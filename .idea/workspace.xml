@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="1c3eddcc-e781-4e04-be45-3d8521b01e60" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/assets/css/admin.css" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/assets/js/admin.js" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/build/generate-class-map.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/actions/abstract-sentient-forms-action.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/actions/class-sentient-forms-action-registry.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/actions/class-sentient-forms-entry-evaluation-action.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/actions/class-sentient-forms-spam-analysis-action.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/adapters/forms/class-forms-adapter-registry.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/adapters/forms/class-sentient-forms-gravity-forms-adapter.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/admin/class-sentient-forms-admin.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/admin/views/actions.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/admin/views/dashboard.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/admin/views/forms.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/admin/views/license.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/admin/views/settings.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/api/class-sentient-forms-llm-api-client.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/class-map.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/class-sentient-forms-async-handler.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/class-sentient-forms-autoloader.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/class-sentient-forms-plugin.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/enums/LLMs.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/interfaces/interface-sentient-forms-action.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/interfaces/interface-sentient-forms-adapter.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/interfaces/interface-sentient-forms-llm-model.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/llms/abstract-class-llm.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/llms/google/abstract-class-llm-google.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/llms/google/class-model-google-gemini-2_0-flash-lite.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/llms/google/class-model-google-gemini-2_0-flash.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/llms/google/class-model-google-gemini-2_5-flash-preview.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/llms/google/class-model-google-gemini-2_5-pro-preview.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/includes/llms/sentient-forms-llm-registry.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/sentient-forms.php" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/wp-plugin.iml" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ChangesViewManager">
+    <option name="groupingKeys">
+      <option value="directory" />
+      <option value="repository" />
+    </option>
+  </component>
+  <component name="ComposerSettings">
+    <execution />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="PhpWorkspaceProjectConfiguration" interpreter_name="PHP 8.4 Windows">
+    <include_path>
+      <path value="$PROJECT_DIR$/../../Data Wise/wordpress-installations/6.8.0" />
+    </include_path>
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;customColor&quot;: &quot;&quot;,
+  &quot;associatedIndex&quot;: 6
+}</component>
+  <component name="ProjectId" id="2whp6qBRE4Mp1QkjWKtLM2br6VN" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "PHP Script.generate-class-map.php.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "ShowUsagesActions.previewPropertyKey": "true",
+    "git-widget-placeholder": "master",
+    "ignore.virus.scanning.warn.message": "true",
+    "junie.onboarding.icon.badge.shown": "true",
+    "last_opened_file_path": "C:/Users/gavin/Work/Local Files/Sentient Forms/wp-plugin/includes/adapters/models/google",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "php.override.implement.member.chooser.php.doc": "COPY_ALWAYS",
+    "settings.editor.selected.configurable": "reference.webide.settings.project.settings.php",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="C:\Users\gavin\Work\Local Files\Sentient Forms\wp-plugin\includes\adapters\models\google" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\gavin\Work\Local Files\Sentient Forms\wp-plugin\includes\llms" />
+      <recent name="C:\Users\gavin\Work\Local Files\Sentient Forms\wp-plugin\includes\adapters\models" />
+      <recent name="C:\Users\gavin\Work\Local Files\Sentient Forms\wp-plugin\includes\adapters\forms" />
+    </key>
+  </component>
+  <component name="RunManager">
+    <configuration name="generate-class-map.php" type="PhpLocalRunConfigurationType" factoryName="PHP Console" temporary="true" path="$PROJECT_DIR$/build/generate-class-map.php">
+      <method v="2" />
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="PHP Script.generate-class-map.php" />
+      </list>
+    </recent_temporary>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-jdk-9823dce3aa75-fbdcb00ec9e3-intellij.indexing.shared.core-IU-251.25410.109" />
+        <option value="bundled-js-predefined-d6986cc7102b-6a121458b545-JavaScript-IU-251.25410.109" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="StructureViewState">
+    <option name="selectedTab" value="PHP" />
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="1c3eddcc-e781-4e04-be45-3d8521b01e60" name="Changes" comment="" />
+      <created>1746503488930</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1746503488930</updated>
+      <workItem from="1746503490964" duration="4017000" />
+      <workItem from="1746559362017" duration="18081000" />
+      <workItem from="1746779185258" duration="2054000" />
+      <workItem from="1746925477821" duration="33030000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="WordPressConfiguration" enabled="true">
+    <wordpressPath>C:\Users\gavin\Work\Local Files\Data Wise\wordpress-installations\6.8.0</wordpressPath>
+  </component>
+  <component name="XSLT-Support.FileAssociations.UIState">
+    <expand />
+    <select />
+  </component>
+</project>
