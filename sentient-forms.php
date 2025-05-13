@@ -1,0 +1,57 @@
+<?php
+/**
+ * Plugin Name: Sentient Forms
+ * Plugin URI: https://sentientforms.com
+ * Description: Integrate Large Language Models (LLMs) with form builders to automate intelligent actions on form submissions.
+ * Version: 0.1.0
+ * Author: TWP Technologies, LLC.
+ * Author URI: https://sentientforms.com
+ * Text Domain: sentient-forms
+ * Domain Path: /languages
+ * Requires at least: 6.8.0
+ * Requires PHP: 8.2
+ * License: GPL v2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ */
+
+if ( !defined( 'ABSPATH' ) )
+{
+    exit; // Exit if accessed directly.
+}
+
+// Define plugin constants.
+const SENTIENT_FORMS_VERSION     = '0.1.0';
+const SENTIENT_FORMS_PLUGIN_FILE = __FILE__;
+define( 'SENTIENT_FORMS_PLUGIN_DIR', plugin_dir_path( SENTIENT_FORMS_PLUGIN_FILE ) );
+define( 'SENTIENT_FORMS_PLUGIN_URL', plugin_dir_url( SENTIENT_FORMS_PLUGIN_FILE ) );
+
+/**
+ * The ID of the default "free tier" LLM model.
+ * This should be a valid model ID from one of the registered Sentient_Forms_Llm_Model_Interface implementations.
+ * Ensure a model with this ID is registered and its `is_default_for_free_tier()` returns true if that logic is used.
+ */
+if ( !defined( 'SENTIENT_FORMS_DEFAULT_FREE_LLM_ID' ) )
+{
+    define( 'SENTIENT_FORMS_DEFAULT_FREE_LLM_ID', 'gemini-2.0-flash' );
+}
+
+// Include the autoloader.
+require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-sentient-forms-autoloader.php';
+require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-sentient-forms-plugin.php';
+
+// Include template functions if any.
+// require_once SENTIENT_FORMS_PLUGIN_PATH . 'includes/template-functions.php';
+
+if ( class_exists( 'Sentient_Forms_Plugin' ) )
+{
+    Sentient_Forms_Plugin::instance();
+}
+else
+{
+    error_log( 'Sentient Forms: Main plugin function sentient_forms() not found.' );
+}
+
+// Activation/Deactivation hooks are typically registered within the main plugin class constructor or a dedicated hooks method.
+// Example: register_activation_hook( __FILE__, array( 'Sentient_Forms_Plugin', 'activate' ) );
+// This is already handled inside the Sentient_Forms_Plugin class.
+

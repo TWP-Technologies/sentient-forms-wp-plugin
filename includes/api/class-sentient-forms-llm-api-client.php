@@ -1,0 +1,408 @@
+<?php
+/**
+ * LLM API client
+ *
+ * @package Sentient_Forms
+ */
+
+// Exit if accessed directly
+if ( !defined( 'ABSPATH' ) )
+{
+    exit;
+}
+
+/**
+ * Class Sentient_Forms_Llm_Api_Client
+ * Handles communication with the LLM proxy server
+ */
+class Sentient_Forms_Llm_Api_Client
+{
+
+    /**
+     * Proxy API key
+     */
+    private string $api_key;
+
+    /**
+     * Proxy API URL
+     */
+    private string $api_url;
+
+    /**
+     * Constructor
+     *
+     * @param string      $api_key Proxy API key.
+     * @param string|null $api_url Proxy API URL.
+     */
+    public function __construct( string $api_key, ?string $api_url = null )
+    {
+        $this->api_key = $api_key;
+        $this->api_url = $api_url ?: $this->get_default_api_url();
+    }
+
+    /**
+     * Get default API URL
+     *
+     * @return string
+     */
+    private function get_default_api_url(): string
+    {
+        return 'https://api.sentientforms.com/v1'; // gx todo - update this to the actual API URL
+    }
+
+    /**
+     * Send a query to the LLM via the proxy
+     *
+     * @param array $data The data to send.
+     *
+     * @return array|WP_Error The response or error.
+     */
+    public function query( array $data ): WP_Error | array
+    {
+        // Ensure we have an API key
+        if ( empty( $this->api_key ) )
+        {
+            return new WP_Error(
+                'missing_api_key', __( 'Missing proxy API key. Please enter your API key in the plugin settings.', 'sentient-forms' ),
+            );
+        }
+
+        // Prepare the request
+        $url  = $this->api_url . '/query';
+        $args = [
+            'method'      => 'POST',
+            'timeout'     => 45,
+            'redirection' => 5,
+            'httpversion' => '1.1',
+            'blocking'    => true,
+            'headers'     => [
+                'Content-Type' => 'application/json',
+                'X-API-Key'    => $this->api_key,
+                'X-Site-URL'   => home_url(),
+            ],
+            'body'        => wp_json_encode( $data ),
+            'cookies'     => [],
+        ];
+
+        // Send the request
+        $response = wp_remote_post( $url, $args );
+
+        // Check for errors
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        // Get the response code
+        $response_code = wp_remote_retrieve_response_code( $response );
+        if ( $response_code !== 200 )
+        {
+            $error_message = wp_remote_retrieve_response_message( $response );
+            $body          = wp_remote_retrieve_body( $response );
+            $body_data     = json_decode( $body, true );
+
+            if ( isset( $body_data[ 'error' ] ) )
+            {
+                $error_message = $body_data[ 'error' ];
+            }
+
+            return new WP_Error(
+                'api_error', sprintf( __( 'API error: %s', 'sentient-forms' ), $error_message ), [ 'status' => $response_code ],
+            );
+        }
+
+        // Parse the response
+        $body = wp_remote_retrieve_body( $response );
+        $data = json_decode( $body, true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE )
+        {
+            return new WP_Error( 'json_parse_error', __( 'Error parsing API response', 'sentient-forms' ) );
+        }
+
+        return $data;
+    }
+
+    /**
+     * Validate a license key
+     *
+     * @param string $license_key License key.
+     * @param string $site_url    Site URL.
+     *
+     * @return array|WP_Error The response or error.
+     */
+    public function validate_license( string $license_key, string $site_url ): WP_Error | array
+    {
+        // Prepare the request
+        $url  = $this->api_url . '/license/validate';
+        $args = [
+            'method'      => 'POST',
+            'timeout'     => 45,
+            'redirection' => 5,
+            'httpversion' => '2.0',
+            'blocking'    => true,
+            'headers'     => [
+                'Content-Type' => 'application/json',
+                'X-API-Key'    => $this->api_key,
+            ],
+            'body'        => wp_json_encode(
+                [
+                    'license_key' => $license_key,
+                    'site_url'    => $site_url,
+                ],
+            ),
+            'cookies'     => [],
+        ];
+
+        // Send the request
+        $response = wp_remote_post( $url, $args );
+
+        // Check for errors
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        // Get the response code
+        $response_code = wp_remote_retrieve_response_code( $response );
+        if ( $response_code !== 200 )
+        {
+            $error_message = wp_remote_retrieve_response_message( $response );
+            $body          = wp_remote_retrieve_body( $response );
+            $body_data     = json_decode( $body, true );
+
+            if ( isset( $body_data[ 'error' ] ) )
+            {
+                $error_message = $body_data[ 'error' ];
+            }
+
+            return new WP_Error(
+                'license_validation_error',
+                sprintf( __( 'License validation error: %s', 'sentient-forms' ), $error_message ),
+                [ 'status' => $response_code ],
+            );
+        }
+
+        // Parse the response
+        $body = wp_remote_retrieve_body( $response );
+        $data = json_decode( $body, true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE )
+        {
+            return new WP_Error( 'json_parse_error', __( 'Error parsing license validation response', 'sentient-forms' ) );
+        }
+
+        return $data;
+    }
+
+    /**
+     * Get credit balance
+     *
+     * @return array|WP_Error The response or error.
+     */
+    public function get_credit_balance(): WP_Error | array
+    {
+        // Ensure we have an API key
+        if ( empty( $this->api_key ) )
+        {
+            return new WP_Error(
+                'missing_api_key', __( 'Missing proxy API key. Please enter your API key in the plugin settings.', 'sentient-forms' ),
+            );
+        }
+
+        // Prepare the request
+        $url  = $this->api_url . '/credits/balance';
+        $args = [
+            'method'      => 'GET',
+            'timeout'     => 45,
+            'redirection' => 5,
+            'httpversion' => '2.0',
+            'blocking'    => true,
+            'headers'     => [
+                'X-API-Key'  => $this->api_key,
+                'X-Site-URL' => home_url(),
+            ],
+            'cookies'     => [],
+        ];
+
+        // Send the request
+        $response = wp_remote_get( $url, $args );
+
+        // Check for errors
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        // Get the response code
+        $response_code = wp_remote_retrieve_response_code( $response );
+        if ( $response_code !== 200 )
+        {
+            $error_message = wp_remote_retrieve_response_message( $response );
+            $body          = wp_remote_retrieve_body( $response );
+            $body_data     = json_decode( $body, true );
+
+            if ( isset( $body_data[ 'error' ] ) )
+            {
+                $error_message = $body_data[ 'error' ];
+            }
+
+            return new WP_Error(
+                'credit_balance_error', sprintf( __( 'Credit balance error: %s', 'sentient-forms' ), $error_message ), [ 'status' => $response_code ],
+            );
+        }
+
+        // Parse the response
+        $body = wp_remote_retrieve_body( $response );
+        $data = json_decode( $body, true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE )
+        {
+            return new WP_Error( 'json_parse_error', __( 'Error parsing credit balance response', 'sentient-forms' ) );
+        }
+
+        return $data;
+    }
+
+    /**
+     * Get available LLM models
+     *
+     * @return array|WP_Error The response or error.
+     */
+    public function get_available_models(): WP_Error | array
+    {
+        // Ensure we have an API key
+        if ( empty( $this->api_key ) )
+        {
+            return new WP_Error(
+                'missing_api_key', __( 'Missing proxy API key. Please enter your API key in the plugin settings.', 'sentient-forms' ),
+            );
+        }
+
+        // Prepare the request
+        $url  = $this->api_url . '/models';
+        $args = [
+            'method'      => 'GET',
+            'timeout'     => 45,
+            'redirection' => 5,
+            'httpversion' => '1.1',
+            'blocking'    => true,
+            'headers'     => [
+                'X-API-Key'  => $this->api_key,
+                'X-Site-URL' => home_url(),
+            ],
+            'cookies'     => [],
+        ];
+
+        // Send the request
+        $response = wp_remote_get( $url, $args );
+
+        // Check for errors
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        // Get the response code
+        $response_code = wp_remote_retrieve_response_code( $response );
+        if ( $response_code !== 200 )
+        {
+            $error_message = wp_remote_retrieve_response_message( $response );
+            $body          = wp_remote_retrieve_body( $response );
+            $body_data     = json_decode( $body, true );
+
+            if ( isset( $body_data[ 'error' ] ) )
+            {
+                $error_message = $body_data[ 'error' ];
+            }
+
+            return new WP_Error(
+                'models_error', sprintf( __( 'Models error: %s', 'sentient-forms' ), $error_message ), [ 'status' => $response_code ],
+            );
+        }
+
+        // Parse the response
+        $body = wp_remote_retrieve_body( $response );
+        $data = json_decode( $body, true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE )
+        {
+            return new WP_Error( 'json_parse_error', __( 'Error parsing models response', 'sentient-forms' ) );
+        }
+
+        return $data;
+    }
+
+    /**
+     * Estimate cost for a query
+     *
+     * @param array $data The data to estimate cost for.
+     *
+     * @return array|WP_Error The response or error.
+     */
+    public function estimate_cost( array $data ): WP_Error | array
+    {
+        // Ensure we have an API key
+        if ( empty( $this->api_key ) )
+        {
+            return new WP_Error(
+                'missing_api_key', __( 'Missing proxy API key. Please enter your API key in the plugin settings.', 'sentient-forms' ),
+            );
+        }
+
+        // Prepare the request
+        $url  = $this->api_url . '/estimate';
+        $args = [
+            'method'      => 'POST',
+            'timeout'     => 45,
+            'redirection' => 5,
+            'httpversion' => '1.1',
+            'blocking'    => true,
+            'headers'     => [
+                'Content-Type' => 'application/json',
+                'X-API-Key'    => $this->api_key,
+                'X-Site-URL'   => home_url(),
+            ],
+            'body'        => wp_json_encode( $data ),
+            'cookies'     => [],
+        ];
+
+        // Send the request
+        $response = wp_remote_post( $url, $args );
+
+        // Check for errors
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        // Get the response code
+        $response_code = wp_remote_retrieve_response_code( $response );
+        if ( $response_code !== 200 )
+        {
+            $error_message = wp_remote_retrieve_response_message( $response );
+            $body          = wp_remote_retrieve_body( $response );
+            $body_data     = json_decode( $body, true );
+
+            if ( isset( $body_data[ 'error' ] ) )
+            {
+                $error_message = $body_data[ 'error' ];
+            }
+
+            return new WP_Error(
+                'estimate_error', sprintf( __( 'Estimate error: %s', 'sentient-forms' ), $error_message ), [ 'status' => $response_code ],
+            );
+        }
+
+        // Parse the response
+        $body = wp_remote_retrieve_body( $response );
+        $data = json_decode( $body, true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE )
+        {
+            return new WP_Error( 'json_parse_error', __( 'Error parsing estimate response', 'sentient-forms' ) );
+        }
+
+        return $data;
+    }
+}
