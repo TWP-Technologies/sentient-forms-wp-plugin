@@ -404,7 +404,7 @@ HTML;
     public function update_form_settings( mixed $form_id, array $settings ): bool
     {
         $option_name = 'sentient_forms_gravity_forms_' . $form_id;
-        return update_option( $option_name, $settings );
+        return update_option( $option_name, $settings, false );
     }
 
     /**
@@ -686,7 +686,7 @@ HTML;
             // Format from GFFormsModel::add_note($entry_id, $user_id, $user_name, $note, $note_type = 'user')
             $result = GFFormsModel::add_note(
                 $entry_id,
-                0,       // User ID (0 for system)
+                0,        // User ID (0 for system)
                 $note_author,
                 $note_content,
                 'system', // Note type

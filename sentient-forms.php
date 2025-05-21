@@ -36,7 +36,7 @@ if ( !defined( 'SENTIENT_FORMS_DEFAULT_FREE_LLM_ID' ) )
 }
 
 // Include the autoloader.
-require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-sentient-forms-autoloader.php';
+require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-autoloader.php';
 require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-sentient-forms-plugin.php';
 
 // Include template functions if any.

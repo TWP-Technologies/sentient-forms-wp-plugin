@@ -22,45 +22,47 @@ final class Sentient_Forms_Plugin
     /**
      * The single instance of the class.
      *
-     * @var Sentient_Forms_Plugin|null
-     * @access private
-     * @static
+     * @var Sentient_Forms_Plugin
      */
-    private static ?Sentient_Forms_Plugin $_instance = null;
+    private static Sentient_Forms_Plugin $_instance;
 
     /**
      * LLM Model Registry instance.
      * Manages available Large Language Models.
      *
-     * @var Sentient_Forms_Llm_Model_Registry|null
-     * @access private
+     * @var Sentient_Forms_Llm_Model_Registry
      */
-    private ?Sentient_Forms_Llm_Model_Registry $llm_model_registry = null;
+    private Sentient_Forms_Llm_Model_Registry $llm_model_registry;
 
     /**
      * Action Registry instance.
      * Manages available actions that can be performed (e.g., Spam Analysis).
      *
-     * @var Sentient_Forms_Action_Registry|null
-     * @access private
+     * @var Sentient_Forms_Action_Registry
      */
-    private ?Sentient_Forms_Action_Registry $action_registry = null;
+    private Sentient_Forms_Action_Registry $action_registry;
 
     /**
      * Adapter Registry instance.
      * Manages integrations with different form provider plugins.
      *
-     * @var Sentient_Forms_Form_Adapter_Registry|null
-     * @access private
+     * @var Sentient_Forms_Form_Adapter_Registry
      */
-    private ?Sentient_Forms_Form_Adapter_Registry $adapter_registry = null;
+    private Sentient_Forms_Form_Adapter_Registry $adapter_registry;
+
+    /**
+     * REST API instance.
+     * Handles interactions with the REST API for the application.
+     *
+     * @var Sentient_Forms_REST_API
+     */
+    private Sentient_Forms_REST_API $rest_api;
 
     /**
      * Plugin options.
      * Stores settings retrieved from the WordPress options table.
      *
      * @var array|null
-     * @access private
      */
     private ?array $options = null;
 
@@ -69,7 +71,6 @@ final class Sentient_Forms_Plugin
      * Ensures only one instance of Sentient_Forms_Plugin is loaded or can be loaded.
      * This is a common singleton pattern in WordPress plugins.
      *
-     * @static
      * @return Sentient_Forms_Plugin - Main instance.
      */
     public static function instance(): Sentient_Forms_Plugin
@@ -86,8 +87,6 @@ final class Sentient_Forms_Plugin
      * Initialize the plugin.
      * This private method is called once during the first instantiation.
      * It loads dependencies, initializes registries, and sets up WordPress hooks.
-     *
-     * @access private
      */
     private function init(): void
     {
@@ -98,15 +97,16 @@ final class Sentient_Forms_Plugin
         // Initialize admin area if in admin context or WP-CLI.
         if ( is_admin() || ( defined( 'WP_CLI' ) && WP_CLI ) )
         {
-            if ( class_exists( 'Sentient_Forms_Admin' ) )
+            if ( !class_exists( 'Sentient_Forms_Admin' ) )
             {
-                $admin = new Sentient_Forms_Admin( $this ); // Pass plugin instance to Admin.
-                $admin->init();
+                Sentient_Forms_Error_Utils::throw_or_die(
+                    'Sentient Forms: Sentient_Forms_Admin class not found during init.',
+                    Sentient_Forms_Error_Type::dependency,
+                );
             }
-            else
-            {
-                error_log( 'Sentient Forms: Sentient_Forms_Admin class not found during init.' );
-            }
+
+            $admin = new Sentient_Forms_Admin( $this ); // Pass plugin instance to Admin.
+            $admin->init();
         }
     }
 
@@ -114,57 +114,59 @@ final class Sentient_Forms_Plugin
      * Load plugin dependencies.
      * Includes necessary files and sets up the autoloader if applicable.
      * This method ensures all core interfaces and classes are available.
-     *
-     * @access private
      */
     private function load_dependencies(): void
     {
-        // The main plugin file (sentient-forms.php) should handle autoloader registration.
-        // Sentient_Forms_Autoloader::register(); // gx todo - verify the autoloader is called in the base plugin file.
+        if ( !class_exists( 'Sentient_Forms_REST_API' ) )
+        {
+            Sentient_Forms_Error_Utils::throw_or_die(
+                'Sentient Forms: Sentient_Forms_REST_API class not found.',
+                Sentient_Forms_Error_Type::dependency,
+            );
+        }
+
+        $this->rest_api = new Sentient_Forms_REST_API();
     }
 
     /**
      * Initialize registries.
      * Creates instances of LLM, Action, and Adapter registries.
      * Populates them with available models, actions, and adapters.
-     *
-     * @access private
      */
     private function init_registries(): void
     {
-        if ( class_exists( 'Sentient_Forms_Llm_Model_Registry' ) )
+        if ( !class_exists( 'Sentient_Forms_Llm_Model_Registry' ) )
         {
-            $this->llm_model_registry = new Sentient_Forms_Llm_Model_Registry();
-        }
-        else
-        {
-            error_log( 'Sentient Forms: Sentient_Forms_Llm_Model_Registry class not found.' );
-        }
-
-        if ( class_exists( 'Sentient_Forms_Action_Registry' ) )
-        {
-            $this->action_registry = new Sentient_Forms_Action_Registry( $this );
-        }
-        else
-        {
-            error_log( 'Sentient Forms: Sentient_Forms_Action_Registry class not found.' );
+            Sentient_Forms_Error_Utils::throw_or_die(
+                'Sentient Forms: Sentient_Forms_Llm_Model_Registry class not found.',
+                Sentient_Forms_Error_Type::dependency,
+            );
         }
 
-        if ( class_exists( 'Sentient_Forms_Form_Adapter_Registry' ) )
+        if ( !class_exists( 'Sentient_Forms_Action_Registry' ) )
         {
-            $this->adapter_registry = new Sentient_Forms_Form_Adapter_Registry( $this );
+            Sentient_Forms_Error_Utils::throw_or_die(
+                'Sentient Forms: Sentient_Forms_Action_Registry class not found.',
+                Sentient_Forms_Error_Type::dependency,
+            );
         }
-        else
+
+        if ( !class_exists( 'Sentient_Forms_Form_Adapter_Registry' ) )
         {
-            error_log( 'Sentient Forms: Sentient_Forms_Adapter_Registry class not found.' );
+            Sentient_Forms_Error_Utils::throw_or_die(
+                'Sentient Forms: Sentient_Forms_Form_Adapter_Registry class not found.',
+                Sentient_Forms_Error_Type::dependency,
+            );
         }
+
+        $this->action_registry    = new Sentient_Forms_Action_Registry( $this );
+        $this->adapter_registry   = new Sentient_Forms_Form_Adapter_Registry( $this );
+        $this->llm_model_registry = new Sentient_Forms_Llm_Model_Registry();
     }
 
     /**
      * Initialize WordPress hooks.
      * Adds core action and filter hooks used by the plugin.
-     *
-     * @access private
      */
     private function init_hooks(): void
     {
@@ -194,9 +196,9 @@ final class Sentient_Forms_Plugin
      * Get the LLM Model Registry.
      * Provides access to the registry managing LLM models.
      *
-     * @return Sentient_Forms_Llm_Model_Registry|null The LLM model registry instance, or null if not initialized.
+     * @return Sentient_Forms_Llm_Model_Registry The LLM model registry instance.
      */
-    public function get_llm_model_registry(): ?Sentient_Forms_Llm_Model_Registry
+    public function get_llm_model_registry(): Sentient_Forms_Llm_Model_Registry
     {
         return $this->llm_model_registry;
     }
@@ -205,9 +207,9 @@ final class Sentient_Forms_Plugin
      * Get the Action Registry.
      * Provides access to the registry managing available actions.
      *
-     * @return Sentient_Forms_Action_Registry|null The action registry instance, or null if not initialized.
+     * @return Sentient_Forms_Action_Registry The action registry instance.
      */
-    public function get_action_registry(): ?Sentient_Forms_Action_Registry
+    public function get_action_registry(): Sentient_Forms_Action_Registry
     {
         return $this->action_registry;
     }
@@ -216,9 +218,9 @@ final class Sentient_Forms_Plugin
      * Get the Adapter Registry.
      * Provides access to the registry managing form provider adapters.
      *
-     * @return Sentient_Forms_Form_Adapter_Registry|null The adapter registry instance, or null if not initialized.
+     * @return Sentient_Forms_Form_Adapter_Registry The adapter registry instance.
      */
-    public function get_form_adapter_registry(): ?Sentient_Forms_Form_Adapter_Registry
+    public function get_form_adapter_registry(): Sentient_Forms_Form_Adapter_Registry
     {
         return $this->adapter_registry;
     }
@@ -235,12 +237,6 @@ final class Sentient_Forms_Plugin
      */
     public function get_adapters( bool $only_active = true ): array
     {
-        if ( !$this->adapter_registry )
-        {
-            error_log( 'Sentient Forms: Adapter registry not available when calling get_adapters().' );
-            return []; // Return empty array if the registry isn't initialized.
-        }
-
         if ( $only_active )
         {
             return $this->adapter_registry->get_adapters( true );
@@ -299,8 +295,6 @@ final class Sentient_Forms_Plugin
 
     /**
      * Cloning is forbidden to prevent multiple instances of this singleton.
-     *
-     * @access private
      */
     public function __clone()
     {
@@ -309,8 +303,6 @@ final class Sentient_Forms_Plugin
 
     /**
      * Unserializing instances of this class is forbidden.
-     *
-     * @access private
      */
     public function __wakeup()
     {

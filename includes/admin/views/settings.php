@@ -11,7 +11,7 @@ if ( !defined( 'ABSPATH' ) )
     exit; // Exit if accessed directly.
 }
 
-$llm_registry = sentient_forms()->get_llm_model_registry();
+$llm_registry = Sentient_Forms_Plugin::instance()->get_llm_model_registry();
 $all_models   = [];
 
 if ( $llm_registry instanceof Sentient_Forms_Llm_Model_Registry )
@@ -33,10 +33,9 @@ else
          '</p></div>';
 }
 
-$options = get_option( 'sentient_forms_settings', [] );
-$api_key = $options[ 'api_key' ] ?? '';
-// $default_llm_id = $options['default_llm'] ?? Sentient_Forms_Supported_LLMs::GEMINI_1_5_FLASH->get_id(); // Old way
-$default_llm_id = $options[ 'default_llm' ] ?? ''; // New way, will be an ID string.
+$options        = get_option( 'sentient_forms_settings', [] );
+$api_key        = $options[ 'api_key' ] ?? '';
+$default_llm_id = $options[ 'default_llm' ] ?? '';
 
 // If no default_llm_id is set, try to get a system default (e.g., the one marked as default for free tier).
 if ( empty( $default_llm_id ) && $llm_registry instanceof Sentient_Forms_Llm_Model_Registry )
