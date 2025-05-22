@@ -61,7 +61,7 @@ final class Sentient_Forms_REST_API
     {
         $core_controllers = [
             Sentient_Forms_Action_Definitions_Controller::class,
-            // \Sentient_Forms_Credit_Controller::class, // Assuming Sentient_Forms_Credit_Controller exists ; gx todo - determine what to do with this
+            Sentient_Forms_Credit_Controller::class,
             Sentient_Forms_Form_Actions_Controller::class,
             Sentient_Forms_Form_Controller::class,
             Sentient_Forms_License_Controller::class,
