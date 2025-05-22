@@ -96,7 +96,7 @@ trait Trait_Sentient_Forms_Permission_Utils
 
         if ( !$nonce )
         {
-            $nonce_header_names = ['X-WP-Nonce', 'x_wp_nonce', 'X-Sentient-Forms-Nonce', 'x_sentient_forms_nonce'];
+            $nonce_header_names = [ 'X-WP-Nonce', 'x_wp_nonce', 'X-Sentient-Forms-Nonce', 'x_sentient_forms_nonce' ];
             foreach ( $nonce_header_names as $header_name )
             {
                 $nonce = $request->get_header( $header_name );
@@ -105,7 +105,7 @@ trait Trait_Sentient_Forms_Permission_Utils
                     break;
                 }
             }
-        }
+
             /* translators: %s: parameter name (_wpnonce) */
             $translated_text = __( 'Nonce is missing from the request (%s). Please include a valid nonce.', 'sentient-forms' );
             $error_message   = sprintf( $translated_text, esc_html( $query_arg_name ) );
@@ -113,11 +113,8 @@ trait Trait_Sentient_Forms_Permission_Utils
             return $this->permission_denied_error( $error_message, 'rest_missing_nonce', 400 );
         }
 
-            return $this->permission_denied_error( $error_message, 'rest_missing_nonce', 400 );
-        }
-
         $nonce_verified = wp_verify_nonce( $nonce, $nonce_action );
-        
+
         if ( !$nonce_verified )
         {
             return $this->permission_denied_error(
@@ -126,7 +123,7 @@ trait Trait_Sentient_Forms_Permission_Utils
                 403,
             );
         }
-        
+
         return true;
     }
 }
