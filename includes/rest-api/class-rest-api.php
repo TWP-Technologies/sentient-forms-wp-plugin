@@ -65,6 +65,7 @@ final class Sentient_Forms_REST_API
             Sentient_Forms_Form_Actions_Controller::class,
             Sentient_Forms_Form_Controller::class,
             Sentient_Forms_License_Controller::class,
+            Sentient_Forms_Llm_Controller::class,
             Sentient_Forms_Settings_Controller::class,
             // Add more core controller class names as you create them.
         ];
