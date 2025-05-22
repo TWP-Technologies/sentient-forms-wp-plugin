@@ -40,7 +40,7 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
     /**
      * How long to cache the credit balance in seconds.
      */
-    private const BALANCE_CACHE_TTL = 600; // 10 minutes
+    private const BALANCE_CACHE_TTL = 60 * 10; // 10 minutes
 
     /**
      * Registers the routes for the credit controller.
