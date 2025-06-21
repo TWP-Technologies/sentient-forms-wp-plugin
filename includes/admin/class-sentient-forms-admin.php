@@ -195,9 +195,11 @@ class Sentient_Forms_Admin
 
             // Prepare data for JavaScript localization
             $js_data_for_admin = [
-                'ajaxUrl' => admin_url( 'admin-ajax.php' ),
-                'nonce'    => wp_create_nonce( 'sentient_forms_admin_nonce' ), // General admin nonce
-                'i18n'     => [
+                'apiBaseUrl' => rest_url( 'sentient-forms/v1/' ),
+                'rest_nonce' => wp_create_nonce( 'wp_rest' ),
+                'ajax_nonce' => wp_create_nonce( 'sentient_forms_admin_nonce' ),
+                'ajaxUrl'    => admin_url( 'admin-ajax.php' ),
+                'i18n'       => [
                     'errorOccurred'  => __( 'An error occurred. Please try again.', 'sentient-forms' ),
                     'unsavedChanges' => __( 'You have unsaved changes. Are you sure you want to leave?', 'sentient-forms' ),
                     'savingSettings' => __( 'Saving settings...', 'sentient-forms'),
@@ -533,7 +535,11 @@ class Sentient_Forms_Admin
      */
     public function ajax_save_settings(): void
     {
-        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        $options       = get_option( 'sentient_forms_settings', [] );
+        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
+        if ( $enforce_nonce ) {
+            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        }
 
         if ( !current_user_can( 'manage_options' ) )
         {
@@ -555,7 +561,11 @@ class Sentient_Forms_Admin
         if (isset($settings_data['license_key'])) {
             $sanitized_settings['license_key'] = sanitize_text_field($settings_data['license_key']);
         }
-        // Add more fields as needed
+        if (isset($settings_data['enforce_nonce_verification'])) {
+            $sanitized_settings['enforce_nonce_verification'] = rest_sanitize_boolean($settings_data['enforce_nonce_verification']);
+        } else {
+            $sanitized_settings['enforce_nonce_verification'] = false;
+        }
 
         update_option( 'sentient_forms_settings', $sanitized_settings );
 
@@ -573,7 +583,11 @@ class Sentient_Forms_Admin
      */
     public function ajax_get_forms_for_provider(): void
     {
-        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        $options       = get_option( 'sentient_forms_settings', [] );
+        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
+        if ( $enforce_nonce ) {
+            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        }
 
         if ( !current_user_can( 'manage_options' ) )
         {
@@ -607,7 +621,11 @@ class Sentient_Forms_Admin
      */
     public function ajax_get_actions_for_form(): void
     {
-        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        $options       = get_option( 'sentient_forms_settings', [] );
+        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
+        if ( $enforce_nonce ) {
+            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        }
         if ( !current_user_can( 'manage_options' ) )
         {
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
@@ -651,7 +669,11 @@ class Sentient_Forms_Admin
      */
     public function ajax_save_form_settings(): void // Renamed from ajax_save_form_actions
     {
-        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        $options       = get_option( 'sentient_forms_settings', [] );
+        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
+        if ( $enforce_nonce ) {
+            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        }
         if ( !current_user_can( 'manage_options' ) )
         {
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
@@ -760,7 +782,11 @@ class Sentient_Forms_Admin
      */
     public function ajax_get_action_settings_html(): void
     {
-        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        $options       = get_option( 'sentient_forms_settings', [] );
+        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
+        if ( $enforce_nonce ) {
+            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        }
         if ( !current_user_can( 'manage_options' ) )
         {
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
@@ -905,7 +931,11 @@ class Sentient_Forms_Admin
      * AJAX handler for testing API connection.
      */
     public function ajax_test_connection(): void {
-        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        $options       = get_option( 'sentient_forms_settings', [] );
+        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
+        if ( $enforce_nonce ) {
+            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        }
         if ( ! current_user_can( 'manage_options' ) ) {
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
         }
@@ -935,7 +965,11 @@ class Sentient_Forms_Admin
      * AJAX handler for fetching credit balance.
      */
     public function ajax_get_credit_balance(): void {
-        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        $options       = get_option( 'sentient_forms_settings', [] );
+        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
+        if ( $enforce_nonce ) {
+            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
+        }
         if ( ! current_user_can( 'manage_options' ) ) {
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
         }

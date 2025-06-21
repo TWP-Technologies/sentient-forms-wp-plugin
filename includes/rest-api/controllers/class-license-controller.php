@@ -20,6 +20,7 @@ if ( !defined( 'ABSPATH' ) )
  */
 class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Controller
 {
+    use Trait_Sentient_Forms_Permission_Utils;
 
     /**
      * The base of this controller's routes.
@@ -92,7 +93,7 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_license_info' ],
-                    'permission_callback' => [ $this->permission_checker, 'can_manage_settings' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                 ],
                 'schema' => [ $this, 'get_item_schema' ],
             ],
@@ -106,7 +107,7 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
                 [
                     'methods'             => WP_REST_Server::EDITABLE,
                     'callback'            => [ $this, 'activate_license' ],
-                    'permission_callback' => [ $this->permission_checker, 'can_manage_settings' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => [
                         'license_key' => [
                             'required'          => true,
@@ -128,7 +129,7 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
                 [
                     'methods'             => WP_REST_Server::EDITABLE,
                     'callback'            => [ $this, 'deactivate_license' ],
-                    'permission_callback' => [ $this->permission_checker, 'can_manage_settings' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                 ],
             ],
         );

@@ -19,6 +19,7 @@ if ( !defined( 'ABSPATH' ) )
  */
 class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Controller
 {
+    use Trait_Sentient_Forms_Permission_Utils;
     /**
      * The base of this controller's routes.
      *
@@ -56,7 +57,7 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_credit_balance' ],
-                    'permission_callback' => [ $this, 'check_manage_options_permission' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => [
                         'force_refresh' => [
                             'description'       => __( 'Force a refresh of the cached balance.', 'sentient-forms' ),

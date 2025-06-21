@@ -75,7 +75,7 @@
                 type: 'POST',
                 data: {
                     action: 'sentient_forms_test_connection',
-                    nonce: sentientFormsAdmin.nonce,
+                    nonce: sentientFormsAdmin.ajax_nonce,
                     api_key: apiKey
                 },
                 success: function(response) {
@@ -245,7 +245,7 @@
                 type: 'POST',
                 data: {
                     action: 'sentient_forms_save_form_settings',
-                    nonce: sentientFormsAdmin.nonce,
+                    nonce: sentientFormsAdmin.ajax_nonce,
                     form_id: $('#sentient-forms-form-id').val(),
                     adapter_id: $('#sentient-forms-adapter-id').val(),
                     settings: getFormSettings()
@@ -368,7 +368,7 @@
                 type: 'POST',
                 data: {
                     action: 'sentient_forms_get_credit_balance',
-                    nonce: sentientFormsAdmin.nonce
+                    nonce: sentientFormsAdmin.ajax_nonce
                 },
                 success: function(response) {
                     if (response.success) {

@@ -33,9 +33,10 @@ else
          '</p></div>';
 }
 
-$options        = get_option( 'sentient_forms_settings', [] );
-$api_key        = $options[ 'api_key' ] ?? '';
-$default_llm_id = $options[ 'default_llm' ] ?? '';
+$options                = get_option( 'sentient_forms_settings', [] );
+$api_key                = $options[ 'api_key' ] ?? '';
+$default_llm_id         = $options[ 'default_llm' ] ?? '';
+$enforce_nonce_setting  = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
 
 // If no default_llm_id is set, try to get a system default (e.g., the one marked as default for free tier).
 if ( empty( $default_llm_id ) && $llm_registry instanceof Sentient_Forms_Llm_Model_Registry )
@@ -165,6 +166,19 @@ $license_status = get_option( 'sentient_forms_license_status', 'inactive' );
                     </td>
                 </tr>
             <?php endif; ?>
+
+            <tr valign="top">
+                <th scope="row"><?php esc_html_e( 'Enforce Nonce Verification', 'sentient-forms' ); ?></th>
+                <td>
+                    <label>
+                        <input type="checkbox" name="sentient_forms_settings[enforce_nonce_verification]" value="1" <?php checked( $enforce_nonce_setting ); ?> />
+                        <?php esc_html_e( 'Require a nonce for all data-changing requests.', 'sentient-forms' ); ?>
+                    </label>
+                    <p class="description">
+                        <?php esc_html_e( 'Disable only to troubleshoot external integrations.', 'sentient-forms' ); ?>
+                    </p>
+                </td>
+            </tr>
 
         </table>
 

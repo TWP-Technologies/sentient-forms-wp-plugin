@@ -20,6 +20,7 @@ if ( !defined( 'ABSPATH' ) )
  */
 class Sentient_Forms_Form_Controller extends Abstract_Sentient_Forms_Base_Controller
 {
+    use Trait_Sentient_Forms_Permission_Utils;
 
     /**
      * The base of this controller's routes.
@@ -83,7 +84,7 @@ class Sentient_Forms_Form_Controller extends Abstract_Sentient_Forms_Base_Contro
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'endpoint_get_forms' ],
-                    'permission_callback' => [ $this, 'permissions_check' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => $this->get_collection_args(),
                 ],
             ],
@@ -96,13 +97,13 @@ class Sentient_Forms_Form_Controller extends Abstract_Sentient_Forms_Base_Contro
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'endpoint_get_form_settings' ],
-                    'permission_callback' => [ $this, 'permissions_check' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => $this->get_item_args(),
                 ],
                 [
                     'methods'             => WP_REST_Server::EDITABLE,
                     'callback'            => [ $this, 'endpoint_update_form_settings' ],
-                    'permission_callback' => [ $this, 'permissions_check' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => $this->get_update_args(),
                 ],
             ],

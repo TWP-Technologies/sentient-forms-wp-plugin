@@ -21,6 +21,7 @@ if ( !defined( 'ABSPATH' ) )
  */
 class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Controller
 {
+    use Trait_Sentient_Forms_Permission_Utils;
 
     /**
      * The base of this controller's routes.
@@ -98,7 +99,7 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_settings' ],
-                    'permission_callback' => [ $this->permission_checker, 'can_manage_settings' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => $this->get_collection_params(),
                 ],
                 // Define the schema for the settings resource.
@@ -114,7 +115,7 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
                 [
                     'methods'             => WP_REST_Server::EDITABLE,
                     'callback'            => [ $this, 'update_settings' ],
-                    'permission_callback' => [ $this->permission_checker, 'can_manage_settings' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => $this->get_endpoint_args_for_item_schema( WP_REST_Server::EDITABLE ),
                 ],
                 // Schema is often the same for GET and POST/PUT for the item itself.

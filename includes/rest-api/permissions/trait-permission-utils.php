@@ -81,47 +81,48 @@ trait Trait_Sentient_Forms_Permission_Utils
     }
 
     /**
-     * Verifies a WordPress nonce.
+     * Verifies a WordPress nonce using the standard wp_rest action.
      *
-     * @param WP_REST_Request $request        The REST request object.
-     * @param string          $nonce_action   The nonce action string (e.g., 'sentient_forms_custom_action').
-     * @param string          $query_arg_name The name of the query argument or header that contains the nonce. Defaults to '_wpnonce'.
+     * The nonce can be supplied either via the `X-WP-Nonce` header or the
+     * `_wpnonce` request parameter. This mirrors WordPress core behaviour for
+     * REST requests.
      *
-     * @return true|WP_Error True if the nonce is valid, WP_Error otherwise.
-     * @since 0.1.0
+     * @param WP_REST_Request $request The current REST request object.
+     *
+     * @return bool True when the nonce is valid, false otherwise.
      */
-    protected function verify_nonce( WP_REST_Request $request, string $nonce_action, string $query_arg_name = '_wpnonce' ): true | WP_Error
+    public function verify_nonce( WP_REST_Request $request ): bool
     {
-        $nonce = $request->get_param( $query_arg_name );
+        $nonce = $request->get_header_as_array( 'X-WP-Nonce' )[0] ?? $request->get_param( '_wpnonce' );
 
-        if ( !$nonce )
+        return (bool) wp_verify_nonce( $nonce, 'wp_rest' );
+    }
+
+    /**
+     * Combined permission check for admin capability and nonce validation.
+     *
+     * This method enforces that only users with `manage_options` capability can
+     * access the endpoint. For mutating requests (POST, PUT, PATCH, DELETE) a
+     * valid nonce is required.
+     *
+     * @param WP_REST_Request $r The REST request being processed.
+     *
+     * @return bool True if permission is granted, false otherwise.
+     */
+    public function permission_callback_with_nonce( WP_REST_Request $r ): bool
+    {
+        if ( ! current_user_can( 'manage_options' ) )
         {
-            $nonce_header_names = [ 'X-WP-Nonce', 'x_wp_nonce', 'X-Sentient-Forms-Nonce', 'x_sentient_forms_nonce' ];
-            foreach ( $nonce_header_names as $header_name )
-            {
-                $nonce = $request->get_header( $header_name );
-                if ( $nonce )
-                {
-                    break;
-                }
-            }
-
-            /* translators: %s: parameter name (_wpnonce) */
-            $translated_text = __( 'Nonce is missing from the request (%s). Please include a valid nonce.', 'sentient-forms' );
-            $error_message   = sprintf( $translated_text, esc_html( $query_arg_name ) );
-
-            return $this->permission_denied_error( $error_message, 'rest_missing_nonce', 400 );
+            return false;
         }
 
-        $nonce_verified = wp_verify_nonce( $nonce, $nonce_action );
-
-        if ( !$nonce_verified )
+        if ( in_array( $r->get_method(), [ 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) )
         {
-            return $this->permission_denied_error(
-                __( 'Nonce is invalid or has expired.', 'sentient-forms' ),
-                'rest_invalid_nonce',
-                403,
-            );
+            $options       = get_option( 'sentient_forms_settings', [] );
+            $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
+            if ( $enforce_nonce ) {
+                return $this->verify_nonce( $r );
+            }
         }
 
         return true;

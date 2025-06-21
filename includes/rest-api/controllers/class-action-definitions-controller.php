@@ -19,6 +19,7 @@ if ( !defined( 'ABSPATH' ) )
  */
 class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_Forms_Base_Controller
 {
+    use Trait_Sentient_Forms_Permission_Utils;
     /**
      * Base route for action definitions.
      *
@@ -79,7 +80,7 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_action_definitions' ],
-                    'permission_callback' => [ $this->permission_checker, 'can_manage_settings' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                 ],
                 'schema' => [ $this, 'get_item_schema' ],
             ],

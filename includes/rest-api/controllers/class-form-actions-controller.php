@@ -19,6 +19,7 @@ if ( !defined( 'ABSPATH' ) )
  */
 class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Base_Controller
 {
+    use Trait_Sentient_Forms_Permission_Utils;
     /**
      * Route base including form source and form ID placeholders.
      *
@@ -190,7 +191,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             }
         }
 
-        return $this->permission_checker->can_manage_settings( $request );
+        return $this->permission_callback_with_nonce( $request );
     }
 
     /** Validate form_id param. */

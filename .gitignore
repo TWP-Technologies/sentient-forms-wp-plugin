@@ -1,2 +1,7 @@
 .idea
 .qodo
+vendor
+tests/wordpress
+tests/wordpress-tests-lib
+tests/wp.tar.gz
+.phpunit.result.cache

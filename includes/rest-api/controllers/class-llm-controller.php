@@ -14,6 +14,7 @@ if ( !defined( 'ABSPATH' ) )
 
 class Sentient_Forms_Llm_Controller extends Abstract_Sentient_Forms_Base_Controller
 {
+    use Trait_Sentient_Forms_Permission_Utils;
     protected string $rest_base = 'llms/models';
 
     private Sentient_Forms_Admin_Permission $permission_checker;
@@ -62,7 +63,7 @@ class Sentient_Forms_Llm_Controller extends Abstract_Sentient_Forms_Base_Control
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_models' ],
-                    'permission_callback' => [ $this->permission_checker, 'can_manage_settings' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => $this->get_collection_params(),
                 ],
                 'schema' => [ $this, 'get_item_schema' ],
