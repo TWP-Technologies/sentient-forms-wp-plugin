@@ -19,13 +19,17 @@ Unless otherwise directed or noted, do not simply affirm my statements or assume
 Sentient Forms is a WordPress plugin that routes form submissions through curated LLM actions. Follow the guidance below to keep contributions predictable.
 
 ## Project Structure & Module Organization
-The entry point `sentient-forms.php` defines plugin constants and boots `includes/class-sentient-forms-plugin.php`. Domain logic sits in `includes/` with subdirectories for `actions/`, `adapters/`, `llms/`, `rest-api/`, and shared `utilities/`. Admin-facing CSS and JS live in `assets/css/admin.css` and `assets/js/admin.js`. Build scripts, currently `build/generate-class-map.php`, remain isolated from runtime code.
+The entry point `sentient-forms.php` defines plugin constants and boots `includes/class-sentient-forms-plugin.php`. Domain logic sits in `includes/` with subdirectories for `actions/`, `adapters/`, `llms/`, `rest-api/`, and shared `utilities/`. Admin-facing CSS/JS are transitioning to the SvelteKit SPA located in `admin-app/` (built assets will be emitted into `assets/dist/` in Task 0.6). Legacy PHP-rendered admin scripts persist only until the SPA replaces them. Build scripts, currently `build/generate-class-map.php`, remain isolated from runtime code.
 
 ## Build, Test, and Development Commands
 - `php build/generate-class-map.php`: rebuild `includes/class-map.php` after adding or moving classes.
 - `php -l sentient-forms.php includes/**/*.php`: run a syntax lint sweep before committing.
 - `wp plugin activate sentient-forms`: enable the plugin in a local WordPress stack for manual testing.
 - `wp rest route list --namespace=sentient-forms/v1`: verify endpoints after REST changes.
+- `bun install` (from `wp-plugin/admin-app/`): install SPA dependencies (requires network access).
+- `bun run dev`: start the SvelteKit admin SPA for local development (Task 0.6 will detail Vite ↔︎ WP proxying).
+- `bun run lint && bun run check && bun run test && bun run e2e`: frontend CI parity commands; run before raising PRs touching the SPA.
+- `bun run <script>`: execute admin SPA tasks (e.g., `bun run dev`, `bun run build`, `bun run lint`) from `wp-plugin/admin-app/`; Bun is the mandated runtime for all Node-equivalent tooling within this repository.
 
 ## Coding Style & Naming Conventions
 Target PHP 8.2, 4-space indentation, and Allman braces to match existing files. Class names use the `Sentient_Forms_*` PascalCase pattern with filenames like `class-sentient-forms-foo.php`; procedural helpers stay in snake case prefixed `sentient_forms_`. Keep docblocks on public APIs and wrap user-facing strings in WordPress translation helpers.
@@ -39,4 +43,4 @@ Recent history mixes Conventional Commits (`refactor(rest-api): ...`) with numbe
 ## Security & Configuration Tips
 Never commit API keys or tenant secrets; store them in WordPress settings or environment variables. Validate changes against the stated baselines (WordPress 6.8+, PHP 8.2) and ensure any new LLM adapters enforce timeouts and scrub sensitive prompts from logs.
 
-> _Last updated: 2025-10-08_
+> _Last updated: 2025-10-20_
