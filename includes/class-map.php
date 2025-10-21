@@ -10,6 +10,7 @@ return [
 	'Sentient_Forms_Action_Registry' => __DIR__ . '/actions/class-sentient-forms-action-registry.php',
 	'Sentient_Forms_Adapter_Interface' => __DIR__ . '/interfaces/interface-sentient-forms-adapter.php',
 	'Sentient_Forms_Admin' => __DIR__ . '/admin/class-sentient-forms-admin.php',
+	'Sentient_Forms_Admin_Assets' => __DIR__ . '/admin/class-sentient-forms-admin-assets.php',
 	'Sentient_Forms_Admin_Permission' => __DIR__ . '/rest-api/permissions/class-admin-permission.php',
 	'Sentient_Forms_Async_Handler' => __DIR__ . '/class-async-handler.php',
 	'Sentient_Forms_Autoloader' => __DIR__ . '/class-autoloader.php',

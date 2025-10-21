@@ -27,9 +27,10 @@ The entry point `sentient-forms.php` defines plugin constants and boots `include
 - `wp plugin activate sentient-forms`: enable the plugin in a local WordPress stack for manual testing.
 - `wp rest route list --namespace=sentient-forms/v1`: verify endpoints after REST changes.
 - `bun install` (from `wp-plugin/admin-app/`): install SPA dependencies (requires network access).
-- `bun run dev`: start the SvelteKit admin SPA for local development (Task 0.6 will detail Vite ↔︎ WP proxying).
+- `bun run build:wp`: produce hashed SPA assets under `assets/dist/` (run before committing changes that affect the admin UI).
+- `bun run dev`: start the SvelteKit SPA dev server (use together with the asset-base override described below for real-time iteration).
 - `bun run lint && bun run check && bun run test && bun run e2e`: frontend CI parity commands; run before raising PRs touching the SPA.
-- `bun run <script>`: execute admin SPA tasks (e.g., `bun run dev`, `bun run build`, `bun run lint`) from `wp-plugin/admin-app/`; Bun is the mandated runtime for all Node-equivalent tooling within this repository.
+- `bun run <script>`: execute admin SPA tasks (e.g., `bun run dev`, `bun run build:wp`, `bun run lint`) from `wp-plugin/admin-app/`; Bun is the mandated runtime for all Node-equivalent tooling within this repository.
 
 ## Coding Style & Naming Conventions
 Target PHP 8.2, 4-space indentation, and Allman braces to match existing files. Class names use the `Sentient_Forms_*` PascalCase pattern with filenames like `class-sentient-forms-foo.php`; procedural helpers stay in snake case prefixed `sentient_forms_`. Keep docblocks on public APIs and wrap user-facing strings in WordPress translation helpers.
@@ -43,4 +44,10 @@ Recent history mixes Conventional Commits (`refactor(rest-api): ...`) with numbe
 ## Security & Configuration Tips
 Never commit API keys or tenant secrets; store them in WordPress settings or environment variables. Validate changes against the stated baselines (WordPress 6.8+, PHP 8.2) and ensure any new LLM adapters enforce timeouts and scrub sensitive prompts from logs.
 
-> _Last updated: 2025-10-20_
+### Admin SPA Asset Overrides
+- Production builds must ship the contents of `assets/dist/` generated via `bun run build:wp`.
+- For local iteration, the plugin automatically probes `http://localhost:5173/`; if a Vite dev server is running there, assets are served from it. You can tailor the host timeout via filters (`sentient_forms_admin_dev_host`, `sentient_forms_admin_dev_timeout`).
+- To explicitly override the asset location (e.g., custom tunnel), define `SENTIENT_FORMS_ADMIN_ASSET_BASE_URL` or filter `sentient_forms_admin_asset_base_url`. Ensure the alternate location serves the same file structure as `assets/dist/`.
+- The runtime payload published to `window.sentientFormsConfig` exposes `assetBaseUrl`, enabling client-side fetchers to derive absolute URLs when needed.
+
+> _Last updated: 2025-10-21_

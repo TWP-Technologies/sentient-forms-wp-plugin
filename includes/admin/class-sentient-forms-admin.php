@@ -30,6 +30,12 @@ class Sentient_Forms_Admin
      */
     private Sentient_Forms_Plugin $plugin;
 
+    private Sentient_Forms_Admin_Assets $assets;
+
+    /** @var WP_Error|null */
+    private $asset_error = null;
+    private ?string $dev_notice = null;
+
     /**
      * Constructor.
      * Stores a reference to the main plugin instance.
@@ -39,6 +45,7 @@ class Sentient_Forms_Admin
     public function __construct( Sentient_Forms_Plugin $plugin )
     {
         $this->plugin = $plugin;
+        $this->assets = new Sentient_Forms_Admin_Assets();
     }
 
     /**
@@ -174,111 +181,106 @@ class Sentient_Forms_Admin
             return;
         }
 
-        // Enqueue admin CSS (ensure SENTIENT_FORMS_URL and SENTIENT_FORMS_VERSION are defined).
-        if ( defined( 'SENTIENT_FORMS_PLUGIN_URL' ) && defined( 'SENTIENT_FORMS_VERSION' ) )
-        {
-            wp_enqueue_style(
-                'sentient-forms-admin-css',
-                SENTIENT_FORMS_PLUGIN_URL . 'assets/css/admin.css',
-                [ 'wp-admin', 'wp-components' ], // Added wp-components for potential future use with React/Gutenberg style components
-                SENTIENT_FORMS_VERSION,
-            );
-
-            // Enqueue admin JavaScript.
-            wp_enqueue_script(
-                'sentient-forms-admin-js',
-                SENTIENT_FORMS_PLUGIN_URL . 'assets/js/admin.js',
-                [ 'jquery', 'jquery-ui-sortable', 'wp-util', 'jquery-ui-tooltip' ], // Added jquery-ui-tooltip based on error message
-                SENTIENT_FORMS_VERSION,
-                true, // Load in footer
-            );
-
-            // Prepare data for JavaScript localization
-            $js_data_for_admin = [
-                'apiBaseUrl' => rest_url( 'sentient-forms/v1/' ),
-                'rest_nonce' => wp_create_nonce( 'wp_rest' ),
-                'ajax_nonce' => wp_create_nonce( 'sentient_forms_admin_nonce' ),
-                'ajaxUrl'    => admin_url( 'admin-ajax.php' ),
-                'i18n'       => [
-                    'errorOccurred'  => __( 'An error occurred. Please try again.', 'sentient-forms' ),
-                    'unsavedChanges' => __( 'You have unsaved changes. Are you sure you want to leave?', 'sentient-forms' ),
-                    'savingSettings' => __( 'Saving settings...', 'sentient-forms'),
-                    'settingsFailed' => __( 'Failed to save settings: ', 'sentient-forms'),
-                    'settingsError' => __( 'An error occurred while saving settings.', 'sentient-forms'),
-                    'apiKeyRequired' => __('API Key is required to test connection.', 'sentient-forms'),
-                    'testingConnection' => __('Testing connection...', 'sentient-forms'),
-                    'connectionFailed' => __('Connection failed: ', 'sentient-forms'),
-                    'connectionError' => __('An error occurred during the connection test.', 'sentient-forms'),
-                    'confirmReset' => __('Are you sure you want to reset all settings to their defaults? This cannot be undone.', 'sentient-forms'),
-                    'confirmDeactivate' => __('Are you sure you want to deactivate your license?', 'sentient-forms'),
-                    'checking' => __('Checking...', 'sentient-forms'),
-                    'loadingBalance' => __('Loading balance...', 'sentient-forms'),
-                    'balanceError' => __('Could not retrieve credit balance.', 'sentient-forms'),
-                ],
-            ];
-
-            // Localize the main admin script with general data.
-            // Changed 'sentientFormsAdminData' to 'sentientFormsAdmin' to match JS usage.
-            wp_localize_script( 'sentient-forms-admin-js', 'sentientFormsAdmin', $js_data_for_admin );
-
-
-            // Localize data specifically for the Forms Configuration page
-            // The hook suffix for submenu pages is typically 'toplevel_page_{main_menu_slug}' for the main page,
-            // and '{parent_slug}_page_{submenu_slug}' for actual submenus.
-            // For "Forms Configuration" under "sentient-forms", it should be 'sentient-forms_page_sentient-forms-form-config'.
-            if ( 'sentient-forms_page_sentient-forms-form-config' === $hook_suffix ) {
-                $form_adapter_registry = $this->plugin->get_form_adapter_registry();
-                $forms_data_for_js = [];
-
-                if ($form_adapter_registry) {
-                    $form_providers = $form_adapter_registry->get_adapters(true); // Get only active adapters
-                    if (!empty($form_providers)) {
-                        $all_forms_from_providers = array_map(
-                            static fn(Sentient_Forms_Adapter_Interface $provider) => $provider->get_forms(),
-                            $form_providers
-                        );
-                        // Filter out any empty results from get_forms() if a provider has no forms
-                        $all_forms_from_providers = array_filter($all_forms_from_providers);
-
-                        if (!empty($all_forms_from_providers)) {
-                            // Flatten the array of arrays if get_forms() returns arrays of forms for each provider
-                            $forms_data_for_js = array_reduce(
-                                $all_forms_from_providers,
-                                static fn($carry, $item) => array_merge($carry, is_array($item) ? $item : []),
-                                []
-                            );
-                        }
-                    }
-                }
-
-                // Ensure the sentientFormsFormsData object contains the 'forms' array as expected by admin.js
-                // The admin.js script (line 132) expects sentientFormsAdmin.forms,
-                // but the error was sentientFormsFormsData is not defined (line 320 of forms.php inline script).
-                // The inline script in forms.php expects `sentientFormsFormsData` to be the array of forms.
-                wp_localize_script(
-                    'sentient-forms-admin-js',
-                    'sentientFormsFormsData', // This is for the inline script in forms.php
-                    $forms_data_for_js
-                );
-
-                // Additionally, if admin.js (external file) also needs this list under sentientFormsAdmin.forms:
-                // We need to add it to the $js_data_for_admin array before it's localized.
-                // However, looking at admin.js, it seems to expect `sentientFormsAdmin.forms`
-                // Let's ensure `sentientFormsAdmin` (formerly `sentientFormsAdminData`) includes this.
-                // The click handler in admin.js (line 129) uses `sentientFormsAdmin.forms`.
-                // The inline script in forms.php (line 320) uses `sentientFormsFormsData`. Both need to be correct.
-
-                // To make `sentientFormsAdmin.forms` available in admin.js:
-                $js_data_for_admin_with_forms = $js_data_for_admin; // Start with the general data
-                $js_data_for_admin_with_forms['forms'] = $forms_data_for_js; // Add the forms list
-
-                // Re-localize with the added forms data if this specific page is loaded.
-                // This will overwrite the previous localization of `sentientFormsAdmin` for this page only,
-                // adding the 'forms' key.
-                wp_localize_script( 'sentient-forms-admin-js', 'sentientFormsAdmin', $js_data_for_admin_with_forms );
-
-            }
+        if ( ! defined( 'SENTIENT_FORMS_VERSION' ) ) {
+            return;
         }
+
+        try {
+            $entry = $this->assets->get_entry();
+        } catch ( WP_Error $error ) {
+            $this->asset_error = $error;
+            add_action( 'admin_notices', [ $this, 'render_asset_error_notice' ] );
+            return;
+        }
+
+        $dev_notice = $this->assets->get_dev_notice();
+        if ( $dev_notice && apply_filters( 'sentient_forms_admin_dev_notice_enabled', true ) ) {
+            $this->dev_notice = $dev_notice;
+            add_action( 'admin_notices', [ $this, 'render_dev_asset_notice' ] );
+        }
+
+        $script_handle = 'sentient-forms-admin-app';
+        $script_url    = $this->assets->get_asset_url( $entry['file'] ?? '' );
+
+        wp_enqueue_style( 'wp-components' );
+
+        foreach ( $entry['css'] ?? [] as $index => $css_path ) {
+            wp_enqueue_style(
+                sprintf( '%s-css-%d', $script_handle, $index ),
+                $this->assets->get_asset_url( $css_path ),
+                [],
+                SENTIENT_FORMS_VERSION
+            );
+        }
+
+        wp_enqueue_script(
+            $script_handle,
+            $script_url,
+            [],
+            SENTIENT_FORMS_VERSION,
+            true
+        );
+
+        wp_script_add_data( $script_handle, 'type', 'module' );
+
+        $config = $this->build_spa_bootstrap_payload();
+        wp_add_inline_script( $script_handle, 'window.sentientFormsConfig = ' . wp_json_encode( $config ) . ';', 'before' );
+    }
+
+    private function build_spa_bootstrap_payload(): array
+    {
+        return [
+            'apiBaseUrl'    => rest_url( 'sentient-forms/v1/' ),
+            'restNonce'     => wp_create_nonce( 'wp_rest' ),
+            'ajaxNonce'     => wp_create_nonce( 'sentient_forms_admin_nonce' ),
+            'ajaxUrl'       => admin_url( 'admin-ajax.php' ),
+            'siteUrl'       => get_site_url(),
+            'pluginVersion' => SENTIENT_FORMS_VERSION,
+            'assetBaseUrl'  => rtrim( $this->assets->get_asset_url( '' ), '/' ),
+            'devMode'       => $this->assets->is_dev_mode(),
+            'devServerUrl'  => $this->assets->is_dev_mode() ? rtrim( $this->assets->get_asset_url( '' ), '/' ) : null,
+            'currentUser'   => [
+                'id'        => get_current_user_id(),
+                'canManage' => current_user_can( 'manage_options' ),
+            ],
+            'i18n'          => [
+                'errorOccurred'     => __( 'An error occurred. Please try again.', 'sentient-forms' ),
+                'unsavedChanges'    => __( 'You have unsaved changes. Are you sure you want to leave?', 'sentient-forms' ),
+                'savingSettings'    => __( 'Saving settings...', 'sentient-forms' ),
+                'settingsFailed'    => __( 'Failed to save settings.', 'sentient-forms' ),
+                'settingsError'     => __( 'An error occurred while saving settings.', 'sentient-forms' ),
+                'apiKeyRequired'    => __( 'API key is required to test connection.', 'sentient-forms' ),
+                'testingConnection' => __( 'Testing connection...', 'sentient-forms' ),
+                'connectionFailed'  => __( 'Connection failed.', 'sentient-forms' ),
+                'connectionError'   => __( 'An error occurred during the connection test.', 'sentient-forms' ),
+            ],
+        ];
+    }
+
+    public function render_asset_error_notice(): void
+    {
+        if ( null === $this->asset_error ) {
+            return;
+        }
+
+        $message = $this->asset_error->get_error_message();
+
+        printf(
+            '<div class="notice notice-error"><p>%s</p></div>',
+            esc_html( sprintf( __( 'Sentient Forms admin assets are unavailable. %s', 'sentient-forms' ), $message ) )
+        );
+    }
+
+    public function render_dev_asset_notice(): void
+    {
+        if ( null === $this->dev_notice ) {
+            return;
+        }
+
+        printf(
+            '<div class="notice notice-info is-dismissible"><p>%s</p></div>',
+            esc_html( sprintf( __( 'Sentient Forms dev server unavailable (%s). Falling back to built assets.', 'sentient-forms' ), $this->dev_notice ) )
+        );
     }
 
 
@@ -308,40 +310,7 @@ class Sentient_Forms_Admin
      */
     public function render_forms_tab(): void
     {
-        // Data for the view is prepared here or directly in the view file.
-        // For example, getting available form adapters and actions.
-        $form_adapter_registry = $this->plugin->get_form_adapter_registry();
-        $action_registry = $this->plugin->get_action_registry();
-
-        $active_form_adapters = $form_adapter_registry ? $form_adapter_registry->get_adapters(true) : [];
-        $all_actions = $action_registry ? $action_registry->get_all_actions() : [];
-
-
-        // The actual HTML/UI for this tab is typically in a separate view file.
-        $view_file = SENTIENT_FORMS_PLUGIN_DIR . 'includes/admin/views/forms.php';
-
-        if ( file_exists( $view_file ) )
-        {
-            // Make variables available to the view file.
-            // This is one way; alternatively, pass them as arguments if the view is a function.
-            $data_for_view = [
-                'plugin' => $this->plugin, // Pass the main plugin instance
-                'active_form_adapters' => $active_form_adapters,
-                'all_actions' => $all_actions,
-                // The $forms variable will be generated within forms.php itself now
-            ];
-            extract($data_for_view); // Make array keys into variables
-
-            include $view_file;
-        }
-        else
-        {
-            echo sprintf(
-                '<div class="wrap"><div id="message" class="error"><p>%s%s</p></div></div>',
-                esc_html__( 'Forms configuration view file is missing. Expected at: ', 'sentient-forms' ),
-                esc_html( $view_file ),
-            );
-        }
+        $this->render_app_container( 'forms' );
     }
 
     /**
@@ -349,60 +318,14 @@ class Sentient_Forms_Admin
      */
     public function render_dashboard_tab(): void
     {
-        $view_file = SENTIENT_FORMS_PLUGIN_DIR . 'includes/admin/views/dashboard.php';
-        if ( file_exists( $view_file ) )
-        {
-            // Prepare data for the dashboard view
-            $credit_balance = get_option('sentient_forms_credit_balance', 0); // Example
-            $license_status = $this->plugin->get_license_status();
-            $license_data = get_option('sentient_forms_license_data', []); // Example
-
-            $form_adapter_registry = $this->plugin->get_form_adapter_registry();
-            $form_count = 0;
-            if ($form_adapter_registry) {
-                $adapters = $form_adapter_registry->get_adapters(true);
-                foreach ($adapters as $adapter) {
-                    $form_count += count($adapter->get_forms());
-                }
-            }
-
-            $action_registry = $this->plugin->get_action_registry();
-            $actions = $action_registry ? $action_registry->get_all_actions() : [];
-
-
-            // Pass data to the view
-            extract(compact('credit_balance', 'license_status', 'license_data', 'form_count', 'actions'));
-
-            include $view_file;
-        }
-        else
-        {
-            echo '<div class="wrap"><h1>' .
-                 esc_html__( 'Sentient Forms Dashboard', 'sentient-forms' ) .
-                 '</h1><p>' .
-                 esc_html__( 'Welcome to Sentient Forms!', 'sentient-forms' ) .
-                 '</p></div>';
-        }
+        $this->render_app_container( 'dashboard' );
     }
 
     /**
      * Render the Actions tab.
      */
     public function render_actions_tab(): void {
-        $view_file = SENTIENT_FORMS_PLUGIN_DIR . 'includes/admin/views/actions.php';
-        if ( file_exists( $view_file ) ) {
-            $action_registry = $this->plugin->get_action_registry();
-            $actions         = $action_registry ? $action_registry->get_all_actions() : [];
-
-            extract( compact( 'actions' ) ); // Make $actions available to the view
-            include $view_file;
-        } else {
-            echo '<div class="wrap"><h1>' .
-                 esc_html__( 'Sentient Forms Actions', 'sentient-forms' ) .
-                 '</h1><p>' .
-                 esc_html__( 'Actions view file is missing.', 'sentient-forms' ) .
-                 '</p></div>';
-        }
+        $this->render_app_container( 'actions' );
     }
 
 
@@ -411,40 +334,7 @@ class Sentient_Forms_Admin
      */
     public function render_settings_tab(): void
     {
-        $view_file = SENTIENT_FORMS_PLUGIN_DIR . 'includes/admin/views/settings.php';
-        if ( file_exists( $view_file ) )
-        {
-            // Pass options to the view
-            $options = $this->plugin->get_options(); // This gets all 'sentient_forms_settings'
-            $llm_registry = $this->plugin->get_llm_model_registry();
-            $all_llm_models = $llm_registry ? $llm_registry->get_models([Sentient_Forms_Llm_Status::ACTIVE, Sentient_Forms_Llm_Status::PREVIEW]) : [];
-
-            // Extract specific values needed by the view, with defaults
-            $api_key = $options['api_key'] ?? '';
-            $default_llm_id = $options['default_llm'] ?? '';
-            if (empty($default_llm_id) && $llm_registry) {
-                $default_free_model = $llm_registry->get_model_by_id(SENTIENT_FORMS_DEFAULT_FREE_LLM_ID);
-                if ($default_free_model) {
-                    $default_llm_id = $default_free_model->get_id();
-                } elseif (!empty($all_llm_models)) {
-                    $first_model = reset($all_llm_models);
-                    $default_llm_id = $first_model->get_id();
-                }
-            }
-            $license_key = $options['license_key'] ?? ''; // Assuming license key is stored within the same option array
-            $license_status = get_option('sentient_forms_license_status', 'inactive'); // License status might be a separate option
-
-            extract(compact('options', 'all_llm_models', 'api_key', 'default_llm_id', 'license_key', 'license_status', 'llm_registry'));
-            include $view_file;
-        }
-        else
-        {
-            echo '<div class="wrap"><h1>' .
-                 esc_html__( 'Sentient Forms Settings', 'sentient-forms' ) .
-                 '</h1><p>' .
-                 esc_html__( 'Configure your settings.', 'sentient-forms' ) .
-                 '</p></div>';
-        }
+        $this->render_app_container( 'settings' );
     }
 
     /**
@@ -452,28 +342,20 @@ class Sentient_Forms_Admin
      */
     public function render_license_tab(): void
     {
-        $view_file = SENTIENT_FORMS_PLUGIN_DIR . 'includes/admin/views/license.php';
-        if ( file_exists( $view_file ) )
-        {
-            // Pass license info to the view
-            $options = $this->plugin->get_options();
-            $license_key    = $options['license_key'] ?? '';
-            $license_status = get_option( 'sentient_forms_license_status', 'inactive' );
-            $license_data   = get_option( 'sentient_forms_license_data', [] );
-
-
-            extract(compact('license_key', 'license_status', 'license_data'));
-            include $view_file;
-        }
-        else
-        {
-            echo '<div class="wrap"><h1>' .
-                 esc_html__( 'Sentient Forms License', 'sentient-forms' ) .
-                 '</h1><p>' .
-                 esc_html__( 'Manage your license.', 'sentient-forms' ) .
-                 '</p></div>';
-        }
+        $this->render_app_container( 'license' );
     }
+
+    /**
+     * Output the SPA mount point for the requested view.
+     */
+    private function render_app_container( string $view ): void
+    {
+        printf(
+            '<div class="wrap"><div id="sentient-forms-admin-app" data-view="%s"></div></div>',
+            esc_attr( $view )
+        );
+    }
+
 
     /**
      * Admin notice for missing API key.
