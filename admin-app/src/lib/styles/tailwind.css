@@ -1,3 +1,38 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+	:root {
+		color-scheme: light;
+		font-feature-settings: 'cv11', 'ss01';
+	}
+
+	body {
+		font-family: theme('fontFamily.sans');
+		background-color: #f8fafc;
+		color: #0f172a;
+	}
+
+	a {
+		color: #2563eb;
+	}
+
+	a:hover {
+		color: #1d4ed8;
+	}
+}
+
+@layer components {
+	.sf-card {
+		@apply sf-bg-white sf-rounded-lg sf-shadow-card sf-border sf-border-slate-200;
+	}
+
+	.sf-card-header {
+		@apply sf-flex sf-items-center sf-justify-between sf-gap-2;
+	}
+
+	.sf-card-body {
+		@apply sf-space-y-4;
+	}
+}

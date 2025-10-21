@@ -2,6 +2,7 @@
 	import { sessionStore } from '$lib/stores/session';
 	import type { SessionState } from '$lib/stores/session';
 	import { onMount } from 'svelte';
+	import { Section, Card, Button, Alert, Badge } from '$lib/components/ui';
 
 	let form: SessionState = {
 		siteUrl: '',
@@ -34,17 +35,13 @@
 	}
 </script>
 
-<section class="sf-space-y-4 sf-max-w-2xl">
-	<header>
-		<h2 class="sf-text-2xl sf-font-semibold">License activation</h2>
-		<p class="sf-text-sm sf-text-slate-500">
-			Provide your Sentient Forms license key to enable CPS-backed automations.
-		</p>
-	</header>
 
-	<form
-	class="sf-space-y-4 sf-rounded-lg sf-border sf-border-slate-200 sf-bg-white sf-p-6 sf-shadow-sm"
-	>
+<Section
+	heading="License activation"
+	description="Provide your Sentient Forms license key to enable CPS-backed automations."
+>
+	<Card>
+		<form class="sf-space-y-4">
 		<div class="sf-space-y-1">
 			<label class="sf-text-sm sf-font-medium sf-text-slate-700" for="license-key">
 				License key
@@ -70,25 +67,30 @@
 				type="url"
 			/>
 		</div>
-		<button
-			class="sf-inline-flex sf-items-center sf-rounded sf-bg-slate-900 sf-px-3 sf-py-2 sf-text-sm sf-font-medium sf-text-white hover:sf-bg-slate-800 disabled:sf-opacity-50"
-			type="button"
-			on:click={simulateActivate}
-		>
-			Activate
-		</button>
+		<Button type="button" on:click={simulateActivate}>Activate</Button>
 	</form>
+	</Card>
 
-	<section class="sf-rounded-lg sf-border sf-border-slate-200 sf-bg-white sf-p-6 sf-shadow-sm sf-text-sm sf-space-y-2">
-		<div class="sf-flex sf-justify-between">
-			<span class="sf-font-medium sf-text-slate-600">Status</span>
-			<span class="sf-text-slate-900 sf-font-semibold">{$sessionStore.licenseStatus}</span>
+	<Card title="Status">
+		<div class="sf-text-sm sf-space-y-2">
+			<div class="sf-flex sf-items-center sf-justify-between">
+				<span class="sf-font-medium sf-text-slate-600">License</span>
+				<Badge variant={$sessionStore.licenseStatus === 'active' ? 'success' : 'warning'}>
+					{$sessionStore.licenseStatus}
+				</Badge>
+			</div>
+			<div class="sf-flex sf-items-center sf-justify-between">
+				<span class="sf-font-medium sf-text-slate-600">Proxy key stored</span>
+				<span class="sf-text-slate-900 sf-font-semibold">
+					{$sessionStore.proxyKeyPresent ? 'Yes' : 'No'}
+				</span>
+			</div>
 		</div>
-		<div class="sf-flex sf-justify-between">
-			<span class="sf-font-medium sf-text-slate-600">Proxy key stored</span>
-			<span class="sf-text-slate-900 sf-font-semibold">
-				{$sessionStore.proxyKeyPresent ? 'Yes' : 'No'}
-			</span>
-		</div>
-	</section>
-</section>
+
+		{#if $sessionStore.licenseStatus === 'activating'}
+			<Alert variant="info" class="sf-mt-4">
+				Activating license… this may take a few seconds.
+			</Alert>
+		{/if}
+	</Card>
+</Section>
