@@ -26,14 +26,20 @@ The entry point `sentient-forms.php` defines plugin constants and boots `include
 - `php -l sentient-forms.php includes/**/*.php`: run a syntax lint sweep before committing.
 - `wp plugin activate sentient-forms`: enable the plugin in a local WordPress stack for manual testing.
 - `wp rest route list --namespace=sentient-forms/v1`: verify endpoints after REST changes.
+- `composer install && composer phpcs`: install PHP tooling and run the custom Sentient Forms coding standard (Allman braces, 4-space indent, snake_case names). CI will run the same check on every PR.
+- `vendor/bin/phpunit --filter LicenseControllerTest`: executes the current WordPress integration test suite (requires MariaDB; see `tests/wp-tests-config.php` for credentials or set `WP_TESTS_DB_*` env vars).
 - `bun install` (from `wp-plugin/admin-app/`): install SPA dependencies (requires network access).
 - `bun run build:wp`: produce hashed SPA assets under `assets/dist/` (run before committing changes that affect the admin UI).
-- `bun run dev`: start the SvelteKit SPA dev server (use together with the asset-base override described below for real-time iteration).
-- `bun run lint && bun run check && bun run test && bun run e2e`: frontend CI parity commands; run before raising PRs touching the SPA.
+- `bun run dev`: start the SvelteKit SPA dev server (binds to `127.0.0.1:5173`; set `SENTIENT_FORMS_DEV_HOST=0.0.0.0` if another container—such as WordPress in Docker—needs access).
+- `bun run qa:full`: mirror the GitHub Actions admin QA workflow (lint → type-check → Tailwind prefix enforcement → Vitest → Playwright → build → bundle budget). Use this as the default pre-PR gate for SPA changes.
+- `bun run tailwind:check`: verify no unprefixed/hex Tailwind classes slipped into `src/`.
 - `bun run <script>`: execute admin SPA tasks (e.g., `bun run dev`, `bun run build:wp`, `bun run lint`) from `wp-plugin/admin-app/`; Bun is the mandated runtime for all Node-equivalent tooling within this repository.
 
+GitHub Actions mirrors these commands in `.github/workflows/admin-spa-qa.yml`; keep that workflow green before merging SPA-facing work.
+The PHP workflow (`.github/workflows/php-quality.yml`) runs Composer linting on PHP 8.3 and exercises the licensing PHPUnit test on PHP 8.3 (blocking) and PHP 8.4 (non-blocking, to monitor upstream deprecations).
+
 ## Coding Style & Naming Conventions
-Target PHP 8.2, 4-space indentation, and Allman braces to match existing files. Class names use the `Sentient_Forms_*` PascalCase pattern with filenames like `class-sentient-forms-foo.php`; procedural helpers stay in snake case prefixed `sentient_forms_`. Keep docblocks on public APIs and wrap user-facing strings in WordPress translation helpers.
+Target PHP 8.2, 4-space indentation, and Allman braces to match existing files. Class names use the `Sentient_Forms_*` Pascal_Snake_Case pattern with filenames like `class-sentient-forms-foo.php`; procedural helpers stay in snake case prefixed `sentient_forms_`. Keep docblocks on public APIs and wrap user-facing strings in WordPress translation helpers.
 
 ## Testing Guidelines
 Automated tests are not yet provisioned, so combine manual QA with lightweight scripting. Run the lint command above, hit critical REST routes with `wp rest get <route>`, and document payloads or UI screenshots in the PR. New test suites should land under `tests/` using filenames `test-<feature>.php` and mirror the plugin bootstrap flow.

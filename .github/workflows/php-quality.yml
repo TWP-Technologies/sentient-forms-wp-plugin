@@ -1,0 +1,91 @@
+name: PHP Quality
+
+on:
+  push:
+    paths:
+      - 'wp-plugin/**'
+  pull_request:
+    paths:
+      - 'wp-plugin/**'
+
+jobs:
+  phpcs:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wp-plugin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+          extensions: mysqli
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run PHPCS
+        run: composer phpcs
+
+  phpunit:
+    runs-on: ubuntu-latest
+    needs: phpcs
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.3', '8.4']
+    continue-on-error: ${{ matrix.php-version == '8.4' }}
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: sentient_forms_wpdb
+          MYSQL_USER: sf_wp_user
+          MYSQL_PASSWORD: your_strong_user_password_here
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    defaults:
+      run:
+        working-directory: wp-plugin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          coverage: none
+          extensions: mysqli
+
+      - name: Install mysql client
+        run: sudo apt-get update && sudo apt-get install -y mysql-client
+
+      - name: Wait for database
+        env:
+          MYSQL_PWD: rootpass
+        run: |
+          for i in {1..30}; do
+            mysqladmin ping -h 127.0.0.1 -uroot && break || sleep 2;
+          done
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Run PHPUnit (License controller)
+        env:
+          WP_TESTS_DB_HOST: 127.0.0.1
+          WP_TESTS_DB_NAME: sentient_forms_wpdb
+          WP_TESTS_DB_USER: sf_wp_user
+          WP_TESTS_DB_PASSWORD: your_strong_user_password_here
+        run: vendor/bin/phpunit --filter LicenseControllerTest

@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<ruleset name="Sentient Forms">
+    <description>Sentient Forms PHP coding standard (Allman braces, 4-space indent, snake_case functions, Pascal_Snake classes).</description>
+
+    <file>../includes/rest-api/controllers/class-license-controller.php</file>
+    <file>../tests/license-controller-test.php</file>
+
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+    <exclude-pattern>*/node_modules/*</exclude-pattern>
+    <exclude-pattern>../tests/wordpress-tests-lib/*</exclude-pattern>
+    <exclude-pattern>../tests/wp-temp/*</exclude-pattern>
+
+    <!-- Whitespace and formatting -->
+    <rule ref="Generic.WhiteSpace.DisallowTabIndent"/>
+
+    <rule ref="Generic.WhiteSpace.ScopeIndent">
+        <properties>
+            <property name="indent" value="4"/>
+            <property name="tabIndent" value="false"/>
+        </properties>
+    </rule>
+
+    <rule ref="Generic.Functions.OpeningFunctionBraceBsdAllman"/>
+
+    <rule ref="Generic.ControlStructures.InlineControlStructure"/>
+
+    <!-- Naming -->
+    <rule ref="PEAR.NamingConventions.ValidClassName"/>
+    <rule ref="WordPress.NamingConventions.ValidFunctionName"/>
+    <rule ref="WordPress.NamingConventions.ValidVariableName"/>
+
+    <!-- Misc -->
+    <rule ref="Generic.Files.LineEndings"/>
+    <rule ref="Generic.PHP.DisallowShortOpenTag"/>
+</ruleset>

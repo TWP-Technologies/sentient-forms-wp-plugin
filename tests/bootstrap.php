@@ -1,13 +1,21 @@
 <?php
 require dirname(__DIR__) . '/vendor/autoload.php';
 
-$tests_dir   = __DIR__ . '/wordpress-tests-lib';
+$tests_dir    = __DIR__ . '/wordpress-tests-lib';
 $includes_dir = $tests_dir . '/tests/phpunit/includes';
-$wp_dir    = __DIR__ . '/wordpress';
+$wp_dir       = __DIR__ . '/wordpress';
+
+$ensure_directory = static function ( string $path ): bool {
+    if ( is_dir( $path ) ) {
+        return true;
+    }
+
+    return mkdir( $path, 0775, true );
+};
 
 if ( ! file_exists( "$includes_dir/functions.php" ) ) {
     // Download the WordPress test library using PHP's native functions.
-    if ( ! wp_mkdir_p( $tests_dir ) ) {
+    if ( ! $ensure_directory( $tests_dir ) ) {
         fwrite( STDERR, "Failed to create test directory: {$tests_dir}\n" );
         return;
     }
@@ -26,7 +34,7 @@ if ( ! file_exists( "$includes_dir/functions.php" ) ) {
 
     if ( file_exists( $archive ) ) {
         $tmp_dir = __DIR__ . '/wp-temp';
-        if ( ! wp_mkdir_p( $tmp_dir ) ) {
+        if ( ! $ensure_directory( $tmp_dir ) ) {
             fwrite( STDERR, "Failed to create {$tmp_dir}\n" );
             return;
         }

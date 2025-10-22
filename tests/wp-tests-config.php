@@ -1,9 +1,9 @@
 <?php
 
-define( 'DB_NAME', 'wordpress_test' );
-define( 'DB_USER', 'wp' );
-define( 'DB_PASSWORD', 'password' );
-define( 'DB_HOST', 'localhost' );
+define( 'DB_NAME', getenv( 'WP_TESTS_DB_NAME' ) ?: 'sentient_forms_wpdb' );
+define( 'DB_USER', getenv( 'WP_TESTS_DB_USER' ) ?: 'sf_wp_user' );
+define( 'DB_PASSWORD', getenv( 'WP_TESTS_DB_PASSWORD' ) ?: 'your_strong_user_password_here' );
+define( 'DB_HOST', getenv( 'WP_TESTS_DB_HOST' ) ?: '127.0.0.1' );
 define( 'DB_CHARSET', 'utf8' );
 
 $table_prefix = 'wptests_';

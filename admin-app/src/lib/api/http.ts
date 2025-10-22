@@ -13,6 +13,20 @@ interface SentientFormsConfig {
     apiBaseUrl: string;
     restNonce: string;
     ajaxNonce: string;
+    siteUrl: string;
+    localSiteIdentifier?: string;
+    license?: {
+        status?: string;
+        licenseKeyMasked?: string;
+        proxyKeyPresent?: boolean;
+        tier?: string | null;
+        expiresAt?: string | null;
+        lastSynced?: string | null;
+        licenseId?: string | null;
+        siteId?: string | null;
+    };
+    i18n?: Record<string, string>;
+    devMode?: boolean;
 }
 
 declare global {
@@ -24,11 +38,15 @@ declare global {
 export class ApiError extends Error {
 	status: number;
 	payload: unknown;
+	code?: string;
 
 	constructor(message: string, status: number, payload: unknown) {
 		super(message);
 		this.status = status;
 		this.payload = payload;
+		if (isApiErrorPayload(payload) && payload.error_code) {
+			this.code = payload.error_code;
+		}
 	}
 }
 
@@ -64,10 +82,15 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 	if (!response.ok) {
 		const error = new ApiError('Request failed', response.status, payload);
 		if (showNotifications) {
-			notifications.error(payload?.message ?? 'Request failed');
+			const message = isApiErrorPayload(payload) ? payload.message : null;
+			notifications.error(message ?? 'Request failed');
 		}
 		throw error;
 	}
 
 	return payload as T;
+}
+
+function isApiErrorPayload(payload: unknown): payload is { message?: string; error_code?: string } {
+	return Boolean(payload && typeof payload === 'object');
 }

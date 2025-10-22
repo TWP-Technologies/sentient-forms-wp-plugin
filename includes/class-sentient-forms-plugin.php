@@ -64,6 +64,8 @@ final class Sentient_Forms_Plugin
      *
      * @var array|null
      */
+    private const OPTION_KEY = 'sentient_forms_settings';
+
     private ?array $options = null;
 
     /**
@@ -255,9 +257,139 @@ final class Sentient_Forms_Plugin
     {
         if ( null === $this->options )
         {
-            $this->options = get_option( 'sentient_forms_settings', [] );
+            $this->options = get_option( self::OPTION_KEY, [] );
         }
         return is_array( $this->options ) ? $this->options : [];
+    }
+
+    private function save_options( array $options ): void
+    {
+        $this->options = $options;
+        update_option( self::OPTION_KEY, $options );
+    }
+
+    private function get_license_defaults(): array
+    {
+        return [
+            'license_key'           => '',
+            'license_status'        => 'inactive',
+            'license_id'            => '',
+            'site_id'               => '',
+            'proxy_api_key'         => '',
+            'tier'                  => '',
+            'expiry_date'           => null,
+            'last_synced'           => null,
+            'local_site_identifier' => '',
+        ];
+    }
+
+    public function get_license_data(): array
+    {
+        $options        = $this->get_options();
+        $license_data   = [];
+        $defaults       = $this->get_license_defaults();
+        $stored_license = $options['license'] ?? [];
+
+        if ( isset( $options['license_key'] ) )
+        {
+            $stored_license['license_key'] = $options['license_key'];
+        }
+        if ( isset( $options['license_status'] ) )
+        {
+            $stored_license['license_status'] = $options['license_status'];
+        }
+        if ( isset( $options['proxy_api_key'] ) )
+        {
+            $stored_license['proxy_api_key'] = $options['proxy_api_key'];
+        }
+
+        foreach ( $defaults as $key => $default_value )
+        {
+            if ( isset( $stored_license[ $key ] ) )
+            {
+                $license_data[ $key ] = is_string( $stored_license[ $key ] )
+                    ? sanitize_text_field( $stored_license[ $key ] )
+                    : $stored_license[ $key ];
+            }
+            else
+            {
+                $license_data[ $key ] = $default_value;
+            }
+        }
+
+        if ( empty( $license_data['local_site_identifier'] ) )
+        {
+            $license_data['local_site_identifier'] = $this->generate_local_site_identifier();
+        }
+
+        return $license_data;
+    }
+
+    public function set_license_data( array $data ): void
+    {
+        $options        = $this->get_options();
+        $defaults       = $this->get_license_defaults();
+        $license_data   = $this->get_license_data();
+
+        foreach ( $defaults as $key => $default_value )
+        {
+            if ( array_key_exists( $key, $data ) )
+            {
+                $value                 = $data[ $key ];
+                $license_data[ $key ] = is_string( $value ) ? sanitize_text_field( $value ) : $value;
+            }
+        }
+
+        $options['license'] = $license_data;
+
+        unset( $options['license_key'], $options['license_status'], $options['proxy_api_key'] );
+
+        $this->save_options( $options );
+    }
+
+    public function clear_license_data(): void
+    {
+        $license_data                 = $this->get_license_data();
+        $license_data['license_status'] = 'inactive';
+        $license_data['license_key']    = '';
+        $license_data['proxy_api_key']  = '';
+        $license_data['license_id']     = '';
+        $license_data['site_id']        = '';
+        $license_data['tier']           = '';
+        $license_data['expiry_date']    = null;
+        $license_data['last_synced']    = current_time( 'mysql' );
+
+        $this->set_license_data( $license_data );
+    }
+
+    public function get_local_site_identifier(): string
+    {
+        $license = $this->get_license_data();
+        if ( !empty( $license['local_site_identifier'] ) )
+        {
+            return $license['local_site_identifier'];
+        }
+
+        $identifier = $this->generate_local_site_identifier();
+
+        $this->set_license_data(
+            array_merge(
+                $license,
+                [ 'local_site_identifier' => $identifier ]
+            )
+        );
+
+        return $identifier;
+    }
+
+    private function generate_local_site_identifier(): string
+    {
+        if ( function_exists( 'wp_generate_uuid4' ) )
+        {
+            return str_replace( '-', '', wp_generate_uuid4() );
+        }
+
+        return substr( hash( 'sha256', uniqid( (string) get_current_user_id(), true ) ), 0, 32 );
     }
 
     /**
@@ -267,8 +399,8 @@ final class Sentient_Forms_Plugin
      */
     public function get_proxy_api_key(): string
     {
-        $options = $this->get_options();
-        return $options[ 'proxy_api_key' ] ?? '';
+        $license = $this->get_license_data();
+        return $license['proxy_api_key'] ?? '';
     }
 
     /**
@@ -278,8 +410,8 @@ final class Sentient_Forms_Plugin
      */
     public function get_license_key(): string
     {
-        $options = $this->get_options();
-        return $options[ 'license_key' ] ?? '';
+        $license = $this->get_license_data();
+        return $license['license_key'] ?? '';
     }
 
     /**
@@ -289,8 +421,8 @@ final class Sentient_Forms_Plugin
      */
     public function get_license_status(): string
     {
-        $options = $this->get_options();
-        return $options[ 'license_status' ] ?? '';
+        $license = $this->get_license_data();
+        return $license['license_status'] ?? '';
     }
 
     /**

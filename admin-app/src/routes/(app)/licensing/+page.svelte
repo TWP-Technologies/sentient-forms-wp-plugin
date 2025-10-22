@@ -1,37 +1,34 @@
 <script lang="ts">
-	import { sessionStore } from '$lib/stores/session';
-	import type { SessionState } from '$lib/stores/session';
 	import { onMount } from 'svelte';
-	import { Section, Card, Button, Alert, Badge } from '$lib/components/ui';
+	import {
+		Section,
+		Card,
+		Button,
+		Alert,
+		Badge,
+		InputField,
+		ValidationSummary
+	} from '$lib/components/ui';
+	import type { ValidationIssue } from '$lib/components/ui/types';
+	import { licenseStore } from '$lib/stores/license';
 
-	let form: SessionState = {
-		siteUrl: '',
-		licenseStatus: 'inactive',
-		proxyKeyPresent: false,
-		creditsRemaining: null,
-		lastSync: null
-	};
+	let licenseKey = '';
+	let issues: ValidationIssue[] = [];
 
 	onMount(() => {
-		const unsubscribe = sessionStore.subscribe((state) => {
-			form = { ...state };
-		});
-
-		return () => unsubscribe();
+		licenseStore.load();
 	});
 
-	function simulateActivate() {
-		sessionStore.hydrate({
-			licenseStatus: 'activating'
-		});
+	async function handleActivate() {
+		issues = [];
 
-		setTimeout(() => {
-			sessionStore.hydrate({
-				licenseStatus: 'active',
-				proxyKeyPresent: true,
-				lastSync: new Date().toISOString()
-			});
-		}, 500);
+		if (!licenseKey.trim()) {
+			issues = [{ id: 'license-key', message: 'Enter your license key' }];
+			return;
+		}
+
+		await licenseStore.activate(licenseKey.trim());
+		licenseKey = '';
 	}
 </script>
 
@@ -40,57 +37,69 @@
 	heading="License activation"
 	description="Provide your Sentient Forms license key to enable CPS-backed automations."
 >
+	<ValidationSummary {issues} />
 	<Card>
-		<form class="sf-space-y-4">
-		<div class="sf-space-y-1">
-			<label class="sf-text-sm sf-font-medium sf-text-slate-700" for="license-key">
-				License key
-			</label>
-			<input
-				class="sf-w-full sf-rounded sf-border sf-border-slate-300 sf-bg-white sf-px-3 sf-py-2 focus:sf-border-slate-500 focus:sf-outline-none"
+		<form class="sf-space-y-4" on:submit|preventDefault={handleActivate}>
+			<InputField
 				id="license-key"
-				name="license-key"
+				bind:value={licenseKey}
+				label="License key"
 				placeholder="LIC-XXXX-XXXX-XXXX"
-				type="text"
+				required
+				error={issues.find((issue) => issue.id === 'license-key')?.message ?? null}
 			/>
-		</div>
-		<div class="sf-space-y-1">
-			<label class="sf-text-sm sf-font-medium sf-text-slate-700" for="site-url">
-				Site URL
-			</label>
-			<input
-				bind:value={form.siteUrl}
-				class="sf-w-full sf-rounded sf-border sf-border-slate-300 sf-bg-white sf-px-3 sf-py-2 focus:sf-border-slate-500 focus:sf-outline-none"
+			<InputField
 				id="site-url"
-				name="site-url"
-				placeholder="https://example.com"
+				value={$licenseStore.siteUrl}
+				label="Site URL"
 				type="url"
+				placeholder={$licenseStore.siteUrl}
+				disabled
 			/>
-		</div>
-		<Button type="button" on:click={simulateActivate}>Activate</Button>
-	</form>
+			<Button type="submit" disabled={$licenseStore.loading}>
+				{$licenseStore.loading ? 'Processing…' : 'Activate'}
+			</Button>
+		</form>
 	</Card>
 
 	<Card title="Status">
 		<div class="sf-text-sm sf-space-y-2">
 			<div class="sf-flex sf-items-center sf-justify-between">
 				<span class="sf-font-medium sf-text-slate-600">License</span>
-				<Badge variant={$sessionStore.licenseStatus === 'active' ? 'success' : 'warning'}>
-					{$sessionStore.licenseStatus}
+				<Badge variant={$licenseStore.status === 'active' ? 'success' : $licenseStore.status === 'error' ? 'danger' : 'warning'}>
+					{$licenseStore.status}
 				</Badge>
 			</div>
 			<div class="sf-flex sf-items-center sf-justify-between">
 				<span class="sf-font-medium sf-text-slate-600">Proxy key stored</span>
 				<span class="sf-text-slate-900 sf-font-semibold">
-					{$sessionStore.proxyKeyPresent ? 'Yes' : 'No'}
+					{$licenseStore.proxyKeyPresent ? 'Yes' : 'No'}
 				</span>
+			</div>
+			<div class="sf-flex sf-items-center sf-justify-between">
+				<span class="sf-font-medium sf-text-slate-600">Tier</span>
+				<span class="sf-text-slate-900">{$licenseStore.tier ?? '—'}</span>
+			</div>
+			<div class="sf-flex sf-items-center sf-justify-between">
+				<span class="sf-font-medium sf-text-slate-600">Expires</span>
+				<span class="sf-text-slate-900">{$licenseStore.expiresAt ?? '—'}</span>
+			</div>
+			<div class="sf-flex sf-items-center sf-justify-between">
+				<span class="sf-font-medium sf-text-slate-600">Last synced</span>
+				<span class="sf-text-slate-900">{$licenseStore.lastSynced ?? '—'}</span>
 			</div>
 		</div>
 
-		{#if $sessionStore.licenseStatus === 'activating'}
+		{#if $licenseStore.loading}
 			<Alert variant="info" class="sf-mt-4">
 				Activating license… this may take a few seconds.
 			</Alert>
+		{/if}
+
+		{#if $licenseStore.status === 'active'}
+			<Button variant="secondary" class="sf-mt-4" disabled={$licenseStore.loading} on:click={() => licenseStore.deactivate()}>
+				{$licenseStore.loading ? 'Processing…' : 'Deactivate license'}
+			</Button>
 		{/if}
 	</Card>
 </Section>

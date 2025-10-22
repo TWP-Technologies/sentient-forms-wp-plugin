@@ -1,54 +1,222 @@
+import { notifications } from '$lib/stores/notifications';
+import type {
+	ApiErrorPayload,
+	LicenseActivationRequest,
+	LicenseActivationResponsePayload,
+	LicenseActivationResult,
+	LicenseInfoResponse
+} from '$lib/api/types';
+
 export interface ClientConfig {
 	baseUrl: string;
 	getNonce?: () => string | undefined;
 	fetchImpl?: typeof fetch;
+	notifyErrors?: boolean;
 }
 
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
 	body?: unknown;
+	showNotifications?: boolean;
+}
+
+interface RestEnvelope<T> {
+	success: boolean;
+	data: T;
+}
+
+export class ApiClientError extends Error {
+	status: number;
+	payload: unknown;
+	code?: string;
+
+	constructor(message: string, status: number, payload: unknown) {
+		super(message);
+		this.status = status;
+		this.payload = payload;
+		if (isApiErrorPayload(payload) && payload.error_code) {
+			this.code = payload.error_code;
+		}
+	}
 }
 
 export class SentientFormsApiClient {
 	private baseUrl: URL;
 	private getNonce?: () => string | undefined;
 	private fetchImpl: typeof fetch;
+	private notifyErrors: boolean;
 
 	constructor(config: ClientConfig) {
 		this.baseUrl = new URL(config.baseUrl, 'http://localhost');
 		this.getNonce = config.getNonce;
 		this.fetchImpl = config.fetchImpl ?? fetch;
+		this.notifyErrors = config.notifyErrors ?? true;
+	}
+
+	async activateLicense(
+		payload: LicenseActivationRequest,
+		options: RequestOptions = {}
+	): Promise<LicenseActivationResult> {
+		const response = await this.request<RestEnvelope<LicenseActivationResponsePayload>>(
+			'license/activate',
+			{
+				method: 'POST',
+				body: {
+					license_key: payload.licenseKey,
+					site_url: payload.siteUrl,
+					local_site_identifier: payload.localSiteIdentifier
+				},
+				showNotifications: options.showNotifications
+			}
+		);
+
+		const data = this.unwrap<LicenseActivationResponsePayload>(response);
+		return {
+			success: Boolean(data.success ?? true),
+			message: String(data.message ?? 'License activated successfully.'),
+			status: String(data.status ?? 'active'),
+			proxyApiKey: typeof data.proxy_api_key === 'string' ? data.proxy_api_key : undefined,
+			tier: typeof data.tier === 'string' ? data.tier : undefined,
+			expiryDate: typeof data.expiry_date === 'string' ? data.expiry_date : undefined,
+			licenseId: typeof data.license_id === 'string' ? data.license_id : undefined,
+			siteId: typeof data.site_id === 'string' ? data.site_id : undefined
+		};
+	}
+
+	async getLicenseInfo(options: RequestOptions = {}): Promise<LicenseInfoResponse> {
+		const response = await this.request<RestEnvelope<LicenseInfoResponse>>('license', options);
+		return this.unwrap(response);
+	}
+
+	async deactivateLicense(options: RequestOptions = {}): Promise<void> {
+		await this.request('license/deactivate', { method: 'POST', ...options });
 	}
 
 	async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
 		const url = new URL(path, this.baseUrl);
-		const { body, headers, ...rest } = options;
+		const { body, headers, showNotifications, ...rest } = options;
 		const nonce = this.getNonce?.();
 
-		const response = await this.fetchImpl(url.toString(), {
-			credentials: 'same-origin',
-			headers: {
-				'Content-Type': 'application/json',
-				...(nonce ? { 'X-WP-Nonce': nonce } : {}),
-				...(headers as Record<string, string>)
-			},
-			body: body ? JSON.stringify(body) : undefined,
-			...rest
-		});
+		let parsed: unknown;
 
-		if (!response.ok) {
-			const errorPayload = await response.text();
-			throw new Error(`API error ${response.status}: ${errorPayload}`);
+		try {
+			const response = await this.fetchImpl(url.toString(), {
+				credentials: 'same-origin',
+				headers: {
+					'Content-Type': 'application/json',
+					...(nonce ? { 'X-WP-Nonce': nonce } : {}),
+					...(headers as Record<string, string>)
+				},
+				body: body ? JSON.stringify(body) : undefined,
+				...rest
+			});
+
+			parsed = await this.parseResponseBody(response);
+
+			if (!response.ok) {
+				throw new ApiClientError('Request failed', response.status, parsed);
+			}
+
+			if (response.status === 204) {
+				return undefined as T;
+			}
+
+			return parsed as T;
+		} catch (error) {
+			const clientError = error instanceof ApiClientError ? error : coerceToApiClientError(error, parsed);
+			if ((showNotifications ?? this.notifyErrors) && isApiErrorPayload(clientError.payload)) {
+				const message = clientError.payload.message ?? clientError.message;
+				notifications.error(message ?? 'Request failed');
+			}
+			throw clientError;
+		}
+	}
+
+	private async parseResponseBody(response: Response): Promise<unknown> {
+		if (response.status === 204) {
+			return undefined;
 		}
 
-		if (response.status === 204) {
-			return undefined as T;
+		const contentType = response.headers.get('content-type') ?? '';
+		if (contentType.includes('application/json')) {
+			return response.json();
 		}
 
 		const text = await response.text();
-		return text.length ? (JSON.parse(text) as T) : (undefined as T);
+		try {
+			return text.length ? JSON.parse(text) : undefined;
+		} catch {
+			return text;
+		}
 	}
+
+	private unwrap<T>(payload: unknown): T {
+		if (isRestEnvelope<T>(payload)) {
+			return payload.data;
+		}
+
+		return payload as T;
+	}
+}
+
+function isRestEnvelope<T>(payload: unknown): payload is RestEnvelope<T> {
+	return Boolean(
+		payload &&
+		typeof payload === 'object' &&
+		'success' in payload &&
+		'data' in payload
+	);
+}
+
+function isApiErrorPayload(payload: unknown): payload is ApiErrorPayload {
+	return Boolean(payload && typeof payload === 'object');
+}
+
+function coerceToApiClientError(original: unknown, parsed?: unknown): ApiClientError {
+	if (original instanceof ApiClientError) {
+		return original;
+	}
+
+	if (original instanceof Error) {
+		return new ApiClientError(original.message, 500, parsed ?? null);
+	}
+
+	return new ApiClientError('Unknown error', 500, parsed ?? null);
 }
 
 export const mockClient = new SentientFormsApiClient({
 	baseUrl: 'https://example.test/wp-json/sentient-forms/v1/'
 });
+
+export function createClientFromConfig(overrides: Partial<ClientConfig> = {}): SentientFormsApiClient {
+	const config =
+		window.sentientFormsConfig ??
+		(() => {
+			const origin = window.location.origin;
+			window.sentientFormsConfig = {
+				apiBaseUrl: `${origin}/wp-json/sentient-forms/v1/`,
+				restNonce: 'dev-nonce',
+				ajaxNonce: 'dev-ajax',
+				siteUrl: origin,
+				localSiteIdentifier: 'dev-site',
+				devMode: true,
+				license: {
+					status: 'inactive',
+					licenseKeyMasked: '',
+					proxyKeyPresent: false,
+					tier: null,
+					expiresAt: null,
+					lastSynced: null,
+					licenseId: null,
+					siteId: null
+				},
+				i18n: {}
+			};
+			return window.sentientFormsConfig;
+		})();
+
+	return new SentientFormsApiClient({
+		baseUrl: config.apiBaseUrl,
+		getNonce: () => config.restNonce,
+		...overrides
+	});
+}

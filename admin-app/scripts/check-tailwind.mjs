@@ -14,9 +14,13 @@ function hasDisallowedClass(className) {
 	return true;
 }
 
+const HEX_PATTERN = /#[0-9a-fA-F]{3,8}\b/g;
+const HEX_ALLOW_LIST = new Set(['src/lib/styles/tailwind.css']);
+
 async function main() {
-	const files = await globby('src/**/*.svelte');
+	const files = await globby(['src/**/*.{svelte,ts,js}']);
 	const violations = [];
+	const hexViolations = [];
 	const classRegex = /class="([^"]*)"/g;
 
 	for (const file of files) {
@@ -30,17 +34,35 @@ async function main() {
 				}
 			}
 		}
+
+		HEX_PATTERN.lastIndex = 0;
+		if (!HEX_ALLOW_LIST.has(file) && HEX_PATTERN.test(content)) {
+			hexViolations.push(file);
+		}
 	}
 
+	const messages = [];
+
 	if (violations.length) {
-		console.error('[tailwind-check] Non-prefixed classes detected:');
+		messages.push('[tailwind-check] Non-prefixed classes detected:');
 		for (const violation of violations) {
-			console.error(` - ${violation.className} (${violation.file})`);
+			messages.push(` - ${violation.className} (${violation.file})`);
 		}
+	}
+
+	if (hexViolations.length) {
+		messages.push('[tailwind-check] Raw hex colors detected (define tokens instead):');
+		for (const file of [...new Set(hexViolations)]) {
+			messages.push(` - ${file}`);
+		}
+	}
+
+	if (messages.length) {
+		console.error(messages.join('\n'));
 		process.exit(1);
 	}
 
-	console.log('[tailwind-check] All classes use the sf- prefix.');
+	console.log('[tailwind-check] Prefix and token enforcement passed.');
 }
 
 main().catch((error) => {

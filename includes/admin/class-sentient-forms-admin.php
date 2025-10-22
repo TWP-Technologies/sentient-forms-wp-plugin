@@ -235,10 +235,12 @@ class Sentient_Forms_Admin
             'ajaxNonce'     => wp_create_nonce( 'sentient_forms_admin_nonce' ),
             'ajaxUrl'       => admin_url( 'admin-ajax.php' ),
             'siteUrl'       => get_site_url(),
+            'localSiteIdentifier' => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
             'pluginVersion' => SENTIENT_FORMS_VERSION,
             'assetBaseUrl'  => rtrim( $this->assets->get_asset_url( '' ), '/' ),
             'devMode'       => $this->assets->is_dev_mode(),
             'devServerUrl'  => $this->assets->is_dev_mode() ? rtrim( $this->assets->get_asset_url( '' ), '/' ) : null,
+            'license'       => $this->build_license_bootstrap_payload(),
             'currentUser'   => [
                 'id'        => get_current_user_id(),
                 'canManage' => current_user_can( 'manage_options' ),
@@ -254,6 +256,31 @@ class Sentient_Forms_Admin
                 'connectionFailed'  => __( 'Connection failed.', 'sentient-forms' ),
                 'connectionError'   => __( 'An error occurred during the connection test.', 'sentient-forms' ),
             ],
+        ];
+    }
+
+    private function build_license_bootstrap_payload(): array
+    {
+        $license_data = Sentient_Forms_Plugin::instance()->get_license_data();
+        $license_key  = $license_data['license_key'] ?? '';
+
+        $masked_key = '';
+        if ( ! empty( $license_key ) )
+        {
+            $masked_key = strlen( $license_key ) > 8
+                ? substr( $license_key, 0, 4 ) . str_repeat( '*', strlen( $license_key ) - 8 ) . substr( $license_key, -4 )
+                : str_repeat( '*', strlen( $license_key ) );
+        }
+
+        return [
+            'status'            => $license_data['license_status'] ?? 'inactive',
+            'licenseKeyMasked'  => $masked_key,
+            'proxyKeyPresent'   => ! empty( $license_data['proxy_api_key'] ),
+            'tier'              => $license_data['tier'] ?: null,
+            'expiresAt'         => $license_data['expiry_date'] ?: null,
+            'lastSynced'        => $license_data['last_synced'] ?: null,
+            'licenseId'         => $license_data['license_id'] ?: null,
+            'siteId'            => $license_data['site_id'] ?: null,
         ];
     }
 

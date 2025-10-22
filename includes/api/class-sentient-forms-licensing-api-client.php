@@ -1,0 +1,108 @@
+<?php
+/**
+ * Licensing API client.
+ *
+ * @package Sentient_Forms
+ */
+
+if ( ! defined( 'ABSPATH' ) )
+{
+    exit;
+}
+
+/**
+ * Class Sentient_Forms_Licensing_Api_Client
+ * Handles CPS licensing activation and deactivation calls.
+ */
+class Sentient_Forms_Licensing_Api_Client
+{
+    private string $api_url;
+
+    private int $timeout;
+
+    public function __construct( ?string $api_url = null, int $timeout = 30 )
+    {
+        $this->api_url = $api_url ? rtrim( $api_url, '/' ) : 'https://api.sentientforms.com/v1';
+        $this->timeout = $timeout;
+    }
+
+    public function activate_license( string $license_key, string $site_url, string $local_site_identifier ): WP_Error | array
+    {
+        $payload = [
+            'license_key'            => $license_key,
+            'site_url'               => $site_url,
+            'local_site_identifier'  => $local_site_identifier,
+        ];
+
+        $response = wp_remote_post(
+            $this->api_url . '/license/activate',
+            $this->build_request_args( $payload )
+        );
+
+        return $this->parse_response( $response );
+    }
+
+    public function deactivate_license( string $proxy_api_key, string $license_id, string $site_id ): WP_Error | array
+    {
+        $payload = [
+            'license_id' => $license_id,
+            'site_id'    => $site_id,
+        ];
+
+        $response = wp_remote_post(
+            $this->api_url . '/license/deactivate',
+            $this->build_request_args( $payload, $proxy_api_key )
+        );
+
+        return $this->parse_response( $response );
+    }
+
+    private function build_request_args( array $payload, string $proxy_api_key = '' ): array
+    {
+        $headers = [
+            'Content-Type' => 'application/json',
+            'Accept'       => 'application/json',
+        ];
+
+        if ( ! empty( $proxy_api_key ) )
+        {
+            $headers['X-API-Key'] = $proxy_api_key;
+        }
+
+        return [
+            'method'      => 'POST',
+            'timeout'     => $this->timeout,
+            'redirection' => 3,
+            'headers'     => $headers,
+            'body'        => wp_json_encode( $payload ),
+        ];
+    }
+
+    private function parse_response( WP_Error | array $response ): WP_Error | array
+    {
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        $status_code = (int) wp_remote_retrieve_response_code( $response );
+        $body        = wp_remote_retrieve_body( $response );
+        $decoded     = json_decode( $body, true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE )
+        {
+            $error_message = json_last_error_msg();
+            return new WP_Error( 'license_invalid_json', sprintf( __( 'Invalid response from licensing service: %s', 'sentient-forms' ), $error_message ), [ 'status' => $status_code ] );
+        }
+
+        if ( $status_code >= 200 && $status_code < 300 )
+        {
+            return $decoded;
+        }
+
+        $error_code    = $decoded['error_code'] ?? 'license_activation_failed';
+        $error_message = $decoded['message'] ?? __( 'Unable to complete licensing request.', 'sentient-forms' );
+
+        return new WP_Error( $error_code, $error_message, [ 'status' => $status_code, 'payload' => $decoded ] );
+    }
+}
