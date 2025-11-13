@@ -7,3 +7,4 @@ tests/wp.tar.gz
 .phpunit.result.cache
 assets/dist/
 !assets/dist/.gitkeep
+in-memoria*.db
