@@ -35,6 +35,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     /** Allowed values for action_type_indicator. */
     private const ACTION_TYPE_INDICATORS = [ 'master', 'custom' ];
 
+    /** Allowed Gravity Forms hooks that can trigger Sentient Forms actions. */
+    private const ALLOWED_TRIGGER_HOOKS = [
+        'gform_validation',
+        'gform_after_submission',
+    ];
+
     public function __construct()
     {
         parent::__construct();
@@ -93,6 +99,19 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
         register_rest_route(
             $this->namespace,
+            '/' . $this->rest_base . '/status',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_form_execution_status' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
+                    'args'                => $this->get_collection_args(),
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
             '/' . $this->rest_base . '/(?P<local_mapping_id>[a-zA-Z0-9_]+)',
             [
                 [
@@ -114,6 +133,19 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     'args'                => $this->get_item_args(),
                 ],
                 'schema' => [ $this, 'get_item_schema' ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/entries/(?P<entry_id>\\d+)/status',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_entry_execution_status' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
+                    'args'                => $this->get_entry_status_args(),
+                ],
             ],
         );
     }
@@ -149,6 +181,24 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     'required'          => true,
                     'type'              => 'string',
                     'description'       => __( 'Local mapping ID for the action linkage.', 'sentient-forms' ),
+                ],
+            ],
+        );
+    }
+
+    /**
+     * Arguments for entry status endpoint.
+     */
+    protected function get_entry_status_args(): array
+    {
+        return array_merge(
+            $this->get_collection_args(),
+            [
+                'entry_id' => [
+                    'validate_callback' => [ $this, 'validate_entry_id_param' ],
+                    'required'          => true,
+                    'type'              => 'integer',
+                    'description'       => __( 'Gravity Forms entry ID to inspect.', 'sentient-forms' ),
                 ],
             ],
         );
@@ -252,6 +302,34 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         return true;
     }
 
+    /** Validate entry_id path parameter. */
+    public function validate_entry_id_param( int $value, WP_REST_Request $request, string $param ): true | WP_Error
+    {
+        if ( $value <= 0 )
+        {
+            return new WP_Error( 'rest_invalid_entry', __( 'Entry ID must be a positive integer.', 'sentient-forms' ), [ 'status' => 400 ] );
+        }
+
+        if ( ! class_exists( 'GFAPI' ) )
+        {
+            return new WP_Error( 'rest_gf_missing', __( 'Gravity Forms is required for this endpoint.', 'sentient-forms' ), [ 'status' => 500 ] );
+        }
+
+        $entry = GFAPI::get_entry( $value );
+        if ( is_wp_error( $entry ) )
+        {
+            return new WP_Error( 'rest_entry_not_found', __( 'Entry not found.', 'sentient-forms' ), [ 'status' => 404 ] );
+        }
+
+        $form_id = (int) $request->get_param( 'form_id' );
+        if ( $form_id > 0 && isset( $entry['form_id'] ) && (int) $entry['form_id'] !== $form_id )
+        {
+            return new WP_Error( 'rest_entry_form_mismatch', __( 'Entry does not belong to the requested form.', 'sentient-forms' ), [ 'status' => 400 ] );
+        }
+
+        return true;
+    }
+
     /**
      * Retrieve all action linkages for a form.
      */
@@ -289,7 +367,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             'local_mapping_id'           => $new_id,
             'central_action_id'          => $request->get_param( 'central_action_id' ),
             'action_type_indicator'      => $request->get_param( 'action_type_indicator' ),
-            'trigger_hooks'              => $request->get_param( 'trigger_hooks' ),
+            'trigger_hooks'              => $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) ),
             'is_action_enabled_for_form' => $request->get_param( 'is_action_enabled_for_form' ) ?? true,
             'execution_priority'         => $request->get_param( 'execution_priority' ) ?? 10,
         ];
@@ -346,7 +424,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
         if ( $request->has_param( 'trigger_hooks' ) )
         {
-            $linkage[ 'trigger_hooks' ] = $request->get_param( 'trigger_hooks' );
+            $linkage[ 'trigger_hooks' ] = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
         }
         if ( $request->has_param( 'is_action_enabled_for_form' ) )
         {
@@ -385,9 +463,82 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         return $this->prepare_item_for_response( [ 'deleted' => true, 'previous' => $deleted ] );
     }
 
+
+    /** Retrieve aggregated execution status for a form. */
+    public function get_form_execution_status( WP_REST_Request $request ): WP_REST_Response
+    {
+        $form_source_slug = Sentient_Forms_Form_Sources::rest_sanitize_form_source_slug(
+            $request->get_param( 'form_source_slug' ),
+            $request,
+            'form_source_slug'
+        );
+
+        $form_id    = (int) $request->get_param( 'form_id' );
+        $option_key = $this->get_form_status_option_key( $form_source_slug, $form_id );
+        $status     = get_option( $option_key, null );
+
+        if ( ! is_array( $status ) )
+        {
+            $status = [
+                'status'          => 'unknown',
+                'message'         => null,
+                'entry_id'        => null,
+                'last_error_code' => null,
+                'last_result'     => null,
+                'updated_at'      => null,
+            ];
+        }
+
+        return $this->prepare_item_for_response( $status );
+    }
+
+    /**
+     * Retrieve the latest execution status for a given entry.
+     */
+    public function get_entry_execution_status( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        if ( ! class_exists( 'GFAPI' ) )
+        {
+            return $this->prepare_error_response( 'rest_gf_missing', __( 'Gravity Forms is required for this endpoint.', 'sentient-forms' ), 500 );
+        }
+
+        $entry_id = (int) $request->get_param( 'entry_id' );
+        $entry    = GFAPI::get_entry( $entry_id );
+
+        if ( is_wp_error( $entry ) )
+        {
+            return $this->prepare_error_response( 'rest_entry_not_found', __( 'Entry not found.', 'sentient-forms' ), 404 );
+        }
+
+        $last_response = function_exists( 'gform_get_meta' ) ? gform_get_meta( $entry_id, 'sentient_forms_last_response' ) : null;
+        $last_error    = function_exists( 'gform_get_meta' ) ? gform_get_meta( $entry_id, 'sentient_forms_last_error' ) : null;
+        $processed_at  = function_exists( 'gform_get_meta' ) ? gform_get_meta( $entry_id, 'sentient_forms_last_processed_at' ) : null;
+
+        $payload = [
+            'entry_id'       => $entry_id,
+            'form_id'        => (int) ( $entry['form_id'] ?? 0 ),
+            'last_response'  => $this->maybe_decode_json_meta( $last_response ),
+            'last_error'     => is_string( $last_error ) && $last_error !== '' ? $last_error : null,
+            'processed_at'   => is_string( $processed_at ) && $processed_at !== '' ? $processed_at : null,
+            'status'         => is_string( $last_error ) && $last_error !== '' ? 'error' : ( $last_response ? 'success' : 'unknown' ),
+        ];
+
+        return $this->prepare_item_for_response( $payload );
+    }
+
     /**
      * Endpoint args for item schema.
      */
+
+    private function get_form_status_option_key( string $form_source_slug, int $form_id ): string
+    {
+        return sprintf(
+            'sentient_forms_form_status_%s_%d',
+            sanitize_key( $form_source_slug ),
+            $form_id
+        );
+    }
+
     public function get_endpoint_args_for_item_schema( $method = null ): array
     {
         $args = $this->get_collection_args();
@@ -412,6 +563,10 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 'description'       => __( 'Hooks that trigger this action.', 'sentient-forms' ),
                 'type'              => 'array',
                 'required'          => WP_REST_Server::CREATABLE === $method,
+                'items'             => [
+                    'type' => 'string',
+                    'enum' => self::ALLOWED_TRIGGER_HOOKS,
+                ],
                 'validate_callback' => [ $this, 'validate_trigger_hooks_param' ],
             ];
             $args[ 'is_action_enabled_for_form' ] = [
@@ -482,13 +637,14 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     'context'     => [ 'view', 'edit' ],
                 ],
                 'trigger_hooks'              => [
-                    'description'       => __( 'Hooks that trigger the action.', 'sentient-forms' ),
-                    'type'              => 'array',
-                    'default'           => [],
-                    'items'             => [ 'type' => 'string' ],
-                    'context'           => [ 'view', 'edit' ],
-                    'validate_callback' => [ 'Sentient_Forms_REST_Argument_Utils', 'validate_array_of_strings' ],
-                    'sanitize_callback' => [ 'Sentient_Forms_REST_Argument_Utils', 'sanitize_array_of_keys' ],
+                    'description' => __( 'Hooks that trigger the action.', 'sentient-forms' ),
+                    'type'        => 'array',
+                    'default'     => [],
+                    'items'       => [
+                        'type' => 'string',
+                        'enum' => self::ALLOWED_TRIGGER_HOOKS,
+                    ],
+                    'context'     => [ 'view', 'edit' ],
                 ],
                 'is_action_enabled_for_form' => [
                     'description' => __( 'Whether this action is enabled for the form.', 'sentient-forms' ),
@@ -527,8 +683,60 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             {
                 return new WP_Error( 'rest_invalid_param', __( 'Each trigger hook must be a string.', 'sentient-forms' ), [ 'status' => 400 ] );
             }
+
+            $hook_key = sanitize_key( $hook );
+            if ( ! in_array( $hook_key, self::ALLOWED_TRIGGER_HOOKS, true ) )
+            {
+                return new WP_Error(
+                    'rest_invalid_hook',
+                    sprintf(
+                        /* translators: %s: invalid hook name */
+                        __( 'Hook %s is not supported. Allowed hooks: gform_validation, gform_after_submission.', 'sentient-forms' ),
+                        esc_html( $hook )
+                    ),
+                    [ 'status' => 400 ],
+                );
+            }
         }
 
         return true;
+    }
+
+    /**
+     * Normalize trigger hooks to allowed sanitized values.
+     */
+    private function sanitize_trigger_hooks( array $hooks ): array
+    {
+        if ( empty( $hooks ) )
+        {
+            return [];
+        }
+
+        $normalized = array_map( 'sanitize_key', $hooks );
+        $normalized = array_filter(
+            $normalized,
+            static fn( $hook ) => in_array( $hook, self::ALLOWED_TRIGGER_HOOKS, true )
+        );
+
+        return array_values( array_unique( $normalized ) );
+    }
+
+    /**
+     * Safely decode JSON-encoded Gravity Forms meta values.
+     */
+    private function maybe_decode_json_meta( mixed $value ): mixed
+    {
+        if ( ! is_string( $value ) || '' === trim( $value ) )
+        {
+            return null;
+        }
+
+        $decoded = json_decode( $value, true );
+        if ( JSON_ERROR_NONE === json_last_error() )
+        {
+            return $decoded;
+        }
+
+        return $value;
     }
 }
