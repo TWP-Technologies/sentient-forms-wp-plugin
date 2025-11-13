@@ -1,0 +1,84 @@
+name: Full QA
+
+on:
+  push:
+    paths:
+      - '**'
+  pull_request:
+    paths:
+      - '**'
+
+jobs:
+  full-qa:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: wp-plugin
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: sentient_forms_wpdb
+          MYSQL_USER: sf_wp_user
+          MYSQL_PASSWORD: your_strong_user_password_here
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features rustls
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+          extensions: mysqli
+
+      - name: Install mysql client
+        run: sudo apt-get update && sudo apt-get install -y mysql-client
+
+      - name: Wait for database
+        env:
+          MYSQL_PWD: rootpass
+        run: |
+          for i in {1..30}; do
+            mysqladmin ping -h 127.0.0.1 -uroot && break || sleep 2;
+          done
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: '1.3.0'
+
+      - name: Run full QA script
+        env:
+          WP_TESTS_DB_HOST: 127.0.0.1
+          WP_TESTS_DB_NAME: sentient_forms_wpdb
+          WP_TESTS_DB_USER: sf_wp_user
+          WP_TESTS_DB_PASSWORD: your_strong_user_password_here
+          CI: 'true'
+        run: ./scripts/run-full-qa.sh
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            wp-plugin/admin-app/playwright-report
+            wp-plugin/admin-app/test-results
+          if-no-files-found: ignore
