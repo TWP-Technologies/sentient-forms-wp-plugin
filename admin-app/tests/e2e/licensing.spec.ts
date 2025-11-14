@@ -2,11 +2,15 @@ import { expect, test } from '@playwright/test';
 
 test('licensing screen handles activation flow', async ({ page }) => {
 	page.on('console', (msg) => {
-		process.env.PLAYWRIGHT_DEBUG && console.log('console', msg.type(), msg.text());
+		if (process.env.PLAYWRIGHT_DEBUG) {
+			console.log('console', msg.type(), msg.text());
+		}
 	});
 
 	page.on('requestfailed', (request) => {
-		process.env.PLAYWRIGHT_DEBUG && console.log('request failed', request.method(), request.url(), request.failure());
+		if (process.env.PLAYWRIGHT_DEBUG) {
+			console.log('request failed', request.method(), request.url(), request.failure());
+		}
 	});
 
 	let status = {
@@ -22,7 +26,9 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	};
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) => {
-		process.env.PLAYWRIGHT_DEBUG && console.log('route', route.request().method(), route.request().url());
+		if (process.env.PLAYWRIGHT_DEBUG) {
+			console.log('route', route.request().method(), route.request().url());
+		}
 
 		return route.fulfill({
 			status: 200,
@@ -32,7 +38,9 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	});
 
 	await page.route('**/wp-json/sentient-forms/v1/license/activate', (route) => {
-		process.env.PLAYWRIGHT_DEBUG && console.log('route', route.request().method(), route.request().url());
+		if (process.env.PLAYWRIGHT_DEBUG) {
+			console.log('route', route.request().method(), route.request().url());
+		}
 
 			status = {
 				status: 'active',
@@ -54,7 +62,9 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	});
 
 	await page.route('**/wp-json/sentient-forms/v1/license/deactivate', (route) => {
-		process.env.PLAYWRIGHT_DEBUG && console.log('route', route.request().method(), route.request().url());
+		if (process.env.PLAYWRIGHT_DEBUG) {
+			console.log('route', route.request().method(), route.request().url());
+		}
 
 			status = {
 				status: 'inactive',

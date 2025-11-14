@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { ensureSentientFormsSpa, loginToWpAdmin, wpBaseUrl } from './utils/wp-admin';
 
 async function expectNoConsoleErrors(page: Parameters<typeof test>[0]['page']) {
 	const consoleErrors: string[] = [];
@@ -36,10 +37,21 @@ test.describe('WordPress runtime smoke', () => {
 	test('wp-admin login loads without console errors', async ({ page }) => {
 		const watcher = await expectNoConsoleErrors(page);
 
-		const response = await page.goto('http://localhost:8080/wp-login.php', { waitUntil: 'domcontentloaded' });
+		const response = await page.goto(`${wpBaseUrl}/wp-login.php`, { waitUntil: 'domcontentloaded' });
 		expect(response?.ok(), 'Login page should return HTTP 200').toBeTruthy();
 
 		await expect(page.locator('#loginform')).toBeVisible();
+		watcher.assert();
+	});
+
+	test('Sentient Forms admin SPA renders inside wp-admin without console errors', async ({ page }) => {
+		const watcher = await expectNoConsoleErrors(page);
+
+		await loginToWpAdmin(page);
+		await ensureSentientFormsSpa(page);
+		await page.waitForFunction(() => typeof (window as any).sentientFormsConfig !== 'undefined');
+		await page.waitForFunction(() => !!document.querySelector('#sentient-forms-admin-app'));
+
 		watcher.assert();
 	});
 });
