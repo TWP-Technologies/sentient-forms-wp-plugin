@@ -41,3 +41,10 @@
 - Should WordPress cache custom actions locally or always hit CPS? Initial assumption: cache minimal metadata in transients for performance; revisit after MVP.
 - Audit trail visibility: do we need a dedicated tab or is metadata in detail view sufficient?
 - Access control: confirm capability requirements (`manage_options` vs custom capability).
+
+## Action Mapping UX Snapshot (2025-11-13)
+- The **Actions** tab now reflects the selected form source (Gravity Forms initially) and lists every detected form with badges that summarize mapping counts and Sentient Forms enablement.
+- Each row links directly into `/actions/{sourceSlug}/{formId}` via hash-based routing so the SPA can operate safely inside the WordPress admin without rewriting the core URL.
+- The form-level detail view shows the current credit balance, execution status, and linked CPS actions. Administrators can enable/disable mappings, refresh execution metadata, and inspect entry-specific telemetry.
+- Trigger hook management is now interactive: clicking **Edit hooks** opens an inline editor with the allowed Gravity Forms hooks (validation vs. after submission). Changes persist via the Form Actions REST controller and mirror immediately in the status panel.
+- All new flows rely on the normalized REST payloads (`credits/balance`, action definitions, form actions) so the Vitest/unit suites can assert real API behavior.

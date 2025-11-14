@@ -31,3 +31,11 @@ bun run dev
 | `bun run qa:full` | Run lint, type-check, tests, e2e, build, and bundle check sequentially. |
 
 Tailwind CSS (prefixed with `sf-`) and linting are configured; see `tailwind.config.cjs` and `eslint.config.js` for details.
+
+## End-to-end tests
+
+Playwright tests interact with the Dockerized WordPress stack (`docker compose up -d` from the repo root). Before running `bun run e2e` or `bun run qa:full`, ensure:
+
+- Environment variables `SENTIENT_WP_ADMIN_USER` and `SENTIENT_WP_ADMIN_PASS` match a valid wp-admin account (defaults to `sentient_admin` / `sentient_admin`).
+- The helper script `scripts/wp-playwright-fixtures.php` can run via `docker compose exec wordpress wp eval-file …`; the e2e suite seeds a Gravity Forms form/action mapping automatically using that script.
+- The admin email verification prompt can be dismissed (the tests handle it, but leave the modal enabled so the helper logic exercises the flow).

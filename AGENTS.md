@@ -21,6 +21,11 @@ Sentient Forms is a WordPress plugin that routes form submissions through curate
 ## Project Structure & Module Organization
 The entry point `sentient-forms.php` defines plugin constants and boots `includes/class-sentient-forms-plugin.php`. Domain logic sits in `includes/` with subdirectories for `actions/`, `adapters/`, `llms/`, `rest-api/`, and shared `utilities/`. Admin-facing CSS/JS are transitioning to the SvelteKit SPA located in `admin-app/` (built assets will be emitted into `assets/dist/` in Task 0.6). Legacy PHP-rendered admin scripts persist only until the SPA replaces them. Build scripts, currently `build/generate-class-map.php`, remain isolated from runtime code.
 
+### Svelte 5 SPA Conventions
+- SPA modules must follow Svelte 5 idioms: use runes (`$state`, `$derived`, `$effect`, `$props()`), callback props, and `$bindable` instead of `createEventDispatcher`/`on:` directives. Native DOM attributes (e.g., `onclick`) replace the old `on:event` syntax.
+- When two-way bindings are required, expose bindable props or callback props rather than dispatchers. Shared stores should only remain in writable form when they orchestrate side effects (e.g., the notifications queue uses `setTimeout`), and such cases should be documented inline.
+- Run `bun run svelte:guard` (part of `bun run qa:full`) before opening a PR; it executes `npx sv check` and fails if legacy syntax or `createEventDispatcher` usage slips back in.
+
 ## Build, Test, and Development Commands
 - `php build/generate-class-map.php`: rebuild `includes/class-map.php` after adding or moving classes.
 - `php -l sentient-forms.php includes/**/*.php`: run a syntax lint sweep before committing.
