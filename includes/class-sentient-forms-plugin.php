@@ -346,6 +346,11 @@ final class Sentient_Forms_Plugin
         return $scheduled;
     }
 
+    public function dispatch_action_evaluation( array $job ): bool
+    {
+        return $this->get_async_handler()->dispatch_evaluation( $job );
+    }
+
     private function get_cps_base_url(): string
     {
         $options  = $this->get_options();

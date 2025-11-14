@@ -15,7 +15,7 @@ if ( !defined( 'ABSPATH' ) )
  * Class Sentient_Forms_Gravity_Forms_Adapter
  * Adapter for Gravity Forms integration
  */
-class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Interface
+class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface
 {
 
     /**
@@ -937,5 +937,103 @@ HTML;
             error_log( 'Sentient Forms: Error retrieving form object: ' . $e->getMessage() );
             return null;
         }
+    }
+
+    public function finalize_async_success( array $context, array $result ): void
+    {
+        $entry_id = isset( $context['entry_id'] ) ? absint( $context['entry_id'] ) : 0;
+        if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        $excerpt = $this->format_async_result_excerpt( $result );
+        $this->update_entry_meta( $entry_id, 'sentient_forms_last_response', wp_json_encode( $result ) );
+        $this->add_entry_note(
+            $entry_id,
+            'Sentient Forms AI',
+            sprintf(
+                /* translators: %s is the action label */
+                __( 'Sentient Forms finished %s. Result: %s', 'sentient-forms' ),
+                $this->get_async_action_label( $context ),
+                $excerpt,
+            ),
+        );
+    }
+
+    public function finalize_async_error( array $context, WP_Error $error ): void
+    {
+        $entry_id = isset( $context['entry_id'] ) ? absint( $context['entry_id'] ) : 0;
+        $message  = sprintf(
+            /* translators: 1: action label, 2: error reason */
+            __( 'Sentient Forms could not complete %1$s. Reason: %2$s', 'sentient-forms' ),
+            $this->get_async_action_label( $context ),
+            $error->get_error_message(),
+        );
+
+        if ( $entry_id > 0 )
+        {
+            $this->add_entry_note( $entry_id, 'Sentient Forms AI', $message );
+        }
+        else
+        {
+            error_log( $message );
+        }
+    }
+
+    public function finalize_async_evaluation( array $context, array $result ): void
+    {
+        $entry_id = isset( $context['entry_id'] ) ? absint( $context['entry_id'] ) : 0;
+        if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        $excerpt = $this->format_async_result_excerpt( $result );
+        $this->add_entry_note(
+            $entry_id,
+            'Sentient Forms AI',
+            sprintf(
+                /* translators: %s is the action label */
+                __( 'Evaluation updated for %s: %s', 'sentient-forms' ),
+                $this->get_async_action_label( $context ),
+                $excerpt,
+            ),
+        );
+    }
+
+    private function get_async_action_label( array $context ): string
+    {
+        if ( !empty( $context['action_name_label'] ) )
+        {
+            return sanitize_text_field( (string) $context['action_name_label'] );
+        }
+
+        if ( !empty( $context['central_action_id'] ) )
+        {
+            return sanitize_text_field( (string) $context['central_action_id'] );
+        }
+
+        if ( !empty( $context['action_id'] ) )
+        {
+            return sanitize_text_field( (string) $context['action_id'] );
+        }
+
+        return __( 'Sentient Forms action', 'sentient-forms' );
+    }
+
+    private function format_async_result_excerpt( array $result ): string
+    {
+        if ( isset( $result['result_data']['llm_output'] ) && is_scalar( $result['result_data']['llm_output'] ) )
+        {
+            return wp_trim_words( wp_kses_post( (string) $result['result_data']['llm_output'] ), 40 );
+        }
+
+        if ( isset( $result['result_data'] ) )
+        {
+            return wp_trim_words( wp_json_encode( $result['result_data'] ), 40 );
+        }
+
+        return wp_trim_words( wp_json_encode( $result ), 40 );
     }
 }

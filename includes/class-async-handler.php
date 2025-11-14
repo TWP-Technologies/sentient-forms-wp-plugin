@@ -11,12 +11,17 @@ if ( !defined( 'ABSPATH' ) )
     exit;
 }
 
+use Throwable;
+use WP_Error;
+
 /**
  * Class Sentient_Forms_Async_Handler
  * Handles asynchronous processing of actions
  */
 class Sentient_Forms_Async_Handler
 {
+    private const MAX_ATTEMPTS = 3;
+    private const BASE_BACKOFF_SECONDS = 60;
 
     /**
      * Plugin instance
@@ -34,6 +39,173 @@ class Sentient_Forms_Async_Handler
         $this->init();
     }
 
+    public function process_evaluation( array $payload ): void
+    {
+        $context = $this->normalize_context(
+            $payload['context'] ?? [],
+            (string) ( $payload['context']['action_id'] ?? 'evaluation' ),
+        );
+
+        $result  = isset( $context['evaluation_payload'] ) && is_array( $context['evaluation_payload'] )
+            ? $context['evaluation_payload']
+            : [];
+        $adapter = $this->resolve_async_adapter( $context['form_source'] ?? null, $context );
+
+        if ( !$adapter )
+        {
+            return;
+        }
+
+        try
+        {
+            $adapter->finalize_async_evaluation( $context, $result );
+            do_action( 'sentient_forms_async_success', $context, $result );
+        } catch ( Throwable $throwable )
+        {
+            $this->handle_evaluation_failure(
+                $context,
+                $result,
+                new WP_Error( 'sentient_forms_async_evaluation_failed', $throwable->getMessage() ),
+            );
+        }
+    }
+
+    private function handle_success( array $job, array $result ): void
+    {
+        $this->log_success( $job['action_id'], $result );
+        do_action( 'sentient_forms_async_success', $job['context'], $result );
+        $this->notify_adapter_success( $job['context'], $result );
+    }
+
+    private function handle_failure( array $job, WP_Error $error ): void
+    {
+        $context = $job['context'];
+        $attempt = (int) $context['attempt'];
+        $max     = (int) $context['max_attempts'];
+
+        if ( $attempt < $max )
+        {
+            $context['attempt']    = $attempt + 1;
+            $context['last_error'] = $error->get_error_message();
+            $delay                 = $this->compute_backoff_delay( $attempt );
+            $this->schedule_action(
+                $job['action_id'],
+                $job['data'],
+                $job['settings'],
+                $context,
+                time() + $delay,
+            );
+            return;
+        }
+
+        $this->log_error( $error->get_error_message() );
+        do_action( 'sentient_forms_async_failure', $context, $error );
+        $this->notify_adapter_error( $context, $error );
+    }
+
+    private function handle_evaluation_failure( array $context, array $result, WP_Error $error ): void
+    {
+        $attempt = (int) $context['attempt'];
+        $max     = (int) $context['max_attempts'];
+
+        if ( $attempt < $max )
+        {
+            $context['attempt']    = $attempt + 1;
+            $context['last_error'] = $error->get_error_message();
+            $delay                 = $this->compute_backoff_delay( $attempt );
+            $this->dispatch_evaluation(
+                [
+                    'adapter_id' => $context['adapter_id'] ?? $context['form_source'] ?? null,
+                    'entry_id'   => $context['entry_id'] ?? null,
+                    'form_id'    => $context['form_id'] ?? null,
+                    'action_id'  => $context['action_id'] ?? null,
+                    'payload'    => $result,
+                    'context'    => $context,
+                    'run_at'     => time() + $delay,
+                ],
+            );
+            return;
+        }
+
+        $this->log_error( $error->get_error_message() );
+        do_action( 'sentient_forms_async_failure', $context, $error );
+        $this->notify_adapter_error( $context, $error );
+    }
+
+    private function notify_adapter_success( array $context, array $result ): void
+    {
+        $adapter = $this->resolve_async_adapter( $context['form_source'] ?? null, $context );
+        if ( $adapter )
+        {
+            $adapter->finalize_async_success( $context, $result );
+        }
+    }
+
+    private function notify_adapter_error( array $context, WP_Error $error ): void
+    {
+        $adapter = $this->resolve_async_adapter( $context['form_source'] ?? null, $context );
+        if ( $adapter )
+        {
+            $adapter->finalize_async_error( $context, $error );
+        }
+    }
+
+    private function compute_backoff_delay( int $attempt ): int
+    {
+        $delay = (int) ( self::BASE_BACKOFF_SECONDS * pow( 2, max( 0, $attempt - 1 ) ) );
+        return min( HOUR_IN_SECONDS, max( self::BASE_BACKOFF_SECONDS, $delay ) );
+    }
+
+    private function enqueue_job( string $hook, array $args, int $run_at ): bool
+    {
+        if ( function_exists( 'as_schedule_single_action' ) )
+        {
+            return (bool) as_schedule_single_action( $run_at, $hook, $args, 'sentient_forms' );
+        }
+
+        if ( function_exists( 'as_enqueue_async_action' ) )
+        {
+            as_enqueue_async_action( $hook, $args, 'sentient_forms' );
+            return true;
+        }
+
+        return (bool) wp_schedule_single_event( $run_at, $hook, $args );
+    }
+
+    private function normalize_context( array $context, string $action_id = '' ): array
+    {
+        $attempt = isset( $context['attempt'] ) ? max( 1, (int) $context['attempt'] ) : 1;
+        $max     = isset( $context['max_attempts'] ) ? max( 1, (int) $context['max_attempts'] ) : self::MAX_ATTEMPTS;
+
+        $defaults = [
+            'attempt'      => $attempt,
+            'max_attempts' => $max,
+            'job_type'     => $context['job_type'] ?? 'execution',
+            'action_id'    => $context['action_id'] ?? $action_id,
+        ];
+
+        if ( !isset( $context['form_source'] ) && isset( $context['adapter_id'] ) )
+        {
+            $defaults['form_source'] = $context['adapter_id'];
+        }
+
+        return array_merge( $defaults, $context );
+    }
+
+    private function resolve_async_adapter( ?string $form_source, array $context = [] ): ?Sentient_Forms_Async_Capable_Adapter_Interface
+    {
+        $adapter_id = $form_source ?? ( $context['adapter_id'] ?? null );
+        if ( empty( $adapter_id ) )
+        {
+            return null;
+        }
+
+        $registry = $this->plugin->get_form_adapter_registry();
+        $adapter  = $registry ? $registry->get_adapter_by_id( $adapter_id ) : null;
+
+        return $adapter instanceof Sentient_Forms_Async_Capable_Adapter_Interface ? $adapter : null;
+    }
+
     /**
      * Initialize the async handler
      *
@@ -43,6 +215,7 @@ class Sentient_Forms_Async_Handler
     {
         // Register the action hook for processing actions
         add_action( 'sentient_forms_process_action', [ $this, 'process_action' ], 10, 4 );
+        add_action( 'sentient_forms_evaluate_action', [ $this, 'process_evaluation' ], 10, 1 );
 
         // Register the action hook for Action Scheduler
         if ( function_exists( 'as_schedule_single_action' ) )
@@ -73,7 +246,7 @@ class Sentient_Forms_Async_Handler
      *
      * @return bool Whether the action was scheduled.
      */
-    public function schedule_action( string $action_id, array $data, array $settings, array $context = [] ): bool
+    public function schedule_action( string $action_id, array $data, array $settings, array $context = [], ?int $run_at = null ): bool
     {
         // Get the action instance
         $action = $this->plugin->get_action( $action_id );
@@ -82,38 +255,54 @@ class Sentient_Forms_Async_Handler
             return false;
         }
 
-        // Schedule the action
-        if ( function_exists( 'as_schedule_single_action' ) )
-        {
-            // Use Action Scheduler if available
-            return as_schedule_single_action(
-                time(),
-                'sentient_forms_process_action',
-                [
-                    'action_id'            => $action_id,
-                    'data'                 => $data,
-                    'settings'             => $settings,
-                    'execution_request_id' => $context['execution_request_id'] ?? null,
-                    'context'              => $context,
-                ],
-                'sentient_forms',
-            );
-        }
-        else
-        {
-            // Fallback to WP-Cron
-            return wp_schedule_single_event(
-                time(),
-                'sentient_forms_process_action',
-                [
-                    'action_id'            => $action_id,
-                    'data'                 => $data,
-                    'settings'             => $settings,
-                    'execution_request_id' => $context['execution_request_id'] ?? null,
-                    'context'              => $context,
-                ],
-            );
-        }
+        $payload = [
+            'action_id'            => $action_id,
+            'data'                 => $data,
+            'settings'             => $settings,
+            'execution_request_id' => $context['execution_request_id'] ?? null,
+            'context'              => $this->normalize_context(
+                array_merge(
+                    [
+                        'form_source' => $context['form_source'] ?? null,
+                        'job_type'    => $context['job_type'] ?? 'execution',
+                    ],
+                    $context,
+                ),
+                $action_id,
+            ),
+        ];
+
+        return $this->enqueue_job(
+            'sentient_forms_process_action',
+            $payload,
+            $run_at ?? time(),
+        );
+    }
+
+    public function dispatch_evaluation( array $job ): bool
+    {
+        $payload = [
+            'context' => $this->normalize_context(
+                array_merge(
+                    [
+                        'adapter_id'        => $job['adapter_id'] ?? null,
+                        'entry_id'          => $job['entry_id'] ?? null,
+                        'form_id'           => $job['form_id'] ?? null,
+                        'action_id'         => $job['action_id'] ?? null,
+                        'job_type'          => 'evaluation',
+                        'evaluation_payload'=> $job['payload'] ?? [],
+                    ],
+                    $job['context'] ?? [],
+                ),
+                (string) ( $job['action_id'] ?? 'evaluation' ),
+            ),
+        ];
+
+        return $this->enqueue_job(
+            'sentient_forms_evaluate_action',
+            $payload,
+            $job['run_at'] ?? time(),
+        );
     }
 
     /**
@@ -127,23 +316,52 @@ class Sentient_Forms_Async_Handler
      */
     public function process_action( string $action_id, array $data, array $settings, $execution_request_id = null, array $context = [] ): void
     {
-        // Get the action instance
+        $context = $this->normalize_context( $context, $action_id );
+
+        $job = [
+            'action_id'            => $action_id,
+            'data'                 => $data,
+            'settings'             => $settings,
+            'execution_request_id' => $execution_request_id,
+            'context'              => $context,
+        ];
+
         $action = $this->plugin->get_action( $action_id );
         if ( !$action )
         {
-            $this->log_error( sprintf( __( 'Action %s not found.', 'sentient-forms' ), $action_id ) );
+            $this->handle_failure(
+                $job,
+                new WP_Error(
+                    'sentient_forms_missing_action',
+                    sprintf( __( 'Action %s not found.', 'sentient-forms' ), $action_id ),
+                ),
+            );
             return;
         }
 
-        // Execute the action
         try
         {
             $result = $action->execute( $data, $settings );
-            $this->log_success( $action_id, $result );
-        } catch ( Exception $e )
+        } catch ( Throwable $throwable )
         {
-            $this->log_error( sprintf( __( 'Error processing action %s: %s', 'sentient-forms' ), $action_id, $e->getMessage() ) );
+            $this->handle_failure(
+                $job,
+                new WP_Error(
+                    'sentient_forms_async_exception',
+                    $throwable->getMessage(),
+                ),
+            );
+            return;
         }
+
+        if ( is_wp_error( $result ) )
+        {
+            $this->handle_failure( $job, $result );
+            return;
+        }
+
+        $normalized_result = is_array( $result ) ? $result : [ 'success' => (bool) $result ];
+        $this->handle_success( $job, $normalized_result );
     }
 
     /**
