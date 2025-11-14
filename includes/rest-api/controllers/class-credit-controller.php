@@ -94,42 +94,38 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
             );
         }
 
-        // If not forcing a refresh, try to get the cached balance.
-        if ( !$force_refresh )
-        {
-            $cached_balance = get_transient( self::BALANCE_TRANSIENT_KEY );
-            if ( false !== $cached_balance )
-            {
-                return $this->prepare_item_for_response( [ 'balance' => (int)$cached_balance ] );
-            }
-        }
+		// If not forcing a refresh, try to get the cached balance.
+		if ( !$force_refresh )
+		{
+			$cached_balance = $this->format_cached_balance( get_transient( self::BALANCE_TRANSIENT_KEY ) );
+			if ( null !== $cached_balance )
+			{
+				return $this->prepare_item_for_response( $cached_balance );
+			}
+		}
 
-        $balance = $this->fetch_and_cache_balance( $api_key );
+		$balance = $this->fetch_and_cache_balance( $api_key );
 
-        if ( is_wp_error( $balance ) )
-        {
-            // If fetching failed, try to return the last known good balance (stale data).
-            $stale_balance = get_option( self::BALANCE_OPTION_KEY, null );
-            if ( null !== $stale_balance )
-            {
-                return $this->prepare_item_for_response(
-                    [
-                        'balance' => (int)$stale_balance,
-                        'stale'   => true, // Indicate that the balance is stale
-                    ],
-                );
-            }
+		if ( is_wp_error( $balance ) )
+		{
+			// If fetching failed, try to return the last known good balance (stale data).
+			$stale_balance = $this->format_cached_balance( get_option( self::BALANCE_OPTION_KEY, null ) );
+			if ( null !== $stale_balance )
+			{
+				$stale_balance['stale'] = true;
+				return $this->prepare_item_for_response( $stale_balance );
+			}
 
-            // If no stale balance is available, return the error.
-            return $this->prepare_error_response(
-                'credit_balance_error',
-                $balance->get_error_message(),
-                500,
-            );
-        }
+			// If no stale balance is available, return the error.
+			return $this->prepare_error_response(
+				'credit_balance_error',
+				$balance->get_error_message(),
+				500,
+			);
+		}
 
-        return $this->prepare_item_for_response( [ 'balance' => $balance ] );
-    }
+		return $this->prepare_item_for_response( $balance );
+	}
 
     /**
      * Fetch the credit balance from the proxy and update caches.
@@ -138,43 +134,94 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
      *
      * @return WP_Error|int The balance as an integer on success, or WP_Error on failure.
      */
-    private function fetch_and_cache_balance( string $api_key ): WP_Error | int
-    {
-        if ( !class_exists( 'Sentient_Forms_Llm_Api_Client' ) )
-        {
-            return new WP_Error( 'api_client_missing', __( 'LLM API Client class not found.', 'sentient-forms' ), [ 'status' => 500 ] );
-        }
-        $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $client->get_credit_balance();
+	private function fetch_and_cache_balance( string $api_key ): WP_Error | array
+	{
+		if ( !class_exists( 'Sentient_Forms_Llm_Api_Client' ) )
+		{
+			return new WP_Error( 'api_client_missing', __( 'LLM API Client class not found.', 'sentient-forms' ), [ 'status' => 500 ] );
+		}
+		$client   = new Sentient_Forms_Llm_Api_Client( $api_key );
+		$response = $client->get_credit_balance();
 
-        if ( is_wp_error( $response ) )
-        {
-            return $response;
-        }
+		if ( is_wp_error( $response ) )
+		{
+			return $response;
+		}
 
-        // this handles cases where json_decode might return null, false, or other scalar types
-        // if the upstream API returns valid JSON that isn't an object/array.
-        if ( !is_array( $response ) )
-        {
-            return new WP_Error(
-                'invalid_response_format', __( 'Unexpected response format from API. Expected an array.', 'sentient-forms' ), [ 'status' => 500 ],
-            );
-        }
+		if ( !is_array( $response ) )
+		{
+			return new WP_Error(
+				'invalid_response_format', __( 'Unexpected response format from API. Expected an array.', 'sentient-forms' ), [ 'status' => 500 ]
+			);
+		}
 
-        if ( !isset( $response[ 'balance' ] ) )
-        {
-            return new WP_Error(
-                'invalid_response_content', __( 'Invalid credit balance response: "balance" key missing.', 'sentient-forms' ), [ 'status' => 500 ],
-            );
-        }
+		$normalized = $this->normalize_credit_payload( $response );
+		if ( is_wp_error( $normalized ) )
+		{
+			return $normalized;
+		}
 
-        $balance = absint( $response[ 'balance' ] );
+		set_transient( self::BALANCE_TRANSIENT_KEY, $normalized, self::BALANCE_CACHE_TTL );
+		update_option( self::BALANCE_OPTION_KEY, $normalized, false );
 
-        set_transient( self::BALANCE_TRANSIENT_KEY, $balance, self::BALANCE_CACHE_TTL );
-        update_option( self::BALANCE_OPTION_KEY, $balance, false );
+		return $normalized;
+	}
 
-        return $balance;
-    }
+	private function normalize_credit_payload( array $response ): WP_Error | array
+	{
+		$data = isset( $response['data'] ) && is_array( $response['data'] ) ? $response['data'] : $response;
+		$current_balance = null;
+
+		if ( isset( $data['current_balance'] ) )
+		{
+			$current_balance = (int) $data['current_balance'];
+		}
+		elseif ( isset( $data['balance'] ) )
+		{
+			$current_balance = (int) $data['balance'];
+		}
+
+		if ( null === $current_balance )
+		{
+			return new WP_Error(
+				'invalid_response_content',
+				__( 'Invalid credit balance response.', 'sentient-forms' ),
+				[ 'status' => 500 ]
+			);
+		}
+
+		return [
+			'current_balance' => $current_balance,
+			'ledger_delta'    => isset( $data['ledger_delta'] ) ? (int) $data['ledger_delta'] : 0,
+			'tier'            => isset( $data['tier'] ) && is_array( $data['tier'] ) ? $data['tier'] : null,
+			'stale'           => false,
+		];
+	}
+
+	private function format_cached_balance( $value ): ?array
+	{
+		if ( is_array( $value ) && isset( $value['current_balance'] ) )
+		{
+			return [
+				'current_balance' => (int) $value['current_balance'],
+				'ledger_delta'    => isset( $value['ledger_delta'] ) ? (int) $value['ledger_delta'] : 0,
+				'tier'            => isset( $value['tier'] ) && is_array( $value['tier'] ) ? $value['tier'] : null,
+				'stale'           => isset( $value['stale'] ) ? rest_sanitize_boolean( $value['stale'] ) : false,
+			];
+		}
+
+		if ( is_numeric( $value ) )
+		{
+			return [
+				'current_balance' => (int) $value,
+				'ledger_delta'    => 0,
+				'tier'            => null,
+				'stale'           => false,
+			];
+		}
+
+		return null;
+	}
 
     /**
      * Retrieves the schema for the credit balance response.

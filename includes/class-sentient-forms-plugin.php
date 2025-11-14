@@ -24,7 +24,7 @@ final class Sentient_Forms_Plugin
      *
      * @var Sentient_Forms_Plugin
      */
-    private static Sentient_Forms_Plugin $_instance;
+    private static ?Sentient_Forms_Plugin $_instance = null;
 
     /**
      * LLM Model Registry instance.
@@ -32,7 +32,7 @@ final class Sentient_Forms_Plugin
      *
      * @var Sentient_Forms_Llm_Model_Registry
      */
-    private Sentient_Forms_Llm_Model_Registry $llm_model_registry;
+    private ?Sentient_Forms_Llm_Model_Registry $llm_model_registry = null;
 
     /**
      * Action Registry instance.
@@ -40,7 +40,7 @@ final class Sentient_Forms_Plugin
      *
      * @var Sentient_Forms_Action_Registry
      */
-    private Sentient_Forms_Action_Registry $action_registry;
+    private ?Sentient_Forms_Action_Registry $action_registry = null;
 
     /**
      * Adapter Registry instance.
@@ -48,7 +48,7 @@ final class Sentient_Forms_Plugin
      *
      * @var Sentient_Forms_Form_Adapter_Registry
      */
-    private Sentient_Forms_Form_Adapter_Registry $adapter_registry;
+    private ?Sentient_Forms_Form_Adapter_Registry $adapter_registry = null;
 
     /**
      * REST API instance.
@@ -56,7 +56,7 @@ final class Sentient_Forms_Plugin
      *
      * @var Sentient_Forms_REST_API
      */
-    private Sentient_Forms_REST_API $rest_api;
+    private ?Sentient_Forms_REST_API $rest_api = null;
 
     /**
      * Plugin options.
@@ -67,6 +67,12 @@ final class Sentient_Forms_Plugin
     private const OPTION_KEY = 'sentient_forms_settings';
 
     private ?array $options = null;
+
+    private ?Sentient_Forms_Api_Client $cps_api_client = null;
+
+    private ?Sentient_Forms_Action_Executor $action_executor = null;
+
+    private ?Sentient_Forms_Async_Handler $async_handler = null;
 
     /**
      * Main Sentient_Forms_Plugin Instance.
@@ -92,8 +98,10 @@ final class Sentient_Forms_Plugin
      */
     private function init(): void
     {
-        $this->load_dependencies();
+        // Initialize registries before loading REST/API dependencies so controllers
+        // can resolve the registries during their constructors.
         $this->init_registries();
+        $this->load_dependencies();
         $this->init_hooks();
 
         // Initialize admin area if in admin context or WP-CLI.
@@ -245,6 +253,111 @@ final class Sentient_Forms_Plugin
         }
 
         return $this->adapter_registry->get_all_adapters();
+    }
+
+    public function get_action( string $action_id ): ?Sentient_Forms_Action_Interface
+    {
+        if ( !$this->action_registry )
+        {
+            return null;
+        }
+
+        return $this->action_registry->get_action( $action_id );
+    }
+
+    public function get_api_client(): Sentient_Forms_Api_Client
+    {
+        return $this->get_cps_api_client();
+    }
+
+    public function get_cps_api_client(): Sentient_Forms_Api_Client
+    {
+        if ( null === $this->cps_api_client )
+        {
+            $this->cps_api_client = new Sentient_Forms_Api_Client( $this->get_cps_base_url() );
+        }
+
+        return $this->cps_api_client;
+    }
+
+    public function get_action_executor(): Sentient_Forms_Action_Executor
+    {
+        if ( null === $this->action_executor )
+        {
+            $this->action_executor = new Sentient_Forms_Action_Executor( $this, $this->get_cps_api_client() );
+        }
+
+        return $this->action_executor;
+    }
+
+    public function get_async_handler(): Sentient_Forms_Async_Handler
+    {
+        if ( null === $this->async_handler )
+        {
+            $this->async_handler = new Sentient_Forms_Async_Handler( $this );
+        }
+
+        return $this->async_handler;
+    }
+
+    public function process_action_async( string $action_id, array $data, array $settings, array $context = [] ): bool
+    {
+        $central_action_id = $settings['central_action_id'] ?? '';
+        if ( empty( $central_action_id ) )
+        {
+            return false;
+        }
+
+        $context = array_merge(
+            [
+                'form_source' => $context['form_source'] ?? null,
+                'hook'        => $context['hook'] ?? 'gform_after_submission',
+                'action_id'   => $context['action_id'] ?? $action_id,
+                'form_id'     => $context['form_id'] ?? ( $data['form']['id'] ?? null ),
+            ],
+            $context,
+        );
+
+        $execution_request_id = Sentient_Forms_Action_Executor::generate_execution_request_id(
+            $central_action_id,
+            $data['form'] ?? [],
+            $data['entry'] ?? [],
+            $context,
+        );
+
+        $cache_key = 'sentient_forms_async_' . $execution_request_id;
+        if ( false !== get_transient( $cache_key ) )
+        {
+            return false;
+        }
+
+        $scheduled = $this->get_async_handler()->schedule_action(
+            $action_id,
+            $data,
+            $settings,
+            array_merge( $context, [ 'execution_request_id' => $execution_request_id, 'central_action_id' => $central_action_id ] ),
+        );
+
+        if ( $scheduled )
+        {
+            set_transient( $cache_key, 1, HOUR_IN_SECONDS );
+        }
+
+        return $scheduled;
+    }
+
+    private function get_cps_base_url(): string
+    {
+        $options  = $this->get_options();
+        $base_url = $options['cps_base_url'] ?? null;
+        $base_url = apply_filters( 'sentient_forms_cps_base_url', $base_url, $options );
+
+        if ( empty( $base_url ) )
+        {
+            $base_url = 'https://staging-api.totalwebpartners.com/v1';
+        }
+
+        return untrailingslashit( $base_url );
     }
 
     /**

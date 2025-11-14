@@ -131,6 +131,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             {
                 $validation_result = $result[ 'validation_result' ];
             }
+
+            $validation_result = $this->maybe_execute_cps_validation(
+                $validation_result,
+                $form,
+                $entry,
+                $action_id,
+                $action_settings,
+            );
         }
 
         return $validation_result;
@@ -176,7 +184,17 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             if ( !empty( $action_settings[ 'async' ] ) )
             {
                 // Process the action asynchronously
-                $this->plugin->process_action_async( $action_id, $data, $action_settings );
+                $this->plugin->process_action_async(
+                    $action_id,
+                    $data,
+                    $action_settings,
+                    [
+                        'hook'        => 'gform_after_submission',
+                        'form_source' => $this->get_id(),
+                        'action_id'   => $action_id,
+                        'form_id'     => $form_id,
+                    ],
+                );
             }
             else
             {
@@ -217,6 +235,120 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         return $entry;
+    }
+
+    private function maybe_execute_cps_validation( array $validation_result, array $form, array $entry, string $action_id, array $action_settings ): array
+    {
+        $central_action_id = $action_settings['central_action_id'] ?? '';
+        if ( empty( $central_action_id ) )
+        {
+            return $validation_result;
+        }
+
+        $context = [
+            'hook'        => 'gform_validation',
+            'form_source' => $this->get_id(),
+            'action_id'   => $action_id,
+            'form_id'     => $form['id'] ?? null,
+        ];
+
+        $response = $this->plugin->get_action_executor()->execute(
+            $central_action_id,
+            $form,
+            $entry,
+            $context,
+        );
+
+        return $this->apply_cps_validation_response( $validation_result, $response, $action_settings );
+    }
+
+    private function apply_cps_validation_response( array $validation_result, $response, array $action_settings ): array
+    {
+        if ( is_wp_error( $response ) )
+        {
+            return $this->inject_validation_message( $validation_result, $response->get_error_message(), $action_settings );
+        }
+
+        if ( isset( $response['validation'] ) && is_array( $response['validation'] ) )
+        {
+            $validation = $response['validation'];
+            if ( array_key_exists( 'is_valid', $validation ) && false === $validation['is_valid'] )
+            {
+                $message = $validation['message'] ?? $this->default_validation_failure_message( $action_settings );
+                $validation_result = $this->inject_validation_message( $validation_result, $message, $action_settings );
+
+                if ( !empty( $validation['fields'] ) && is_array( $validation['fields'] ) )
+                {
+                    $validation_result = $this->inject_field_validation_messages( $validation_result, $validation['fields'] );
+                }
+            }
+        }
+
+        return $validation_result;
+    }
+
+    private function inject_validation_message( array $validation_result, string $message, array $action_settings ): array
+    {
+        if ( '' === trim( $message ) )
+        {
+            $message = $this->default_validation_failure_message( $action_settings );
+        }
+
+        $validation_result['is_valid']             = false;
+        $validation_result['form']['failed_validation'] = true;
+
+        if ( empty( $validation_result['form']['validation_message'] ) )
+        {
+            $validation_result['form']['validation_message'] = $message;
+        }
+        else
+        {
+            $validation_result['form']['validation_message'] .= ' ' . $message;
+        }
+
+        return $validation_result;
+    }
+
+    private function inject_field_validation_messages( array $validation_result, array $field_errors ): array
+    {
+        if ( empty( $validation_result['form']['fields'] ) )
+        {
+            return $validation_result;
+        }
+
+        foreach ( $field_errors as $field_error )
+        {
+            $field_id = $field_error['field_id'] ?? null;
+            $message  = $field_error['message'] ?? '';
+
+            if ( null === $field_id || '' === trim( $message ) )
+            {
+                continue;
+            }
+
+            foreach ( $validation_result['form']['fields'] as &$field )
+            {
+                if ( isset( $field->id ) && (string) $field->id === (string) $field_id )
+                {
+                    $field->failed_validation  = true;
+                    $field->validation_message = $message;
+                }
+            }
+            unset( $field );
+        }
+
+        return $validation_result;
+    }
+
+    private function default_validation_failure_message( array $action_settings ): string
+    {
+        $label = $action_settings['action_name_label'] ?? $action_settings['central_action_id'] ?? __( 'Sentient Forms action', 'sentient-forms' );
+
+        return sprintf(
+            /* translators: %s is the action label */
+            __( '%s blocked this submission. Please review the entry and try again.', 'sentient-forms' ),
+            $label,
+        );
     }
 
     /**
@@ -367,6 +499,11 @@ HTML;
         return $form ? $form[ 'fields' ] : [];
     }
 
+    private function get_form_option_name( int $form_id ): string
+    {
+        return sprintf( 'sentient_forms_actions_%s_%d', $this->get_id(), absint( $form_id ) );
+    }
+
     /**
      * Get form settings
      *
@@ -376,8 +513,14 @@ HTML;
      */
     public function get_form_settings( mixed $form_id ): array
     {
-        $option_name = 'sentient_forms_gravity_forms_' . $form_id;
+        $option_name = $this->get_form_option_name( $form_id );
         $settings    = get_option( $option_name, [] );
+
+        if ( empty( $settings ) )
+        {
+            // Fallback to legacy option naming for backwards compatibility.
+            $settings = get_option( 'sentient_forms_gravity_forms_' . $form_id, [] );
+        }
 
         // Get global settings as defaults
         $global_settings = $this->plugin->get_options();
@@ -403,7 +546,7 @@ HTML;
      */
     public function update_form_settings( mixed $form_id, array $settings ): bool
     {
-        $option_name = 'sentient_forms_gravity_forms_' . $form_id;
+        $option_name = $this->get_form_option_name( $form_id );
         return update_option( $option_name, $settings, false );
     }
 

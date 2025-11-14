@@ -97,19 +97,22 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
      */
     public function get_action_definitions( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $definitions = [];
-        foreach ( $this->action_registry->get_all_actions() as $id => $action )
-        {
-            $definitions[] = [
-                'id'             => $id,
-                'label'          => $action->get_name(),
-                'description'    => $action->get_description(),
-                'settingsFields' => $action->get_settings_fields(),
-                'icon'           => method_exists( $action, 'get_icon' ) ? $action->get_icon() : '',
-                'hooks'          => method_exists( $action, 'get_hooks' ) ? $action->get_hooks() : [],
-                'compatibility'  => method_exists( $action, 'get_compatibility' ) ? $action->get_compatibility() : [],
-            ];
-        }
+		$definitions = [];
+		foreach ( $this->action_registry->get_all_actions() as $id => $action )
+		{
+			$definitions[] = [
+				'id'             => $id,
+				'label'          => $action->get_name(),
+				'description'    => $action->get_description(),
+				'settingsFields' => $action->get_settings_fields(),
+				'icon'           => method_exists( $action, 'get_icon' ) ? $action->get_icon() : '',
+				'hooks'          => method_exists( $action, 'get_hooks' ) ? $action->get_hooks() : [],
+				'compatibility'  => method_exists( $action, 'get_compatibility' ) ? $action->get_compatibility() : [],
+				'source'         => 'local',
+				'baseCreditCost' => null,
+				'modelHint'      => method_exists( $action, 'get_model_hint' ) ? $action->get_model_hint() : null,
+			];
+		}
 
         return $this->prepare_item_for_response( $definitions );
     }

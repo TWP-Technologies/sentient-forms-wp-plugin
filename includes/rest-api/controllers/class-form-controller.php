@@ -24,7 +24,7 @@ class Sentient_Forms_Form_Controller extends Abstract_Sentient_Forms_Base_Contro
 
     /**
      * The base of this controller's routes.
-     * Example: /sentient-forms/v1/gravityforms/forms
+	 * Example: /sentient-forms/v1/gravity_forms/forms
      *
      * @var string
      */

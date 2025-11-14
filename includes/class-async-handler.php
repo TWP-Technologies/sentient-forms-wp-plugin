@@ -42,7 +42,7 @@ class Sentient_Forms_Async_Handler
     public function init(): void
     {
         // Register the action hook for processing actions
-        add_action( 'sentient_forms_process_action', [ $this, 'process_action' ], 10, 3 );
+        add_action( 'sentient_forms_process_action', [ $this, 'process_action' ], 10, 4 );
 
         // Register the action hook for Action Scheduler
         if ( function_exists( 'as_schedule_single_action' ) )
@@ -73,7 +73,7 @@ class Sentient_Forms_Async_Handler
      *
      * @return bool Whether the action was scheduled.
      */
-    public function schedule_action( string $action_id, array $data, array $settings ): bool
+    public function schedule_action( string $action_id, array $data, array $settings, array $context = [] ): bool
     {
         // Get the action instance
         $action = $this->plugin->get_action( $action_id );
@@ -90,9 +90,11 @@ class Sentient_Forms_Async_Handler
                 time(),
                 'sentient_forms_process_action',
                 [
-                    'action_id' => $action_id,
-                    'data'      => $data,
-                    'settings'  => $settings,
+                    'action_id'            => $action_id,
+                    'data'                 => $data,
+                    'settings'             => $settings,
+                    'execution_request_id' => $context['execution_request_id'] ?? null,
+                    'context'              => $context,
                 ],
                 'sentient_forms',
             );
@@ -104,9 +106,11 @@ class Sentient_Forms_Async_Handler
                 time(),
                 'sentient_forms_process_action',
                 [
-                    'action_id' => $action_id,
-                    'data'      => $data,
-                    'settings'  => $settings,
+                    'action_id'            => $action_id,
+                    'data'                 => $data,
+                    'settings'             => $settings,
+                    'execution_request_id' => $context['execution_request_id'] ?? null,
+                    'context'              => $context,
                 ],
             );
         }
@@ -121,7 +125,7 @@ class Sentient_Forms_Async_Handler
      *
      * @return void
      */
-    public function process_action( string $action_id, array $data, array $settings ): void
+    public function process_action( string $action_id, array $data, array $settings, $execution_request_id = null, array $context = [] ): void
     {
         // Get the action instance
         $action = $this->plugin->get_action( $action_id );

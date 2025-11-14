@@ -121,9 +121,31 @@ final class Sentient_Forms_Autoloader
      */
     public function autoload( string $class_name ): void
     {
-        // Only attempt to autoload classes that belong to this plugin (based on prefix).
-        // Adjust the prefix if your plugin uses a different one.
-        if ( !str_starts_with( $class_name, 'Sentient_Forms_' ) )
+        if ( 'Abstract_Sentient_Forms_Base_Controller' === $class_name )
+        {
+            require_once __DIR__ . '/rest-api/controllers/abstract-class-base-controller.php';
+            return;
+        }
+
+        if ( 'Trait_Sentient_Forms_Permission_Utils' === $class_name )
+        {
+            require_once __DIR__ . '/rest-api/permissions/trait-permission-utils.php';
+            return;
+        }
+
+        // Only attempt to autoload plugin symbols.
+        $supported_prefixes = [ 'Sentient_Forms_', 'Trait_Sentient_Forms_' ];
+        $has_supported_prefix = false;
+        foreach ( $supported_prefixes as $prefix )
+        {
+            if ( str_starts_with( $class_name, $prefix ) )
+            {
+                $has_supported_prefix = true;
+                break;
+            }
+        }
+
+        if ( !$has_supported_prefix )
         {
             return;
         }
@@ -158,4 +180,3 @@ final class Sentient_Forms_Autoloader
 }
 
 new Sentient_Forms_Autoloader(); // this should be done once when the plugin loads.
-

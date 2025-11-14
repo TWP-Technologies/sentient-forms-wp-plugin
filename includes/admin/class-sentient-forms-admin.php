@@ -60,6 +60,7 @@ class Sentient_Forms_Admin
 
         // Enqueue admin-specific scripts and styles.
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_scripts' ] );
+        add_filter( 'script_loader_tag', [ $this, 'force_module_type_for_spa' ], 10, 3 );
 
         // Add plugin action links (e.g., "Settings") on the plugins page.
         if ( defined( 'SENTIENT_FORMS_PLUGIN_FILE' ) )
@@ -221,30 +222,51 @@ class Sentient_Forms_Admin
             true
         );
 
-        wp_script_add_data( $script_handle, 'type', 'module' );
+		wp_script_add_data( $script_handle, 'type', 'module' );
 
-        $config = $this->build_spa_bootstrap_payload();
-        wp_add_inline_script( $script_handle, 'window.sentientFormsConfig = ' . wp_json_encode( $config ) . ';', 'before' );
-    }
+		$config        = $this->build_spa_bootstrap_payload();
+		$bootstrap_js  = 'window.sentientFormsConfig = ' . wp_json_encode( $config ) . ';';
+		$bootstrap_js .= "\n" . $this->build_hash_router_bootstrap_js();
+		wp_add_inline_script( $script_handle, $bootstrap_js, 'before' );
+	}
 
-    private function build_spa_bootstrap_payload(): array
-    {
-        return [
-            'apiBaseUrl'    => rest_url( 'sentient-forms/v1/' ),
-            'restNonce'     => wp_create_nonce( 'wp_rest' ),
-            'ajaxNonce'     => wp_create_nonce( 'sentient_forms_admin_nonce' ),
-            'ajaxUrl'       => admin_url( 'admin-ajax.php' ),
-            'siteUrl'       => get_site_url(),
-            'localSiteIdentifier' => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
-            'pluginVersion' => SENTIENT_FORMS_VERSION,
-            'assetBaseUrl'  => rtrim( $this->assets->get_asset_url( '' ), '/' ),
-            'devMode'       => $this->assets->is_dev_mode(),
-            'devServerUrl'  => $this->assets->is_dev_mode() ? rtrim( $this->assets->get_asset_url( '' ), '/' ) : null,
-            'license'       => $this->build_license_bootstrap_payload(),
-            'currentUser'   => [
-                'id'        => get_current_user_id(),
-                'canManage' => current_user_can( 'manage_options' ),
-            ],
+	public function force_module_type_for_spa( string $tag, string $handle, string $src ): string
+	{
+		if ( 'sentient-forms-admin-app' !== $handle )
+		{
+			return $tag;
+		}
+
+		if ( str_contains( $tag, 'type="module"' ) || str_contains( $tag, "type='module'" ) )
+		{
+			return $tag;
+		}
+
+		return str_replace( '<script ', '<script type="module" ', $tag );
+	}
+
+	private function build_spa_bootstrap_payload(): array
+	{
+		$initial_route = $this->determine_initial_route();
+
+		return [
+			'apiBaseUrl'    => rest_url( 'sentient-forms/v1/' ),
+			'restNonce'     => wp_create_nonce( 'wp_rest' ),
+			'ajaxNonce'     => wp_create_nonce( 'sentient_forms_admin_nonce' ),
+			'ajaxUrl'       => admin_url( 'admin-ajax.php' ),
+			'siteUrl'       => get_site_url(),
+			'localSiteIdentifier' => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
+			'pluginVersion' => SENTIENT_FORMS_VERSION,
+			'assetBaseUrl'  => rtrim( $this->assets->get_asset_url( '' ), '/' ),
+			'devMode'       => $this->assets->is_dev_mode(),
+			'devServerUrl'  => $this->assets->is_dev_mode() ? rtrim( $this->assets->get_asset_url( '' ), '/' ) : null,
+			'license'       => $this->build_license_bootstrap_payload(),
+			'initialRoute'  => $initial_route,
+			'formSources'   => $this->collect_form_sources(),
+			'currentUser'   => [
+				'id'        => get_current_user_id(),
+				'canManage' => current_user_can( 'manage_options' ),
+			],
             'i18n'          => [
                 'errorOccurred'     => __( 'An error occurred. Please try again.', 'sentient-forms' ),
                 'unsavedChanges'    => __( 'You have unsaved changes. Are you sure you want to leave?', 'sentient-forms' ),
@@ -259,9 +281,9 @@ class Sentient_Forms_Admin
         ];
     }
 
-    private function build_license_bootstrap_payload(): array
-    {
-        $license_data = Sentient_Forms_Plugin::instance()->get_license_data();
+	private function build_license_bootstrap_payload(): array
+	{
+		$license_data = Sentient_Forms_Plugin::instance()->get_license_data();
         $license_key  = $license_data['license_key'] ?? '';
 
         $masked_key = '';
@@ -272,17 +294,71 @@ class Sentient_Forms_Admin
                 : str_repeat( '*', strlen( $license_key ) );
         }
 
-        return [
-            'status'            => $license_data['license_status'] ?? 'inactive',
-            'licenseKeyMasked'  => $masked_key,
-            'proxyKeyPresent'   => ! empty( $license_data['proxy_api_key'] ),
-            'tier'              => $license_data['tier'] ?: null,
-            'expiresAt'         => $license_data['expiry_date'] ?: null,
-            'lastSynced'        => $license_data['last_synced'] ?: null,
-            'licenseId'         => $license_data['license_id'] ?: null,
-            'siteId'            => $license_data['site_id'] ?: null,
-        ];
-    }
+		return [
+			'status'            => $license_data['license_status'] ?? 'inactive',
+			'licenseKeyMasked'  => $masked_key,
+			'proxyKeyPresent'   => ! empty( $license_data['proxy_api_key'] ),
+			'tier'              => $license_data['tier'] ?: null,
+			'expiresAt'         => $license_data['expiry_date'] ?: null,
+			'lastSynced'        => $license_data['last_synced'] ?: null,
+			'licenseId'         => $license_data['license_id'] ?: null,
+			'siteId'            => $license_data['site_id'] ?: null,
+		];
+	}
+
+	private function build_hash_router_bootstrap_js(): string
+	{
+		return <<<'JS'
+(function () {
+	try {
+		var config = window.sentientFormsConfig || {};
+		var route = typeof config.initialRoute === 'string' ? config.initialRoute : '/dashboard';
+		if (!route.startsWith('/')) {
+			route = '/' + route;
+		}
+		var targetHash = '#' + route.replace(/^\/+/g, '');
+		if (window.location.hash !== targetHash) {
+			window.location.hash = targetHash;
+		}
+	} catch (error) {
+		console.error('Sentient Forms router bootstrap failed', error);
+	}
+})();
+JS;
+	}
+
+	private function determine_initial_route(): string
+	{
+		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( (string) $_GET['page'] ) ) : 'sentient-forms';
+
+		return match ( $page ) {
+			'sentient-forms-actions',
+			'sentient-forms-form-config' => '/actions',
+			'sentient-forms-license'     => '/licensing',
+			default                      => '/dashboard',
+		};
+	}
+
+	private function collect_form_sources(): array
+	{
+		$plugin   = Sentient_Forms_Plugin::instance();
+		$registry = $plugin ? $plugin->get_form_adapter_registry() : null;
+
+		if ( ! $registry ) {
+			return [];
+		}
+
+		$sources = [];
+		foreach ( $registry->get_all_adapters() as $adapter ) {
+			$sources[] = [
+				'slug'     => $adapter->get_id(),
+				'label'    => $adapter->get_name(),
+				'isActive' => $adapter->is_active(),
+			];
+		}
+
+		return $sources;
+	}
 
     public function render_asset_error_notice(): void
     {

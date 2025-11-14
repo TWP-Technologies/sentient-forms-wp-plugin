@@ -54,4 +54,3 @@ else
 // Activation/Deactivation hooks are typically registered within the main plugin class constructor or a dedicated hooks method.
 // Example: register_activation_hook( __FILE__, array( 'Sentient_Forms_Plugin', 'activate' ) );
 // This is already handled inside the Sentient_Forms_Plugin class.
-

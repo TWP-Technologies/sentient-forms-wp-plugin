@@ -27,7 +27,7 @@ final class Sentient_Forms_Form_Sources
      * @var string
      * @since 0.1.0
      */
-    const GRAVITY_FORMS = 'gravityforms';
+	const GRAVITY_FORMS = 'gravity_forms';
 
     /**
      * Slug for Contact Form 7 (example for future).
