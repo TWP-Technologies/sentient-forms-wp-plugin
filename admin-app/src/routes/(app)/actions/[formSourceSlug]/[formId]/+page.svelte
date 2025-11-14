@@ -3,8 +3,8 @@
 	import { onMount } from 'svelte';
 	import { Section, Button, Card, Badge } from '$lib/components/ui';
 	import Alert from '$lib/components/ui/alert.svelte';
-	import { formActionsStore } from '$lib/stores/form-actions';
-	import { notifications } from '$lib/stores/notifications';
+import { formActionsStore } from '$lib/stores/form-actions';
+import { notifications } from '$lib/stores/notifications';
 	import type {
 		ActionDefinition,
 		CreditBalanceResponse,
@@ -25,6 +25,37 @@ let state = {
 	definitions: [] as ActionDefinition[],
 	status: null as FormExecutionStatus | null
 };
+
+const FALLBACK_HOOK_LABELS: Record<string, string> = {
+	'gform_validation': 'During validation (Gravity Forms)',
+	'gform_after_submission': 'After submission (Gravity Forms)'
+};
+
+function normalizeDefinitionHooks(hooks?: Record<string, string> | string[]): string[] {
+	if (!hooks) {
+		return [];
+	}
+
+	return Array.isArray(hooks) ? hooks : Object.keys(hooks);
+}
+
+function summarizeDefinitionHooks(hooks?: Record<string, string> | string[]): string {
+	if (!hooks) {
+		return 'Default (gform_validation)';
+	}
+
+	if (Array.isArray(hooks)) {
+		return hooks.length > 0 ? hooks.join(', ') : 'Default (gform_validation)';
+	}
+
+	const labels = Object.values(hooks);
+	return labels.length > 0 ? labels.join(', ') : 'Default (gform_validation)';
+}
+
+let hookOptions: Record<string, string> = { ...FALLBACK_HOOK_LABELS };
+let hookEntries: [string, string][] = Object.entries(hookOptions);
+let editingLinkageId: string | null = null;
+let draftHooks: Set<string> = new Set();
 
 type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 let definitionsBadgeVariant: BadgeVariant = 'warning';
@@ -52,9 +83,34 @@ $: definitionsBadgeLabel = hasCpsDefinitions ? 'CPS templates' : 'Local fallback
 
 	let statusAdvice: StatusAdvice | null = null;
 
-	const unsubscribe = formActionsStore.subscribe((value) => {
-		state = value;
-	});
+const unsubscribe = formActionsStore.subscribe((value) => {
+	state = value;
+});
+
+$: hookOptions = state.definitions.reduce<Record<string, string>>((acc, definition) => {
+	if (!definition?.hooks) {
+		return acc;
+	}
+
+	if (Array.isArray(definition.hooks)) {
+		definition.hooks.forEach((hook) => {
+			const key = hook?.toString();
+			if (key) {
+				acc[key] = acc[key] ?? key;
+			}
+		});
+	} else if (typeof definition.hooks === 'object') {
+		Object.entries(definition.hooks).forEach(([hook, label]) => {
+			if (hook) {
+				acc[hook] = label?.toString() ?? hook;
+			}
+		});
+	}
+
+	return acc;
+}, { ...FALLBACK_HOOK_LABELS });
+
+$: hookEntries = Object.entries(hookOptions);
 
 	onMount(() => {
 		formActionsStore.load(data.formSourceSlug, data.formId);
@@ -79,9 +135,9 @@ $: definitionsBadgeLabel = hasCpsDefinitions ? 'CPS templates' : 'Local fallback
 
 function handleCreate() {
 	const definitions = state.definitions ?? [];
-	const actionList = definitions
-		.map((definition) => {
-			const label = definition.label ?? definition.id;
+const actionList = definitions
+	.map((definition) => {
+		const label = definition.label ?? definition.id;
 			const cost =
 				typeof definition.baseCreditCost === 'number'
 					? ` (≈${definition.baseCreditCost} credits)`
@@ -102,10 +158,8 @@ function handleCreate() {
 		const selectedDefinition = definitions.find(
 			(definition) => definition.id === centralActionId.trim()
 		);
-		const triggerHooks =
-			selectedDefinition?.hooks && selectedDefinition.hooks.length > 0
-				? selectedDefinition.hooks
-				: ['gform_validation'];
+	const normalizedHooks = normalizeDefinitionHooks(selectedDefinition?.hooks);
+	const triggerHooks = normalizedHooks.length > 0 ? normalizedHooks : ['gform_validation'];
 
 		formActionsStore.create(data.formSourceSlug, data.formId, {
 			central_action_id: centralActionId.trim(),
@@ -127,6 +181,47 @@ function handleCreate() {
 
 function refresh() {
 	formActionsStore.refresh(data.formSourceSlug, data.formId);
+}
+
+function ensureDraftHooks(): string[] {
+	const available = Object.keys(hookOptions);
+	if (available.length === 0) {
+		return ['gform_validation'];
+	}
+
+	return available;
+}
+
+function startEditingHooks(linkage: FormActionLinkage) {
+	editingLinkageId = linkage.local_mapping_id;
+	const initialHooks = linkage.trigger_hooks && linkage.trigger_hooks.length > 0 ? linkage.trigger_hooks : ensureDraftHooks().slice(0, 1);
+	draftHooks = new Set(initialHooks);
+}
+
+function cancelEditingHooks() {
+	editingLinkageId = null;
+	draftHooks = new Set();
+}
+
+function toggleHookSelection(hook: string) {
+	const next = new Set(draftHooks);
+	if (next.has(hook)) {
+		next.delete(hook);
+	} else {
+		next.add(hook);
+	}
+	draftHooks = next;
+}
+
+async function saveHookChanges(linkage: FormActionLinkage) {
+	if (draftHooks.size === 0) {
+		notifications.error('Select at least one trigger hook.');
+		return;
+	}
+
+	await formActionsStore.updateHooks(data.formSourceSlug, data.formId, linkage, Array.from(draftHooks));
+	editingLinkageId = null;
+	draftHooks = new Set();
 }
 
 	const formatBaseCreditCost = (definition: ActionDefinition) => {
@@ -326,9 +421,9 @@ function refresh() {
 
 <Section heading="Actions" description="Configure CPS-backed workflows for your form submissions.">
 	<div slot="actions" class="sf-flex sf-gap-2">
-		<Button variant="secondary" on:click={refresh}>Refresh</Button>
-		<Button on:click={handleCreate}>New action</Button>
-		<Button variant="secondary" on:click={checkEntryStatus}>Check entry status</Button>
+	<Button variant="secondary" onclick={refresh}>Refresh</Button>
+	<Button onclick={handleCreate}>New action</Button>
+	<Button variant="secondary" onclick={checkEntryStatus}>Check entry status</Button>
 	</div>
 
 	{#if hasDefinitions}
@@ -380,9 +475,7 @@ function refresh() {
 								<td class="sf-px-4 sf-py-3 sf-align-top">{formatBaseCreditCost(definition)}</td>
 								<td class="sf-px-4 sf-py-3 sf-align-top">{formatModelHint(definition)}</td>
 								<td class="sf-px-4 sf-py-3 sf-align-top">
-									{definition.hooks && definition.hooks.length > 0
-										? definition.hooks.join(', ')
-										: 'Default (gform_validation)'}
+										{summarizeDefinitionHooks(definition.hooks)}
 								</td>
 							</tr>
 						{/each}
@@ -398,7 +491,7 @@ function refresh() {
 		<Alert variant="danger" class="sf-mb-4">
 			<div class="sf-flex sf-flex-col md:sf-flex-row sf-items-start md:sf-items-center sf-gap-3">
 				<span>{state.error}</span>
-				<Button size="sm" variant="secondary" on:click={refresh}>Retry</Button>
+			<Button size="sm" variant="secondary" onclick={refresh}>Retry</Button>
 			</div>
 		</Alert>
 {:else}
@@ -434,11 +527,11 @@ function refresh() {
 							{#if statusAdvice.actions && statusAdvice.actions.length > 0}
 								<div class="sf-flex sf-flex-wrap sf-gap-2 sf-mt-2">
 									{#each statusAdvice.actions as action (action.id)}
-										<Button
-											size="sm"
-											variant={action.variant ?? 'secondary'}
-											on:click={() => performStatusAction(action.id)}
-										>
+											<Button
+												size="sm"
+												variant={action.variant ?? 'secondary'}
+												onclick={() => performStatusAction(action.id)}
+											>
 											{action.label}
 										</Button>
 									{/each}
@@ -470,15 +563,49 @@ function refresh() {
 									<td class="sf-px-4 sf-py-3 sf-font-medium">
 										{linkage.action_name_label ?? linkage.central_action_id ?? 'Unnamed action'}
 									</td>
-									<td class="sf-px-4 sf-py-3">{(linkage.trigger_hooks ?? []).join(', ')}</td>
+							<td class="sf-px-4 sf-py-3">
+								<div class="sf-flex sf-flex-wrap sf-gap-2">
+									{#if linkage.trigger_hooks && linkage.trigger_hooks.length > 0}
+										{#each linkage.trigger_hooks as hook (hook)}
+											<Badge variant="info">{hookOptions[hook] ?? hook}</Badge>
+										{/each}
+									{:else}
+										<span class="sf-text-xs sf-text-slate-500">No hooks configured</span>
+									{/if}
+								</div>
+								<div class="sf-mt-2 sf-space-x-2">
+						<Button size="sm" variant="ghost" onclick={() => startEditingHooks(linkage)}>
+										Edit hooks
+									</Button>
+								</div>
+								{#if editingLinkageId === linkage.local_mapping_id}
+									<div class="sf-mt-3 sf-rounded-md sf-border sf-border-slate-200 sf-p-3 sf-space-y-2">
+										{#each hookEntries as [hookKey, hookLabel] (hookKey)}
+											<label class="sf-flex sf-items-center sf-gap-2 sf-text-sm">
+												<input
+													type="checkbox"
+													class="sf-form-checkbox"
+													checked={draftHooks.has(hookKey)}
+													onchange={() => toggleHookSelection(hookKey)}
+												/>
+												<span>{hookLabel}</span>
+											</label>
+										{/each}
+										<div class="sf-flex sf-gap-2 sf-flex-wrap sf-pt-2">
+										<Button size="sm" onclick={() => saveHookChanges(linkage)}>Save</Button>
+										<Button size="sm" variant="secondary" onclick={cancelEditingHooks}>Cancel</Button>
+										</div>
+									</div>
+								{/if}
+							</td>
 									<td class="sf-px-4 sf-py-3">
 										<Badge variant={statusVariant(linkage)}>{statusLabel(linkage)}</Badge>
 									</td>
 									<td class="sf-px-4 sf-py-3 sf-text-right sf-space-x-2">
-										<Button size="sm" variant="secondary" on:click={() => toggle(linkage)}>
+						<Button size="sm" variant="secondary" onclick={() => toggle(linkage)}>
 											{linkage.is_action_enabled_for_form === false ? 'Enable' : 'Disable'}
 										</Button>
-										<Button size="sm" variant="ghost" on:click={() => remove(linkage)}>
+						<Button size="sm" variant="ghost" onclick={() => remove(linkage)}>
 											Remove
 										</Button>
 									</td>

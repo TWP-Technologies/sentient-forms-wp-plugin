@@ -4,11 +4,16 @@
 
 	const activePath = derived(page, ($page) => $page.url.pathname);
 
-	const links = [
-		{ href: '/dashboard', label: 'Dashboard' },
-		{ href: '/licensing', label: 'Licensing' },
-		{ href: '/actions', label: 'Actions' }
-	];
+const links = [
+	{ path: '/dashboard', label: 'Dashboard' },
+	{ path: '/licensing', label: 'Licensing' },
+	{ path: '/actions', label: 'Actions' }
+];
+
+const toHashHref = (path: string) => {
+	const normalized = path.startsWith('/') ? path.slice(1) : path;
+	return `#/${normalized}`.replace('#//', '#/');
+};
 </script>
 
 <div class="sf-min-h-screen sf-bg-slate-100 sf-text-slate-900 sf-font-sans">
@@ -22,9 +27,9 @@
 				{#each links as link}
 					<a
 						class="sf-rounded sf-px-3 sf-py-2 sf-text-sm sf-font-medium sf-transition-all hover:sf-bg-slate-100"
-						class:sf-bg-slate-200={ $activePath === link.href}
-						class:sf-text-slate-900={ $activePath === link.href}
-						href={link.href}
+						class:sf-bg-slate-200={ $activePath === link.path}
+						class:sf-text-slate-900={ $activePath === link.path}
+						href={toHashHref(link.path)}
 					>
 						{link.label}
 					</a>

@@ -1,17 +1,33 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
+	import type { HTMLButtonAttributes } from 'svelte/elements';
 
-	export let id: string;
-	export let checked = false;
-	export let disabled = false;
-	export let label: string | null = null;
-	export let description: string | null = null;
+	type ToggleEvent = CustomEvent<{ checked: boolean }>;
+	type Props = {
+		id?: string;
+		checked?: boolean;
+		disabled?: boolean;
+		label?: string | null;
+		description?: string | null;
+		onchange?: (event: ToggleEvent) => void;
+	} & Omit<HTMLButtonAttributes, 'type' | 'role'>;
 
-	const dispatch = createEventDispatcher<{ change: { checked: boolean } }>();
+	const autoId = $props.id();
+	let {
+		id = autoId,
+		checked = $bindable(false),
+		disabled = false,
+		label = null,
+		description = null,
+		onchange,
+		...rest
+	}: Props = $props();
+
+	let ariaDescribedBy = $derived(description ? `${id}-description` : undefined);
+	let ariaLabelledBy = $derived(label ? `${id}-label` : undefined);
 
 	function emitChange(next: boolean) {
 		checked = next;
-		dispatch('change', { checked: next });
+		onchange?.(new CustomEvent('change', { detail: { checked: next } }));
 	}
 
 	function handleClick() {
@@ -26,9 +42,6 @@
 			emitChange(!checked);
 		}
 	}
-
-	$: ariaDescribedBy = description ? `${id}-description` : undefined;
-	$: ariaLabelledBy = label ? `${id}-label` : undefined;
 </script>
 
 <div class="sf-flex sf-items-start sf-gap-3" data-testid="toggle">
@@ -44,8 +57,9 @@
 			checked ? 'sf-bg-primary-600' : 'sf-bg-muted-400'
 		} ${disabled ? 'sf-opacity-60 sf-cursor-not-allowed' : 'sf-cursor-pointer'}`}
 		disabled={disabled}
-		on:click={handleClick}
-		on:keydown={handleKeydown}
+		onclick={handleClick}
+		onkeydown={handleKeydown}
+		{...rest}
 	>
 		<span
 			aria-hidden="true"

@@ -1,6 +1,13 @@
 import { notifications } from '$lib/stores/notifications';
 import type {
+	ActionDefinition,
 	ApiErrorPayload,
+	CreditBalanceResponse,
+	ExecutionStatus,
+	FormActionLinkage,
+	FormActionMutationPayload,
+	FormExecutionStatus,
+	FormSummary,
 	LicenseActivationRequest,
 	LicenseActivationResponsePayload,
 	LicenseActivationResult,
@@ -89,6 +96,104 @@ export class SentientFormsApiClient {
 
 	async deactivateLicense(options: RequestOptions = {}): Promise<void> {
 		await this.request('license/deactivate', { method: 'POST', ...options });
+	}
+
+	async getCreditBalance(options: RequestOptions = {}): Promise<CreditBalanceResponse> {
+		const response = await this.request<RestEnvelope<CreditBalanceResponse>>('credits/balance', options);
+		return this.unwrap(response);
+	}
+
+	async getActionDefinitions(options: RequestOptions = {}): Promise<ActionDefinition[]> {
+		const response = await this.request<RestEnvelope<ActionDefinition[]>>('actions/definitions', options);
+		return this.unwrap(response);
+	}
+
+	async getForms(formSourceSlug: string, options: RequestOptions = {}): Promise<FormSummary[]> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<FormSummary[]>>(`${slug}/forms`, options);
+		return this.unwrap(response);
+	}
+
+	async getFormActions(
+		formSourceSlug: string,
+		formId: number,
+		options: RequestOptions = {}
+	): Promise<FormActionLinkage[]> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<FormActionLinkage[]>>(
+			`${slug}/forms/${formId}/actions`,
+			options
+		);
+		return this.unwrap(response);
+	}
+
+	async getFormExecutionStatus(
+		formSourceSlug: string,
+		formId: number,
+		options: RequestOptions = {}
+	): Promise<FormExecutionStatus> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<FormExecutionStatus>>(
+			`${slug}/forms/${formId}/actions/status`,
+			options
+		);
+		return this.unwrap(response);
+	}
+
+	async createFormAction(
+		formSourceSlug: string,
+		formId: number,
+		payload: FormActionMutationPayload,
+		options: RequestOptions = {}
+	): Promise<FormActionLinkage> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<FormActionLinkage>>(
+			`${slug}/forms/${formId}/actions`,
+			{ method: 'POST', body: payload, ...options }
+		);
+		return this.unwrap(response);
+	}
+
+	async updateFormAction(
+		formSourceSlug: string,
+		formId: number,
+		localMappingId: string,
+		payload: FormActionMutationPayload,
+		options: RequestOptions = {}
+	): Promise<FormActionLinkage> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<FormActionLinkage>>(
+			`${slug}/forms/${formId}/actions/${encodeURIComponent(localMappingId)}`,
+			{ method: 'PUT', body: payload, ...options }
+		);
+		return this.unwrap(response);
+	}
+
+	async deleteFormAction(
+		formSourceSlug: string,
+		formId: number,
+		localMappingId: string,
+		options: RequestOptions = {}
+	): Promise<void> {
+		const slug = encodeURIComponent(formSourceSlug);
+		await this.request(
+			`${slug}/forms/${formId}/actions/${encodeURIComponent(localMappingId)}`,
+			{ method: 'DELETE', ...options }
+		);
+	}
+
+	async getExecutionStatus(
+		formSourceSlug: string,
+		formId: number,
+		entryId: number,
+		options: RequestOptions = {}
+	): Promise<ExecutionStatus> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<ExecutionStatus>>(
+			`${slug}/forms/${formId}/actions/entries/${entryId}/status`,
+			options
+		);
+		return this.unwrap(response);
 	}
 
 	async request<T>(path: string, options: RequestOptions = {}): Promise<T> {

@@ -16,7 +16,9 @@
 </script>
 
 <Section heading="Dashboard" description="High-level health of Sentient Forms automation.">
-	<Button slot="actions" variant="secondary" on:click={() => sessionStore.reset?.()}>Refresh</Button>
+	<Button slot="actions" variant="secondary" onclick={() => sessionStore.reset?.()}>
+		Refresh
+	</Button>
 
 	<div class="sf-grid sf-gap-4 md:sf-grid-cols-3">
 		<Card>

@@ -1,3 +1,4 @@
+import type { FormSourceSummary } from '$lib/api/types';
 import { notifications } from '$lib/stores/notifications';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -15,6 +16,8 @@ interface SentientFormsConfig {
     ajaxNonce: string;
     siteUrl: string;
     localSiteIdentifier?: string;
+    initialRoute?: string;
+    formSources?: FormSourceSummary[];
     license?: {
         status?: string;
         licenseKeyMasked?: string;
@@ -27,6 +30,7 @@ interface SentientFormsConfig {
     };
     i18n?: Record<string, string>;
     devMode?: boolean;
+    devServerUrl?: string | null;
 }
 
 declare global {

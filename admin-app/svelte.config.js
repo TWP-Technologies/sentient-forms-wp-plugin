@@ -9,6 +9,9 @@ const config = {
 			$lib: 'src/lib',
 			$components: 'src/lib/components'
 		},
+		router: {
+			type: 'hash'
+		},
 		prerender: {
 			entries: []
 		}

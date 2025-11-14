@@ -9,6 +9,10 @@ export interface Notification {
 	timeout?: number;
 }
 
+// NOTE: This store intentionally stays as a classic writable store because it
+// manages setTimeout side effects for auto-dismiss behaviour. Converting it to
+// runes would add indirection without improving ergonomics, so we document the
+// choice here to prevent "upgrade" churn.
 const factory = () => {
 	const { subscribe, update } = writable<Notification[]>([]);
 	let counter = 0;

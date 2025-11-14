@@ -144,4 +144,41 @@ describe('formActionsStore', () => {
 			'This Sentient Forms action mapping is no longer valid. Reconfigure the action before retrying.'
 		);
 	});
+
+	it('updates trigger hooks and refreshes the status', async () => {
+		const linkage = {
+			local_mapping_id: 'map_1',
+			central_action_id: 'spam_detection_v1',
+			action_type_indicator: 'master',
+			trigger_hooks: ['gform_validation'],
+			is_action_enabled_for_form: true,
+			execution_priority: 10
+		};
+
+		stubClient.getFormActions.mockResolvedValue([linkage]);
+		stubClient.getCreditBalance.mockResolvedValue({
+			current_balance: 250,
+			ledger_delta: 0,
+			tier: null
+		});
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+		stubClient.updateFormAction.mockResolvedValue({
+			...linkage,
+			trigger_hooks: ['gform_after_submission']
+		});
+
+		await formActionsStore.load('gravity_forms', 1);
+		await formActionsStore.updateHooks('gravity_forms', 1, linkage, ['gform_after_submission']);
+
+		expect(stubClient.updateFormAction).toHaveBeenCalledWith(
+			'gravity_forms',
+			1,
+			'map_1',
+			{ trigger_hooks: ['gform_after_submission'] }
+		);
+		expect(stubClient.getFormExecutionStatus).toHaveBeenCalledTimes(2);
+		const state = snapshotState();
+		expect(state.items[0]?.trigger_hooks).toEqual(['gform_after_submission']);
+	});
 });

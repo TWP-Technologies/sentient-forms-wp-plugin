@@ -19,11 +19,12 @@
 		licenseStore.load();
 	});
 
-	async function handleActivate() {
-		issues = [];
+async function handleActivate(event: SubmitEvent) {
+	event.preventDefault();
+	issues = [];
 
-		if (!licenseKey.trim()) {
-			issues = [{ id: 'license-key', message: 'Enter your license key' }];
+	if (!licenseKey.trim()) {
+		issues = [{ id: 'license-key', message: 'Enter your license key' }];
 			return;
 		}
 
@@ -39,7 +40,7 @@
 >
 	<ValidationSummary {issues} />
 	<Card>
-		<form class="sf-space-y-4" on:submit|preventDefault={handleActivate}>
+		<form class="sf-space-y-4" onsubmit={handleActivate}>
 			<InputField
 				id="license-key"
 				bind:value={licenseKey}
@@ -97,7 +98,12 @@
 		{/if}
 
 		{#if $licenseStore.status === 'active'}
-			<Button variant="secondary" class="sf-mt-4" disabled={$licenseStore.loading} on:click={() => licenseStore.deactivate()}>
+			<Button
+				variant="secondary"
+				class="sf-mt-4"
+				disabled={$licenseStore.loading}
+				onclick={() => licenseStore.deactivate()}
+			>
 				{$licenseStore.loading ? 'Processing…' : 'Deactivate license'}
 			</Button>
 		{/if}
