@@ -67,6 +67,9 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'sentient_forms_process_action', $job['hook'] );
         $this->assertArrayHasKey( 'execution_request_id', $job['args'] );
         $this->assertNotEmpty( $job['args']['execution_request_id'] );
+        $this->assertArrayHasKey( 'context', $job['args'] );
+        $this->assertArrayHasKey( 'job_id', $job['args']['context'] );
+        $this->assertNotEmpty( $job['args']['context']['job_id'] );
     }
 
     public function test_process_action_async_is_idempotent_for_same_payload(): void
@@ -148,6 +151,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'entry_evaluation', $context['action_id'] );
         $this->assertArrayHasKey( 'evaluation_payload', $context );
         $this->assertSame( $job['payload'], $context['evaluation_payload'] );
+        $this->assertArrayHasKey( 'job_id', $context );
+        $this->assertNotEmpty( $context['job_id'] );
     }
 
     public function test_metadata_store_tracks_job_status(): void
