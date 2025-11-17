@@ -7,7 +7,7 @@ import { ApiClientError, createClientFromConfig } from '$lib/api/client';
 import type { FormSourceSummary, FormSummary } from '$lib/api/types';
 
 	const client = createClientFromConfig();
-	const runtime = window.sentientFormsConfig;
+	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
 	const formSources: FormSourceSummary[] = runtime?.formSources ?? [];
 	const formsCache = new Map<string, FormSummary[]>();
 

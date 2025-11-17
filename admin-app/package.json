@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
-    "preview": "vite preview",
+    "dev": "node scripts/select-layout.mjs && vite dev",
+    "build": "node scripts/select-layout.mjs && vite build",
+    "preview": "node scripts/select-layout.mjs && vite preview",
+    "preview:ci": "SENTIENT_FORMS_ROUTER=pathname bun run build && SENTIENT_FORMS_ROUTER=pathname node scripts/select-layout.mjs && SENTIENT_FORMS_ROUTER=pathname vite preview --host 127.0.0.1 --port 4173",
     "build:spa": "bun run build",
     "build:clean": "rimraf ../assets/dist/*",
     "build:copy": "node scripts/copy-build.mjs",

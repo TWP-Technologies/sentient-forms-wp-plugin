@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const PREVIEW_PORT = 4173;
+
 export default defineConfig({
 	testDir: './tests/e2e',
 	timeout: 30_000,
@@ -9,7 +11,7 @@ export default defineConfig({
 	fullyParallel: true,
 	reporter: [['list'], ['html', { open: 'never' }]],
 	use: {
-		baseURL: 'http://localhost:5173',
+		baseURL: `http://127.0.0.1:${PREVIEW_PORT}`,
 		trace: 'on-first-retry'
 	},
 	projects: [
@@ -19,8 +21,8 @@ export default defineConfig({
 		}
 	],
 	webServer: {
-		command: 'bun run dev',
-		url: 'http://127.0.0.1:5173',
+		command: 'bun run preview:ci',
+		url: `http://127.0.0.1:${PREVIEW_PORT}`,
 		reuseExistingServer: true,
 		timeout: 120_000
 	}

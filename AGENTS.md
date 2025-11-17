@@ -21,10 +21,13 @@ Sentient Forms is a WordPress plugin that routes form submissions through curate
 ## Project Structure & Module Organization
 The entry point `sentient-forms.php` defines plugin constants and boots `includes/class-sentient-forms-plugin.php`. Domain logic sits in `includes/` with subdirectories for `actions/`, `adapters/`, `llms/`, `rest-api/`, and shared `utilities/`. Admin-facing CSS/JS are transitioning to the SvelteKit SPA located in `admin-app/` (built assets will be emitted into `assets/dist/` in Task 0.6). Legacy PHP-rendered admin scripts persist only until the SPA replaces them. Build scripts, currently `build/generate-class-map.php`, remain isolated from runtime code.
 
+- Async execution details (Action Scheduler integration, retry policy, telemetry hooks) live in `docs/async-handler.md`. Use that doc when wiring new adapters or site-specific logging so you respect consent + retry semantics.
+
 ### Svelte 5 SPA Conventions
 - SPA modules must follow Svelte 5 idioms: use runes (`$state`, `$derived`, `$effect`, `$props()`), callback props, and `$bindable` instead of `createEventDispatcher`/`on:` directives. Native DOM attributes (e.g., `onclick`) replace the old `on:event` syntax.
 - When two-way bindings are required, expose bindable props or callback props rather than dispatchers. Shared stores should only remain in writable form when they orchestrate side effects (e.g., the notifications queue uses `setTimeout`), and such cases should be documented inline.
 - Run `bun run svelte:guard` (part of `bun run qa:full`) before opening a PR; it executes `npx sv check` and fails if legacy syntax or `createEventDispatcher` usage slips back in.
+- The `/actions/custom` route is the canonical custom-action UX. Always go through `$lib/stores/custom-actions` so quota, notifications, and CPS envelopes stay consistent. The store expects CPS to return `{ action, quota }` on mutations and `{ actions, quota }` on reads; update the shared TypeScript types if the CPS contract changes.
 
 ## Build, Test, and Development Commands
 - `php build/generate-class-map.php`: rebuild `includes/class-map.php` after adding or moving classes.
@@ -38,6 +41,8 @@ The entry point `sentient-forms.php` defines plugin constants and boots `include
 - `bun run dev`: start the SvelteKit SPA dev server (binds to `127.0.0.1:5173`; set `SENTIENT_FORMS_DEV_HOST=0.0.0.0` if another container—such as WordPress in Docker—needs access).
 - `bun run qa:full`: mirror the GitHub Actions admin QA workflow (lint → type-check → Tailwind prefix enforcement → Vitest → Playwright → build → bundle budget). Use this as the default pre-PR gate for SPA changes.
 - `bun run tailwind:check`: verify no unprefixed/hex Tailwind classes slipped into `src/`.
+- `bun run preview:ci`: build with the pathname router and start a preview server on port `4173`. Playwright uses this preview build (see `playwright.config.ts`) so tests run against the same assets that WordPress loads.
+- `RUN_WP_E2E=1 bun run qa:full`: opt-in flag to exercise the wp-admin/Gravity Forms Playwright suites against the Docker WordPress stack. Without it, the `wp-*` specs skip to keep local CI deterministic when WordPress is unavailable.
 - `bun run <script>`: execute admin SPA tasks (e.g., `bun run dev`, `bun run build:wp`, `bun run lint`) from `wp-plugin/admin-app/`; Bun is the mandated runtime for all Node-equivalent tooling within this repository.
 
 GitHub Actions mirrors these commands in `.github/workflows/admin-spa-qa.yml`; keep that workflow green before merging SPA-facing work.

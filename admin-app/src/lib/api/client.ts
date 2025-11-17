@@ -1,8 +1,14 @@
+import type { SentientFormsConfig } from '$lib/api/http';
 import { notifications } from '$lib/stores/notifications';
 import type {
 	ActionDefinition,
 	ApiErrorPayload,
 	CreditBalanceResponse,
+	CustomAction,
+	CustomActionCreatePayload,
+	CustomActionFilters,
+	CustomActionQuota,
+	CustomActionUpdatePayload,
 	ExecutionStatus,
 	FormActionLinkage,
 	FormActionMutationPayload,
@@ -11,7 +17,8 @@ import type {
 	LicenseActivationRequest,
 	LicenseActivationResponsePayload,
 	LicenseActivationResult,
-	LicenseInfoResponse
+	LicenseInfoResponse,
+	TelemetrySettingsResponse
 } from '$lib/api/types';
 
 export interface ClientConfig {
@@ -98,6 +105,20 @@ export class SentientFormsApiClient {
 		await this.request('license/deactivate', { method: 'POST', ...options });
 	}
 
+	async getTelemetrySettings(options: RequestOptions = {}): Promise<TelemetrySettingsResponse> {
+		const response = await this.request<RestEnvelope<TelemetrySettingsResponse>>('telemetry', options);
+		return this.unwrap(response);
+	}
+
+	async updateTelemetrySettings(optIn: boolean, options: RequestOptions = {}): Promise<TelemetrySettingsResponse> {
+		const response = await this.request<RestEnvelope<TelemetrySettingsResponse>>('telemetry', {
+			method: 'PUT',
+			body: { telemetry_opt_in: optIn },
+			...options
+		});
+		return this.unwrap(response);
+	}
+
 	async getCreditBalance(options: RequestOptions = {}): Promise<CreditBalanceResponse> {
 		const response = await this.request<RestEnvelope<CreditBalanceResponse>>('credits/balance', options);
 		return this.unwrap(response);
@@ -182,6 +203,63 @@ export class SentientFormsApiClient {
 		);
 	}
 
+	async getCustomActions(
+		filters: CustomActionFilters = {},
+		options: RequestOptions = {}
+	): Promise<{ actions: CustomAction[]; quota: CustomActionQuota }> {
+		const params = new URLSearchParams();
+		if (filters.status) {
+			params.set('status', filters.status);
+		}
+		if (filters.include_archived) {
+			params.set('include_archived', 'true');
+		}
+		if (filters.template_id) {
+			params.set('template_id', filters.template_id);
+		}
+
+		const query = params.toString();
+		const path = query ? `custom-actions?${query}` : 'custom-actions';
+		return this.request(path, { showNotifications: false, ...options });
+	}
+
+	async createCustomAction(
+		payload: CustomActionCreatePayload,
+		options: RequestOptions = {}
+	): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
+		return this.request('custom-actions', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+	}
+
+	async updateCustomAction(
+		id: string,
+		payload: CustomActionUpdatePayload,
+		options: RequestOptions = {}
+	): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
+		return this.request(`custom-actions/${encodeURIComponent(id)}`, {
+			method: 'PUT',
+			body: payload,
+			...options
+		});
+	}
+
+	async archiveCustomAction(id: string, options: RequestOptions = {}): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
+		return this.request(`custom-actions/${encodeURIComponent(id)}`, {
+			method: 'DELETE',
+			...options
+		});
+	}
+
+	async reactivateCustomAction(id: string, options: RequestOptions = {}): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
+		return this.request(`custom-actions/${encodeURIComponent(id)}/reactivate`, {
+			method: 'POST',
+			...options
+		});
+	}
+
 	async getExecutionStatus(
 		formSourceSlug: string,
 		formId: number,
@@ -197,7 +275,27 @@ export class SentientFormsApiClient {
 	}
 
 	async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-		const url = new URL(path, this.baseUrl);
+		let url: URL;
+		const base = new URL(this.baseUrl.toString());
+		const restRoute = base.searchParams.get('rest_route');
+
+		if (restRoute) {
+			const [rawPath, rawQuery] = path.split('?');
+			const normalizedRoute = restRoute.replace(/\/+$/, '');
+			const normalizedPath = rawPath.replace(/^\/+/, '');
+			base.searchParams.set('rest_route', `${normalizedRoute}/${normalizedPath}`.replace(/\/{2,}/g, '/'));
+
+			if (rawQuery) {
+				const extra = new URLSearchParams(rawQuery);
+				extra.forEach((value, key) => {
+					base.searchParams.set(key, value);
+				});
+			}
+
+			url = base;
+		} else {
+			url = new URL(path, base);
+		}
 		const { body, headers, showNotifications, ...rest } = options;
 		const nonce = this.getNonce?.();
 
@@ -293,35 +391,57 @@ export const mockClient = new SentientFormsApiClient({
 });
 
 export function createClientFromConfig(overrides: Partial<ClientConfig> = {}): SentientFormsApiClient {
-	const config =
-		window.sentientFormsConfig ??
-		(() => {
-			const origin = window.location.origin;
-			window.sentientFormsConfig = {
-				apiBaseUrl: `${origin}/wp-json/sentient-forms/v1/`,
-				restNonce: 'dev-nonce',
-				ajaxNonce: 'dev-ajax',
-				siteUrl: origin,
-				localSiteIdentifier: 'dev-site',
-				devMode: true,
-				license: {
-					status: 'inactive',
-					licenseKeyMasked: '',
-					proxyKeyPresent: false,
-					tier: null,
-					expiresAt: null,
-					lastSynced: null,
-					licenseId: null,
-					siteId: null
-				},
-				i18n: {}
-			};
-			return window.sentientFormsConfig;
-		})();
+	const config = resolveRuntimeConfig();
 
 	return new SentientFormsApiClient({
 		baseUrl: config.apiBaseUrl,
 		getNonce: () => config.restNonce,
 		...overrides
 	});
+}
+
+function defaultRuntimeConfig(): SentientFormsConfig {
+	return {
+		apiBaseUrl: 'http://127.0.0.1:8080/wp-json/sentient-forms/v1/',
+		restNonce: 'dev-nonce',
+		ajaxNonce: 'dev-ajax',
+		siteUrl: 'http://127.0.0.1:8080',
+		localSiteIdentifier: 'dev-site',
+		devMode: true,
+		license: {
+			status: 'inactive',
+			licenseKeyMasked: '',
+			proxyKeyPresent: false,
+			tier: null,
+			expiresAt: null,
+			lastSynced: null,
+			licenseId: null,
+			siteId: null
+		},
+		telemetry: {
+			optIn: false,
+			updatedAt: null,
+			syncedAt: null,
+			remoteUpdatedAt: null,
+			lastError: null
+		},
+		i18n: {}
+	};
+}
+
+function resolveRuntimeConfig(): SentientFormsConfig {
+	if (typeof window === 'undefined') {
+		return defaultRuntimeConfig();
+	}
+
+	if (!window.sentientFormsConfig) {
+		const origin = window.location.origin;
+		window.sentientFormsConfig = {
+			...defaultRuntimeConfig(),
+			apiBaseUrl: `${origin}/wp-json/sentient-forms/v1/`,
+			siteUrl: origin
+		};
+	}
+
+	return window.sentientFormsConfig;
 }

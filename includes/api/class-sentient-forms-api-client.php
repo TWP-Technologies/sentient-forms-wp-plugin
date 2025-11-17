@@ -51,6 +51,56 @@ class Sentient_Forms_Api_Client
     }
 
     /**
+     * Perform a PUT request.
+     *
+     * @param string $path    Relative CPS path.
+     * @param array  $payload Payload to JSON encode.
+     * @param array  $options Optional bearer token / headers.
+     *
+     * @return array|WP_Error
+     */
+    public function put( string $path, array $payload, array $options = [] ): WP_Error | array
+    {
+        $args = [
+            'method'      => 'PUT',
+            'timeout'     => $this->timeout,
+            'redirection' => 3,
+            'headers'     => $this->build_headers( $options ),
+            'body'        => wp_json_encode( $payload ),
+        ];
+
+        return $this->request( $path, $args );
+    }
+
+    /**
+     * Perform a DELETE request. Optionally sends a JSON payload (needed for actor hints).
+     *
+     * @param string $path    Relative CPS path.
+     * @param array  $payload Optional JSON payload.
+     * @param array  $options Optional bearer token / headers.
+     *
+     * @return array|WP_Error
+     */
+    public function delete( string $path, array $payload = [], array $options = [] ): WP_Error | array
+    {
+        $has_payload = ! empty( $payload );
+
+        $args = [
+            'method'      => 'DELETE',
+            'timeout'     => $this->timeout,
+            'redirection' => 0,
+            'headers'     => $this->build_headers( $options, $has_payload ),
+        ];
+
+        if ( $has_payload )
+        {
+            $args['body'] = wp_json_encode( $payload );
+        }
+
+        return $this->request( $path, $args );
+    }
+
+    /**
      * Perform a GET request.
      *
      * @param string $path    Relative CPS path.

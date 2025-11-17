@@ -91,6 +91,63 @@ export interface FormActionMutationPayload {
 	action_name_label?: string;
 }
 
+export type CustomActionStatus = 'active' | 'archived';
+
+export interface CustomAction {
+	id: string;
+	template_id: string;
+	code: string;
+	display_name: string;
+	description: string | null;
+	prompt_overrides: Record<string, unknown>;
+	model_hint: string | null;
+	base_credit_cost: number | null;
+	status: CustomActionStatus;
+	archived_at: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface CustomActionQuota {
+	quota_max: number;
+	quota_used: number;
+	quota_remaining: number;
+}
+
+export interface CustomActionListSuccess {
+	success: true;
+	data: {
+		actions: CustomAction[];
+		quota: CustomActionQuota;
+	};
+}
+
+export interface CustomActionMutationSuccess {
+	success: true;
+	data: {
+		action: CustomAction;
+		quota: CustomActionQuota;
+	};
+}
+
+export interface CustomActionCreatePayload {
+	template_id: string;
+	code: string;
+	display_name: string;
+	description?: string | null;
+	prompt_overrides?: Record<string, unknown>;
+	model_hint?: string | null;
+	base_credit_cost?: number | null;
+}
+
+export type CustomActionUpdatePayload = Omit<CustomActionCreatePayload, 'template_id' | 'code'>;
+
+export interface CustomActionFilters {
+	status?: CustomActionStatus;
+	include_archived?: boolean;
+	template_id?: string;
+}
+
 export interface FormExecutionStatus {
 	status: 'unknown' | 'success' | 'error';
 	message: string | null;
@@ -107,6 +164,14 @@ export interface ExecutionStatus {
 	last_error: string | null;
 	processed_at: string | null;
 	status: 'unknown' | 'success' | 'error';
+}
+
+export interface TelemetrySettingsResponse {
+	telemetry_opt_in: boolean;
+	updated_at: string | null;
+	synced_at: string | null;
+	remote_updated_at: string | null;
+	last_error: string | null;
 }
 
 export interface FormSummary {

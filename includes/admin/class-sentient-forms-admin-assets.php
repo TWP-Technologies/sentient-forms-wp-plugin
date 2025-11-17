@@ -16,6 +16,7 @@ class Sentient_Forms_Admin_Assets {
     private $manifest;
     private ?string $dev_base_url = null;
     private ?string $dev_notice_message = null;
+    private ?string $sveltekit_runtime_key = null;
 
     /**
      * Retrieve the decoded Vite manifest.
@@ -81,6 +82,24 @@ class Sentient_Forms_Admin_Assets {
      */
     private function get_assets_path( string $relative ): string {
         return trailingslashit( SENTIENT_FORMS_PLUGIN_DIR ) . 'assets/dist/' . ltrim( $relative, '/' );
+    }
+
+    public function get_sveltekit_runtime_key(): string {
+        if ( null !== $this->sveltekit_runtime_key ) {
+            return $this->sveltekit_runtime_key;
+        }
+
+        $index_path = $this->get_assets_path( 'index.html' );
+        if ( file_exists( $index_path ) ) {
+            $contents = file_get_contents( $index_path );
+            if ( is_string( $contents ) && preg_match( '/__sveltekit_[a-z0-9]+/', $contents, $matches ) ) {
+                $this->sveltekit_runtime_key = $matches[0];
+                return $this->sveltekit_runtime_key;
+            }
+        }
+
+        $this->sveltekit_runtime_key = '__sveltekit_legacy';
+        return $this->sveltekit_runtime_key;
     }
 
     private function get_assets_base_url(): string {

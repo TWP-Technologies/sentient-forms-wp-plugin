@@ -61,12 +61,14 @@ final class Sentient_Forms_REST_API
     {
         $core_controllers = [
             Sentient_Forms_Action_Definitions_Controller::class,
+            Sentient_Forms_Custom_Actions_Controller::class,
             Sentient_Forms_Credit_Controller::class,
             Sentient_Forms_Form_Actions_Controller::class,
             Sentient_Forms_Form_Controller::class,
             Sentient_Forms_License_Controller::class,
             Sentient_Forms_Llm_Controller::class,
             Sentient_Forms_Settings_Controller::class,
+            Sentient_Forms_Telemetry_Controller::class,
             // Add more core controller class names as you create them.
         ];
 

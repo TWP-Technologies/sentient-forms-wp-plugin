@@ -10,7 +10,7 @@ export interface RequestOptions
     showNotifications?: boolean;
 }
 
-interface SentientFormsConfig {
+export interface SentientFormsConfig {
     apiBaseUrl: string;
     restNonce: string;
     ajaxNonce: string;
@@ -31,6 +31,13 @@ interface SentientFormsConfig {
     i18n?: Record<string, string>;
     devMode?: boolean;
     devServerUrl?: string | null;
+    telemetry?: {
+        optIn: boolean;
+        updatedAt?: string | null;
+        syncedAt?: string | null;
+        remoteUpdatedAt?: string | null;
+        lastError?: string | null;
+    };
 }
 
 declare global {
@@ -54,11 +61,15 @@ export class ApiError extends Error {
 	}
 }
 
-export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
-	const config = window.sentientFormsConfig;
-	if (!config) {
+function getRuntimeConfig(): SentientFormsConfig {
+	if (typeof window === 'undefined' || !window.sentientFormsConfig) {
 		throw new Error('Sentient Forms runtime config missing.');
 	}
+	return window.sentientFormsConfig;
+}
+
+export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
+	const config = getRuntimeConfig();
 
 	const { method = 'GET', showNotifications = true, headers, body, ...rest } = options;
 

@@ -17,7 +17,7 @@ export interface LicenseState {
 	error: string | null;
 }
 
-const runtimeConfig = window.sentientFormsConfig;
+const runtimeConfig = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
 const bootstrap = runtimeConfig?.license ?? {};
 
 const initialState: LicenseState = {

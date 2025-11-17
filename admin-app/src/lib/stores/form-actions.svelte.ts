@@ -1,4 +1,4 @@
-import { toStore } from 'svelte/store';
+import { writable } from 'svelte/store';
 import { ApiClientError, createClientFromConfig } from '$lib/api/client';
 import { notifications } from '$lib/stores/notifications';
 import type {
@@ -84,20 +84,19 @@ function friendlyMessageFromError(error: unknown, fallback: string): string {
 	return fallback;
 }
 
-export const formActionsState = $state(initialState());
-const readable = toStore(() => formActionsState);
+const { subscribe, set, update } = writable<FormActionsState>(initialState());
 
 function resetState() {
-	Object.assign(formActionsState, initialState());
+	set(initialState());
 }
 
 function setState(partial: Partial<FormActionsState>) {
-	Object.assign(formActionsState, partial);
+	update((previous) => ({ ...previous, ...partial }));
 }
 
 async function load(formSourceSlug: string, formId: number) {
 	resetState();
-	formActionsState.loading = true;
+	setState({ loading: true });
 
 	try {
 		const [items, balance, definitions, status] = await Promise.all([
@@ -107,11 +106,10 @@ async function load(formSourceSlug: string, formId: number) {
 			client.getFormExecutionStatus(formSourceSlug, formId, { showNotifications: false })
 		]);
 
-		setState({ loading: false, error: null, items, balance, definitions, status });
+		set({ loading: false, error: null, items, balance, definitions, status });
 	} catch (error) {
 		const message = friendlyMessageFromError(error, 'Failed to load actions');
-		resetState();
-		setState({ error: message });
+		set({ ...initialState(), error: message });
 		notifications.error(message);
 	}
 }
@@ -119,7 +117,10 @@ async function load(formSourceSlug: string, formId: number) {
 async function create(formSourceSlug: string, formId: number, payload: FormActionMutationPayload) {
 	try {
 		const created = await client.createFormAction(formSourceSlug, formId, payload);
-		formActionsState.items = [...formActionsState.items, created];
+		update((previous) => ({
+			...previous,
+			items: [...previous.items, created]
+		}));
 		notifications.success('Action mapping created');
 		await refresh(formSourceSlug, formId);
 	} catch (error) {
@@ -139,9 +140,12 @@ async function toggleEnabled(
 			is_action_enabled_for_form: enabled
 		});
 
-		formActionsState.items = formActionsState.items.map((item) =>
-			item.local_mapping_id === updated.local_mapping_id ? updated : item
-		);
+		update((previous) => ({
+			...previous,
+			items: previous.items.map((item) =>
+				item.local_mapping_id === updated.local_mapping_id ? updated : item
+			)
+		}));
 		await refresh(formSourceSlug, formId);
 	} catch (error) {
 		const message = friendlyMessageFromError(error, 'Failed to update action mapping');
@@ -172,10 +176,13 @@ async function updateHooks(
 			{ trigger_hooks: normalizedHooks }
 		);
 
-		formActionsState.items = formActionsState.items.map((item) =>
-			item.local_mapping_id === updated.local_mapping_id ? updated : item
-		);
-		formActionsState.error = null;
+		update((previous) => ({
+			...previous,
+			items: previous.items.map((item) =>
+				item.local_mapping_id === updated.local_mapping_id ? updated : item
+			),
+			error: null
+		}));
 
 		notifications.success('Trigger hooks updated');
 		await refresh(formSourceSlug, formId);
@@ -188,9 +195,10 @@ async function updateHooks(
 async function remove(formSourceSlug: string, formId: number, linkage: FormActionLinkage) {
 	try {
 		await client.deleteFormAction(formSourceSlug, formId, linkage.local_mapping_id);
-		formActionsState.items = formActionsState.items.filter(
-			(item) => item.local_mapping_id !== linkage.local_mapping_id
-		);
+		update((previous) => ({
+			...previous,
+			items: previous.items.filter((item) => item.local_mapping_id !== linkage.local_mapping_id)
+		}));
 		notifications.success('Action mapping deleted');
 		await refresh(formSourceSlug, formId);
 	} catch (error) {
@@ -210,7 +218,7 @@ async function refresh(formSourceSlug: string, formId: number) {
 	} catch (error) {
 		const message = friendlyMessageFromError(error, 'Failed to refresh Sentient Forms status');
 		notifications.error(message);
-		formActionsState.error = message;
+		setState({ error: message });
 	}
 }
 
@@ -231,7 +239,7 @@ async function fetchExecutionStatus(
 }
 
 export const formActionsStore = {
-	subscribe: readable.subscribe,
+	subscribe,
 	load,
 	create,
 	toggleEnabled,

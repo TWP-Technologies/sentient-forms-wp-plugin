@@ -60,6 +60,7 @@ class Sentient_Forms_Async_Handler
         {
             $adapter->finalize_async_evaluation( $context, $result );
             do_action( 'sentient_forms_async_success', $context, $result );
+            $this->emit_async_event( 'evaluation_success', $context, $result );
         } catch ( Throwable $throwable )
         {
             $this->handle_evaluation_failure(
@@ -75,6 +76,7 @@ class Sentient_Forms_Async_Handler
         $this->log_success( $job['action_id'], $result );
         do_action( 'sentient_forms_async_success', $job['context'], $result );
         $this->notify_adapter_success( $job['context'], $result );
+        $this->emit_async_event( 'success', $job['context'], $result );
     }
 
     private function handle_failure( array $job, WP_Error $error ): void
@@ -95,12 +97,25 @@ class Sentient_Forms_Async_Handler
                 $context,
                 time() + $delay,
             );
+            $this->emit_async_event(
+                'retry_scheduled',
+                $context,
+                [
+                    'error' => $error->get_error_message(),
+                    'run_at' => time() + $delay,
+                ],
+            );
             return;
         }
 
         $this->log_error( $error->get_error_message() );
         do_action( 'sentient_forms_async_failure', $context, $error );
         $this->notify_adapter_error( $context, $error );
+        $this->emit_async_event(
+            'failed',
+            $context,
+            [ 'error' => $error->get_error_message() ],
+        );
     }
 
     private function handle_evaluation_failure( array $context, array $result, WP_Error $error ): void
@@ -124,12 +139,25 @@ class Sentient_Forms_Async_Handler
                     'run_at'     => time() + $delay,
                 ],
             );
+            $this->emit_async_event(
+                'evaluation_retry_scheduled',
+                $context,
+                [
+                    'error' => $error->get_error_message(),
+                    'run_at' => time() + $delay,
+                ],
+            );
             return;
         }
 
         $this->log_error( $error->get_error_message() );
         do_action( 'sentient_forms_async_failure', $context, $error );
         $this->notify_adapter_error( $context, $error );
+        $this->emit_async_event(
+            'evaluation_failed',
+            $context,
+            [ 'error' => $error->get_error_message() ],
+        );
     }
 
     private function notify_adapter_success( array $context, array $result ): void
@@ -412,6 +440,41 @@ class Sentient_Forms_Async_Handler
         {
             error_log( sprintf( __( 'Sentient Forms Error: %s', 'sentient-forms' ), $message ) );
         }
+    }
+
+    /**
+     * Emit a consent-aware async event for external logging.
+     *
+     * @param string $event   Event name (success, failed, retry_scheduled, etc.).
+     * @param array  $context Job context metadata.
+     * @param array  $payload Result/error payload.
+     */
+    private function emit_async_event( string $event, array $context = [], array $payload = [] ): void
+    {
+        $options      = $this->plugin->get_options();
+        $debug_mode   = ! empty( $options['global_settings']['debug_mode'] );
+        $telemetry    = $this->plugin->get_telemetry_settings();
+        $telemetry_on = ! empty( $telemetry['telemetry_opt_in'] );
+
+        if ( !$telemetry_on && !$debug_mode )
+        {
+            return;
+        }
+
+        /**
+         * Fires whenever the async handler emits a structured telemetry/logging event.
+         *
+         * @param array<string, mixed> $event_payload Event data (`event`, `context`, `payload`, `timestamp`).
+         */
+        do_action(
+            'sentient_forms_async_event',
+            [
+                'event'     => $event,
+                'context'   => $context,
+                'payload'   => $payload,
+                'timestamp' => time(),
+            ]
+        );
     }
 
     /**

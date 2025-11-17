@@ -3,6 +3,7 @@
 class CreditControllerTest extends WP_UnitTestCase
 {
     protected static $admin_id;
+    private array $http_mocks = [];
 
     public static function wpSetUpBeforeClass( $factory ): void
     {
@@ -15,13 +16,18 @@ class CreditControllerTest extends WP_UnitTestCase
         wp_set_current_user( self::$admin_id );
         delete_transient( 'sf_credit_balance_cache' );
         delete_option( 'sentient_forms_credit_balance' );
-        Sentient_Forms_Plugin::instance();
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [ 'proxy_api_key' => '' ] );
     }
 
     protected function tearDown(): void
     {
         delete_transient( 'sf_credit_balance_cache' );
         delete_option( 'sentient_forms_credit_balance' );
+        foreach ( $this->http_mocks as $mock ) {
+            remove_filter( 'pre_http_request', $mock, 10 );
+        }
+        $this->http_mocks = [];
         parent::tearDown();
     }
 
@@ -50,8 +56,8 @@ class CreditControllerTest extends WP_UnitTestCase
                 ],
             ],
             function ( $args ) {
-                $this->assertArrayHasKey( 'Authorization', $args['headers'] );
-                $this->assertSame( 'Bearer proxy-key-123', $args['headers']['Authorization'] );
+                $this->assertArrayHasKey( 'X-API-Key', $args['headers'] );
+                $this->assertSame( 'proxy-key-123', $args['headers']['X-API-Key'] );
             }
         );
 
@@ -64,7 +70,8 @@ class CreditControllerTest extends WP_UnitTestCase
         $this->assertSame( 321, $data['current_balance'] );
         $this->assertSame( -9, $data['ledger_delta'] );
         $this->assertIsArray( $data['tier'] );
-        $this->assertFalse( isset( $data['stale'] ) );
+        $this->assertArrayHasKey( 'stale', $data );
+        $this->assertFalse( $data['stale'] );
     }
 
     public function test_credit_balance_returns_stale_when_cps_fails(): void
@@ -89,10 +96,7 @@ class CreditControllerTest extends WP_UnitTestCase
             '/credits/balance',
             [
                 'success' => false,
-                'error'   => [
-                    'code'    => 'internal_error',
-                    'message' => 'Service unavailable',
-                ],
+                'error'   => 'Service unavailable',
             ],
             null,
             500
@@ -110,6 +114,8 @@ class CreditControllerTest extends WP_UnitTestCase
 
     public function test_credit_balance_requires_proxy_key(): void
     {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [ 'proxy_api_key' => '' ] );
         $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/credits/balance' );
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $response = rest_get_server()->dispatch( $request );
@@ -121,9 +127,7 @@ class CreditControllerTest extends WP_UnitTestCase
 
     private function mock_http_response( string $path_suffix, array $body, ?callable $assertion = null, int $status = 200 ): void
     {
-        add_filter(
-            'pre_http_request',
-            function ( $preempt, $args, $url ) use ( $path_suffix, $body, $assertion, $status ) {
+        $callback = function ( $preempt, $args, $url ) use ( $path_suffix, $body, $assertion, $status ) {
                 if ( str_ends_with( $url, $path_suffix ) ) {
                     if ( is_callable( $assertion ) ) {
                         $assertion( $args, $url );
@@ -140,9 +144,8 @@ class CreditControllerTest extends WP_UnitTestCase
                 }
 
                 return $preempt;
-            },
-            10,
-            3
-        );
+            };
+        add_filter( 'pre_http_request', $callback, 10, 3 );
+        $this->http_mocks[] = $callback;
     }
 }

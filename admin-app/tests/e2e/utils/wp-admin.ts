@@ -4,6 +4,8 @@ export const wpBaseUrl = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8
 const wpAdminUser = process.env.SENTIENT_WP_ADMIN_USER ?? 'sentient_admin';
 const wpAdminPass = process.env.SENTIENT_WP_ADMIN_PASS ?? 'sentient_admin';
 
+type SentientWindow = Window & { sentientFormsConfig?: unknown };
+
 async function maybeHandleAdminVerification(page: Page): Promise<void> {
 	const confirmButton = page.locator('button', { hasText: 'The email is correct' });
 	const remindLink = page.locator('a', { hasText: 'Remind me later' });
@@ -38,9 +40,29 @@ export async function loginToWpAdmin(page: Page): Promise<void> {
 }
 
 export async function ensureSentientFormsSpa(page: Page, hash = '/dashboard'): Promise<void> {
-	const normalized = hash.startsWith('#') ? hash : `#${hash.replace(/^\//, '')}`;
-	await page.goto(`${wpBaseUrl}/wp-admin/admin.php?page=sentient-forms${normalized}`, {
+	const normalizedHash = hash.startsWith('#') ? hash : `#/${hash.replace(/^\/+/, '')}`;
+	const target = normalizedHash.replace('#//', '#/');
+	const destination = `${wpBaseUrl}/wp-admin/admin.php?page=sentient-forms${target}`;
+	await page.goto(destination, {
 		waitUntil: 'domcontentloaded'
 	});
-	await page.waitForFunction(() => typeof (window as any).sentientFormsConfig !== 'undefined');
+	await waitForSentientConfig(page);
+	await page.waitForFunction(() => {
+		const root = document.querySelector('#sentient-forms-admin-app');
+		if (!root) {
+			return false;
+		}
+		return Array.from(root.children).some((child) => child.tagName !== 'SCRIPT');
+	}, { timeout: 15000 });
+	await page.evaluate((desiredHash) => {
+		if (typeof window !== 'undefined' && window.location.hash !== desiredHash) {
+			window.location.hash = desiredHash;
+		}
+	}, target);
+}
+
+export async function waitForSentientConfig(page: Page): Promise<void> {
+	await page.waitForFunction(
+		() => typeof (window as SentientWindow).sentientFormsConfig !== 'undefined'
+	);
 }

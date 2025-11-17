@@ -4,6 +4,7 @@
 	import { Section, Button, Card, Badge } from '$lib/components/ui';
 	import Alert from '$lib/components/ui/alert.svelte';
 import { formActionsStore } from '$lib/stores/form-actions';
+import type { FormActionsState } from '$lib/stores/form-actions.svelte';
 import { notifications } from '$lib/stores/notifications';
 	import type {
 		ActionDefinition,
@@ -12,19 +13,22 @@ import { notifications } from '$lib/stores/notifications';
 		FormExecutionStatus
 	} from '$lib/api/types';
 
-	export let data: {
-		formSourceSlug: string;
-		formId: number;
-	};
-
-let state = {
-	loading: true,
-	error: null as string | null,
-	items: [] as FormActionLinkage[],
-	balance: null as CreditBalanceResponse | null,
-	definitions: [] as ActionDefinition[],
-	status: null as FormExecutionStatus | null
+export let data: {
+	formSourceSlug: string;
+	formId: number;
 };
+
+let state: FormActionsState = {
+	loading: true,
+	error: null,
+	items: [],
+	balance: null,
+	definitions: [],
+	status: null
+};
+const unsubscribe = formActionsStore.subscribe((value) => {
+	state = value;
+});
 
 const FALLBACK_HOOK_LABELS: Record<string, string> = {
 	'gform_validation': 'During validation (Gravity Forms)',
@@ -82,10 +86,6 @@ $: definitionsBadgeLabel = hasCpsDefinitions ? 'CPS templates' : 'Local fallback
 	};
 
 	let statusAdvice: StatusAdvice | null = null;
-
-const unsubscribe = formActionsStore.subscribe((value) => {
-	state = value;
-});
 
 $: hookOptions = state.definitions.reduce<Record<string, string>>((acc, definition) => {
 	if (!definition?.hooks) {

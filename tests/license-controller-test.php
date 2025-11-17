@@ -25,7 +25,7 @@ class LicenseControllerTest extends WP_UnitTestCase
 
     public function test_activate_license_persists_credentials(): void
     {
-        $license_key = '01HY3ZABCD1EFGHJKLMNPQRSTV';
+        $license_key = '0ABCDEFGHJKMNPQRSTVWXYZ123';
 
         $this->mock_http_response(
             '/license/activate',
@@ -65,7 +65,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $plugin = Sentient_Forms_Plugin::instance();
         $plugin->set_license_data(
             [
-                'license_key'    => '01HY3ZABCD1EFGHJKLMNPQRSTV',
+                'license_key'    => '0ABCDEFGHJKMNPQRSTVWXYZ123',
                 'license_status' => 'active',
                 'proxy_api_key'  => 'proxy-abc',
                 'license_id'     => 'lic-1',

@@ -2,9 +2,14 @@ import { expect, test } from '@playwright/test';
 import { ensurePlaywrightFixtures } from './utils/wp-fixtures';
 import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
 
+const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
+
 let seededFormId: number;
 
 test.beforeAll(() => {
+	if (!runWpE2E) {
+		return;
+	}
 	seededFormId = ensurePlaywrightFixtures();
 });
 
@@ -14,6 +19,7 @@ async function openSentientForms(page: Parameters<typeof test>[0]['page'], hash 
 }
 
 test.describe('Sentient Forms admin actions', () => {
+	test.skip(!runWpE2E, 'Set SENTIENT_RUN_WP_E2E=1 to exercise Gravity Forms admin flows.');
 	test('exposes runtime config for licensing/navigation', async ({ page }) => {
 		await openSentientForms(page);
 		const config = await page.evaluate(() => window.sentientFormsConfig);

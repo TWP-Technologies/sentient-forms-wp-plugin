@@ -401,6 +401,64 @@ final class Sentient_Forms_Plugin
         ];
     }
 
+    private function get_telemetry_defaults(): array
+    {
+        return [
+            'telemetry_opt_in' => false,
+            'updated_at'       => null,
+            'synced_at'        => null,
+            'remote_updated_at'=> null,
+            'last_error'       => null,
+        ];
+    }
+
+    public function get_telemetry_settings(): array
+    {
+        $options  = $this->get_options();
+        $stored   = isset( $options['telemetry'] ) && is_array( $options['telemetry'] )
+            ? $options['telemetry']
+            : [];
+
+        $settings = array_merge( $this->get_telemetry_defaults(), $stored );
+        $settings['telemetry_opt_in'] = ! empty( $settings['telemetry_opt_in'] );
+
+        foreach ( [ 'updated_at', 'synced_at', 'remote_updated_at', 'last_error' ] as $field )
+        {
+            if ( isset( $settings[ $field ] ) && null !== $settings[ $field ] )
+            {
+                $settings[ $field ] = sanitize_text_field( (string) $settings[ $field ] );
+            }
+            else
+            {
+                $settings[ $field ] = null;
+            }
+        }
+
+        return $settings;
+    }
+
+    public function set_telemetry_settings( array $settings ): void
+    {
+        $options  = $this->get_options();
+        $merged   = array_merge( $this->get_telemetry_defaults(), $settings );
+        $merged['telemetry_opt_in'] = ! empty( $merged['telemetry_opt_in'] );
+
+        foreach ( [ 'updated_at', 'synced_at', 'remote_updated_at', 'last_error' ] as $field )
+        {
+            if ( isset( $merged[ $field ] ) && null !== $merged[ $field ] )
+            {
+                $merged[ $field ] = sanitize_text_field( (string) $merged[ $field ] );
+            }
+            else
+            {
+                $merged[ $field ] = null;
+            }
+        }
+
+        $options['telemetry'] = $merged;
+        $this->save_options( $options );
+    }
+
     public function get_license_data(): array
     {
         $options        = $this->get_options();

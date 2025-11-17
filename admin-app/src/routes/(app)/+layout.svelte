@@ -7,7 +7,9 @@
 const links = [
 	{ path: '/dashboard', label: 'Dashboard' },
 	{ path: '/licensing', label: 'Licensing' },
-	{ path: '/actions', label: 'Actions' }
+	{ path: '/actions', label: 'Actions' },
+	{ path: '/actions/custom', label: 'Custom Actions' },
+	{ path: '/settings', label: 'Settings' }
 ];
 
 const toHashHref = (path: string) => {

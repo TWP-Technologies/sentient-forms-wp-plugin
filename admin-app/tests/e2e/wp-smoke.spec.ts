@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test';
-import { ensureSentientFormsSpa, loginToWpAdmin, wpBaseUrl } from './utils/wp-admin';
+import {
+	ensureSentientFormsSpa,
+	loginToWpAdmin,
+	waitForSentientConfig,
+	wpBaseUrl
+} from './utils/wp-admin';
+
+const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
 
 async function expectNoConsoleErrors(page: Parameters<typeof test>[0]['page']) {
 	const consoleErrors: string[] = [];
@@ -24,6 +31,7 @@ async function expectNoConsoleErrors(page: Parameters<typeof test>[0]['page']) {
 }
 
 test.describe('WordPress runtime smoke', () => {
+	test.skip(!runWpE2E, 'Set SENTIENT_RUN_WP_E2E=1 to exercise wp-admin flows.');
 	test('home page loads without console errors', async ({ page }) => {
 		const watcher = await expectNoConsoleErrors(page);
 
@@ -44,14 +52,14 @@ test.describe('WordPress runtime smoke', () => {
 		watcher.assert();
 	});
 
-	test('Sentient Forms admin SPA renders inside wp-admin without console errors', async ({ page }) => {
-		const watcher = await expectNoConsoleErrors(page);
+		test('Sentient Forms admin SPA renders inside wp-admin without console errors', async ({ page }) => {
+			const watcher = await expectNoConsoleErrors(page);
 
-		await loginToWpAdmin(page);
-		await ensureSentientFormsSpa(page);
-		await page.waitForFunction(() => typeof (window as any).sentientFormsConfig !== 'undefined');
-		await page.waitForFunction(() => !!document.querySelector('#sentient-forms-admin-app'));
+			await loginToWpAdmin(page);
+			await ensureSentientFormsSpa(page);
+			await waitForSentientConfig(page);
+			await page.waitForFunction(() => !!document.querySelector('#sentient-forms-admin-app'));
 
-		watcher.assert();
+			watcher.assert();
+		});
 	});
-});

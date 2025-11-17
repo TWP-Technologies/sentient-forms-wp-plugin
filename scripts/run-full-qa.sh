@@ -59,7 +59,13 @@ run_admin_spa() {
   pushd "$PLUGIN_ROOT/admin-app" >/dev/null
   bun install --frozen-lockfile
   bunx playwright install --with-deps
-  bun run qa:full
+  local run_wp_e2e="${RUN_WP_E2E:-0}"
+  if [[ "$run_wp_e2e" != "1" ]]; then
+    info "Skipping wp-admin Playwright flows (set RUN_WP_E2E=1 to enable)"
+  else
+    info "Including wp-admin Playwright flows (requires Docker WordPress stack)"
+  fi
+  SENTIENT_RUN_WP_E2E="$run_wp_e2e" bun run qa:full
   popd >/dev/null
 }
 

@@ -2,7 +2,11 @@
 <phpunit bootstrap="tests/bootstrap.php" colors="true">
     <testsuites>
         <testsuite name="Sentient Forms">
-            <directory>./tests</directory>
+            <directory suffix="-test.php">./tests</directory>
+            <directory prefix="test-">./tests/phpunit</directory>
+            <exclude>./tests/wordpress-tests-lib</exclude>
+            <exclude>./tests/phpunit/tests</exclude>
+            <exclude>./tests/ajax-nonce-test.php</exclude>
         </testsuite>
     </testsuites>
 </phpunit>

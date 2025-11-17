@@ -35,6 +35,9 @@ class Sentient_Forms_Admin
     /** @var WP_Error|null */
     private $asset_error = null;
     private ?string $dev_notice = null;
+	private ?string $spa_app_module_url = null;
+	private ?string $spa_start_module_url = null;
+	private ?string $spa_bootstrap_script = null;
 
     /**
      * Constructor.
@@ -66,6 +69,11 @@ class Sentient_Forms_Admin
         if ( defined( 'SENTIENT_FORMS_PLUGIN_FILE' ) )
         {
             add_filter( 'plugin_action_links_' . plugin_basename( SENTIENT_FORMS_PLUGIN_FILE ), [ $this, 'plugin_action_links' ] );
+        }
+
+        if ( function_exists( 'wp_add_privacy_policy_content' ) )
+        {
+            add_action( 'admin_init', [ $this, 'register_privacy_policy_content' ] );
         }
 
         // Register AJAX handlers for various admin operations.
@@ -201,7 +209,9 @@ class Sentient_Forms_Admin
         }
 
         $script_handle = 'sentient-forms-admin-app';
-        $script_url    = $this->assets->get_asset_url( $entry['file'] ?? '' );
+		$start_entry   = $this->assets->get_entry( 'node_modules/@sveltejs/kit/src/runtime/client/entry.js' );
+        $app_module_url    = $this->assets->get_asset_url( $entry['file'] ?? '' );
+		$start_module_url  = $this->assets->get_asset_url( $start_entry['file'] ?? '' );
 
         wp_enqueue_style( 'wp-components' );
 
@@ -214,20 +224,30 @@ class Sentient_Forms_Admin
             );
         }
 
-        wp_enqueue_script(
-            $script_handle,
-            $script_url,
-            [],
-            SENTIENT_FORMS_VERSION,
-            true
-        );
+		$this->spa_app_module_url   = $app_module_url;
+		$this->spa_start_module_url = $start_module_url;
 
-		wp_script_add_data( $script_handle, 'type', 'module' );
-
-		$config        = $this->build_spa_bootstrap_payload();
-		$bootstrap_js  = 'window.sentientFormsConfig = ' . wp_json_encode( $config ) . ';';
+		$config                 = $this->build_spa_bootstrap_payload();
+		$asset_base             = rtrim( $config['assetBaseUrl'] ?? '', '/' );
+		$svelte_runtime_key     = $this->assets->get_sveltekit_runtime_key();
+		$bootstrap_js           = 'window.sentientFormsConfig = ' . wp_json_encode( $config ) . ';';
+		$bootstrap_js          .= "\n" . sprintf(
+			'window.%1$s = { base: new URL(".", location).pathname.slice(0, -1), assets: %2$s };',
+			$svelte_runtime_key,
+			wp_json_encode( $asset_base )
+		);
+		$bootstrap_js .= "\n" . '(function(){ try { var NativeURL = URL; window.URL = function(input, base) {';
+		$bootstrap_js .= "\n" . 'var instance = base ? new NativeURL(input, base) : new NativeURL(input);';
+		$bootstrap_js .= "\n" . 'if (!base && typeof input === "string" && input.indexOf("/wp-admin/admin.php") !== -1) {';
+		$bootstrap_js .= "\n" . 'Object.defineProperty(instance, "pathname", { get: function() { return "/wp-admin/"; }, configurable: true });';
+		$bootstrap_js .= "\n" . '}';
+		$bootstrap_js .= "\n" . 'return instance;';
+		$bootstrap_js .= "\n" . '};';
+		$bootstrap_js .= "\n" . 'window.URL.prototype = NativeURL.prototype;';
+		$bootstrap_js .= "\n" . '} catch (error) { console.error("Sentient Forms URL override failed", error); } })();';
+		$bootstrap_js .= "\n" . 'window.sentientFormsAppReady = "bootstrapping";';
 		$bootstrap_js .= "\n" . $this->build_hash_router_bootstrap_js();
-		wp_add_inline_script( $script_handle, $bootstrap_js, 'before' );
+		$this->spa_bootstrap_script = $bootstrap_js;
 	}
 
 	public function force_module_type_for_spa( string $tag, string $handle, string $src ): string
@@ -261,6 +281,7 @@ class Sentient_Forms_Admin
 			'devMode'       => $this->assets->is_dev_mode(),
 			'devServerUrl'  => $this->assets->is_dev_mode() ? rtrim( $this->assets->get_asset_url( '' ), '/' ) : null,
 			'license'       => $this->build_license_bootstrap_payload(),
+			'telemetry'     => $this->build_telemetry_bootstrap_payload(),
 			'initialRoute'  => $initial_route,
 			'formSources'   => $this->collect_form_sources(),
 			'currentUser'   => [
@@ -306,18 +327,50 @@ class Sentient_Forms_Admin
 		];
 	}
 
+	private function build_telemetry_bootstrap_payload(): array
+	{
+		$settings = Sentient_Forms_Plugin::instance()->get_telemetry_settings();
+
+		return [
+			'optIn'           => ! empty( $settings['telemetry_opt_in'] ),
+			'updatedAt'       => $settings['updated_at'] ?? null,
+			'syncedAt'        => $settings['synced_at'] ?? null,
+			'remoteUpdatedAt' => $settings['remote_updated_at'] ?? null,
+			'lastError'       => $settings['last_error'] ?? null,
+		];
+	}
+
 	private function build_hash_router_bootstrap_js(): string
 	{
 		return <<<'JS'
 (function () {
 	try {
 		var config = window.sentientFormsConfig || {};
-		var route = typeof config.initialRoute === 'string' ? config.initialRoute : '/dashboard';
+		var basePath = new URL(".", location).pathname;
+		if (!basePath.endsWith("/")) {
+			basePath = basePath + "/";
+		}
+		var searchParams = new URLSearchParams(window.location.search || "");
+		var pageParam = searchParams.get("page") || "";
+		if (pageParam && pageParam.indexOf("sentient-forms") === 0) {
+			var pathMatchesBase = window.location.pathname === basePath;
+			var pathMatchesIndex = window.location.pathname === basePath + "index.php";
+			if (!pathMatchesBase && !pathMatchesIndex) {
+				var replacementUrl = basePath + (window.location.search || "") + (window.location.hash || "");
+				history.replaceState({}, document.title, replacementUrl);
+			}
+		}
+		var existingHash = typeof window.location.hash === 'string' ? window.location.hash.trim() : '';
+		var hasExplicitHash = existingHash.length > 1;
+		var route = hasExplicitHash ? existingHash : (typeof config.initialRoute === 'string' ? config.initialRoute : '/dashboard');
+		if (route.startsWith('#')) {
+			route = route.slice(1);
+		}
 		if (!route.startsWith('/')) {
 			route = '/' + route;
 		}
-		var targetHash = '#' + route.replace(/^\/+/g, '');
-		if (window.location.hash !== targetHash) {
+		var targetHash = '#' + route;
+		if (!hasExplicitHash && window.location.hash !== targetHash) {
 			window.location.hash = targetHash;
 		}
 	} catch (error) {
@@ -384,6 +437,18 @@ JS;
             '<div class="notice notice-info is-dismissible"><p>%s</p></div>',
             esc_html( sprintf( __( 'Sentient Forms dev server unavailable (%s). Falling back to built assets.', 'sentient-forms' ), $this->dev_notice ) )
         );
+    }
+
+    public function register_privacy_policy_content(): void
+    {
+        if ( ! function_exists( 'wp_add_privacy_policy_content' ) )
+        {
+            return;
+        }
+
+        $content = '<p>' . esc_html__( 'Sentient Forms can send anonymized telemetry (action usage counts and CPS health signals) to Total Web Partners when administrators opt in via Settings → Telemetry. No form entries or visitor identifiers are transmitted, and consent can be revoked at any time.', 'sentient-forms' ) . '</p>';
+
+        wp_add_privacy_policy_content( 'Sentient Forms', wp_kses_post( $content ) );
     }
 
 
@@ -454,9 +519,39 @@ JS;
     private function render_app_container( string $view ): void
     {
         printf(
-            '<div class="wrap"><div id="sentient-forms-admin-app" data-view="%s"></div></div>',
+            '<div class="wrap"><div id="sentient-forms-admin-app" data-view="%s">',
             esc_attr( $view )
         );
+		if ( $this->spa_bootstrap_script && $this->spa_start_module_url && $this->spa_app_module_url ) {
+			printf(
+				'<script>
+%3$s
+const mount = document.currentScript.parentElement;
+if (!mount) {
+	throw new Error("Sentient Forms mount element missing");
+}
+Promise.all([
+	import(%1$s),
+	import(%2$s)
+]).then(([kit, app]) => {
+	if (kit && typeof kit.start === "function") {
+		return kit.start(app, mount);
+	}
+	return null;
+}).then(function () {
+	window.sentientFormsAppReady = "ready";
+}).catch(function (error) {
+	console.error("Sentient Forms SPA failed to start", error);
+	window.sentientFormsAppReady = "failed";
+});
+</script>',
+			wp_json_encode( $this->spa_start_module_url ),
+			wp_json_encode( $this->spa_app_module_url ),
+			$this->spa_bootstrap_script
+		);
+		}
+
+		echo '</div></div>';
     }
 
 
