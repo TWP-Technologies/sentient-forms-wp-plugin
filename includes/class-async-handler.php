@@ -58,9 +58,15 @@ class Sentient_Forms_Async_Handler
 
         try
         {
+            $this->get_metadata_store()->update_status( $context['job_id'] ?? null, 'running' );
             $adapter->finalize_async_evaluation( $context, $result );
             do_action( 'sentient_forms_async_success', $context, $result );
             $this->emit_async_event( 'evaluation_success', $context, $result );
+            $this->get_metadata_store()->update_status(
+                $context['job_id'] ?? null,
+                'success',
+                [ 'completed_at' => time() ]
+            );
         } catch ( Throwable $throwable )
         {
             $this->handle_evaluation_failure(
@@ -77,6 +83,11 @@ class Sentient_Forms_Async_Handler
         do_action( 'sentient_forms_async_success', $job['context'], $result );
         $this->notify_adapter_success( $job['context'], $result );
         $this->emit_async_event( 'success', $job['context'], $result );
+        $this->get_metadata_store()->update_status(
+            $job['context']['job_id'] ?? null,
+            'success',
+            [ 'completed_at' => time() ]
+        );
     }
 
     private function handle_failure( array $job, WP_Error $error ): void
@@ -90,6 +101,15 @@ class Sentient_Forms_Async_Handler
             $context['attempt']    = $attempt + 1;
             $context['last_error'] = $error->get_error_message();
             $delay                 = $this->compute_backoff_delay( $attempt );
+            $this->get_metadata_store()->update_status(
+                $context['job_id'] ?? null,
+                'retry_scheduled',
+                [
+                    'last_error' => $error->get_error_message(),
+                    'run_at'     => time() + $delay,
+                ]
+            );
+            unset( $context['job_id'] );
             $this->schedule_action(
                 $job['action_id'],
                 $job['data'],
@@ -116,6 +136,14 @@ class Sentient_Forms_Async_Handler
             $context,
             [ 'error' => $error->get_error_message() ],
         );
+        $this->get_metadata_store()->update_status(
+            $context['job_id'] ?? null,
+            'failed',
+            [
+                'last_error'   => $error->get_error_message(),
+                'completed_at' => time(),
+            ]
+        );
     }
 
     private function handle_evaluation_failure( array $context, array $result, WP_Error $error ): void
@@ -128,6 +156,15 @@ class Sentient_Forms_Async_Handler
             $context['attempt']    = $attempt + 1;
             $context['last_error'] = $error->get_error_message();
             $delay                 = $this->compute_backoff_delay( $attempt );
+            $this->get_metadata_store()->update_status(
+                $context['job_id'] ?? null,
+                'retry_scheduled',
+                [
+                    'last_error' => $error->get_error_message(),
+                    'run_at'     => time() + $delay,
+                ]
+            );
+            unset( $context['job_id'] );
             $this->dispatch_evaluation(
                 [
                     'adapter_id' => $context['adapter_id'] ?? $context['form_source'] ?? null,
@@ -157,6 +194,14 @@ class Sentient_Forms_Async_Handler
             'evaluation_failed',
             $context,
             [ 'error' => $error->get_error_message() ],
+        );
+        $this->get_metadata_store()->update_status(
+            $context['job_id'] ?? null,
+            'failed',
+            [
+                'last_error'   => $error->get_error_message(),
+                'completed_at' => time(),
+            ]
         );
     }
 
@@ -200,6 +245,11 @@ class Sentient_Forms_Async_Handler
         return (bool) wp_schedule_single_event( $run_at, $hook, $args );
     }
 
+    private function get_metadata_store(): Sentient_Forms_Async_Metadata_Store
+    {
+        return $this->plugin->get_async_metadata_store();
+    }
+
     private function normalize_context( array $context, string $action_id = '' ): array
     {
         $attempt = isset( $context['attempt'] ) ? max( 1, (int) $context['attempt'] ) : 1;
@@ -210,6 +260,7 @@ class Sentient_Forms_Async_Handler
             'max_attempts' => $max,
             'job_type'     => $context['job_type'] ?? 'execution',
             'action_id'    => $context['action_id'] ?? $action_id,
+            'job_id'       => $context['job_id'] ?? wp_generate_uuid4(),
         ];
 
         if ( !isset( $context['form_source'] ) && isset( $context['adapter_id'] ) )
@@ -283,6 +334,8 @@ class Sentient_Forms_Async_Handler
             return false;
         }
 
+        $context['job_id'] = wp_generate_uuid4();
+
         $payload = [
             'action_id'            => $action_id,
             'data'                 => $data,
@@ -300,15 +353,30 @@ class Sentient_Forms_Async_Handler
             ),
         ];
 
-        return $this->enqueue_job(
+        $run_at_ts = $run_at ?? time();
+        $scheduled = $this->enqueue_job(
             'sentient_forms_process_action',
             $payload,
-            $run_at ?? time(),
+            $run_at_ts,
         );
+
+        if ( $scheduled )
+        {
+            $this->get_metadata_store()->record_job(
+                $payload['context']['job_id'],
+                'sentient_forms_process_action',
+                $payload,
+                $run_at_ts,
+            );
+        }
+
+        return $scheduled;
     }
 
     public function dispatch_evaluation( array $job ): bool
     {
+        $job['context']['job_id'] = wp_generate_uuid4();
+
         $payload = [
             'context' => $this->normalize_context(
                 array_merge(
@@ -326,11 +394,24 @@ class Sentient_Forms_Async_Handler
             ),
         ];
 
-        return $this->enqueue_job(
+        $run_at_ts = $job['run_at'] ?? time();
+        $scheduled = $this->enqueue_job(
             'sentient_forms_evaluate_action',
             $payload,
-            $job['run_at'] ?? time(),
+            $run_at_ts,
         );
+
+        if ( $scheduled )
+        {
+            $this->get_metadata_store()->record_job(
+                $payload['context']['job_id'],
+                'sentient_forms_evaluate_action',
+                $payload,
+                $run_at_ts,
+            );
+        }
+
+        return $scheduled;
     }
 
     /**
@@ -345,6 +426,7 @@ class Sentient_Forms_Async_Handler
     public function process_action( string $action_id, array $data, array $settings, $execution_request_id = null, array $context = [] ): void
     {
         $context = $this->normalize_context( $context, $action_id );
+        $this->get_metadata_store()->update_status( $context['job_id'] ?? null, 'running' );
 
         $job = [
             'action_id'            => $action_id,

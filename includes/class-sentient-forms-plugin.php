@@ -74,6 +74,8 @@ final class Sentient_Forms_Plugin
 
     private ?Sentient_Forms_Async_Handler $async_handler = null;
 
+    private ?Sentient_Forms_Async_Metadata_Store $async_metadata_store = null;
+
     /**
      * Main Sentient_Forms_Plugin Instance.
      * Ensures only one instance of Sentient_Forms_Plugin is loaded or can be loaded.
@@ -103,6 +105,11 @@ final class Sentient_Forms_Plugin
         $this->init_registries();
         $this->load_dependencies();
         $this->init_hooks();
+
+        if ( defined( 'WP_CLI' ) && WP_CLI )
+        {
+            require_once __DIR__ . '/cli/class-sentient-forms-async-cli-command.php';
+        }
 
         // Initialize admin area if in admin context or WP-CLI.
         if ( is_admin() || ( defined( 'WP_CLI' ) && WP_CLI ) )
@@ -349,6 +356,16 @@ final class Sentient_Forms_Plugin
     public function dispatch_action_evaluation( array $job ): bool
     {
         return $this->get_async_handler()->dispatch_evaluation( $job );
+    }
+
+    public function get_async_metadata_store(): Sentient_Forms_Async_Metadata_Store
+    {
+        if ( null === $this->async_metadata_store )
+        {
+            $this->async_metadata_store = new Sentient_Forms_Async_Metadata_Store();
+        }
+
+        return $this->async_metadata_store;
     }
 
     private function get_cps_base_url(): string

@@ -33,6 +33,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->plugin = Sentient_Forms_Plugin::instance();
         $this->plugin->set_license_data( [ 'proxy_api_key' => 'test-key' ] );
         $GLOBALS['__sentient_forms_async_queue'] = [ 'enqueued' => [] ];
+        $this->plugin->get_async_metadata_store()->clear();
 
         if ( class_exists( 'Sentient_Forms_Test_Gravity_Meta_Store' ) )
         {
@@ -147,5 +148,38 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'entry_evaluation', $context['action_id'] );
         $this->assertArrayHasKey( 'evaluation_payload', $context );
         $this->assertSame( $job['payload'], $context['evaluation_payload'] );
+    }
+
+    public function test_metadata_store_tracks_job_status(): void
+    {
+        $data = [
+            'form'  => [ 'id' => 88, 'title' => 'Newsletter' ],
+            'entry' => [ 'id' => 909, 'field_1' => 'hi@example.com' ],
+        ];
+
+        $settings = [ 'central_action_id' => 'spam_detection_v1' ];
+        $context  = [ 'form_source' => 'gravity_forms' ];
+
+        $this->plugin->process_action_async( 'entry_evaluation', $data, $settings, $context );
+
+        $jobs = $this->plugin->get_async_metadata_store()->all();
+        $this->assertNotEmpty( $jobs );
+        $job = reset( $jobs );
+        $this->assertSame( 'queued', $job['status'] );
+
+        $payload = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0]['args'];
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $payload['action_id'],
+            $payload['data'],
+            $payload['settings'],
+            $payload['execution_request_id'],
+            $payload['context'],
+        );
+
+        $jobs = $this->plugin->get_async_metadata_store()->all();
+        $job  = reset( $jobs );
+        $this->assertSame( 'success', $job['status'] );
+        $this->assertNotEmpty( $job['completed_at'] );
     }
 }
