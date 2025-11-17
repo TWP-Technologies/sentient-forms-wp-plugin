@@ -359,7 +359,7 @@ final class Sentient_Forms_Plugin
 
         if ( empty( $base_url ) )
         {
-            $base_url = 'https://staging-api.totalwebpartners.com/v1';
+            $base_url = 'https://staging-api.sentientforms.com/v1';
         }
 
         return untrailingslashit( $base_url );
