@@ -57,6 +57,23 @@ Adapters must implement `Sentient_Forms_Async_Capable_Adapter_Interface` to part
 
 The async handler resolves adapters via `Sentient_Forms_Form_Adapter_Registry`, so ensure your adapter is registered during plugin bootstrap.
 
+### Context payload reference
+
+Every job receives a normalized `context` array that the handler enriches before enqueueing:
+
+| Key | Description |
+| --- | --- |
+| `action_id` | Sentient Forms action identifier (e.g., `spam_detection_v1`). |
+| `form_source` | Adapter slug such as `gravity_forms`; derived from `adapter_id` when omitted. |
+| `adapter_id` | Optional; used when the evaluation job needs an adapter that differs from `form_source`. |
+| `form_id` / `entry_id` | Adapter-provided identifiers for downstream bookkeeping and logging. |
+| `execution_request_id` | Deterministic idempotency key generated from the form payload and central action. |
+| `attempt` / `max_attempts` | Current retry counters. Defaults to `1` / `Sentient_Forms_Async_Handler::MAX_ATTEMPTS`. |
+| `job_type` | `execution` or `evaluation`. Helps adapters branch logic. |
+| `last_error` | The most recent error message (set only after a failed attempt). |
+
+> **Idempotency:** `Sentient_Forms_Plugin::process_action_async()` caches `execution_request_id` values in a transient for one hour. If the same payload is submitted twice, the second invocation is ignored so CPS is not double-billed. If you override the cache horizon, update both the plugin code and this document.
+
 ## Telemetry & logging
 - Local logging (`error_log`) only fires when `global_settings.debug_mode` is enabled.
 - Consent-aware events now fire through `do_action( 'sentient_forms_async_event', $payload )` when **either** telemetry opt-in is enabled **or** debug mode is on. Payload shape:

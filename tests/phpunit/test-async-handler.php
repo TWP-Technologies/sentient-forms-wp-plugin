@@ -96,4 +96,56 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertFalse( $result );
         $this->assertCount( 0, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
     }
+
+    public function test_process_action_async_normalizes_context_payload(): void
+    {
+        $data = [
+            'form'  => [ 'id' => 77, 'title' => 'Newsletter' ],
+            'entry' => [ 'id' => 404, 'field_1' => 'hi@example.com' ],
+        ];
+
+        $settings = [ 'central_action_id' => 'summary_v1' ];
+        $context  = [
+            'form_source' => 'gravity_forms',
+            'action_id'   => 'entry_evaluation',
+        ];
+
+        $this->plugin->process_action_async( 'entry_evaluation', $data, $settings, $context );
+
+        $job = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0];
+        $job_context = $job['args']['context'];
+
+        $this->assertSame( 'sentient_forms_process_action', $job['hook'] );
+        $this->assertSame( 'execution', $job_context['job_type'] );
+        $this->assertSame( 'gravity_forms', $job_context['form_source'] );
+        $this->assertSame( 'entry_evaluation', $job_context['action_id'] );
+        $this->assertSame( 1, $job_context['attempt'] );
+        $this->assertSame( 'summary_v1', $job_context['central_action_id'] );
+    }
+
+    public function test_dispatch_action_evaluation_enqueues_evaluation_job(): void
+    {
+        $job = [
+            'adapter_id' => 'gravity_forms',
+            'entry_id'   => 515,
+            'form_id'    => 25,
+            'action_id'  => 'entry_evaluation',
+            'payload'    => [ 'result' => 'ok' ],
+        ];
+
+        $this->plugin->dispatch_action_evaluation( $job );
+
+        $queued = $GLOBALS['__sentient_forms_async_queue']['enqueued'];
+        $this->assertNotEmpty( $queued );
+
+        $evaluation_job = array_pop( $queued );
+        $context = $evaluation_job['args']['context'];
+
+        $this->assertSame( 'sentient_forms_evaluate_action', $evaluation_job['hook'] );
+        $this->assertSame( 'evaluation', $context['job_type'] );
+        $this->assertSame( 'gravity_forms', $context['adapter_id'] );
+        $this->assertSame( 'entry_evaluation', $context['action_id'] );
+        $this->assertArrayHasKey( 'evaluation_payload', $context );
+        $this->assertSame( $job['payload'], $context['evaluation_payload'] );
+    }
 }
