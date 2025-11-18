@@ -23,7 +23,7 @@ class Sentient_Forms_Telemetry_Controller extends Abstract_Sentient_Forms_Base_C
         parent::__construct();
 
         $plugin = Sentient_Forms_Plugin::instance();
-        $this->service = new Sentient_Forms_Telemetry_Service( $plugin );
+        $this->service = $plugin->get_telemetry_service();
     }
 
     public function register_routes(): void

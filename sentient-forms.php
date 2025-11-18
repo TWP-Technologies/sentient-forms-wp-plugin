@@ -21,6 +21,7 @@ if ( !defined( 'ABSPATH' ) )
 
 // Define plugin constants.
 const SENTIENT_FORMS_VERSION     = '0.1.0';
+const SENTIENT_FORMS_DB_VERSION  = '2025.11.17';
 const SENTIENT_FORMS_PLUGIN_FILE = __FILE__;
 define( 'SENTIENT_FORMS_PLUGIN_DIR', plugin_dir_path( SENTIENT_FORMS_PLUGIN_FILE ) );
 define( 'SENTIENT_FORMS_PLUGIN_URL', plugin_dir_url( SENTIENT_FORMS_PLUGIN_FILE ) );
@@ -37,7 +38,10 @@ if ( !defined( 'SENTIENT_FORMS_DEFAULT_FREE_LLM_ID' ) )
 
 // Include the autoloader.
 require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-autoloader.php';
+require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-sentient-forms-installer.php';
 require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-sentient-forms-plugin.php';
+
+register_activation_hook( __FILE__, [ 'Sentient_Forms_Installer', 'activate' ] );
 
 // Include template functions if any.
 // require_once SENTIENT_FORMS_PLUGIN_PATH . 'includes/template-functions.php';

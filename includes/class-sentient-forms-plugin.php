@@ -76,6 +76,14 @@ final class Sentient_Forms_Plugin
 
     private ?Sentient_Forms_Async_Metadata_Store $async_metadata_store = null;
 
+    private ?Sentient_Forms_Async_Settings_Service $async_settings_service = null;
+
+    private ?Sentient_Forms_Async_Health_Service $async_health_service = null;
+
+    private ?Sentient_Forms_Async_Request_Store $async_request_store = null;
+
+    private ?Sentient_Forms_Telemetry_Service $telemetry_service = null;
+
     /**
      * Main Sentient_Forms_Plugin Instance.
      * Ensures only one instance of Sentient_Forms_Plugin is loaded or can be loaded.
@@ -103,8 +111,11 @@ final class Sentient_Forms_Plugin
         // Initialize registries before loading REST/API dependencies so controllers
         // can resolve the registries during their constructors.
         $this->init_registries();
+        $this->boot_form_adapters();
         $this->load_dependencies();
+        Sentient_Forms_Installer::maybe_upgrade();
         $this->init_hooks();
+        $this->register_debug_hooks();
 
         if ( defined( 'WP_CLI' ) && WP_CLI )
         {
@@ -143,6 +154,8 @@ final class Sentient_Forms_Plugin
         }
 
         $this->rest_api = new Sentient_Forms_REST_API();
+        $this->get_async_health_service();
+        $this->get_telemetry_service();
     }
 
     /**
@@ -181,6 +194,22 @@ final class Sentient_Forms_Plugin
         $this->llm_model_registry = new Sentient_Forms_Llm_Model_Registry();
     }
 
+    private function boot_form_adapters(): void
+    {
+        if ( null === $this->adapter_registry )
+        {
+            return;
+        }
+
+        foreach ( $this->adapter_registry->get_adapters( true ) as $adapter )
+        {
+            if ( method_exists( $adapter, 'init' ) )
+            {
+                $adapter->init();
+            }
+        }
+    }
+
     /**
      * Initialize WordPress hooks.
      * Adds core action and filter hooks used by the plugin.
@@ -192,6 +221,31 @@ final class Sentient_Forms_Plugin
 
         // Add other core plugin hooks here. For example, hooks for processing form submissions
         // might be set up here or dynamically by the adapters/actions themselves.
+    }
+
+    private function register_debug_hooks(): void
+    {
+        $should_log = (bool) apply_filters( 'sentient_forms_enable_debug_evaluation_logging', defined( 'WP_DEBUG' ) && WP_DEBUG );
+        if ( ! $should_log )
+        {
+            return;
+        }
+
+        add_action(
+            'sentient_forms_debug_evaluation_payload',
+            static function ( array $payload, array $job, array $result ): void {
+                if ( ! defined( 'WP_DEBUG_LOG' ) || ! WP_DEBUG_LOG )
+                {
+                    return;
+                }
+
+                $entry_id  = $job['context']['entry_id'] ?? 'unknown';
+                $action_id = $job['context']['action_id'] ?? 'unknown';
+                error_log( sprintf( 'Sentient Forms evaluation payload (entry %s, action %s): %s', $entry_id, $action_id, wp_json_encode( $payload ) ) );
+            },
+            10,
+            3
+        );
     }
 
     /**
@@ -315,12 +369,18 @@ final class Sentient_Forms_Plugin
             return false;
         }
 
+        $action_label = $action_settings['action_name_label'] ?? $central_action_id ?: $action_id;
+        $entry_id     = $context['entry_id'] ?? ( $data['entry']['id'] ?? null );
+
         $context = array_merge(
             [
-                'form_source' => $context['form_source'] ?? null,
-                'hook'        => $context['hook'] ?? 'gform_after_submission',
-                'action_id'   => $context['action_id'] ?? $action_id,
-                'form_id'     => $context['form_id'] ?? ( $data['form']['id'] ?? null ),
+                'form_source'      => $context['form_source'] ?? null,
+                'hook'             => $context['hook'] ?? 'gform_after_submission',
+                'action_id'        => $context['action_id'] ?? $action_id,
+                'form_id'          => $context['form_id'] ?? ( $data['form']['id'] ?? null ),
+                'entry_id'         => $entry_id,
+                'central_action_id'=> $central_action_id,
+                'action_name_label'=> $context['action_name_label'] ?? $action_label,
             ],
             $context,
         );
@@ -332,11 +392,20 @@ final class Sentient_Forms_Plugin
             $context,
         );
 
-        $cache_key = 'sentient_forms_async_' . $execution_request_id;
-        if ( false !== get_transient( $cache_key ) )
+        $request_store = $this->get_async_request_store();
+        if ( $request_store->should_block( $execution_request_id ) )
         {
             return false;
         }
+
+        $request_store->record(
+            $execution_request_id,
+            [
+                'action_id' => $central_action_id ?: $action_id,
+                'adapter'   => $context['form_source'] ?? null,
+                'status'    => 'queued',
+            ]
+        );
 
         $scheduled = $this->get_async_handler()->schedule_action(
             $action_id,
@@ -345,9 +414,9 @@ final class Sentient_Forms_Plugin
             array_merge( $context, [ 'execution_request_id' => $execution_request_id, 'central_action_id' => $central_action_id ] ),
         );
 
-        if ( $scheduled )
+        if ( ! $scheduled )
         {
-            set_transient( $cache_key, 1, HOUR_IN_SECONDS );
+            $request_store->mark_status( $execution_request_id, 'failed', __( 'Scheduling failed', 'sentient-forms' ) );
         }
 
         return $scheduled;
@@ -366,6 +435,52 @@ final class Sentient_Forms_Plugin
         }
 
         return $this->async_metadata_store;
+    }
+
+    public function get_async_settings_service(): Sentient_Forms_Async_Settings_Service
+    {
+        if ( null === $this->async_settings_service )
+        {
+            $this->async_settings_service = new Sentient_Forms_Async_Settings_Service();
+        }
+
+        return $this->async_settings_service;
+    }
+
+    public function get_async_health_service(): Sentient_Forms_Async_Health_Service
+    {
+        if ( null === $this->async_health_service )
+        {
+            $this->async_health_service = new Sentient_Forms_Async_Health_Service( $this );
+        }
+
+        return $this->async_health_service;
+    }
+
+    public function get_async_request_store(): Sentient_Forms_Async_Request_Store
+    {
+        if ( null === $this->async_request_store )
+        {
+            global $wpdb;
+            $this->async_request_store = new Sentient_Forms_Async_Request_Store( $wpdb );
+        }
+
+        return $this->async_request_store;
+    }
+
+    public function get_telemetry_service(): Sentient_Forms_Telemetry_Service
+    {
+        if ( null === $this->telemetry_service )
+        {
+            $this->telemetry_service = new Sentient_Forms_Telemetry_Service( $this );
+        }
+
+        return $this->telemetry_service;
+    }
+
+    public function get_cps_base_url_value(): string
+    {
+        return $this->get_cps_base_url();
     }
 
     private function get_cps_base_url(): string

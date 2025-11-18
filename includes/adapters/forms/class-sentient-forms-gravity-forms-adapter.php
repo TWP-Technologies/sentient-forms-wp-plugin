@@ -83,6 +83,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         add_action( 'gform_editor_js', [ $this, 'editor_js' ] );
         add_filter( 'gform_tooltips', [ $this, 'add_tooltips' ] );
         add_action( 'gform_field_standard_settings', [ $this, 'field_settings' ], 10, 2 );
+
+        add_filter( 'sentient_forms_async_evaluation_jobs', [ $this, 'filter_async_evaluation_jobs' ], 10, 3 );
     }
 
     /**
@@ -193,6 +195,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                         'form_source' => $this->get_id(),
                         'action_id'   => $action_id,
                         'form_id'     => $form_id,
+                        'entry_id'    => $entry['id'] ?? null,
+                        'action_name_label' => $action_settings['action_name_label'] ?? ($action_settings['central_action_id'] ?? $action_id),
                     ],
                 );
             }
@@ -250,6 +254,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             'form_source' => $this->get_id(),
             'action_id'   => $action_id,
             'form_id'     => $form['id'] ?? null,
+            'action_name_label' => $action_settings['action_name_label'] ?? $central_action_id,
         ];
 
         $response = $this->plugin->get_action_executor()->execute(
@@ -1035,5 +1040,45 @@ HTML;
         }
 
         return wp_trim_words( wp_json_encode( $result ), 40 );
+    }
+
+    public function filter_async_evaluation_jobs( array $jobs, array $job, array $result ): array
+    {
+        $context = $job['context'] ?? [];
+        if ( ( $context['form_source'] ?? '' ) !== $this->get_id() )
+        {
+            return $jobs;
+        }
+
+        $payload = $result['evaluation_payload'] ?? null;
+        if ( ! is_array( $payload ) || empty( $payload ) )
+        {
+            return $jobs;
+        }
+
+        $entry_id = $context['entry_id'] ?? null;
+        if ( empty( $entry_id ) )
+        {
+            return $jobs;
+        }
+
+        $jobs[] = [
+            'adapter_id' => $this->get_id(),
+            'entry_id'   => $entry_id,
+            'form_id'    => $context['form_id'] ?? null,
+            'action_id'  => $context['action_id'] ?? null,
+            'payload'    => $payload,
+            'context'    => [
+                'action_name_label' => $context['action_name_label'] ?? '',
+            ],
+        ];
+
+        /**
+         * Fires when the Gravity Forms adapter inspects an evaluation payload.
+         * Used for temporary logging/diagnostics in staging.
+         */
+        do_action( 'sentient_forms_debug_evaluation_payload', $payload, $job, $result );
+
+        return $jobs;
     }
 }

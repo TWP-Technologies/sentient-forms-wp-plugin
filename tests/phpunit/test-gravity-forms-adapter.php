@@ -64,4 +64,31 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             $message
         );
     }
+
+    public function test_filter_async_evaluation_jobs_appends_job(): void
+    {
+        $jobs   = [];
+        $job    = [ 'context' => [
+            'form_source'       => 'gravity_forms',
+            'entry_id'          => 123,
+            'form_id'           => 9,
+            'action_id'         => 'entry_evaluation',
+            'action_name_label' => 'Summary',
+        ] ];
+        $result = [
+            'evaluation_payload' => [
+                'result_data' => [ 'llm_output' => 'Summary text' ],
+                'meta'        => [ 'credits_debited' => 5 ],
+            ],
+        ];
+
+        $filtered = $this->adapter->filter_async_evaluation_jobs( $jobs, $job, $result );
+
+        $this->assertCount( 1, $filtered );
+        $evaluation = $filtered[0];
+        $this->assertSame( 'gravity_forms', $evaluation['adapter_id'] );
+        $this->assertSame( 123, $evaluation['entry_id'] );
+        $this->assertSame( 'Summary', $evaluation['context']['action_name_label'] );
+        $this->assertSame( 'Summary text', $evaluation['payload']['result_data']['llm_output'] );
+    }
 }

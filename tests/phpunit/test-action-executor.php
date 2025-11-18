@@ -98,6 +98,8 @@ class ActionExecutorTest extends WP_UnitTestCase {
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'ham', $result['result_data']['classification'] );
+		$this->assertArrayHasKey( 'evaluation_payload', $result );
+		$this->assertSame( 'ham', $result['evaluation_payload']['result_data']['classification'] );
 		$this->assertCount( 1, $client->calls );
 
 		$call = $client->calls[0];
@@ -158,6 +160,7 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$second = $executor->execute( 'central-dup', $form, $entry, $context );
 
 		$this->assertIsArray( $first );
+		$this->assertArrayHasKey( 'evaluation_payload', $first );
 		$this->assertSame( $first, $second );
 		$this->assertCount( 1, $client->calls );
 	}

@@ -60,6 +60,8 @@ final class Sentient_Forms_REST_API
     private function get_core_controller_classes(): array
     {
         $core_controllers = [
+            Sentient_Forms_Async_Settings_Controller::class,
+            Sentient_Forms_Async_Health_Controller::class,
             Sentient_Forms_Action_Definitions_Controller::class,
             Sentient_Forms_Custom_Actions_Controller::class,
             Sentient_Forms_Credit_Controller::class,
