@@ -3,6 +3,8 @@ import { notifications } from '$lib/stores/notifications';
 import type {
 	ActionDefinition,
 	ApiErrorPayload,
+	AsyncSettingsResponse,
+	AsyncHealthResponse,
 	CreditBalanceResponse,
 	CustomAction,
 	CustomActionCreatePayload,
@@ -36,6 +38,12 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
 interface RestEnvelope<T> {
 	success: boolean;
 	data: T;
+}
+
+export interface AsyncSettingsPayload {
+	maxAttempts?: number;
+	baseDelaySeconds?: number;
+	maxDelaySeconds?: number;
 }
 
 export class ApiClientError extends Error {
@@ -116,6 +124,43 @@ export class SentientFormsApiClient {
 			body: { telemetry_opt_in: optIn },
 			...options
 		});
+		return this.unwrap(response);
+	}
+
+	async getAsyncSettings(options: RequestOptions = {}): Promise<AsyncSettingsResponse> {
+		const response = await this.request<RestEnvelope<AsyncSettingsResponse>>('async-settings', options);
+		return this.unwrap(response);
+	}
+
+	async updateAsyncSettings(
+		payload: AsyncSettingsPayload,
+		options: RequestOptions = {}
+	): Promise<AsyncSettingsResponse> {
+		const body: Record<string, number> = {};
+		if ( typeof payload.maxAttempts === 'number' )
+		{
+			body.max_attempts = payload.maxAttempts;
+		}
+		if ( typeof payload.baseDelaySeconds === 'number' )
+		{
+			body.base_delay_seconds = payload.baseDelaySeconds;
+		}
+		if ( typeof payload.maxDelaySeconds === 'number' )
+		{
+			body.max_delay_seconds = payload.maxDelaySeconds;
+		}
+
+		const response = await this.request<RestEnvelope<AsyncSettingsResponse>>('async-settings', {
+			method: 'PUT',
+			body,
+			...options
+		});
+
+		return this.unwrap(response);
+	}
+
+	async getAsyncHealth(options: RequestOptions = {}): Promise<AsyncHealthResponse> {
+		const response = await this.request<RestEnvelope<AsyncHealthResponse>>('async-health', options);
 		return this.unwrap(response);
 	}
 

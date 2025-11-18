@@ -174,6 +174,21 @@ export interface TelemetrySettingsResponse {
 	last_error: string | null;
 }
 
+export interface AsyncSettingsResponse {
+	max_attempts: number;
+	base_delay_seconds: number;
+	max_delay_seconds: number;
+	updated_at: string | null;
+	updated_by: string | null;
+}
+
+export interface AsyncHealthResponse {
+	queue_depth: number;
+	oldest_run_at: number | null;
+	recent_failures: Record<string, number>;
+	warnings: Array<{ code: string; level: string; message: string }>;
+}
+
 export interface FormSummary {
 	id: number;
 	title: string;

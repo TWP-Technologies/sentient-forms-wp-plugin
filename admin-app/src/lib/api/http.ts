@@ -38,6 +38,19 @@ export interface SentientFormsConfig {
         remoteUpdatedAt?: string | null;
         lastError?: string | null;
     };
+    asyncSettings?: {
+        maxAttempts: number;
+        baseDelaySeconds: number;
+        maxDelaySeconds: number;
+        updatedAt?: string | null;
+        updatedBy?: string | null;
+    };
+    asyncHealth?: {
+        queue_depth: number;
+        oldest_run_at: number | null;
+        recent_failures: Record<string, number>;
+        warnings: Array<{ code: string; level: string; message: string }>;
+    };
 }
 
 declare global {
