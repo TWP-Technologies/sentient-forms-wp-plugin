@@ -154,6 +154,7 @@ final class Sentient_Forms_Plugin
         }
 
         $this->rest_api = new Sentient_Forms_REST_API();
+        $this->get_async_handler();
         $this->get_async_health_service();
         $this->get_telemetry_service();
     }
@@ -534,6 +535,11 @@ final class Sentient_Forms_Plugin
     {
         $this->options = $options;
         update_option( self::OPTION_KEY, $options );
+    }
+
+    public function update_options( array $options ): void
+    {
+        $this->save_options( $options );
     }
 
     private function get_license_defaults(): array

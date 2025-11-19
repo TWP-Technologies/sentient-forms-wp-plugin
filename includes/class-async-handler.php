@@ -511,7 +511,7 @@ class Sentient_Forms_Async_Handler
 
         $payload = [
             'action_id'            => $action_id,
-            'data'                 => $data,
+            'data'                 => $this->prepare_job_data( $data ),
             'settings'             => $settings,
             'execution_request_id' => $context['execution_request_id'] ?? null,
             'context'              => $this->normalize_context(
@@ -546,6 +546,62 @@ class Sentient_Forms_Async_Handler
         }
 
         return $scheduled['scheduled'];
+    }
+
+    private function prepare_job_data( array $data ): array
+    {
+        $form = [];
+        if ( isset( $data['form'] ) && is_array( $data['form'] ) )
+        {
+            if ( isset( $data['form']['id'] ) && '' !== $data['form']['id'] )
+            {
+                $form['id'] = (string) $data['form']['id'];
+            }
+
+            if ( isset( $data['form']['title'] ) )
+            {
+                $form['title'] = sanitize_text_field( (string) $data['form']['title'] );
+            }
+        }
+
+        $entry = [];
+        if ( isset( $data['entry'] ) && is_array( $data['entry'] ) )
+        {
+            foreach ( $data['entry'] as $key => $value )
+            {
+                if ( is_scalar( $value ) )
+                {
+                    $entry[ (string) $key ] = sanitize_text_field( (string) $value );
+                }
+            }
+        }
+
+        $payload = [
+            'form'        => $form,
+            'entry'       => $entry,
+            'hook'        => isset( $data['hook'] ) ? sanitize_text_field( (string) $data['hook'] ) : 'gform_after_submission',
+            'form_source' => isset( $data['form_source'] ) ? sanitize_key( (string) $data['form_source'] ) : 'gravity_forms',
+        ];
+
+        if ( isset( $data['source_url'] ) )
+        {
+            $payload['source_url'] = esc_url_raw( (string) $data['source_url'] );
+        }
+
+        if ( isset( $data['validation_result'] ) && is_array( $data['validation_result'] ) )
+        {
+            $payload['validation_result'] = [
+                'is_valid' => (bool) ( $data['validation_result']['is_valid'] ?? true ),
+                'form'     => [
+                    'failed_validation'  => ! empty( $data['validation_result']['form']['failed_validation'] ),
+                    'validation_message' => isset( $data['validation_result']['form']['validation_message'] )
+                        ? sanitize_text_field( (string) $data['validation_result']['form']['validation_message'] )
+                        : '',
+                ],
+            ];
+        }
+
+        return $payload;
     }
 
     public function dispatch_evaluation( array $job ): bool
