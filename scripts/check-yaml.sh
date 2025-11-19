@@ -19,7 +19,6 @@ import sys
 if importlib.util.find_spec('yaml') is None:
     sys.exit(1)
 PY
-then
   cat >&2 <<'MSG'
 [yaml-check] PyYAML not found. Install it via `pip install pyyaml` to enable YAML validation.
 MSG
@@ -32,7 +31,7 @@ if [[ ${#yaml_files[@]} -eq 0 ]]; then
   exit 0
 fi
 
-python3 - <<'PY'
+python3 - "${yaml_files[@]}" <<'PY'
 import pathlib
 import sys
 import yaml
@@ -51,4 +50,3 @@ for file_path in files:
 if failed:
     sys.exit(1)
 PY
-"${yaml_files[@]}"
