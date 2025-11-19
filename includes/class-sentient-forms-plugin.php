@@ -369,21 +369,39 @@ final class Sentient_Forms_Plugin
             return false;
         }
 
-        $action_label = $action_settings['action_name_label'] ?? $central_action_id ?: $action_id;
+		$action_label = $settings['action_name_label'] ?? $central_action_id ?: $action_id;
         $entry_id     = $context['entry_id'] ?? ( $data['entry']['id'] ?? null );
 
         $context = array_merge(
             [
                 'form_source'      => $context['form_source'] ?? null,
+                'source'           => $context['source'] ?? ( $context['form_source'] ?? 'gravity_forms' ),
                 'hook'             => $context['hook'] ?? 'gform_after_submission',
                 'action_id'        => $context['action_id'] ?? $action_id,
-                'form_id'          => $context['form_id'] ?? ( $data['form']['id'] ?? null ),
-                'entry_id'         => $entry_id,
-                'central_action_id'=> $central_action_id,
-                'action_name_label'=> $context['action_name_label'] ?? $action_label,
+                'form_id'          => isset( $data['form']['id'] ) ? (string) $data['form']['id'] : null,
+                'entry_id'         => isset( $entry_id ) && '' !== $entry_id ? (string) $entry_id : null,
+                'central_action_id'=> (string) $central_action_id,
+                'action_name_label'=> (string) $action_label,
             ],
             $context,
         );
+
+        if ( isset( $context['form_id'] ) && '' !== $context['form_id'] )
+        {
+            $context['form_id'] = (string) $context['form_id'];
+        }
+
+        if ( isset( $context['entry_id'] ) && '' !== $context['entry_id'] )
+        {
+            $context['entry_id'] = (string) $context['entry_id'];
+        }
+
+        if ( isset( $context['action_name_label'] ) )
+        {
+            $context['action_name_label'] = (string) $context['action_name_label'];
+        }
+
+        $context['central_action_id'] = (string) ( $context['central_action_id'] ?? $central_action_id );
 
         $execution_request_id = Sentient_Forms_Action_Executor::generate_execution_request_id(
             $central_action_id,

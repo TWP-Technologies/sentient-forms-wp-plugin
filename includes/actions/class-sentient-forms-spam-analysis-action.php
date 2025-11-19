@@ -186,82 +186,83 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
             $validated_settings[ 'prompt_template' ] = $this->get_default_prompt_template();
         }
 
+        // Preserve orchestration fields that are not part of the action-specific schema but are
+        // required for CPS execution/async orchestration.
+        $passthrough_strings = [ 'central_action_id', 'action_name_label', 'action_type_indicator', 'local_mapping_id' ];
+        foreach ( $passthrough_strings as $field_key )
+        {
+            if ( isset( $settings[ $field_key ] ) )
+            {
+                $validated_settings[ $field_key ] = sanitize_text_field( (string) $settings[ $field_key ] );
+            }
+        }
+
+        if ( isset( $settings['hooks'] ) && is_array( $settings['hooks'] ) )
+        {
+            $validated_settings['hooks'] = array_values( array_map( 'sanitize_text_field', $settings['hooks'] ) );
+        }
+
+        if ( isset( $settings['async'] ) )
+        {
+            $validated_settings['async'] = rest_sanitize_boolean( $settings['async'] );
+        }
+        if ( isset( $settings['execution_priority'] ) )
+        {
+            $validated_settings['execution_priority'] = (int) $settings['execution_priority'];
+        }
+
         return $validated_settings;
     }
 
     /**
-     * Execute the action.
-     * This method is called when the associated form hook triggers.
-     *
-     * @param array      $form_data Form submission data.
-     * @param array      $settings  Action settings.
-     * @param int|string $entry_id  The ID of the form entry.
-     * @param int|string $form_id   The ID of the form.
-     *
-     * @return WP_Error|bool True on success, WP_Error on failure, or an array for validation hooks.
+     * Execute the action against the CPS executor.
      */
-    public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool
+    public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | array | bool
     {
-        // Ensure settings are complete with defaults
         $settings = $this->validate_settings( array_merge( $this->get_default_settings_values(), $settings ) );
 
         if ( !( $settings[ 'enabled' ] ?? true ) )
         {
-            return true; // Action is disabled
+            return true;
         }
 
-        $llm_id = $settings[ 'llm' ] ?? null;
-        if ( empty( $llm_id ) )
+        $central_action_id = $settings[ 'central_action_id' ] ?? '';
+        if ( empty( $central_action_id ) )
         {
-            $global_options = get_option( 'sentient_forms_options', [] );
-            $llm_id         = $global_options[ 'default_llm' ] ?? SENTIENT_FORMS_DEFAULT_FREE_LLM_ID;
+            return new WP_Error(
+                'sentient_forms_missing_central_action',
+                __( 'Spam Analysis is not linked to a central action. Please select one in the Sentient Forms settings.', 'sentient-forms' ),
+                [ 'action_id' => $this->id ],
+            );
         }
 
-        $api_client = $this->plugin->get_api_client();
-        if ( !$api_client || empty( $this->plugin->get_proxy_api_key() ) )
-        {
-            error_log( 'Sentient Forms (Spam Analysis): API client not available or API key not set.' );
-            return new WP_Error( 'api_client_unavailable', __( 'API client is not available or API key not set.', 'sentient-forms' ) );
-        }
+        $payload = $this->normalize_execution_payload( $form_data, $entry_id, $form_id );
 
-        // Prepare prompt
-        // This is a simplified placeholder for merge tag replacement.
-        $prompt = str_replace( '{form_title}', "Form ID: " . $form_id, $settings[ 'prompt_template' ] ); // Placeholder
-        $prompt = str_replace( '{all_fields}', print_r( $form_data, true ), $prompt );                   // Placeholder
-
-        $api_args = [
-            'prompt' => $prompt,
-            // Add other API args like temperature, max_tokens if configurable or fixed for this action
-        ];
-
-        $response = $api_client->make_request( $llm_id, $api_args );
-
-        // Process the response
-        $processed_result = $this->process_response(
-            $response,
-            [ 'form_data' => $form_data, 'entry_id' => $entry_id, 'form_id' => $form_id ],
-            $settings,
+        $context = array_filter(
+            [
+                'hook'              => $payload[ 'hook' ],
+                'form_source'       => $payload[ 'form_source' ],
+                'form_id'           => isset( $payload['form']['id'] ) ? (string) $payload['form']['id'] : (string) $form_id,
+                'entry_id'          => isset( $payload['entry']['id'] ) ? (string) $payload['entry']['id'] : (string) $entry_id,
+                'action_id'         => $this->get_id(),
+                'action_name_label' => $settings[ 'action_name_label' ] ?? $central_action_id,
+            ],
+            static fn ( $value ) => null !== $value && '' !== $value,
         );
 
-        // Handle Gravity Forms validation hook if applicable
-        // This part is highly dependent on how you integrate with specific form plugin hooks.
-        // The $data argument in process_response was used for this.
-        // If current hook is 'gform_validation', $entry_id might be the $validation_result array.
-        if ( current_filter() === 'gform_validation' && isset( $processed_result[ 'validation_result' ] ) )
-        {
-            return $processed_result[ 'validation_result' ];
-        }
+        $response = $this->plugin->get_action_executor()->execute(
+            $central_action_id,
+            $payload[ 'form' ],
+            $payload[ 'entry' ],
+            $context,
+        );
 
         if ( is_wp_error( $response ) )
         {
-            error_log( 'Sentient Forms (Spam Analysis) API Error for entry ' . $entry_id . ': ' . $response->get_error_message() );
             return $response;
         }
 
-        // Log success or further actions
-        // error_log('Sentient Forms (Spam Analysis) executed for entry ' . $entry_id . '. Result: ' . print_r($processed_result, true));
-
-        return true;
+        return $this->process_response( $response, $payload, $settings );
     }
 
     /**
@@ -283,125 +284,62 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
     }
 
     /**
-     * Process the LLM API response.
-     *
-     * @param WP_Error|array $response     The API response.
-     * @param array          $context_data Contextual data (e.g., form_data, entry_id, form_id, validation_result for GF).
-     * @param array          $settings     The action settings.
-     *
-     * @return array The processed result.
+     * Process the CPS response and apply spam decisions locally.
      */
-    protected function process_response( WP_Error | array $response, array $context_data, array $settings ): array
+    protected function process_response( array $response, array $payload, array $settings ): array
     {
+        $result_data    = is_array( $response[ 'result_data' ] ?? null ) ? $response[ 'result_data' ] : [];
+        $meta           = is_array( $response[ 'meta' ] ?? null ) ? $response[ 'meta' ] : [];
+        $classification = isset( $result_data[ 'classification' ] ) ? strtolower( (string) $result_data[ 'classification' ] ) : '';
+        $is_spam        = in_array( $classification, [ 'spam', 'likely_spam' ], true );
+
         $result = [
-            'is_spam'         => false,
-            'confidence'      => 0,
-            'reasoning'       => '',
-            'spam_indicators' => [],
-            'action_taken'    => 'none',
-            'error'           => null,
+            'result_data'        => $result_data,
+            'meta'               => $meta,
+            'classification'     => $classification,
+            'is_spam'            => $is_spam,
+            'evaluation_payload' => $response[ 'evaluation_payload' ] ?? [
+                'result_data' => $result_data,
+                'meta'        => $meta,
+            ],
         ];
 
-        if ( is_wp_error( $response ) )
+        $entry_id = $payload[ 'entry' ][ 'id' ] ?? null;
+        $form_id  = $payload[ 'form' ][ 'id' ] ?? null;
+
+        if ( $entry_id && function_exists( 'gform_add_meta' ) )
         {
-            $result[ 'error' ] = $response->get_error_message();
-            return $result;
+            gform_add_meta( (int) $entry_id, '_sentient_forms_spam_analysis', $result );
         }
 
-        $content = $response[ 'content' ]
-                   ??
-                   ( $response[ 'choices' ][ 0 ][ 'message' ][ 'content' ] ?? '' ); // Adjust based on actual API response structure
-
-        if ( empty( $content ) )
+        if ( $is_spam )
         {
-            $result[ 'error' ] = __( 'Empty response content from LLM.', 'sentient-forms' );
-            return $result;
-        }
-
-        // Attempt to find JSON within the content, as LLMs sometimes add extra text.
-        preg_match( '/\{.*?\}/s', $content, $matches );
-        $json_string = $matches[ 0 ] ?? $content;
-
-        $json_data = json_decode( $json_string, true );
-
-        if ( json_last_error() !== JSON_ERROR_NONE || !is_array( $json_data ) )
-        {
-            $result[ 'error' ]       = __( 'Invalid JSON response format from LLM: ', 'sentient-forms' ) . json_last_error_msg();
-            $result[ 'raw_content' ] = $content; // Store raw content for debugging
-            return $result;
-        }
-
-        $result[ 'is_spam' ]         = isset( $json_data[ 'is_spam' ] ) && rest_sanitize_boolean( $json_data[ 'is_spam' ] );
-        $result[ 'confidence' ]      = isset( $json_data[ 'confidence' ] ) ? floatval( $json_data[ 'confidence' ] ) : 0;
-        $result[ 'reasoning' ]       = isset( $json_data[ 'reasoning' ] ) ? sanitize_textarea_field( $json_data[ 'reasoning' ] ) : '';
-        $result[ 'spam_indicators' ] = isset( $json_data[ 'spam_indicators' ] ) && is_array( $json_data[ 'spam_indicators' ] ) ? array_map(
-            'sanitize_text_field',
-            $json_data[ 'spam_indicators' ],
-        ) : [];
-
-        $threshold = $settings[ 'spam_threshold' ] ?? 0.7;
-
-        if ( $result[ 'is_spam' ] && $result[ 'confidence' ] >= $threshold )
-        {
-            // Handling for Gravity Forms validation hook
-            if ( isset( $context_data[ 'validation_result' ] ) && is_array( $context_data[ 'validation_result' ] ) )
+            if ( !empty( $settings[ 'reject_submission' ] ) && isset( $payload[ 'validation_result' ] ) )
             {
-                $validation_result = $context_data[ 'validation_result' ]; // This is passed by reference or needs to be returned
-
-                if ( !empty( $settings[ 'mark_as_spam' ] ) )
-                {
-                    // For GF, is_spam is set on the $validation_result array directly.
-                    $validation_result[ 'is_spam' ] = true; // This tells GF to mark the entry as spam.
-                    $result[ 'action_taken' ]       = 'marked_as_spam';
-                }
-
-                if ( !empty( $settings[ 'reject_submission' ] ) )
-                {
-                    $validation_result[ 'is_valid' ] = false; // Mark the submission as invalid.
-                    // Add a validation message to a field or globally
-                    // For simplicity, this example adds a general message.
-                    // You might want to target a specific field.
-                    // Find first field to attach message to, or add a general form validation message.
-                    if ( !empty( $validation_result[ 'form' ][ 'fields' ] ) )
-                    {
-                        // $validation_result['form']['fields'][0]->validation_message = $settings['rejection_message'];
-                        // Or, add a general validation summary message if supported by the form plugin
-                    }
-                    // A common way for Gravity Forms is to iterate fields and set validation_message
-                    // For now, we rely on a global message or the form handling is_valid = false.
-                    // Gravity Forms might show a generic error if no field has a specific message.
-                    // The below is a more direct way to add a validation message to the form object.
-                    // This might not be directly displayed by GF without custom handling.
-                    // GF usually expects validation messages on individual fields.
-                    // $validation_result['form']['validation_message'] = $settings['rejection_message'];
-
-                    // The most reliable way for GF validation message is to find a field and set its message
-                    // or use a hook like gform_validation_message if you want a global message above the form.
-                    // For now, setting is_valid to false is the primary action.
-                    $result[ 'action_taken' ]           = 'rejected';
-                    $result[ 'rejection_message_used' ] = $settings[ 'rejection_message' ];
-                }
-                $result[ 'validation_result' ] = $validation_result; // Store modified validation result
+                $validation_result                      = $payload[ 'validation_result' ];
+                $validation_result[ 'is_valid' ]        = false;
+                $validation_result[ 'form' ][ 'failed_validation' ] = true;
+                $validation_result[ 'form' ][ 'validation_message' ] = $settings[ 'rejection_message' ]
+                                                                          ??
+                                                                          __( 'This submission has been identified as potential spam.', 'sentient-forms' );
+                $result[ 'validation_result' ] = $validation_result;
             }
-            // Handling for after submission (e.g., gform_after_submission)
-            elseif ( isset( $context_data[ 'entry_id' ] ) && function_exists( 'GFAPI' ) && class_exists( 'GFAPI' ) )
+
+            if ( $entry_id && !empty( $settings[ 'mark_as_spam' ] ) && class_exists( 'GFAPI' ) )
             {
-                if ( !empty( $settings[ 'mark_as_spam' ] ) )
-                {
-                    $entry = GFAPI::get_entry( $context_data[ 'entry_id' ] );
-                    if ( $entry && !is_wp_error( $entry ) )
-                    {
-                        GFAPI::update_entry_property( $context_data[ 'entry_id' ], 'is_spam', 1 );
-                        $result[ 'action_taken' ] = 'marked_as_spam_post_submission';
-                    }
-                }
+                GFAPI::update_entry_property( (int) $entry_id, 'is_spam', 1 );
+                $result[ 'action_taken' ] = 'marked_as_spam';
             }
         }
 
-        // Store the analysis in entry meta if we have an entry ID (Gravity Forms example)
-        if ( isset( $context_data[ 'entry_id' ] ) && function_exists( 'gform_add_meta' ) )
+        if ( $entry_id && $form_id && function_exists( 'gform_update_meta' ) )
         {
-            gform_add_meta( $context_data[ 'entry_id' ], '_sentient_forms_spam_analysis', $result );
+            gform_update_meta( (int) $entry_id, '_sentient_forms_last_action_meta', [
+                'action_id'      => $this->get_id(),
+                'form_id'        => $form_id,
+                'ran_at'         => time(),
+                'classification' => $classification,
+            ] );
         }
 
         return $result;

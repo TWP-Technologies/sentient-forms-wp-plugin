@@ -75,9 +75,9 @@ interface Sentient_Forms_Action_Interface
      * @param int|string           $entry_id  The ID of the form entry.
      * @param int|string           $form_id   The ID of the form.
      *
-     * @return bool|WP_Error True on success, WP_Error on failure.
+     * @return bool|array|WP_Error True/array on success, WP_Error on failure.
      */
-    public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool;
+    public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array;
 
     /**
      * Estimate the cost of the action

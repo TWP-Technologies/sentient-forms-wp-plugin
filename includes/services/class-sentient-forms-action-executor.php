@@ -61,6 +61,10 @@ class Sentient_Forms_Action_Executor {
 			'action_context'        => $this->build_action_context( $form, $entry, $context, $execution_request_id, $submission_token ),
 		);
 
+		if ( defined( 'SENTIENT_FORMS_DEBUG_CPS_PAYLOAD' ) && SENTIENT_FORMS_DEBUG_CPS_PAYLOAD ) {
+			error_log( '[sentient-forms] CPS payload: ' . wp_json_encode( $payload ) );
+		}
+
 		$response = $client->post(
 			'/actions/execute',
 			$payload,
@@ -88,8 +92,44 @@ class Sentient_Forms_Action_Executor {
 			return $response;
 		}
 
+		$response = $this->ensure_evaluation_payload( $response, $central_action_id, $context );
 		$this->cache_execution_result( $execution_request_id, $response, $entry_id, $context );
 
+		return $response;
+	}
+
+	private function ensure_evaluation_payload( array $response, string $central_action_id, array $context ): array {
+		if ( isset( $response['evaluation_payload'] ) && is_array( $response['evaluation_payload'] ) ) {
+			return $response;
+		}
+
+		$payload = array(
+			'central_action_id' => $central_action_id,
+			'result_data'      => $response['result_data'] ?? array(),
+			'meta'             => $response['meta'] ?? array(),
+		);
+
+		if ( ! empty( $context['action_id'] ) ) {
+			$payload['action_id'] = $context['action_id'];
+		}
+
+		if ( ! empty( $context['action_name_label'] ) ) {
+			$payload['action_name_label'] = $context['action_name_label'];
+		}
+
+		if ( ! empty( $context['form_id'] ) ) {
+			$payload['form_id'] = $context['form_id'];
+		}
+
+		if ( ! empty( $context['entry_id'] ) ) {
+			$payload['entry_id'] = $context['entry_id'];
+		}
+
+		if ( ! empty( $context['form_source'] ) ) {
+			$payload['form_source'] = $context['form_source'];
+		}
+
+		$response['evaluation_payload'] = $payload;
 		return $response;
 	}
 
@@ -106,7 +146,7 @@ class Sentient_Forms_Action_Executor {
 
 		return array(
 			'form'  => array(
-				'id'    => $form['id'] ?? null,
+				'id'    => isset( $form['id'] ) ? (string) $form['id'] : null,
 				'title' => $form['title'] ?? '',
 			),
 			'entry' => $field_values,
@@ -129,7 +169,17 @@ class Sentient_Forms_Action_Executor {
 			$defaults['form_title'] = sanitize_text_field( $form['title'] );
 		}
 
-		return array_merge( $defaults, $context );
+		$action_context = array_merge( $defaults, $context );
+
+		if ( isset( $action_context['form_id'] ) ) {
+			$action_context['form_id'] = (string) $action_context['form_id'];
+		}
+
+		if ( isset( $action_context['entry_id'] ) ) {
+			$action_context['entry_id'] = (string) $action_context['entry_id'];
+		}
+
+		return $action_context;
 	}
 
 	public static function generate_execution_request_id( string $central_action_id, array $form, array $entry, array $context = array() ): string {

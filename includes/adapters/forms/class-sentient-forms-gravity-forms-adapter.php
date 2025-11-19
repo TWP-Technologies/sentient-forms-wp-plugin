@@ -125,11 +125,20 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 'validation_result' => $validation_result,
             ];
 
-            // Execute the action
-            $result = $action->execute( $data, $action_settings );
+            // Execute the action synchronously for validation.
+            $entry_id = $entry['id'] ?? ( $data['entry']['id'] ?? 0 );
+            $form_id  = $form['id'] ?? 0;
+            $result   = $action->execute( $data, $action_settings, $entry_id, $form_id );
 
-            // Check if the action modified the validation result
-            if ( isset( $result[ 'validation_result' ] ) )
+            if ( is_wp_error( $result ) )
+            {
+                $validation_result = $this->inject_validation_message(
+                    $validation_result,
+                    $result->get_error_message(),
+                    $action_settings,
+                );
+            }
+            elseif ( isset( $result[ 'validation_result' ] ) )
             {
                 $validation_result = $result[ 'validation_result' ];
             }
@@ -156,6 +165,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     public function handle_after_submission( array $entry, array $form ): void
     {
+        error_log( sprintf( '[sentient-forms] handle_after_submission invoked for entry %s', $entry['id'] ?? 'unknown' ) );
         $form_id = $form[ 'id' ];
 
         // Get form settings
@@ -202,8 +212,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             }
             else
             {
-                // Execute the action immediately
-                $action->execute( $data, $action_settings );
+                // Execute the action immediately (synchronous mode).
+                $entry_id = $entry['id'] ?? 0;
+                $form_id  = $form['id'] ?? 0;
+                $action->execute( $data, $action_settings, $entry_id, $form_id );
             }
         }
     }

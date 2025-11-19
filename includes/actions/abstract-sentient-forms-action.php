@@ -258,6 +258,47 @@ abstract class Sentient_Forms_Abstract_Action implements Sentient_Forms_Action_I
     }
 
     /**
+     * Normalize execution payload so child classes can talk to the CPS executor consistently.
+     *
+     * @param array      $data     Raw adapter payload.
+     * @param int|string $entry_id Entry identifier supplied by adapters/async handler.
+     * @param int|string $form_id  Form identifier supplied by adapters/async handler.
+     *
+     * @return array<string, mixed>
+     */
+    protected function normalize_execution_payload( array $data, int | string $entry_id = 0, int | string $form_id = 0 ): array
+    {
+        $form  = is_array( $data[ 'form' ] ?? null ) ? $data[ 'form' ] : [];
+        $entry = is_array( $data[ 'entry' ] ?? null ) ? $data[ 'entry' ] : [];
+
+        if ( $form_id && !isset( $form[ 'id' ] ) )
+        {
+            $form[ 'id' ] = $form_id;
+        }
+
+        if ( $entry_id && !isset( $entry[ 'id' ] ) )
+        {
+            $entry[ 'id' ] = $entry_id;
+        }
+
+        $validation_result = isset( $data[ 'validation_result' ] ) && is_array( $data[ 'validation_result' ] )
+            ? $data[ 'validation_result' ]
+            : null;
+
+        $hook = $data[ 'hook' ]
+                ??
+                ( $validation_result ? 'gform_validation' : 'gform_after_submission' );
+
+        return [
+            'form'              => $form,
+            'entry'             => $entry,
+            'validation_result' => $validation_result,
+            'hook'              => $hook,
+            'form_source'       => $data[ 'form_source' ] ?? 'gravity_forms',
+        ];
+    }
+
+    /**
      * Execute the action.
      *
      * @param array<string, mixed> $form_data Form submission data.
@@ -265,9 +306,9 @@ abstract class Sentient_Forms_Abstract_Action implements Sentient_Forms_Action_I
      * @param int|string           $entry_id  The ID of the form entry.
      * @param int|string           $form_id   The ID of the form.
      *
-     * @return bool|WP_Error True on success, WP_Error on failure.
+     * @return bool|array|WP_Error True/array on success, WP_Error on failure.
      */
-    abstract public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool;
+    abstract public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array;
 
     /**
      * Estimate the cost of executing the action.
