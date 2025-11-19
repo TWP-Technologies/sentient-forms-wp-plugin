@@ -45,6 +45,16 @@ The entry point `sentient-forms.php` defines plugin constants and boots `include
 - `RUN_WP_E2E=1 bun run qa:full`: opt-in flag to exercise the wp-admin/Gravity Forms Playwright suites against the Docker WordPress stack. Without it, the `wp-*` specs skip to keep local CI deterministic when WordPress is unavailable.
 - `bun run <script>`: execute admin SPA tasks (e.g., `bun run dev`, `bun run build:wp`, `bun run lint`) from `wp-plugin/admin-app/`; Bun is the mandated runtime for all Node-equivalent tooling within this repository.
 
+### Git Hooks
+
+YAML validation for `.github/*.yml` files runs via a tracked pre-commit hook. Enable it once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+Install `PyYAML` (`pip install pyyaml`) if the hook reports the module is missing.
+
 GitHub Actions mirrors these commands in `.github/workflows/admin-spa-qa.yml`; keep that workflow green before merging SPA-facing work.
 The PHP workflow (`.github/workflows/php-quality.yml`) runs Composer linting on PHP 8.3 and exercises the licensing PHPUnit test on PHP 8.3 (blocking) and PHP 8.4 (non-blocking, to monitor upstream deprecations).
 
