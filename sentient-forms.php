@@ -36,6 +36,20 @@ if ( !defined( 'SENTIENT_FORMS_DEFAULT_FREE_LLM_ID' ) )
     define( 'SENTIENT_FORMS_DEFAULT_FREE_LLM_ID', 'gemini-2.0-flash' );
 }
 
+// Bootstrap Composer dependencies (Action Scheduler and tooling).
+$sentient_forms_composer_autoload = __DIR__ . '/vendor/autoload.php';
+if ( file_exists( $sentient_forms_composer_autoload ) )
+{
+    require_once $sentient_forms_composer_autoload;
+}
+
+// Ensure Action Scheduler is loaded when bundled via Composer.
+$sentient_forms_action_scheduler = __DIR__ . '/vendor/woocommerce/action-scheduler/action-scheduler.php';
+if ( !function_exists( 'as_schedule_single_action' ) && file_exists( $sentient_forms_action_scheduler ) )
+{
+    require_once $sentient_forms_action_scheduler;
+}
+
 // Include the autoloader.
 require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-autoloader.php';
 require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-sentient-forms-installer.php';
