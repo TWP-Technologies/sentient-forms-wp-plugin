@@ -16,6 +16,16 @@ The Sentient Forms plugin connects WordPress form builders (Gravity Forms first)
 3. **Testing** – `bun run qa:full` mirrors the GitHub Actions workflow: lint → type-check → rune guard → Tailwind prefix check → Vitest → Playwright → build/bundle budget. Playwright now relies on the preview server (step 2) instead of the wp-admin iframe mock, ensuring the hash-based navigation limitations do not block CI. When you need to exercise the wp-admin/Gravity Forms flows against the Docker WordPress stack, export `RUN_WP_E2E=1` (the flag is plumbed through `scripts/run-full-qa.sh` via `SENTIENT_RUN_WP_E2E`).
 4. **PHP tooling** – Run `composer install`, regenerate the class map with `php build/generate-class-map.php` after adding classes, and execute `vendor/bin/phpunit` for the REST controllers (custom actions, telemetry, licensing, credits).
 
+### Git hooks
+
+This repo also ships a tracked pre-commit hook that parses every `.github/*.yml` file. Enable it once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+Install `PyYAML` (`pip install pyyaml`) if the hook reports that the module is missing.
+
 ## Key Paths & Docs
 - `AGENTS.md` – cross-repo guardrails plus SPA-specific coding standards.
 - `docs/custom-actions-*` – source-of-truth for quotas, telemetry consent, and schema contracts consumed by the admin app.
