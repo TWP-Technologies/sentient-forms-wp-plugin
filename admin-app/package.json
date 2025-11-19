@@ -23,7 +23,7 @@
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "svelte:guard": "node scripts/svelte-guard.mjs",
-    "qa:full": "bun run lint && bun run check && bun run svelte:guard && bun run tailwind:check && bun run test && bun run e2e && bun run build:wp && bun run bundle:check"
+    "qa:full": "bunx svelte-kit sync && bun run lint && bun run check && bun run svelte:guard && bun run tailwind:check && bun run test && bun run e2e && bun run build:wp && bun run bundle:check"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.10.2",

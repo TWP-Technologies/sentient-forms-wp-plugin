@@ -82,10 +82,10 @@ jobs:
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist
 
-      - name: Run PHPUnit (License controller)
+      - name: Run PHPUnit
         env:
           WP_TESTS_DB_HOST: 127.0.0.1
           WP_TESTS_DB_NAME: sentient_forms_wpdb
           WP_TESTS_DB_USER: sf_wp_user
           WP_TESTS_DB_PASSWORD: your_strong_user_password_here
-        run: vendor/bin/phpunit --filter LicenseControllerTest
+        run: vendor/bin/phpunit

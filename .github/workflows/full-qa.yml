@@ -11,9 +11,6 @@ on:
 jobs:
   full-qa:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: wp-plugin
     services:
       mariadb:
         image: mariadb:10.11
@@ -79,6 +76,6 @@ jobs:
         with:
           name: playwright-report
           path: |
-            wp-plugin/admin-app/playwright-report
-            wp-plugin/admin-app/test-results
+            admin-app/playwright-report
+            admin-app/test-results
           if-no-files-found: ignore
