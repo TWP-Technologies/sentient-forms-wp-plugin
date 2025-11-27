@@ -131,6 +131,19 @@ $license_status = get_option( 'sentient_forms_license_status', 'inactive' );
                 </td>
             </tr>
 
+            <tr valign="top">
+                <th scope="row"><?php esc_html_e( 'Enable Sentient Forms logging', 'sentient-forms' ); ?></th>
+                <td>
+                    <label>
+                        <input type="checkbox" name="sentient_forms_settings[enable_logging]" value="1" <?php checked( !empty( $options['enable_logging'] ) ); ?> />
+                        <?php esc_html_e( 'Write masked diagnostic logs to uploads/sentient-forms/logs (rotated)', 'sentient-forms' ); ?>
+                    </label>
+                    <p class="description">
+                        <?php esc_html_e( 'Disable after debugging. Logs exclude payloads and mask emails/IPs.', 'sentient-forms' ); ?>
+                    </p>
+                </td>
+            </tr>
+
             <?php
             if ( class_exists( 'Sentient_Forms_Pro_Updater' ) ) :
                 ?>

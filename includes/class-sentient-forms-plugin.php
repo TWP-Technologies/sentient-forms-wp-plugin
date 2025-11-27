@@ -338,9 +338,11 @@ final class Sentient_Forms_Plugin
                 require_once __DIR__ . '/logging/class-sentient-forms-logger.php';
             }
 
+            $option = get_option( 'sentient_forms_settings', [] );
+            $enabled_via_option = ! empty( $option['enable_logging'] );
             $enabled = (bool) apply_filters(
                 'sentient_forms_enable_logging',
-                defined( 'SENTIENT_FORMS_LOG_ENABLED' ) && SENTIENT_FORMS_LOG_ENABLED
+                $enabled_via_option || ( defined( 'SENTIENT_FORMS_LOG_ENABLED' ) && SENTIENT_FORMS_LOG_ENABLED )
             );
 
             $this->logger = new Sentient_Forms_Logger( $enabled );

@@ -652,6 +652,11 @@ Promise.all([
         } else {
             $sanitized_settings['enforce_nonce_verification'] = false;
         }
+        if ( isset( $settings_data['enable_logging'] ) ) {
+            $sanitized_settings['enable_logging'] = rest_sanitize_boolean( $settings_data['enable_logging'] );
+        } else {
+            $sanitized_settings['enable_logging'] = false;
+        }
 
         update_option( 'sentient_forms_settings', $sanitized_settings );
 
