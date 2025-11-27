@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { seedRuntimeConfig } from './utils/runtime-config';
 
 test('licensing screen handles activation flow', async ({ page }) => {
 	page.on('console', (msg) => {
@@ -24,6 +25,8 @@ test('licensing screen handles activation flow', async ({ page }) => {
 		site_id: null,
 		site_url: 'https://example.test'
 	};
+
+	await seedRuntimeConfig(page);
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) => {
 		if (process.env.PLAYWRIGHT_DEBUG) {
@@ -85,7 +88,7 @@ test('licensing screen handles activation flow', async ({ page }) => {
 		});
 	});
 
-	await page.goto('/licensing');
+	await page.goto('/#/licensing');
 
 	await expect(page.getByRole('heading', { name: 'License activation' })).toBeVisible();
 	await expect(page.getByText('Proxy key stored')).toBeVisible();

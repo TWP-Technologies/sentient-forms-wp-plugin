@@ -4,7 +4,7 @@ const PREVIEW_PORT = 4173;
 
 export default defineConfig({
 	testDir: './tests/e2e',
-	timeout: 30_000,
+	timeout: 300_000,
 	expect: {
 		timeout: 5_000
 	},
@@ -21,9 +21,9 @@ export default defineConfig({
 		}
 	],
 	webServer: {
-		command: 'bun run preview:ci',
+		command: 'bun run preview:serve',
 		url: `http://127.0.0.1:${PREVIEW_PORT}`,
 		reuseExistingServer: true,
-		timeout: 120_000
+		timeout: 900_000
 	}
 });

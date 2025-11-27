@@ -1,6 +1,11 @@
 import { test, expect } from '@playwright/test';
+import { seedRuntimeConfig } from './utils/runtime-config';
 
 test.describe('Custom actions admin view', () => {
+	test.beforeEach(async ({ page }) => {
+		await seedRuntimeConfig(page);
+	});
+
 	test('lists, creates, archives, and reactivates custom actions', async ({ page }) => {
 		let actions = [
 			{
@@ -130,7 +135,7 @@ test.describe('Custom actions admin view', () => {
 			return route.continue();
 		});
 
-		await page.goto('/actions/custom', { waitUntil: 'networkidle' });
+		await page.goto('/#/actions/custom', { waitUntil: 'networkidle' });
 		await page.waitForFunction(() => document.body.textContent?.includes('Custom Actions'));
 		await expect(page.getByRole('heading', { name: 'Custom Actions' })).toBeVisible();
 

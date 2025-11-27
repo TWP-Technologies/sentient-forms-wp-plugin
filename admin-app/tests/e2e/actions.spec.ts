@@ -1,6 +1,11 @@
 import { test, expect } from '@playwright/test';
+import { seedRuntimeConfig } from './utils/runtime-config';
 
 test.describe('Actions configuration', () => {
+	test.beforeEach(async ({ page }) => {
+		await seedRuntimeConfig(page);
+	});
+
 	test('manages action mappings and credit balance', async ({ page }) => {
 		let actions = [
 			{
@@ -170,7 +175,7 @@ test.describe('Actions configuration', () => {
 		});
 
 		try {
-			await page.goto('/actions/gravity_forms/1', { waitUntil: 'networkidle' });
+			await page.goto('/#/actions/gravity_forms/1', { waitUntil: 'networkidle' });
 
 			await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 			const definitionsCard = page.getByTestId('action-definitions-card');
@@ -305,7 +310,7 @@ test.describe('Actions configuration', () => {
 		});
 
 			try {
-				await page.goto('/actions/gravity_forms/1', { waitUntil: 'networkidle' });
+				await page.goto('/#/actions/gravity_forms/1', { waitUntil: 'networkidle' });
 
 				await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 				const fallbackCard = page.getByTestId('action-definitions-card');
