@@ -37,6 +37,11 @@ class Sentient_Forms_Settings_Validator
      */
     public function validate_api_key_param( mixed $value, WP_REST_Request $request, string $param ): true | WP_Error
     {
+        if ( '' === $value || null === $value )
+        {
+            return true;
+        }
+
         $string_check = $this->validate_is_non_empty_string( $value, $param );
         if ( is_wp_error( $string_check ) )
         {
@@ -58,6 +63,11 @@ class Sentient_Forms_Settings_Validator
      */
     public function validate_selected_llm_param( mixed $value, WP_REST_Request $request, string $param ): true | WP_Error
     {
+        if ( empty( $value ) )
+        {
+            return true;
+        }
+
         if ( !empty( $value ) )
         {
             $string_check = $this->validate_is_non_empty_string( $value, $param );

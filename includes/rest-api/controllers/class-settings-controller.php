@@ -208,7 +208,7 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
                 'required'          => false,
                 'sanitize_callback' => 'sanitize_text_field',
                 'validate_callback' => [ $this->validator, 'validate_api_key_param' ],
-                'default'           => '',
+                'default'           => null,
             ];
             $args[ 'selected_llm' ]     = [
                 'description'       => __( 'The preferred Large Language Model to use.', 'sentient-forms' ),
@@ -216,7 +216,7 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
                 'required'          => false,
                 'sanitize_callback' => 'sanitize_text_field',
                 'validate_callback' => [ $this->validator, 'validate_selected_llm_param' ],
-                'default'           => 'gemini-1.5-flash-latest', // Example default
+                'default'           => null,
             ];
             $args[ 'enable_logging' ] = [
                 'description'       => __( 'Enable masked diagnostic logging on the WordPress site.', 'sentient-forms' ),
