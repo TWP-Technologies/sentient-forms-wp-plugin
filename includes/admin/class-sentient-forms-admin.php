@@ -194,10 +194,10 @@ class Sentient_Forms_Admin
             return;
         }
 
-        try {
-            $entry = $this->assets->get_entry();
-        } catch ( WP_Error $error ) {
-            $this->asset_error = $error;
+        $entry = $this->assets->get_entry();
+        if ( is_wp_error( $entry ) )
+        {
+            $this->asset_error = $entry;
             add_action( 'admin_notices', [ $this, 'render_asset_error_notice' ] );
             return;
         }
@@ -210,6 +210,12 @@ class Sentient_Forms_Admin
 
         $script_handle = 'sentient-forms-admin-app';
 		$start_entry   = $this->assets->get_entry( 'node_modules/@sveltejs/kit/src/runtime/client/entry.js' );
+		if ( is_wp_error( $start_entry ) )
+		{
+			$this->asset_error = $start_entry;
+			add_action( 'admin_notices', [ $this, 'render_asset_error_notice' ] );
+			return;
+		}
         $app_module_url    = $this->assets->get_asset_url( $entry['file'] ?? '' );
 		$start_module_url  = $this->assets->get_asset_url( $start_entry['file'] ?? '' );
 

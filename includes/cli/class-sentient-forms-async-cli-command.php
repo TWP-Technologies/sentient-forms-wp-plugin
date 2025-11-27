@@ -10,7 +10,6 @@ if ( ! defined( 'ABSPATH' ) )
     exit;
 }
 
-use Throwable;
 
 if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CLI_Command' ) )
 {

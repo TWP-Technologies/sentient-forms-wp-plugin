@@ -639,6 +639,42 @@ HTML;
     }
 
     /**
+     * Retrieve metadata for a specific form entry.
+     * Mirrors update_entry_meta but uses gform_get_meta.
+     *
+     * @param mixed  $entry_id  The ID of the entry.
+     * @param string $meta_key  The meta key to fetch.
+     *
+     * @return mixed|null Meta value or null on failure/missing.
+     */
+    public function get_entry_meta( $entry_id, string $meta_key )
+    {
+        if ( !$this->is_active() )
+        {
+            return null;
+        }
+
+        if ( !str_starts_with( $meta_key, 'sentient_forms_' ) )
+        {
+            $meta_key = 'sentient_forms_' . $meta_key;
+        }
+
+        if ( !function_exists( 'gform_get_meta' ) )
+        {
+            return null;
+        }
+
+        try
+        {
+            return gform_get_meta( $entry_id, $meta_key );
+        } catch ( Exception $e )
+        {
+            error_log( 'Sentient Forms: Error getting entry meta: ' . $e->getMessage() );
+            return null;
+        }
+    }
+
+    /**
      * Update metadata for a specific form entry.
      * Used to store results of Sentient Forms actions (e.g., spam score, evaluation notes).
      *

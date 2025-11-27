@@ -21,10 +21,9 @@ class Sentient_Forms_Admin_Assets {
     /**
      * Retrieve the decoded Vite manifest.
      *
-     * @return array
-     * @throws WP_Error If manifest cannot be located or parsed.
+     * @return array|WP_Error
      */
-    public function get_manifest(): array {
+    public function get_manifest() {
         if ( null !== $this->manifest ) {
             return $this->manifest;
         }
@@ -32,19 +31,19 @@ class Sentient_Forms_Admin_Assets {
         $manifest_path = $this->get_assets_path( 'manifest.json' );
 
         if ( ! file_exists( $manifest_path ) ) {
-            throw new WP_Error( 'sentient_forms_manifest_missing', sprintf( 'Sentient Forms admin manifest missing: %s', $manifest_path ) );
+            return new WP_Error( 'sentient_forms_manifest_missing', sprintf( 'Sentient Forms admin manifest missing: %s', $manifest_path ) );
         }
 
         $manifest_contents = file_get_contents( $manifest_path );
 
         if ( false === $manifest_contents ) {
-            throw new WP_Error( 'sentient_forms_manifest_read_error', sprintf( 'Unable to read admin manifest: %s', $manifest_path ) );
+            return new WP_Error( 'sentient_forms_manifest_read_error', sprintf( 'Unable to read admin manifest: %s', $manifest_path ) );
         }
 
         $decoded = json_decode( $manifest_contents, true );
 
         if ( ! is_array( $decoded ) ) {
-            throw new WP_Error( 'sentient_forms_manifest_decode_error', sprintf( 'Invalid admin manifest JSON: %s', $manifest_path ) );
+            return new WP_Error( 'sentient_forms_manifest_decode_error', sprintf( 'Invalid admin manifest JSON: %s', $manifest_path ) );
         }
 
         $this->manifest = $decoded;
@@ -57,14 +56,16 @@ class Sentient_Forms_Admin_Assets {
      *
      * @param string $entry
      *
-     * @return array
-     * @throws WP_Error When the specified entry is not present.
+     * @return array|WP_Error
      */
-    public function get_entry( string $entry = self::DEFAULT_ENTRY ): array {
+    public function get_entry( string $entry = self::DEFAULT_ENTRY ) {
         $manifest = $this->get_manifest();
+        if ( is_wp_error( $manifest ) ) {
+            return $manifest;
+        }
 
         if ( ! isset( $manifest[ $entry ] ) ) {
-            throw new WP_Error( 'sentient_forms_manifest_entry_missing', sprintf( 'Entry %s not found in admin manifest.', $entry ) );
+            return new WP_Error( 'sentient_forms_manifest_entry_missing', sprintf( 'Entry %s not found in admin manifest.', $entry ) );
         }
 
         return $manifest[ $entry ];

@@ -11,8 +11,6 @@ if ( !defined( 'ABSPATH' ) )
     exit;
 }
 
-use Throwable;
-use WP_Error;
 
 /**
  * Class Sentient_Forms_Async_Handler
@@ -464,7 +462,7 @@ class Sentient_Forms_Async_Handler
     public function init(): void
     {
         // Register the action hook for processing actions
-        add_action( 'sentient_forms_process_action', [ $this, 'process_action' ], 10, 4 );
+        add_action( 'sentient_forms_process_action', [ $this, 'process_action' ], 10, 5 );
         add_action( 'sentient_forms_evaluate_action', [ $this, 'process_evaluation' ], 10, 1 );
 
         // Register the action hook for Action Scheduler
@@ -741,6 +739,10 @@ class Sentient_Forms_Async_Handler
             );
         } catch ( Throwable $throwable )
         {
+            if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+            {
+                error_log( sprintf( '[sentient-forms][async] execute exception action=%s entry=%s form=%s error=%s', $action_id, $entry_id ?? 'n/a', $form_id ?? 'n/a', $throwable->getMessage() ) );
+            }
             $this->handle_failure(
                 $job,
                 new WP_Error(
@@ -753,6 +755,10 @@ class Sentient_Forms_Async_Handler
 
         if ( is_wp_error( $result ) )
         {
+            if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+            {
+                error_log( sprintf( '[sentient-forms][async] execute wp_error action=%s entry=%s form=%s code=%s message=%s', $action_id, $entry_id ?? 'n/a', $form_id ?? 'n/a', $result->get_error_code(), $result->get_error_message() ) );
+            }
             $this->handle_failure( $job, $result );
             return;
         }

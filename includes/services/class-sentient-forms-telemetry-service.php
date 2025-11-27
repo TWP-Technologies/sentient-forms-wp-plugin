@@ -14,6 +14,7 @@ class Sentient_Forms_Telemetry_Service
     private const CRON_INTERVAL = 'sentient_forms_five_minutes';
     private const DEFAULT_BATCH_SIZE = 20;
     private const TELEMETRY_ENDPOINT = 'sites/telemetry';
+    private const LOG_PREFIX = '[sentient-forms][telemetry] ';
 
     public function __construct( private Sentient_Forms_Plugin $plugin )
     {
@@ -51,6 +52,15 @@ class Sentient_Forms_Telemetry_Service
     private function store(): Sentient_Forms_Async_Request_Store
     {
         return $this->plugin->get_async_request_store();
+    }
+
+    private function log_debug( string $message, array $context = [] ): void
+    {
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+        {
+            $suffix = $context ? ' ' . wp_json_encode( $context ) : '';
+            error_log( self::LOG_PREFIX . $message . $suffix );
+        }
     }
 
     public function handle_job_success( array $context, array $result ): void
@@ -127,6 +137,7 @@ class Sentient_Forms_Telemetry_Service
 
         if ( is_wp_error( $response ) )
         {
+            $this->log_debug( 'telemetry opt-in sync failed', [ 'error' => $response->get_error_message(), 'endpoint' => self::TELEMETRY_ENDPOINT ] );
             $this->plugin->set_telemetry_settings(
                 [
                     'telemetry_opt_in' => $opt_in,
@@ -148,6 +159,7 @@ class Sentient_Forms_Telemetry_Service
             'last_error'        => null,
         ];
         $this->plugin->set_telemetry_settings( $settings );
+        $this->log_debug( 'telemetry opt-in sync success', [ 'telemetry_opt_in' => $settings['telemetry_opt_in'] ] );
 
         return $this->plugin->get_telemetry_settings();
     }
@@ -172,6 +184,7 @@ class Sentient_Forms_Telemetry_Service
     {
         if ( ! $this->consent_enabled() )
         {
+            $this->log_debug( 'flush_queue skipped: consent disabled' );
             return;
         }
 
@@ -179,12 +192,14 @@ class Sentient_Forms_Telemetry_Service
         $proxy_key = isset( $license['proxy_api_key'] ) ? trim( (string) $license['proxy_api_key'] ) : '';
         if ( '' === $proxy_key )
         {
+            $this->log_debug( 'flush_queue skipped: missing proxy key' );
             return;
         }
 
         $batch = $this->store()->claim_telemetry_batch( self::DEFAULT_BATCH_SIZE );
         if ( empty( $batch ) )
         {
+            $this->log_debug( 'flush_queue skipped: no queued telemetry' );
             return;
         }
 
@@ -194,12 +209,15 @@ class Sentient_Forms_Telemetry_Service
             'Authorization' => 'Bearer ' . $proxy_key,
         ];
 
+        $this->log_debug( 'flush_queue sending batch', [ 'count' => count( $batch ), 'endpoint' => $endpoint ] );
+
         foreach ( $batch as $row )
         {
             $payload = $row['telemetry_payload'] ? json_decode( $row['telemetry_payload'], true ) : null;
             if ( ! $payload )
             {
                 $this->store()->update_telemetry_status( $row['request_hash'], 'telemetry_failed', __( 'Missing payload', 'sentient-forms' ) );
+                $this->log_debug( 'telemetry payload missing', [ 'request_hash' => $row['request_hash'] ] );
                 continue;
             }
 
@@ -215,6 +233,7 @@ class Sentient_Forms_Telemetry_Service
             if ( is_wp_error( $response ) )
             {
                 $this->store()->update_telemetry_status( $row['request_hash'], 'telemetry_failed', $response->get_error_message() );
+                $this->log_debug( 'telemetry post error', [ 'request_hash' => $row['request_hash'], 'error' => $response->get_error_message() ] );
                 continue;
             }
 
@@ -222,11 +241,13 @@ class Sentient_Forms_Telemetry_Service
             if ( $code >= 200 && $code < 300 )
             {
                 $this->store()->update_telemetry_status( $row['request_hash'], 'telemetry_sent' );
+                $this->log_debug( 'telemetry sent', [ 'request_hash' => $row['request_hash'], 'status' => $code, 'event' => $payload['event'] ?? null ] );
             }
             else
             {
                 $body = wp_remote_retrieve_body( $response );
                 $this->store()->update_telemetry_status( $row['request_hash'], 'telemetry_failed', sprintf( 'HTTP %d %s', $code, $body ) );
+                $this->log_debug( 'telemetry failed', [ 'request_hash' => $row['request_hash'], 'status' => $code, 'body' => $body ] );
             }
         }
     }
