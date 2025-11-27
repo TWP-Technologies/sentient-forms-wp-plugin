@@ -45,6 +45,7 @@ return [
 	'Sentient_Forms_Google_Gemini_2_5_Pro_Preview_Llm' => __DIR__ . '/llms/google/class-model-google-gemini-2_5-pro-preview.php',
 	'Sentient_Forms_Gravity_Forms_Adapter' => __DIR__ . '/adapters/forms/class-sentient-forms-gravity-forms-adapter.php',
 	'Sentient_Forms_Installer' => __DIR__ . '/class-sentient-forms-installer.php',
+	'Sentient_Forms_Logger' => __DIR__ . '/logging/class-sentient-forms-logger.php',
 	'Sentient_Forms_License_Controller' => __DIR__ . '/rest-api/controllers/class-license-controller.php',
 	'Sentient_Forms_Licensing_Api_Client' => __DIR__ . '/api/class-sentient-forms-licensing-api-client.php',
 	'Sentient_Forms_Llm_Api_Client' => __DIR__ . '/api/class-sentient-forms-llm-api-client.php',

@@ -83,6 +83,7 @@ final class Sentient_Forms_Plugin
     private ?Sentient_Forms_Async_Request_Store $async_request_store = null;
 
     private ?Sentient_Forms_Telemetry_Service $telemetry_service = null;
+    private ?Sentient_Forms_Logger $logger = null;
 
     /**
      * Main Sentient_Forms_Plugin Instance.
@@ -157,6 +158,7 @@ final class Sentient_Forms_Plugin
         $this->get_async_handler();
         $this->get_async_health_service();
         $this->get_telemetry_service();
+        $this->get_logger();
     }
 
     /**
@@ -325,6 +327,26 @@ final class Sentient_Forms_Plugin
         }
 
         return $this->action_registry->get_action( $action_id );
+    }
+
+    public function get_logger(): Sentient_Forms_Logger
+    {
+        if ( null === $this->logger )
+        {
+            if ( !class_exists( 'Sentient_Forms_Logger' ) )
+            {
+                require_once __DIR__ . '/logging/class-sentient-forms-logger.php';
+            }
+
+            $enabled = (bool) apply_filters(
+                'sentient_forms_enable_logging',
+                defined( 'SENTIENT_FORMS_LOG_ENABLED' ) && SENTIENT_FORMS_LOG_ENABLED
+            );
+
+            $this->logger = new Sentient_Forms_Logger( $enabled );
+        }
+
+        return $this->logger;
     }
 
     public function get_api_client(): Sentient_Forms_Api_Client

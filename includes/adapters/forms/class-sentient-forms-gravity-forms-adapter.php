@@ -98,6 +98,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     {
         $form    = $validation_result[ 'form' ];
         $form_id = $form[ 'id' ];
+        $logger  = $this->plugin->get_logger();
+        $correlation_id = $logger->correlation_id( $form['sentient_forms_request_id'] ?? null );
 
         // Get form settings
         $settings = $this->get_form_settings( $form_id );
@@ -117,6 +119,16 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
+            $logger->info(
+                'validation start',
+                [
+                    'hook'           => 'gform_validation',
+                    'action_id'      => $action_id,
+                    'form_id'        => $form_id,
+                    'correlation_id' => $correlation_id,
+                ]
+            );
+
             // Prepare data for the action
             $entry = $this->prepare_entry_from_submission();
             $data  = [
@@ -132,6 +144,16 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
             if ( is_wp_error( $result ) )
             {
+                $logger->info(
+                    'validation wp_error',
+                    [
+                        'hook'           => 'gform_validation',
+                        'action_id'      => $action_id,
+                        'form_id'        => $form_id,
+                        'correlation_id' => $correlation_id,
+                        'error_code'     => $result->get_error_code(),
+                    ]
+                );
                 $validation_result = $this->inject_validation_message(
                     $validation_result,
                     $result->get_error_message(),
@@ -150,6 +172,16 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 $action_id,
                 $action_settings,
             );
+
+            $logger->info(
+                'validation complete',
+                [
+                    'hook'           => 'gform_validation',
+                    'action_id'      => $action_id,
+                    'form_id'        => $form_id,
+                    'correlation_id' => $correlation_id,
+                ]
+            );
         }
 
         return $validation_result;
@@ -167,6 +199,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     {
         error_log( sprintf( '[sentient-forms] handle_after_submission invoked for entry %s', $entry['id'] ?? 'unknown' ) );
         $form_id = $form[ 'id' ];
+        $logger  = $this->plugin->get_logger();
+        $correlation_id = $logger->correlation_id( $entry['id'] ?? null );
 
         // Get form settings
         $settings = $this->get_form_settings( $form_id );
@@ -196,6 +230,16 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             if ( !empty( $action_settings[ 'async' ] ) )
             {
                 // Process the action asynchronously
+                $logger->info(
+                    'async action enqueued',
+                    [
+                        'hook'           => 'gform_after_submission',
+                        'action_id'      => $action_id,
+                        'form_id'        => $form_id,
+                        'entry_id'       => $entry['id'] ?? null,
+                        'correlation_id' => $correlation_id,
+                    ]
+                );
                 $this->plugin->process_action_async(
                     $action_id,
                     $data,

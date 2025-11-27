@@ -353,18 +353,97 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
             }
         }
 
-        private function find_requeued_job_id( string $source_job_id ): ?string
-        {
-            foreach ( $this->get_store()->all() as $job )
-            {
-                if ( ( $job['context']['requeued_from'] ?? null ) === $source_job_id )
-                {
-                    return $job['job_id'];
-                }
-            }
+		private function find_requeued_job_id( string $source_job_id ): ?string
+		{
+			foreach ( $this->get_store()->all() as $job )
+			{
+				if ( ( $job['context']['requeued_from'] ?? null ) === $source_job_id )
+				{
+					return $job['job_id'];
+				}
+			}
 
-            return null;
-        }
+			return null;
+		}
+
+		public function logs_tail( array $args, array $assoc_args ): void
+		{
+			$lines = isset( $assoc_args['lines'] ) ? max( 1, (int) $assoc_args['lines'] ) : 200;
+			$logger = Sentient_Forms_Plugin::instance()->get_logger();
+			$path   = $logger->get_log_path();
+
+			if ( ! $logger->is_enabled() )
+			{
+				WP_CLI::warning( 'Logging is disabled (set SENTIENT_FORMS_LOG_ENABLED=1 to enable).' );
+			}
+
+			if ( ! file_exists( $path ) )
+			{
+				WP_CLI::warning( sprintf( 'No log file found at %s', $path ) );
+				return;
+			}
+
+			$rows = @file( $path, FILE_IGNORE_NEW_LINES );
+			if ( false === $rows )
+			{
+				WP_CLI::error( 'Unable to read log file.' );
+			}
+
+			$tail = array_slice( $rows, -$lines );
+			foreach ( $tail as $row )
+			{
+				WP_CLI::line( $row );
+			}
+		}
+
+		public function logs_bundle(): void
+		{
+			$logger = Sentient_Forms_Plugin::instance()->get_logger();
+			$dir    = $logger->get_log_dir();
+			$path   = $logger->get_log_path();
+
+			if ( ! file_exists( $path ) )
+			{
+				WP_CLI::error( 'No logs to bundle; file not found.' );
+			}
+
+			$files = glob( $dir . '/sf.log*' ) ?: [];
+			if ( empty( $files ) )
+			{
+				WP_CLI::error( 'No log files matched sf.log*' );
+			}
+
+			$bundle = $dir . '/sf-support-bundle-' . gmdate( 'Ymd-His' ) . '.zip';
+
+			if ( class_exists( 'ZipArchive' ) )
+			{
+				$zip = new ZipArchive();
+				if ( true !== $zip->open( $bundle, ZipArchive::CREATE ) )
+				{
+					WP_CLI::error( 'Unable to create zip bundle.' );
+				}
+
+				foreach ( $files as $file )
+				{
+					$zip->addFile( $file, basename( $file ) );
+				}
+
+				$zip->close();
+				WP_CLI::success( sprintf( 'Bundle created: %s', $bundle ) );
+				return;
+			}
+
+			// Fallback: gzip the main log only.
+			$content = file_get_contents( $path );
+			if ( false === $content )
+			{
+				WP_CLI::error( 'Unable to read log file for gzip fallback.' );
+			}
+
+			$bundle = $dir . '/sf-support-bundle-' . gmdate( 'Ymd-His' ) . '.gz';
+			file_put_contents( $bundle, gzencode( $content, 6 ) );
+			WP_CLI::success( sprintf( 'Bundle created (gzip fallback): %s', $bundle ) );
+		}
     }
 
 	$async_cli = new Sentient_Forms_Async_CLI_Command();
@@ -376,4 +455,6 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
 	WP_CLI::add_command( 'sentient-forms async status', [ $async_cli, 'status' ] );
     WP_CLI::add_command( 'sentient-forms async-requests list', [ $async_cli, 'list_requests' ] );
     WP_CLI::add_command( 'sentient-forms async-requests purge', [ $async_cli, 'purge_requests' ] );
+	WP_CLI::add_command( 'sentient-forms logs tail', [ $async_cli, 'logs_tail' ] );
+	WP_CLI::add_command( 'sentient-forms logs bundle', [ $async_cli, 'logs_bundle' ] );
 }
