@@ -18,6 +18,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cache Composer
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/composer
+            wp-plugin/vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('wp-plugin/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
@@ -60,6 +70,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Cache Composer
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/composer
+            wp-plugin/vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('wp-plugin/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2

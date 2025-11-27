@@ -33,11 +33,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.bun/install/cache
+            ~/.cache/bun/install/cache
             wp-plugin/admin-app/node_modules
           key: bun-admin-app-${{ hashFiles('wp-plugin/admin-app/bun.lock') }}
           restore-keys: |
             bun-admin-app-
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-ms-playwright-${{ hashFiles('wp-plugin/admin-app/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-ms-playwright-
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

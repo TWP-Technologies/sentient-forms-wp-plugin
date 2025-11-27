@@ -30,6 +30,47 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Cache Cargo directories
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            Sentient-Forms-Central-Proxy-Server/target
+          key: ${{ runner.os }}-cps-cargo-${{ hashFiles('Sentient-Forms-Central-Proxy-Server/**/Cargo.lock') }}-${{ hashFiles('Sentient-Forms-Central-Proxy-Server/**/sqlx-data.json') }}
+          restore-keys: |
+            ${{ runner.os }}-cps-cargo-
+
+      - name: Cache Composer
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/composer
+            wp-plugin/vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('wp-plugin/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bun/install/cache
+            wp-plugin/admin-app/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('wp-plugin/admin-app/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-ms-playwright-${{ hashFiles('wp-plugin/admin-app/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-ms-playwright-
+
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
         with:
