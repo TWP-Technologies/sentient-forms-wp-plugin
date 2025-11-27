@@ -218,13 +218,13 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
                 'validate_callback' => [ $this->validator, 'validate_selected_llm_param' ],
                 'default'           => 'gemini-1.5-flash-latest', // Example default
             ];
-            $args[ 'enable_feature_x' ] = [
-                'description'       => __( 'Enable or disable Feature X.', 'sentient-forms' ),
+            $args[ 'enable_logging' ] = [
+                'description'       => __( 'Enable masked diagnostic logging on the WordPress site.', 'sentient-forms' ),
                 'type'              => 'boolean',
                 'required'          => false,
                 'sanitize_callback' => 'wp_validate_boolean',
                 'validate_callback' => [ $this->validator, 'validate_boolean_param' ],
-                'default'           => true,
+                'default'           => false,
             ];
         }
         return $args;

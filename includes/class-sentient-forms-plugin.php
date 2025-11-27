@@ -339,7 +339,8 @@ final class Sentient_Forms_Plugin
             }
 
             $option = get_option( 'sentient_forms_settings', [] );
-            $enabled_via_option = ! empty( $option['enable_logging'] );
+            $api_option = get_option( 'sentient_forms_plugin_settings', [] );
+            $enabled_via_option = ! empty( $option['enable_logging'] ) || ! empty( $api_option['enable_logging'] );
             $enabled = (bool) apply_filters(
                 'sentient_forms_enable_logging',
                 $enabled_via_option || ( defined( 'SENTIENT_FORMS_LOG_ENABLED' ) && SENTIENT_FORMS_LOG_ENABLED )

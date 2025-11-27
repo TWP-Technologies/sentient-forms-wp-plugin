@@ -132,6 +132,23 @@ export class SentientFormsApiClient {
 		return this.unwrap(response);
 	}
 
+	async getSettings(options: RequestOptions = {}): Promise<Record<string, unknown>> {
+		const response = await this.request<RestEnvelope<Record<string, unknown>>>('settings', options);
+		return this.unwrap(response);
+	}
+
+	async updateSettings(
+		payload: Record<string, unknown>,
+		options: RequestOptions = {}
+	): Promise<Record<string, unknown>> {
+		const response = await this.request<RestEnvelope<Record<string, unknown>>>('settings', {
+			method: 'PUT',
+			body: payload,
+			...options
+		});
+		return this.unwrap(response);
+	}
+
 	async updateAsyncSettings(
 		payload: AsyncSettingsPayload,
 		options: RequestOptions = {}

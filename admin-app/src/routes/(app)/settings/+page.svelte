@@ -3,10 +3,12 @@
 	import { telemetryStore } from '$lib/stores/telemetry.svelte';
 	import { asyncSettingsStore } from '$lib/stores/async-settings.svelte';
 	import { asyncHealthStore } from '$lib/stores/async-health.svelte';
+	import { loggingStore } from '$lib/stores/logging.svelte';
 
 	const telemetry = telemetryStore;
 	const asyncSettings = asyncSettingsStore;
 	const asyncHealth = asyncHealthStore;
+	const logging = loggingStore;
 
 	let formDirty = false;
 	let formState = {
@@ -19,11 +21,17 @@
 		telemetry.load();
 		asyncSettings.load();
 		asyncHealth.refresh();
+		logging.load();
 	});
 
 	function toggle(event: Event) {
 		const target = event.currentTarget as HTMLInputElement;
 		telemetry.setOptIn(target.checked);
+	}
+
+	function toggleLogging(event: Event) {
+		const target = event.currentTarget as HTMLInputElement;
+		logging.setEnabled(target.checked);
 	}
 
 	$: if (!$asyncSettings.loading && !$asyncSettings.saving && !formDirty) {
@@ -117,6 +125,30 @@
 				<p class="sf-text-red-600">Last sync error: {$telemetry.lastError}</p>
 			{/if}
 		</div>
+	</div>
+
+	<div class="sf-rounded-xl sf-border sf-border-slate-200 sf-bg-white sf-p-6 sf-shadow-sm sf-space-y-3">
+		<div class="sf-flex sf-items-center sf-justify-between">
+			<div>
+				<p class="sf-font-medium sf-text-slate-900">Enable on-site logging</p>
+				<p class="sf-text-sm sf-text-slate-600">
+					Write masked diagnostic logs to <code>wp-content/uploads/sentient-forms/logs</code> for support.
+				</p>
+			</div>
+			<label class="sf-flex sf-items-center sf-gap-3">
+				<span class="sf-text-sm sf-font-semibold">{$logging.enabled ? 'On' : 'Off'}</span>
+				<input
+					type="checkbox"
+					class="sf-h-5 sf-w-5"
+					checked={$logging.enabled}
+					disabled={$logging.saving}
+					onchange={toggleLogging}
+				/>
+			</label>
+		</div>
+		{#if $logging.lastError}
+			<p class="sf-text-xs sf-text-red-600">{$logging.lastError}</p>
+		{/if}
 	</div>
 
 	<div class="sf-rounded-xl sf-border sf-border-slate-200 sf-bg-white sf-p-6 sf-shadow-sm sf-space-y-4">
