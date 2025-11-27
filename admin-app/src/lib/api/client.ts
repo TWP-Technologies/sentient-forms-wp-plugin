@@ -20,7 +20,8 @@ import type {
 	LicenseActivationResponsePayload,
 	LicenseActivationResult,
 	LicenseInfoResponse,
-	TelemetrySettingsResponse
+	TelemetrySettingsResponse,
+	PluginSettingsResponse
 } from '$lib/api/types';
 
 export interface ClientConfig {
@@ -132,16 +133,16 @@ export class SentientFormsApiClient {
 		return this.unwrap(response);
 	}
 
-	async getSettings(options: RequestOptions = {}): Promise<Record<string, unknown>> {
-		const response = await this.request<RestEnvelope<Record<string, unknown>>>('settings', options);
+	async getSettings(options: RequestOptions = {}): Promise<PluginSettingsResponse> {
+		const response = await this.request<RestEnvelope<PluginSettingsResponse>>('settings', options);
 		return this.unwrap(response);
 	}
 
 	async updateSettings(
-		payload: Record<string, unknown>,
+		payload: Partial<PluginSettingsResponse>,
 		options: RequestOptions = {}
-	): Promise<Record<string, unknown>> {
-		const response = await this.request<RestEnvelope<Record<string, unknown>>>('settings', {
+	): Promise<PluginSettingsResponse> {
+		const response = await this.request<RestEnvelope<PluginSettingsResponse>>('settings', {
 			method: 'PUT',
 			body: payload,
 			...options

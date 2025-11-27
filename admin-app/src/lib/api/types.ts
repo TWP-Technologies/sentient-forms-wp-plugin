@@ -62,6 +62,10 @@ export interface CreditBalanceResponse {
 	stale?: boolean;
 }
 
+export interface PluginSettingsResponse {
+	enable_logging?: boolean;
+}
+
 export interface ActionDefinition {
 	id: string;
 	label?: string;
