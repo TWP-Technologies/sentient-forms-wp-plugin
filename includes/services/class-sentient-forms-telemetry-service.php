@@ -170,11 +170,28 @@ class Sentient_Forms_Telemetry_Service
         $license_id = isset( $license['license_id'] ) ? sanitize_text_field( (string) $license['license_id'] ) : '';
         $site_id    = isset( $license['site_id'] ) ? sanitize_text_field( (string) $license['site_id'] ) : '';
 
+        // Enrich with entry/form if present.
+        $entry_id = $payload['entry_id'] ?? $payload['context']['entry_id'] ?? null;
+        $form_id  = $payload['form_id'] ?? $payload['context']['form_id'] ?? null;
+        $action_id = $payload['action_id'] ?? $payload['context']['action_id'] ?? null;
+        $request_id = $payload['request_id'] ?? $payload['context']['request_id'] ?? null;
+
         return [
             'event'      => $event_type,
             'site_url'   => get_site_url(),
             'timestamp'  => gmdate( 'c' ),
-            'payload'    => $payload,
+            'payload'    => array_merge(
+                $payload,
+                array_filter(
+                    [
+                        'entry_id'   => $entry_id,
+                        'form_id'    => $form_id,
+                        'action_id'  => $action_id,
+                        'request_id' => $request_id,
+                    ],
+                    static fn( $v ) => null !== $v && '' !== $v
+                )
+            ),
             'license_id' => $license_id ?: null,
             'site_id'    => $site_id ?: null,
         ];
