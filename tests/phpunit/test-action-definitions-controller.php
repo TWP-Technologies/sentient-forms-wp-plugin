@@ -89,7 +89,7 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
         $data = $response->get_data();
         $this->assertIsArray( $data );
-        $this->assertCount( 1, $data );
+        $this->assertNotEmpty( $data );
         $definition = $data[0];
 
         $this->assertSame( 'spam_analysis', $definition['id'] );

@@ -212,7 +212,7 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
             return $response;
         }
 
-        $templates = $response['data']['templates'] ?? [];
+        $templates = $response['templates'] ?? ( $response['data']['templates'] ?? [] );
         if ( ! is_array( $templates ) )
         {
             return [];
