@@ -44,6 +44,7 @@ The entry point `sentient-forms.php` defines plugin constants and boots `include
 - `bun run preview:ci`: build with the pathname router and start a preview server on port `4173`. Playwright uses this preview build (see `playwright.config.ts`) so tests run against the same assets that WordPress loads.
 - `RUN_WP_E2E=1 bun run qa:full`: opt-in flag to exercise the wp-admin/Gravity Forms Playwright suites against the Docker WordPress stack. Without it, the `wp-*` specs skip to keep local CI deterministic when WordPress is unavailable.
 - `bun run <script>`: execute admin SPA tasks (e.g., `bun run dev`, `bun run build:wp`, `bun run lint`) from `wp-plugin/admin-app/`; Bun is the mandated runtime for all Node-equivalent tooling within this repository.
+- Async/unit sanity: run `vendor/bin/phpunit --testsuite "Sentient Forms"` (expects WP 6.8 deprecation noise). For local harness health before submissions, run `./scripts/check-local-health.sh` from repo root (verifies CPS /v1/health from WP container and proxy key presence).
 
 ### Git Hooks
 

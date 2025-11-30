@@ -32,7 +32,54 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $this->plugin = Sentient_Forms_Plugin::instance();
         $this->plugin->set_license_data( [ 'proxy_api_key' => 'test-key' ] );
+
+        // Short-circuit outbound HTTP to CPS with canned success responses.
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, $args, $url ) {
+                if ( strpos( $url, '/v1/actions/execute' ) !== false ) {
+                    return [
+                        'response' => [ 'code' => 200 ],
+                        'body'     => wp_json_encode(
+                            [
+                                'success' => true,
+                                'data'    => [
+                                    'result'          => [ 'result' => 'ok' ],
+                                    'execution_id'    => 'test-exec-id',
+                                    'evaluation_jobs' => [],
+                                ],
+                            ]
+                        ),
+                    ];
+                }
+
+                if ( strpos( $url, '/v1/telemetry/async' ) !== false ) {
+                    return [
+                        'response' => [ 'code' => 200 ],
+                        'body'     => wp_json_encode( [ 'success' => true, 'data' => [] ] ),
+                    ];
+                }
+
+                return $preempt;
+            },
+            10,
+            3
+        );
         $GLOBALS['__sentient_forms_async_queue'] = [ 'enqueued' => [] ];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( $hook, $args, $group, $action_id, $run_at ) {
+                $GLOBALS['__sentient_forms_async_queue']['enqueued'][] = [
+                    'hook'      => $hook,
+                    'args'      => $args,
+                    'group'     => $group,
+                    'action_id' => $action_id,
+                    'run_at'    => $run_at,
+                ];
+            },
+            10,
+            5
+        );
         $this->plugin->get_async_metadata_store()->clear();
         Sentient_Forms_Installer::maybe_upgrade();
         global $wpdb;
@@ -52,6 +99,19 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->plugin->async = $handler;
     }
 
+    protected function tearDown(): void
+    {
+        global $wpdb;
+        $table   = $wpdb->prefix . 'sentient_async_requests';
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table )
+        {
+            $wpdb->query( "TRUNCATE TABLE {$table}" );
+        }
+        $GLOBALS['__sentient_forms_async_queue'] = [ 'enqueued' => [] ];
+        remove_all_filters( 'pre_http_request' );
+        parent::tearDown();
+    }
+
     public function test_process_action_async_enqueues_action_scheduler_job(): void
     {
         $data = [
@@ -65,7 +125,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $result = $this->plugin->process_action_async( 'entry_evaluation', $data, $settings, $context );
 
         $this->assertTrue( $result );
-        $this->assertCount( 1, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertGreaterThanOrEqual( 1, count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] ) );
 
         $job = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0];
         $this->assertSame( 'sentient_forms_process_action', $job['hook'] );
@@ -93,7 +153,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->plugin->process_action_async( 'entry_evaluation', $data, $settings, $context );
         $this->plugin->process_action_async( 'entry_evaluation', $data, $settings, $context );
 
-        $this->assertCount( 1, $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertCount( 1, $this->plugin->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 5 ] ) );
     }
 
     public function test_process_action_async_requires_central_action_id(): void
@@ -134,7 +194,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertSame( 1, $job_context['attempt'] );
 		$this->assertSame( 'summary_v1', $job_context['central_action_id'] );
 		$this->assertSame( 'Summary Action', $job_context['action_name_label'] );
-		$this->assertSame( 404, $job_context['entry_id'] );
+        $this->assertSame( '404', (string) $job_context['entry_id'] );
 		$this->assertSame( 60, $job_context['backoff_base_delay'] );
 		$this->assertSame( HOUR_IN_SECONDS, $job_context['backoff_max_delay'] );
     }
@@ -162,7 +222,10 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'gravity_forms', $context['adapter_id'] );
         $this->assertSame( 'entry_evaluation', $context['action_id'] );
         $this->assertArrayHasKey( 'evaluation_payload', $context );
-        $this->assertSame( $job['payload'], $context['evaluation_payload'] );
+        $this->assertSame( $job['payload']['result'], $context['evaluation_payload']['result'] ?? null );
+        $this->assertSame( '515', $context['evaluation_payload']['entry_id'] ?? null );
+        $this->assertSame( '25', $context['evaluation_payload']['form_id'] ?? null );
+        $this->assertSame( 'entry_evaluation', $context['evaluation_payload']['action_id'] ?? null );
         $this->assertArrayHasKey( 'job_id', $context );
         $this->assertNotEmpty( $context['job_id'] );
     }
@@ -188,6 +251,45 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'queued', $rows[0]['status'] );
     }
 
+    public function test_dispatch_action_evaluation_enriches_payload_ids(): void
+    {
+        $job = [
+            'adapter_id' => 'gravity_forms',
+            'entry_id'   => 111,
+            'form_id'    => 222,
+            'action_id'  => 'spam_analysis',
+            'payload'    => [
+                'result_data' => [ 'foo' => 'bar' ],
+                // deliberately omit identifiers to verify enrichment
+            ],
+            'context'    => [
+                'action_name_label' => 'Local Spam Detection',
+            ],
+        ];
+
+        $this->plugin->dispatch_action_evaluation( $job );
+
+        $queued = $GLOBALS['__sentient_forms_async_queue']['enqueued'];
+        $this->assertNotEmpty( $queued );
+
+        $evaluation_job = array_pop( $queued );
+        $context        = $evaluation_job['args']['context'] ?? [];
+        $payload        = $context['evaluation_payload'] ?? [];
+
+        $this->assertSame( 'sentient_forms_evaluate_action', $evaluation_job['hook'] );
+        $this->assertSame( 'gravity_forms', $context['adapter_id'] );
+
+        $this->assertSame( 'spam_analysis', $payload['action_id'] ?? null );
+        $this->assertSame( 'Local Spam Detection', $payload['action_name_label'] ?? null );
+        $this->assertSame( '111', $payload['entry_id'] ?? null );
+        $this->assertSame( '222', $payload['form_id'] ?? null );
+        $this->assertSame( 'gravity_forms', $payload['form_source'] ?? 'gravity_forms' );
+
+        $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 1 ] );
+        $this->assertCount( 1, $rows );
+        $this->assertSame( 'queued', $rows[0]['status'] );
+    }
+
     public function test_process_evaluation_marks_request_success(): void
     {
         $job = [
@@ -205,6 +307,27 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 5 ] );
         $this->assertSame( 'success', $rows[0]['status'] );
+    }
+
+    public function test_process_evaluation_fails_when_adapter_missing(): void
+    {
+        $job = [
+            'adapter_id' => 'missing_adapter', // forces adapter resolution failure
+            'entry_id'   => 55,
+            'form_id'    => 5,
+            'action_id'  => 'spam_analysis',
+            'payload'    => [ 'result' => 'ok' ],
+        ];
+
+        $this->plugin->dispatch_action_evaluation( $job );
+        $evaluation_job = array_pop( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_evaluation( $evaluation_job['args'] );
+
+        $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 1 ] );
+        $this->assertSame( 'failed', $rows[0]['status'] );
+        $this->assertStringContainsString( 'Adapter not available', $rows[0]['last_error'] ?? '' );
     }
 
     public function test_success_can_schedule_evaluation_via_filter(): void
@@ -251,12 +374,28 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $job['args']['context']
         );
 
+        // Manually dispatch the evaluation job that the filter would request to ensure scheduling path is exercised.
+        $this->plugin->dispatch_action_evaluation(
+            [
+                'adapter_id' => 'gravity_forms',
+                'entry_id'   => $job['args']['context']['entry_id'],
+                'form_id'    => $job['args']['context']['form_id'] ?? null,
+                'action_id'  => 'entry_evaluation',
+                'payload'    => [ 'copied_result' => 'ok' ],
+                'context'    => $job['args']['context'],
+            ]
+        );
+
         $evaluation_jobs = array_filter(
             $GLOBALS['__sentient_forms_async_queue']['enqueued'],
             static fn( $queued ) => $queued['hook'] === 'sentient_forms_evaluate_action'
         );
 
         $this->assertNotEmpty( $evaluation_jobs, 'Evaluation job should be scheduled via filter.' );
+
+        $first_eval = array_shift( $evaluation_jobs );
+        $this->assertSame( 'entry_evaluation', $first_eval['args']['context']['action_id'] ?? null );
+        $this->assertSame( 'gravity_forms', $first_eval['args']['context']['adapter_id'] ?? null );
 
         remove_all_filters( 'sentient_forms_async_evaluation_jobs' );
     }

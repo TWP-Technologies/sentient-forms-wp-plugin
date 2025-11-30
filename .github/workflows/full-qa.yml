@@ -108,6 +108,7 @@ jobs:
           WP_TESTS_DB_NAME: sentient_forms_wpdb
           WP_TESTS_DB_USER: sf_wp_user
           WP_TESTS_DB_PASSWORD: your_strong_user_password_here
+          RUN_HEALTH_CHECK: '0'
           CI: 'true'
         run: ./scripts/run-full-qa.sh
 

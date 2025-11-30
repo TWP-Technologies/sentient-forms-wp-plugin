@@ -51,7 +51,16 @@ class Sentient_Forms_Async_Handler
             (string) ( $payload['context']['action_id'] ?? 'evaluation' ),
         );
 
-        $evaluation_request_id = $context['evaluation_request_id'] ?? null;
+        $evaluation_request_id = $context['evaluation_request_id']
+            ?? $this->generate_evaluation_request_id(
+                [
+                    'adapter_id' => $context['adapter_id'] ?? $context['form_source'] ?? '',
+                    'action_id'  => $context['action_id'] ?? '',
+                    'entry_id'   => $context['entry_id'] ?? '',
+                    'form_id'    => $context['form_id'] ?? '',
+                    'payload'    => $context['evaluation_payload'] ?? $payload['context']['evaluation_payload'] ?? [],
+                ]
+            );
 
         $result  = isset( $context['evaluation_payload'] ) && is_array( $context['evaluation_payload'] )
             ? $context['evaluation_payload']
@@ -93,6 +102,23 @@ class Sentient_Forms_Async_Handler
                 $result,
                 new WP_Error( 'sentient_forms_async_evaluation_failed', $throwable->getMessage() ),
             );
+        }
+        finally
+        {
+            if ( $evaluation_request_id )
+            {
+                // If status somehow stayed queued, force it to failed to avoid ledger leaks.
+                $row = $this->get_request_store()->get( $evaluation_request_id, 'evaluation' );
+                if ( $row && ( $row['status'] ?? '' ) === 'queued' )
+                {
+                    $this->get_request_store()->mark_status(
+                        $evaluation_request_id,
+                        'failed',
+                        __( 'Evaluation job did not complete', 'sentient-forms' ),
+                        'evaluation'
+                    );
+                }
+            }
         }
     }
 
@@ -342,6 +368,19 @@ class Sentient_Forms_Async_Handler
     {
         $group = $this->get_scheduler_group();
 
+        $record_enqueued = function ( $action_id ) use ( $hook, $args, $group, $run_at ) {
+            /**
+             * Internal hook to observe async job scheduling (used by tests).
+             *
+             * @param string     $hook      Hook name.
+             * @param array      $args      Hook args.
+             * @param string     $group     Action Scheduler group.
+             * @param int|null   $action_id Scheduler action id if available.
+             * @param int        $run_at    Timestamp the job is scheduled for.
+             */
+            do_action( 'sentient_forms_async_job_scheduled', $hook, $args, $group, $action_id, $run_at );
+        };
+
         if ( function_exists( 'as_schedule_single_action' ) )
         {
             $action_id = as_schedule_single_action( $run_at, $hook, $args, $group );
@@ -350,16 +389,24 @@ class Sentient_Forms_Async_Handler
                 return [ 'scheduled' => false, 'action_id' => null ];
             }
 
+            $record_enqueued( $action_id );
             return [ 'scheduled' => (bool) $action_id, 'action_id' => is_numeric( $action_id ) ? (int) $action_id : null ];
         }
 
         if ( function_exists( 'as_enqueue_async_action' ) )
         {
             $action_id = as_enqueue_async_action( $hook, $args, $group );
+            $record_enqueued( $action_id );
             return [ 'scheduled' => (bool) $action_id, 'action_id' => is_numeric( $action_id ) ? (int) $action_id : null ];
         }
 
-        return [ 'scheduled' => (bool) wp_schedule_single_event( $run_at, $hook, $args ), 'action_id' => null ];
+        $scheduled = (bool) wp_schedule_single_event( $run_at, $hook, $args );
+        if ( $scheduled )
+        {
+            $record_enqueued( null );
+        }
+
+        return [ 'scheduled' => $scheduled, 'action_id' => null ];
     }
 
     private function get_scheduler_group(): string
@@ -605,6 +652,7 @@ class Sentient_Forms_Async_Handler
     public function dispatch_evaluation( array $job ): bool
     {
         $payload_data = isset( $job['payload'] ) && is_array( $job['payload'] ) ? $job['payload'] : [];
+        $payload_data = $this->enrich_evaluation_payload_ids( $payload_data, $job );
         if ( empty( $payload_data ) )
         {
             return false;
@@ -685,6 +733,45 @@ class Sentient_Forms_Async_Handler
         }
 
         return $scheduled['scheduled'];
+    }
+
+    /**
+     * Ensure evaluation payload carries identifiers needed by CPS telemetry/logs.
+     */
+    private function enrich_evaluation_payload_ids( array $payload, array $job ): array
+    {
+        $entry_id  = $job['entry_id'] ?? $job['context']['entry_id'] ?? null;
+        $form_id   = $job['form_id'] ?? $job['context']['form_id'] ?? null;
+        $action_id = $job['action_id'] ?? $job['context']['action_id'] ?? null;
+        $action_label = $job['context']['action_name_label'] ?? null;
+        $form_source  = $job['context']['form_source'] ?? $job['context']['adapter_id'] ?? null;
+
+        if ( $entry_id && empty( $payload['entry_id'] ) )
+        {
+            $payload['entry_id'] = (string) $entry_id;
+        }
+
+        if ( $form_id && empty( $payload['form_id'] ) )
+        {
+            $payload['form_id'] = (string) $form_id;
+        }
+
+        if ( $action_id && empty( $payload['action_id'] ) )
+        {
+            $payload['action_id'] = (string) $action_id;
+        }
+
+        if ( $action_label && empty( $payload['action_name_label'] ) )
+        {
+            $payload['action_name_label'] = (string) $action_label;
+        }
+
+        if ( $form_source && empty( $payload['form_source'] ) )
+        {
+            $payload['form_source'] = (string) $form_source;
+        }
+
+        return $payload;
     }
 
     /**
