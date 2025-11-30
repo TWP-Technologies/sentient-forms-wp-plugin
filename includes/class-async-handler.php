@@ -105,19 +105,36 @@ class Sentient_Forms_Async_Handler
         }
         finally
         {
+            $store = $this->get_request_store();
+
             if ( $evaluation_request_id )
             {
-                // If status somehow stayed queued, force it to failed to avoid ledger leaks.
-                $row = $this->get_request_store()->get( $evaluation_request_id, 'evaluation' );
+                // If status stayed queued, force it to failed to avoid ledger leaks.
+                $row = $store->get( $evaluation_request_id, 'evaluation' );
                 if ( $row && ( $row['status'] ?? '' ) === 'queued' )
                 {
-                    $this->get_request_store()->mark_status(
+                    $store->mark_status(
                         $evaluation_request_id,
                         'failed',
                         __( 'Evaluation job did not complete', 'sentient-forms' ),
                         'evaluation'
                     );
                 }
+            }
+
+            // Sweep any remaining queued evaluation rows to failed to keep the ledger clean.
+            foreach ( $store->list( [ 'record_type' => 'evaluation', 'status' => 'queued', 'limit' => 50 ] ) as $queued )
+            {
+                if ( empty( $queued['request_hash'] ) )
+                {
+                    continue;
+                }
+                $store->mark_status(
+                    $queued['request_hash'],
+                    'failed',
+                    __( 'Evaluation cleanup sweep (stale queued)', 'sentient-forms' ),
+                    'evaluation'
+                );
             }
         }
     }
