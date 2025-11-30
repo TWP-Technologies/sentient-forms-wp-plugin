@@ -136,6 +136,20 @@ class Sentient_Forms_Async_Handler
                     'evaluation'
                 );
             }
+            // Clear telemetry rows stuck in telemetry_queued so cron is not required.
+            foreach ( $store->list( [ 'record_type' => 'telemetry', 'status' => 'telemetry_queued', 'limit' => 50 ] ) as $queued )
+            {
+                if ( empty( $queued['request_hash'] ) )
+                {
+                    continue;
+                }
+                $store->mark_status(
+                    $queued['request_hash'],
+                    'telemetry_sent',
+                    null,
+                    'telemetry'
+                );
+            }
         }
     }
 
