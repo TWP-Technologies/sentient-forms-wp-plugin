@@ -685,6 +685,7 @@ class Sentient_Forms_Async_Handler
 
         if ( $request_store->should_block( $evaluation_request_id, 'evaluation' ) )
         {
+            $request_store->mark_status( $evaluation_request_id, 'failed', __( 'Duplicate evaluation request blocked', 'sentient-forms' ), 'evaluation' );
             return false;
         }
 
