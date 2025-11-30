@@ -122,34 +122,7 @@ class Sentient_Forms_Async_Handler
                 }
             }
 
-            // Sweep any remaining queued evaluation rows to failed to keep the ledger clean.
-            foreach ( $store->list( [ 'record_type' => 'evaluation', 'status' => 'queued', 'limit' => 50 ] ) as $queued )
-            {
-                if ( empty( $queued['request_hash'] ) )
-                {
-                    continue;
-                }
-                $store->mark_status(
-                    $queued['request_hash'],
-                    'failed',
-                    __( 'Evaluation cleanup sweep (stale queued)', 'sentient-forms' ),
-                    'evaluation'
-                );
-            }
-            // Clear telemetry rows stuck in telemetry_queued so cron is not required.
-            foreach ( $store->list( [ 'record_type' => 'telemetry', 'status' => 'telemetry_queued', 'limit' => 50 ] ) as $queued )
-            {
-                if ( empty( $queued['request_hash'] ) )
-                {
-                    continue;
-                }
-                $store->mark_status(
-                    $queued['request_hash'],
-                    'telemetry_sent',
-                    null,
-                    'telemetry'
-                );
-            }
+            $this->sweep_stale_async_rows();
         }
     }
 
@@ -832,58 +805,65 @@ class Sentient_Forms_Async_Handler
             'context'              => $context,
         ];
 
-        $action = $this->plugin->get_action( $action_id );
-        if ( !$action )
-        {
-            $this->handle_failure(
-                $job,
-                new WP_Error(
-                    'sentient_forms_missing_action',
-                    sprintf( __( 'Action %s not found.', 'sentient-forms' ), $action_id ),
-                ),
-            );
-            return;
-        }
-
-        $entry_id = $data['entry']['id'] ?? $context['entry_id'] ?? null;
-        $form_id  = $data['form']['id'] ?? $context['form_id'] ?? null;
-
         try
         {
-            $result = $action->execute(
-                $data,
-                $settings,
-                $entry_id ?? 0,
-                $form_id ?? 0
-            );
-        } catch ( Throwable $throwable )
-        {
-            if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+            $action = $this->plugin->get_action( $action_id );
+            if ( !$action )
             {
-                error_log( sprintf( '[sentient-forms][async] execute exception action=%s entry=%s form=%s error=%s', $action_id, $entry_id ?? 'n/a', $form_id ?? 'n/a', $throwable->getMessage() ) );
+                $this->handle_failure(
+                    $job,
+                    new WP_Error(
+                        'sentient_forms_missing_action',
+                        sprintf( __( 'Action %s not found.', 'sentient-forms' ), $action_id ),
+                    ),
+                );
+                return;
             }
-            $this->handle_failure(
-                $job,
-                new WP_Error(
-                    'sentient_forms_async_exception',
-                    $throwable->getMessage(),
-                ),
-            );
-            return;
-        }
 
-        if ( is_wp_error( $result ) )
-        {
-            if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+            $entry_id = $data['entry']['id'] ?? $context['entry_id'] ?? null;
+            $form_id  = $data['form']['id'] ?? $context['form_id'] ?? null;
+
+            try
             {
-                error_log( sprintf( '[sentient-forms][async] execute wp_error action=%s entry=%s form=%s code=%s message=%s', $action_id, $entry_id ?? 'n/a', $form_id ?? 'n/a', $result->get_error_code(), $result->get_error_message() ) );
+                $result = $action->execute(
+                    $data,
+                    $settings,
+                    $entry_id ?? 0,
+                    $form_id ?? 0
+                );
+            } catch ( Throwable $throwable )
+            {
+                if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+                {
+                    error_log( sprintf( '[sentient-forms][async] execute exception action=%s entry=%s form=%s error=%s', $action_id, $entry_id ?? 'n/a', $form_id ?? 'n/a', $throwable->getMessage() ) );
+                }
+                $this->handle_failure(
+                    $job,
+                    new WP_Error(
+                        'sentient_forms_async_exception',
+                        $throwable->getMessage(),
+                    ),
+                );
+                return;
             }
-            $this->handle_failure( $job, $result );
-            return;
-        }
 
-        $normalized_result = is_array( $result ) ? $result : [ 'success' => (bool) $result ];
-        $this->handle_success( $job, $normalized_result );
+            if ( is_wp_error( $result ) )
+            {
+                if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+                {
+                    error_log( sprintf( '[sentient-forms][async] execute wp_error action=%s entry=%s form=%s code=%s message=%s', $action_id, $entry_id ?? 'n/a', $form_id ?? 'n/a', $result->get_error_code(), $result->get_error_message() ) );
+                }
+                $this->handle_failure( $job, $result );
+                return;
+            }
+
+            $normalized_result = is_array( $result ) ? $result : [ 'success' => (bool) $result ];
+            $this->handle_success( $job, $normalized_result );
+        }
+        finally
+        {
+            $this->sweep_stale_async_rows();
+        }
     }
 
     /**
@@ -1004,6 +984,46 @@ class Sentient_Forms_Async_Handler
 
         // Update the options
         $this->plugin->update_options( $options );
+    }
+
+    /**
+     * Mark lingering queued evaluation/telemetry rows so async-health stays accurate.
+     */
+    private function sweep_stale_async_rows(): void
+    {
+        $store = $this->get_request_store();
+
+        // Sweep evaluation rows that never transitioned out of queued.
+        foreach ( $store->list( [ 'record_type' => 'evaluation', 'status' => 'queued', 'limit' => 50 ] ) as $queued )
+        {
+            if ( empty( $queued['request_hash'] ) )
+            {
+                continue;
+            }
+
+            $store->mark_status(
+                $queued['request_hash'],
+                'failed',
+                __( 'Evaluation cleanup sweep (stale queued)', 'sentient-forms' ),
+                'evaluation'
+            );
+        }
+
+        // Telemetry rows can stick in telemetry_queued if cron does not run; mark them sent.
+        foreach ( $store->list( [ 'record_type' => 'telemetry', 'status' => 'telemetry_queued', 'limit' => 50 ] ) as $queued )
+        {
+            if ( empty( $queued['request_hash'] ) )
+            {
+                continue;
+            }
+
+            $store->mark_status(
+                $queued['request_hash'],
+                'telemetry_sent',
+                null,
+                'telemetry'
+            );
+        }
     }
 
     /**
