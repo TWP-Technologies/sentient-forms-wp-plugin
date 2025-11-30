@@ -97,22 +97,28 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
      */
     public function get_action_definitions( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-		$definitions = [];
-		foreach ( $this->action_registry->get_all_actions() as $id => $action )
-		{
-			$definitions[] = [
-				'id'             => $id,
-				'label'          => $action->get_name(),
-				'description'    => $action->get_description(),
-				'settingsFields' => $action->get_settings_fields(),
-				'icon'           => method_exists( $action, 'get_icon' ) ? $action->get_icon() : '',
-				'hooks'          => method_exists( $action, 'get_hooks' ) ? $action->get_hooks() : [],
-				'compatibility'  => method_exists( $action, 'get_compatibility' ) ? $action->get_compatibility() : [],
-				'source'         => 'local',
-				'baseCreditCost' => null,
-				'modelHint'      => method_exists( $action, 'get_model_hint' ) ? $action->get_model_hint() : null,
-			];
-		}
+        $cps_definitions = $this->maybe_fetch_cps_templates();
+        if ( ! is_wp_error( $cps_definitions ) && ! empty( $cps_definitions ) )
+        {
+            return $this->prepare_item_for_response( $cps_definitions );
+        }
+
+        $definitions = [];
+        foreach ( $this->action_registry->get_all_actions() as $id => $action )
+        {
+            $definitions[] = [
+                'id'             => $id,
+                'label'          => $action->get_name(),
+                'description'    => $action->get_description(),
+                'settingsFields' => $action->get_settings_fields(),
+                'icon'           => method_exists( $action, 'get_icon' ) ? $action->get_icon() : '',
+                'hooks'          => method_exists( $action, 'get_hooks' ) ? $action->get_hooks() : [],
+                'compatibility'  => method_exists( $action, 'get_compatibility' ) ? $action->get_compatibility() : [],
+                'source'         => 'local',
+                'baseCreditCost' => null,
+                'modelHint'      => method_exists( $action, 'get_model_hint' ) ? $action->get_model_hint() : null,
+            ];
+        }
 
         return $this->prepare_item_for_response( $definitions );
     }
@@ -174,5 +180,61 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
         ];
 
         return $this->schema;
+    }
+
+    /**
+     * Attempt to fetch action templates from CPS if a proxy key is available.
+     *
+     * @return array<int, array<string, mixed>>|WP_Error
+     */
+    private function maybe_fetch_cps_templates(): array | WP_Error
+    {
+        $plugin    = Sentient_Forms_Plugin::instance();
+        $proxy_key = $plugin->get_proxy_api_key();
+        if ( empty( $proxy_key ) )
+        {
+            return [];
+        }
+
+        $client = $plugin->get_cps_api_client();
+        if ( ! $client )
+        {
+            return [];
+        }
+
+        $response = $client->get(
+            '/actions/templates',
+            [ 'bearer_token' => $proxy_key ]
+        );
+
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        $templates = $response['data']['templates'] ?? [];
+        if ( ! is_array( $templates ) )
+        {
+            return [];
+        }
+
+        $mapped = [];
+        foreach ( $templates as $template )
+        {
+            $mapped[] = [
+                'id'             => $template['code'] ?? '',
+                'label'          => $template['display_name'] ?? ( $template['code'] ?? '' ),
+                'description'    => $template['description'] ?? '',
+                'settingsFields' => [],
+                'icon'           => '',
+                'hooks'          => [],
+                'compatibility'  => [],
+                'source'         => 'cps',
+                'baseCreditCost' => $template['base_credit_cost'] ?? null,
+                'modelHint'      => $template['model_hint'] ?? null,
+            ];
+        }
+
+        return $mapped;
     }
 }

@@ -348,6 +348,36 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         return $validation_result;
     }
 
+    /**
+     * Map CPS/WP errors to user-friendly messages for admin status.
+     */
+    private function map_error_to_message( WP_Error $error ): string
+    {
+        return match ( $error->get_error_code() ) {
+            'insufficient_credits' => __( 'Sentient Forms could not run: insufficient credits remain for this license.', 'sentient-forms' ),
+            'duplicate_execution'  => __( 'Sentient Forms already processed this submission. Refresh the status to view the existing result.', 'sentient-forms' ),
+            'timeout'              => __( 'Sentient Forms timed out while contacting CPS. The submission was not processed.', 'sentient-forms' ),
+            default                => $error->get_error_message(),
+        };
+    }
+
+    /**
+     * Persist form-level error status for admins to review.
+     */
+    private function record_entry_error( int $entry_id, WP_Error $error, int $form_id ): void
+    {
+        $option_key = sprintf( 'sentient_forms_form_status_gravity_forms_%s', $form_id );
+        $status     = [
+            'status'          => 'error',
+            'last_error_code' => $error->get_error_code(),
+            'message'         => $this->map_error_to_message( $error ),
+            'entry_id'        => $entry_id,
+            'updated_at'      => time(),
+        ];
+
+        update_option( $option_key, $status, false );
+    }
+
     private function inject_validation_message( array $validation_result, string $message, array $action_settings ): array
     {
         if ( '' === trim( $message ) )
