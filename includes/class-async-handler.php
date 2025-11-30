@@ -672,7 +672,22 @@ class Sentient_Forms_Async_Handler
 
         if ( $request_store->should_block( $evaluation_request_id, 'evaluation' ) )
         {
-            $request_store->mark_status( $evaluation_request_id, 'failed', __( 'Duplicate evaluation request blocked', 'sentient-forms' ), 'evaluation' );
+            // Treat duplicates as a no-op so health dashboards stay green, but keep the event visible.
+            $request_store->mark_status( $evaluation_request_id, 'skipped', __( 'Duplicate evaluation request blocked', 'sentient-forms' ), 'evaluation' );
+            $this->emit_async_event(
+                'evaluation_duplicate_blocked',
+                array_merge(
+                    $job['context'] ?? [],
+                    [
+                        'evaluation_request_id' => $evaluation_request_id,
+                        'adapter_id'            => $job['adapter_id'] ?? $job['context']['adapter_id'] ?? $job['context']['form_source'] ?? null,
+                        'action_id'             => $job['action_id'] ?? $job['context']['action_id'] ?? null,
+                    ]
+                ),
+                [
+                    'reason' => 'duplicate_blocked',
+                ]
+            );
             return false;
         }
 

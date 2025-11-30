@@ -248,7 +248,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 5 ] );
         $this->assertCount( 1, $rows );
-        $this->assertSame( 'queued', $rows[0]['status'] );
+        $this->assertSame( 'skipped', $rows[0]['status'] );
     }
 
     public function test_dispatch_action_evaluation_enriches_payload_ids(): void
