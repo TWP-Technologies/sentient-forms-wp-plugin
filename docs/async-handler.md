@@ -87,6 +87,10 @@ By default, adapters inherit `entry_id`, `form_id`, and `action_id` from the exe
 
 > Debugging tip: when `WP_DEBUG` and `WP_DEBUG_LOG` are enabled (or the `sentient_forms_enable_debug_evaluation_logging` filter returns true), the plugin logs every payload passed through `sentient_forms_async_evaluation_jobs` via the `sentient_forms_debug_evaluation_payload` action. These entries land in `wp-content/debug.log` and are safe to remove once staging validation is complete.
 
+### Duplicate evaluation requests
+
+Evaluation jobs are idempotent. If the ledger already contains the same `evaluation_request_id`, the handler records the attempt as `skipped` with the message “Duplicate evaluation request blocked”, emits the async event `evaluation_duplicate_blocked`, and does **not** enqueue another job. This keeps health dashboards green while preserving an audit trail for accidental double-enqueues.
+
 ## Adapter contract
 Adapters must implement `Sentient_Forms_Async_Capable_Adapter_Interface` to participate:
 - `finalize_async_success( $context, $result )`

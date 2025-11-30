@@ -251,6 +251,45 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'skipped', $rows[0]['status'] );
     }
 
+    public function test_dispatch_action_evaluation_emits_duplicate_block_event(): void
+    {
+        // Enable telemetry so events are emitted even without debug mode.
+        $options = $this->plugin->get_options();
+        $options['telemetry_settings']['telemetry_opt_in'] = true;
+        $this->plugin->update_options( $options );
+
+        $job = [
+            'adapter_id' => 'gravity_forms',
+            'entry_id'   => 321,
+            'form_id'    => 654,
+            'action_id'  => 'entry_evaluation',
+            'payload'    => [ 'result' => 'duplicate-check' ],
+        ];
+
+        $events = [];
+        add_action(
+            'sentient_forms_async_event',
+            function ( $event ) use ( &$events ) {
+                $events[] = $event;
+            },
+            10,
+            1
+        );
+
+        // First schedule records the row; second is treated as skipped duplicate.
+        $this->plugin->dispatch_action_evaluation( $job );
+        $this->plugin->dispatch_action_evaluation( $job );
+
+        $this->assertNotEmpty( $events, 'Async event should fire for duplicate evaluation block.' );
+        $duplicate = array_filter(
+            $events,
+            static fn( $event ) => isset( $event['event'] ) && 'evaluation_duplicate_blocked' === $event['event']
+        );
+        $this->assertNotEmpty( $duplicate, 'Duplicate block event should be present.' );
+        $first = array_shift( $duplicate );
+        $this->assertSame( 'duplicate_blocked', $first['payload']['reason'] ?? null );
+    }
+
     public function test_dispatch_action_evaluation_enriches_payload_ids(): void
     {
         $job = [

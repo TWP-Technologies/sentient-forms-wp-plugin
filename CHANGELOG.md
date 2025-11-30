@@ -11,6 +11,7 @@
 - Async: Added async health monitoring (admin notices, SPA health card, REST `GET /async-health`, `sentient_forms_async_health_warning` hook, and `wp sentient-forms async status`) plus queue/failure thresholds so operators can react before customers notice delays.
 - Async: Implemented a dedicated `sentient_async_requests` table + CLI (`wp sentient-forms async-requests ...`) so idempotency survives beyond transient caches and retries never double-bill CPS.
 - Async: Evaluation follow-ups now receive deterministic `evaluation_request_id`s, leverage the same ledger (`--record-type=evaluation` in `wp sentient-forms async-requests list`), and refuse duplicate dispatches.
+- Async: Duplicate evaluation enqueue attempts now record `skipped` (non-error) with event `evaluation_duplicate_blocked`, keeping health dashboards clean while preserving an audit trail.
 - Hooks: Added the `sentient_forms_async_evaluation_jobs` filter + docs so adapters/actions can describe follow-up evaluation work without touching the handler directly.
 - QA: Playwright now runs against the pathname-router preview build (`bun run preview:ci`) to exercise the same assets WordPress loads; CI stubs CPS responses so CRUD flows stay deterministic.
 - Docs/Infra: Published `docs/async-handler.md` (Action Scheduler contract, retry policy, consent-aware logging) and added the `sentient_forms_async_event` hook gated by telemetry/debug mode.
