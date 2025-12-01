@@ -216,7 +216,7 @@ class Sentient_Forms_Admin
 			add_action( 'admin_notices', [ $this, 'render_asset_error_notice' ] );
 			return;
 		}
-        $app_module_url    = $this->assets->get_asset_url( $entry['file'] ?? '' );
+		$app_module_url    = $this->assets->get_asset_url( $entry['file'] ?? '' );
 		$start_module_url  = $this->assets->get_asset_url( $start_entry['file'] ?? '' );
 
         wp_enqueue_style( 'wp-components' );
@@ -253,7 +253,27 @@ class Sentient_Forms_Admin
 		$bootstrap_js .= "\n" . '} catch (error) { console.error("Sentient Forms URL override failed", error); } })();';
 		$bootstrap_js .= "\n" . 'window.sentientFormsAppReady = "bootstrapping";';
 		$bootstrap_js .= "\n" . $this->build_hash_router_bootstrap_js();
+
+		$is_dev = ! empty( $config['devMode'] );
+		if ( $is_dev ) {
+			$bootstrap_js .= "\n" . sprintf(
+				'import("%s/@vite/client").catch((e) => console.warn("Vite client load failed", e));',
+				rtrim( $asset_base, '/' )
+			);
+		}
+
+		$runtime_import = $is_dev
+			? rtrim( $asset_base, '/' ) . '/node_modules/@sveltejs/kit/src/runtime/client/entry.js'
+			: $start_module_url;
+		$app_import = $is_dev
+			? rtrim( $asset_base, '/' ) . '/@fs/app/.svelte-kit/generated/client/app.js'
+			: $app_module_url;
+
 		$this->spa_bootstrap_script = $bootstrap_js;
+
+		// Store dev/prod module URLs for enqueue output.
+		$this->spa_start_module_url = $runtime_import;
+		$this->spa_app_module_url   = $app_import;
 	}
 
 	public function force_module_type_for_spa( string $tag, string $handle, string $src ): string

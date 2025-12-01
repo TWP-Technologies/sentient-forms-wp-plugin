@@ -22,7 +22,7 @@ class Sentient_Forms_Licensing_Api_Client
 
     public function __construct( ?string $api_url = null, int $timeout = 30 )
     {
-        $this->api_url = $api_url ? rtrim( $api_url, '/' ) : 'https://api.sentientforms.com/v1';
+        $this->api_url = $this->resolve_api_url( $api_url );
         $this->timeout = $timeout;
     }
 
@@ -104,5 +104,33 @@ class Sentient_Forms_Licensing_Api_Client
         $error_message = $decoded['message'] ?? __( 'Unable to complete licensing request.', 'sentient-forms' );
 
         return new WP_Error( $error_code, $error_message, [ 'status' => $status_code, 'payload' => $decoded ] );
+    }
+
+    /**
+     * Resolve API base with overrides (constant/env/filter) and enforce /v1 suffix.
+     */
+    private function resolve_api_url( ?string $api_url ): string
+    {
+        $url = $api_url ?: 'https://api.sentientforms.com/v1';
+
+        if ( defined( 'SENTIENT_FORMS_PROXY_API_URL' ) && is_string( constant( 'SENTIENT_FORMS_PROXY_API_URL' ) ) ) {
+            $url = constant( 'SENTIENT_FORMS_PROXY_API_URL' );
+        } elseif ( getenv( 'SENTIENT_FORMS_PROXY_API_URL' ) ) {
+            $url = (string) getenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+        }
+
+        if ( function_exists( 'apply_filters' ) ) {
+            $filtered = apply_filters( 'sentient_forms_proxy_api_url', $url );
+            if ( is_string( $filtered ) && '' !== trim( $filtered ) ) {
+                $url = $filtered;
+            }
+        }
+
+        $url = rtrim( trim( $url ), '/' );
+        if ( substr( $url, -3 ) !== '/v1' ) {
+            $url .= '/v1';
+        }
+
+        return $url;
     }
 }

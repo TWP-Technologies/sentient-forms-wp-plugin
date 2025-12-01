@@ -37,7 +37,7 @@ class Sentient_Forms_Llm_Api_Client
     public function __construct( string $api_key, ?string $api_url = null )
     {
         $this->api_key = $api_key;
-        $this->api_url = $api_url ?: $this->get_default_api_url();
+        $this->api_url = $this->resolve_api_url( $api_url );
     }
 
     /**
@@ -47,7 +47,35 @@ class Sentient_Forms_Llm_Api_Client
      */
     private function get_default_api_url(): string
     {
-        return 'https://api.sentientforms.com/v1'; // gx todo - update this to the actual API URL
+        return 'https://api.sentientforms.com/v1';
+    }
+
+    /**
+     * Resolve API URL with overrides from constants/env/filters.
+     */
+    private function resolve_api_url( ?string $api_url ): string
+    {
+        $url = $api_url ?: $this->get_default_api_url();
+
+        if ( defined( 'SENTIENT_FORMS_PROXY_API_URL' ) && is_string( constant( 'SENTIENT_FORMS_PROXY_API_URL' ) ) ) {
+            $url = constant( 'SENTIENT_FORMS_PROXY_API_URL' );
+        } elseif ( getenv( 'SENTIENT_FORMS_PROXY_API_URL' ) ) {
+            $url = (string) getenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+        }
+
+        if ( function_exists( 'apply_filters' ) ) {
+            $filtered = apply_filters( 'sentient_forms_proxy_api_url', $url );
+            if ( is_string( $filtered ) && '' !== trim( $filtered ) ) {
+                $url = $filtered;
+            }
+        }
+
+        $url = rtrim( trim( $url ), '/' );
+        if ( substr( $url, -3 ) !== '/v1' ) {
+            $url .= '/v1';
+        }
+
+        return $url;
     }
 
     /**

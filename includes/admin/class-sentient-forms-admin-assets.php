@@ -59,16 +59,30 @@ class Sentient_Forms_Admin_Assets {
      * @return array|WP_Error
      */
     public function get_entry( string $entry = self::DEFAULT_ENTRY ) {
+        // Ensure dev server detection has run so $this->dev_base_url is set when available.
+        $this->get_assets_base_url();
+
         $manifest = $this->get_manifest();
+
+        // Dev mode fallback: when probing a Vite dev server, the manifest will not exist.
+        if ( is_wp_error( $manifest ) && $this->dev_base_url ) {
+            return [ 'file' => ltrim( $entry, '/' ), 'css' => [] ];
+        }
+
         if ( is_wp_error( $manifest ) ) {
             return $manifest;
         }
 
-        if ( ! isset( $manifest[ $entry ] ) ) {
-            return new WP_Error( 'sentient_forms_manifest_entry_missing', sprintf( 'Entry %s not found in admin manifest.', $entry ) );
+        if ( isset( $manifest[ $entry ] ) ) {
+            return $manifest[ $entry ];
         }
 
-        return $manifest[ $entry ];
+        if ( $this->dev_base_url ) {
+            // In dev we don't have hashed entries; fall back to requested path.
+            return [ 'file' => ltrim( $entry, '/' ), 'css' => [] ];
+        }
+
+        return new WP_Error( 'sentient_forms_manifest_entry_missing', sprintf( 'Entry %s not found in admin manifest.', $entry ) );
     }
 
     /**
@@ -117,6 +131,14 @@ class Sentient_Forms_Admin_Assets {
             return $this->dev_base_url;
         }
 
+        // If an explicit dev host is provided via env/const/filter, trust it and bypass the cached "none".
+        $explicit_dev_host = $this->explicit_dev_host();
+        if ( $explicit_dev_host ) {
+            $this->dev_base_url = trailingslashit( esc_url_raw( $explicit_dev_host ) );
+            set_transient( self::DEV_TRANSIENT, untrailingslashit( $this->dev_base_url ), 5 * MINUTE_IN_SECONDS );
+            return $this->dev_base_url;
+        }
+
         $default = trailingslashit( SENTIENT_FORMS_PLUGIN_URL ) . 'assets/dist/';
 
         $cached = get_transient( self::DEV_TRANSIENT );
@@ -140,7 +162,7 @@ class Sentient_Forms_Admin_Assets {
     }
 
     private function maybe_detect_dev_server(): ?string {
-        $host = apply_filters( 'sentient_forms_admin_dev_host', 'http://localhost:5173/' );
+        $host = $this->dev_host_candidate();
         $host = trailingslashit( $host );
         $timeout = apply_filters( 'sentient_forms_admin_dev_timeout', 1.5 );
 
@@ -160,6 +182,48 @@ class Sentient_Forms_Admin_Assets {
         }
 
         $this->dev_notice_message = sprintf( 'Dev server responded with HTTP %d.', $code );
+        return null;
+    }
+
+    /**
+     * Determine which dev host to probe.
+     */
+    private function dev_host_candidate(): string {
+        if ( defined( 'SENTIENT_FORMS_ADMIN_DEV_HOST' ) && is_string( constant( 'SENTIENT_FORMS_ADMIN_DEV_HOST' ) ) ) {
+            return constant( 'SENTIENT_FORMS_ADMIN_DEV_HOST' );
+        }
+
+        $env = getenv( 'SENTIENT_FORMS_ADMIN_DEV_HOST' );
+        if ( $env ) {
+            return (string) $env;
+        }
+
+        $filtered = apply_filters( 'sentient_forms_admin_dev_host', null );
+        if ( is_string( $filtered ) && '' !== trim( $filtered ) ) {
+            return $filtered;
+        }
+
+        return 'http://localhost:5173/';
+    }
+
+    /**
+     * Return a dev host only if explicitly provided via env/const/filter; otherwise null.
+     */
+    private function explicit_dev_host(): ?string {
+        if ( defined( 'SENTIENT_FORMS_ADMIN_DEV_HOST' ) && is_string( constant( 'SENTIENT_FORMS_ADMIN_DEV_HOST' ) ) ) {
+            return constant( 'SENTIENT_FORMS_ADMIN_DEV_HOST' );
+        }
+
+        $env = getenv( 'SENTIENT_FORMS_ADMIN_DEV_HOST' );
+        if ( $env ) {
+            return (string) $env;
+        }
+
+        $filtered = apply_filters( 'sentient_forms_admin_dev_host', null );
+        if ( is_string( $filtered ) && '' !== trim( $filtered ) ) {
+            return $filtered;
+        }
+
         return null;
     }
 
