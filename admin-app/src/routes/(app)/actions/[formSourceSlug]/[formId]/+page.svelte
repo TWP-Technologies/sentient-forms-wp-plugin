@@ -655,28 +655,35 @@ onMount(() => {
 		</Card>
 
 		<Card class="sf:space-y-3">
-			<div class="sf:flex sf:items-center sf:justify-between">
-				<p class="sf:text-sm sf:font-medium sf:text-slate-700">Execution status</p>
-				{#if actionsState.status}
-					<Badge variant={statusBadgeVariant(actionsState.status)}>{actionsState.status.status}</Badge>
-				{/if}
-			</div>
-			{#if actionsState.balance}
-				<p class="sf:text-sm sf:text-slate-600">
-					Credit balance: <strong>{actionsState.balance.current_balance}</strong>
-				</p>
-			{/if}
-			{#if actionsState.status}
-				<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
-				<p class="sf:text-sm sf:text-slate-600">{statusDescription(actionsState.status)}</p>
-				{#if actionsState.status.updated_at}
-					<p class="sf:text-xs sf:text-slate-500">
-						Updated {new Date(actionsState.status.updated_at).toLocaleString()}
+				<div class="sf:flex sf:items-center sf:justify-between">
+					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Execution status</p>
+					{#if actionsState.status}
+						<Badge variant={statusBadgeVariant(actionsState.status)}>{actionsState.status.status}</Badge>
+					{/if}
+				</div>
+				{#if actionsState.balance}
+					<p class="sf:text-sm sf:text-slate-600">
+						Credit balance: <strong>{actionsState.balance.current_balance}</strong>
 					</p>
 				{/if}
-			{:else}
-				<p class="sf:text-sm sf:text-slate-600">Status not loaded yet.</p>
-			{/if}
+				{#if actionsState.status}
+					<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
+					<p class="sf:text-sm sf:text-slate-600">{statusDescription(actionsState.status)}</p>
+					{#if actionsState.status.updated_at}
+						<p class="sf:text-xs sf:text-slate-500">
+							Updated {new Date(actionsState.status.updated_at).toLocaleString()}
+						</p>
+					{:else}
+						<p class="sf:text-xs sf:text-slate-500">Last updated: not available</p>
+					{/if}
+					<div class="sf:flex sf:justify-end">
+						<Button size="sm" variant="secondary" onclick={() => refreshStatus()}>
+							Refresh now
+						</Button>
+					</div>
+				{:else}
+					<p class="sf:text-sm sf:text-slate-600">Status not loaded yet.</p>
+				{/if}
 
 			{#if statusAdvice}
 				<Alert variant={statusAdvice.variant}>
@@ -940,38 +947,41 @@ onMount(() => {
 						{/if}
 					{/if}
 
-					<div>
-						<p class="sf:text-sm sf:font-medium sf:text-slate-700 sf:mb-2">Trigger hooks</p>
-					<div class="sf:flex sf:flex-wrap sf:gap-3">
-						{#if hookEntries.length === 0}
-							{#each Object.entries(FALLBACK_HOOK_LABELS) as [hookKey, hookLabel]}
-								<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2">
-									<input
-										type="checkbox"
-										class="sf:form-checkbox"
-										checked={selectedHooks.has(hookKey)}
-										onchange={() => toggleHookSelection(hookKey)}
-									/>
-									<span>{hookLabel}</span>
-								</label>
-							{/each}
-						{:else}
-							{#each hookEntries as [hookKey, hookLabel] (hookKey)}
-								<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2">
-									<input
-										type="checkbox"
-										class="sf:form-checkbox"
-										checked={selectedHooks.has(hookKey)}
-										onchange={() => toggleHookSelection(hookKey)}
-									/>
-									<span>{hookLabel}</span>
-								</label>
-							{/each}
-						{/if}
-					</div>
-			<!-- debug output to verify hook options during e2e; remove after stabilization -->
-			<pre class="sf:text-[11px] sf:text-slate-400" data-testid="hook-debug">{JSON.stringify(hookOptions)}</pre>
-		</div>
+						<div>
+							<div class="sf:flex sf:items-center sf:gap-2 sf:mb-2">
+								<p class="sf:text-sm sf:font-medium sf:text-slate-700">Trigger hooks</p>
+								{#if selectedHooks.size === 0}
+									<span class="sf:text-xs sf:text-amber-600">Select at least one</span>
+								{/if}
+							</div>
+							<div class="sf:flex sf:flex-wrap sf:gap-3">
+								{#if hookEntries.length === 0}
+									{#each Object.entries(FALLBACK_HOOK_LABELS) as [hookKey, hookLabel]}
+										<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2">
+											<input
+												type="checkbox"
+												class="sf:form-checkbox"
+												checked={selectedHooks.has(hookKey)}
+												onchange={() => toggleHookSelection(hookKey)}
+											/>
+											<span>{hookLabel}</span>
+										</label>
+									{/each}
+								{:else}
+									{#each hookEntries as [hookKey, hookLabel] (hookKey)}
+										<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2">
+											<input
+												type="checkbox"
+												class="sf:form-checkbox"
+												checked={selectedHooks.has(hookKey)}
+												onchange={() => toggleHookSelection(hookKey)}
+											/>
+											<span>{hookLabel}</span>
+										</label>
+									{/each}
+								{/if}
+							</div>
+						</div>
 
 					{#if createError}
 						<Alert variant="danger">{createError}</Alert>
