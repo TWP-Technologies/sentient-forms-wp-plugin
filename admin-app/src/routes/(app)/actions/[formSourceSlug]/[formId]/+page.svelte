@@ -981,15 +981,15 @@ onMount(() => {
 						<Button type="button" variant="secondary" onclick={() => (showAddPanel = false)}>
 							Cancel
 						</Button>
-						<Button
-							type="button"
-							onclick={() => handleCreate(new Event('submit', { cancelable: true }))}
-							disabled={creating || (!hasDefinitions && createKind === 'template')}
-						>
-							{creating ? 'Linking…' : 'Link action'}
-						</Button>
-					</div>
-				</form>
+							<Button
+								type="button"
+								onclick={() => handleCreate(new Event('submit', { cancelable: true }))}
+								disabled={creating || selectedHooks.size === 0 || (!hasDefinitions && createKind === 'template')}
+							>
+								{creating ? 'Linking…' : 'Link action'}
+							</Button>
+						</div>
+					</form>
 			</div>
 		</div>
 	{/if}
