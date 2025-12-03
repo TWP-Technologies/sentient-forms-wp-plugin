@@ -61,6 +61,9 @@ class Sentient_Forms_Admin
         // Add WordPress admin menu pages.
         add_action( 'admin_menu', [ $this, 'admin_menu' ] );
 
+        // Ensure admin_url paths include /wp-admin/ for environments where it may be omitted (avoids /admin.php 404s).
+		add_filter( 'admin_url', [ $this, 'ensure_admin_path_prefix' ], 9, 3 );
+
         // Enqueue admin-specific scripts and styles.
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_scripts' ] );
         add_filter( 'script_loader_tag', [ $this, 'force_module_type_for_spa' ], 10, 3 );
@@ -294,6 +297,9 @@ class Sentient_Forms_Admin
 	private function build_spa_bootstrap_payload(): array
 	{
 		$initial_route = $this->determine_initial_route();
+		$admin_url     = admin_url( 'admin.php' );
+		$admin_path    = parse_url( $admin_url, PHP_URL_PATH ) ?: '/wp-admin/admin.php';
+		$admin_base    = rtrim( preg_replace( '#/admin\.php$#', '', $admin_path ), '/' ) . '/';
 
 		return [
 			'apiBaseUrl'    => rest_url( 'sentient-forms/v1/' ),
@@ -301,6 +307,8 @@ class Sentient_Forms_Admin
 			'ajaxNonce'     => wp_create_nonce( 'sentient_forms_admin_nonce' ),
 			'ajaxUrl'       => admin_url( 'admin-ajax.php' ),
 			'siteUrl'       => get_site_url(),
+			'adminPhpPath'  => $admin_path,
+			'adminBasePath' => $admin_base,
 			'localSiteIdentifier' => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
 			'pluginVersion' => SENTIENT_FORMS_VERSION,
 			'assetBaseUrl'  => rtrim( $this->assets->get_asset_url( '' ), '/' ),
@@ -372,6 +380,8 @@ class Sentient_Forms_Admin
 (function () {
 	try {
 		var config = window.sentientFormsConfig || {};
+		var adminPhpPath = typeof config.adminPhpPath === 'string' && config.adminPhpPath.length ? config.adminPhpPath : '/wp-admin/admin.php';
+		var adminBasePath = typeof config.adminBasePath === 'string' && config.adminBasePath.length ? config.adminBasePath : '/wp-admin/';
 		var basePath = new URL(".", location).pathname;
 		if (!basePath.endsWith("/")) {
 			basePath = basePath + "/";
@@ -379,15 +389,18 @@ class Sentient_Forms_Admin
 		var searchParams = new URLSearchParams(window.location.search || "");
 		var pageParam = searchParams.get("page") || "";
 		if (pageParam && pageParam.indexOf("sentient-forms") === 0) {
-			var pathMatchesBase = window.location.pathname === basePath;
-			var pathMatchesIndex = window.location.pathname === basePath + "index.php";
-			if (!pathMatchesBase && !pathMatchesIndex) {
-				var replacementUrl = basePath + (window.location.search || "") + (window.location.hash || "");
+			var pathname = window.location.pathname || '';
+			var pathMatchesAdmin = pathname === adminPhpPath;
+			var pathMatchesBase = pathname === adminBasePath;
+			var pathMatchesIndex = pathname === adminBasePath + "index.php";
+			if (!pathMatchesAdmin && !pathMatchesBase && !pathMatchesIndex) {
+				var replacementUrl = adminPhpPath + (window.location.search || "") + (window.location.hash || "");
 				history.replaceState({}, document.title, replacementUrl);
+				pathname = adminPhpPath;
 			}
 		}
 		var existingHash = typeof window.location.hash === 'string' ? window.location.hash.trim() : '';
-		var hasExplicitHash = existingHash.length > 1;
+		var hasExplicitHash = existingHash.length > 1 && existingHash !== '#/';
 		var route = hasExplicitHash ? existingHash : (typeof config.initialRoute === 'string' ? config.initialRoute : '/dashboard');
 		if (route.startsWith('#')) {
 			route = route.slice(1);
@@ -404,6 +417,53 @@ class Sentient_Forms_Admin
 	}
 })();
 JS;
+	}
+
+	/**
+	 * Some local environments (or misconfigured proxies) can yield admin_url() values like
+	 * http://localhost:8080/admin.php?page=sentient-forms (missing /wp-admin/), which 404s at Apache
+	 * before WordPress executes. Guard against that by forcing the /wp-admin/ prefix when it's absent.
+	 *
+	 * @param string $url  The generated admin URL.
+	 * @param string $path Requested path.
+	 * @param int    $blog_id Site blog id (unused).
+	 *
+	 * @return string Corrected admin URL.
+	 */
+	public function ensure_admin_path_prefix( string $url, string $path = '', $blog_id = null ): string
+	{
+		$parsed = wp_parse_url( $url );
+		if ( empty( $parsed['path'] ) ) {
+			return $url;
+		}
+
+		$path_value = $parsed['path'];
+		// If /wp-admin/ already present, leave untouched.
+		if ( str_contains( $path_value, '/wp-admin/' ) ) {
+			return $url;
+		}
+
+		// Only adjust typical admin endpoints; avoid altering other admin_url usages unexpectedly.
+		$basename = basename( $path_value );
+		$admin_targets = [ 'admin.php', 'index.php', 'plugins.php', 'options-general.php' ];
+		if ( ! in_array( $basename, $admin_targets, true ) ) {
+			return $url;
+		}
+
+		$corrected_path = '/wp-admin/' . ltrim( $path_value, '/' );
+		$rebuilt = ( $parsed['scheme'] ?? 'http' ) . '://' . ( $parsed['host'] ?? 'localhost' );
+		if ( isset( $parsed['port'] ) ) {
+			$rebuilt .= ':' . $parsed['port'];
+		}
+		$rebuilt .= $corrected_path;
+		if ( ! empty( $parsed['query'] ) ) {
+			$rebuilt .= '?' . $parsed['query'];
+		}
+		if ( ! empty( $parsed['fragment'] ) ) {
+			$rebuilt .= '#' . $parsed['fragment'];
+		}
+
+		return $rebuilt;
 	}
 
 	private function determine_initial_route(): string

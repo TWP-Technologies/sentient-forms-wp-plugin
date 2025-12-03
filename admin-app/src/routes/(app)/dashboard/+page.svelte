@@ -16,29 +16,31 @@
 </script>
 
 <Section heading="Dashboard" description="High-level health of Sentient Forms automation.">
-	<Button slot="actions" variant="secondary" onclick={() => sessionStore.reset?.()}>
-		Refresh
-	</Button>
+	{#snippet actions()}
+		<Button  variant="secondary" onclick={() => sessionStore.reset?.()}>
+			Refresh
+		</Button>
+	{/snippet}
 
-	<div class="sf-grid sf-gap-4 md:sf-grid-cols-3">
+	<div class="sf:grid sf:gap-4 sf:md:grid-cols-3">
 		<Card>
-			<div class="sf-space-y-1">
-				<h3 class="sf-text-sm sf-font-medium sf-text-slate-500">License status</h3>
-				<p class="sf-text-lg sf-font-semibold">{$licenseSummary}</p>
+			<div class="sf:space-y-1">
+				<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">License status</h3>
+				<p class="sf:text-lg sf:font-semibold">{$licenseSummary}</p>
 				<Badge variant={$licenseSummary === 'License active' ? 'success' : 'warning'}>
 					{$licenseSummary}
 				</Badge>
 			</div>
 		</Card>
 		<Card>
-			<h3 class="sf-text-sm sf-font-medium sf-text-slate-500">Credits remaining</h3>
-			<p class="sf-mt-2 sf-text-lg sf-font-semibold">
+			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Credits remaining</h3>
+			<p class="sf:mt-2 sf:text-lg sf:font-semibold">
 				{$sessionStore.creditsRemaining ?? '—'}
 			</p>
 		</Card>
 		<Card>
-			<h3 class="sf-text-sm sf-font-medium sf-text-slate-500">Last sync</h3>
-			<p class="sf-mt-2 sf-text-lg sf-font-semibold">
+			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Last sync</h3>
+			<p class="sf:mt-2 sf:text-lg sf:font-semibold">
 				{$sessionStore.lastSync ? new Date($sessionStore.lastSync).toLocaleString() : '—'}
 			</p>
 		</Card>

@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
 	plugins: [sveltekit()],
+	envPrefix: ['VITE_', 'SENTIENT_FORMS_'],
 	test: {
 		environment: 'happy-dom',
 		globals: true,

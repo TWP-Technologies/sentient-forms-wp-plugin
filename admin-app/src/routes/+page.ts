@@ -1,6 +1,4 @@
-import { redirect } from '@sveltejs/kit';
-import { appPath } from '$lib/navigation';
-
 export const load = () => {
-	throw redirect(302, appPath('/dashboard'));
+	// Hash router is enabled globally; root can stay as-is and the router will use the hash portion.
+	return {};
 };

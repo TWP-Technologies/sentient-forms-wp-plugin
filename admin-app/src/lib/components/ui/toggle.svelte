@@ -44,7 +44,7 @@
 	}
 </script>
 
-<div class="sf-flex sf-items-start sf-gap-3" data-testid="toggle">
+<div class="sf:flex sf:items-start sf:gap-3" data-testid="toggle">
 	<button
 		type="button"
 		id={id}
@@ -54,8 +54,8 @@
 		aria-labelledby={ariaLabelledBy}
 		aria-label={ariaLabelledBy ? undefined : label ?? 'Toggle setting'}
 		class={`sf-relative sf-inline-flex sf-h-6 sf-w-11 sf-items-center sf-rounded-full sf-transition-colors ${
-			checked ? 'sf-bg-primary-600' : 'sf-bg-muted-400'
-		} ${disabled ? 'sf-opacity-60 sf-cursor-not-allowed' : 'sf-cursor-pointer'}`}
+			checked ? 'sf:bg-primary-600' : 'sf:bg-muted-400'
+		} ${disabled ? 'sf:opacity-60 sf:cursor-not-allowed' : 'sf:cursor-pointer'}`}
 		disabled={disabled}
 		onclick={handleClick}
 		onkeydown={handleKeydown}
@@ -64,15 +64,15 @@
 		<span
 			aria-hidden="true"
 			class={`sf-inline-block sf-h-5 sf-w-5 sf-rounded-full sf-bg-white sf-shadow-card sf-transition-transform ${
-				checked ? 'sf-translate-x-5' : 'sf-translate-x-1'
+				checked ? 'sf:translate-x-5' : 'sf:translate-x-1'
 			}`}
 		></span>
 	</button>
 	{#if label}
-		<div class="sf-flex sf-flex-col sf-gap-1">
-			<span class="sf-text-sm sf-font-medium sf-text-slate-700" id={`${id}-label`}>{label}</span>
+		<div class="sf:flex sf:flex-col sf:gap-1">
+			<span class="sf:text-sm sf:font-medium sf:text-slate-700" id={`${id}-label`}>{label}</span>
 			{#if description}
-				<span class="sf-text-xs sf-text-slate-500" id={`${id}-description`}>
+				<span class="sf:text-xs sf:text-slate-500" id={`${id}-description`}>
 					{description}
 				</span>
 			{/if}

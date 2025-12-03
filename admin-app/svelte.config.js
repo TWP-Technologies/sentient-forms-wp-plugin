@@ -1,8 +1,6 @@
 import adapter from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
-const routerType = process.env.SENTIENT_FORMS_ROUTER === 'pathname' ? 'pathname' : 'hash';
-
 const config = {
 	preprocess: vitePreprocess(),
 	kit: {
@@ -12,7 +10,7 @@ const config = {
 			$components: 'src/lib/components'
 		},
 		router: {
-			type: routerType
+			type: 'hash'
 		},
 		prerender: {
 			entries: []

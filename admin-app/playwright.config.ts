@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const PREVIEW_PORT = 4173;
+const PREVIEW_PORT = 4175;
 
 export default defineConfig({
 	testDir: './tests/e2e',
@@ -20,8 +20,8 @@ export default defineConfig({
 			use: { ...devices['Desktop Chrome'] }
 		}
 	],
-	webServer: {
-		command: 'bun run preview:serve',
+webServer: {
+		command: 'bun run preview:e2e',
 		url: `http://127.0.0.1:${PREVIEW_PORT}`,
 		reuseExistingServer: true,
 		timeout: 900_000

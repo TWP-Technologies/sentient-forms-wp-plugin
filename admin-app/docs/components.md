@@ -51,7 +51,7 @@ Standard page wrapper with heading/description and an `actions` slot.
 Placeholder element for loading states.
 
 ```svelte
-<Skeleton className="sf-h-4 sf-w-32" />
+<Skeleton className="sf:h-4 sf:w-32" />
 ```
 
 ## Form Fields

@@ -13,26 +13,26 @@ This reference documents the canonical Tailwind tokens used by the Sentient Form
 | `muted` | `100`, `200`, `400`, `500` | Layout chrome, borders, subdued text |
 
 Usage guidance:
-- Prefer semantic utilities (`sf-bg-primary-500`) and avoid literal hex values in components.
-- Combine with opacity utilities (`sf-bg-primary-500/90`) rather than defining duplicate shades.
+- Prefer semantic utilities (`sf:bg-primary-500`) and avoid literal hex values in components.
+- Combine with opacity utilities (`sf:bg-primary-500/90`) rather than defining duplicate shades.
 
 ## Typography
 
-- Font family `sf-font-sans` maps to `Inter` with the Tailwind default fallbacks.
-- Use `sf-text-sm`, `sf-text-base`, or `sf-text-lg` with corresponding `sf-font-medium` or `sf-font-semibold` for hierarchy.
+- Font family `sf:font-sans` maps to `Inter` with the Tailwind default fallbacks.
+- Use `sf:text-sm`, `sf:text-base`, or `sf:text-lg` with corresponding `sf:font-medium` or `sf:font-semibold` for hierarchy.
 - Headings in Section/Card components provide built-in sizing—reuse them where possible.
 
 ## Shadows & Radii
 
 | Token | Value | Use |
 | --- | --- | --- |
-| `sf-shadow-card` | `0 1px 2px 0 rgba(15, 23, 42, 0.08)` | Card container elevation |
-| `sf-shadow-inset-card` | `inset 0 1px 2px rgba(15, 23, 42, 0.06)` | Panels that should appear recessed |
-| `sf-rounded-lg` | `0.75rem` | Default component corners |
+| `sf:shadow-card` | `0 1px 2px 0 rgba(15, 23, 42, 0.08)` | Card container elevation |
+| `sf:shadow-inset-card` | `inset 0 1px 2px rgba(15, 23, 42, 0.06)` | Panels that should appear recessed |
+| `sf:rounded-lg` | `0.75rem` | Default component corners |
 
 ## Spacing Scale Additions
 
-- `sf-p-18` / `sf-m-18` (`4.5rem`) for wide gutters in page layouts
+- `sf:p-18` / `sf:m-18` (`4.5rem`) for wide gutters in page layouts
 
 ## Introducing or Updating Tokens
 

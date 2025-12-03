@@ -90,6 +90,18 @@ async function load(filters: CustomActionFilters = customActionsState.filters): 
 			lastLoadedAt: Date.now()
 		});
 	} catch (error) {
+		if (error instanceof ApiClientError && error.status === 404) {
+			// Endpoint not available yet; treat as empty list but surface a mild warning.
+			setState({
+				loading: false,
+				error: 'Custom Actions API is not available on this backend. Deploy or enable CPS custom actions to use this page.',
+				actions: [],
+				quota: null,
+				lastLoadedAt: Date.now()
+			});
+			return;
+		}
+
 		const message = friendlyMessageFromError(error, 'Failed to load custom actions');
 		setState({ loading: false, error: message, actions: [] });
 		notifications.error(message);

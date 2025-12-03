@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { toStore } from 'svelte/store';
 import { ApiClientError, createClientFromConfig } from '$lib/api/client';
 import { notifications } from '$lib/stores/notifications';
 import type {
@@ -84,46 +84,49 @@ function friendlyMessageFromError(error: unknown, fallback: string): string {
 	return fallback;
 }
 
-const { subscribe, set, update } = writable<FormActionsState>(initialState());
+export const formActionsState = $state(initialState());
+const readable = toStore(() => formActionsState);
+let refreshInFlight = false;
 
 function resetState() {
-	set(initialState());
+	Object.assign(formActionsState, initialState());
 }
 
 function setState(partial: Partial<FormActionsState>) {
-	update((previous) => ({ ...previous, ...partial }));
+	Object.assign(formActionsState, partial);
 }
 
 async function load(formSourceSlug: string, formId: number) {
 	resetState();
-	setState({ loading: true });
+	formActionsState.loading = true;
 
 	try {
-		const [items, balance, definitions, status] = await Promise.all([
+		const [items, definitions, status] = await Promise.all([
 			client.getFormActions(formSourceSlug, formId, { showNotifications: false }),
-			client.getCreditBalance({ showNotifications: false }),
 			client.getActionDefinitions({ showNotifications: false }),
 			client.getFormExecutionStatus(formSourceSlug, formId, { showNotifications: false })
 		]);
 
-		set({ loading: false, error: null, items, balance, definitions, status });
+		setState({ loading: false, error: null, items, definitions, status });
+		await refreshBalance();
 	} catch (error) {
 		const message = friendlyMessageFromError(error, 'Failed to load actions');
-		set({ ...initialState(), error: message });
+		resetState();
+		setState({ loading: false, error: message });
 		notifications.error(message);
 	}
 }
 
 async function create(formSourceSlug: string, formId: number, payload: FormActionMutationPayload) {
+	console.log('formActionsStore.create payload', formSourceSlug, formId, payload);
 	try {
 		const created = await client.createFormAction(formSourceSlug, formId, payload);
-		update((previous) => ({
-			...previous,
-			items: [...previous.items, created]
-		}));
+		console.log('formActionsStore.create success', created);
+		formActionsState.items = [...formActionsState.items, created];
 		notifications.success('Action mapping created');
 		await refresh(formSourceSlug, formId);
 	} catch (error) {
+		console.error('formActionsStore.create failed', error);
 		const message = friendlyMessageFromError(error, 'Failed to create action mapping');
 		notifications.error(message);
 	}
@@ -135,19 +138,26 @@ async function toggleEnabled(
 	linkage: FormActionLinkage,
 	enabled: boolean
 ) {
+	const previousItems = [...formActionsState.items];
+	// optimistic update
+	formActionsState.items = formActionsState.items.map((item) =>
+		item.local_mapping_id === linkage.local_mapping_id
+			? { ...item, is_action_enabled_for_form: enabled }
+			: item
+	);
+
 	try {
 		const updated = await client.updateFormAction(formSourceSlug, formId, linkage.local_mapping_id, {
 			is_action_enabled_for_form: enabled
 		});
 
-		update((previous) => ({
-			...previous,
-			items: previous.items.map((item) =>
-				item.local_mapping_id === updated.local_mapping_id ? updated : item
-			)
-		}));
+		formActionsState.items = formActionsState.items.map((item) =>
+			item.local_mapping_id === updated.local_mapping_id ? updated : item
+		);
 		await refresh(formSourceSlug, formId);
 	} catch (error) {
+		// rollback
+		formActionsState.items = previousItems;
 		const message = friendlyMessageFromError(error, 'Failed to update action mapping');
 		notifications.error(message);
 	}
@@ -168,6 +178,15 @@ async function updateHooks(
 		return;
 	}
 
+	const previousItems = [...formActionsState.items];
+	// optimistic update
+	formActionsState.items = formActionsState.items.map((item) =>
+		item.local_mapping_id === linkage.local_mapping_id
+			? { ...item, trigger_hooks: normalizedHooks }
+			: item
+	);
+	formActionsState.error = null;
+
 	try {
 		const updated = await client.updateFormAction(
 			formSourceSlug,
@@ -176,17 +195,15 @@ async function updateHooks(
 			{ trigger_hooks: normalizedHooks }
 		);
 
-		update((previous) => ({
-			...previous,
-			items: previous.items.map((item) =>
-				item.local_mapping_id === updated.local_mapping_id ? updated : item
-			),
-			error: null
-		}));
+		formActionsState.items = formActionsState.items.map((item) =>
+			item.local_mapping_id === updated.local_mapping_id ? updated : item
+		);
+		formActionsState.error = null;
 
 		notifications.success('Trigger hooks updated');
 		await refresh(formSourceSlug, formId);
 	} catch (error) {
+		formActionsState.items = previousItems;
 		const message = friendlyMessageFromError(error, 'Failed to update trigger hooks');
 		notifications.error(message);
 	}
@@ -195,10 +212,9 @@ async function updateHooks(
 async function remove(formSourceSlug: string, formId: number, linkage: FormActionLinkage) {
 	try {
 		await client.deleteFormAction(formSourceSlug, formId, linkage.local_mapping_id);
-		update((previous) => ({
-			...previous,
-			items: previous.items.filter((item) => item.local_mapping_id !== linkage.local_mapping_id)
-		}));
+		formActionsState.items = formActionsState.items.filter(
+			(item) => item.local_mapping_id !== linkage.local_mapping_id
+		);
 		notifications.success('Action mapping deleted');
 		await refresh(formSourceSlug, formId);
 	} catch (error) {
@@ -208,17 +224,38 @@ async function remove(formSourceSlug: string, formId: number, linkage: FormActio
 }
 
 async function refresh(formSourceSlug: string, formId: number) {
+	if (refreshInFlight) {
+		return;
+	}
+	refreshInFlight = true;
 	try {
-		const [balance, status] = await Promise.all([
-			client.getCreditBalance({ showNotifications: false }),
-			client.getFormExecutionStatus(formSourceSlug, formId, { showNotifications: false })
-		]);
+		const status = await client.getFormExecutionStatus(formSourceSlug, formId, {
+			showNotifications: false
+		});
 
-		setState({ balance, status, error: null });
+		setState({ status, error: null });
+		await refreshBalance();
 	} catch (error) {
 		const message = friendlyMessageFromError(error, 'Failed to refresh Sentient Forms status');
 		notifications.error(message);
 		setState({ error: message });
+	}
+	refreshInFlight = false;
+}
+
+async function refreshBalance() {
+	try {
+		const balance = await client.getCreditBalance({ showNotifications: false });
+		setState({ balance, error: null });
+	} catch (error) {
+		const friendly = friendlyMessageFromError(error, 'Credit balance unavailable right now.');
+		const message =
+			!friendly || friendly === 'Not Found' || friendly === 'Request failed'
+				? 'Credit balance unavailable right now.'
+				: friendly;
+		// Show a warning but do not fail the page.
+		notifications.warning(message);
+		setState({ balance: null });
 	}
 }
 
@@ -239,7 +276,7 @@ async function fetchExecutionStatus(
 }
 
 export const formActionsStore = {
-	subscribe,
+	subscribe: readable.subscribe,
 	load,
 	create,
 	toggleEnabled,

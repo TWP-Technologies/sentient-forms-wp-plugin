@@ -2,19 +2,39 @@
 	import FormField from './form-field.svelte';
 	import type { HTMLInputAttributes } from 'svelte/elements';
 
-	export let id: string;
-	export let label: string;
-	export let description: string | null = null;
-	export let help: string | null = null;
-	export let error: string | null = null;
-	export let required = false;
-	export let disabled = false;
-	export let type: HTMLInputAttributes['type'] = 'text';
-	export let placeholder: string | undefined;
-export let autocomplete: HTMLInputAttributes['autocomplete'] | undefined = undefined;
-export let inputClass = '';
-export let name: string | undefined = undefined;
-	export let value: HTMLInputAttributes['value'] = '';
+	interface Props {
+		id: string;
+		label: string;
+		description?: string | null;
+		help?: string | null;
+		error?: string | null;
+		required?: boolean;
+		disabled?: boolean;
+		type?: HTMLInputAttributes['type'];
+		placeholder: string | undefined;
+		autocomplete?: HTMLInputAttributes['autocomplete'] | undefined;
+		inputClass?: string;
+		name?: string | undefined;
+		value?: HTMLInputAttributes['value'];
+		[key: string]: any
+	}
+
+	let {
+		id,
+		label,
+		description = null,
+		help = null,
+		error = null,
+		required = false,
+		disabled = false,
+		type = 'text',
+		placeholder,
+		autocomplete = undefined,
+		inputClass = '',
+		name = undefined,
+		value = $bindable(''),
+		...rest
+	}: Props = $props();
 
 	const describedBy = [
 		description ? `${id}-description` : null,
@@ -31,13 +51,13 @@ export let name: string | undefined = undefined;
 		aria-describedby={describedBy}
 		aria-invalid={error ? true : undefined}
 		autocomplete={autocomplete}
-		class={`sf-w-full sf-rounded sf-border sf-border-slate-300 sf-bg-white sf-px-3 sf-py-2 sf-text-sm focus:sf-border-primary-500 focus:sf-ring-2 focus:sf-ring-primary-100 disabled:sf-bg-muted-100 disabled:sf-text-muted-400 ${inputClass}`}
+		class={`sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus:border-primary-500 sf:focus:ring-2 sf:focus:ring-primary-100 sf:disabled:bg-muted-100 sf:disabled:text-muted-400 ${inputClass}`}
 		{disabled}
 		id={id}
 		name={name}
 		placeholder={placeholder}
 		required={required}
 		type={type}
-		{...$$restProps}
+		{...rest}
 	/>
 </FormField>

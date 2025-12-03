@@ -61,17 +61,9 @@ export const navigateToAppPath = async (
 	options?: Parameters<typeof goto>[1]
 ): Promise<void | import('@sveltejs/kit').NavigationResult> => {
 	const href = appPath(path);
-	const canUseWindow = browser || typeof window !== 'undefined';
 
-	if (routerType === 'hash') {
-		if (!canUseWindow) return;
-		const nextHash = href.startsWith('#') ? href : `#${href}`;
-		if (window.location.hash === nextHash) {
-			return;
-		}
-		window.location.hash = nextHash;
-		return;
-	}
-
+	// Always delegate to SvelteKit's router so that navigation triggers load/hydration
+	// even when we're using hash-based routing. Directly mutating `location.hash`
+	// can skip SvelteKit's navigation pipeline and leave the UI stuck on the old view.
 	return goto(href, options);
 };

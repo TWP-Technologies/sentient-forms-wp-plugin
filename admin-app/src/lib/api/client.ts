@@ -23,6 +23,7 @@ import type {
 	TelemetrySettingsResponse,
 	PluginSettingsResponse
 } from '$lib/api/types';
+import { MockSentientFormsApiClient } from './mock-client';
 
 export interface ClientConfig {
 	baseUrl: string;
@@ -231,10 +232,16 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<FormActionLinkage> {
 		const slug = encodeURIComponent(formSourceSlug);
+		console.log('client.createFormAction', {
+			slug,
+			formId,
+			body: payload
+		});
 		const response = await this.request<RestEnvelope<FormActionLinkage>>(
 			`${slug}/forms/${formId}/actions`,
 			{ method: 'POST', body: payload, ...options }
 		);
+		console.log('client.createFormAction response', response);
 		return this.unwrap(response);
 	}
 
@@ -455,6 +462,16 @@ export const mockClient = new SentientFormsApiClient({
 
 export function createClientFromConfig(overrides: Partial<ClientConfig> = {}): SentientFormsApiClient {
 	const config = resolveRuntimeConfig();
+
+	if (
+		import.meta.env.SENTIENT_FORMS_DEMO === '1' ||
+		(import.meta.env.DEV && !config.apiBaseUrl) ||
+		config.demoMode
+	) {
+		// Use mock client for demo/dev without backend
+		// @ts-expect-error return compatible surface
+		return new MockSentientFormsApiClient() as SentientFormsApiClient;
+	}
 
 	return new SentientFormsApiClient({
 		baseUrl: config.apiBaseUrl,

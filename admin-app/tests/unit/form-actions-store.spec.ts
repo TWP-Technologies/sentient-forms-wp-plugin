@@ -60,11 +60,13 @@ describe('formActionsStore', () => {
 	};
 
 	const notifyErrorSpy = vi.spyOn(notifications, 'error');
+	const notifyWarningSpy = vi.spyOn(notifications, 'warning');
 
 	beforeEach(() => {
 		formActionsStore.reset();
 		Object.values(stubClient).forEach((fn) => fn.mockReset());
 		notifyErrorSpy.mockReset();
+		notifyWarningSpy.mockReset();
 	});
 
 	it('stores friendly error message when initial load fails', async () => {
@@ -92,7 +94,7 @@ describe('formActionsStore', () => {
 		);
 	});
 
-	it('updates error state when refresh encounters timeout', async () => {
+	it('warns but keeps state when credit balance refresh times out', async () => {
 		stubClient.getFormActions.mockResolvedValue([]);
 		stubClient.getCreditBalance.mockResolvedValue({
 			current_balance: 100,
@@ -121,12 +123,37 @@ describe('formActionsStore', () => {
 		await formActionsStore.refresh('gravity_forms', 1);
 		const state = snapshotState();
 
-		expect(state.error).toBe(
+		expect(state.error).toBeNull();
+		expect(state.status).toEqual(noopStatus);
+		expect(notifyWarningSpy).toHaveBeenLastCalledWith(
 			'Sentient Forms timed out while contacting the CPS service. Retry the request shortly.'
 		);
-		expect(notifyErrorSpy).toHaveBeenLastCalledWith(
-			'Sentient Forms timed out while contacting the CPS service. Retry the request shortly.'
-		);
+	});
+
+	it('keeps actions usable when credit balance is missing', async () => {
+		const balanceError = new ApiClientError('Request failed', 404, { message: 'Not Found' });
+
+		const linkage = {
+			local_mapping_id: 'map_1',
+			central_action_id: 'spam_detection_v1',
+			action_type_indicator: 'master',
+			trigger_hooks: ['gform_validation'],
+			is_action_enabled_for_form: true,
+			execution_priority: 10
+		};
+
+		stubClient.getFormActions.mockResolvedValue([linkage]);
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+		stubClient.getCreditBalance.mockRejectedValue(balanceError);
+
+		await formActionsStore.load('gravity_forms', 1);
+		const state = snapshotState();
+
+		expect(state.items).toHaveLength(1);
+		expect(state.balance).toBeNull();
+		expect(state.error).toBeNull();
+		expect(notifyWarningSpy).toHaveBeenCalledWith('Credit balance unavailable right now.');
 	});
 
 	it('surfaces friendly message when execution status lookup fails', async () => {
@@ -180,5 +207,54 @@ describe('formActionsStore', () => {
 		expect(stubClient.getFormExecutionStatus).toHaveBeenCalledTimes(2);
 		const state = snapshotState();
 		expect(state.items[0]?.trigger_hooks).toEqual(['gform_after_submission']);
+	});
+
+	it('rolls back optimistic toggle when update fails', async () => {
+		const linkage = {
+			local_mapping_id: 'map_1',
+			central_action_id: 'spam_detection_v1',
+			action_type_indicator: 'master',
+			trigger_hooks: ['gform_validation'],
+			is_action_enabled_for_form: true,
+			execution_priority: 10
+		};
+
+		stubClient.getFormActions.mockResolvedValue([linkage]);
+		stubClient.getCreditBalance.mockResolvedValue({ current_balance: 100, ledger_delta: 0, tier: null });
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+		const apiError = new ApiClientError('Request failed', 500, { message: 'boom' });
+		stubClient.updateFormAction.mockRejectedValue(apiError);
+
+		await formActionsStore.load('gravity_forms', 1);
+		await formActionsStore.toggleEnabled('gravity_forms', 1, linkage, false);
+		const state = snapshotState();
+		expect(state.items[0]?.is_action_enabled_for_form).toBe(true);
+		expect(notifyErrorSpy).toHaveBeenCalledWith('boom');
+	});
+
+	it('rolls back optimistic hook edit when update fails', async () => {
+		const linkage = {
+			local_mapping_id: 'map_1',
+			central_action_id: 'spam_detection_v1',
+			action_type_indicator: 'master',
+			trigger_hooks: ['gform_validation'],
+			is_action_enabled_for_form: true,
+			execution_priority: 10
+		};
+
+		stubClient.getFormActions.mockResolvedValue([linkage]);
+		stubClient.getCreditBalance.mockResolvedValue({ current_balance: 100, ledger_delta: 0, tier: null });
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+		const apiError = new ApiClientError('Request failed', 400, { message: 'bad hooks' });
+		stubClient.updateFormAction.mockRejectedValue(apiError);
+
+		await formActionsStore.load('gravity_forms', 1);
+		await formActionsStore.updateHooks('gravity_forms', 1, linkage, ['gform_after_submission']);
+
+		const state = snapshotState();
+		expect(state.items[0]?.trigger_hooks).toEqual(['gform_validation']);
+		expect(notifyErrorSpy).toHaveBeenCalledWith('bad hooks');
 	});
 });

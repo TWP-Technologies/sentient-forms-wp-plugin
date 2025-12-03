@@ -38,14 +38,14 @@ type Props = {
 
 <button
 	{type}
-	class={buttonStyles({ variant, size }) + (iconOnly ? ' sf-px-0 sf-justify-center sf-w-10' : '')}
+	class={buttonStyles({ variant, size }) + (iconOnly ? ' sf:px-0 sf:justify-center sf:w-10' : '')}
 	onclick={handleClick}
 	disabled={isDisabled}
 	aria-busy={loading}
 	{...rest}
 >
 	{#if loading}
-		<span class="sf-h-4 sf-w-4 sf-rounded-full sf-border-2 sf-border-white/40 sf-border-t-white sf-animate-spin" aria-hidden="true"></span>
+		<span class="sf:h-4 sf:w-4 sf:rounded-full sf:border-2 sf:border-white/40 sf:border-t-white sf:animate-spin" aria-hidden="true"></span>
 	{/if}
 	{@render children?.()}
 </button>

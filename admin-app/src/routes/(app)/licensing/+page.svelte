@@ -12,8 +12,8 @@
 	import type { ValidationIssue } from '$lib/components/ui/types';
 	import { licenseStore } from '$lib/stores/license';
 
-	let licenseKey = '';
-	let issues: ValidationIssue[] = [];
+	let licenseKey = $state('');
+	let issues: ValidationIssue[] = $state([]);
 
 	onMount(() => {
 		licenseStore.load();
@@ -40,7 +40,7 @@ async function handleActivate(event: SubmitEvent) {
 >
 	<ValidationSummary {issues} />
 	<Card>
-		<form class="sf-space-y-4" onsubmit={handleActivate}>
+		<form class="sf:space-y-4" onsubmit={handleActivate}>
 			<InputField
 				id="license-key"
 				bind:value={licenseKey}
@@ -64,35 +64,35 @@ async function handleActivate(event: SubmitEvent) {
 	</Card>
 
 	<Card title="Status">
-		<div class="sf-text-sm sf-space-y-2">
-			<div class="sf-flex sf-items-center sf-justify-between">
-				<span class="sf-font-medium sf-text-slate-600">License</span>
+		<div class="sf:text-sm sf:space-y-2">
+			<div class="sf:flex sf:items-center sf:justify-between">
+				<span class="sf:font-medium sf:text-slate-600">License</span>
 				<Badge variant={$licenseStore.status === 'active' ? 'success' : $licenseStore.status === 'error' ? 'danger' : 'warning'}>
 					{$licenseStore.status}
 				</Badge>
 			</div>
-			<div class="sf-flex sf-items-center sf-justify-between">
-				<span class="sf-font-medium sf-text-slate-600">Proxy key stored</span>
-				<span class="sf-text-slate-900 sf-font-semibold">
+			<div class="sf:flex sf:items-center sf:justify-between">
+				<span class="sf:font-medium sf:text-slate-600">Proxy key stored</span>
+				<span class="sf:text-slate-900 sf:font-semibold">
 					{$licenseStore.proxyKeyPresent ? 'Yes' : 'No'}
 				</span>
 			</div>
-			<div class="sf-flex sf-items-center sf-justify-between">
-				<span class="sf-font-medium sf-text-slate-600">Tier</span>
-				<span class="sf-text-slate-900">{$licenseStore.tier ?? '—'}</span>
+			<div class="sf:flex sf:items-center sf:justify-between">
+				<span class="sf:font-medium sf:text-slate-600">Tier</span>
+				<span class="sf:text-slate-900">{$licenseStore.tier ?? '—'}</span>
 			</div>
-			<div class="sf-flex sf-items-center sf-justify-between">
-				<span class="sf-font-medium sf-text-slate-600">Expires</span>
-				<span class="sf-text-slate-900">{$licenseStore.expiresAt ?? '—'}</span>
+			<div class="sf:flex sf:items-center sf:justify-between">
+				<span class="sf:font-medium sf:text-slate-600">Expires</span>
+				<span class="sf:text-slate-900">{$licenseStore.expiresAt ?? '—'}</span>
 			</div>
-			<div class="sf-flex sf-items-center sf-justify-between">
-				<span class="sf-font-medium sf-text-slate-600">Last synced</span>
-				<span class="sf-text-slate-900">{$licenseStore.lastSynced ?? '—'}</span>
+			<div class="sf:flex sf:items-center sf:justify-between">
+				<span class="sf:font-medium sf:text-slate-600">Last synced</span>
+				<span class="sf:text-slate-900">{$licenseStore.lastSynced ?? '—'}</span>
 			</div>
 		</div>
 
 		{#if $licenseStore.loading}
-			<Alert variant="info" class="sf-mt-4">
+			<Alert variant="info" class="sf:mt-4">
 				Activating license… this may take a few seconds.
 			</Alert>
 		{/if}
@@ -100,7 +100,7 @@ async function handleActivate(event: SubmitEvent) {
 		{#if $licenseStore.status === 'active'}
 			<Button
 				variant="secondary"
-				class="sf-mt-4"
+				class="sf:mt-4"
 				disabled={$licenseStore.loading}
 				onclick={() => licenseStore.deactivate()}
 			>

@@ -108,11 +108,11 @@ describe('Form field primitives', () => {
 
 		const button = target.querySelector('button');
 		expect(button).toBeTruthy();
-		expect(button!.className).toContain('sf-bg-muted-400');
+		expect(button!.className).toContain('sf:bg-muted-400');
 		button!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 		await tick();
 
-		expect(button!.className).toContain('sf-bg-primary-600');
+		expect(button!.className).toContain('sf:bg-primary-600');
 		dispose();
 	});
 });
