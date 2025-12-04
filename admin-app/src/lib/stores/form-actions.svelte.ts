@@ -20,6 +20,7 @@ export interface FormActionsState {
 	definitions: ActionDefinition[];
 	status: FormExecutionStatus | null;
 	supportsStatus: boolean;
+	cpsVersion: string | null;
 }
 
 const client = createClientFromConfig();
@@ -33,7 +34,8 @@ function initialState(): FormActionsState {
 		supportsCredits: true,
 		definitions: [],
 		status: null,
-		supportsStatus: true
+		supportsStatus: true,
+		cpsVersion: null
 	};
 }
 
@@ -105,6 +107,17 @@ async function load(formSourceSlug: string, formId: number) {
 	formActionsState.loading = true;
 
 	try {
+		try {
+			const caps = await client.getCapabilities({ showNotifications: false });
+			setState({
+				supportsCredits: caps.supports_credits ?? true,
+				supportsStatus: caps.supports_status ?? true,
+				cpsVersion: caps.cps_version ?? null
+			});
+		} catch (err) {
+			// Capability fetch is best-effort; ignore failures and fall back.
+		}
+
 		const [items, definitions, status] = await Promise.all([
 			client.getFormActions(formSourceSlug, formId, { showNotifications: false }),
 			client.getActionDefinitions({ showNotifications: false }),

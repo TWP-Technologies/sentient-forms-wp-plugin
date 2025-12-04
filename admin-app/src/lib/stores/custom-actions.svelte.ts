@@ -14,6 +14,7 @@ export interface CustomActionsState {
 	creating: boolean;
 	error: string | null;
 	supportsCustomActions: boolean;
+	cpsVersion: string | null;
 	actions: CustomAction[];
 	quota: CustomActionQuota | null;
 	filters: CustomActionFilters;
@@ -28,6 +29,7 @@ function initialState(): CustomActionsState {
 		creating: false,
 		error: null,
 		supportsCustomActions: true,
+		cpsVersion: null,
 		actions: [],
 		quota: null,
 		filters: { status: 'active' },
@@ -79,6 +81,14 @@ async function load(filters: CustomActionFilters = customActionsState.filters): 
 	customActionsState.error = null;
 
 	try {
+		try {
+			const caps = await client.getCapabilities({ showNotifications: false });
+			customActionsState.supportsCustomActions = caps.supports_custom_actions ?? true;
+			customActionsState.cpsVersion = caps.cps_version ?? null;
+		} catch (err) {
+			// best effort; fall back to 404 detection
+		}
+
 		const response = await client.getCustomActions(filters, { showNotifications: false });
 		const sorted = [...response.actions].sort((a, b) =>
 			new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()

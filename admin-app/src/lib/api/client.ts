@@ -16,6 +16,7 @@ import type {
 	FormActionMutationPayload,
 	FormExecutionStatus,
 	FormSummary,
+	CapabilitiesResponse,
 	LicenseActivationRequest,
 	LicenseActivationResponsePayload,
 	LicenseActivationResult,
@@ -222,6 +223,14 @@ export class SentientFormsApiClient {
 			`${slug}/forms/${formId}/actions/status`,
 			options
 		);
+		return this.unwrap(response);
+	}
+
+	async getCapabilities(options: RequestOptions = {}): Promise<CapabilitiesResponse> {
+		const response = await this.request<RestEnvelope<CapabilitiesResponse>>('meta/capabilities', {
+			...options,
+			showNotifications: false
+		});
 		return this.unwrap(response);
 	}
 

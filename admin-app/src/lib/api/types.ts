@@ -152,6 +152,13 @@ export interface CustomActionFilters {
 	template_id?: string;
 }
 
+export interface CapabilitiesResponse {
+	supports_custom_actions?: boolean;
+	supports_status?: boolean;
+	supports_credits?: boolean;
+	cps_version?: string;
+}
+
 export interface FormExecutionStatus {
 	status: 'unknown' | 'success' | 'error';
 	message: string | null;
