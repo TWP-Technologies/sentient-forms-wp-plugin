@@ -13,6 +13,7 @@ export interface CustomActionsState {
 	loading: boolean;
 	creating: boolean;
 	error: string | null;
+	supportsCustomActions: boolean;
 	actions: CustomAction[];
 	quota: CustomActionQuota | null;
 	filters: CustomActionFilters;
@@ -26,6 +27,7 @@ function initialState(): CustomActionsState {
 		loading: false,
 		creating: false,
 		error: null,
+		supportsCustomActions: true,
 		actions: [],
 		quota: null,
 		filters: { status: 'active' },
@@ -86,6 +88,7 @@ async function load(filters: CustomActionFilters = customActionsState.filters): 
 			quota: response.quota,
 			loading: false,
 			error: null,
+			supportsCustomActions: true,
 			filters,
 			lastLoadedAt: Date.now()
 		});
@@ -94,6 +97,7 @@ async function load(filters: CustomActionFilters = customActionsState.filters): 
 			// Endpoint not available yet; treat as empty list but surface a mild warning.
 			setState({
 				loading: false,
+				supportsCustomActions: false,
 				error: 'Custom Actions API is not available on this backend. Deploy or enable CPS custom actions to use this page.',
 				actions: [],
 				quota: null,
@@ -103,7 +107,7 @@ async function load(filters: CustomActionFilters = customActionsState.filters): 
 		}
 
 		const message = friendlyMessageFromError(error, 'Failed to load custom actions');
-		setState({ loading: false, error: message, actions: [] });
+		setState({ loading: false, error: message, actions: [], supportsCustomActions: true });
 		notifications.error(message);
 	}
 }

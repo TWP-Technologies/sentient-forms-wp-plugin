@@ -37,6 +37,7 @@ let draftHooks = $state<Set<string>>(new Set());
 let pendingRemovalId = $state<string | null>(null);
 let entryLookupId = $state('');
 	let refreshInterval: number | null = null;
+	let visibilityHandler: (() => void) | null = null;
 
 	const definitions = $derived(actionsState.definitions ?? []);
 	const customActions = $derived(customState.actions.filter((action) => action.status === 'active'));
@@ -156,23 +157,45 @@ const LAST_HOOKS_KEY = 'sentient_forms_last_hooks';
 		}
 	}
 
-onMount(() => {
-	formActionsStore.load(data.formSourceSlug, data.formId);
-	customActionsStore.load({ status: 'active' });
-	restoreLastHooks();
-
+function startRefreshInterval() {
+	if (refreshInterval !== null) return;
 	refreshInterval = window.setInterval(
 		() => formActionsStore.refresh(data.formSourceSlug, data.formId),
 		30_000
 	);
+}
 
-		return () => {
-			if (refreshInterval) {
-				window.clearInterval(refreshInterval);
-			}
-			formActionsStore.reset();
-		};
-	});
+function stopRefreshInterval() {
+	if (refreshInterval !== null) {
+		window.clearInterval(refreshInterval);
+		refreshInterval = null;
+	}
+}
+
+onMount(() => {
+	formActionsStore.load(data.formSourceSlug, data.formId);
+	customActionsStore.load({ status: 'active' });
+	restoreLastHooks();
+	startRefreshInterval();
+
+	visibilityHandler = () => {
+		if (document.visibilityState === 'hidden') {
+			stopRefreshInterval();
+		} else {
+			void formActionsStore.refresh(data.formSourceSlug, data.formId);
+			startRefreshInterval();
+		}
+	};
+	document.addEventListener('visibilitychange', visibilityHandler);
+
+	return () => {
+		stopRefreshInterval();
+		if (visibilityHandler) {
+			document.removeEventListener('visibilitychange', visibilityHandler);
+		}
+		formActionsStore.reset();
+	};
+});
 
 	function normalizeDefinitionHooks(hooks?: Record<string, string> | string[]): string[] {
 		if (!hooks) return [];
