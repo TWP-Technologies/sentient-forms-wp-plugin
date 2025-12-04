@@ -16,8 +16,10 @@ export interface FormActionsState {
 	error: string | null;
 	items: FormActionLinkage[];
 	balance: CreditBalanceResponse | null;
+	supportsCredits: boolean;
 	definitions: ActionDefinition[];
 	status: FormExecutionStatus | null;
+	supportsStatus: boolean;
 }
 
 const client = createClientFromConfig();
@@ -28,8 +30,10 @@ function initialState(): FormActionsState {
 		error: null,
 		items: [],
 		balance: null,
+		supportsCredits: true,
 		definitions: [],
-		status: null
+		status: null,
+		supportsStatus: true
 	};
 }
 
@@ -233,9 +237,14 @@ async function refresh(formSourceSlug: string, formId: number) {
 			showNotifications: false
 		});
 
-		setState({ status, error: null });
+		setState({ status, error: null, supportsStatus: true });
 		await refreshBalance();
 	} catch (error) {
+		if (error instanceof ApiClientError && error.status === 404) {
+			setState({ supportsStatus: false, error: null });
+			refreshInFlight = false;
+			return;
+		}
 		const message = friendlyMessageFromError(error, 'Failed to refresh Sentient Forms status');
 		notifications.error(message);
 		setState({ error: message });
@@ -246,8 +255,12 @@ async function refresh(formSourceSlug: string, formId: number) {
 async function refreshBalance() {
 	try {
 		const balance = await client.getCreditBalance({ showNotifications: false });
-		setState({ balance, error: null });
+		setState({ balance, error: null, supportsCredits: true });
 	} catch (error) {
+		if (error instanceof ApiClientError && error.status === 404) {
+			setState({ balance: null, supportsCredits: false });
+			return;
+		}
 		const friendly = friendlyMessageFromError(error, 'Credit balance unavailable right now.');
 		const message =
 			!friendly || friendly === 'Not Found' || friendly === 'Request failed'
