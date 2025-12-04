@@ -692,6 +692,14 @@ onMount(() => {
 				{#if actionsState.status}
 					<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
 					<p class="sf:text-sm sf:text-slate-600">{statusDescription(actionsState.status)}</p>
+					{#if actionsState.status.last_error_code || actionsState.status.message}
+						<p class="sf:text-xs sf:text-amber-700 sf:mt-1">
+							{actionsState.status.last_error_code
+								? `Last error: ${actionsState.status.last_error_code}`
+								: ''}
+							{actionsState.status.message ? ` ${actionsState.status.message}` : ''}
+						</p>
+					{/if}
 					{#if actionsState.status.updated_at}
 						<p class="sf:text-xs sf:text-slate-500">
 							Updated {new Date(actionsState.status.updated_at).toLocaleString()}
