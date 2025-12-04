@@ -21,6 +21,8 @@ export interface FormActionsState {
 	status: FormExecutionStatus | null;
 	supportsStatus: boolean;
 	cpsVersion: string | null;
+	requiredCreditsVersion?: string;
+	requiredStatusVersion?: string;
 }
 
 const client = createClientFromConfig();
@@ -35,7 +37,9 @@ function initialState(): FormActionsState {
 		definitions: [],
 		status: null,
 		supportsStatus: true,
-		cpsVersion: null
+		cpsVersion: null,
+		requiredCreditsVersion: '1.0.0',
+		requiredStatusVersion: '1.0.0'
 	};
 }
 

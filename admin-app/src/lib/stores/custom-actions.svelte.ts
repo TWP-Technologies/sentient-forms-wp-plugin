@@ -15,6 +15,7 @@ export interface CustomActionsState {
 	error: string | null;
 	supportsCustomActions: boolean;
 	cpsVersion: string | null;
+	requiredCustomActionsVersion?: string;
 	actions: CustomAction[];
 	quota: CustomActionQuota | null;
 	filters: CustomActionFilters;
@@ -30,6 +31,7 @@ function initialState(): CustomActionsState {
 		error: null,
 		supportsCustomActions: true,
 		cpsVersion: null,
+		requiredCustomActionsVersion: '1.0.0',
 		actions: [],
 		quota: null,
 		filters: { status: 'active' },

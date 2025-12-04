@@ -133,8 +133,10 @@ import { customActionsStore, customActionsState } from '$lib/stores/custom-actio
 		{:else if customState.supportsCustomActions === false}
 			<Alert variant="warning" class="sf:mb-4" data-testid="custom-actions-api-warning">
 				Custom Actions are disabled or not supported on this CPS backend
-				{#if customState.cpsVersion}(version {customState.cpsVersion}){/if}. Deploy CPS with custom-actions
-				enabled to manage them here.
+				{#if customState.cpsVersion}(current {customState.cpsVersion}){/if}
+				{#if customState.requiredCustomActionsVersion}
+					(Requires CPS ≥ {customState.requiredCustomActionsVersion})
+				{/if}. Deploy CPS with custom-actions enabled to manage them here.
 			</Alert>
 		{/if}
 

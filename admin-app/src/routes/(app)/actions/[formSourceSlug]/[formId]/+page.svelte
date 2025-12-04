@@ -687,8 +687,10 @@ onMount(() => {
 				{#if actionsState.supportsCredits === false}
 					<Alert variant="warning">
 						Credit balance is unavailable on this CPS backend
-						{#if actionsState.cpsVersion}(version {actionsState.cpsVersion}){/if}. Upgrade or enable
-						credits support to see balance.
+						{#if actionsState.cpsVersion}(current {actionsState.cpsVersion}){/if}
+						{#if actionsState.requiredCreditsVersion}
+							(Requires CPS ≥ {actionsState.requiredCreditsVersion})
+						{/if}. Upgrade or enable credits support to see balance.
 					</Alert>
 				{:else if actionsState.balance}
 					<p class="sf:text-sm sf:text-slate-600">
@@ -698,8 +700,10 @@ onMount(() => {
 				{#if actionsState.supportsStatus === false}
 					<Alert variant="warning">
 						Execution status is unavailable on this CPS backend
-						{#if actionsState.cpsVersion}(version {actionsState.cpsVersion}){/if}. Upgrade or enable the
-						status endpoint to see run results.
+						{#if actionsState.cpsVersion}(current {actionsState.cpsVersion}){/if}
+						{#if actionsState.requiredStatusVersion}
+							(Requires CPS ≥ {actionsState.requiredStatusVersion})
+						{/if}. Upgrade or enable the status endpoint to see run results.
 					</Alert>
 				{:else if actionsState.status}
 					<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
