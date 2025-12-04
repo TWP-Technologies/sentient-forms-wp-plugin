@@ -686,7 +686,9 @@ onMount(() => {
 				</div>
 				{#if actionsState.supportsCredits === false}
 					<Alert variant="warning">
-						Credit balance is unavailable on this CPS backend. Upgrade or enable credits support to see balance.
+						Credit balance is unavailable on this CPS backend
+						{#if actionsState.cpsVersion}(version {actionsState.cpsVersion}){/if}. Upgrade or enable
+						credits support to see balance.
 					</Alert>
 				{:else if actionsState.balance}
 					<p class="sf:text-sm sf:text-slate-600">
@@ -695,7 +697,9 @@ onMount(() => {
 				{/if}
 				{#if actionsState.supportsStatus === false}
 					<Alert variant="warning">
-						Execution status is unavailable on this CPS backend. Upgrade or enable status endpoint to see run results.
+						Execution status is unavailable on this CPS backend
+						{#if actionsState.cpsVersion}(version {actionsState.cpsVersion}){/if}. Upgrade or enable the
+						status endpoint to see run results.
 					</Alert>
 				{:else if actionsState.status}
 					<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
