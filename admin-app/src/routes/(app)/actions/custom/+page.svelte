@@ -130,6 +130,10 @@ import { customActionsStore, customActionsState } from '$lib/stores/custom-actio
 			<Alert variant="warning" class="sf:mb-4" data-testid="custom-actions-api-warning">
 				{customState.error}
 			</Alert>
+		{:else if customState.supportsCustomActions === false}
+			<Alert variant="warning" class="sf:mb-4" data-testid="custom-actions-api-warning">
+				Custom Actions are disabled or not supported on this CPS backend. Deploy CPS with custom-actions enabled to manage them here.
+			</Alert>
 		{/if}
 
 		{#if customState.quota}

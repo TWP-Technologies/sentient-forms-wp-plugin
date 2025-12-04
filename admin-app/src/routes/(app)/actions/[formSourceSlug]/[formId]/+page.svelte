@@ -684,12 +684,20 @@ onMount(() => {
 						<Badge variant={statusBadgeVariant(actionsState.status)}>{actionsState.status.status}</Badge>
 					{/if}
 				</div>
-				{#if actionsState.balance}
+				{#if actionsState.supportsCredits === false}
+					<Alert variant="warning">
+						Credit balance is unavailable on this CPS backend. Upgrade or enable credits support to see balance.
+					</Alert>
+				{:else if actionsState.balance}
 					<p class="sf:text-sm sf:text-slate-600">
 						Credit balance: <strong>{actionsState.balance.current_balance}</strong>
 					</p>
 				{/if}
-				{#if actionsState.status}
+				{#if actionsState.supportsStatus === false}
+					<Alert variant="warning">
+						Execution status is unavailable on this CPS backend. Upgrade or enable status endpoint to see run results.
+					</Alert>
+				{:else if actionsState.status}
 					<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
 					<p class="sf:text-sm sf:text-slate-600">{statusDescription(actionsState.status)}</p>
 					{#if actionsState.status.last_error_code || actionsState.status.message}
