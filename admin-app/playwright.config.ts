@@ -5,6 +5,7 @@ const PREVIEW_PORT = 4175;
 export default defineConfig({
 	testDir: './tests/e2e',
 	timeout: 300_000,
+	globalSetup: './tests/e2e/global-setup.ts',
 	expect: {
 		timeout: 5_000
 	},
