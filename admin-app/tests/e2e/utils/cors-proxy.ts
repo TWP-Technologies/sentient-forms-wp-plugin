@@ -1,0 +1,46 @@
+import type { Page, Route } from '@playwright/test';
+
+const ACA_HEADERS = {
+	'access-control-allow-headers': 'authorization, content-type, x-wp-nonce',
+	'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+};
+
+async function fulfillWithCors(route: Route, origin: string | undefined): Promise<void> {
+	const req = route.request();
+
+	if (req.method() === 'OPTIONS') {
+		return route.fulfill({
+			status: 200,
+			headers: {
+				...ACA_HEADERS,
+				'access-control-allow-origin': origin ?? '*',
+				vary: 'Origin'
+			},
+			body: ''
+		});
+	}
+
+	const upstream = await req.fetch();
+	const body = await upstream.text();
+	const headers: Record<string, string> = { ...upstream.headers() } as Record<string, string>;
+	headers['access-control-allow-origin'] = origin ?? '*';
+	headers['access-control-allow-headers'] = ACA_HEADERS['access-control-allow-headers'];
+	headers['access-control-allow-methods'] = ACA_HEADERS['access-control-allow-methods'];
+	headers['vary'] = 'Origin';
+
+	await route.fulfill({
+		status: upstream.status(),
+		headers,
+		body
+	});
+}
+
+/**
+ * Inject CORS headers for Sentient Forms REST routes to allow the Playwright preview
+ * origin (127.0.0.1:4175) to call WP REST (localhost:8080) during E2E.
+ */
+export async function installSentientCorsProxy(page: Page): Promise<void> {
+	await page.route('**/wp-json/sentient-forms/v1/**', (route) =>
+		fulfillWithCors(route, route.request().headers().origin)
+	);
+}
