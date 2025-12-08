@@ -10,7 +10,7 @@ const baseConfig: SentientFormsConfig = {
 	apiBaseUrl: '/wp-json/sentient-forms/v1/',
 	restNonce: 'e2e-rest-nonce',
 	ajaxNonce: 'e2e-ajax-nonce',
-	siteUrl: 'http://localhost',
+	siteUrl: 'http://localhost:8080',
 	localSiteIdentifier: 'local-dev',
 	formSources: defaultFormSources
 };

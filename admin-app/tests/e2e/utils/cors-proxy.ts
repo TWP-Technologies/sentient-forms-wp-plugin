@@ -20,7 +20,39 @@ async function fulfillWithCors(route: Route, origin: string | undefined): Promis
 		});
 	}
 
-	const upstream = await req.fetch();
+	if (req.url().includes('/meta/capabilities')) {
+		return route.fulfill({
+			status: 200,
+			headers: {
+				...ACA_HEADERS,
+				'access-control-allow-origin': origin ?? '*',
+				vary: 'Origin',
+				'content-type': 'application/json'
+			},
+			body: JSON.stringify({
+				success: true,
+				data: {
+					supports_custom_actions: true,
+					supports_status: true,
+					supports_credits: true,
+					cps_version: 'mock-e2e'
+				}
+			})
+		});
+	}
+
+	const targetUrl = req
+		.url()
+		.replace('127.0.0.1:4175', 'localhost:8080')
+		.replace('localhost:4175', 'localhost:8080');
+
+	const upstream = await req.fetch({
+		url: targetUrl,
+		headers: {
+			...req.headers(),
+			host: 'localhost:8080'
+		}
+	});
 	const body = await upstream.text();
 	const headers: Record<string, string> = { ...upstream.headers() } as Record<string, string>;
 	headers['access-control-allow-origin'] = origin ?? '*';
