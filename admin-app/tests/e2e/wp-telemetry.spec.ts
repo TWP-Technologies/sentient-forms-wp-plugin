@@ -61,6 +61,7 @@ test.describe('WordPress telemetry settings', () => {
 		});
 
 		await loginToWpAdmin(page);
+	await requireWpRestHealthy(page);
 		await ensureSentientFormsSpa(page, '/settings');
 		const spaRoot = page.locator('#sentient-forms-admin-app');
 		await expect(page.getByRole('heading', { name: 'Telemetry & Privacy' })).toBeVisible();

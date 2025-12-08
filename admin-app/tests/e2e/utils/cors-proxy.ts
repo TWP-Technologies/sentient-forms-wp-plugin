@@ -22,9 +22,15 @@ async function fulfillWithCors(route: Route, origin: string | undefined): Promis
 
 	const original = new URL(req.url());
 	const target = new URL(req.url());
-	// Force traffic to real WP host:port.
+	// Force traffic to real WP host:port and use ?rest_route for reliability.
 	target.hostname = 'localhost';
 	target.port = '8080';
+
+	if (target.pathname.startsWith('/wp-json/')) {
+		const restRoute = target.pathname.replace('/wp-json', '');
+		target.pathname = '/index.php';
+		target.searchParams.set('rest_route', restRoute);
+	}
 
 	const upstream = await req.fetch({
 		url: target.toString(),

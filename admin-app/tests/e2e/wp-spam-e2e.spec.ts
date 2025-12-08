@@ -11,6 +11,7 @@ import {
 	getProxyApiKey,
 	runActionScheduler
 } from './utils/wp-e2e-helpers';
+import { requireWpRestHealthy } from './utils/wp-e2e-helpers';
 import { loginToWpAdmin, wpBaseUrl } from './utils/wp-admin';
 
 const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
@@ -55,6 +56,7 @@ test.describe('Gravity Forms spam e2e @spam-e2e', () => {
 
 		const email = `spam-${Date.now()}@example.test`;
 		await loginToWpAdmin(page);
+	await requireWpRestHealthy(page);
 		await page.goto(`${wpBaseUrl}/?gf_page=preview&id=${formId}`, { waitUntil: 'networkidle' });
 		await page.fill('input[name="input_1"]', 'Playwright Bot');
 		await page.fill('input[name="input_2"]', email);

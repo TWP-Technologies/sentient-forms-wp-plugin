@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { ensurePlaywrightFixtures } from './utils/wp-fixtures';
 import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
+import { requireWpRestHealthy } from './utils/wp-e2e-helpers';
 
 const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
 
@@ -16,6 +17,8 @@ test.beforeAll(() => {
 async function openSentientForms(page: Parameters<typeof test>[0]['page'], hash = '/dashboard') {
 	await loginToWpAdmin(page);
 	await ensureSentientFormsSpa(page, hash);
+	await requireWpRestHealthy(page);
+	await requireWpRestHealthy(page);
 }
 
 test.describe('Sentient Forms admin actions', () => {

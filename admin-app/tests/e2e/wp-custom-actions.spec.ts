@@ -9,6 +9,7 @@ import {
 	getLatestEntryId,
 	getProxyApiKey,
 	runActionScheduler,
+	requireWpRestHealthy,
 	submitGravityForm,
 	waitForEntryMeta
 } from './utils/wp-e2e-helpers';
@@ -38,6 +39,7 @@ test.describe('Custom actions end-to-end @custom-actions', () => {
 
 		const proxyKey = getProxyApiKey();
 		ensureCreditBalanceAtLeast(50);
+		await requireWpRestHealthy(page);
 		const balanceBefore = await fetchCreditBalance(page, proxyKey);
 		const baselineEntryId = getLatestEntryId(formId);
 

@@ -10,6 +10,7 @@ import {
 	setExecutionRequestIdOverride,
 	submitGravityForm
 } from './utils/wp-e2e-helpers';
+import { requireWpRestHealthy } from './utils/wp-e2e-helpers';
 
 const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
 

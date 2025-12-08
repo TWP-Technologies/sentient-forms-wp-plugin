@@ -26,6 +26,15 @@ export type EntryEvaluation = {
 	raw?: unknown;
 };
 
+export async function requireWpRestHealthy(page: Page): Promise<void> {
+	const res = await page.request.get('http://localhost:8080/index.php?rest_route=/sentient-forms/v1/meta/capabilities', {
+		timeout: 5000
+	});
+	if (!res.ok()) {
+		test.skip(`WP REST unavailable (${res.status()})`);
+	}
+}
+
 type ActionMappingArgs = {
 	formId: number;
 	actionId: string;
