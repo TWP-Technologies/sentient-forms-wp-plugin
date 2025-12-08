@@ -1,8 +1,8 @@
 import type {
 	ActionDefinition,
 	AsyncHealthResponse,
-	AsyncSettingsPayload,
 	AsyncSettingsResponse,
+	CapabilitiesResponse,
 	CreditBalanceResponse,
 	CustomAction,
 	CustomActionCreatePayload,
@@ -15,26 +15,25 @@ import type {
 	FormExecutionStatus,
 	FormSummary,
 	LicenseActivationRequest,
-	LicenseActivationResponsePayload,
 	LicenseActivationResult,
 	LicenseInfoResponse,
 	PluginSettingsResponse,
 	TelemetrySettingsResponse
 } from './types';
 
-type MaybePromise<T> = T | Promise<T>;
+type AsyncSettingsPayload = {
+	maxAttempts?: number;
+	baseDelaySeconds?: number;
+	maxDelaySeconds?: number;
+};
 
-/**
- * Very small in-memory mock client to let the SPA run without a backend (dev/demo/e2e).
- * Only implements the methods currently used by the Actions screens.
- */
 export class MockSentientFormsApiClient {
 	private definitions: ActionDefinition[] = [
 		{
 			id: 'spam-check',
 			label: 'Spam check',
 			source: 'cps',
-			hooks: ['gform_validation'],
+			hooks: { gform_validation: 'Gravity validation' },
 			baseCreditCost: 2,
 			modelHint: 'gemini-1.5-flash'
 		},
@@ -42,7 +41,7 @@ export class MockSentientFormsApiClient {
 			id: 'summarize',
 			label: 'Summarize entry',
 			source: 'local',
-			hooks: ['gform_after_submission'],
+			hooks: { gform_after_submission: 'After submission' },
 			baseCreditCost: 6,
 			modelHint: 'gemini-1.5-pro'
 		}
@@ -78,9 +77,10 @@ export class MockSentientFormsApiClient {
 	private formActions: FormActionLinkage[] = [];
 
 	private creditBalance: CreditBalanceResponse = {
-		credits_remaining: 10,
-		credits_used: 0,
-		credits_max: 10
+		current_balance: 10,
+		ledger_delta: 0,
+		tier: null,
+		stale: false
 	};
 
 	async activateLicense(_payload: LicenseActivationRequest): Promise<LicenseActivationResult> {
@@ -94,21 +94,31 @@ export class MockSentientFormsApiClient {
 
 	async getLicenseInfo(): Promise<LicenseInfoResponse> {
 		return {
+			license_key_masked: '****-MOCK',
 			status: 'active',
-			licenseKeyMasked: '****-MOCK',
-			proxyKeyPresent: true,
+			proxy_key_present: true,
 			tier: 'mock',
-			expiresAt: null,
-			lastSynced: new Date().toISOString()
+			expires_at: null,
+			last_synced: new Date().toISOString(),
+			license_id: 'license-mock',
+			site_id: 'site-mock',
+			site_url: 'https://example.test'
 		};
 	}
 
 	async getTelemetrySettings(): Promise<TelemetrySettingsResponse> {
-		return { enabled: true, lastUpdated: new Date().toISOString() };
+		const timestamp = new Date().toISOString();
+		return {
+			telemetry_opt_in: true,
+			updated_at: timestamp,
+			synced_at: timestamp,
+			remote_updated_at: timestamp,
+			last_error: null
+		};
 	}
 
 	async updateTelemetrySettings(): Promise<TelemetrySettingsResponse> {
-		return { enabled: true, lastUpdated: new Date().toISOString() };
+		return this.getTelemetrySettings();
 	}
 
 	async getPluginSettings(): Promise<PluginSettingsResponse> {
@@ -116,7 +126,16 @@ export class MockSentientFormsApiClient {
 	}
 
 	async updatePluginSettings(settings: PluginSettingsResponse): Promise<PluginSettingsResponse> {
-		return settings;
+		return { ...settings };
+	}
+
+	async getCapabilities(): Promise<CapabilitiesResponse> {
+		return {
+			supports_custom_actions: true,
+			supports_status: true,
+			supports_credits: true,
+			cps_version: 'mock-1.0.0'
+		};
 	}
 
 	async getActionDefinitions(): Promise<ActionDefinition[]> {
@@ -133,7 +152,14 @@ export class MockSentientFormsApiClient {
 	}
 
 	async getFormExecutionStatus(): Promise<FormExecutionStatus> {
-		return { status: 'unknown' };
+		return {
+			status: 'success',
+			message: null,
+			entry_id: null,
+			last_error_code: null,
+			last_result: null,
+			updated_at: new Date().toISOString()
+		};
 	}
 
 	async getCreditBalance(): Promise<CreditBalanceResponse> {
@@ -150,7 +176,8 @@ export class MockSentientFormsApiClient {
 			central_action_id: payload.central_action_id ?? 'unknown',
 			action_type_indicator: payload.action_type_indicator ?? 'master',
 			trigger_hooks: payload.trigger_hooks ?? [],
-			is_action_enabled_for_form: true,
+			is_action_enabled_for_form: payload.is_action_enabled_for_form ?? true,
+			execution_priority: payload.execution_priority ?? 10,
 			action_name_label: payload.action_name_label ?? payload.central_action_id ?? 'Action'
 		};
 
@@ -158,8 +185,8 @@ export class MockSentientFormsApiClient {
 		// pretend balance consumption
 		this.creditBalance = {
 			...this.creditBalance,
-			credits_remaining: Math.max(0, (this.creditBalance.credits_remaining ?? 0) - 1),
-			credits_used: (this.creditBalance.credits_used ?? 0) + 1
+			current_balance: Math.max(0, (this.creditBalance.current_balance ?? 0) - 1),
+			ledger_delta: (this.creditBalance.ledger_delta ?? 0) + 1
 		};
 		return linkage;
 	}
@@ -189,11 +216,19 @@ export class MockSentientFormsApiClient {
 	// Unused stubs to satisfy types
 	async getFormExecutionStatusForEntry(
 		_formSourceSlug: string,
-		_formId: number,
-		_entryId: number
+		formId: number,
+		entryId: number
 	): Promise<ExecutionStatus> {
-		return { status: 'unknown' };
+		return {
+			entry_id: entryId,
+			form_id: formId,
+			last_response: {},
+			last_error: null,
+			processed_at: new Date().toISOString(),
+			status: 'success'
+		};
 	}
+
 	async refreshExecutionStatus(
 		formSourceSlug: string,
 		formId: number,
@@ -201,24 +236,41 @@ export class MockSentientFormsApiClient {
 	): Promise<ExecutionStatus> {
 		return this.getFormExecutionStatusForEntry(formSourceSlug, formId, entryId);
 	}
+
 	async updateAsyncSettings(_payload: AsyncSettingsPayload): Promise<AsyncSettingsResponse> {
-		return { maxAttempts: 3, baseDelaySeconds: 2, maxDelaySeconds: 30 };
+		return {
+			max_attempts: _payload.maxAttempts ?? 3,
+			base_delay_seconds: _payload.baseDelaySeconds ?? 2,
+			max_delay_seconds: _payload.maxDelaySeconds ?? 30,
+			updated_at: new Date().toISOString(),
+			updated_by: 'mock-user'
+		};
 	}
+
 	async getAsyncHealth(): Promise<AsyncHealthResponse> {
-		return { ok: true, pending: 0, stalled: 0 };
+		return { queue_depth: 0, oldest_run_at: null, recent_failures: {}, warnings: [] };
 	}
+
 	async getAsyncSettings(): Promise<AsyncSettingsResponse> {
-		return { maxAttempts: 3, baseDelaySeconds: 2, maxDelaySeconds: 30 };
+		return {
+			max_attempts: 3,
+			base_delay_seconds: 2,
+			max_delay_seconds: 30,
+			updated_at: new Date().toISOString(),
+			updated_by: 'mock-user'
+		};
 	}
-	async getCustomActions(_filters?: CustomActionFilters): Promise<{
+
+	async getCustomActions(_filters: CustomActionFilters = {}): Promise<{
 		actions: CustomAction[];
 		quota: CustomActionQuota;
 	}> {
 		return {
 			actions: this.customActions,
-			quota: { quota_max: 5, quota_used: 1, quota_remaining: 4 }
+			quota: { quota_max: 5, quota_used: this.customActions.length, quota_remaining: Math.max(0, 5 - this.customActions.length) }
 		};
 	}
+
 	async createCustomAction(payload: CustomActionCreatePayload): Promise<{
 		action: CustomAction;
 		quota: CustomActionQuota;
@@ -239,8 +291,16 @@ export class MockSentientFormsApiClient {
 			updated_at: now
 		};
 		this.customActions = [action, ...this.customActions];
-		return { action, quota: { quota_max: 5, quota_used: this.customActions.length, quota_remaining: Math.max(0, 5 - this.customActions.length) } };
+		return {
+			action,
+			quota: {
+				quota_max: 5,
+				quota_used: this.customActions.length,
+				quota_remaining: Math.max(0, 5 - this.customActions.length)
+			}
+		};
 	}
+
 	async updateCustomAction(id: string, patch: CustomActionUpdatePayload): Promise<{
 		action: CustomAction;
 		quota: CustomActionQuota;
@@ -249,14 +309,23 @@ export class MockSentientFormsApiClient {
 			action.id === id ? { ...action, ...patch, updated_at: new Date().toISOString() } : action
 		);
 		const action = this.customActions.find((a) => a.id === id)!;
-		return { action, quota: { quota_max: 5, quota_used: this.customActions.length, quota_remaining: Math.max(0, 5 - this.customActions.length) } };
+		return {
+			action,
+			quota: {
+				quota_max: 5,
+				quota_used: this.customActions.length,
+				quota_remaining: Math.max(0, 5 - this.customActions.length)
+			}
+		};
 	}
+
 	async archiveCustomAction(id: string): Promise<{
 		action: CustomAction;
 		quota: CustomActionQuota;
 	}> {
 		return this.updateCustomAction(id, { status: 'archived', archived_at: new Date().toISOString() });
 	}
+
 	async reactivateCustomAction(id: string): Promise<{
 		action: CustomAction;
 		quota: CustomActionQuota;

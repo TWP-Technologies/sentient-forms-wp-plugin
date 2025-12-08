@@ -1,4 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('$app/navigation', () => ({
+	goto: vi.fn(() => Promise.reject(new Error('goto unavailable')))
+}));
+
+vi.mock('$app/environment', () => ({ browser: true }));
+
+import { goto } from '$app/navigation';
 import {
 	appHref,
 	deriveActivePath,
@@ -9,6 +17,7 @@ import {
 
 afterEach(() => {
 	window.location.hash = '';
+	vi.clearAllMocks();
 });
 
 describe('navigation helpers', () => {
@@ -35,6 +44,7 @@ describe('navigation helpers', () => {
 
 	it('navigates via hash by updating location.hash', async () => {
 		await navigateToAppPath('/actions/demo/42');
+		expect(vi.mocked(goto)).toHaveBeenCalled();
 		expect(window.location.hash).toBe('#/actions/demo/42');
 	});
 });

@@ -144,7 +144,10 @@ export interface CustomActionCreatePayload {
 	base_credit_cost?: number | null;
 }
 
-export type CustomActionUpdatePayload = Omit<CustomActionCreatePayload, 'template_id' | 'code'>;
+export type CustomActionUpdatePayload = Partial<Omit<CustomActionCreatePayload, 'template_id' | 'code'>> & {
+	status?: CustomActionStatus;
+	archived_at?: string | null;
+};
 
 export interface CustomActionFilters {
 	status?: CustomActionStatus;

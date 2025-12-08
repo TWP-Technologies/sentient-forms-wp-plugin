@@ -75,7 +75,7 @@ let entryLookupId = $state('');
 		hookOptions = next;
 	});
 
-	const hookEntries = $derived(() => Object.entries(hookOptions));
+	const hookEntries = $derived<[string, string][]>(Object.entries(hookOptions));
 
 	const hasDefinitions = $derived(definitions.length > 0);
 	const hasCpsDefinitions = $derived(
@@ -93,9 +93,9 @@ let entryLookupId = $state('');
 	const selectedCustomAction = $derived(
 		selectedCustomId ? customLookup[selectedCustomId] ?? null : null
 	);
-const selectedActionKey = $derived(
-	`${createKind}:${createKind === 'template' ? selectedTemplateId : selectedCustomId}`
-);
+	const selectedActionKey = $derived(
+		`${createKind}:${createKind === 'template' ? selectedTemplateId : selectedCustomId}`
+	);
 
 let lastPresetKey = $state<string | null>(null);
 const LAST_HOOKS_KEY = 'sentient_forms_last_hooks';
@@ -123,10 +123,10 @@ const LAST_HOOKS_KEY = 'sentient_forms_last_hooks';
 	});
 
 	$effect(() => {
-	if (createKind === 'template' && !hasDefinitions && customActions.length > 0) {
-		createKind = 'custom';
-	}
-});
+		if (createKind === 'template' && !hasDefinitions && customActions.length > 0) {
+			createKind = 'custom';
+		}
+	});
 
 	$effect(() => {
 		// Ensure at least one hook is preselected when opening the drawer
@@ -534,8 +534,8 @@ onMount(() => {
 		formActionsStore.refresh(data.formSourceSlug, data.formId);
 	}
 
-	async function checkEntryStatus(event: SubmitEvent) {
-		event.preventDefault();
+	async function checkEntryStatus(event?: SubmitEvent | Event) {
+		event?.preventDefault?.();
 		const parsed = Number.parseInt(entryLookupId.trim(), 10);
 		if (!entryLookupId.trim() || Number.isNaN(parsed) || parsed <= 0) {
 			createError = 'Entry ID must be a positive number.';
@@ -724,7 +724,7 @@ onMount(() => {
 						<p class="sf:text-xs sf:text-slate-500">Last updated: not available</p>
 					{/if}
 					<div class="sf:flex sf:justify-end">
-						<Button size="sm" variant="secondary" onclick={() => refreshStatus()}>
+						<Button size="sm" variant="secondary" onclick={refresh}>
 							Refresh now
 						</Button>
 					</div>

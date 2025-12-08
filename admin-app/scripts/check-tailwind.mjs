@@ -8,6 +8,8 @@ const allowList = ['prose', 'dark'];
 function hasDisallowedClass(className) {
 	const parts = className.split(':');
 	const base = parts[parts.length - 1];
+	if (className.startsWith('sf:')) return false;
+	if (parts.some((part) => part === 'sf' || part.startsWith('sf-'))) return false;
 	if (base.startsWith('sf-')) return false;
 	if (allowList.includes(base)) return false;
 	if (/^aria-/.test(base)) return false;

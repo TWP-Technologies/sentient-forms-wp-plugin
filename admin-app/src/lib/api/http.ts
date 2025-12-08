@@ -30,6 +30,7 @@ export interface SentientFormsConfig {
     };
     i18n?: Record<string, string>;
     devMode?: boolean;
+    demoMode?: boolean;
     devServerUrl?: string | null;
     telemetry?: {
         optIn: boolean;

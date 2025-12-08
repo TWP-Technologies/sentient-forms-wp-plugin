@@ -87,7 +87,7 @@ async function load(filters: CustomActionFilters = customActionsState.filters): 
 			const caps = await client.getCapabilities({ showNotifications: false });
 			customActionsState.supportsCustomActions = caps.supports_custom_actions ?? true;
 			customActionsState.cpsVersion = caps.cps_version ?? null;
-		} catch (err) {
+		} catch {
 			// best effort; fall back to 404 detection
 		}
 

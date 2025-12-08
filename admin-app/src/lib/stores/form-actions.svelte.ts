@@ -118,7 +118,7 @@ async function load(formSourceSlug: string, formId: number) {
 				supportsStatus: caps.supports_status ?? true,
 				cpsVersion: caps.cps_version ?? null
 			});
-		} catch (err) {
+		} catch {
 			// Capability fetch is best-effort; ignore failures and fall back.
 		}
 
@@ -274,14 +274,16 @@ async function refreshBalance() {
 		const balance = await client.getCreditBalance({ showNotifications: false });
 		setState({ balance, error: null, supportsCredits: true });
 	} catch (error) {
+		const fallbackMessage = 'Credit balance unavailable right now.';
 		if (error instanceof ApiClientError && error.status === 404) {
 			setState({ balance: null, supportsCredits: false });
+			notifications.warning(fallbackMessage);
 			return;
 		}
-		const friendly = friendlyMessageFromError(error, 'Credit balance unavailable right now.');
+		const friendly = friendlyMessageFromError(error, fallbackMessage);
 		const message =
 			!friendly || friendly === 'Not Found' || friendly === 'Request failed'
-				? 'Credit balance unavailable right now.'
+				? fallbackMessage
 				: friendly;
 		// Show a warning but do not fail the page.
 		notifications.warning(message);

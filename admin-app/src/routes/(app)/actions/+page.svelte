@@ -134,8 +134,8 @@
 				<div class="sf:mt-3 sf:space-y-2">
 					{#each Array(3) as _, idx}
 						<div class="sf:flex sf:items-center sf:gap-2" aria-label={`template-skeleton-${idx}`}>
-							<Skeleton class="sf:h-3 sf:w-32" />
-							<Skeleton class="sf:h-3 sf:w-12" />
+							<Skeleton className="sf:h-3 sf:w-32" />
+							<Skeleton className="sf:h-3 sf:w-12" />
 						</div>
 					{/each}
 				</div>
@@ -252,10 +252,10 @@
 				<div class="sf:mt-4 sf:grid sf:gap-4 sf:md:grid-cols-2 sf:xl:grid-cols-3">
 					{#each Array(6) as _, idx}
 						<Card aria-label={`form-skeleton-${idx}`}>
-							<Skeleton class="sf:h-4 sf:w-3/4" />
-							<Skeleton class="sf:mt-2 sf:h-3 sf:w-1/2" />
-							<Skeleton class="sf:mt-4 sf:h-3 sf:w-2/3" />
-							<Skeleton class="sf:mt-4 sf:h-8 sf:w-full" />
+							<Skeleton className="sf:h-4 sf:w-3/4" />
+							<Skeleton className="sf:mt-2 sf:h-3 sf:w-1/2" />
+							<Skeleton className="sf:mt-4 sf:h-3 sf:w-2/3" />
+							<Skeleton className="sf:mt-4 sf:h-8 sf:w-full" />
 						</Card>
 					{/each}
 				</div>
