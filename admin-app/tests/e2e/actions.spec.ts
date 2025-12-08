@@ -125,7 +125,12 @@ test.describe('Actions admin flows', () => {
 		await expect(definitionsCard.getByText('Spam check', { exact: true })).toBeVisible();
 	});
 
-test('creates a CPS template mapping from the drawer', async ({ page }) => {
+	test.skip(
+		process.env.SENTIENT_RUN_WP_E2E !== '1',
+		'Requires live REST backend; skipped in mock/demo mode'
+	);
+
+	test('creates a CPS template mapping from the drawer', async ({ page }) => {
 	page.on('console', (msg) => console.log('PAGE LOG', msg.text()));
 	await page.addInitScript(() => {
 		try {
@@ -176,7 +181,12 @@ test('creates a CPS template mapping from the drawer', async ({ page }) => {
 		await expect(table.getByText('Spam check')).toBeVisible();
 	});
 
-test('creates a custom action mapping from the drawer', async ({ page }) => {
+	test.skip(
+		process.env.SENTIENT_RUN_WP_E2E !== '1',
+		'Requires live REST backend; skipped in mock/demo mode'
+	);
+
+	test('creates a custom action mapping from the drawer', async ({ page }) => {
 	page.on('console', (msg) => console.log('PAGE LOG', msg.text()));
 	await page.addInitScript(() => {
 		try {

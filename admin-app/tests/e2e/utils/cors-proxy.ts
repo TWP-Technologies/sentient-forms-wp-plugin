@@ -20,34 +20,14 @@ async function fulfillWithCors(route: Route, origin: string | undefined): Promis
 		});
 	}
 
-	if (req.url().includes('/meta/capabilities')) {
-		return route.fulfill({
-			status: 200,
-			headers: {
-				...ACA_HEADERS,
-				'access-control-allow-origin': origin ?? '*',
-				vary: 'Origin',
-				'content-type': 'application/json'
-			},
-			body: JSON.stringify({
-				success: true,
-				data: {
-					supports_custom_actions: true,
-					supports_status: true,
-					supports_credits: true,
-					cps_version: 'mock-e2e'
-				}
-			})
-		});
-	}
-
-	const targetUrl = req
-		.url()
-		.replace('127.0.0.1:4175', 'localhost:8080')
-		.replace('localhost:4175', 'localhost:8080');
+	const original = new URL(req.url());
+	const target = new URL(req.url());
+	// Force traffic to real WP host:port.
+	target.hostname = 'localhost';
+	target.port = '8080';
 
 	const upstream = await req.fetch({
-		url: targetUrl,
+		url: target.toString(),
 		headers: {
 			...req.headers(),
 			host: 'localhost:8080'

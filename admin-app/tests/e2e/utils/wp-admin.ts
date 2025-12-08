@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+import { installSentientCorsProxy } from './cors-proxy';
 
 export const wpBaseUrl = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
 const wpAdminUser = process.env.SENTIENT_WP_ADMIN_USER ?? 'sentient_admin';
@@ -40,6 +41,10 @@ export async function loginToWpAdmin(page: Page): Promise<void> {
 }
 
 export async function ensureSentientFormsSpa(page: Page, hash = '/dashboard'): Promise<void> {
+	if (process.env.SENTIENT_RUN_WP_E2E === '1') {
+		await installSentientCorsProxy(page);
+	}
+
 	const normalizedHash = hash.startsWith('#') ? hash : `#/${hash.replace(/^\/+/, '')}`;
 	const target = normalizedHash.replace('#//', '#/');
 	const destination = `${wpBaseUrl}/wp-admin/admin.php?page=sentient-forms${target}`;
