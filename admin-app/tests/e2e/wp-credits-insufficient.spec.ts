@@ -5,15 +5,23 @@ import {
 	fetchCreditBalance,
 	getLatestEntryId,
 	getProxyApiKey,
+	requireWpRestHealthy,
 	setCreditBalance
 } from './utils/wp-e2e-helpers';
-import { requireWpRestHealthy } from './utils/wp-e2e-helpers';
+import { installSentientCorsProxy } from './utils/cors-proxy';
 import { loginToWpAdmin, wpBaseUrl } from './utils/wp-admin';
 
 const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
 
 test.describe('Gravity Forms credits @credits-insufficient', () => {
 	test.skip(!runWpE2E, 'Set SENTIENT_RUN_WP_E2E=1 to exercise Gravity Forms + CPS.');
+
+	test.beforeEach(async ({ page }) => {
+		if (runWpE2E) {
+			await installSentientCorsProxy(page);
+			await requireWpRestHealthy(page);
+		}
+	});
 
 	test('blocks submission when credits are depleted and keeps balance unchanged', async ({ page }) => {
 		const formId = ensureGravityForm('Playwright QA Form');

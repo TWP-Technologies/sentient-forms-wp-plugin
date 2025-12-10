@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
-import { getFormStatusOption, setFormStatusOption } from './utils/wp-e2e-helpers';
+import { getFormStatusOption, setFormStatusOption } from './utils/wp-e2e-helpers'
+import { requireWpRestHealthy } from './utils/wp-e2e-helpers'
+import { installSentientCorsProxy } from './utils/cors-proxy';
 import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
 
 const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';

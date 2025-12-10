@@ -3,7 +3,8 @@ import { seedRuntimeConfig } from './utils/runtime-config';
 
 test.describe('Custom actions admin view', () => {
 	test.beforeEach(async ({ page }) => {
-		await seedRuntimeConfig(page);
+		const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+		await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 	});
 
 	test('lists, creates, archives, and reactivates custom actions', async ({ page }) => {

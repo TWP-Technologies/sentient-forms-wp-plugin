@@ -32,7 +32,7 @@ async function fulfillWithCors(route: Route, origin: string | undefined): Promis
 		target.searchParams.set('rest_route', restRoute);
 	}
 
-	const upstream = await req.fetch({
+	const upstream = await route.fetch({
 		url: target.toString(),
 		headers: {
 			...req.headers(),
@@ -59,6 +59,9 @@ async function fulfillWithCors(route: Route, origin: string | undefined): Promis
  */
 export async function installSentientCorsProxy(page: Page): Promise<void> {
 	await page.route('**/wp-json/sentient-forms/v1/**', (route) =>
+		fulfillWithCors(route, route.request().headers().origin)
+	);
+	await page.route('**/index.php?rest_route=/sentient-forms/v1/**', (route) =>
 		fulfillWithCors(route, route.request().headers().origin)
 	);
 }

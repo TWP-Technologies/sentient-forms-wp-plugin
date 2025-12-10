@@ -8,14 +8,22 @@ import {
 	getProxyApiKey,
 	runActionScheduler,
 	setExecutionRequestIdOverride,
-	submitGravityForm
+	submitGravityForm,
+	requireWpRestHealthy
 } from './utils/wp-e2e-helpers';
-import { requireWpRestHealthy } from './utils/wp-e2e-helpers';
+import { installSentientCorsProxy } from './utils/cors-proxy';
 
 const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
 
 test.describe('Duplicate execution guard @dedupe', () => {
 	test.skip(!runWpE2E, 'Set SENTIENT_RUN_WP_E2E=1 to exercise Gravity Forms + CPS.');
+
+	test.beforeEach(async ({ page }) => {
+		if (runWpE2E) {
+			await installSentientCorsProxy(page);
+			await requireWpRestHealthy(page);
+		}
+	});
 
 	test('second run with same execution_request_id does not debit again', async ({ page }) => {
 		const formId = ensureGravityForm('Playwright QA Form');

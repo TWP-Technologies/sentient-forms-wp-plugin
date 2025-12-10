@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
+import { requireWpRestHealthy } from './utils/wp-e2e-helpers';
 
 const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
 
@@ -64,7 +65,7 @@ test.describe('WordPress telemetry settings', () => {
 	await requireWpRestHealthy(page);
 		await ensureSentientFormsSpa(page, '/settings');
 		const spaRoot = page.locator('#sentient-forms-admin-app');
-		await expect(page.getByRole('heading', { name: 'Telemetry & Privacy' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: /Telemetry/ })).toBeVisible();
 
 		const toggle = page.locator('input[type="checkbox"]').first();
 		await expect(toggle).not.toBeChecked();

@@ -42,6 +42,21 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
+		if (url.endsWith('/meta/capabilities')) {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					success: true,
+					data: {
+						features: [],
+						form_sources: ['gravity_forms'],
+						actions: ['spam_detection_v1']
+					}
+				})
+			});
+		}
+
 		if (routes.actions?.creditBalance && url.endsWith('/credits/balance')) {
 			return route.fulfill({
 				status: 200,
@@ -59,6 +74,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 		}
 
 		if (routes.actions?.formsActions && /forms\/\d+\/actions$/.test(url) && method === 'GET') {
+			console.log('[mock-wpjson] GET actions', url);
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -67,6 +83,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 		}
 
 		if (routes.actions?.formsActions && /forms\/\d+\/actions$/.test(url) && method === 'POST') {
+			console.log('[mock-wpjson] POST actions', url);
 			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			const newLinkage =
 				routes.actions.createResponse?.(body) ??

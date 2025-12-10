@@ -26,7 +26,8 @@ test('licensing screen handles activation flow', async ({ page }) => {
 		site_url: 'https://example.test'
 	};
 
-	await seedRuntimeConfig(page);
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
 	await page.route('**/wp-json/sentient-forms/v1/license', (route) => {
 		if (process.env.PLAYWRIGHT_DEBUG) {

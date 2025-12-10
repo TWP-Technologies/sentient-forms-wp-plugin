@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,12 +27,24 @@ export type EntryEvaluation = {
 };
 
 export async function requireWpRestHealthy(page: Page): Promise<void> {
-	const res = await page.request.get('http://localhost:8080/index.php?rest_route=/sentient-forms/v1/meta/capabilities', {
+	const res = await page.request.get('http://localhost:8080/index.php?rest_route=/', {
 		timeout: 5000
 	});
 	if (!res.ok()) {
 		test.skip(`WP REST unavailable (${res.status()})`);
 	}
+}
+
+
+export async function waitForPreviewInputs(page: Page, formId: number, reloadOnce = true): Promise<void> {
+	const isVisible = async () =>
+		page.locator('input[name="input_1"]').isVisible({ timeout: 2000 }).catch(() => false);
+    if (await isVisible()) return;
+    if (reloadOnce) {
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        if (await isVisible()) return;
+    }
+    throw new Error(`Gravity Forms preview inputs not visible for form ${formId}`);
 }
 
 type ActionMappingArgs = {
@@ -616,12 +628,13 @@ export async function waitForEntryMeta(
 
 export async function submitGravityForm(page: Page, formId: number, name: string, email: string): Promise<void> {
 	await loginToWpAdmin(page);
-	await page.goto(`${wpBaseUrl}/?gf_page=preview&id=${formId}`, { waitUntil: 'networkidle' });
+	await page.goto(`${wpBaseUrl}/?gf_page=preview&id=${formId}`, { waitUntil: 'domcontentloaded' });
+	await waitForPreviewInputs(page, formId);
 	await page.fill('input[name="input_1"]', name);
 	await page.fill('input[name="input_2"]', email);
 	await Promise.all([
 		page.click('input[type="submit"], button[type="submit"]'),
-		page.waitForLoadState('networkidle')
+		page.waitForSelector('.gform_confirmation_message, .gform_confirmation_wrapper', { timeout: 15000 })
 	]);
 }
 

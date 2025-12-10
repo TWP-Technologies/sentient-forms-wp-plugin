@@ -8,14 +8,22 @@ import {
 	getProxyApiKey,
 	runActionScheduler,
 	submitGravityForm,
-	waitForEntryMeta
+	waitForEntryMeta,
+	requireWpRestHealthy
 } from './utils/wp-e2e-helpers';
-import { requireWpRestHealthy } from './utils/wp-e2e-helpers';
+import { installSentientCorsProxy } from './utils/cors-proxy';
 
 const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
 
 test.describe('After-submission spam async @after-submission @summary-e2e', () => {
 	test.skip(!runWpE2E, 'Set SENTIENT_RUN_WP_E2E=1 to exercise Gravity Forms + CPS.');
+
+	test.beforeEach(async ({ page }) => {
+		if (runWpE2E) {
+			await installSentientCorsProxy(page);
+			await requireWpRestHealthy(page);
+		}
+	});
 
 	test('stores spam analysis meta and debits credits once', async ({ page }) => {
 		const formId = ensureGravityForm('Playwright QA Form');
