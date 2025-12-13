@@ -41,15 +41,21 @@ let entryLookupId = $state('');
 
 	const definitions = $derived(actionsState.definitions ?? []);
 	const customActions = $derived(customState.actions.filter((action) => action.status === 'active'));
-	const definitionLookup = $derived(() =>
+	const definitionLookup = $derived.by(() =>
 		actionsState.definitions.reduce<Record<string, ActionDefinition>>((acc, definition) => {
 			acc[definition.id] = definition;
 			return acc;
 		}, {})
 	);
-	const customLookup = $derived(() =>
+	const customLookupById = $derived.by(() =>
 		customActions.reduce<Record<string, CustomAction>>((acc, action) => {
 			acc[action.id] = action;
+			return acc;
+		}, {})
+	);
+	const customLookupByCode = $derived.by(() =>
+		customActions.reduce<Record<string, CustomAction>>((acc, action) => {
+			acc[action.code] = action;
 			return acc;
 		}, {})
 	);
@@ -91,7 +97,7 @@ let entryLookupId = $state('');
 		selectedTemplateId ? definitionLookup[selectedTemplateId] ?? null : null
 	);
 	const selectedCustomAction = $derived(
-		selectedCustomId ? customLookup[selectedCustomId] ?? null : null
+		selectedCustomId ? customLookupById[selectedCustomId] ?? null : null
 	);
 	const selectedActionKey = $derived(
 		`${createKind}:${createKind === 'template' ? selectedTemplateId : selectedCustomId}`
@@ -366,7 +372,8 @@ onMount(() => {
 		if (linkage.action_name_label) return linkage.action_name_label;
 		const template = definitionLookup[linkage.central_action_id];
 		if (template?.label) return template.label;
-		const custom = customLookup[linkage.central_action_id];
+		const custom =
+			customLookupByCode[linkage.central_action_id] ?? customLookupById[linkage.central_action_id];
 		if (custom?.display_name) return custom.display_name;
 		return linkage.central_action_id ?? 'Unnamed action';
 	}
@@ -422,60 +429,41 @@ onMount(() => {
 			}
 		}
 		createError = null;
-		console.log('handleCreate start', {
-			createKind,
-			selectedTemplateId,
-			selectedCustomId,
-			selectedHooks: Array.from(selectedHooks)
-		});
 
 		const hooks = Array.from(selectedHooks).filter(Boolean);
 		if (hooks.length === 0) {
-			console.log('handleCreate abort: no hooks');
 			createError = 'Select at least one trigger hook.';
 			return;
 		}
-		console.log('handleCreate after hooks check', hooks);
 
-		if (createKind === 'template' && !selectedDefinition) {
-			console.log('handleCreate abort: no selectedDefinition');
+		const chosenDefinition =
+			createKind === 'template'
+				? selectedDefinition ?? definitions.find((def) => def.id === selectedTemplateId) ?? null
+				: null;
+		const chosenCustom =
+			createKind === 'custom'
+				? selectedCustomAction ??
+					customActions.find((action) => action.id === selectedCustomId) ??
+					null
+				: null;
+
+		if (createKind === 'template' && !chosenDefinition) {
 			createError = 'Select a CPS template to link.';
 			return;
 		}
-		console.log('handleCreate after selectedDefinition check', selectedDefinition);
 
-		if (createKind === 'custom' && !selectedCustomAction) {
-			console.log('handleCreate abort: no selectedCustomAction');
+		if (createKind === 'custom' && !chosenCustom) {
 			createError = 'Select a custom action to link.';
 			return;
 		}
-		console.log('handleCreate after selectedCustomAction check');
-
-		console.log('handleCreate about to enter try');
 
 		try {
-			console.log('handleCreate inside try', { eventType: event.type });
 			creating = true;
-			const chosenDefinition =
-				createKind === 'template'
-					? selectedDefinition ?? definitions.find((def) => def.id === selectedTemplateId) ?? null
-					: null;
-			const chosenCustom =
-				createKind === 'custom'
-					? selectedCustomAction ??
-						customActions.find((action) => action.id === selectedCustomId) ??
-						null
-					: null;
 			const centralActionId =
 				createKind === 'template'
 					? chosenDefinition?.id ?? selectedTemplateId
-					: chosenCustom?.id ?? selectedCustomId;
+					: chosenCustom?.code;
 			if (!centralActionId) {
-				console.error('handleCreate abort: missing centralActionId', {
-					createKind,
-					chosenDefinition,
-					chosenCustom
-				});
 				createError = 'Select an action to link.';
 				return;
 			}
@@ -483,23 +471,15 @@ onMount(() => {
 				createKind === 'template'
 					? chosenDefinition?.label ?? centralActionId
 					: chosenCustom?.display_name ?? chosenCustom?.code ?? centralActionId;
-			console.log('handleCreate calling store.create', {
-				central_action_id: centralActionId,
-				action_type_indicator: createKind === 'template' ? 'master' : 'custom',
-				trigger_hooks: hooks,
-				action_name_label: label
-			});
 			await formActionsStore.create(data.formSourceSlug, data.formId, {
 				central_action_id: centralActionId,
 				action_type_indicator: createKind === 'template' ? 'master' : 'custom',
 				trigger_hooks: hooks,
 				action_name_label: label
 			});
-			console.log('handleCreate after store.create');
 			pendingRemovalId = null;
 			showAddPanel = false;
 		} catch (error) {
-			console.error('handleCreate error', error);
 			createError =
 				error instanceof Error ? error.message : 'Failed to create action mapping';
 		} finally {

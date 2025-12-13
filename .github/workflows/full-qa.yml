@@ -77,7 +77,7 @@ jobs:
           toolchain: stable
 
       - name: Install sqlx-cli
-        run: cargo install sqlx-cli --no-default-features --features rustls
+        run: cargo install sqlx-cli --no-default-features --features rustls --locked --force
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2

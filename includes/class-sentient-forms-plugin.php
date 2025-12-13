@@ -395,8 +395,8 @@ final class Sentient_Forms_Plugin
             return false;
         }
 
-		$action_label = $settings['action_name_label'] ?? $central_action_id ?: $action_id;
-        $entry_id     = $context['entry_id'] ?? ( $data['entry']['id'] ?? null );
+			$action_label = $settings['action_name_label'] ?? ( $central_action_id ?: $action_id );
+	        $entry_id     = $context['entry_id'] ?? ( $data['entry']['id'] ?? null );
 
         $context = array_merge(
             [
@@ -408,6 +408,8 @@ final class Sentient_Forms_Plugin
                 'entry_id'         => isset( $entry_id ) && '' !== $entry_id ? (string) $entry_id : null,
                 'central_action_id'=> (string) $central_action_id,
                 'action_name_label'=> (string) $action_label,
+                'action_type_indicator' => $settings['action_type_indicator'] ?? null,
+                'local_mapping_id'      => $settings['local_mapping_id'] ?? null,
             ],
             $context,
         );
@@ -426,6 +428,16 @@ final class Sentient_Forms_Plugin
         {
             $context['action_name_label'] = (string) $context['action_name_label'];
         }
+
+	        if ( isset( $context['action_type_indicator'] ) && is_scalar( $context['action_type_indicator'] ) && '' !== $context['action_type_indicator'] )
+	        {
+	            $context['action_type_indicator'] = (string) $context['action_type_indicator'];
+	        }
+
+	        if ( isset( $context['local_mapping_id'] ) && is_scalar( $context['local_mapping_id'] ) && '' !== $context['local_mapping_id'] )
+	        {
+	            $context['local_mapping_id'] = (string) $context['local_mapping_id'];
+	        }
 
         $context['central_action_id'] = (string) ( $context['central_action_id'] ?? $central_action_id );
 

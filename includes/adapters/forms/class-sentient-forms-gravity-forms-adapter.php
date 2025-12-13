@@ -197,7 +197,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     public function handle_after_submission( array $entry, array $form ): void
     {
-        error_log( sprintf( '[sentient-forms] handle_after_submission invoked for entry %s', $entry['id'] ?? 'unknown' ) );
         $form_id = $form[ 'id' ];
         $logger  = $this->plugin->get_logger();
         $correlation_id = $logger->correlation_id( $entry['id'] ?? null );
@@ -305,12 +304,26 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return $validation_result;
         }
 
+        $action_type_indicator = null;
+        if ( isset( $action_settings['action_type_indicator'] ) && is_scalar( $action_settings['action_type_indicator'] ) && '' !== $action_settings['action_type_indicator'] )
+        {
+            $action_type_indicator = (string) $action_settings['action_type_indicator'];
+        }
+
+        $local_mapping_id = null;
+        if ( isset( $action_settings['local_mapping_id'] ) && is_scalar( $action_settings['local_mapping_id'] ) && '' !== $action_settings['local_mapping_id'] )
+        {
+            $local_mapping_id = (string) $action_settings['local_mapping_id'];
+        }
+
         $context = [
             'hook'        => 'gform_validation',
             'form_source' => $this->get_id(),
             'action_id'   => $action_id,
             'form_id'     => $form['id'] ?? null,
             'action_name_label' => $action_settings['action_name_label'] ?? $central_action_id,
+            'action_type_indicator' => $action_type_indicator,
+            'local_mapping_id'      => $local_mapping_id,
         ];
 
         $response = $this->plugin->get_action_executor()->execute(

@@ -13,7 +13,7 @@ The Sentient Forms plugin connects WordPress form builders (Gravity Forms first)
    - `bun run dev` for live development (hash router served via Vite).
    - `bun run build:wp` before committing UI changes (copies hashed assets into `assets/dist/`).
    - `bun run preview:ci` spins up a pathname-router preview on port 4173 so Playwright can run against a deterministic build.
-3. **Testing** – `bun run qa:full` mirrors the GitHub Actions workflow: lint → type-check → rune guard → Tailwind prefix check → Vitest → Playwright → build/bundle budget. Playwright now relies on the preview server (step 2) instead of the wp-admin iframe mock, ensuring the hash-based navigation limitations do not block CI. When you need to exercise the wp-admin/Gravity Forms flows against the Docker WordPress stack, export `RUN_WP_E2E=1` (the flag is plumbed through `scripts/run-full-qa.sh` via `SENTIENT_RUN_WP_E2E`).
+3. **Testing** – `bun run qa:full` mirrors the GitHub Actions workflow: lint → type-check → rune guard → Tailwind prefix check → Vitest → Playwright → build/bundle budget. Playwright now relies on the preview server (step 2) instead of the wp-admin iframe mock, ensuring the hash-based navigation limitations do not block CI. When you need to exercise the wp-admin/Gravity Forms flows against the Docker WordPress stack, export `SENTIENT_RUN_WP_E2E=1` (prefer `--workers=1` until parallel stability is proven).
 4. **PHP tooling** – Run `composer install`, regenerate the class map with `php build/generate-class-map.php` after adding classes, and execute `vendor/bin/phpunit` for the REST controllers (custom actions, telemetry, licensing, credits).
 
 ### Git hooks

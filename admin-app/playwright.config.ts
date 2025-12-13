@@ -21,10 +21,10 @@ export default defineConfig({
 			use: { ...devices['Desktop Chrome'] }
 		}
 	],
-webServer: {
+	webServer: {
 		command: 'bun run preview:e2e',
 		url: `http://127.0.0.1:${PREVIEW_PORT}`,
-		reuseExistingServer: true,
+		reuseExistingServer: !process.env.CI,
 		timeout: 900_000
 	}
 });

@@ -246,6 +246,8 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
                 'entry_id'          => isset( $payload['entry']['id'] ) ? (string) $payload['entry']['id'] : (string) $entry_id,
                 'action_id'         => $this->get_id(),
                 'action_name_label' => $settings[ 'action_name_label' ] ?? $central_action_id,
+                'action_type_indicator' => $settings['action_type_indicator'] ?? null,
+                'local_mapping_id'       => $settings['local_mapping_id'] ?? null,
             ],
             static fn ( $value ) => null !== $value && '' !== $value,
         );
