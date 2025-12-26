@@ -23,6 +23,15 @@ The entry point `sentient-forms.php` defines plugin constants and boots `include
 
 - Async execution details (Action Scheduler integration, retry policy, telemetry hooks) live in `docs/async-handler.md`. Use that doc when wiring new adapters or site-specific logging so you respect consent + retry semantics.
 
+### CPS Master Actions Pattern
+Actions managed by the Central Proxy Server (CPS) use `action_type_indicator: 'master'` in their settings. This pattern allows CPS-defined actions to execute without requiring a local PHP class:
+
+- **Schedule Path**: `Async_Handler::schedule_action()` checks `action_type_indicator`. If `'master'`, it bypasses the local action registry requirement.
+- **Execution Path**: `Async_Handler::process_action()` routes master actions directly to `Action_Executor::execute()` instead of calling a local `$action->execute()` method.
+- **Settings Key**: Stored linkages use `is_action_enabled_for_form` (not `enabled`) and `trigger_hooks` (not `hooks`).
+- **Regression Tests**: See `test-async-handler.php` for `test_schedule_action_allows_master_actions_without_local_class()` and related tests.
+
+
 ### Svelte 5 SPA Conventions
 - SPA modules must follow Svelte 5 idioms: use runes (`$state`, `$derived`, `$effect`, `$props()`), callback props, and `$bindable` instead of `createEventDispatcher`/`on:` directives. Native DOM attributes (e.g., `onclick`) replace the old `on:event` syntax.
 - When two-way bindings are required, expose bindable props or callback props rather than dispatchers. Shared stores should only remain in writable form when they orchestrate side effects (e.g., the notifications queue uses `setTimeout`), and such cases should be documented inline.
@@ -77,4 +86,4 @@ Never commit API keys or tenant secrets; store them in WordPress settings or env
 - To explicitly override the asset location (e.g., custom tunnel), define `SENTIENT_FORMS_ADMIN_ASSET_BASE_URL` or filter `sentient_forms_admin_asset_base_url`. Ensure the alternate location serves the same file structure as `assets/dist/`.
 - The runtime payload published to `window.sentientFormsConfig` exposes `assetBaseUrl`, enabling client-side fetchers to derive absolute URLs when needed.
 
-> _Last updated: 2025-10-21_
+> _Last updated: 2025-12-25_
