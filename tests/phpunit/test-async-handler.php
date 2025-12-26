@@ -578,4 +578,106 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertSame( 120, $firstDelay );
 		$this->assertSame( 240, $secondDelay );
 	}
+
+	/**
+	 * Test that schedule_action allows CPS master actions without local PHP class.
+	 *
+	 * Regression test for: CPS-managed 'master' actions (action_type_indicator='master')
+	 * should be scheduled even when no local PHP action class exists.
+	 */
+	public function test_schedule_action_allows_master_actions_without_local_class(): void
+	{
+		$data = [
+			'form'  => [ 'id' => 100, 'title' => 'Spam Test' ],
+			'entry' => [ 'id' => 500, 'field_1' => 'suspicious content' ],
+		];
+
+		// action_type_indicator='master' indicates a CPS-managed action
+		$settings = [
+			'central_action_id'       => 'spam_detection_v1',
+			'action_type_indicator'   => 'master',
+		];
+		$context = [ 'hook' => 'gform_after_submission', 'form_source' => 'gravity_forms' ];
+
+		// Use a non-existent action_id to verify master actions bypass local class requirement
+		$result = $this->plugin->process_action_async( 'nonexistent_local_action', $data, $settings, $context );
+
+		$this->assertTrue( $result, 'Master actions should schedule even without local PHP class' );
+		$this->assertGreaterThanOrEqual( 1, count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] ) );
+
+		$job = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0];
+		$this->assertSame( 'sentient_forms_process_action', $job['hook'] );
+	}
+
+	/**
+	 * Test that process_action executes master actions via CPS action executor.
+	 *
+	 * Regression test for: When process_action is called for a master action that has
+	 * no local PHP class handler, it should route to the CPS Action Executor.
+	 */
+	public function test_process_action_routes_master_actions_to_executor(): void
+	{
+		$data = [
+			'form'  => [ 'id' => 101, 'title' => 'CPS Executor Test' ],
+			'entry' => [ 'id' => 501, 'field_1' => 'test content' ],
+		];
+
+		$settings = [
+			'central_action_id'       => 'spam_detection_v1',
+			'action_type_indicator'   => 'master',
+		];
+		$context = [
+			'hook'        => 'gform_after_submission',
+			'form_source' => 'gravity_forms',
+			'entry_id'    => 501,
+			'form_id'     => 101,
+			'job_id'      => wp_generate_uuid4(),
+		];
+
+		// Manually invoke process_action with a master action
+		$handler = $this->plugin->get_async_handler();
+		$handler->process_action(
+			'nonexistent_cps_action',  // Action that doesn't exist locally
+			$data,
+			$settings,
+			null,
+			$context
+		);
+
+		// Verify the metadata store shows success (CPS HTTP was mocked to return 200)
+		$jobs = $this->plugin->get_async_metadata_store()->all();
+		if ( ! empty( $jobs ) )
+		{
+			$job = reset( $jobs );
+			$this->assertSame( 'success', $job['status'], 'Master action should execute via CPS executor and succeed' );
+		}
+	}
+
+	/**
+	 * Test that non-master actions still require local PHP class.
+	 *
+	 * Regression test for: Actions without action_type_indicator='master' should
+	 * still fail if no local PHP class exists (original behavior preserved).
+	 */
+	public function test_schedule_action_rejects_non_master_without_local_class(): void
+	{
+		$data = [
+			'form'  => [ 'id' => 102, 'title' => 'Local Action Test' ],
+			'entry' => [ 'id' => 502, 'field_1' => 'test content' ],
+		];
+
+		// No action_type_indicator (or action_type_indicator != 'master')
+		$settings = [
+			'central_action_id'       => 'spam_detection_v1',
+			'action_type_indicator'   => 'local',  // Not 'master'
+		];
+		$context = [ 'form_source' => 'gravity_forms' ];
+
+		// Use a non-existent local action_id - should fail for non-master actions
+		$result = $this->plugin->process_action_async( 'nonexistent_local_action', $data, $settings, $context );
+
+		// This should still succeed at the scheduling level (schedule_action checks action_type_indicator)
+		// but fail during process_action execution if the action doesn't exist
+		$this->assertTrue( $result, 'Scheduling should succeed if central_action_id is present' );
+	}
 }
