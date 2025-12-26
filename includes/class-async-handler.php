@@ -342,7 +342,9 @@ class Sentient_Forms_Async_Handler
 
     private function notify_adapter_success( array $context, array $result ): void
     {
-        $adapter = $this->resolve_async_adapter( $context['form_source'] ?? null, $context );
+        $form_source = $context['form_source'] ?? null;
+        $adapter = $this->resolve_async_adapter( $form_source, $context );
+        
         if ( $adapter )
         {
             $adapter->finalize_async_success( $context, $result );
@@ -549,9 +551,13 @@ class Sentient_Forms_Async_Handler
      */
     public function schedule_action( string $action_id, array $data, array $settings, array $context = [], ?int $run_at = null ): bool
     {
-        // Get the action instance
+        // For CPS-managed 'master' actions, we don't require a local PHP action class
+        // The CPS handles execution, so we can proceed without a local action
+        $is_master_action = ( $settings['action_type_indicator'] ?? '' ) === 'master';
+        
+        // Get the action instance (optional for master actions)
         $action = $this->plugin->get_action( $action_id );
-        if ( !$action )
+        if ( !$action && !$is_master_action )
         {
             return false;
         }
@@ -823,7 +829,9 @@ class Sentient_Forms_Async_Handler
         try
         {
             $action = $this->plugin->get_action( $action_id );
-            if ( !$action )
+            $is_master_action = ( $settings['action_type_indicator'] ?? '' ) === 'master';
+            
+            if ( !$action && !$is_master_action )
             {
                 $this->handle_failure(
                     $job,
@@ -838,28 +846,51 @@ class Sentient_Forms_Async_Handler
             $entry_id = $data['entry']['id'] ?? $context['entry_id'] ?? null;
             $form_id  = $data['form']['id'] ?? $context['form_id'] ?? null;
 
-            try
+            // For CPS master actions without a local handler, execute via Action Executor
+            if ( !$action && $is_master_action )
             {
-                $result = $action->execute(
-                    $data,
-                    $settings,
-                    $entry_id ?? 0,
-                    $form_id ?? 0
-                );
-            } catch ( Throwable $throwable )
-            {
-                if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+                try
                 {
-                    error_log( sprintf( '[sentient-forms][async] execute exception action=%s entry=%s form=%s error=%s', $action_id, $entry_id ?? 'n/a', $form_id ?? 'n/a', $throwable->getMessage() ) );
+                    $executor = $this->plugin->get_action_executor();
+                    $result = $executor->execute( $action_id, $data, $settings, $context );
+                } catch ( Throwable $throwable )
+                {
+                    $this->handle_failure(
+                        $job,
+                        new WP_Error(
+                            'sentient_forms_async_exception',
+                            $throwable->getMessage(),
+                        ),
+                    );
+                    return;
                 }
-                $this->handle_failure(
-                    $job,
-                    new WP_Error(
-                        'sentient_forms_async_exception',
-                        $throwable->getMessage(),
-                    ),
-                );
-                return;
+            }
+            else
+            {
+                // Local action exists - execute via local handler
+                try
+                {
+                    $result = $action->execute(
+                        $data,
+                        $settings,
+                        $entry_id ?? 0,
+                        $form_id ?? 0
+                    );
+                } catch ( Throwable $throwable )
+                {
+                    if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+                    {
+                        error_log( sprintf( '[sentient-forms][async] execute exception action=%s entry=%s form=%s error=%s', $action_id, $entry_id ?? 'n/a', $form_id ?? 'n/a', $throwable->getMessage() ) );
+                    }
+                    $this->handle_failure(
+                        $job,
+                        new WP_Error(
+                            'sentient_forms_async_exception',
+                            $throwable->getMessage(),
+                        ),
+                    );
+                    return;
+                }
             }
 
             if ( is_wp_error( $result ) )

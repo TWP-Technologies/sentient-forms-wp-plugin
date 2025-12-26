@@ -201,23 +201,29 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $logger  = $this->plugin->get_logger();
         $correlation_id = $logger->correlation_id( $entry['id'] ?? null );
 
-        // Get form settings
+        // Get form settings - these are stored directly under local_mapping_id keys
         $settings = $this->get_form_settings( $form_id );
 
-        // Check if any actions are enabled for after submission
-        $actions = $this->plugin->get_action_registry()->get_all_actions();
-        foreach ( $actions as $action )
+        // Iterate over stored action settings (keyed by local_mapping_id like 'map_spam_v1')
+        foreach ( $settings as $mapping_id => $action_settings )
         {
-            $action_id       = $action->get_id();
-            $action_settings = $settings[ 'actions' ][ $action_id ] ?? [];
-
-            // Skip if action is not enabled for this form or not configured for after submission
-            if ( empty( $action_settings[ 'enabled' ] ) ||
-                 empty( $action_settings[ 'hooks' ] ) ||
-                 !in_array( 'gform_after_submission', $action_settings[ 'hooks' ] ) )
+            // Skip non-action entries (like 'enabled', 'actions' wrapper if it exists)
+            if ( !is_array( $action_settings ) || !isset( $action_settings['central_action_id'] ) )
             {
                 continue;
             }
+            // Skip if action is not enabled for this form or not configured for after submission
+            // Note: stored settings use 'is_action_enabled_for_form' and 'trigger_hooks'
+            if ( empty( $action_settings[ 'is_action_enabled_for_form' ] ) ||
+                 empty( $action_settings[ 'trigger_hooks' ] ) ||
+                 !in_array( 'gform_after_submission', (array) $action_settings[ 'trigger_hooks' ] ) )
+            {
+                continue;
+            }
+
+            // Use central_action_id to find the action in the registry
+            $action_id = $action_settings['central_action_id'];
+            $action = $this->plugin->get_action( $action_id );
 
             // Prepare data for the action
             $data = [
@@ -234,11 +240,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                     [
                         'hook'           => 'gform_after_submission',
                         'action_id'      => $action_id,
+                        'mapping_id'     => $mapping_id,
                         'form_id'        => $form_id,
                         'entry_id'       => $entry['id'] ?? null,
                         'correlation_id' => $correlation_id,
                     ]
                 );
+                
                 $this->plugin->process_action_async(
                     $action_id,
                     $data,
@@ -247,13 +255,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                         'hook'        => 'gform_after_submission',
                         'form_source' => $this->get_id(),
                         'action_id'   => $action_id,
+                        'mapping_id'  => $mapping_id,
                         'form_id'     => $form_id,
                         'entry_id'    => $entry['id'] ?? null,
                         'action_name_label' => $action_settings['action_name_label'] ?? ($action_settings['central_action_id'] ?? $action_id),
                     ],
                 );
             }
-            else
+            elseif ( $action )
             {
                 // Execute the action immediately (synchronous mode).
                 $entry_id = $entry['id'] ?? 0;
@@ -1088,7 +1097,9 @@ HTML;
         }
 
         $excerpt = $this->format_async_result_excerpt( $result );
+        
         $this->update_entry_meta( $entry_id, 'sentient_forms_last_response', wp_json_encode( $result ) );
+        
         $this->add_entry_note(
             $entry_id,
             'Sentient Forms AI',
