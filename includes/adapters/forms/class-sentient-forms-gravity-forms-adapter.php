@@ -869,8 +869,8 @@ HTML;
                 return false;
             }
 
-            // Update the is_spam property to 1 (true)
-            $result = GFAPI::update_entry_property( $entry_id, 'is_spam', 1 );
+            // Update the status property to 'spam' (per Gravity Forms API)
+            $result = GFAPI::update_entry_property( $entry_id, 'status', 'spam' );
 
             // Add a note about the spam marking
             if ( $result && !is_wp_error( $result ) )
@@ -1302,7 +1302,7 @@ HTML;
      * Implements FR-003 (hook), FR-004 (suppress spam), FR-005 (pass ham).
      *
      * This filter runs before each notification is sent. If the entry is
-     * marked as spam (is_spam = 1) or has spam classification meta, the
+     * marked as spam (status = 'spam') or has spam classification meta, the
      * notification is suppressed by returning false.
      *
      * @param array $notification The notification configuration.
@@ -1343,8 +1343,8 @@ HTML;
      */
     private function is_entry_spam( array $entry ): bool
     {
-        // Check native GF is_spam property (set by mark_entry_as_spam)
-        if ( isset( $entry['is_spam'] ) && ( $entry['is_spam'] === '1' || $entry['is_spam'] === 1 || $entry['is_spam'] === true ) )
+        // Check native GF status property (set by mark_entry_as_spam)
+        if ( isset( $entry['status'] ) && $entry['status'] === 'spam' )
         {
             return true;
         }

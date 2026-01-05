@@ -329,7 +329,7 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
 
             if ( $entry_id && !empty( $settings[ 'mark_as_spam' ] ) && class_exists( 'GFAPI' ) )
             {
-                GFAPI::update_entry_property( (int) $entry_id, 'is_spam', 1 );
+                GFAPI::update_entry_property( (int) $entry_id, 'status', 'spam' );
                 $result[ 'action_taken' ] = 'marked_as_spam';
             }
         }
