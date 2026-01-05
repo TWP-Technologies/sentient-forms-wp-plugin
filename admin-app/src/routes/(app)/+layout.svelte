@@ -11,13 +11,14 @@
 
 	const activePath = derived(page, ($page) => deriveActivePath($page.url));
 
-const links = [
-	{ path: '/dashboard', label: 'Dashboard' },
-	{ path: '/licensing', label: 'Licensing' },
-	{ path: '/actions', label: 'Actions' },
-	{ path: '/actions/custom', label: 'Custom Actions' },
-	{ path: '/settings', label: 'Settings' }
-];
+	const links = [
+		{ path: '/dashboard', label: 'Dashboard' },
+		{ path: '/licensing', label: 'Licensing' },
+		{ path: '/actions', label: 'Actions' },
+		{ path: '/actions/log', label: 'Action Log' },
+		{ path: '/actions/custom', label: 'Custom Actions' },
+		{ path: '/settings', label: 'Settings' }
+	];
 
 	onMount(() => {
 		if (routerType === 'hash' && typeof window !== 'undefined' && window.location.hash === '') {
@@ -37,8 +38,8 @@ const links = [
 				{#each links as link}
 					<a
 						class="sf:rounded sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:transition-all sf:hover:bg-slate-100"
-						class:sf-bg-slate-200={ $activePath === link.path}
-						class:sf-text-slate-900={ $activePath === link.path}
+						class:sf-bg-slate-200={$activePath === link.path}
+						class:sf-text-slate-900={$activePath === link.path}
 						href={appHref(link.path)}
 					>
 						{link.label}

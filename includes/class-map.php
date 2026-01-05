@@ -8,6 +8,7 @@ return [
 	'Sentient_Forms_Abstract_Llm_Google' => __DIR__ . '/llms/google/abstract-class-llm-google.php',
 	'Sentient_Forms_Action_Definitions_Controller' => __DIR__ . '/rest-api/controllers/class-action-definitions-controller.php',
 	'Sentient_Forms_Action_Executor' => __DIR__ . '/services/class-sentient-forms-action-executor.php',
+	'Sentient_Forms_Action_Log_Controller' => __DIR__ . '/rest-api/controllers/class-action-log-controller.php',
 	'Sentient_Forms_Action_Interface' => __DIR__ . '/interfaces/interface-sentient-forms-action.php',
 	'Sentient_Forms_Action_Registry' => __DIR__ . '/actions/class-sentient-forms-action-registry.php',
 	'Sentient_Forms_Adapter_Interface' => __DIR__ . '/interfaces/interface-sentient-forms-adapter.php',

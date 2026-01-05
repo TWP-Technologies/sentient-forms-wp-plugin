@@ -79,6 +79,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         add_filter( 'gform_validation', [ $this, 'handle_validation' ], 10, 1 );
         add_action( 'gform_after_submission', [ $this, 'handle_after_submission' ], 10, 2 );
 
+        // FR-003: Notification interception hook - suppress notifications for spam entries
+        add_filter( 'gform_notification', [ $this, 'maybe_suppress_spam_notification' ], 10, 3 );
+
         // Add settings to the form editor
         add_action( 'gform_editor_js', [ $this, 'editor_js' ] );
         add_filter( 'gform_tooltips', [ $this, 'add_tooltips' ] );
@@ -259,6 +262,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                         'form_id'     => $form_id,
                         'entry_id'    => $entry['id'] ?? null,
                         'action_name_label' => $action_settings['action_name_label'] ?? ($action_settings['central_action_id'] ?? $action_id),
+                        // FR-001: Pass spam marking setting for finalize_async_success
+                        'mark_as_spam' => !empty( $action_settings['mark_as_spam'] ),
+                        'central_action_id' => $action_settings['central_action_id'] ?? null,
                     ],
                 );
             }
@@ -347,8 +353,29 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
     private function apply_cps_validation_response( array $validation_result, $response, array $action_settings ): array
     {
+        // NFR-REL-001: Fail-open behavior - if CPS returns an error, log it but
+        // allow the submission to continue. This prevents CPS downtime from
+        // blocking all form submissions.
         if ( is_wp_error( $response ) )
         {
+            $fail_open = $action_settings['fail_open'] ?? true; // Default to fail-open
+
+            if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+            {
+                error_log( sprintf(
+                    'Sentient Forms: CPS validation error (fail_open=%s): %s',
+                    $fail_open ? 'true' : 'false',
+                    $response->get_error_message()
+                ) );
+            }
+
+            // If fail_open is enabled (default), don't block the submission
+            if ( $fail_open )
+            {
+                return $validation_result;
+            }
+
+            // Only inject error message if explicitly configured to fail-closed
             return $this->inject_validation_message( $validation_result, $response->get_error_message(), $action_settings );
         }
 
@@ -1110,6 +1137,230 @@ HTML;
                 $excerpt,
             ),
         );
+
+        // FR-001, FR-002: Auto-mark spam entries in Gravity Forms
+        $this->maybe_mark_entry_as_spam_from_result( $entry_id, $context, $result );
+
+        // FR-008: Log successful action execution
+        $this->log_action_execution( $context, $result, 'success' );
+    }
+
+    /**
+     * Check CPS result for spam classification and mark entry if applicable.
+     * Implements FR-001 (auto spam marking) and FR-002 (note with justification).
+     *
+     * @param int   $entry_id The GF entry ID.
+     * @param array $context  The async job context (includes mark_as_spam setting).
+     * @param array $result   The CPS result data.
+     */
+    private function maybe_mark_entry_as_spam_from_result( int $entry_id, array $context, array $result ): void
+    {
+        // Only process if mark_as_spam setting is enabled in context
+        if ( empty( $context['mark_as_spam'] ) )
+        {
+            return;
+        }
+
+        // Extract classification from various result structures
+        $classification = $this->extract_spam_classification( $result );
+        if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+        {
+            return;
+        }
+
+        // Extract justification for the note
+        $justification = $this->extract_spam_justification( $result );
+
+        // Mark entry as spam in Gravity Forms (FR-001)
+        if ( $this->mark_entry_as_spam( $entry_id ) )
+        {
+            // Add detailed note with justification (FR-002)
+            $this->add_entry_note(
+                $entry_id,
+                'Sentient Forms AI',
+                sprintf(
+                    /* translators: %s is the AI justification */
+                    __( 'Marked as spam by Sentient Forms AI: %s', 'sentient-forms' ),
+                    $justification ?: __( 'Classified as spam by LLM analysis.', 'sentient-forms' ),
+                ),
+            );
+
+            // Store spam classification meta for notification filtering
+            $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'spam' );
+        }
+    }
+
+    /**
+     * Extract spam classification from CPS result structure.
+     *
+     * @param array $result The CPS result.
+     * @return string|null The classification ('spam', 'ham', etc.) or null.
+     */
+    private function extract_spam_classification( array $result ): ?string
+    {
+        // Check evaluation_payload structure (async flow)
+        if ( isset( $result['evaluation_payload']['result_data']['classification'] ) )
+        {
+            return strtolower( (string) $result['evaluation_payload']['result_data']['classification'] );
+        }
+
+        // Check direct result_data structure
+        if ( isset( $result['result_data']['classification'] ) )
+        {
+            return strtolower( (string) $result['result_data']['classification'] );
+        }
+
+        // Check top-level classification
+        if ( isset( $result['classification'] ) )
+        {
+            return strtolower( (string) $result['classification'] );
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract justification/reasoning from CPS result.
+     *
+     * @param array $result The CPS result.
+     * @return string|null The justification text.
+     */
+    private function extract_spam_justification( array $result ): ?string
+    {
+        // Check evaluation_payload structure
+        $payload = $result['evaluation_payload']['result_data'] ?? $result['result_data'] ?? $result;
+
+        // LLM output often contains the reasoning
+        if ( ! empty( $payload['llm_output'] ) )
+        {
+            // Truncate to reasonable length for note
+            return wp_trim_words( (string) $payload['llm_output'], 50, '...' );
+        }
+
+        if ( ! empty( $payload['reasoning'] ) )
+        {
+            return wp_trim_words( (string) $payload['reasoning'], 50, '...' );
+        }
+
+        if ( ! empty( $payload['justification'] ) )
+        {
+            return wp_trim_words( (string) $payload['justification'], 50, '...' );
+        }
+
+        return null;
+    }
+
+    /**
+     * Log action execution to the action log.
+     * Implements FR-008: Persist action log entries.
+     *
+     * @param array         $context  The async job context.
+     * @param array         $result   The CPS result (empty for errors).
+     * @param string        $status   'success' or 'error'.
+     * @param WP_Error|null $error    Error object if status is 'error'.
+     */
+    private function log_action_execution( array $context, array $result, string $status, ?WP_Error $error = null ): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
+        {
+            return;
+        }
+
+        $classification = $this->extract_spam_classification( $result );
+        $credits_used = 0;
+        
+        // Try to extract credits from various result structures
+        $meta = $result['evaluation_payload']['meta'] ?? $result['meta'] ?? [];
+        if ( isset( $meta['credits_debited'] ) )
+        {
+            $credits_used = absint( $meta['credits_debited'] );
+        }
+        elseif ( isset( $meta['credits_used'] ) )
+        {
+            $credits_used = absint( $meta['credits_used'] );
+        }
+
+        $log_data = [
+            'form_source'    => $context['form_source'] ?? $this->get_id(),
+            'form_id'        => absint( $context['form_id'] ?? 0 ),
+            'entry_id'       => isset( $context['entry_id'] ) ? absint( $context['entry_id'] ) : null,
+            'action_code'    => $context['central_action_id'] ?? $context['action_id'] ?? '',
+            'action_label'   => $context['action_name_label'] ?? $this->get_async_action_label( $context ),
+            'status'         => $status,
+            'result_summary' => $this->format_async_result_excerpt( $result ),
+            'classification' => $classification,
+            'credits_used'   => $credits_used,
+            'error_code'     => $error ? $error->get_error_code() : null,
+            'error_message'  => $error ? $error->get_error_message() : null,
+        ];
+
+        Sentient_Forms_Action_Log_Controller::log_execution( $log_data );
+    }
+
+    /**
+     * Suppress Gravity Forms notifications for spam entries.
+     * Implements FR-003 (hook), FR-004 (suppress spam), FR-005 (pass ham).
+     *
+     * This filter runs before each notification is sent. If the entry is
+     * marked as spam (is_spam = 1) or has spam classification meta, the
+     * notification is suppressed by returning false.
+     *
+     * @param array $notification The notification configuration.
+     * @param array $form         The form data.
+     * @param array $entry        The entry data.
+     *
+     * @return array|false The notification array to send, or false to suppress.
+     */
+    public function maybe_suppress_spam_notification( array $notification, array $form, array $entry )
+    {
+        // FR-004: Check if entry is marked as spam in Gravity Forms
+        if ( $this->is_entry_spam( $entry ) )
+        {
+            // Log suppression for debugging
+            if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+            {
+                error_log( sprintf(
+                    'Sentient Forms: Suppressing notification "%s" for spam entry %d on form %d',
+                    $notification['name'] ?? 'unknown',
+                    $entry['id'] ?? 0,
+                    $form['id'] ?? 0
+                ) );
+            }
+
+            // Return false to suppress this notification entirely
+            return false;
+        }
+
+        // FR-005: Pass through notification unchanged for ham entries
+        return $notification;
+    }
+
+    /**
+     * Check if a Gravity Forms entry is marked as spam.
+     *
+     * @param array $entry The entry data.
+     * @return bool True if entry is spam, false otherwise.
+     */
+    private function is_entry_spam( array $entry ): bool
+    {
+        // Check native GF is_spam property (set by mark_entry_as_spam)
+        if ( isset( $entry['is_spam'] ) && ( $entry['is_spam'] === '1' || $entry['is_spam'] === 1 || $entry['is_spam'] === true ) )
+        {
+            return true;
+        }
+
+        // Also check our spam classification meta as backup
+        $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
+        if ( $entry_id > 0 )
+        {
+            $classification = $this->get_entry_meta( $entry_id, 'sentient_forms_spam_classification' );
+            if ( $classification === 'spam' )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function finalize_async_error( array $context, WP_Error $error ): void
@@ -1130,6 +1381,9 @@ HTML;
         {
             error_log( $message );
         }
+
+        // FR-008: Log failed action execution
+        $this->log_action_execution( $context, [], 'error', $error );
     }
 
     public function finalize_async_evaluation( array $context, array $result ): void

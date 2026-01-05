@@ -87,6 +87,22 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
 
         if ( empty( $api_key ) )
         {
+            // In development mode, return mock credits data instead of error
+            if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+            {
+                return $this->prepare_item_for_response( [
+                    'current_balance' => 1000, // Mock development credits
+                    'ledger_delta'    => 0,
+                    'tier'            => [
+                        'code'                 => 'dev',
+                        'display_name'         => 'Development',
+                        'monthly_credit_quota' => 5000,
+                    ],
+                    'stale'           => false,
+                    'dev_mode'        => true,
+                ] );
+            }
+
             return $this->prepare_error_response(
                 'missing_api_key',
                 __( 'Proxy API key is not configured.', 'sentient-forms' ),
@@ -116,7 +132,22 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
 				return $this->prepare_item_for_response( $stale_balance );
 			}
 
-			// If no stale balance is available, return the error.
+			// If no stale balance is available, return mock data in dev mode or error in production.
+			if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
+			{
+				return $this->prepare_item_for_response( [
+					'current_balance' => 1000, // Mock development credits
+					'ledger_delta'    => 0,
+					'tier'            => [
+						'code'                 => 'dev',
+						'display_name'         => 'Development',
+						'monthly_credit_quota' => 5000,
+					],
+					'stale'           => false,
+					'dev_mode'        => true,
+				] );
+			}
+
 			return $this->prepare_error_response(
 				'credit_balance_error',
 				$balance->get_error_message(),

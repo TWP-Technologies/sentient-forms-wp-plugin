@@ -61,65 +61,72 @@ declare global {
 }
 
 export class ApiError extends Error {
-	status: number;
-	payload: unknown;
-	code?: string;
+    status: number;
+    payload: unknown;
+    code?: string;
 
-	constructor(message: string, status: number, payload: unknown) {
-		super(message);
-		this.status = status;
-		this.payload = payload;
-		if (isApiErrorPayload(payload) && payload.error_code) {
-			this.code = payload.error_code;
-		}
-	}
+    constructor(message: string, status: number, payload: unknown) {
+        super(message);
+        this.status = status;
+        this.payload = payload;
+        if (isApiErrorPayload(payload) && payload.error_code) {
+            this.code = payload.error_code;
+        }
+    }
 }
 
 function getRuntimeConfig(): SentientFormsConfig {
-	if (typeof window === 'undefined' || !window.sentientFormsConfig) {
-		throw new Error('Sentient Forms runtime config missing.');
-	}
-	return window.sentientFormsConfig;
+    if (typeof window === 'undefined' || !window.sentientFormsConfig) {
+        throw new Error('Sentient Forms runtime config missing.');
+    }
+    return window.sentientFormsConfig;
 }
 
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
-	const config = getRuntimeConfig();
+    const config = getRuntimeConfig();
 
-	const { method = 'GET', showNotifications = true, headers, body, ...rest } = options;
+    const { method = 'GET', showNotifications = true, headers, body, ...rest } = options;
 
-	const requestInit: RequestInit = {
-		method,
-		headers: {
-			'Content-Type': 'application/json',
-			'X-WP-Nonce': config.restNonce,
-			...(headers ?? {})
-		},
-		credentials: 'same-origin',
-		...rest
-	};
+    const requestInit: RequestInit = {
+        method,
+        headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': config.restNonce,
+            ...(headers ?? {})
+        },
+        credentials: 'same-origin',
+        ...rest
+    };
 
-	if (body !== undefined) {
-		requestInit.body = typeof body === 'string' ? body : JSON.stringify(body);
-	}
+    if (body !== undefined) {
+        requestInit.body = typeof body === 'string' ? body : JSON.stringify(body);
+    }
 
-	const response = await fetch(`${config.apiBaseUrl}${path}`, requestInit);
+    // Handle URL construction - if path has query params and baseUrl already has ?, replace ? with &
+    let fullUrl = `${config.apiBaseUrl}${path}`;
+    if (config.apiBaseUrl.includes('?') && path.includes('?')) {
+        // Replace the first ? in path with & since we're appending to a URL that already has query params
+        fullUrl = `${config.apiBaseUrl}${path.replace('?', '&')}`;
+    }
 
-	const contentType = response.headers.get('content-type');
-	const isJson = contentType?.includes('application/json');
-	const payload = isJson ? await response.json() : await response.text();
+    const response = await fetch(fullUrl, requestInit);
 
-	if (!response.ok) {
-		const error = new ApiError('Request failed', response.status, payload);
-		if (showNotifications) {
-			const message = isApiErrorPayload(payload) ? payload.message : null;
-			notifications.error(message ?? 'Request failed');
-		}
-		throw error;
-	}
+    const contentType = response.headers.get('content-type');
+    const isJson = contentType?.includes('application/json');
+    const payload = isJson ? await response.json() : await response.text();
 
-	return payload as T;
+    if (!response.ok) {
+        const error = new ApiError('Request failed', response.status, payload);
+        if (showNotifications) {
+            const message = isApiErrorPayload(payload) ? payload.message : null;
+            notifications.error(message ?? 'Request failed');
+        }
+        throw error;
+    }
+
+    return payload as T;
 }
 
 function isApiErrorPayload(payload: unknown): payload is { message?: string; error_code?: string } {
-	return Boolean(payload && typeof payload === 'object');
+    return Boolean(payload && typeof payload === 'object');
 }
