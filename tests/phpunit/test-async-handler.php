@@ -22,6 +22,26 @@ if ( ! function_exists( 'as_enqueue_async_action' ) )
     }
 }
 
+class Sentient_Forms_Test_Action_Executor extends Sentient_Forms_Action_Executor
+{
+    public array $captured = [];
+
+    public function execute( string $central_action_id, array $form, array $entry, array $context = [] )
+    {
+        $this->captured = [
+            'central_action_id' => $central_action_id,
+            'form'              => $form,
+            'entry'             => $entry,
+            'context'           => $context,
+        ];
+
+        return [
+            'result_data' => [],
+            'meta'        => [],
+        ];
+    }
+}
+
 class AsyncHandlerTest extends WP_UnitTestCase
 {
     private Sentient_Forms_Plugin $plugin;
@@ -651,6 +671,46 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			$job = reset( $jobs );
 			$this->assertSame( 'success', $job['status'], 'Master action should execute via CPS executor and succeed' );
 		}
+	}
+
+	public function test_process_action_passes_central_action_and_payload_to_executor(): void
+	{
+		$executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+		$reflection = new ReflectionClass( $this->plugin );
+		$property   = $reflection->getProperty( 'action_executor' );
+		$property->setAccessible( true );
+		$property->setValue( $this->plugin, $executor );
+
+		$data = [
+			'form'  => [ 'id' => 210, 'title' => 'Executor Payload Test' ],
+			'entry' => [ 'id' => 701, 'field_1' => 'payload content' ],
+		];
+
+		$settings = [
+			'central_action_id'     => 'spam_detection_v1',
+			'action_type_indicator' => 'master',
+		];
+
+		$context = [
+			'hook'        => 'gform_after_submission',
+			'form_source' => 'gravity_forms',
+			'entry_id'    => 701,
+			'form_id'     => 210,
+			'job_id'      => wp_generate_uuid4(),
+		];
+
+		$handler = $this->plugin->get_async_handler();
+		$handler->process_action(
+			'nonexistent_cps_action',
+			$data,
+			$settings,
+			null,
+			$context
+		);
+
+		$this->assertSame( 'spam_detection_v1', $executor->captured['central_action_id'] ?? null );
+		$this->assertSame( $data['form'], $executor->captured['form'] ?? null );
+		$this->assertSame( $data['entry'], $executor->captured['entry'] ?? null );
 	}
 
 	/**
