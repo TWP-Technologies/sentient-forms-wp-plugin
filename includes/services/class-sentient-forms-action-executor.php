@@ -80,7 +80,10 @@ class Sentient_Forms_Action_Executor {
 					return $duplicate;
 				}
 
-				$response = new WP_Error(
+				// CPS processed this request successfully but we don't have the result cached.
+				// Return the error WITHOUT caching so Action Scheduler can retry and
+				// eventually find the successful cached result after finalize completes.
+				return new WP_Error(
 					'duplicate_execution',
 					__( 'Sentient Forms already processed this submission.', 'sentient-forms' ),
 					$response->get_error_data()
@@ -256,6 +259,17 @@ class Sentient_Forms_Action_Executor {
 						$this->execution_cache[ $execution_request_id ] = $result;
 						return $result;
 					}
+				}
+			}
+
+			// Fallback: check if finalize_async_success already saved a response
+			// This catches cases where CPS succeeded but the primary cache wasn't written
+			$last_response = gform_get_meta( $entry_id, 'sentient_forms_last_response' );
+			if ( is_string( $last_response ) && ! empty( $last_response ) ) {
+				$decoded = json_decode( $last_response, true );
+				if ( is_array( $decoded ) && ! empty( $decoded['meta'] ) ) {
+					$this->execution_cache[ $execution_request_id ] = $decoded;
+					return $decoded;
 				}
 			}
 		}
