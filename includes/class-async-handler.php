@@ -852,7 +852,12 @@ class Sentient_Forms_Async_Handler
                 try
                 {
                     $executor = $this->plugin->get_action_executor();
-                    $result = $executor->execute( $action_id, $data, $settings, $context );
+                    $result = $executor->execute(
+                    $settings['central_action_id'] ?? $action_id,
+                    $data['form'] ?? [],
+                    $data['entry'] ?? [],
+                    $context
+                );
                 } catch ( Throwable $throwable )
                 {
                     $this->handle_failure(
