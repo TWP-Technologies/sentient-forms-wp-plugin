@@ -129,8 +129,15 @@ class Sentient_Forms_Async_Handler
 	private function handle_success( array $job, array $result ): void
 	{
 		$this->log_success( $job['action_id'], $result );
-		do_action( 'sentient_forms_async_success', $job['context'], $result );
-		$this->notify_adapter_success( $job['context'], $result );
+		
+		// Merge settings into context so adapter can access them (mark_as_spam, spam_confidence_threshold, etc.)
+		$context_with_settings = array_merge(
+			$job['context'] ?? [],
+			$job['settings'] ?? []
+		);
+		
+		do_action( 'sentient_forms_async_success', $context_with_settings, $result );
+		$this->notify_adapter_success( $context_with_settings, $result );
 		$this->emit_async_event( 'success', $job['context'], $result );
 		$this->maybe_schedule_evaluation_jobs( $job, $result );
 		$this->get_metadata_store()->update_status(
