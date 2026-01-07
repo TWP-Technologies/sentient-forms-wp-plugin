@@ -107,6 +107,12 @@ function setState(partial: Partial<FormActionsState>) {
 }
 
 async function load(formSourceSlug: string, formId: number) {
+	// Guard against undefined or invalid parameters during hydration race conditions
+	if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+		console.warn('[formActionsStore] load called with invalid params:', { formSourceSlug, formId });
+		return;
+	}
+
 	resetState();
 	formActionsState.loading = true;
 
@@ -279,6 +285,12 @@ async function remove(formSourceSlug: string, formId: number, linkage: FormActio
 }
 
 async function refresh(formSourceSlug: string, formId: number) {
+	// Guard against undefined or invalid parameters during hydration race conditions
+	if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+		console.warn('[formActionsStore] refresh called with invalid params:', { formSourceSlug, formId });
+		return;
+	}
+
 	if (refreshInFlight) {
 		return;
 	}

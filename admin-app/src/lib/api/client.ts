@@ -157,16 +157,13 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<AsyncSettingsResponse> {
 		const body: Record<string, number> = {};
-		if ( typeof payload.maxAttempts === 'number' )
-		{
+		if (typeof payload.maxAttempts === 'number') {
 			body.max_attempts = payload.maxAttempts;
 		}
-		if ( typeof payload.baseDelaySeconds === 'number' )
-		{
+		if (typeof payload.baseDelaySeconds === 'number') {
 			body.base_delay_seconds = payload.baseDelaySeconds;
 		}
-		if ( typeof payload.maxDelaySeconds === 'number' )
-		{
+		if (typeof payload.maxDelaySeconds === 'number') {
 			body.max_delay_seconds = payload.maxDelaySeconds;
 		}
 
@@ -205,6 +202,11 @@ export class SentientFormsApiClient {
 		formId: number,
 		options: RequestOptions = {}
 	): Promise<FormActionLinkage[]> {
+		// Guard against undefined parameters during hydration race conditions
+		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+			console.warn('[ApiClient] getFormActions called with invalid params:', { formSourceSlug, formId });
+			return [];
+		}
 		const slug = encodeURIComponent(formSourceSlug);
 		const response = await this.request<RestEnvelope<FormActionLinkage[]>>(
 			`${slug}/forms/${formId}/actions`,
@@ -218,6 +220,11 @@ export class SentientFormsApiClient {
 		formId: number,
 		options: RequestOptions = {}
 	): Promise<FormExecutionStatus> {
+		// Guard against undefined parameters during hydration race conditions
+		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+			console.warn('[ApiClient] getFormExecutionStatus called with invalid params:', { formSourceSlug, formId });
+			return { status: 'unknown', message: 'Page loading...', updated_at: null };
+		}
 		const slug = encodeURIComponent(formSourceSlug);
 		const response = await this.request<RestEnvelope<FormExecutionStatus>>(
 			`${slug}/forms/${formId}/actions/status`,
