@@ -725,7 +725,10 @@ class Sentient_Forms_Async_Handler
                 'evaluation_payload' => $payload_data,
                 'evaluation_request_id' => $evaluation_request_id,
             ],
-            $job['context'] ?? []
+            array_merge(
+                $job['context'] ?? [],
+                $job['settings'] ?? []
+            )
         );
 
         $job_context['job_id'] = wp_generate_uuid4();
