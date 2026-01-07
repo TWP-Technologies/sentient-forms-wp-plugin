@@ -264,6 +264,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                         'action_name_label' => $action_settings['action_name_label'] ?? ($action_settings['central_action_id'] ?? $action_id),
                         // FR-001: Pass spam marking setting for finalize_async_success
                         'mark_as_spam' => !empty( $action_settings['mark_as_spam'] ),
+                        // Structured spam detection settings
+                        'spam_confidence_threshold' => $action_settings['settings']['spam_confidence_threshold'] ?? $action_settings['spam_confidence_threshold'] ?? 0.80,
+                        'spam_indicators_display'   => $action_settings['settings']['spam_indicators_display'] ?? $action_settings['spam_indicators_display'] ?? 'simple',
                         'central_action_id' => $action_settings['central_action_id'] ?? null,
                     ],
                 );
@@ -1148,9 +1151,10 @@ HTML;
     /**
      * Check CPS result for spam classification and mark entry if applicable.
      * Implements FR-001 (auto spam marking) and FR-002 (note with justification).
+     * Now supports confidence threshold and structured indicators display.
      *
      * @param int   $entry_id The GF entry ID.
-     * @param array $context  The async job context (includes mark_as_spam setting).
+     * @param array $context  The async job context (includes mark_as_spam, spam_confidence_threshold, spam_indicators_display).
      * @param array $result   The CPS result data.
      */
     private function maybe_mark_entry_as_spam_from_result( int $entry_id, array $context, array $result ): void
@@ -1161,33 +1165,155 @@ HTML;
             return;
         }
 
-        // Extract classification from various result structures
+        // Extract classification and confidence from result
         $classification = $this->extract_spam_classification( $result );
+        $confidence     = $this->extract_spam_confidence( $result );
+        $threshold      = isset( $context['spam_confidence_threshold'] ) 
+            ? (float) $context['spam_confidence_threshold'] 
+            : 0.80; // Default 80%
+
+        // Check if classified as spam
         if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
+            // If ham/legitimate, add a review note but don't mark as spam
+            if ( $classification === 'ham' || $classification === 'legitimate' )
+            {
+                $note = $this->format_spam_detection_note( $result, $context, false );
+                $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
+                $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'ham' );
+            }
             return;
         }
 
-        // Extract justification for the note
-        $justification = $this->extract_spam_justification( $result );
+        // Check confidence against threshold
+        // If confidence is null (legacy response), treat as 1.0 for backward compatibility
+        $effective_confidence = $confidence ?? 1.0;
+        if ( $effective_confidence < $threshold )
+        {
+            // Below threshold - add note but don't mark as spam
+            $note = sprintf(
+                /* translators: 1: confidence percent, 2: threshold percent */
+                __( '✅ Sentient Forms AI reviewed this entry (%1$s%% spam confidence - below %2$s%% threshold). Entry remains active for manual review.', 'sentient-forms' ),
+                round( $effective_confidence * 100 ),
+                round( $threshold * 100 ),
+            );
+            $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
+            $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'reviewed' );
+            return;
+        }
 
-        // Mark entry as spam in Gravity Forms (FR-001)
+        // Spam classification above threshold - mark as spam
         if ( $this->mark_entry_as_spam( $entry_id ) )
         {
-            // Add detailed note with justification (FR-002)
-            $this->add_entry_note(
-                $entry_id,
-                'Sentient Forms AI',
-                sprintf(
-                    /* translators: %s is the AI justification */
-                    __( 'Marked as spam by Sentient Forms AI: %s', 'sentient-forms' ),
-                    $justification ?: __( 'Classified as spam by LLM analysis.', 'sentient-forms' ),
-                ),
-            );
+            // Format detailed note with structured data
+            $note = $this->format_spam_detection_note( $result, $context, true );
+            $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
 
             // Store spam classification meta for notification filtering
             $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'spam' );
         }
+    }
+
+    /**
+     * Extract confidence score from CPS result.
+     *
+     * @param array $result The CPS result.
+     * @return float|null The confidence score (0.0 to 1.0) or null if not present.
+     */
+    private function extract_spam_confidence( array $result ): ?float
+    {
+        $payload = $result['evaluation_payload']['result_data'] ?? $result['result_data'] ?? $result;
+
+        if ( isset( $payload['confidence'] ) && is_numeric( $payload['confidence'] ) )
+        {
+            return (float) $payload['confidence'];
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract spam indicators array from CPS result.
+     *
+     * @param array $result The CPS result.
+     * @return array The indicators array or empty array.
+     */
+    private function extract_spam_indicators( array $result ): array
+    {
+        $payload = $result['evaluation_payload']['result_data'] ?? $result['result_data'] ?? $result;
+
+        if ( isset( $payload['indicators'] ) && is_array( $payload['indicators'] ) )
+        {
+            return $payload['indicators'];
+        }
+
+        return [];
+    }
+
+    /**
+     * Format a spam detection note with structured data.
+     *
+     * @param array $result   The CPS result.
+     * @param array $context  The async job context.
+     * @param bool  $is_spam  Whether the entry is being marked as spam.
+     * @return string The formatted note.
+     */
+    private function format_spam_detection_note( array $result, array $context, bool $is_spam ): string
+    {
+        $confidence    = $this->extract_spam_confidence( $result );
+        $justification = $this->extract_spam_justification( $result );
+        $indicators    = $this->extract_spam_indicators( $result );
+        $display_mode  = $context['spam_indicators_display'] ?? 'simple';
+
+        $confidence_pct = $confidence !== null ? round( $confidence * 100 ) . '%' : 'N/A';
+
+        if ( $is_spam )
+        {
+            $icon   = '🚫';
+            $status = __( 'SPAM', 'sentient-forms' );
+        }
+        else
+        {
+            $icon   = '✅';
+            $status = __( 'LEGITIMATE', 'sentient-forms' );
+        }
+
+        $note = sprintf(
+            /* translators: 1: icon, 2: status, 3: confidence */
+            __( '%1$s Sentient Forms AI classified this entry as %2$s (%3$s confidence)', 'sentient-forms' ),
+            $icon,
+            $status,
+            $confidence_pct,
+        );
+
+        if ( ! empty( $justification ) )
+        {
+            $note .= "\n\n" . $justification;
+        }
+
+        // Add indicators list in detailed mode
+        if ( 'detailed' === $display_mode && ! empty( $indicators ) )
+        {
+            $note .= "\n\n" . __( 'Signals Detected:', 'sentient-forms' );
+            foreach ( $indicators as $indicator )
+            {
+                $type     = $indicator['type'] ?? 'unknown';
+                $evidence = $indicator['evidence'] ?? '';
+                $weight   = $indicator['weight'] ?? 'medium';
+
+                // Humanize the type (high_pressure_language -> High Pressure Language)
+                $type_label = ucwords( str_replace( '_', ' ', $type ) );
+
+                $note .= sprintf(
+                    "\n• %s: \"%s\" (%s)",
+                    $type_label,
+                    esc_html( $evidence ),
+                    $weight,
+                );
+            }
+        }
+
+        return $note;
     }
 
     /**
@@ -1221,6 +1347,7 @@ HTML;
 
     /**
      * Extract justification/reasoning from CPS result.
+     * Prefers structured 'justification' field from JSON mode, falls back to llm_output.
      *
      * @param array $result The CPS result.
      * @return string|null The justification text.
@@ -1230,21 +1357,21 @@ HTML;
         // Check evaluation_payload structure
         $payload = $result['evaluation_payload']['result_data'] ?? $result['result_data'] ?? $result;
 
-        // LLM output often contains the reasoning
+        // Prefer structured justification field (JSON mode output)
+        if ( ! empty( $payload['justification'] ) )
+        {
+            return (string) $payload['justification'];
+        }
+
+        // Legacy: Extract from llm_output (truncate for note)
         if ( ! empty( $payload['llm_output'] ) )
         {
-            // Truncate to reasonable length for note
             return wp_trim_words( (string) $payload['llm_output'], 50, '...' );
         }
 
         if ( ! empty( $payload['reasoning'] ) )
         {
             return wp_trim_words( (string) $payload['reasoning'], 50, '...' );
-        }
-
-        if ( ! empty( $payload['justification'] ) )
-        {
-            return wp_trim_words( (string) $payload['justification'], 50, '...' );
         }
 
         return null;

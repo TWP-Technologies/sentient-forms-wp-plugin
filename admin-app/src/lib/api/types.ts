@@ -84,6 +84,7 @@ export interface FormActionLinkage {
 	is_action_enabled_for_form?: boolean;
 	execution_priority?: number;
 	action_name_label?: string;
+	settings?: Record<string, any>;
 }
 
 export interface FormActionMutationPayload {
@@ -93,6 +94,7 @@ export interface FormActionMutationPayload {
 	is_action_enabled_for_form?: boolean;
 	execution_priority?: number;
 	action_name_label?: string;
+	settings?: Record<string, any>;
 }
 
 export type CustomActionStatus = 'active' | 'archived';

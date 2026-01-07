@@ -377,6 +377,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $action[ 'action_name_label' ] = $request->get_param( 'action_name_label' );
         }
 
+        if ( $request->has_param( 'settings' ) )
+        {
+            $action[ 'settings' ] = $this->sanitize_settings( $request->get_param( 'settings' ) );
+        }
+
         $actions[ $new_id ] = $action;
         update_option( $option_key, $actions, false );
 
@@ -437,6 +442,10 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         if ( $request->has_param( 'action_name_label' ) )
         {
             $linkage[ 'action_name_label' ] = $request->get_param( 'action_name_label' );
+        }
+        if ( $request->has_param( 'settings' ) )
+        {
+            $linkage[ 'settings' ] = $this->sanitize_settings( $request->get_param( 'settings' ) );
         }
 
         $actions[ $id ] = $linkage;
@@ -589,6 +598,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 'required'          => false,
                 'sanitize_callback' => 'sanitize_text_field',
             ];
+            $args[ 'settings' ]                   = [
+                'description'       => __( 'Action-specific configuration settings.', 'sentient-forms' ),
+                'type'              => 'object',
+                'required'          => false,
+            ];
         }
 
         if ( WP_REST_Server::EDITABLE === $method )
@@ -662,6 +676,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     'description' => __( 'Human readable name of the action.', 'sentient-forms' ),
                     'type'        => 'string',
                     'context'     => [ 'view', 'edit' ],
+                ],
+                'settings'                   => [
+                    'description' => __( 'Action-specific configuration settings.', 'sentient-forms' ),
+                    'type'        => 'object',
+                    'context'     => [ 'view', 'edit' ],
+                    'default'     => [],
                 ],
             ],
         ];
@@ -738,5 +758,37 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return $value;
+    }
+
+    /**
+     * Sanitize settings array recursively.
+     */
+    private function sanitize_settings( $settings ): array
+    {
+        if ( ! is_array( $settings ) )
+        {
+            return [];
+        }
+
+        $sanitized = [];
+        foreach ( $settings as $key => $value )
+        {
+            $key = sanitize_key( $key );
+            if ( is_array( $value ) )
+            {
+                $sanitized[ $key ] = $this->sanitize_settings( $value );
+            }
+            elseif ( is_bool( $value ) || is_numeric( $value ) )
+            {
+                // Allow booleans and numbers (int/float) to pass through
+                $sanitized[ $key ] = $value;
+            }
+            else
+            {
+                $sanitized[ $key ] = sanitize_text_field( (string)$value );
+            }
+        }
+
+        return $sanitized;
     }
 }

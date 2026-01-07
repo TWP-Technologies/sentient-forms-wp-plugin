@@ -91,14 +91,14 @@
 		}
 	}
 
-	function getStatusVariant(status: string): 'success' | 'warning' | 'destructive' {
+	function getStatusVariant(status: string): 'success' | 'warning' | 'danger' {
 		switch (status) {
 			case 'success':
 				return 'success';
 			case 'pending':
 				return 'warning';
 			case 'error':
-				return 'destructive';
+				return 'danger';
 			default:
 				return 'warning';
 		}
@@ -158,7 +158,7 @@
 				/>
 			</div>
 			<div class="sf:flex sf:gap-2">
-				<Button variant="default" onclick={applyFilters}>Apply</Button>
+				<Button variant="primary" onclick={applyFilters}>Apply</Button>
 				<Button variant="ghost" onclick={clearFilters}>Clear</Button>
 			</div>
 		</div>
@@ -212,7 +212,7 @@
 								</td>
 								<td class="sf:py-3 sf:pr-4 sf:max-w-[200px] sf:truncate">
 									{#if entry.classification}
-										<Badge variant={entry.classification === 'spam' ? 'destructive' : 'success'}>
+										<Badge variant={entry.classification === 'spam' ? 'danger' : 'success'}>
 											{entry.classification}
 										</Badge>
 									{:else if entry.result_summary}

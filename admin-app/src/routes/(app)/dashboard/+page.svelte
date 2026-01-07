@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { licenseSummary, sessionStore } from '$lib/stores/session';
+	import { licenseSummary, sessionStore, type LicenseStatus } from '$lib/stores/session';
 	import { Button, Card, Section, Badge } from '$lib/components/ui';
 	import { onMount } from 'svelte';
 	import { wpFetch } from '$lib/wp';
@@ -44,7 +44,7 @@
 
 			sessionStore.hydrate({
 				siteUrl: licenseData?.site_url ?? window.location.origin,
-				licenseStatus: licenseData?.status ?? 'unknown',
+				licenseStatus: (licenseData?.status as LicenseStatus) ?? 'inactive',
 				proxyKeyPresent: licenseData?.proxy_key_present ?? false,
 				creditsRemaining: creditData?.current_balance ?? 0,
 				lastSync: licenseData?.last_synced ?? null

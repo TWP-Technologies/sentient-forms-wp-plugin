@@ -40,14 +40,24 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
                     'sentient-forms',
                 ),
             ],
-            'spam_threshold'    => [
+            'spam_confidence_threshold' => [
                 'type'        => 'number',
-                'label'       => __( 'Spam Threshold', 'sentient-forms' ),
-                'default'     => 0.7,
+                'label'       => __( 'Spam Confidence Threshold', 'sentient-forms' ),
+                'default'     => 0.80,
                 'min'         => 0,
                 'max'         => 1,
-                'step'        => 0.1,
-                'description' => __( 'Confidence level threshold for marking as spam (0-1).', 'sentient-forms' ),
+                'step'        => 0.05,
+                'description' => __( 'Only mark entries as spam when AI confidence exceeds this threshold (0-1). Default: 80%.', 'sentient-forms' ),
+            ],
+            'spam_indicators_display' => [
+                'type'        => 'select',
+                'label'       => __( 'Indicators Display Mode', 'sentient-forms' ),
+                'default'     => 'simple',
+                'options'     => [
+                    'simple'   => __( 'Simple (justification only)', 'sentient-forms' ),
+                    'detailed' => __( 'Detailed (with indicator list)', 'sentient-forms' ),
+                ],
+                'description' => __( 'How to display spam detection signals in entry notes.', 'sentient-forms' ),
             ],
             'mark_as_spam'      => [
                 'type'        => 'checkbox',

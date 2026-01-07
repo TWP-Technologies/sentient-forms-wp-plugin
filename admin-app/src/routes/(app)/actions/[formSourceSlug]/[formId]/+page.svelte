@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-import { Section, Card, Button, Badge, Alert, InputField, SelectField } from '$lib/components/ui';
+	import { Section, Card, Button, Badge, Alert, InputField, SelectField } from '$lib/components/ui';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { formActionsStore, formActionsState } from '$lib/stores/form-actions.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
@@ -23,24 +23,27 @@ import { Section, Card, Button, Badge, Alert, InputField, SelectField } from '$l
 	const actionsState = formActionsState;
 	const customState = customActionsState;
 
-let createKind = $state<'template' | 'custom'>('template');
-let selectedTemplateId = $state('');
-let selectedCustomId = $state('');
-let selectedHooks = $state<Set<string>>(new Set());
-let createError = $state<string | null>(null);
-let creating = $state(false);
-let showAddPanel = $state(false);
-let searchTerm = $state('');
+	let createKind = $state<'template' | 'custom'>('template');
+	let selectedTemplateId = $state('');
+	let selectedCustomId = $state('');
+	let selectedHooks = $state<Set<string>>(new Set());
+	let createError = $state<string | null>(null);
+	let creating = $state(false);
+	let showAddPanel = $state(false);
+	let searchTerm = $state('');
 
-let editingLinkageId = $state<string | null>(null);
-let draftHooks = $state<Set<string>>(new Set());
-let pendingRemovalId = $state<string | null>(null);
-let entryLookupId = $state('');
+	let editingLinkageId = $state<string | null>(null);
+	let draftHooks = $state<Set<string>>(new Set());
+	let draftSettings = $state<Record<string, any>>({});
+	let pendingRemovalId = $state<string | null>(null);
+	let entryLookupId = $state('');
 	let refreshInterval: number | null = null;
 	let visibilityHandler: (() => void) | null = null;
 
 	const definitions = $derived(actionsState.definitions ?? []);
-	const customActions = $derived(customState.actions.filter((action) => action.status === 'active'));
+	const customActions = $derived(
+		customState.actions.filter((action) => action.status === 'active')
+	);
 	const definitionLookup = $derived.by(() =>
 		actionsState.definitions.reduce<Record<string, ActionDefinition>>((acc, definition) => {
 			acc[definition.id] = definition;
@@ -94,17 +97,17 @@ let entryLookupId = $state('');
 	const definitionsBadgeLabel = $derived(hasCpsDefinitions ? 'CPS templates' : 'Local fallback');
 
 	const selectedDefinition = $derived(
-		selectedTemplateId ? definitionLookup[selectedTemplateId] ?? null : null
+		selectedTemplateId ? definitionLookup[selectedTemplateId] : undefined
 	);
 	const selectedCustomAction = $derived(
-		selectedCustomId ? customLookupById[selectedCustomId] ?? null : null
+		selectedCustomId ? (customLookupById[selectedCustomId] ?? null) : null
 	);
 	const selectedActionKey = $derived(
 		`${createKind}:${createKind === 'template' ? selectedTemplateId : selectedCustomId}`
 	);
 
-let lastPresetKey = $state<string | null>(null);
-const LAST_HOOKS_KEY = 'sentient_forms_last_hooks';
+	let lastPresetKey = $state<string | null>(null);
+	const LAST_HOOKS_KEY = 'sentient_forms_last_hooks';
 	$effect(() => {
 		if (!selectedActionKey || selectedActionKey === lastPresetKey) return;
 		const presetHooks =
@@ -163,45 +166,45 @@ const LAST_HOOKS_KEY = 'sentient_forms_last_hooks';
 		}
 	}
 
-function startRefreshInterval() {
-	if (refreshInterval !== null) return;
-	refreshInterval = window.setInterval(
-		() => formActionsStore.refresh(data.formSourceSlug, data.formId),
-		30_000
-	);
-}
-
-function stopRefreshInterval() {
-	if (refreshInterval !== null) {
-		window.clearInterval(refreshInterval);
-		refreshInterval = null;
+	function startRefreshInterval() {
+		if (refreshInterval !== null) return;
+		refreshInterval = window.setInterval(
+			() => formActionsStore.refresh(data.formSourceSlug, data.formId),
+			30_000
+		);
 	}
-}
 
-onMount(() => {
-	formActionsStore.load(data.formSourceSlug, data.formId);
-	customActionsStore.load({ status: 'active' });
-	restoreLastHooks();
-	startRefreshInterval();
+	function stopRefreshInterval() {
+		if (refreshInterval !== null) {
+			window.clearInterval(refreshInterval);
+			refreshInterval = null;
+		}
+	}
 
-	visibilityHandler = () => {
-		if (document.visibilityState === 'hidden') {
+	onMount(() => {
+		formActionsStore.load(data.formSourceSlug, data.formId);
+		customActionsStore.load({ status: 'active' });
+		restoreLastHooks();
+		startRefreshInterval();
+
+		visibilityHandler = () => {
+			if (document.visibilityState === 'hidden') {
+				stopRefreshInterval();
+			} else {
+				void formActionsStore.refresh(data.formSourceSlug, data.formId);
+				startRefreshInterval();
+			}
+		};
+		document.addEventListener('visibilitychange', visibilityHandler);
+
+		return () => {
 			stopRefreshInterval();
-		} else {
-			void formActionsStore.refresh(data.formSourceSlug, data.formId);
-			startRefreshInterval();
-		}
-	};
-	document.addEventListener('visibilitychange', visibilityHandler);
-
-	return () => {
-		stopRefreshInterval();
-		if (visibilityHandler) {
-			document.removeEventListener('visibilitychange', visibilityHandler);
-		}
-		formActionsStore.reset();
-	};
-});
+			if (visibilityHandler) {
+				document.removeEventListener('visibilitychange', visibilityHandler);
+			}
+			formActionsStore.reset();
+		};
+	});
 
 	function normalizeDefinitionHooks(hooks?: Record<string, string> | string[]): string[] {
 		if (!hooks) return [];
@@ -385,18 +388,21 @@ onMount(() => {
 		persistLastHooks(Array.from(next));
 	}
 
-	function startEditingHooks(linkage: FormActionLinkage) {
+	function startEditingAction(linkage: FormActionLinkage) {
 		editingLinkageId = linkage.local_mapping_id;
 		const initialHooks =
 			linkage.trigger_hooks && linkage.trigger_hooks.length > 0
 				? linkage.trigger_hooks
 				: [hookEntries[0]?.[0] ?? 'gform_validation'];
 		draftHooks = new Set(initialHooks);
+		// Clone settings to avoid mutating the store directly
+		draftSettings = { ...(linkage.settings ?? {}) };
 	}
 
-	function cancelEditingHooks() {
+	function cancelEditingAction() {
 		editingLinkageId = null;
 		draftHooks = new Set();
+		draftSettings = {};
 	}
 
 	function toggleDraftHook(hook: string) {
@@ -405,19 +411,28 @@ onMount(() => {
 		draftHooks = next;
 	}
 
-	async function saveHookChanges(linkage: FormActionLinkage) {
+	async function saveActionChanges(linkage: FormActionLinkage) {
 		if (draftHooks.size === 0) {
 			notifications.error('Select at least one trigger hook.');
 			return;
 		}
-		await formActionsStore.updateHooks(
-			data.formSourceSlug,
-			data.formId,
-			linkage,
-			Array.from(draftHooks)
-		);
+
+		// Ensure types are correct for spam settings
+		if (linkage.central_action_id === 'spam_detection_v1') {
+			if (draftSettings.spam_confidence_threshold) {
+				draftSettings.spam_confidence_threshold = parseFloat(
+					String(draftSettings.spam_confidence_threshold)
+				);
+			}
+		}
+
+		await formActionsStore.updateAction(data.formSourceSlug, data.formId, linkage, {
+			trigger_hooks: Array.from(draftHooks),
+			settings: draftSettings
+		});
 		editingLinkageId = null;
 		draftHooks = new Set();
+		draftSettings = {};
 	}
 
 	async function handleCreate(event?: Event) {
@@ -438,13 +453,13 @@ onMount(() => {
 
 		const chosenDefinition =
 			createKind === 'template'
-				? selectedDefinition ?? definitions.find((def) => def.id === selectedTemplateId) ?? null
+				? (selectedDefinition ?? definitions.find((def) => def.id === selectedTemplateId) ?? null)
 				: null;
 		const chosenCustom =
 			createKind === 'custom'
-				? selectedCustomAction ??
+				? (selectedCustomAction ??
 					customActions.find((action) => action.id === selectedCustomId) ??
-					null
+					null)
 				: null;
 
 		if (createKind === 'template' && !chosenDefinition) {
@@ -461,7 +476,7 @@ onMount(() => {
 			creating = true;
 			const centralActionId =
 				createKind === 'template'
-					? chosenDefinition?.id ?? selectedTemplateId
+					? (chosenDefinition?.id ?? selectedTemplateId)
 					: chosenCustom?.code;
 			if (!centralActionId) {
 				createError = 'Select an action to link.';
@@ -469,8 +484,8 @@ onMount(() => {
 			}
 			const label =
 				createKind === 'template'
-					? chosenDefinition?.label ?? centralActionId
-					: chosenCustom?.display_name ?? chosenCustom?.code ?? centralActionId;
+					? (chosenDefinition?.label ?? centralActionId)
+					: (chosenCustom?.display_name ?? chosenCustom?.code ?? centralActionId);
 			await formActionsStore.create(data.formSourceSlug, data.formId, {
 				central_action_id: centralActionId,
 				action_type_indicator: createKind === 'template' ? 'master' : 'custom',
@@ -480,8 +495,7 @@ onMount(() => {
 			pendingRemovalId = null;
 			showAddPanel = false;
 		} catch (error) {
-			createError =
-				error instanceof Error ? error.message : 'Failed to create action mapping';
+			createError = error instanceof Error ? error.message : 'Failed to create action mapping';
 		} finally {
 			creating = false;
 		}
@@ -502,12 +516,7 @@ onMount(() => {
 
 	async function toggleEnabled(linkage: FormActionLinkage) {
 		const enabled = linkage.is_action_enabled_for_form !== false;
-		await formActionsStore.toggleEnabled(
-			data.formSourceSlug,
-			data.formId,
-			linkage,
-			!enabled
-		);
+		await formActionsStore.toggleEnabled(data.formSourceSlug, data.formId, linkage, !enabled);
 	}
 
 	function refresh() {
@@ -563,7 +572,9 @@ onMount(() => {
 
 	<div class="sf:grid sf:gap-4 sf:xl:grid-cols-3">
 		<Card class="sf:xl:col-span-2" data-testid="action-definitions-card">
-			<div class="sf:flex sf:flex-col sf:gap-3 sf:md:flex-row sf:md:items-center sf:md:justify-between">
+			<div
+				class="sf:flex sf:flex-col sf:gap-3 sf:md:flex-row sf:md:items-center sf:md:justify-between"
+			>
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Action library</p>
 					<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
@@ -579,7 +590,8 @@ onMount(() => {
 				</Alert>
 			{:else if hasLocalDefinitions}
 				<Alert variant="info" class="sf:mt-3">
-					Some templates come from local extensions and may not exist in CPS. Confirm availability before linking.
+					Some templates come from local extensions and may not exist in CPS. Confirm availability
+					before linking.
 				</Alert>
 			{/if}
 
@@ -602,7 +614,9 @@ onMount(() => {
 											Hooks: {summarizeDefinitionHooks(definition.hooks)}
 										</p>
 										<p class="sf:text-xs sf:text-slate-500">
-											Cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(definition)}
+											Cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+												definition
+											)}
 										</p>
 									</div>
 									<Badge variant={definitionSourceBadgeVariant(definition)}>
@@ -626,7 +640,11 @@ onMount(() => {
 									: 'No active custom actions'}
 							</p>
 						</div>
-						<Button size="sm" variant="secondary" onclick={() => navigateToAppPath('/actions/custom')}>
+						<Button
+							size="sm"
+							variant="secondary"
+							onclick={() => navigateToAppPath('/actions/custom')}
+						>
 							Manage
 						</Button>
 					</div>
@@ -651,66 +669,68 @@ onMount(() => {
 			<div class="sf:mt-6 sf:flex sf:items-center sf:justify-between">
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Link actions to this form</p>
-					<p class="sf:text-xs sf:text-slate-500">Choose a CPS template or custom action, then select hooks.</p>
+					<p class="sf:text-xs sf:text-slate-500">
+						Choose a CPS template or custom action, then select hooks.
+					</p>
 				</div>
 				<Button size="sm" onclick={() => (showAddPanel = true)}>Add action</Button>
 			</div>
 		</Card>
 
 		<Card class="sf:space-y-3">
-				<div class="sf:flex sf:items-center sf:justify-between">
-					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Execution status</p>
-					{#if actionsState.status}
-						<Badge variant={statusBadgeVariant(actionsState.status)}>{actionsState.status.status}</Badge>
-					{/if}
-				</div>
-				{#if actionsState.supportsCredits === false}
-					<Alert variant="warning">
-						Credit balance is unavailable on this CPS backend
-						{#if actionsState.cpsVersion}(current {actionsState.cpsVersion}){/if}
-						{#if actionsState.requiredCreditsVersion}
-							(Requires CPS ≥ {actionsState.requiredCreditsVersion})
-						{/if}. Upgrade or enable credits support to see balance.
-					</Alert>
-				{:else if actionsState.balance}
-					<p class="sf:text-sm sf:text-slate-600">
-						Credit balance: <strong>{actionsState.balance.current_balance}</strong>
+			<div class="sf:flex sf:items-center sf:justify-between">
+				<p class="sf:text-sm sf:font-medium sf:text-slate-700">Execution status</p>
+				{#if actionsState.status}
+					<Badge variant={statusBadgeVariant(actionsState.status)}
+						>{actionsState.status.status}</Badge
+					>
+				{/if}
+			</div>
+			{#if actionsState.supportsCredits === false}
+				<Alert variant="warning">
+					Credit balance is unavailable on this CPS backend
+					{#if actionsState.cpsVersion}(current {actionsState.cpsVersion}){/if}
+					{#if actionsState.requiredCreditsVersion}
+						(Requires CPS ≥ {actionsState.requiredCreditsVersion})
+					{/if}. Upgrade or enable credits support to see balance.
+				</Alert>
+			{:else if actionsState.balance}
+				<p class="sf:text-sm sf:text-slate-600">
+					Credit balance: <strong>{actionsState.balance.current_balance}</strong>
+				</p>
+			{/if}
+			{#if actionsState.supportsStatus === false}
+				<Alert variant="warning">
+					Execution status is unavailable on this CPS backend
+					{#if actionsState.cpsVersion}(current {actionsState.cpsVersion}){/if}
+					{#if actionsState.requiredStatusVersion}
+						(Requires CPS ≥ {actionsState.requiredStatusVersion})
+					{/if}. Upgrade or enable the status endpoint to see run results.
+				</Alert>
+			{:else if actionsState.status}
+				<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
+				<p class="sf:text-sm sf:text-slate-600">{statusDescription(actionsState.status)}</p>
+				{#if actionsState.status.last_error_code || actionsState.status.message}
+					<p class="sf:text-xs sf:text-amber-700 sf:mt-1">
+						{actionsState.status.last_error_code
+							? `Last error: ${actionsState.status.last_error_code}`
+							: ''}
+						{actionsState.status.message ? ` ${actionsState.status.message}` : ''}
 					</p>
 				{/if}
-				{#if actionsState.supportsStatus === false}
-					<Alert variant="warning">
-						Execution status is unavailable on this CPS backend
-						{#if actionsState.cpsVersion}(current {actionsState.cpsVersion}){/if}
-						{#if actionsState.requiredStatusVersion}
-							(Requires CPS ≥ {actionsState.requiredStatusVersion})
-						{/if}. Upgrade or enable the status endpoint to see run results.
-					</Alert>
-				{:else if actionsState.status}
-					<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
-					<p class="sf:text-sm sf:text-slate-600">{statusDescription(actionsState.status)}</p>
-					{#if actionsState.status.last_error_code || actionsState.status.message}
-						<p class="sf:text-xs sf:text-amber-700 sf:mt-1">
-							{actionsState.status.last_error_code
-								? `Last error: ${actionsState.status.last_error_code}`
-								: ''}
-							{actionsState.status.message ? ` ${actionsState.status.message}` : ''}
-						</p>
-					{/if}
-					{#if actionsState.status.updated_at}
-						<p class="sf:text-xs sf:text-slate-500">
-							Updated {new Date(actionsState.status.updated_at).toLocaleString()}
-						</p>
-					{:else}
-						<p class="sf:text-xs sf:text-slate-500">Last updated: not available</p>
-					{/if}
-					<div class="sf:flex sf:justify-end">
-						<Button size="sm" variant="secondary" onclick={refresh}>
-							Refresh now
-						</Button>
-					</div>
+				{#if actionsState.status.updated_at}
+					<p class="sf:text-xs sf:text-slate-500">
+						Updated {new Date(actionsState.status.updated_at).toLocaleString()}
+					</p>
 				{:else}
-					<p class="sf:text-sm sf:text-slate-600">Status not loaded yet.</p>
+					<p class="sf:text-xs sf:text-slate-500">Last updated: not available</p>
 				{/if}
+				<div class="sf:flex sf:justify-end">
+					<Button size="sm" variant="secondary" onclick={refresh}>Refresh now</Button>
+				</div>
+			{:else}
+				<p class="sf:text-sm sf:text-slate-600">Status not loaded yet.</p>
+			{/if}
 
 			{#if statusAdvice}
 				<Alert variant={statusAdvice.variant}>
@@ -774,9 +794,14 @@ onMount(() => {
 			<p class="sf:text-sm sf:text-slate-600">No CPS actions linked to this form yet.</p>
 		{:else}
 			<div class="sf:overflow-x-auto">
-				<table class="sf:min-w-full sf:divide-y sf:divide-slate-200" data-testid="form-actions-table">
+				<table
+					class="sf:min-w-full sf:divide-y sf:divide-slate-200"
+					data-testid="form-actions-table"
+				>
 					<thead class="sf:bg-slate-50">
-						<tr class="sf:text-left sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
+						<tr
+							class="sf:text-left sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600"
+						>
 							<th class="sf:px-4 sf:py-3">Action</th>
 							<th class="sf:px-4 sf:py-3">Hooks</th>
 							<th class="sf:px-4 sf:py-3">Type</th>
@@ -804,26 +829,69 @@ onMount(() => {
 										{/if}
 									</div>
 									<div class="sf:mt-2 sf:space-x-2">
-										<Button size="sm" variant="ghost" onclick={() => startEditingHooks(linkage)}>
-											Edit hooks
+										<Button size="sm" variant="ghost" onclick={() => startEditingAction(linkage)}>
+											Configure
 										</Button>
 									</div>
 									{#if editingLinkageId === linkage.local_mapping_id}
-										<div class="sf:mt-3 sf:rounded-md sf:border sf:border-slate-200 sf:p-3 sf:space-y-2">
-											{#each hookEntries as [hookKey, hookLabel] (hookKey)}
-												<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm">
-													<input
-														type="checkbox"
-														class="sf:form-checkbox"
-														checked={draftHooks.has(hookKey)}
-														onchange={() => toggleDraftHook(hookKey)}
-													/>
-													<span>{hookLabel}</span>
-												</label>
-											{/each}
+										<div
+											class="sf:mt-3 sf:rounded-md sf:border sf:border-slate-200 sf:p-4 sf:space-y-4 sf:bg-slate-50"
+										>
+											<div>
+												<p
+													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
+												>
+													Trigger Hooks
+												</p>
+												<div class="sf:space-y-2">
+													{#each hookEntries as [hookKey, hookLabel] (hookKey)}
+														<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm">
+															<input
+																type="checkbox"
+																class="sf:form-checkbox"
+																checked={draftHooks.has(hookKey)}
+																onchange={() => toggleDraftHook(hookKey)}
+															/>
+															<span>{hookLabel}</span>
+														</label>
+													{/each}
+												</div>
+											</div>
+
+											{#if linkage.central_action_id === 'spam_detection_v1'}
+												<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+													<p
+														class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-3"
+													>
+														Spam Settings
+													</p>
+													<div class="sf:grid sf:gap-4">
+														<InputField
+															id="spam-threshold"
+															label="Confidence Threshold (0.0 - 1.0)"
+															type="number"
+															step="0.05"
+															min="0"
+															max="1"
+															bind:value={draftSettings.spam_confidence_threshold}
+															placeholder="0.80"
+														/>
+														<SelectField
+															id="spam-display"
+															label="Indicators Display"
+															bind:value={draftSettings.spam_indicators_display}
+															options={[
+																{ value: 'simple', label: 'Simple (Summary only)' },
+																{ value: 'detailed', label: 'Detailed (List signals)' }
+															]}
+														/>
+													</div>
+												</div>
+											{/if}
+
 											<div class="sf:flex sf:gap-2 sf:flex-wrap sf:pt-2">
-												<Button size="sm" onclick={() => saveHookChanges(linkage)}>Save</Button>
-												<Button size="sm" variant="secondary" onclick={cancelEditingHooks}>
+												<Button size="sm" onclick={() => saveActionChanges(linkage)}>Save</Button>
+												<Button size="sm" variant="secondary" onclick={cancelEditingAction}>
 													Cancel
 												</Button>
 											</div>
@@ -864,7 +932,9 @@ onMount(() => {
 	{#if showAddPanel}
 		<div class="sf:fixed sf:inset-0 sf:z-30 sf:bg-black/40 sf:flex sf:justify-end">
 			<div class="sf:h-full sf:w-full sf:max-w-xl sf:bg-white sf:shadow-2xl sf:flex sf:flex-col">
-				<div class="sf:flex sf:items-center sf:justify-between sf:border-b sf:border-slate-200 sf:px-4 sf:py-3">
+				<div
+					class="sf:flex sf:items-center sf:justify-between sf:border-b sf:border-slate-200 sf:px-4 sf:py-3"
+				>
 					<div>
 						<p class="sf:text-sm sf:font-semibold sf:text-slate-800">Add action</p>
 						<p class="sf:text-xs sf:text-slate-500">Link a CPS template or custom action.</p>
@@ -899,7 +969,10 @@ onMount(() => {
 					</div>
 				</div>
 
-				<form class="sf:flex sf:flex-col sf:gap-4 sf:px-4 sf:pb-4 sf:overflow-y-auto" data-testid="link-action-form">
+				<form
+					class="sf:flex sf:flex-col sf:gap-4 sf:px-4 sf:pb-4 sf:overflow-y-auto"
+					data-testid="link-action-form"
+				>
 					{#if createKind === 'template'}
 						{#if !hasDefinitions}
 							<Alert variant="warning">No CPS templates available right now.</Alert>
@@ -911,7 +984,9 @@ onMount(() => {
 									const label = (definition.label ?? '').toLowerCase();
 									return definition.id.toLowerCase().includes(term) || label.includes(term);
 								}) as definition (definition.id)}
-									<label class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300">
+									<label
+										class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300"
+									>
 										<input
 											type="radio"
 											name="template-choice"
@@ -925,7 +1000,9 @@ onMount(() => {
 											</p>
 											<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
 											<p class="sf:text-xs sf:text-slate-500">
-												Cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(definition)}
+												Cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+													definition
+												)}
 											</p>
 											<p class="sf:text-xs sf:text-slate-500">
 												Hooks: {summarizeDefinitionHooks(definition.hooks)}
@@ -935,80 +1012,82 @@ onMount(() => {
 								{/each}
 							</div>
 						{/if}
+					{:else if customActions.length === 0}
+						<Alert variant="info">No active custom actions. Create one first.</Alert>
 					{:else}
-						{#if customActions.length === 0}
-							<Alert variant="info">No active custom actions. Create one first.</Alert>
-						{:else}
-							<div class="sf:space-y-2">
-								{#each customActions.filter((action) => {
-									const term = searchTerm.toLowerCase();
-									if (!term) return true;
-									return (
-										action.display_name.toLowerCase().includes(term) ||
-										action.code.toLowerCase().includes(term) ||
-										action.id.toLowerCase().includes(term)
-									);
-								}) as action (action.id)}
-									<label class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300">
-										<input
-											type="radio"
-											name="custom-choice"
-											class="sf:mt-1"
-											checked={selectedCustomId === action.id}
-											onchange={() => (selectedCustomId = action.id)}
-										/>
-										<div class="sf:flex sf:flex-col sf:gap-1">
-											<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
-												{action.display_name}
+						<div class="sf:space-y-2">
+							{#each customActions.filter((action) => {
+								const term = searchTerm.toLowerCase();
+								if (!term) return true;
+								return action.display_name.toLowerCase().includes(term) || action.code
+										.toLowerCase()
+										.includes(term) || action.id.toLowerCase().includes(term);
+							}) as action (action.id)}
+								<label
+									class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300"
+								>
+									<input
+										type="radio"
+										name="custom-choice"
+										class="sf:mt-1"
+										checked={selectedCustomId === action.id}
+										onchange={() => (selectedCustomId = action.id)}
+									/>
+									<div class="sf:flex sf:flex-col sf:gap-1">
+										<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+											{action.display_name}
+										</p>
+										<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
+										{#if action.base_credit_cost !== null}
+											<p class="sf:text-xs sf:text-slate-500">
+												Cost: {action.base_credit_cost} credits
 											</p>
-											<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
-											{#if action.base_credit_cost !== null}
-												<p class="sf:text-xs sf:text-slate-500">
-													Cost: {action.base_credit_cost} credits
-												</p>
-											{/if}
-										</div>
-									</label>
-								{/each}
-							</div>
-						{/if}
+										{/if}
+									</div>
+								</label>
+							{/each}
+						</div>
 					{/if}
 
-						<div>
-							<div class="sf:flex sf:items-center sf:gap-2 sf:mb-2">
-								<p class="sf:text-sm sf:font-medium sf:text-slate-700">Trigger hooks</p>
-								{#if selectedHooks.size === 0}
-									<span class="sf:text-xs sf:text-amber-600">Select at least one</span>
-								{/if}
-							</div>
-							<div class="sf:flex sf:flex-wrap sf:gap-3">
-								{#if hookEntries.length === 0}
-									{#each Object.entries(FALLBACK_HOOK_LABELS) as [hookKey, hookLabel]}
-										<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2">
-											<input
-												type="checkbox"
-												class="sf:form-checkbox"
-												checked={selectedHooks.has(hookKey)}
-												onchange={() => toggleHookSelection(hookKey)}
-											/>
-											<span>{hookLabel}</span>
-										</label>
-									{/each}
-								{:else}
-									{#each hookEntries as [hookKey, hookLabel] (hookKey)}
-										<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2">
-											<input
-												type="checkbox"
-												class="sf:form-checkbox"
-												checked={selectedHooks.has(hookKey)}
-												onchange={() => toggleHookSelection(hookKey)}
-											/>
-											<span>{hookLabel}</span>
-										</label>
-									{/each}
-								{/if}
-							</div>
+					<div>
+						<div class="sf:flex sf:items-center sf:gap-2 sf:mb-2">
+							<p class="sf:text-sm sf:font-medium sf:text-slate-700">Trigger hooks</p>
+							{#if selectedHooks.size === 0}
+								<span class="sf:text-xs sf:text-amber-600">Select at least one</span>
+							{/if}
 						</div>
+						<div class="sf:flex sf:flex-wrap sf:gap-3">
+							{#if hookEntries.length === 0}
+								{#each Object.entries(FALLBACK_HOOK_LABELS) as [hookKey, hookLabel]}
+									<label
+										class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2"
+									>
+										<input
+											type="checkbox"
+											class="sf:form-checkbox"
+											checked={selectedHooks.has(hookKey)}
+											onchange={() => toggleHookSelection(hookKey)}
+										/>
+										<span>{hookLabel}</span>
+									</label>
+								{/each}
+							{:else}
+								{#each hookEntries as [hookKey, hookLabel] (hookKey)}
+									<label
+										class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2"
+									>
+										<input
+											type="checkbox"
+											class="sf:form-checkbox"
+											checked={selectedHooks.has(hookKey)}
+											onchange={() => toggleHookSelection(hookKey)}
+										/>
+										<span>{hookLabel}</span>
+									</label>
+								{/each}
+							{/if}
+						</div>
+					</div>
 
 					{#if createError}
 						<Alert variant="danger">{createError}</Alert>
@@ -1018,15 +1097,17 @@ onMount(() => {
 						<Button type="button" variant="secondary" onclick={() => (showAddPanel = false)}>
 							Cancel
 						</Button>
-							<Button
-								type="button"
-								onclick={() => handleCreate(new Event('submit', { cancelable: true }))}
-								disabled={creating || selectedHooks.size === 0 || (!hasDefinitions && createKind === 'template')}
-							>
-								{creating ? 'Linking…' : 'Link action'}
-							</Button>
-						</div>
-					</form>
+						<Button
+							type="button"
+							onclick={() => handleCreate(new Event('submit', { cancelable: true }))}
+							disabled={creating ||
+								selectedHooks.size === 0 ||
+								(!hasDefinitions && createKind === 'template')}
+						>
+							{creating ? 'Linking…' : 'Link action'}
+						</Button>
+					</div>
+				</form>
 			</div>
 		</div>
 	{/if}

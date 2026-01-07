@@ -73,8 +73,8 @@ function friendlyMessageFromError(error: unknown, fallback: string): string {
 			typeof payload?.error?.message === 'string'
 				? payload?.error?.message
 				: typeof payload?.message === 'string'
-				? payload?.message
-				: undefined;
+					? payload?.message
+					: undefined;
 
 		if (code && friendlyMessages[code]) {
 			return friendlyMessages[code];
@@ -230,6 +230,40 @@ async function updateHooks(
 	}
 }
 
+async function updateAction(
+	formSourceSlug: string,
+	formId: number,
+	linkage: FormActionLinkage,
+	payload: Partial<FormActionMutationPayload>,
+	successMessage = 'Action updated'
+) {
+	const previousItems = [...formActionsState.items];
+	// optimistic update
+	formActionsState.items = formActionsState.items.map((item) =>
+		item.local_mapping_id === linkage.local_mapping_id ? { ...item, ...payload } : item
+	);
+
+	try {
+		const updated = await client.updateFormAction(
+			formSourceSlug,
+			formId,
+			linkage.local_mapping_id,
+			payload
+		);
+
+		formActionsState.items = formActionsState.items.map((item) =>
+			item.local_mapping_id === updated.local_mapping_id ? updated : item
+		);
+
+		notifications.success(successMessage);
+		await refresh(formSourceSlug, formId);
+	} catch (error) {
+		formActionsState.items = previousItems;
+		const message = friendlyMessageFromError(error, 'Failed to update action');
+		notifications.error(message);
+	}
+}
+
 async function remove(formSourceSlug: string, formId: number, linkage: FormActionLinkage) {
 	try {
 		await client.deleteFormAction(formSourceSlug, formId, linkage.local_mapping_id);
@@ -313,6 +347,7 @@ export const formActionsStore = {
 	create,
 	toggleEnabled,
 	updateHooks,
+	updateAction,
 	remove,
 	refresh,
 	fetchExecutionStatus,
