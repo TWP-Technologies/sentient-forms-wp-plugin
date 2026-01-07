@@ -33,7 +33,7 @@ class Sentient_Forms_Custom_Actions_Service
             return $options;
         }
 
-        $path = '/actions/custom';
+        $path = '/custom-actions';
         if ( ! empty( $query ) )
         {
             $path .= '?' . http_build_query( $query, '', '&', PHP_QUERY_RFC3986 );
@@ -53,7 +53,7 @@ class Sentient_Forms_Custom_Actions_Service
      */
     public function create( array $payload, string $actor_hint ): WP_Error | Sentient_Forms_Custom_Action_Mutation_Response
     {
-        return $this->send_mutation( '/actions/custom', 'post', $payload, $actor_hint );
+        return $this->send_mutation( '/custom-actions', 'post', $payload, $actor_hint );
     }
 
     /**
@@ -61,7 +61,7 @@ class Sentient_Forms_Custom_Actions_Service
      */
     public function update( string $id, array $payload, string $actor_hint ): WP_Error | Sentient_Forms_Custom_Action_Mutation_Response
     {
-        $path = sprintf( '/actions/custom/%s', rawurlencode( $id ) );
+        $path = sprintf( '/custom-actions/%s', rawurlencode( $id ) );
         return $this->send_mutation( $path, 'put', $payload, $actor_hint );
     }
 
@@ -73,7 +73,7 @@ class Sentient_Forms_Custom_Actions_Service
             return $options;
         }
 
-        $path     = sprintf( '/actions/custom/%s', rawurlencode( $id ) );
+        $path     = sprintf( '/custom-actions/%s', rawurlencode( $id ) );
         $response = $this->client->delete(
             $path,
             [ 'actor_hint' => $actor_hint ],
@@ -96,7 +96,7 @@ class Sentient_Forms_Custom_Actions_Service
             return $options;
         }
 
-        $path     = sprintf( '/actions/custom/%s/reactivate', rawurlencode( $id ) );
+        $path     = sprintf( '/custom-actions/%s/reactivate', rawurlencode( $id ) );
         $response = $this->client->post(
             $path,
             [ 'actor_hint' => $actor_hint ],
