@@ -395,8 +395,14 @@
 				? linkage.trigger_hooks
 				: [hookEntries[0]?.[0] ?? 'gform_validation'];
 		draftHooks = new Set(initialHooks);
-		// Clone settings to avoid mutating the store directly
-		draftSettings = { ...(linkage.settings ?? {}) };
+		// Clone settings with sensible defaults to avoid Svelte 5 $bindable() issues with undefined
+		const baseSettings = linkage.settings ?? {};
+		draftSettings = {
+			spam_confidence_threshold: baseSettings.spam_confidence_threshold ?? 0.8,
+			spam_result_display_mode: baseSettings.spam_result_display_mode ?? 'entry_note',
+			spam_indicators_display: baseSettings.spam_indicators_display ?? 'simple',
+			...baseSettings
+		};
 	}
 
 	function cancelEditingAction() {
