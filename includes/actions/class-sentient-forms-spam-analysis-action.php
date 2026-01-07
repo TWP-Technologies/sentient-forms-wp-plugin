@@ -354,7 +354,89 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
             ] );
         }
 
+        // Add a visible entry note with spam analysis results
+        $this->add_entry_note( (int) $entry_id, $result_data, $classification, $is_spam, $settings );
+
         return $result;
+    }
+
+    /**
+     * Add a visible note to the Gravity Forms entry with spam analysis results.
+     *
+     * @param int    $entry_id       The entry ID.
+     * @param array  $result_data    The result data from CPS.
+     * @param string $classification The spam classification.
+     * @param bool   $is_spam        Whether the entry is classified as spam.
+     * @param array  $settings       The action settings.
+     */
+    protected function add_entry_note( int $entry_id, array $result_data, string $classification, bool $is_spam, array $settings ): void
+    {
+        if ( ! $entry_id || ! class_exists( 'GFFormsModel' ) )
+        {
+            return;
+        }
+
+        $confidence    = $result_data['confidence'] ?? $result_data['confidence_score'] ?? null;
+        $justification = $result_data['justification'] ?? $result_data['reasoning'] ?? '';
+        $indicators    = $result_data['spam_indicators'] ?? $result_data['indicators'] ?? [];
+        $display_mode  = $settings['spam_indicators_display'] ?? 'simple';
+
+        // Build the note content
+        $note_lines = [];
+        $note_lines[] = '🤖 **Sentient Forms Spam Analysis**';
+        $note_lines[] = '';
+        $note_lines[] = sprintf(
+            '**Classification:** %s',
+            $is_spam ? '🚫 SPAM' : '✅ Not Spam'
+        );
+
+        if ( $classification )
+        {
+            $note_lines[] = sprintf( '**Result:** %s', ucfirst( $classification ) );
+        }
+
+        if ( null !== $confidence )
+        {
+            $confidence_pct = is_numeric( $confidence ) ? round( (float) $confidence * 100, 1 ) : $confidence;
+            $note_lines[]   = sprintf( '**Confidence:** %s%%', $confidence_pct );
+        }
+
+        if ( $justification )
+        {
+            $note_lines[] = '';
+            $note_lines[] = sprintf( '**Justification:** %s', $justification );
+        }
+
+        if ( 'detailed' === $display_mode && ! empty( $indicators ) && is_array( $indicators ) )
+        {
+            $note_lines[] = '';
+            $note_lines[] = '**Spam Indicators:**';
+            foreach ( $indicators as $indicator )
+            {
+                if ( is_string( $indicator ) )
+                {
+                    $note_lines[] = sprintf( '• %s', $indicator );
+                }
+                elseif ( is_array( $indicator ) && isset( $indicator['description'] ) )
+                {
+                    $note_lines[] = sprintf( '• %s', $indicator['description'] );
+                }
+            }
+        }
+
+        $note_lines[] = '';
+        $note_lines[] = sprintf( '— Analyzed at %s', current_time( 'mysql' ) );
+
+        $note_content = implode( "\n", $note_lines );
+
+        // Add the note using Gravity Forms API
+        GFFormsModel::add_note(
+            $entry_id,
+            0, // user_id = 0 for system notes
+            'Sentient Forms',
+            $note_content,
+            'sentient_forms_spam_analysis' // note type for filtering
+        );
     }
 
     /**
