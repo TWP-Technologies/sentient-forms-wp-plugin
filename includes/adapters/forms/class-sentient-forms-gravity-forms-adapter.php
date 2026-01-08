@@ -1532,6 +1532,12 @@ HTML;
                 $excerpt,
             ),
         );
+
+        // FR-001, FR-002: Auto-mark spam entries in Gravity Forms
+        $this->maybe_mark_entry_as_spam_from_result( $entry_id, $context, $result );
+
+        // FR-008: Log successful action execution
+        $this->log_action_execution( $context, $result, 'success' );
     }
 
     private function get_async_action_label( array $context ): string
