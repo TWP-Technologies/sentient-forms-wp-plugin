@@ -1,0 +1,46 @@
+<script lang="ts">
+	import { Section, Button, Alert } from '$lib/components/ui';
+	import CustomActionForm from '$lib/components/custom-action-form.svelte';
+	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
+	import { goto } from '$app/navigation';
+	import type { CustomActionCreateInput } from '$lib/schemas/custom-action';
+
+	let submitting = $state(false);
+	let error = $state<string | null>(null);
+
+	async function handleSubmit(data: CustomActionCreateInput) {
+		submitting = true;
+		error = null;
+		try {
+			await customActionsStore.create(data);
+			// Navigate back to list on success
+			goto('#/actions/custom');
+		} catch (e) {
+			if (e instanceof Error) {
+				error = e.message;
+			}
+			throw e;
+		} finally {
+			submitting = false;
+		}
+	}
+
+	function handleCancel() {
+		goto('#/actions/custom');
+	}
+</script>
+
+<Section
+	heading="Create Custom Action"
+	description="Configure a new custom action based on a CPS template."
+>
+	<div slot="actions">
+		<Button variant="secondary" onclick={handleCancel}>← Back to List</Button>
+	</div>
+
+	{#if error}
+		<Alert variant="danger" class="sf:mb-4">{error}</Alert>
+	{/if}
+
+	<CustomActionForm onSubmit={handleSubmit} onCancel={handleCancel} {submitting} />
+</Section>

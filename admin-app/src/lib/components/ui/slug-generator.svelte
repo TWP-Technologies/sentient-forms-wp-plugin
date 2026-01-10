@@ -1,0 +1,92 @@
+<!--
+  SlugGenerator.svelte - Auto-generates URL-safe code from display name
+  Uses Svelte 5 $derived for reactive transformation
+-->
+<script lang="ts">
+	import { sanitizeCustomActionCode } from '$lib/utils/custom-actions';
+
+	interface Props {
+		/** Display name to generate slug from */
+		name: string;
+		/** Current slug value (for manual override) */
+		value: string;
+		/** Callback when slug changes */
+		onchange?: (slug: string) => void;
+		/** Input ID for label association */
+		id?: string;
+		/** Disable auto-generation (manual mode only) */
+		manualOnly?: boolean;
+	}
+
+	let {
+		name,
+		value = $bindable(''),
+		onchange,
+		id = 'slug-generator',
+		manualOnly = false
+	}: Props = $props();
+
+	// Track if user has manually edited
+	let isManuallyEdited = $state(false);
+
+	// Auto-generate slug from name when not manually edited
+	const generatedSlug = $derived.by(() => {
+		if (manualOnly || isManuallyEdited) return value;
+		// Transform: lowercase, replace spaces/underscores with dashes, strip invalid chars
+		const transformed = name
+			.toLowerCase()
+			.replace(/[\s_]+/g, '-')
+			.replace(/[^a-z0-9-]/g, '');
+		return sanitizeCustomActionCode(transformed);
+	});
+
+	// Sync generated slug to value when auto-generating
+	$effect(() => {
+		if (!manualOnly && !isManuallyEdited && generatedSlug !== value) {
+			value = generatedSlug;
+			onchange?.(generatedSlug);
+		}
+	});
+
+	function handleInput(event: Event) {
+		const target = event.target as HTMLInputElement;
+		const sanitized = sanitizeCustomActionCode(target.value);
+		isManuallyEdited = true;
+		value = sanitized;
+		onchange?.(sanitized);
+	}
+
+	function resetToAuto() {
+		isManuallyEdited = false;
+	}
+</script>
+
+<div class="sf:flex sf:flex-col sf:gap-1">
+	<label for={id} class="sf:text-sm sf:font-medium sf:text-slate-700">
+		Code
+		{#if !manualOnly && !isManuallyEdited}
+			<span class="sf:text-xs sf:text-slate-400 sf:ml-1">(auto-generated)</span>
+		{/if}
+	</label>
+	<div class="sf:flex sf:gap-2 sf:items-center">
+		<input
+			type="text"
+			{id}
+			{value}
+			oninput={handleInput}
+			placeholder="e.g., follow-up-reply"
+			class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:font-mono
+				   focus:sf:outline-none focus:sf:ring-2 focus:sf:ring-indigo-500 focus:sf:border-indigo-500"
+		/>
+		{#if isManuallyEdited && !manualOnly}
+			<button
+				type="button"
+				onclick={resetToAuto}
+				class="sf:text-xs sf:text-indigo-600 sf:hover:text-indigo-800 sf:whitespace-nowrap"
+			>
+				Reset to auto
+			</button>
+		{/if}
+	</div>
+	<p class="sf:text-xs sf:text-slate-500">Lowercase letters, numbers, and dashes only.</p>
+</div>

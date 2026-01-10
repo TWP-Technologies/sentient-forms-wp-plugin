@@ -234,8 +234,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 'entry' => $entry,
             ];
 
-            // Check if we should process asynchronously
-            if ( !empty( $action_settings[ 'async' ] ) )
+            // Check if we should process asynchronously.
+            // CPS-managed master actions have no local PHP handler, so default to async.
+            $should_async = !empty( $action_settings[ 'async' ] )
+                || ( ( $action_settings['action_type_indicator'] ?? '' ) === 'master' );
+
+            if ( $should_async )
             {
                 // Process the action asynchronously
                 $logger->info(
@@ -267,6 +271,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                         // Structured spam detection settings
                         'spam_confidence_threshold' => $action_settings['settings']['spam_confidence_threshold'] ?? $action_settings['spam_confidence_threshold'] ?? 0.80,
                         'spam_indicators_display'   => $action_settings['settings']['spam_indicators_display'] ?? $action_settings['spam_indicators_display'] ?? 'simple',
+                        'spam_result_display_mode'  => $action_settings['settings']['spam_result_display_mode'] ?? $action_settings['spam_result_display_mode'] ?? 'entry_note',
                         'central_action_id' => $action_settings['central_action_id'] ?? null,
                     ],
                 );
@@ -989,8 +994,8 @@ HTML;
             return false;
         }
 
-        // Check if GF Notes API function exists
-        if ( !function_exists( 'GFFormsModel::add_note' ) )
+        // Check if GF Notes API method exists
+        if ( !class_exists( 'GFFormsModel' ) || !is_callable( [ 'GFFormsModel', 'add_note' ] ) )
         {
             // Fall back to meta storage if GF notes function isn't available
             $notes   = $this->get_entry_meta( $entry_id, 'sentient_forms_notes' ) ?: [];
@@ -1126,20 +1131,24 @@ HTML;
             return;
         }
 
-        $excerpt = $this->format_async_result_excerpt( $result );
-        
+        $classification = $this->extract_spam_classification( $result );
+        $excerpt        = $classification ? '' : $this->format_async_result_excerpt( $result );
+
         $this->update_entry_meta( $entry_id, 'sentient_forms_last_response', wp_json_encode( $result ) );
-        
-        $this->add_entry_note(
-            $entry_id,
-            'Sentient Forms AI',
-            sprintf(
-                /* translators: %s is the action label */
-                __( 'Sentient Forms finished %s. Result: %s', 'sentient-forms' ),
-                $this->get_async_action_label( $context ),
-                $excerpt,
-            ),
-        );
+
+        if ( empty( $classification ) )
+        {
+            $this->add_entry_note(
+                $entry_id,
+                'Sentient Forms AI',
+                sprintf(
+                    /* translators: %s is the action label */
+                    __( 'Sentient Forms finished %s. Result: %s', 'sentient-forms' ),
+                    $this->get_async_action_label( $context ),
+                    $excerpt,
+                ),
+            );
+        }
 
         // FR-001, FR-002: Auto-mark spam entries in Gravity Forms
         $this->maybe_mark_entry_as_spam_from_result( $entry_id, $context, $result );
@@ -1159,14 +1168,16 @@ HTML;
      */
     private function maybe_mark_entry_as_spam_from_result( int $entry_id, array $context, array $result ): void
     {
-        // Only process if mark_as_spam setting is enabled in context
-        if ( empty( $context['mark_as_spam'] ) )
-        {
-            return;
-        }
+        $mark_as_spam = ! empty( $context['mark_as_spam'] );
+        $display_mode = $context['spam_result_display_mode'] ?? 'entry_note';
+        $should_note  = ! in_array( $display_mode, [ 'none', 'silent' ], true );
 
         // Extract classification and confidence from result
         $classification = $this->extract_spam_classification( $result );
+        if ( empty( $classification ) )
+        {
+            return;
+        }
         $confidence     = $this->extract_spam_confidence( $result );
         $threshold      = isset( $context['spam_confidence_threshold'] ) 
             ? (float) $context['spam_confidence_threshold'] 
@@ -1176,7 +1187,7 @@ HTML;
         if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
             // If ham/legitimate, add a review note but don't mark as spam
-            if ( $classification === 'ham' || $classification === 'legitimate' )
+            if ( $should_note && ( $classification === 'ham' || $classification === 'legitimate' ) )
             {
                 $note = $this->format_spam_detection_note( $result, $context, false );
                 $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
@@ -1191,27 +1202,41 @@ HTML;
         if ( $effective_confidence < $threshold )
         {
             // Below threshold - add note but don't mark as spam
-            $note = sprintf(
-                /* translators: 1: confidence percent, 2: threshold percent */
-                __( '✅ Sentient Forms AI reviewed this entry (%1$s%% spam confidence - below %2$s%% threshold). Entry remains active for manual review.', 'sentient-forms' ),
-                round( $effective_confidence * 100 ),
-                round( $threshold * 100 ),
-            );
-            $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
+            if ( $should_note )
+            {
+                $note = sprintf(
+                    /* translators: 1: confidence percent, 2: threshold percent */
+                    __( '✅ Sentient Forms AI reviewed this entry (%1$s%% spam confidence - below %2$s%% threshold). Entry remains active for manual review.', 'sentient-forms' ),
+                    round( $effective_confidence * 100 ),
+                    round( $threshold * 100 ),
+                );
+                $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
+            }
             $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'reviewed' );
             return;
         }
 
-        // Spam classification above threshold - mark as spam
-        if ( $this->mark_entry_as_spam( $entry_id ) )
+        // Spam classification above threshold - mark as spam when enabled
+        if ( $mark_as_spam && $this->mark_entry_as_spam( $entry_id ) )
         {
             // Format detailed note with structured data
-            $note = $this->format_spam_detection_note( $result, $context, true );
-            $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
+            if ( $should_note )
+            {
+                $note = $this->format_spam_detection_note( $result, $context, true );
+                $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
+            }
 
             // Store spam classification meta for notification filtering
             $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'spam' );
+            return;
         }
+
+        if ( $should_note )
+        {
+            $note = $this->format_spam_detection_note( $result, $context, true );
+            $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
+        }
+        $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'spam' );
     }
 
     /**
@@ -1361,12 +1386,6 @@ HTML;
         if ( ! empty( $payload['justification'] ) )
         {
             return (string) $payload['justification'];
-        }
-
-        // Legacy: Extract from llm_output (truncate for note)
-        if ( ! empty( $payload['llm_output'] ) )
-        {
-            return wp_trim_words( (string) $payload['llm_output'], 50, '...' );
         }
 
         if ( ! empty( $payload['reasoning'] ) )

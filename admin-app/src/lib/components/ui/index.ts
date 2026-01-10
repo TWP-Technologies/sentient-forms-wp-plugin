@@ -11,3 +11,6 @@ export { default as SelectField } from './select-field.svelte';
 export { default as TextareaField } from './textarea-field.svelte';
 export { default as Toggle } from './toggle.svelte';
 export { default as ValidationSummary } from './validation-summary.svelte';
+export { default as SlugGenerator } from './slug-generator.svelte';
+export { default as PromptBuilder } from './prompt-builder.svelte';
+export { default as ModelSelect } from './model-select.svelte';

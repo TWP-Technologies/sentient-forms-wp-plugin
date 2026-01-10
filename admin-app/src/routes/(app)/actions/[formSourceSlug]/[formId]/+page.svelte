@@ -389,7 +389,6 @@
 	}
 
 	function startEditingAction(linkage: FormActionLinkage) {
-		editingLinkageId = linkage.local_mapping_id;
 		const initialHooks =
 			linkage.trigger_hooks && linkage.trigger_hooks.length > 0
 				? linkage.trigger_hooks
@@ -403,6 +402,7 @@
 			spam_indicators_display: baseSettings.spam_indicators_display ?? 'simple',
 			...baseSettings
 		};
+		editingLinkageId = linkage.local_mapping_id;
 	}
 
 	function cancelEditingAction() {
