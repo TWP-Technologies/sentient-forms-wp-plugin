@@ -651,26 +651,36 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			'form_source' => 'gravity_forms',
 			'entry_id'    => 501,
 			'form_id'     => 101,
-			'job_id'      => wp_generate_uuid4(),
 		];
 
-		// Manually invoke process_action with a master action
-		$handler = $this->plugin->get_async_handler();
-		$handler->process_action(
-			'nonexistent_cps_action',  // Action that doesn't exist locally
+		// Schedule the action first (creates metadata store entry)
+		$scheduled = $this->plugin->process_action_async(
+			'nonexistent_cps_action',
 			$data,
 			$settings,
-			null,
 			$context
+		);
+		$this->assertTrue( $scheduled, 'Master action should schedule successfully' );
+
+		// Now process the scheduled job
+		$queued = $GLOBALS['__sentient_forms_async_queue']['enqueued'];
+		$this->assertNotEmpty( $queued, 'Job should be in queue' );
+
+		$job_payload = end( $queued )['args'];
+		$handler = $this->plugin->get_async_handler();
+		$handler->process_action(
+			$job_payload['action_id'],
+			$job_payload['data'],
+			$job_payload['settings'],
+			$job_payload['execution_request_id'],
+			$job_payload['context']
 		);
 
 		// Verify the metadata store shows success (CPS HTTP was mocked to return 200)
 		$jobs = $this->plugin->get_async_metadata_store()->all();
-		if ( ! empty( $jobs ) )
-		{
-			$job = reset( $jobs );
-			$this->assertSame( 'success', $job['status'], 'Master action should execute via CPS executor and succeed' );
-		}
+		$this->assertNotEmpty( $jobs, 'Metadata store should have the job' );
+		$job = reset( $jobs );
+		$this->assertSame( 'success', $job['status'], 'Master action should execute via CPS executor and succeed' );
 	}
 
 	public function test_process_action_passes_central_action_and_payload_to_executor(): void
@@ -736,8 +746,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		// Use a non-existent local action_id - should fail for non-master actions
 		$result = $this->plugin->process_action_async( 'nonexistent_local_action', $data, $settings, $context );
 
-		// This should still succeed at the scheduling level (schedule_action checks action_type_indicator)
-		// but fail during process_action execution if the action doesn't exist
-		$this->assertTrue( $result, 'Scheduling should succeed if central_action_id is present' );
+		// Non-master actions without a local PHP class should fail to schedule
+		// This preserves original behavior requiring local action registration
+		$this->assertFalse( $result, 'Non-master actions without local PHP class should fail to schedule' );
 	}
 }

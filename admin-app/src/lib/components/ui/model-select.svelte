@@ -17,9 +17,10 @@
 	// Static model options - TODO: fetch from CPS LLM_Registry endpoint when available
 	const modelOptions = [
 		{ value: '', label: 'Default (template decides)' },
-		{ value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' },
-		{ value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
-		{ value: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash (Experimental)' },
+		{ value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro (Preview)' },
+		{ value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (Preview)' },
+		{ value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+		{ value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
 		{ value: 'custom', label: 'Custom model...' }
 	] as const;
 

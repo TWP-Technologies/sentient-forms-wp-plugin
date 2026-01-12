@@ -223,6 +223,7 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
         {
             $mapped[] = [
                 'id'             => $template['code'] ?? '',
+                'templateId'     => $template['id'] ?? null,
                 'label'          => $template['display_name'] ?? ( $template['code'] ?? '' ),
                 'description'    => $template['description'] ?? '',
                 'settingsFields' => [],
@@ -232,6 +233,7 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
                 'source'         => 'cps',
                 'baseCreditCost' => $template['base_credit_cost'] ?? null,
                 'modelHint'      => $template['model_hint'] ?? null,
+                'overrideSchema' => $template['override_schema'] ?? [],
             ];
         }
 

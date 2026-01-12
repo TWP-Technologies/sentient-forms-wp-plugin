@@ -20,11 +20,13 @@
 		type CustomActionCreateInput,
 		type CustomActionUpdateInput
 	} from '$lib/schemas/custom-action';
-	import type { CustomAction } from '$lib/api/types';
+	import type { CustomAction, TemplateOverrideSchema } from '$lib/api/types';
 
 	interface Props {
 		/** Existing action data for edit mode */
 		initialData?: CustomAction | null;
+		/** Override schema for the selected template */
+		templateSchema?: TemplateOverrideSchema;
 		/** Submit handler - returns void or throws */
 		onSubmit: (data: CustomActionCreateInput | CustomActionUpdateInput) => Promise<void>;
 		/** Cancel handler */
@@ -33,7 +35,13 @@
 		submitting?: boolean;
 	}
 
-	let { initialData = null, onSubmit, onCancel, submitting = false }: Props = $props();
+	let {
+		initialData = null,
+		templateSchema,
+		onSubmit,
+		onCancel,
+		submitting = false
+	}: Props = $props();
 
 	const isEditMode = $derived(initialData !== null);
 
@@ -172,6 +180,7 @@
 		<PromptBuilder
 			id="custom-action-overrides"
 			bind:value={promptOverrides}
+			schema={templateSchema}
 			onchange={handlePromptChange}
 		/>
 

@@ -223,7 +223,14 @@ export class SentientFormsApiClient {
 		// Guard against undefined parameters during hydration race conditions
 		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
 			console.warn('[ApiClient] getFormExecutionStatus called with invalid params:', { formSourceSlug, formId });
-			return { status: 'unknown', message: 'Page loading...', updated_at: null };
+			return {
+				status: 'unknown',
+				message: 'Page loading...',
+				updated_at: null,
+				entry_id: null,
+				last_error_code: null,
+				last_result: null
+			};
 		}
 		const slug = encodeURIComponent(formSourceSlug);
 		const response = await this.request<RestEnvelope<FormExecutionStatus>>(

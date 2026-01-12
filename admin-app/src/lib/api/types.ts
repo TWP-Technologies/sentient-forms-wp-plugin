@@ -68,12 +68,54 @@ export interface PluginSettingsResponse {
 
 export interface ActionDefinition {
 	id: string;
+	templateId?: string | null;
 	label?: string;
 	description?: string;
 	hooks?: Record<string, string> | string[];
 	source?: 'cps' | 'local';
 	baseCreditCost?: number | null;
 	modelHint?: string | null;
+	overrideSchema?: TemplateOverrideSchema;
+}
+
+/**
+ * Schema definition for a single override key
+ */
+export interface OverrideKeySchema {
+	type: 'enum' | 'string' | 'number' | 'boolean';
+	options?: string[]; // for enum type
+	default?: unknown;
+	description?: string;
+	min?: number; // for number type
+	max?: number; // for number type
+}
+
+/**
+ * Override schema mapping keys to their schemas
+ */
+export type TemplateOverrideSchema = Record<string, OverrideKeySchema>;
+
+/**
+ * Template summary returned by the templates list endpoint
+ */
+export interface TemplateSummary {
+	id: string;
+	code: string;
+	display_name: string;
+	description: string;
+	model_hint: string;
+	base_credit_cost: number;
+	override_schema: TemplateOverrideSchema;
+}
+
+/**
+ * Response from the template schema endpoint
+ */
+export interface TemplateSchemaResponse {
+	template_id: string;
+	code: string;
+	display_name: string;
+	override_schema: TemplateOverrideSchema;
 }
 
 export interface FormActionLinkage {

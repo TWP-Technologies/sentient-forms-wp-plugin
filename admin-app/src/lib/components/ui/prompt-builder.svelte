@@ -1,40 +1,50 @@
 <!--
-  PromptBuilder.svelte - Hybrid UI/JSON editor for prompt overrides
-  Toggles between form mode (key-value pairs) and JSON mode (raw textarea)
+  PromptBuilder.svelte - Schema-aware hybrid UI/JSON editor for prompt overrides
+  Toggles between form mode (schema-guided or key-value pairs) and JSON mode (raw textarea)
+  
+  When a schema is provided, shows dropdown for defined keys with type-appropriate value inputs.
+  Still allows adding custom keys for advanced users.
 -->
 <script lang="ts">
 	import { parsePromptOverridesInput } from '$lib/utils/custom-actions';
+	import type { TemplateOverrideSchema, OverrideKeySchema } from '$lib/api/types';
 
 	interface Props {
 		/** Current value as a record */
 		value: Record<string, unknown>;
+		/** Optional override schema from the template */
+		schema?: TemplateOverrideSchema;
 		/** Callback when value changes */
 		onchange?: (value: Record<string, unknown>) => void;
 		/** Input ID prefix for label association */
 		id?: string;
 	}
 
-	let { value = $bindable({}), onchange, id = 'prompt-builder' }: Props = $props();
+	let { value = $bindable({}), schema, onchange, id = 'prompt-builder' }: Props = $props();
 
 	type EditorMode = 'form' | 'json';
 	let mode = $state<EditorMode>('form');
 	let jsonText = $state('');
 	let jsonError = $state<string | null>(null);
-	let formPairs = $state<Array<{ key: string; value: string }>>([]);
+	let formPairs = $state<Array<{ key: string; value: string; fromSchema: boolean }>>([]);
+
+	// Get schema keys for dropdown
+	const schemaKeys = $derived(schema ? Object.keys(schema) : []);
+	const hasSchema = $derived(schemaKeys.length > 0);
 
 	// Initialize from value prop
 	$effect(() => {
 		if (Object.keys(value).length > 0 && formPairs.length === 0) {
 			formPairs = Object.entries(value).map(([key, val]) => ({
 				key,
-				value: typeof val === 'string' ? val : JSON.stringify(val)
+				value: typeof val === 'string' ? val : JSON.stringify(val),
+				fromSchema: hasSchema && schemaKeys.includes(key)
 			}));
 			jsonText = JSON.stringify(value, null, 2);
 		}
 	});
 
 	function switchToJson() {
-		// Sync form pairs to JSON
 		const obj = formPairsToObject();
 		jsonText = JSON.stringify(obj, null, 2);
 		jsonError = null;
@@ -42,15 +52,15 @@
 	}
 
 	function switchToForm() {
-		// Try to parse JSON back to form
 		const { result, error } = parsePromptOverridesInput(jsonText);
 		if (error) {
 			jsonError = error;
-			return; // Don't switch if invalid
+			return;
 		}
 		formPairs = Object.entries(result || {}).map(([key, val]) => ({
 			key,
-			value: typeof val === 'string' ? val : JSON.stringify(val)
+			value: typeof val === 'string' ? val : JSON.stringify(val),
+			fromSchema: hasSchema && schemaKeys.includes(key)
 		}));
 		jsonError = null;
 		mode = 'form';
@@ -60,7 +70,6 @@
 		const obj: Record<string, unknown> = {};
 		for (const pair of formPairs) {
 			if (pair.key.trim()) {
-				// Try to parse value as JSON, fallback to string
 				try {
 					obj[pair.key.trim()] = JSON.parse(pair.value);
 				} catch {
@@ -89,7 +98,19 @@
 	}
 
 	function addPair() {
-		formPairs = [...formPairs, { key: '', value: '' }];
+		formPairs = [...formPairs, { key: '', value: '', fromSchema: false }];
+	}
+
+	function addSchemaKey() {
+		// Find first schema key not already in use
+		const usedKeys = new Set(formPairs.map((p) => p.key));
+		const availableKey = schemaKeys.find((k) => !usedKeys.has(k));
+		if (availableKey && schema) {
+			const keySchema = schema[availableKey];
+			const defaultVal = keySchema.default !== undefined ? JSON.stringify(keySchema.default) : '';
+			formPairs = [...formPairs, { key: availableKey, value: defaultVal, fromSchema: true }];
+			updateFromForm();
+		}
 	}
 
 	function removePair(index: number) {
@@ -98,8 +119,32 @@
 	}
 
 	function updatePair(index: number, field: 'key' | 'value', newValue: string) {
-		formPairs = formPairs.map((pair, i) => (i === index ? { ...pair, [field]: newValue } : pair));
+		formPairs = formPairs.map((pair, i) =>
+			i === index
+				? {
+						...pair,
+						[field]: newValue,
+						fromSchema:
+							field === 'key' ? hasSchema && schemaKeys.includes(newValue) : pair.fromSchema
+					}
+				: pair
+		);
 		updateFromForm();
+	}
+
+	function getKeySchema(key: string): OverrideKeySchema | null {
+		return schema?.[key] ?? null;
+	}
+
+	function getAvailableSchemaKeys(): string[] {
+		if (!hasSchema) return [];
+		const usedKeys = new Set(formPairs.map((p) => p.key));
+		return schemaKeys.filter((k) => !usedKeys.has(k));
+	}
+
+	function renderValueInput(pair: { key: string; value: string }, index: number) {
+		const keySchema = getKeySchema(pair.key);
+		return { keySchema };
 	}
 </script>
 
@@ -122,26 +167,93 @@
 			class="sf:flex sf:flex-col sf:gap-2 sf:p-3 sf:bg-slate-50 sf:rounded-md sf:border sf:border-slate-200"
 		>
 			{#if formPairs.length === 0}
-				<p class="sf:text-sm sf:text-slate-500 sf:italic">No overrides configured</p>
+				{#if hasSchema}
+					<p class="sf:text-sm sf:text-slate-500 sf:italic">
+						No overrides configured. Use the dropdown below to add template options.
+					</p>
+				{:else}
+					<p class="sf:text-sm sf:text-slate-500 sf:italic">No overrides configured</p>
+				{/if}
 			{:else}
 				{#each formPairs as pair, index (index)}
+					{@const keySchema = getKeySchema(pair.key)}
 					<div class="sf:flex sf:gap-2 sf:items-start">
-						<input
-							type="text"
-							value={pair.key}
-							oninput={(e) => updatePair(index, 'key', (e.target as HTMLInputElement).value)}
-							placeholder="Key"
-							class="sf:w-1/3 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
-								   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
-						/>
-						<input
-							type="text"
-							value={pair.value}
-							oninput={(e) => updatePair(index, 'value', (e.target as HTMLInputElement).value)}
-							placeholder="Value"
-							class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
-								   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
-						/>
+						<!-- Key input: dropdown if schema available, text otherwise -->
+						{#if hasSchema && (pair.fromSchema || getAvailableSchemaKeys().length > 0)}
+							<select
+								value={pair.key}
+								onchange={(e) => updatePair(index, 'key', (e.target as HTMLSelectElement).value)}
+								class="sf:w-1/3 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
+									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+							>
+								{#if pair.key && schemaKeys.includes(pair.key)}
+									<option value={pair.key}>{pair.key}</option>
+								{/if}
+								{#if !pair.key}
+									<option value="">Select key...</option>
+								{/if}
+								{#each getAvailableSchemaKeys() as key}
+									<option value={key}>{key}</option>
+								{/each}
+								<option value="_custom">+ Custom key...</option>
+							</select>
+						{:else}
+							<input
+								type="text"
+								value={pair.key}
+								oninput={(e) => updatePair(index, 'key', (e.target as HTMLInputElement).value)}
+								placeholder="Key"
+								class="sf:w-1/3 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
+									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+							/>
+						{/if}
+
+						<!-- Value input: type-appropriate based on schema -->
+						{#if keySchema?.type === 'enum' && keySchema.options}
+							<select
+								value={pair.value}
+								onchange={(e) =>
+									updatePair(index, 'value', `"${(e.target as HTMLSelectElement).value}"`)}
+								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
+									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+							>
+								<option value="">Select...</option>
+								{#each keySchema.options as opt}
+									<option value={opt} selected={pair.value === `"${opt}"`}>{opt}</option>
+								{/each}
+							</select>
+						{:else if keySchema?.type === 'boolean'}
+							<select
+								value={pair.value}
+								onchange={(e) => updatePair(index, 'value', (e.target as HTMLSelectElement).value)}
+								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
+									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+							>
+								<option value="true">true</option>
+								<option value="false">false</option>
+							</select>
+						{:else if keySchema?.type === 'number'}
+							<input
+								type="number"
+								value={pair.value}
+								min={keySchema.min}
+								max={keySchema.max}
+								oninput={(e) => updatePair(index, 'value', (e.target as HTMLInputElement).value)}
+								placeholder={keySchema.description ?? 'Number'}
+								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
+									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+							/>
+						{:else}
+							<input
+								type="text"
+								value={pair.value}
+								oninput={(e) => updatePair(index, 'value', (e.target as HTMLInputElement).value)}
+								placeholder={keySchema?.description ?? 'Value'}
+								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
+									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+							/>
+						{/if}
+
 						<button
 							type="button"
 							onclick={() => removePair(index)}
@@ -151,15 +263,32 @@
 							×
 						</button>
 					</div>
+
+					<!-- Show description hint for schema keys -->
+					{#if keySchema?.description}
+						<p class="sf:text-xs sf:text-slate-400 sf:ml-1 sf:-mt-1">{keySchema.description}</p>
+					{/if}
 				{/each}
 			{/if}
-			<button
-				type="button"
-				onclick={addPair}
-				class="sf:self-start sf:text-sm sf:text-indigo-600 sf:hover:text-indigo-800"
-			>
-				+ Add override
-			</button>
+
+			<div class="sf:flex sf:gap-2">
+				{#if hasSchema && getAvailableSchemaKeys().length > 0}
+					<button
+						type="button"
+						onclick={addSchemaKey}
+						class="sf:self-start sf:text-sm sf:text-indigo-600 sf:hover:text-indigo-800 sf:font-medium"
+					>
+						+ Add template option
+					</button>
+				{/if}
+				<button
+					type="button"
+					onclick={addPair}
+					class="sf:self-start sf:text-sm sf:text-slate-500 sf:hover:text-slate-700"
+				>
+					+ Custom override
+				</button>
+			</div>
 		</div>
 	{:else}
 		<textarea
@@ -179,6 +308,10 @@
 		{/if}
 	{/if}
 	<p class="sf:text-xs sf:text-slate-500">
-		Key-value pairs to customize the action prompt template.
+		{#if hasSchema}
+			Customize the action using template-defined options, or add custom overrides.
+		{:else}
+			Key-value pairs to customize the action prompt template.
+		{/if}
 	</p>
 </div>
