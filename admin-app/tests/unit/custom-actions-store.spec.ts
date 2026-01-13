@@ -6,6 +6,8 @@ import type { CustomAction } from '$lib/api/types';
 
 type StubClient = {
 	getCustomActions: ReturnType<typeof vi.fn>;
+	getActionDefinitions: ReturnType<typeof vi.fn>;
+	getCapabilities: ReturnType<typeof vi.fn>;
 	createCustomAction: ReturnType<typeof vi.fn>;
 	updateCustomAction: ReturnType<typeof vi.fn>;
 	archiveCustomAction: ReturnType<typeof vi.fn>;
@@ -15,6 +17,8 @@ type StubClient = {
 const stubClient = vi.hoisted(() => {
 	return {
 		getCustomActions: vi.fn(),
+		getActionDefinitions: vi.fn(),
+		getCapabilities: vi.fn(),
 		createCustomAction: vi.fn(),
 		updateCustomAction: vi.fn(),
 		archiveCustomAction: vi.fn(),
@@ -91,6 +95,13 @@ describe('customActionsStore', () => {
 		Object.values(stubClient).forEach((fn) => fn.mockReset());
 		notifyErrorSpy.mockReset();
 		notifySuccessSpy.mockReset();
+
+		// Default mock implementations for methods called by load()
+		stubClient.getCapabilities.mockResolvedValue({
+			supports_custom_actions: true,
+			cps_version: '1.0.0'
+		});
+		stubClient.getActionDefinitions.mockResolvedValue([]);
 	});
 
 	it('loads actions and sorts by updated time descending', async () => {

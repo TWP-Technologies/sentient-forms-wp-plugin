@@ -84,6 +84,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
      */
     public function test_action_log_requires_auth(): void
     {
+        do_action( 'rest_api_init' );
         $this->controller->register_routes();
 
         // Create request as unauthenticated user
