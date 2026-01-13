@@ -160,6 +160,7 @@
 						<tr class="sf:text-left sf:text-slate-500">
 							<th class="sf:p-2">Name</th>
 							<th class="sf:p-2">Code</th>
+							<th class="sf:p-2">Kind</th>
 							<th class="sf:p-2">Template ID</th>
 							<th class="sf:p-2">Status</th>
 							<th class="sf:p-2">Updated</th>
@@ -171,6 +172,13 @@
 							<tr class="sf:border-t sf:border-slate-100">
 								<td class="sf:p-2 sf:font-semibold sf:text-slate-800">{action.display_name}</td>
 								<td class="sf:p-2 sf:font-mono sf:text-xs">{action.code}</td>
+								<td class="sf:p-2">
+									{#if action.action_kind === 'custom_definition'}
+										<Badge variant="info">Custom</Badge>
+									{:else}
+										<Badge variant="neutral">Override</Badge>
+									{/if}
+								</td>
 								<td
 									class="sf:p-2 sf:font-mono sf:text-xs sf:break-all sf:max-w-xs sf:truncate"
 									title={action.template_id}

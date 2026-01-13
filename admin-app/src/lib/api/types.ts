@@ -66,6 +66,15 @@ export interface PluginSettingsResponse {
 	enable_logging?: boolean;
 }
 
+/**
+ * Action category for taxonomy grouping
+ */
+export type ActionCategory =
+	| 'content_quality'
+	| 'data_processing'
+	| 'automation'
+	| 'custom';
+
 export interface ActionDefinition {
 	id: string;
 	templateId?: string | null;
@@ -76,6 +85,7 @@ export interface ActionDefinition {
 	baseCreditCost?: number | null;
 	modelHint?: string | null;
 	overrideSchema?: TemplateOverrideSchema;
+	category?: ActionCategory;
 }
 
 /**

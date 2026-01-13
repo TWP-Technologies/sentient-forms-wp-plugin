@@ -3,8 +3,14 @@
 	import { Section, Card, Button, Badge, Alert, Skeleton } from '$lib/components/ui';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
-	import type { ActionDefinition, FormSourceSummary, FormSummary } from '$lib/api/types';
+	import type {
+		ActionDefinition,
+		ActionCategory,
+		FormSourceSummary,
+		FormSummary
+	} from '$lib/api/types';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
+	import { groupDefinitionsByCategory, getCategoryMeta } from '$lib/utils/action-categories';
 
 	const client = createClientFromConfig();
 	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
@@ -20,17 +26,32 @@
 	let error: string | null = $state(null);
 
 	const activeSources = $derived(formSources.filter((source) => source.isActive));
-	const customActions = $derived(customActionsState.actions.filter((action) => action.status === 'active'));
+	const customActions = $derived(
+		customActionsState.actions.filter((action) => action.status === 'active')
+	);
 
 	const displayedForms = $derived(
-		selectedSource ? formsBySource[selectedSource.slug] ?? [] : Object.values(formsBySource).flat()
+		selectedSource
+			? (formsBySource[selectedSource.slug] ?? [])
+			: Object.values(formsBySource).flat()
 	);
+
+	// Group definitions by category
+	const groupedDefinitions = $derived(groupDefinitionsByCategory(definitions));
+	const categoryOrder: ActionCategory[] = [
+		'content_quality',
+		'data_processing',
+		'automation',
+		'custom'
+	];
 
 	const definitionsBadgeVariant = $derived(
 		definitions.some((definition) => definition.source === 'cps') ? 'success' : 'warning'
 	);
 	const definitionsBadgeLabel = $derived(
-		definitions.some((definition) => definition.source === 'cps') ? 'CPS templates' : 'Local templates'
+		definitions.some((definition) => definition.source === 'cps')
+			? 'CPS templates'
+			: 'Local templates'
 	);
 
 	function friendlyMessageFromError(err: unknown, fallback: string): string {
@@ -113,7 +134,10 @@
 	});
 </script>
 
-<Section heading="Actions" description="Pair CPS templates and custom actions with your active forms.">
+<Section
+	heading="Actions"
+	description="Pair CPS templates and custom actions with your active forms."
+>
 	<div slot="actions" class="sf:flex sf:flex-wrap sf:gap-2">
 		<Button variant="secondary" onclick={refreshAll}>Refresh</Button>
 		<Button variant="secondary" onclick={() => navigateToAppPath('/actions/custom')}>
@@ -144,25 +168,36 @@
 					No templates loaded yet. Refresh or check CPS connectivity.
 				</p>
 			{:else}
-				<ul class="sf:mt-3 sf:space-y-2">
-					{#each definitions.slice(0, 5) as definition (definition.id)}
-						<li class="sf:flex sf:items-start sf:justify-between sf:gap-2">
+				<div class="sf:mt-3 sf:space-y-3">
+					{#each categoryOrder as category}
+						{@const items = groupedDefinitions.get(category) ?? []}
+						{#if items.length > 0}
+							{@const meta = getCategoryMeta(category)}
 							<div>
-								<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
-									{definition.label ?? definition.id}
+								<p
+									class="sf:text-xs sf:font-medium sf:text-slate-500 sf:uppercase sf:tracking-wide sf:mb-1"
+								>
+									{meta.icon}
+									{meta.label}
 								</p>
-								<p class="sf:text-xs sf:text-slate-500">
-									Hooks: {definition.hooks && Array.isArray(definition.hooks)
-										? definition.hooks.join(', ')
-										: 'Default (gform_validation)'}
-								</p>
+								<ul class="sf:space-y-1">
+									{#each items.slice(0, 3) as definition (definition.id)}
+										<li class="sf:flex sf:items-start sf:justify-between sf:gap-2">
+											<div>
+												<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+													{definition.label ?? definition.id}
+												</p>
+											</div>
+											<Badge variant={definition.source === 'cps' ? 'success' : 'warning'}>
+												{definition.source === 'cps' ? 'CPS' : 'Local'}
+											</Badge>
+										</li>
+									{/each}
+								</ul>
 							</div>
-							<Badge variant={definition.source === 'cps' ? 'success' : 'warning'}>
-								{definition.source === 'cps' ? 'CPS' : 'Local'}
-							</Badge>
-						</li>
+						{/if}
 					{/each}
-				</ul>
+				</div>
 			{/if}
 		</Card>
 
@@ -197,7 +232,8 @@
 			<p class="sf:text-sm sf:font-medium sf:text-slate-700">Form providers</p>
 			{#if formSources.length === 0}
 				<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
-					Install and activate a supported form builder (like Gravity Forms) to start mapping actions.
+					Install and activate a supported form builder (like Gravity Forms) to start mapping
+					actions.
 				</p>
 			{:else}
 				<div class="sf:flex sf:flex-wrap sf:gap-2 sf:mt-3">
@@ -227,7 +263,8 @@
 
 	{#if activeSources.length === 0}
 		<Alert variant="warning" class="sf:mt-4">
-			Install and activate a supported form builder (like Gravity Forms) to start mapping Sentient Forms actions.
+			Install and activate a supported form builder (like Gravity Forms) to start mapping Sentient
+			Forms actions.
 		</Alert>
 	{:else}
 		<Card class="sf:mt-4">
@@ -261,7 +298,8 @@
 				</div>
 			{:else if displayedForms.length === 0}
 				<p class="sf:mt-4 sf:text-sm sf:text-slate-600">
-					No forms detected for {selectedSource?.label ?? 'this provider'}. Create a form first, then refresh this page.
+					No forms detected for {selectedSource?.label ?? 'this provider'}. Create a form first,
+					then refresh this page.
 				</p>
 			{:else}
 				<div class="sf:mt-4 sf:grid sf:gap-4 sf:md:grid-cols-2 sf:xl:grid-cols-3">
@@ -286,7 +324,7 @@
 							</p>
 							<div class="sf:mt-4 sf:flex sf:justify-between sf:items-center">
 								<span class="sf:text-xs sf:text-slate-500">
-									{form.settings && (form.settings as Record<string, unknown>)['enabled']
+									{form.settings && (form.settings as { enabled?: boolean })?.enabled
 										? 'Sentient Forms enabled'
 										: 'Sentient Forms disabled'}
 								</span>
