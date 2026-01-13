@@ -100,7 +100,7 @@ class LicenseControllerTest extends WP_UnitTestCase
     public function test_activate_license_success(): void
     {
         $this->mock_http_response(
-            '/licensing/activate',
+            '/license/activate',
             [
                 'success' => true,
                 'data'    => [
@@ -118,7 +118,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
-            'license_key' => '0abcdefghijklmnopqrstuvwxy',
+            'license_key' => '0abcdefghjkmnpqrstvwxyz123',
         ] ) );
         $response = rest_get_server()->dispatch( $request );
 
@@ -146,7 +146,7 @@ class LicenseControllerTest extends WP_UnitTestCase
     {
         $plugin = Sentient_Forms_Plugin::instance();
         $plugin->set_license_data( [
-            'license_key'    => '0abcdefghijklmnopqrstuvwxy',
+            'license_key'    => '0abcdefghjkmnpqrstvwxyz123',
             'license_status' => 'active',
             'proxy_api_key'  => 'proxy-key-to-deactivate',
             'license_id'     => 'lic-uuid-123',
@@ -154,7 +154,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         ] );
 
         $this->mock_http_response(
-            '/licensing/deactivate',
+            '/license/deactivate',
             [
                 'success' => true,
                 'message' => 'License deactivated successfully.',
@@ -199,7 +199,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                 }
                 return $preempt;
             },
-            10,
+            1,  // Highest priority to ensure mock fires first
             3
         );
     }
