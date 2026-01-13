@@ -60,7 +60,13 @@ export class MockSentientFormsApiClient {
 			status: 'active',
 			archived_at: null,
 			created_at: new Date().toISOString(),
-			updated_at: new Date().toISOString()
+			updated_at: new Date().toISOString(),
+			// New definition fields (CA-DEF-001)
+			action_kind: 'template_override',
+			definition: null,
+			definition_version: 1,
+			output_contract: null,
+			supported_execution_modes: ['after_submission']
 		}
 	];
 
@@ -288,7 +294,13 @@ export class MockSentientFormsApiClient {
 			status: 'active',
 			archived_at: null,
 			created_at: now,
-			updated_at: now
+			updated_at: now,
+			// New definition fields with defaults (CA-DEF-001)
+			action_kind: 'template_override',
+			definition: null,
+			definition_version: 1,
+			output_contract: null,
+			supported_execution_modes: ['after_submission']
 		};
 		this.customActions = [action, ...this.customActions];
 		return {

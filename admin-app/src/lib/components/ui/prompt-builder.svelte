@@ -70,10 +70,23 @@
 		const obj: Record<string, unknown> = {};
 		for (const pair of formPairs) {
 			if (pair.key.trim()) {
-				try {
-					obj[pair.key.trim()] = JSON.parse(pair.value);
-				} catch {
+				const keySchema = getKeySchema(pair.key.trim());
+				// For enum and string types, store as raw string
+				// For boolean and number, parse appropriately
+				// For unknown types, try JSON.parse with string fallback
+				if (keySchema?.type === 'enum' || keySchema?.type === 'string') {
 					obj[pair.key.trim()] = pair.value;
+				} else if (keySchema?.type === 'boolean') {
+					obj[pair.key.trim()] = pair.value === 'true';
+				} else if (keySchema?.type === 'number') {
+					obj[pair.key.trim()] = pair.value === '' ? null : Number(pair.value);
+				} else {
+					// Unknown type: try JSON parse, fall back to string
+					try {
+						obj[pair.key.trim()] = JSON.parse(pair.value);
+					} catch {
+						obj[pair.key.trim()] = pair.value;
+					}
 				}
 			}
 		}
@@ -107,7 +120,17 @@
 		const availableKey = schemaKeys.find((k) => !usedKeys.has(k));
 		if (availableKey && schema) {
 			const keySchema = schema[availableKey];
-			const defaultVal = keySchema.default !== undefined ? JSON.stringify(keySchema.default) : '';
+			// For enum/string/boolean/number, store raw value; otherwise JSON stringify
+			let defaultVal = '';
+			if (keySchema.default !== undefined) {
+				if (keySchema.type === 'enum' || keySchema.type === 'string') {
+					defaultVal = String(keySchema.default);
+				} else if (keySchema.type === 'boolean' || keySchema.type === 'number') {
+					defaultVal = String(keySchema.default);
+				} else {
+					defaultVal = JSON.stringify(keySchema.default);
+				}
+			}
 			formPairs = [...formPairs, { key: availableKey, value: defaultVal, fromSchema: true }];
 			updateFromForm();
 		}
@@ -212,14 +235,13 @@
 						{#if keySchema?.type === 'enum' && keySchema.options}
 							<select
 								value={pair.value}
-								onchange={(e) =>
-									updatePair(index, 'value', `"${(e.target as HTMLSelectElement).value}"`)}
+								onchange={(e) => updatePair(index, 'value', (e.target as HTMLSelectElement).value)}
 								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
 									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
 							>
 								<option value="">Select...</option>
 								{#each keySchema.options as opt}
-									<option value={opt} selected={pair.value === `"${opt}"`}>{opt}</option>
+									<option value={opt}>{opt}</option>
 								{/each}
 							</select>
 						{:else if keySchema?.type === 'boolean'}

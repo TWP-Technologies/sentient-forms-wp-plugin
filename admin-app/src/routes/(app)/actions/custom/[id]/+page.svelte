@@ -72,6 +72,7 @@
 
 		<CustomActionForm
 			initialData={action}
+			definitions={customState.definitions}
 			onSubmit={handleSubmit}
 			onCancel={handleCancel}
 			{submitting}

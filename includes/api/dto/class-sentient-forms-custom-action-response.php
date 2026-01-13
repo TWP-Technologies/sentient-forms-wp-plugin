@@ -18,6 +18,25 @@ if ( !defined( 'ABSPATH' ) )
  */
 class Sentient_Forms_Custom_Action_Response
 {
+    /**
+     * @param string $id
+     * @param string $template_id
+     * @param string $code
+     * @param string $display_name
+     * @param string|null $description
+     * @param array<string, mixed> $prompt_overrides
+     * @param string|null $model_hint
+     * @param int|null $base_credit_cost
+     * @param string $status
+     * @param string|null $archived_at
+     * @param string $created_at
+     * @param string $updated_at
+     * @param string $action_kind New: 'template_override' or 'custom_definition'
+     * @param array<string, mixed>|null $definition New: Full action definition JSONB
+     * @param int $definition_version New: Schema version for definition
+     * @param array<string, mixed>|null $output_contract New: Expected structured output format
+     * @param array<int, string> $supported_execution_modes New: Allowed execution modes
+     */
     public function __construct(
         private string $id,
         private string $template_id,
@@ -30,7 +49,13 @@ class Sentient_Forms_Custom_Action_Response
         private string $status,
         private ?string $archived_at,
         private string $created_at,
-        private string $updated_at
+        private string $updated_at,
+        // New definition fields (CA-DEF-001)
+        private string $action_kind,
+        private ?array $definition,
+        private int $definition_version,
+        private ?array $output_contract,
+        private array $supported_execution_modes
     ) {
     }
 
@@ -52,6 +77,9 @@ class Sentient_Forms_Custom_Action_Response
             'status',
             'created_at',
             'updated_at',
+            'action_kind',
+            'definition_version',
+            'supported_execution_modes',
         ];
 
         foreach ( $required_keys as $key )
@@ -77,7 +105,13 @@ class Sentient_Forms_Custom_Action_Response
             (string) $payload['status'],
             isset( $payload['archived_at'] ) ? (string) $payload['archived_at'] : null,
             (string) $payload['created_at'],
-            (string) $payload['updated_at']
+            (string) $payload['updated_at'],
+            // New definition fields
+            (string) $payload['action_kind'],
+            isset( $payload['definition'] ) && is_array( $payload['definition'] ) ? $payload['definition'] : null,
+            (int) $payload['definition_version'],
+            isset( $payload['output_contract'] ) && is_array( $payload['output_contract'] ) ? $payload['output_contract'] : null,
+            is_array( $payload['supported_execution_modes'] ) ? $payload['supported_execution_modes'] : []
         );
     }
 
@@ -89,18 +123,24 @@ class Sentient_Forms_Custom_Action_Response
     public function to_array(): array
     {
         return [
-            'id'               => $this->id,
-            'template_id'      => $this->template_id,
-            'code'             => $this->code,
-            'display_name'     => $this->display_name,
-            'description'      => $this->description,
-            'prompt_overrides' => $this->prompt_overrides,
-            'model_hint'       => $this->model_hint,
-            'base_credit_cost' => $this->base_credit_cost,
-            'status'           => $this->status,
-            'archived_at'      => $this->archived_at,
-            'created_at'       => $this->created_at,
-            'updated_at'       => $this->updated_at,
+            'id'                        => $this->id,
+            'template_id'               => $this->template_id,
+            'code'                      => $this->code,
+            'display_name'              => $this->display_name,
+            'description'               => $this->description,
+            'prompt_overrides'          => $this->prompt_overrides,
+            'model_hint'                => $this->model_hint,
+            'base_credit_cost'          => $this->base_credit_cost,
+            'status'                    => $this->status,
+            'archived_at'               => $this->archived_at,
+            'created_at'                => $this->created_at,
+            'updated_at'                => $this->updated_at,
+            // New definition fields (CA-DEF-001)
+            'action_kind'               => $this->action_kind,
+            'definition'                => $this->definition,
+            'definition_version'        => $this->definition_version,
+            'output_contract'           => $this->output_contract,
+            'supported_execution_modes' => $this->supported_execution_modes,
         ];
     }
 
@@ -111,4 +151,45 @@ class Sentient_Forms_Custom_Action_Response
     {
         return $this->prompt_overrides;
     }
+
+    /**
+     * @return string 'template_override' or 'custom_definition'
+     */
+    public function get_action_kind(): string
+    {
+        return $this->action_kind;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function get_definition(): ?array
+    {
+        return $this->definition;
+    }
+
+    /**
+     * @return int
+     */
+    public function get_definition_version(): int
+    {
+        return $this->definition_version;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function get_output_contract(): ?array
+    {
+        return $this->output_contract;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public function get_supported_execution_modes(): array
+    {
+        return $this->supported_execution_modes;
+    }
 }
+

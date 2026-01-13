@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { Section, Button, Alert } from '$lib/components/ui';
 	import CustomActionForm from '$lib/components/custom-action-form.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
@@ -7,6 +8,13 @@
 
 	let submitting = $state(false);
 	let error = $state<string | null>(null);
+
+	// Ensure definitions are loaded when navigating directly to this page
+	onMount(async () => {
+		if (customActionsState.definitions.length === 0) {
+			await customActionsStore.load();
+		}
+	});
 
 	async function handleSubmit(data: CustomActionCreateInput) {
 		submitting = true;
@@ -42,5 +50,14 @@
 		<Alert variant="danger" class="sf:mb-4">{error}</Alert>
 	{/if}
 
-	<CustomActionForm onSubmit={handleSubmit} onCancel={handleCancel} {submitting} />
+	{#if customActionsState.loading}
+		<p class="sf:text-slate-500 sf:italic">Loading templates…</p>
+	{:else}
+		<CustomActionForm
+			definitions={customActionsState.definitions}
+			onSubmit={handleSubmit}
+			onCancel={handleCancel}
+			{submitting}
+		/>
+	{/if}
 </Section>

@@ -141,6 +141,43 @@ export interface FormActionMutationPayload {
 
 export type CustomActionStatus = 'active' | 'archived';
 
+/**
+ * Action kind determines how the action is executed
+ */
+export type ActionKind = 'template_override' | 'custom_definition';
+
+/**
+ * Supported execution modes for actions
+ */
+export type ExecutionMode = 'validation' | 'after_submission' | 'real_time';
+
+/**
+ * Output contract defining expected structured output
+ */
+export interface OutputContract {
+	response_type: 'text' | 'boolean' | 'classification' | 'structured';
+	json_schema?: Record<string, unknown>;
+	confidence_score_required?: boolean;
+}
+
+/**
+ * Full action definition for custom_definition kind
+ */
+export interface ActionDefinitionPayload {
+	meta_prompt?: string;
+	goal?: string;
+	success_criteria?: string[];
+	failure_criteria?: string[];
+	examples?: Array<{
+		type: 'positive' | 'negative' | 'edge_case';
+		input: string;
+		expected_output: string;
+		explanation?: string;
+	}>;
+	input_requirements?: Record<string, unknown>;
+	execution_defaults?: Record<string, unknown>;
+}
+
 export interface CustomAction {
 	id: string;
 	template_id: string;
@@ -154,6 +191,12 @@ export interface CustomAction {
 	archived_at: string | null;
 	created_at: string;
 	updated_at: string;
+	// New definition fields (CA-DEF-001)
+	action_kind: ActionKind;
+	definition: ActionDefinitionPayload | null;
+	definition_version: number;
+	output_contract: OutputContract | null;
+	supported_execution_modes: ExecutionMode[];
 }
 
 export interface CustomActionQuota {

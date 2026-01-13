@@ -2,6 +2,7 @@ import { toStore } from 'svelte/store';
 import { ApiClientError, createClientFromConfig } from '$lib/api/client';
 import { notifications } from '$lib/stores/notifications';
 import type {
+	ActionDefinition,
 	CustomAction,
 	CustomActionCreatePayload,
 	CustomActionFilters,
@@ -17,6 +18,7 @@ export interface CustomActionsState {
 	cpsVersion: string | null;
 	requiredCustomActionsVersion?: string;
 	actions: CustomAction[];
+	definitions: ActionDefinition[];
 	quota: CustomActionQuota | null;
 	filters: CustomActionFilters;
 	lastLoadedAt: number | null;
@@ -33,6 +35,7 @@ function initialState(): CustomActionsState {
 		cpsVersion: null,
 		requiredCustomActionsVersion: '1.0.0',
 		actions: [],
+		definitions: [],
 		quota: null,
 		filters: { status: 'active' },
 		lastLoadedAt: null
@@ -91,12 +94,16 @@ async function load(filters: CustomActionFilters = customActionsState.filters): 
 			// best effort; fall back to 404 detection
 		}
 
-		const response = await client.getCustomActions(filters, { showNotifications: false });
+		const [response, definitions] = await Promise.all([
+			client.getCustomActions(filters, { showNotifications: false }),
+			client.getActionDefinitions({ showNotifications: false })
+		]);
 		const sorted = [...response.actions].sort((a, b) =>
 			new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
 		);
 		setState({
 			actions: sorted,
+			definitions,
 			quota: response.quota,
 			loading: false,
 			error: null,

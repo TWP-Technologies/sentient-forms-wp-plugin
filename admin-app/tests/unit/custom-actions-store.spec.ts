@@ -52,7 +52,13 @@ const sampleActions: CustomAction[] = [
 		status: 'active',
 		archived_at: null,
 		created_at: '2025-11-14T00:00:00Z',
-		updated_at: '2025-11-14T05:00:00Z'
+		updated_at: '2025-11-14T05:00:00Z',
+		// New definition fields
+		action_kind: 'template_override',
+		definition: null,
+		definition_version: 1,
+		output_contract: null,
+		supported_execution_modes: ['after_submission']
 	},
 	{
 		id: 'b',
@@ -66,7 +72,13 @@ const sampleActions: CustomAction[] = [
 		status: 'active',
 		archived_at: null,
 		created_at: '2025-11-13T00:00:00Z',
-		updated_at: '2025-11-15T07:00:00Z'
+		updated_at: '2025-11-15T07:00:00Z',
+		// New definition fields
+		action_kind: 'template_override',
+		definition: null,
+		definition_version: 1,
+		output_contract: null,
+		supported_execution_modes: ['after_submission']
 	}
 ];
 

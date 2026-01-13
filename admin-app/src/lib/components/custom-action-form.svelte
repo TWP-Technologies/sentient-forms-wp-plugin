@@ -20,13 +20,13 @@
 		type CustomActionCreateInput,
 		type CustomActionUpdateInput
 	} from '$lib/schemas/custom-action';
-	import type { CustomAction, TemplateOverrideSchema } from '$lib/api/types';
+	import type { CustomAction, ActionDefinition, TemplateOverrideSchema } from '$lib/api/types';
 
 	interface Props {
 		/** Existing action data for edit mode */
 		initialData?: CustomAction | null;
-		/** Override schema for the selected template */
-		templateSchema?: TemplateOverrideSchema;
+		/** Available action definitions with schemas */
+		definitions?: ActionDefinition[];
 		/** Submit handler - returns void or throws */
 		onSubmit: (data: CustomActionCreateInput | CustomActionUpdateInput) => Promise<void>;
 		/** Cancel handler */
@@ -37,7 +37,7 @@
 
 	let {
 		initialData = null,
-		templateSchema,
+		definitions = [],
 		onSubmit,
 		onCancel,
 		submitting = false
@@ -53,6 +53,14 @@
 	let promptOverrides = $state<Record<string, unknown>>(initialData?.prompt_overrides ?? {});
 	let modelHint = $state<string | null>(initialData?.model_hint ?? null);
 	let baseCreditCost = $state(initialData?.base_credit_cost?.toString() ?? '');
+
+	// Derive schema from definitions based on selected templateId
+	const selectedDefinition = $derived(
+		definitions.find((d) => d.id === templateId || d.templateId === templateId)
+	);
+	const templateSchema = $derived<TemplateOverrideSchema | undefined>(
+		selectedDefinition?.overrideSchema
+	);
 
 	// Validation errors
 	let errors = $state<Array<{ path: string; message: string }>>([]);
@@ -167,6 +175,72 @@
 				</p>
 				<p class="sf:text-xs sf:text-slate-500">Code cannot be changed after creation.</p>
 			</div>
+
+			<!-- Definition Metadata (Read-only) CA-DEF-001 -->
+			<details class="sf:mt-4 sf:border sf:border-slate-200 sf:rounded-lg sf:p-3 sf:bg-slate-50">
+				<summary
+					class="sf:cursor-pointer sf:select-none sf:text-sm sf:font-medium sf:text-slate-700"
+				>
+					Definition Metadata
+					<span class="sf:text-xs sf:text-slate-500 sf:font-normal sf:ml-2"
+						>Configuration type and execution modes</span
+					>
+				</summary>
+				<div class="sf:mt-3 sf:grid sf:gap-4 sf:md:grid-cols-3">
+					<div class="sf:flex sf:flex-col sf:gap-1">
+						<span class="sf:text-sm sf:font-medium sf:text-slate-700">Action Kind</span>
+						<p
+							class="sf:text-sm sf:text-slate-600 sf:bg-slate-50 sf:px-3 sf:py-2 sf:rounded-md sf:border sf:border-slate-200"
+						>
+							{#if initialData?.action_kind === 'custom_definition'}
+								<span class="sf:inline-flex sf:items-center sf:gap-1">
+									<span class="sf:w-2 sf:h-2 sf:bg-purple-500 sf:rounded-full"></span>
+									Custom Definition
+								</span>
+							{:else}
+								<span class="sf:inline-flex sf:items-center sf:gap-1">
+									<span class="sf:w-2 sf:h-2 sf:bg-blue-500 sf:rounded-full"></span>
+									Template Override
+								</span>
+							{/if}
+						</p>
+					</div>
+					<div class="sf:flex sf:flex-col sf:gap-1">
+						<span class="sf:text-sm sf:font-medium sf:text-slate-700">Definition Version</span>
+						<p
+							class="sf:text-sm sf:text-slate-600 sf:bg-slate-50 sf:px-3 sf:py-2 sf:rounded-md sf:border sf:border-slate-200"
+						>
+							v{initialData?.definition_version ?? 1}
+						</p>
+					</div>
+					<div class="sf:flex sf:flex-col sf:gap-1">
+						<span class="sf:text-sm sf:font-medium sf:text-slate-700">Execution Modes</span>
+						<div
+							class="sf:flex sf:flex-wrap sf:gap-1.5 sf:bg-slate-50 sf:px-3 sf:py-2 sf:rounded-md sf:border sf:border-slate-200"
+						>
+							{#each initialData?.supported_execution_modes ?? ['after_submission'] as mode}
+								<span
+									class="sf:text-xs sf:bg-slate-200 sf:text-slate-700 sf:px-2 sf:py-0.5 sf:rounded-full"
+								>
+									{mode.replace('_', ' ')}
+								</span>
+							{/each}
+						</div>
+					</div>
+				</div>
+				{#if initialData?.output_contract}
+					<div class="sf:mt-4 sf:flex sf:flex-col sf:gap-1">
+						<span class="sf:text-sm sf:font-medium sf:text-slate-700">Output Contract</span>
+						<p class="sf:text-xs sf:text-slate-500 sf:mb-1">Expected structured output format.</p>
+						<pre
+							class="sf:text-xs sf:text-slate-600 sf:bg-slate-100 sf:p-3 sf:rounded-md sf:overflow-x-auto sf:border sf:border-slate-200">{JSON.stringify(
+								initialData.output_contract,
+								null,
+								2
+							)}</pre>
+					</div>
+				{/if}
+			</details>
 		{/if}
 
 		<TextareaField
