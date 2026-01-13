@@ -1393,6 +1393,12 @@ HTML;
             return wp_trim_words( (string) $payload['reasoning'], 50, '...' );
         }
 
+        // Fall back to llm_output (legacy support) with truncation
+        if ( ! empty( $payload['llm_output'] ) )
+        {
+            return wp_trim_words( (string) $payload['llm_output'], 50, '...' );
+        }
+
         return null;
     }
 
