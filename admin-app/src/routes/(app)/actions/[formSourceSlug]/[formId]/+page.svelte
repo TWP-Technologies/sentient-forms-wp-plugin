@@ -14,6 +14,7 @@
 	import { formActionsStore, formActionsState } from '$lib/stores/form-actions.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { notifications } from '$lib/stores/notifications';
+	import { createClientFromConfig } from '$lib/api/client';
 	import type {
 		ActionDefinition,
 		CustomAction,
@@ -51,16 +52,23 @@
 	let refreshInterval: number | null = null;
 	let visibilityHandler: (() => void) | null = null;
 
-	// CA-MAP-001: Field selection state
-	// TODO: Load from GF adapter once endpoint is available
-	const mockFormFields: FormFieldInfo[] = [
-		{ id: '1', label: 'Name', type: 'name' },
-		{ id: '2', label: 'Email', type: 'email' },
-		{ id: '3', label: 'Phone', type: 'phone' },
-		{ id: '4', label: 'Message', type: 'textarea' },
-		{ id: '5', label: 'Company', type: 'text' }
-	];
-	const formFields = $state<FormFieldInfo[]>(mockFormFields);
+	// CA-MAP-001: Field selection state (loaded from API)
+	let formFields = $state<FormFieldInfo[]>([]);
+	let fieldsLoading = $state(false);
+
+	async function loadFormFields() {
+		if (fieldsLoading) return;
+		fieldsLoading = true;
+		try {
+			const client = createClientFromConfig();
+			formFields = await client.getFormFields(data.formSourceSlug, data.formId);
+		} catch (error) {
+			console.warn('[FormMapping] Failed to load form fields:', error);
+			formFields = []; // Graceful fallback
+		} finally {
+			fieldsLoading = false;
+		}
+	}
 
 	const definitions = $derived(actionsState.definitions ?? []);
 	const customActions = $derived(
@@ -206,6 +214,7 @@
 	onMount(() => {
 		formActionsStore.load(data.formSourceSlug, data.formId);
 		customActionsStore.load({ status: 'active' });
+		loadFormFields(); // CA-MAP-001: Load form fields for FieldSelector
 		restoreLastHooks();
 		startRefreshInterval();
 

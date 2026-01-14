@@ -148,6 +148,20 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 ],
             ],
         );
+
+        // CA-MAP-001: Form field discovery endpoint for FieldSelector component
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/fields',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_form_fields' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
+                    'args'                => $this->get_collection_args(),
+                ],
+            ],
+        );
     }
 
     /** Collection args */
@@ -343,6 +357,63 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return $this->prepare_item_for_response( array_values( $actions ) );
+    }
+
+    /**
+     * CA-MAP-001: Retrieve form fields for FieldSelector component.
+     *
+     * Returns field metadata transformed to FormFieldInfo format.
+     * Filters out non-input fields (HTML, page breaks, sections).
+     *
+     * @param WP_REST_Request $request The request.
+     *
+     * @return WP_REST_Response Field list or error.
+     */
+    public function get_form_fields( WP_REST_Request $request ): WP_REST_Response
+    {
+        $form_source_slug = $request->get_param( 'form_source_slug' );
+        $form_id          = (int) $request->get_param( 'form_id' );
+
+        // Get the adapter for this form source
+        $adapter = $this->plugin->get_adapter( $form_source_slug );
+        if ( ! $adapter ) {
+            return new WP_REST_Response(
+                [ 'success' => false, 'message' => 'Form source adapter not found.' ],
+                404
+            );
+        }
+
+        // Get raw form fields from adapter
+        $raw_fields = $adapter->get_form_fields( $form_id );
+        if ( empty( $raw_fields ) ) {
+            return new WP_REST_Response(
+                [ 'success' => true, 'data' => [] ],
+                200
+            );
+        }
+
+        // Transform to FieldSelector format and filter non-input fields
+        $excluded_types = [ 'html', 'page', 'section', 'captcha' ];
+        $fields         = [];
+
+        foreach ( $raw_fields as $field ) {
+            $field_type = strtolower( $field->type ?? '' );
+            if ( in_array( $field_type, $excluded_types, true ) ) {
+                continue;
+            }
+
+            $fields[] = [
+                'id'         => (string) ( $field->id ?? '' ),
+                'label'      => $field->label ?? '',
+                'type'       => $field_type,
+                'adminLabel' => $field->adminLabel ?? null,
+            ];
+        }
+
+        return new WP_REST_Response(
+            [ 'success' => true, 'data' => $fields ],
+            200
+        );
     }
 
     /**

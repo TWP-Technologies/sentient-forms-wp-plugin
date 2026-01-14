@@ -15,6 +15,7 @@ import type {
 	FormActionLinkage,
 	FormActionMutationPayload,
 	FormExecutionStatus,
+	FormFieldInfo,
 	FormSummary,
 	CapabilitiesResponse,
 	LicenseActivationRequest,
@@ -210,6 +211,27 @@ export class SentientFormsApiClient {
 		const slug = encodeURIComponent(formSourceSlug);
 		const response = await this.request<RestEnvelope<FormActionLinkage[]>>(
 			`${slug}/forms/${formId}/actions`,
+			options
+		);
+		return this.unwrap(response);
+	}
+
+	/**
+	 * CA-MAP-001: Get form fields for FieldSelector component.
+	 * Returns field metadata (id, label, type, adminLabel) filtered to user-input fields.
+	 */
+	async getFormFields(
+		formSourceSlug: string,
+		formId: number,
+		options: RequestOptions = {}
+	): Promise<FormFieldInfo[]> {
+		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+			console.warn('[ApiClient] getFormFields called with invalid params:', { formSourceSlug, formId });
+			return [];
+		}
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<FormFieldInfo[]>>(
+			`${slug}/forms/${formId}/actions/fields`,
 			options
 		);
 		return this.unwrap(response);
