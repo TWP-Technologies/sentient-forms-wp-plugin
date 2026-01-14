@@ -7,7 +7,11 @@
 -->
 <script lang="ts">
 	import { parsePromptOverridesInput } from '$lib/utils/custom-actions';
-	import type { TemplateOverrideSchema, OverrideKeySchema } from '$lib/api/types';
+	import type {
+		TemplateOverrideSchema,
+		OverrideKeySchema,
+		OverrideKeyCategory
+	} from '$lib/api/types';
 
 	interface Props {
 		/** Current value as a record */
@@ -165,6 +169,44 @@
 		return schemaKeys.filter((k) => !usedKeys.has(k));
 	}
 
+	// CA-UI-001: Category labels for taxonomy grouping
+	const categoryLabels: Record<OverrideKeyCategory, string> = {
+		behavior: 'Behavior',
+		output: 'Output',
+		model: 'Model',
+		context: 'Context',
+		advanced: 'Advanced'
+	};
+
+	function getCategoryLabel(category?: OverrideKeyCategory): string {
+		return category ? categoryLabels[category] : 'General';
+	}
+
+	// Group available schema keys by category
+	function getGroupedSchemaKeys(): Array<{ category: string; keys: string[] }> {
+		const availableKeys = getAvailableSchemaKeys();
+		if (availableKeys.length === 0) return [];
+
+		const groups: Record<string, string[]> = {};
+		for (const key of availableKeys) {
+			const keySchema = schema?.[key];
+			const categoryLabel = getCategoryLabel(keySchema?.category);
+			if (!groups[categoryLabel]) {
+				groups[categoryLabel] = [];
+			}
+			groups[categoryLabel].push(key);
+		}
+
+		// Sort categories: General first, then alphabetically
+		return Object.entries(groups)
+			.sort(([a], [b]) => {
+				if (a === 'General') return -1;
+				if (b === 'General') return 1;
+				return a.localeCompare(b);
+			})
+			.map(([category, keys]) => ({ category, keys }));
+	}
+
 	function renderValueInput(pair: { key: string; value: string }, index: number) {
 		const keySchema = getKeySchema(pair.key);
 		return { keySchema };
@@ -215,8 +257,13 @@
 								{#if !pair.key}
 									<option value="">Select key...</option>
 								{/if}
-								{#each getAvailableSchemaKeys() as key}
-									<option value={key}>{key}</option>
+								<!-- CA-UI-001: Group keys by category -->
+								{#each getGroupedSchemaKeys() as group (group.category)}
+									<optgroup label={group.category}>
+										{#each group.keys as key (key)}
+											<option value={key}>{key}</option>
+										{/each}
+									</optgroup>
 								{/each}
 								<option value="_custom">+ Custom key...</option>
 							</select>

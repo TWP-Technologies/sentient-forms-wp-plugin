@@ -104,6 +104,16 @@ export interface ActionDefinition {
 }
 
 /**
+ * Category for override keys (CA-UI-001 Key Taxonomy)
+ */
+export type OverrideKeyCategory =
+	| 'behavior'     // Controls action behavior (strictness, style)
+	| 'output'       // Output format/presentation
+	| 'model'        // Model selection and parameters
+	| 'context'      // Context and input handling
+	| 'advanced';    // Advanced/experimental options
+
+/**
  * Schema definition for a single override key
  */
 export interface OverrideKeySchema {
@@ -113,6 +123,8 @@ export interface OverrideKeySchema {
 	description?: string;
 	min?: number; // for number type
 	max?: number; // for number type
+	/** Category for key taxonomy grouping (CA-UI-001) */
+	category?: OverrideKeyCategory;
 }
 
 /**
