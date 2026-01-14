@@ -67,6 +67,21 @@ export interface PluginSettingsResponse {
 }
 
 /**
+ * Form field information from adapter (e.g., Gravity Forms)
+ */
+export interface FormFieldInfo {
+	/** Field ID (string for GF compatibility) */
+	id: string;
+	/** User-facing field label */
+	label: string;
+	/** Field type (text, email, select, etc.) */
+	type: string;
+	/** Admin label override */
+	adminLabel?: string;
+}
+
+
+/**
  * Action category for taxonomy grouping
  */
 export type ActionCategory =
@@ -128,6 +143,31 @@ export interface TemplateSchemaResponse {
 	override_schema: TemplateOverrideSchema;
 }
 
+/**
+ * Input mapping configuration for field selection (CA-MAP-001)
+ * Controls which form fields are sent to CPS for action execution
+ */
+export interface InputMapping {
+	/** Field selection mode */
+	mode: 'all' | 'selected' | 'exclude';
+	/** Gravity Forms field IDs to include/exclude based on mode */
+	field_ids?: string[];
+	/** Include form metadata (title, entry ID, etc.) */
+	include_metadata?: boolean;
+}
+
+/**
+ * Strongly-typed settings for form-level action configuration
+ */
+export interface FormActionSettings {
+	/** Field selection configuration */
+	input_mapping?: InputMapping;
+	/** Prompt overrides for this mapping */
+	prompt_overrides?: Record<string, unknown>;
+	/** Additional runtime settings */
+	[key: string]: unknown;
+}
+
 export interface FormActionLinkage {
 	local_mapping_id: string;
 	central_action_id: string;
@@ -136,7 +176,7 @@ export interface FormActionLinkage {
 	is_action_enabled_for_form?: boolean;
 	execution_priority?: number;
 	action_name_label?: string;
-	settings?: Record<string, any>;
+	settings?: FormActionSettings;
 }
 
 export interface FormActionMutationPayload {
@@ -146,7 +186,7 @@ export interface FormActionMutationPayload {
 	is_action_enabled_for_form?: boolean;
 	execution_priority?: number;
 	action_name_label?: string;
-	settings?: Record<string, any>;
+	settings?: FormActionSettings;
 }
 
 export type CustomActionStatus = 'active' | 'archived';
