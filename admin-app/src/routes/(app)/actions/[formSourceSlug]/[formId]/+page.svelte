@@ -1,6 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Section, Card, Button, Badge, Alert, InputField, SelectField } from '$lib/components/ui';
+	import {
+		Section,
+		Card,
+		Button,
+		Badge,
+		Alert,
+		InputField,
+		SelectField,
+		FieldSelector
+	} from '$lib/components/ui';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { formActionsStore, formActionsState } from '$lib/stores/form-actions.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
@@ -9,7 +18,9 @@
 		ActionDefinition,
 		CustomAction,
 		FormActionLinkage,
-		FormExecutionStatus
+		FormExecutionStatus,
+		FormFieldInfo,
+		InputMapping
 	} from '$lib/api/types';
 
 	type Props = { data: { formSourceSlug: string; formId: number } };
@@ -39,6 +50,17 @@
 	let entryLookupId = $state('');
 	let refreshInterval: number | null = null;
 	let visibilityHandler: (() => void) | null = null;
+
+	// CA-MAP-001: Field selection state
+	// TODO: Load from GF adapter once endpoint is available
+	const mockFormFields: FormFieldInfo[] = [
+		{ id: '1', label: 'Name', type: 'name' },
+		{ id: '2', label: 'Email', type: 'email' },
+		{ id: '3', label: 'Phone', type: 'phone' },
+		{ id: '4', label: 'Message', type: 'textarea' },
+		{ id: '5', label: 'Company', type: 'text' }
+	];
+	const formFields = $state<FormFieldInfo[]>(mockFormFields);
 
 	const definitions = $derived(actionsState.definitions ?? []);
 	const customActions = $derived(
@@ -894,6 +916,20 @@
 													</div>
 												</div>
 											{/if}
+
+											<!-- CA-MAP-001: Field Selection -->
+											<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+												<FieldSelector
+													fields={formFields}
+													value={draftSettings.input_mapping ?? {
+														mode: 'all',
+														include_metadata: true
+													}}
+													onchange={(mapping) => {
+														draftSettings = { ...draftSettings, input_mapping: mapping };
+													}}
+												/>
+											</div>
 
 											<div class="sf:flex sf:gap-2 sf:flex-wrap sf:pt-2">
 												<Button size="sm" onclick={() => saveActionChanges(linkage)}>Save</Button>

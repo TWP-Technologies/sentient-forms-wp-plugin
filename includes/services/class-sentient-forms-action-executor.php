@@ -54,10 +54,13 @@ class Sentient_Forms_Action_Executor {
 			return $cached_result;
 		}
 
+		// CA-MAP-001: Extract input_mapping from settings if available
+		$input_mapping = isset( $context['settings']['input_mapping'] ) ? $context['settings']['input_mapping'] : null;
+
 		$payload = array(
 			'central_action_id'     => $central_action_id,
 			'execution_request_id'  => $execution_request_id,
-			'form_data_payload'     => $this->build_payload_from_entry( $form, $entry ),
+			'form_data_payload'     => $this->build_payload_from_entry( $form, $entry, $input_mapping ),
 			'action_context'        => $this->build_action_context( $form, $entry, $context, $execution_request_id, $submission_token ),
 		);
 
@@ -136,24 +139,63 @@ class Sentient_Forms_Action_Executor {
 		return $response;
 	}
 
-	private function build_payload_from_entry( array $form, array $entry ): array {
+	/**
+	 * Build the form data payload from entry, optionally filtered by input_mapping.
+	 *
+	 * CA-MAP-001: Supports field selection modes:
+	 * - 'all': Send all fields (default for backward compatibility)
+	 * - 'selected': Only send specified field_ids
+	 * - 'exclude': Send all fields except specified field_ids
+	 *
+	 * @param array      $form          Gravity Forms form array.
+	 * @param array      $entry         Gravity Forms entry array.
+	 * @param array|null $input_mapping Optional input mapping configuration from settings.
+	 *
+	 * @return array Form data payload for CPS.
+	 */
+	private function build_payload_from_entry( array $form, array $entry, ?array $input_mapping = null ): array {
 		$field_values = array();
+
+		// Determine input mapping settings
+		$mode            = $input_mapping['mode'] ?? 'all';
+		$field_ids       = $input_mapping['field_ids'] ?? array();
+		$include_metadata = $input_mapping['include_metadata'] ?? true;
 
 		if ( ! empty( $entry ) ) {
 			foreach ( $entry as $key => $value ) {
-				if ( is_scalar( $value ) ) {
-					$field_values[ $key ] = sanitize_text_field( (string) $value );
+				if ( ! is_scalar( $value ) ) {
+					continue;
 				}
+
+				// Apply field filtering based on mode
+				if ( $mode === 'selected' && ! empty( $field_ids ) ) {
+					// Only include selected fields
+					if ( ! in_array( (string) $key, $field_ids, true ) ) {
+						continue;
+					}
+				} elseif ( $mode === 'exclude' && ! empty( $field_ids ) ) {
+					// Exclude specified fields
+					if ( in_array( (string) $key, $field_ids, true ) ) {
+						continue;
+					}
+				}
+				// mode === 'all' includes all fields (default)
+
+				$field_values[ $key ] = sanitize_text_field( (string) $value );
 			}
 		}
 
-		return array(
-			'form'  => array(
+		$payload = array( 'entry' => $field_values );
+
+		// Include form metadata if enabled
+		if ( $include_metadata ) {
+			$payload['form'] = array(
 				'id'    => isset( $form['id'] ) ? (string) $form['id'] : null,
 				'title' => $form['title'] ?? '',
-			),
-			'entry' => $field_values,
-		);
+			);
+		}
+
+		return $payload;
 	}
 
 	private function build_action_context( array $form, array $entry, array $context, string $execution_request_id, string $submission_token ): array {
