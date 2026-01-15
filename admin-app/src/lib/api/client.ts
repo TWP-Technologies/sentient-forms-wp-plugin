@@ -5,6 +5,8 @@ import type {
 	ApiErrorPayload,
 	AsyncSettingsResponse,
 	AsyncHealthResponse,
+	CloneTemplateMappingRequest,
+	CreateFormMappingRequest,
 	CreditBalanceResponse,
 	CustomAction,
 	CustomActionCreatePayload,
@@ -16,6 +18,7 @@ import type {
 	FormActionMutationPayload,
 	FormExecutionStatus,
 	FormFieldInfo,
+	FormMapping,
 	FormSummary,
 	CapabilitiesResponse,
 	LicenseActivationRequest,
@@ -23,7 +26,8 @@ import type {
 	LicenseActivationResult,
 	LicenseInfoResponse,
 	TelemetrySettingsResponse,
-	PluginSettingsResponse
+	PluginSettingsResponse,
+	UpdateFormMappingRequest
 } from '$lib/api/types';
 import { MockSentientFormsApiClient } from './mock-client';
 
@@ -373,6 +377,101 @@ export class SentientFormsApiClient {
 			method: 'POST',
 			...options
 		});
+	}
+
+	// ==========================================================================
+	// Phase 7: Form Mappings (CSM - Cross-Site Mapping Portability)
+	// ==========================================================================
+
+	/**
+	 * Get all form mappings for the current license.
+	 * CSM-001: CPS mapping storage
+	 */
+	async getFormMappings(options: RequestOptions = {}): Promise<FormMapping[]> {
+		const response = await this.request<{ success: boolean; data: FormMapping[] }>(
+			'mappings',
+			{ showNotifications: false, ...options }
+		);
+		return response.data;
+	}
+
+	/**
+	 * Get template mappings only (reusable across sites).
+	 * CSM-003: Save as Template
+	 */
+	async getFormMappingTemplates(options: RequestOptions = {}): Promise<FormMapping[]> {
+		const response = await this.request<{ success: boolean; data: FormMapping[] }>(
+			'mappings/templates',
+			{ showNotifications: false, ...options }
+		);
+		return response.data;
+	}
+
+	/**
+	 * Get a single form mapping by ID.
+	 */
+	async getFormMapping(id: string, options: RequestOptions = {}): Promise<FormMapping> {
+		const response = await this.request<{ success: boolean; data: FormMapping }>(
+			`mappings/${encodeURIComponent(id)}`,
+			{ showNotifications: false, ...options }
+		);
+		return response.data;
+	}
+
+	/**
+	 * Create a new form mapping.
+	 * CSM-001: CPS mapping storage
+	 */
+	async createFormMapping(
+		payload: CreateFormMappingRequest,
+		options: RequestOptions = {}
+	): Promise<FormMapping> {
+		const response = await this.request<{ success: boolean; data: FormMapping }>(
+			'mappings',
+			{ method: 'POST', body: payload, ...options }
+		);
+		return response.data;
+	}
+
+	/**
+	 * Update an existing form mapping.
+	 */
+	async updateFormMapping(
+		id: string,
+		payload: UpdateFormMappingRequest,
+		options: RequestOptions = {}
+	): Promise<FormMapping> {
+		const response = await this.request<{ success: boolean; data: FormMapping }>(
+			`mappings/${encodeURIComponent(id)}`,
+			{ method: 'PUT', body: payload, ...options }
+		);
+		return response.data;
+	}
+
+	/**
+	 * Delete a form mapping.
+	 */
+	async deleteFormMapping(id: string, options: RequestOptions = {}): Promise<void> {
+		await this.request(`mappings/${encodeURIComponent(id)}`, {
+			method: 'DELETE',
+			...options
+		});
+	}
+
+	/**
+	 * Clone a template mapping to a specific site and form.
+	 * CSM-004: Import from Library
+	 */
+	async cloneFormMappingTemplate(
+		templateId: string,
+		payload: CloneTemplateMappingRequest,
+		options: RequestOptions = {}
+	): Promise<FormMapping> {
+		const response = await this.request<{ success: boolean; data: FormMapping }>(
+			`mappings/${encodeURIComponent(templateId)}/clone`,
+			{ method: 'POST', body: payload, ...options }
+		);
+		return response.data;
 	}
 
 	async getExecutionStatus(

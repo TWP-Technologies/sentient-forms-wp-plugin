@@ -365,3 +365,77 @@ export interface FormSourceSummary {
 	label: string;
 	isActive: boolean;
 }
+
+// ============================================================================
+// Phase 7: Cross-Site Mapping Portability (CSM)
+// ============================================================================
+
+/**
+ * Mapping settings for trigger hooks, input selection, and effect handling
+ */
+export interface MappingSettings {
+	trigger_hooks?: ('validation' | 'after_submission')[];
+	input_mapping?: {
+		mode: 'all' | 'selected';
+		field_ids?: string[];
+		include_metadata?: boolean;
+	};
+	effect_mapping?: Record<string, {
+		mark_spam?: boolean;
+		notify_admin?: boolean;
+		reject_submission?: boolean;
+	}>;
+	portable_fields?: Array<{ label: string; type: string }>;
+	field_mapping?: Record<string, string>;
+}
+
+/**
+ * Form mapping record from CPS (CSM-001)
+ */
+export interface FormMapping {
+	id: string;
+	license_id: string;
+	site_id: string | null;
+	form_source: string;
+	form_id: number | null;
+	action_template_id: string | null;
+	custom_action_id: string | null;
+	display_name: string;
+	settings: MappingSettings;
+	is_template: boolean;
+	created_at: string;
+	updated_at: string;
+}
+
+/**
+ * Request to create a new form mapping
+ */
+export interface CreateFormMappingRequest {
+	site_id?: string | null;
+	form_source: string;
+	form_id?: number | null;
+	action_template_id?: string | null;
+	custom_action_id?: string | null;
+	display_name: string;
+	settings: MappingSettings;
+	is_template?: boolean;
+}
+
+/**
+ * Request to update an existing form mapping
+ */
+export interface UpdateFormMappingRequest {
+	display_name?: string;
+	settings?: MappingSettings;
+	is_template?: boolean;
+}
+
+/**
+ * Request to clone a template to a site/form
+ */
+export interface CloneTemplateMappingRequest {
+	site_id: string;
+	form_source: string;
+	form_id: number;
+	field_mapping?: Record<string, string>;
+}
