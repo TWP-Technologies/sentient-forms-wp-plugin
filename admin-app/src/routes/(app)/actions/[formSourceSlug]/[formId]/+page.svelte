@@ -8,12 +8,15 @@
 		Alert,
 		InputField,
 		SelectField,
-		FieldSelector
+		FieldSelector,
+		TemplateLibrary
 	} from '$lib/components/ui';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { formActionsStore, formActionsState } from '$lib/stores/form-actions.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { notifications } from '$lib/stores/notifications';
+	import { licenseState } from '$lib/stores/license.svelte';
+	import { formMappingsStore } from '$lib/stores/form-mappings.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
 	import type {
 		ActionDefinition,
@@ -42,6 +45,7 @@
 	let createError = $state<string | null>(null);
 	let creating = $state(false);
 	let showAddPanel = $state(false);
+	let showTemplateLibrary = $state(false);
 	let searchTerm = $state('');
 
 	let editingLinkageId = $state<string | null>(null);
@@ -560,6 +564,46 @@
 		formActionsStore.refresh(data.formSourceSlug, data.formId);
 	}
 
+	// Phase 7 CSM: Save current action config as a template
+	let savingTemplate = $state(false);
+	async function saveAsTemplate(linkage: FormActionLinkage) {
+		if (!licenseState.siteId) {
+			notifications.error('Site not activated. Please activate your license first.');
+			return;
+		}
+
+		savingTemplate = true;
+		try {
+			const displayName = linkage.action_name_label ?? `Template from form ${data.formId}`;
+
+			// Create a new template mapping in CPS
+			const result = await formMappingsStore.createMapping({
+				form_source: data.formSourceSlug,
+				display_name: displayName,
+				action_template_id:
+					linkage.action_type_indicator === 'master' ? linkage.central_action_id : undefined,
+				custom_action_id:
+					linkage.action_type_indicator === 'custom' ? linkage.central_action_id : undefined,
+				is_template: true,
+				settings: {
+					trigger_hooks: linkage.trigger_hooks,
+					...(linkage.settings ?? {})
+				}
+			});
+
+			if (result) {
+				notifications.success(`Saved "${displayName}" as template`);
+			} else {
+				notifications.error('Failed to save as template');
+			}
+		} catch (error) {
+			console.error('Failed to save as template', error);
+			notifications.error('Failed to save as template');
+		} finally {
+			savingTemplate = false;
+		}
+	}
+
 	async function checkEntryStatus(event?: SubmitEvent | Event) {
 		event?.preventDefault?.();
 		const parsed = Number.parseInt(entryLookupId.trim(), 10);
@@ -604,6 +648,9 @@
 		<Button variant="secondary" onclick={() => navigateToAppPath('/actions')}>All forms</Button>
 		<Button variant="secondary" onclick={refresh}>Refresh</Button>
 		<Button onclick={() => (showAddPanel = true)}>Add action</Button>
+		<Button variant="secondary" onclick={() => (showTemplateLibrary = true)}
+			>Import from Library</Button
+		>
 		<Button variant="secondary" onclick={checkEntryStatus}>Check entry status</Button>
 	</div>
 
@@ -868,6 +915,14 @@
 									<div class="sf:mt-2 sf:space-x-2">
 										<Button size="sm" variant="ghost" onclick={() => startEditingAction(linkage)}>
 											Configure
+										</Button>
+										<Button
+											size="sm"
+											variant="ghost"
+											onclick={() => saveAsTemplate(linkage)}
+											disabled={savingTemplate || !licenseState.siteId}
+										>
+											{savingTemplate ? 'Saving...' : 'Save as Template'}
 										</Button>
 									</div>
 									{#if editingLinkageId === linkage.local_mapping_id}
@@ -1162,4 +1217,17 @@
 			</div>
 		</div>
 	{/if}
+
+	<!-- Phase 7 CSM: Template Library Modal -->
+	<TemplateLibrary
+		bind:open={showTemplateLibrary}
+		siteId={licenseState.siteId ?? ''}
+		formSource={data.formSourceSlug}
+		formId={data.formId}
+		{formFields}
+		onImport={(mapping) => {
+			notifications.success(`Imported template: ${mapping.display_name}`);
+			formActionsStore.refresh(data.formSourceSlug, data.formId);
+		}}
+	/>
 </Section>

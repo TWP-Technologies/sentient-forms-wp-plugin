@@ -374,9 +374,9 @@ export interface FormSourceSummary {
  * Mapping settings for trigger hooks, input selection, and effect handling
  */
 export interface MappingSettings {
-	trigger_hooks?: ('validation' | 'after_submission')[];
+	trigger_hooks?: string[];
 	input_mapping?: {
-		mode: 'all' | 'selected';
+		mode: 'all' | 'selected' | 'exclude';
 		field_ids?: string[];
 		include_metadata?: boolean;
 	};
