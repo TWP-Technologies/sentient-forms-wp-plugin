@@ -30,6 +30,9 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     /** @var Sentient_Forms_Admin_Permission */
     private Sentient_Forms_Admin_Permission $permission_checker;
 
+    /** @var Sentient_Forms_Mappings_Sync|null Phase 7 CSM: CPS sync service */
+    private ?Sentient_Forms_Mappings_Sync $mappings_sync = null;
+
     const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
 
     /** Allowed values for action_type_indicator. */
@@ -62,6 +65,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         $this->permission_checker = new Sentient_Forms_Admin_Permission();
+
+        // Phase 7 CSM: Initialize sync service if available
+        if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) ) {
+            $this->mappings_sync = new Sentient_Forms_Mappings_Sync();
+        }
     }
 
     /**
@@ -346,17 +354,114 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
     /**
      * Retrieve all action linkages for a form.
+     *
+     * Phase 7 CSM: Merges local WP linkages with CPS mappings.
+     * CPS mappings are transformed to match local linkage format.
      */
     public function get_form_actions( WP_REST_Request $request ): WP_REST_Response
     {
-        $option_key = $this->get_actions_option_key( $request->get_param( 'form_source_slug' ), (int)$request->get_param( 'form_id' ) );
-        $actions    = get_option( $option_key, [] );
-        if ( !is_array( $actions ) )
-        {
-            $actions = [];
+        $form_source_slug = $request->get_param( 'form_source_slug' );
+        $form_id = (int) $request->get_param( 'form_id' );
+
+        // Get local WP linkages
+        $option_key = $this->get_actions_option_key( $form_source_slug, $form_id );
+        $local_actions = get_option( $option_key, [] );
+        if ( ! is_array( $local_actions ) ) {
+            $local_actions = [];
         }
 
-        return $this->prepare_item_for_response( array_values( $actions ) );
+        // Phase 7 CSM: Optionally merge CPS mappings
+        $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
+        $merged = $this->merge_local_and_cps_actions( array_values( $local_actions ), $cps_actions );
+
+        return $this->prepare_item_for_response( $merged );
+    }
+
+    /**
+     * Phase 7 CSM: Fetch CPS mappings for a specific form.
+     *
+     * @param string $form_source_slug Form source (e.g., 'gravity_forms').
+     * @param int    $form_id          Form ID.
+     * @return array Transformed CPS mappings as local linkage format.
+     */
+    private function fetch_cps_mappings_for_form( string $form_source_slug, int $form_id ): array
+    {
+        if ( ! $this->mappings_sync ) {
+            return [];
+        }
+
+        $site_id = get_option( 'sentient_forms_site_id', '' );
+        if ( empty( $site_id ) ) {
+            return [];
+        }
+
+        try {
+            $all_mappings = $this->mappings_sync->fetch_mappings();
+            $form_mappings = array_filter( $all_mappings, function( $m ) use ( $site_id, $form_source_slug, $form_id ) {
+                return
+                    ( $m['site_id'] ?? '' ) === $site_id &&
+                    ( $m['form_source'] ?? '' ) === $form_source_slug &&
+                    ( (int) ( $m['form_id'] ?? 0 ) ) === $form_id &&
+                    empty( $m['is_template'] ); // Exclude templates
+            } );
+
+            return array_map( [ $this, 'transform_cps_mapping_to_linkage' ], array_values( $form_mappings ) );
+        } catch ( \Throwable $e ) {
+            // Silently fail - CPS unreachable, use local only
+            return [];
+        }
+    }
+
+    /**
+     * Phase 7 CSM: Transform a CPS mapping to local linkage format.
+     *
+     * @param array $mapping CPS mapping.
+     * @return array Local linkage format.
+     */
+    private function transform_cps_mapping_to_linkage( array $mapping ): array
+    {
+        $settings = $mapping['settings'] ?? [];
+
+        return [
+            'local_mapping_id'           => 'cps_' . ( $mapping['id'] ?? uniqid() ),
+            'cps_mapping_id'             => $mapping['id'] ?? null, // Track CPS origin
+            'central_action_id'          => $mapping['action_template_id'] ?? $mapping['custom_action_id'] ?? '',
+            'action_type_indicator'      => ! empty( $mapping['custom_action_id'] ) ? 'custom' : 'master',
+            'trigger_hooks'              => $settings['trigger_hooks'] ?? [],
+            'is_action_enabled_for_form' => true,
+            'execution_priority'         => 10,
+            'action_name_label'          => $mapping['display_name'] ?? 'CPS Mapping',
+            'settings'                   => $settings,
+            'source'                     => 'cps', // Mark as CPS-sourced
+        ];
+    }
+
+    /**
+     * Phase 7 CSM: Merge local and CPS actions, avoiding duplicates.
+     *
+     * @param array $local_actions Local WP linkages.
+     * @param array $cps_actions   Transformed CPS mappings.
+     * @return array Merged list.
+     */
+    private function merge_local_and_cps_actions( array $local_actions, array $cps_actions ): array
+    {
+        // Mark local actions
+        foreach ( $local_actions as &$action ) {
+            $action['source'] = $action['source'] ?? 'local';
+        }
+        unset( $action );
+
+        // Add CPS actions that don't have a local equivalent
+        $local_central_ids = array_column( $local_actions, 'central_action_id' );
+        foreach ( $cps_actions as $cps_action ) {
+            // Skip if local already has this central action
+            if ( in_array( $cps_action['central_action_id'], $local_central_ids, true ) ) {
+                continue;
+            }
+            $local_actions[] = $cps_action;
+        }
+
+        return $local_actions;
     }
 
     /**
