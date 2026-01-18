@@ -577,16 +577,38 @@
 			const displayName = linkage.action_name_label ?? `Template from form ${data.formId}`;
 
 			// Create a new template mapping in CPS
+			// Note: CPS expects UUIDs for action_template_id field, but string codes for action_template_code.
+			// For master templates (codes like 'spam_detection_v1'), we use action_template_code.
+			const isMasterTemplate = linkage.action_type_indicator === 'master';
+
+			// CSM-006: Extract portable field references from current form fields
+			// This enables smart field re-mapping when importing template to different sites
+			const inputMapping = linkage.settings?.input_mapping;
+			let portableFields: Array<{ label: string; type: string }> = [];
+
+			if (inputMapping?.mode === 'selected' && inputMapping.field_ids) {
+				// Only include fields that were explicitly selected
+				portableFields = formFields
+					.filter((f) => inputMapping.field_ids!.includes(f.id))
+					.map((f) => ({ label: f.label, type: f.type }));
+			} else if (inputMapping?.mode !== 'exclude') {
+				// Include all fields for 'all' mode or no mapping specified
+				portableFields = formFields.map((f) => ({ label: f.label, type: f.type }));
+			}
+
 			const result = await formMappingsStore.createMapping({
 				form_source: data.formSourceSlug,
 				display_name: displayName,
-				action_template_id:
-					linkage.action_type_indicator === 'master' ? linkage.central_action_id : undefined,
+				// UUID field - leave undefined for code-based templates
+				action_template_id: undefined,
+				// String code field for master templates like 'spam_detection_v1'
+				action_template_code: isMasterTemplate ? linkage.central_action_id : undefined,
 				custom_action_id:
 					linkage.action_type_indicator === 'custom' ? linkage.central_action_id : undefined,
 				is_template: true,
 				settings: {
 					trigger_hooks: linkage.trigger_hooks,
+					portable_fields: portableFields, // CSM-006: field labels for cross-site portability
 					...(linkage.settings ?? {})
 				}
 			});

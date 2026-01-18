@@ -57,6 +57,7 @@ return [
 	'Sentient_Forms_Llm_Model_Registry' => __DIR__ . '/llms/sentient-forms-llm-registry.php',
 	'Sentient_Forms_Llm_Provider' => __DIR__ . '/enums/LLMs.php',
 	'Sentient_Forms_Llm_Status' => __DIR__ . '/enums/LLMs.php',
+	'Sentient_Forms_Mappings_Controller' => __DIR__ . '/rest-api/controllers/class-mappings-controller.php',
 	'Sentient_Forms_Mappings_Sync' => __DIR__ . '/services/class-sentient-forms-mappings-sync.php',
 	'Sentient_Forms_Meta_Controller' => __DIR__ . '/rest-api/controllers/class-meta-controller.php',
 	'Sentient_Forms_Plugin' => __DIR__ . '/class-sentient-forms-plugin.php',

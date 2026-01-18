@@ -70,6 +70,7 @@ final class Sentient_Forms_REST_API
             Sentient_Forms_Form_Controller::class,
             Sentient_Forms_License_Controller::class,
             Sentient_Forms_Llm_Controller::class,
+            Sentient_Forms_Mappings_Controller::class,
             Sentient_Forms_Meta_Controller::class,
             Sentient_Forms_Settings_Controller::class,
             Sentient_Forms_Telemetry_Controller::class,

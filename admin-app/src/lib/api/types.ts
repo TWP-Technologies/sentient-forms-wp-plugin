@@ -414,7 +414,10 @@ export interface CreateFormMappingRequest {
 	site_id?: string | null;
 	form_source: string;
 	form_id?: number | null;
+	/** UUID-based template ID (for custom actions stored in CPS DB) */
 	action_template_id?: string | null;
+	/** String-based template code (for master templates like "spam_detection_v1") */
+	action_template_code?: string | null;
 	custom_action_id?: string | null;
 	display_name: string;
 	settings: MappingSettings;

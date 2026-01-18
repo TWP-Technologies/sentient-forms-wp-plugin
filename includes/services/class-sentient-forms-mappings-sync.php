@@ -24,17 +24,15 @@ class Sentient_Forms_Mappings_Sync {
     private const CACHE_TTL_SECONDS = 300; // 5 minutes
 
     /**
-     * Get CPS API client instance.
+     * Get CPS API client instance from the main plugin.
      *
      * @return Sentient_Forms_Api_Client|null
      */
     private function get_cps_client(): ?Sentient_Forms_Api_Client {
-        $cps_url = get_option( 'sentient_forms_cps_url', '' );
-        if ( empty( $cps_url ) ) {
+        if ( ! class_exists( 'Sentient_Forms_Plugin' ) ) {
             return null;
         }
-
-        return new Sentient_Forms_Api_Client( $cps_url, 10 );
+        return Sentient_Forms_Plugin::instance()->get_cps_api_client();
     }
 
     /**
@@ -43,7 +41,10 @@ class Sentient_Forms_Mappings_Sync {
      * @return string|null
      */
     private function get_api_key(): ?string {
-        return get_option( 'sentient_forms_proxy_api_key', null );
+        if ( ! class_exists( 'Sentient_Forms_Plugin' ) ) {
+            return null;
+        }
+        return Sentient_Forms_Plugin::instance()->get_proxy_api_key();
     }
 
     /**
@@ -78,7 +79,7 @@ class Sentient_Forms_Mappings_Sync {
             return [];
         }
 
-        $response = $client->get( '/v1/mappings/templates', [
+        $response = $client->get( '/mappings/templates', [
             'bearer_token' => $api_key,
         ] );
 
@@ -103,7 +104,7 @@ class Sentient_Forms_Mappings_Sync {
             return new WP_Error( 'cps_unavailable', 'CPS is not configured.' );
         }
 
-        return $client->post( '/v1/mappings', $mapping_data, [
+        return $client->post( '/mappings', $mapping_data, [
             'bearer_token' => $api_key,
         ] );
     }
@@ -123,7 +124,7 @@ class Sentient_Forms_Mappings_Sync {
             return new WP_Error( 'cps_unavailable', 'CPS is not configured.' );
         }
 
-        return $client->post( "/v1/mappings/{$template_id}/clone", $clone_data, [
+        return $client->post( "/mappings/{$template_id}/clone", $clone_data, [
             'bearer_token' => $api_key,
         ] );
     }
@@ -141,7 +142,7 @@ class Sentient_Forms_Mappings_Sync {
             return new WP_Error( 'cps_unavailable', 'CPS is not configured.' );
         }
 
-        $response = $client->get( '/v1/mappings', [
+        $response = $client->get( '/mappings', [
             'bearer_token' => $api_key,
         ] );
 
