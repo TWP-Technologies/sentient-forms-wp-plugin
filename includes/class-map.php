@@ -29,6 +29,7 @@ return [
 	'Sentient_Forms_Credit_Controller' => __DIR__ . '/rest-api/controllers/class-credit-controller.php',
 	'Sentient_Forms_Execution_Status_Controller' => __DIR__ . '/rest-api/controllers/class-execution-status-controller.php',
 	'Sentient_Forms_Site_Context_Controller' => __DIR__ . '/rest-api/controllers/class-site-context-controller.php',
+	'Sentient_Forms_Models_Controller' => __DIR__ . '/rest-api/controllers/class-models-controller.php',
 	'Sentient_Forms_Custom_Action_List_Response' => __DIR__ . '/api/dto/class-sentient-forms-custom-action-list-response.php',
 	'Sentient_Forms_Custom_Action_Mutation_Response' => __DIR__ . '/api/dto/class-sentient-forms-custom-action-mutation-response.php',
 	'Sentient_Forms_Custom_Action_Quota' => __DIR__ . '/api/dto/class-sentient-forms-custom-action-quota.php',

@@ -68,6 +68,7 @@ final class Sentient_Forms_REST_API
             Sentient_Forms_Credit_Controller::class,
             Sentient_Forms_Execution_Status_Controller::class,
             Sentient_Forms_Site_Context_Controller::class,
+            Sentient_Forms_Models_Controller::class,
             Sentient_Forms_Form_Actions_Controller::class,
             Sentient_Forms_Form_Controller::class,
             Sentient_Forms_License_Controller::class,
