@@ -27,6 +27,7 @@ return [
 	'Sentient_Forms_Async_Settings_Service' => __DIR__ . '/services/class-sentient-forms-async-settings-service.php',
 	'Sentient_Forms_Autoloader' => __DIR__ . '/class-autoloader.php',
 	'Sentient_Forms_Credit_Controller' => __DIR__ . '/rest-api/controllers/class-credit-controller.php',
+	'Sentient_Forms_Execution_Status_Controller' => __DIR__ . '/rest-api/controllers/class-execution-status-controller.php',
 	'Sentient_Forms_Custom_Action_List_Response' => __DIR__ . '/api/dto/class-sentient-forms-custom-action-list-response.php',
 	'Sentient_Forms_Custom_Action_Mutation_Response' => __DIR__ . '/api/dto/class-sentient-forms-custom-action-mutation-response.php',
 	'Sentient_Forms_Custom_Action_Quota' => __DIR__ . '/api/dto/class-sentient-forms-custom-action-quota.php',
