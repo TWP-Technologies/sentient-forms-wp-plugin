@@ -480,7 +480,8 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $form_id          = (int) $request->get_param( 'form_id' );
 
         // Get the adapter for this form source
-        $adapter = $this->plugin->get_adapter( $form_source_slug );
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        $adapter  = $registry ? $registry->get_adapter_by_id( $form_source_slug ) : null;
         if ( ! $adapter ) {
             return new WP_REST_Response(
                 [ 'success' => false, 'message' => 'Form source adapter not found.' ],

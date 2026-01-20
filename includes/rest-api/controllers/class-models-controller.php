@@ -103,14 +103,16 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
         }
 
         $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $client->get( '/v1/models' );
+        $response = $client->get_available_models();
 
         if ( is_wp_error( $response ) )
         {
             return $this->prepare_error_response(
                 'cps_error',
                 $response->get_error_message(),
-                500,
+                is_array( $response->get_error_data() ) && isset( $response->get_error_data()['status'] )
+                    ? (int) $response->get_error_data()['status']
+                    : 500,
             );
         }
 
