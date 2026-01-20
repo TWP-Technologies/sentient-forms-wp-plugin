@@ -9,7 +9,8 @@
 		InputField,
 		SelectField,
 		FieldSelector,
-		TemplateLibrary
+		TemplateLibrary,
+		ModelSelector
 	} from '$lib/components/ui';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { formActionsStore, formActionsState } from '$lib/stores/form-actions.svelte';
@@ -1008,11 +1009,29 @@
 												<FieldSelector
 													fields={formFields}
 													value={draftSettings.input_mapping ?? {
-														mode: 'all',
-														include_metadata: true
+														mode: 'selected',
+														include_metadata: false
 													}}
 													onchange={(mapping) => {
 														draftSettings = { ...draftSettings, input_mapping: mapping };
+													}}
+												/>
+											</div>
+
+											<!-- CB-MODEL-004: Per-Mapping Model Selection -->
+											<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+												<p
+													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-3"
+												>
+													AI Model
+												</p>
+												<ModelSelector
+													value={draftSettings.model_selection ?? {
+														primary: 'sf_default',
+														is_preset: true
+													}}
+													onchange={(selection) => {
+														draftSettings = { ...draftSettings, model_selection: selection };
 													}}
 												/>
 											</div>
