@@ -118,6 +118,21 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             ],
         );
 
+        // CA-MAP-001: Form field discovery endpoint for FieldSelector component
+        // IMPORTANT: Must be registered BEFORE /{local_mapping_id} to avoid route conflict
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/fields',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_form_fields' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
+                    'args'                => $this->get_collection_args(),
+                ],
+            ],
+        );
+
         register_rest_route(
             $this->namespace,
             '/' . $this->rest_base . '/(?P<local_mapping_id>[a-zA-Z0-9_]+)',
@@ -153,20 +168,6 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     'callback'            => [ $this, 'get_entry_execution_status' ],
                     'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
                     'args'                => $this->get_entry_status_args(),
-                ],
-            ],
-        );
-
-        // CA-MAP-001: Form field discovery endpoint for FieldSelector component
-        register_rest_route(
-            $this->namespace,
-            '/' . $this->rest_base . '/fields',
-            [
-                [
-                    'methods'             => WP_REST_Server::READABLE,
-                    'callback'            => [ $this, 'get_form_fields' ],
-                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
-                    'args'                => $this->get_collection_args(),
                 ],
             ],
         );
