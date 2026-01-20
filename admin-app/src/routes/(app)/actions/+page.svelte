@@ -24,16 +24,32 @@
 		formSources.find((source) => source.isActive) ?? formSources[0] ?? null
 	);
 	let error: string | null = $state(null);
+	let searchTerm = $state('');
+	let currentPage = $state(1);
+	const pageSize = 12;
 
 	const activeSources = $derived(formSources.filter((source) => source.isActive));
 	const customActions = $derived(
 		customActionsState.actions.filter((action) => action.status === 'active')
 	);
 
-	const displayedForms = $derived(
-		selectedSource
+	// Filter forms by search term
+	const filteredForms = $derived(
+		(selectedSource
 			? (formsBySource[selectedSource.slug] ?? [])
 			: Object.values(formsBySource).flat()
+		).filter(
+			(form) =>
+				searchTerm === '' ||
+				form.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+				form.id.toString().includes(searchTerm)
+		)
+	);
+
+	// Pagination
+	const totalPages = $derived(Math.ceil(filteredForms.length / pageSize));
+	const displayedForms = $derived(
+		filteredForms.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 	);
 
 	// Group definitions by category
@@ -114,6 +130,18 @@
 			return Object.keys(actions as Record<string, unknown>).length;
 		}
 		return 0;
+	}
+
+	function isFormEnabled(form: FormSummary): boolean {
+		return form.settings && (form.settings as { enabled?: boolean })?.enabled === true;
+	}
+
+	function prevPage() {
+		if (currentPage > 1) currentPage--;
+	}
+
+	function nextPage() {
+		if (currentPage < totalPages) currentPage++;
 	}
 
 	function openFormDetail(form: FormSummary) {
@@ -285,6 +313,18 @@
 				</Button>
 			</div>
 
+			<div class="sf:mt-4 sf:flex sf:items-center sf:gap-4">
+				<input
+					type="text"
+					bind:value={searchTerm}
+					placeholder="Search forms..."
+					class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 focus:sf:border-indigo-500 focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+				/>
+				<span class="sf:text-sm sf:text-slate-600">
+					{filteredForms.length} form{filteredForms.length !== 1 ? 's' : ''}
+				</span>
+			</div>
+
 			{#if formsLoading}
 				<div class="sf:mt-4 sf:grid sf:gap-4 sf:md:grid-cols-2 sf:xl:grid-cols-3">
 					{#each Array(6) as _, idx}
@@ -304,35 +344,60 @@
 			{:else}
 				<div class="sf:mt-4 sf:grid sf:gap-4 sf:md:grid-cols-2 sf:xl:grid-cols-3">
 					{#each displayedForms as form (form.id)}
+						{@const actionCount = configuredActionCount(form)}
+						{@const enabled = isFormEnabled(form)}
 						<Card>
 							<div class="sf:flex sf:justify-between sf:items-start sf:gap-3">
-								<div>
-									<p class="sf:font-semibold sf:text-slate-800">{form.title}</p>
-									<p class="sf:text-xs sf:text-slate-500">Form ID: {form.id}</p>
+								<div class="sf:min-w-0 sf:flex-1">
+									<p class="sf:font-semibold sf:text-slate-800 sf:truncate">{form.title}</p>
+									<p class="sf:text-xs sf:text-slate-500">ID: {form.id}</p>
 								</div>
-								<Badge variant={configuredActionCount(form) > 0 ? 'success' : 'neutral'}>
-									{configuredActionCount(form) > 0
-										? `${configuredActionCount(form)} mapped`
-										: 'No mappings'}
-								</Badge>
+								<div class="sf:flex sf:flex-col sf:items-end sf:gap-1">
+									<Badge variant={enabled ? 'success' : 'neutral'}>
+										{enabled ? 'Active' : 'Inactive'}
+									</Badge>
+									{#if actionCount > 0}
+										<span class="sf:text-xs sf:text-indigo-600 sf:font-medium">
+											{actionCount} action{actionCount !== 1 ? 's' : ''}
+										</span>
+									{/if}
+								</div>
 							</div>
-							<p class="sf:mt-2 sf:text-sm sf:text-slate-600">
-								{selectedSource?.label ?? form.adapter_name ?? form.adapter} ·
-								{configuredActionCount(form) === 1
-									? '1 action mapped'
-									: `${configuredActionCount(form)} actions mapped`}
-							</p>
-							<div class="sf:mt-4 sf:flex sf:justify-between sf:items-center">
+							<div class="sf:mt-3 sf:flex sf:items-center sf:gap-2">
 								<span class="sf:text-xs sf:text-slate-500">
-									{form.settings && (form.settings as { enabled?: boolean })?.enabled
-										? 'Sentient Forms enabled'
-										: 'Sentient Forms disabled'}
+									{selectedSource?.label ?? form.adapter_name ?? form.adapter}
 								</span>
-								<Button size="sm" onclick={() => openFormDetail(form)}>Configure</Button>
+								{#if actionCount === 0}
+									<span class="sf:text-xs sf:text-amber-600">No actions configured</span>
+								{/if}
+							</div>
+							<div class="sf:mt-3">
+								<Button size="sm" onclick={() => openFormDetail(form)} class="sf:w-full">
+									Configure Actions
+								</Button>
 							</div>
 						</Card>
 					{/each}
 				</div>
+
+				{#if totalPages > 1}
+					<div class="sf:mt-4 sf:flex sf:items-center sf:justify-center sf:gap-4">
+						<Button size="sm" variant="secondary" onclick={prevPage} disabled={currentPage === 1}>
+							← Previous
+						</Button>
+						<span class="sf:text-sm sf:text-slate-600">
+							Page {currentPage} of {totalPages}
+						</span>
+						<Button
+							size="sm"
+							variant="secondary"
+							onclick={nextPage}
+							disabled={currentPage === totalPages}
+						>
+							Next →
+						</Button>
+					</div>
+				{/if}
 			{/if}
 		</Card>
 	{/if}
