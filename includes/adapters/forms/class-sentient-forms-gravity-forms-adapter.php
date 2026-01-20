@@ -107,17 +107,24 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         // Get form settings
         $settings = $this->get_form_settings( $form_id );
 
-        // Check if any actions are enabled for validation
-        $actions = $this->plugin->get_action_registry()->get_all_actions();
-        foreach ( $actions as $action )
+        // Iterate over stored action settings (keyed by local_mapping_id like 'map_spam_v1')
+        foreach ( $settings as $mapping_id => $action_settings )
         {
-            $action_id       = $action->get_id();
-            $action_settings = $settings[ 'actions' ][ $action_id ] ?? [];
+            // Skip non-action entries (like 'enabled', 'actions' wrapper if it exists)
+            if ( !is_array( $action_settings ) || !isset( $action_settings['central_action_id'] ) )
+            {
+                continue;
+            }
+
+            // Use central_action_id to find the action
+            $action_id = $action_settings['central_action_id'];
+            $action    = $this->plugin->get_action( $action_id );
 
             // Skip if action is not enabled for this form or not configured for validation
-            if ( empty( $action_settings[ 'enabled' ] ) ||
-                 empty( $action_settings[ 'hooks' ] ) ||
-                 !in_array( 'gform_validation', $action_settings[ 'hooks' ] ) )
+            // Note: stored settings use 'is_action_enabled_for_form' and 'trigger_hooks'
+            if ( empty( $action_settings[ 'is_action_enabled_for_form' ] ) ||
+                 empty( $action_settings[ 'trigger_hooks' ] ) ||
+                 !in_array( 'gform_validation', (array) $action_settings[ 'trigger_hooks' ] ) )
             {
                 continue;
             }
@@ -140,32 +147,37 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 'validation_result' => $validation_result,
             ];
 
-            // Execute the action synchronously for validation.
+            // Execute the action synchronously for validation if local action exists.
             $entry_id = $entry['id'] ?? ( $data['entry']['id'] ?? 0 );
             $form_id  = $form['id'] ?? 0;
-            $result   = $action->execute( $data, $action_settings, $entry_id, $form_id );
+            
+            if ( $action )
+            {
+                $result = $action->execute( $data, $action_settings, $entry_id, $form_id );
 
-            if ( is_wp_error( $result ) )
-            {
-                $logger->info(
-                    'validation wp_error',
-                    [
-                        'hook'           => 'gform_validation',
-                        'action_id'      => $action_id,
-                        'form_id'        => $form_id,
-                        'correlation_id' => $correlation_id,
-                        'error_code'     => $result->get_error_code(),
-                    ]
-                );
-                $validation_result = $this->inject_validation_message(
-                    $validation_result,
-                    $result->get_error_message(),
-                    $action_settings,
-                );
-            }
-            elseif ( isset( $result[ 'validation_result' ] ) )
-            {
-                $validation_result = $result[ 'validation_result' ];
+                if ( is_wp_error( $result ) )
+                {
+                    $logger->info(
+                        'validation wp_error',
+                        [
+                            'hook'           => 'gform_validation',
+                            'action_id'      => $action_id,
+                            'mapping_id'     => $mapping_id,
+                            'form_id'        => $form_id,
+                            'correlation_id' => $correlation_id,
+                            'error_code'     => $result->get_error_code(),
+                        ]
+                    );
+                    $validation_result = $this->inject_validation_message(
+                        $validation_result,
+                        $result->get_error_message(),
+                        $action_settings,
+                    );
+                }
+                elseif ( isset( $result[ 'validation_result' ] ) )
+                {
+                    $validation_result = $result[ 'validation_result' ];
+                }
             }
 
             $validation_result = $this->maybe_execute_cps_validation(
