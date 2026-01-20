@@ -127,7 +127,10 @@
 				? (form.settings as Record<string, unknown>)['actions']
 				: null;
 		if (actions && typeof actions === 'object') {
-			return Object.keys(actions as Record<string, unknown>).length;
+			// Count only enabled actions (is_action_enabled_for_form: true)
+			return Object.values(
+				actions as Record<string, { is_action_enabled_for_form?: boolean }>
+			).filter((action) => action?.is_action_enabled_for_form === true).length;
 		}
 		return 0;
 	}
