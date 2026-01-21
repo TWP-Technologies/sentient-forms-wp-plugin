@@ -370,7 +370,6 @@ class Sentient_Forms_Llm_Api_Client
      */
     public function estimate_cost( array $data ): WP_Error | array
     {
-        // Ensure we have an API key
         if ( empty( $this->api_key ) )
         {
             return new WP_Error(
@@ -378,7 +377,6 @@ class Sentient_Forms_Llm_Api_Client
             );
         }
 
-        // Prepare the request
         $url  = $this->api_url . '/estimate';
         $args = [
             'method'      => 'POST',
@@ -395,16 +393,13 @@ class Sentient_Forms_Llm_Api_Client
             'cookies'     => [],
         ];
 
-        // Send the request
         $response = wp_remote_post( $url, $args );
 
-        // Check for errors
         if ( is_wp_error( $response ) )
         {
             return $response;
         }
 
-        // Get the response code
         $response_code = wp_remote_retrieve_response_code( $response );
         if ( $response_code !== 200 )
         {
@@ -412,9 +407,9 @@ class Sentient_Forms_Llm_Api_Client
             $body          = wp_remote_retrieve_body( $response );
             $body_data     = json_decode( $body, true );
 
-            if ( isset( $body_data[ 'error' ] ) )
+            if ( isset( $body_data['error'] ) )
             {
-                $error_message = $body_data[ 'error' ];
+                $error_message = $body_data['error'];
             }
 
             return new WP_Error(
@@ -422,7 +417,6 @@ class Sentient_Forms_Llm_Api_Client
             );
         }
 
-        // Parse the response
         $body = wp_remote_retrieve_body( $response );
         $data = json_decode( $body, true );
 
@@ -433,4 +427,200 @@ class Sentient_Forms_Llm_Api_Client
 
         return $data;
     }
+
+    /**
+     * Get site context from CPS
+     *
+     * @return array|WP_Error The response or error.
+     */
+    public function get_site_context(): WP_Error | array
+    {
+        if ( empty( $this->api_key ) )
+        {
+            return new WP_Error(
+                'missing_api_key', __( 'Missing proxy API key.', 'sentient-forms' ),
+            );
+        }
+
+        $url  = $this->api_url . '/site-context';
+        $args = [
+            'method'      => 'GET',
+            'timeout'     => 45,
+            'redirection' => 5,
+            'httpversion' => '1.1',
+            'blocking'    => true,
+            'headers'     => [
+                'X-API-Key'  => $this->api_key,
+                'X-Site-URL' => home_url(),
+            ],
+            'cookies'     => [],
+        ];
+
+        $response = wp_remote_get( $url, $args );
+
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        $response_code = wp_remote_retrieve_response_code( $response );
+        $body          = wp_remote_retrieve_body( $response );
+        $data          = json_decode( $body, true );
+
+        if ( $response_code !== 200 )
+        {
+            $error_message = isset( $data['error']['message'] ) ? $data['error']['message'] : 'Failed to fetch site context';
+            return new WP_Error(
+                'site_context_error', $error_message, [ 'status' => $response_code ],
+            );
+        }
+
+        if ( json_last_error() !== JSON_ERROR_NONE )
+        {
+            return new WP_Error( 'json_parse_error', __( 'Error parsing site context response', 'sentient-forms' ) );
+        }
+
+        // Extract data from CPS envelope
+        if ( isset( $data['success'] ) && $data['success'] && isset( $data['data'] ) )
+        {
+            return $data['data'];
+        }
+
+        return $data;
+    }
+
+    /**
+     * Create or regenerate site context via LLM
+     *
+     * @param string $site_url URL for the site to generate context for.
+     * @param bool   $pii_ack  PII acknowledgment flag.
+     *
+     * @return array|WP_Error The response or error.
+     */
+    public function create_site_context( string $site_url, bool $pii_ack ): WP_Error | array
+    {
+        if ( empty( $this->api_key ) )
+        {
+            return new WP_Error(
+                'missing_api_key', __( 'Missing proxy API key.', 'sentient-forms' ),
+            );
+        }
+
+        $url  = $this->api_url . '/site-context';
+        $args = [
+            'method'      => 'POST',
+            'timeout'     => 90, // Longer timeout for LLM call
+            'redirection' => 5,
+            'httpversion' => '1.1',
+            'blocking'    => true,
+            'headers'     => [
+                'Content-Type' => 'application/json',
+                'X-API-Key'    => $this->api_key,
+                'X-Site-URL'   => home_url(),
+            ],
+            'body'        => wp_json_encode( [
+                'site_url' => $site_url,
+                'pii_ack'  => $pii_ack,
+            ] ),
+            'cookies'     => [],
+        ];
+
+        $response = wp_remote_post( $url, $args );
+
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        $response_code = wp_remote_retrieve_response_code( $response );
+        $body          = wp_remote_retrieve_body( $response );
+        $data          = json_decode( $body, true );
+
+        if ( $response_code !== 200 && $response_code !== 201 )
+        {
+            $error_message = isset( $data['error']['message'] ) ? $data['error']['message'] : 'Site context generation failed';
+            return new WP_Error(
+                'site_context_create_error', $error_message, [ 'status' => $response_code ],
+            );
+        }
+
+        if ( json_last_error() !== JSON_ERROR_NONE )
+        {
+            return new WP_Error( 'json_parse_error', __( 'Error parsing site context response', 'sentient-forms' ) );
+        }
+
+        // Extract data from CPS envelope
+        if ( isset( $data['success'] ) && $data['success'] && isset( $data['data'] ) )
+        {
+            return $data['data'];
+        }
+
+        return $data;
+    }
+
+    /**
+     * Update site context (manual edit)
+     *
+     * @param array $payload Fields to update (summary_text, auto_include, pii_ack).
+     *
+     * @return array|WP_Error The response or error.
+     */
+    public function update_site_context( array $payload ): WP_Error | array
+    {
+        if ( empty( $this->api_key ) )
+        {
+            return new WP_Error(
+                'missing_api_key', __( 'Missing proxy API key.', 'sentient-forms' ),
+            );
+        }
+
+        $url  = $this->api_url . '/site-context';
+        $args = [
+            'method'      => 'PUT',
+            'timeout'     => 45,
+            'redirection' => 5,
+            'httpversion' => '1.1',
+            'blocking'    => true,
+            'headers'     => [
+                'Content-Type' => 'application/json',
+                'X-API-Key'    => $this->api_key,
+                'X-Site-URL'   => home_url(),
+            ],
+            'body'        => wp_json_encode( $payload ),
+            'cookies'     => [],
+        ];
+
+        $response = wp_remote_request( $url, $args );
+
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        $response_code = wp_remote_retrieve_response_code( $response );
+        $body          = wp_remote_retrieve_body( $response );
+        $data          = json_decode( $body, true );
+
+        if ( $response_code !== 200 )
+        {
+            $error_message = isset( $data['error']['message'] ) ? $data['error']['message'] : 'Site context update failed';
+            return new WP_Error(
+                'site_context_update_error', $error_message, [ 'status' => $response_code ],
+            );
+        }
+
+        if ( json_last_error() !== JSON_ERROR_NONE )
+        {
+            return new WP_Error( 'json_parse_error', __( 'Error parsing site context response', 'sentient-forms' ) );
+        }
+
+        // Extract data from CPS envelope
+        if ( isset( $data['success'] ) && $data['success'] && isset( $data['data'] ) )
+        {
+            return $data['data'];
+        }
+
+        return $data;
+    }
 }
+

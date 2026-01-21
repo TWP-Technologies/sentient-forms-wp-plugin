@@ -112,7 +112,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $client->get( '/v1/site-context' );
+        $response = $client->get_site_context();
 
         if ( is_wp_error( $response ) )
         {
@@ -147,13 +147,11 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             );
         }
 
-        $body = [
-            'site_url' => $request->get_param( 'site_url' ) ?? get_site_url(),
-            'pii_ack'  => $request->get_param( 'pii_ack' ),
-        ];
+        $site_url = $request->get_param( 'site_url' ) ?? get_site_url();
+        $pii_ack  = (bool) $request->get_param( 'pii_ack' );
 
         $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $client->post( '/v1/site-context', $body );
+        $response = $client->create_site_context( $site_url, $pii_ack );
 
         if ( is_wp_error( $response ) )
         {
@@ -203,7 +201,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $client->put( '/v1/site-context', $body );
+        $response = $client->update_site_context( $body );
 
         if ( is_wp_error( $response ) )
         {
