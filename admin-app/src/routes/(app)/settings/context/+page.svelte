@@ -111,6 +111,46 @@
 		context && (editedText !== context.summary_text || autoInclude !== context.auto_include)
 	);
 
+	/**
+	 * Safely format a date string from the API.
+	 * Handles the time crate's default format (e.g., "2024-01-15 2:30:00.123456 +00:00:00")
+	 * which JavaScript's Date cannot parse directly due to:
+	 * - Space instead of 'T' separator
+	 * - Single-digit hours (e.g., "2:30" instead of "02:30")
+	 * - Non-standard timezone offset format
+	 */
+	function formatDate(dateStr: string | null | undefined): string {
+		if (!dateStr) return 'Never';
+
+		// Try parsing as-is first (works for ISO 8601 formats)
+		let date = new Date(dateStr);
+
+		// If invalid, try normalizing the time crate format
+		if (isNaN(date.getTime())) {
+			// Match the time crate format: "2024-01-15 2:30:00.123456 +00:00:00"
+			const match = dateStr.match(
+				/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{1,2}):(\d{1,2})(?:\.(\d+))?\s+([+-]\d{2}:\d{2}(?::\d{2})?)?$/
+			);
+
+			if (match) {
+				const [, datePart, hour, minute, second, , timezone] = match;
+				// Pad time components to 2 digits
+				const paddedTime = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}:${second.padStart(2, '0')}`;
+				// Build ISO 8601 format: 2024-01-15T02:30:00Z
+				const normalized = `${datePart}T${paddedTime}${timezone ? 'Z' : ''}`;
+				date = new Date(normalized);
+			} else {
+				// Fallback: simple replacement approach
+				const normalized = dateStr.replace(' ', 'T').replace(/\s*\+\d{2}:\d{2}(:\d{2})?$/, 'Z');
+				date = new Date(normalized);
+			}
+		}
+
+		if (isNaN(date.getTime())) return 'Unknown';
+
+		return date.toLocaleDateString();
+	}
+
 	onMount(() => {
 		loadContext();
 	});
@@ -137,9 +177,9 @@
 			<div class="sf:space-y-3">
 				<p class="sf:font-medium">⚠️ Privacy Notice</p>
 				<p>
-					By generating a site context, you acknowledge that information about your site
-					(URL, meta descriptions, and publicly available content) will be sent to external
-					AI providers (Google Gemini) for processing.
+					By generating a site context, you acknowledge that information about your site (URL, meta
+					descriptions, and publicly available content) will be sent to external AI providers
+					(Google Gemini) for processing.
 				</p>
 				<p class="sf:text-sm">
 					No personal customer data or form submissions are included in context generation.
@@ -166,17 +206,17 @@
 						<div>
 							<p class="sf:font-medium sf:text-slate-800">No site context configured</p>
 							<p class="sf:text-sm sf:text-slate-600 sf:mt-1">
-								Generate a context summary to help the AI better understand your site's purpose
-								and improve spam detection accuracy.
+								Generate a context summary to help the AI better understand your site's purpose and
+								improve spam detection accuracy.
 							</p>
 						</div>
 					</div>
 
 					<Alert variant="info">
 						<p>
-							<strong>What is site context?</strong> A brief summary describing your business,
-							target audience, and typical form submissions. This helps the AI distinguish
-							between legitimate inquiries and spam.
+							<strong>What is site context?</strong> A brief summary describing your business, target
+							audience, and typical form submissions. This helps the AI distinguish between legitimate
+							inquiries and spam.
 						</p>
 					</Alert>
 
@@ -199,21 +239,19 @@
 						<div>
 							<p class="sf:font-medium sf:text-slate-800">Site Context Summary</p>
 							<p class="sf:text-xs sf:text-slate-500">
-								Source: {context.source} · Last updated: {new Date(context.updated_at).toLocaleDateString()}
+								Source: {context.source} · Last updated: {formatDate(context.updated_at)}
 							</p>
 						</div>
-						<Button
-							size="sm"
-							variant="secondary"
-							onclick={generateContext}
-							disabled={generating}
-						>
+						<Button size="sm" variant="secondary" onclick={generateContext} disabled={generating}>
 							{generating ? 'Regenerating...' : 'Regenerate'}
 						</Button>
 					</div>
 
 					<div>
-						<label for="context-text" class="sf:block sf:text-sm sf:font-medium sf:text-slate-700 sf:mb-1">
+						<label
+							for="context-text"
+							class="sf:block sf:text-sm sf:font-medium sf:text-slate-700 sf:mb-1"
+						>
 							Context Text
 						</label>
 						<textarea
