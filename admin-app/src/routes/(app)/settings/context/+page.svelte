@@ -35,11 +35,9 @@
 		loading = true;
 		error = null;
 		try {
-			const response = await wpFetch<{ success: boolean; data: SiteContext | null }>(
-				'site-context'
-			);
-			if (response?.data) {
-				context = response.data;
+			const response = await wpFetch<SiteContext>('site-context');
+			if (response) {
+				context = response;
 				editedText = context.summary_text;
 				autoInclude = context.auto_include;
 				piiAck = context.pii_ack;
@@ -61,15 +59,12 @@
 		generating = true;
 		error = null;
 		try {
-			const response = await wpFetch<{ success: boolean; data: SiteContext }>(
-				'site-context',
-				{
-					method: 'POST',
-					body: JSON.stringify({ pii_ack: piiAck })
-				}
-			);
-			if (response?.data) {
-				context = response.data;
+			const response = await wpFetch<SiteContext>('site-context', {
+				method: 'POST',
+				body: JSON.stringify({ pii_ack: piiAck })
+			});
+			if (response) {
+				context = response;
 				editedText = context.summary_text;
 				autoInclude = context.auto_include;
 				notifications.success('Site context generated');
@@ -86,19 +81,16 @@
 		saving = true;
 		error = null;
 		try {
-			const response = await wpFetch<{ success: boolean; data: SiteContext }>(
-				'site-context',
-				{
-					method: 'PUT',
-					body: JSON.stringify({
-						summary_text: editedText,
-						auto_include: autoInclude,
-						pii_ack: piiAck
-					})
-				}
-			);
-			if (response?.data) {
-				context = response.data;
+			const response = await wpFetch<SiteContext>('site-context', {
+				method: 'PUT',
+				body: JSON.stringify({
+					summary_text: editedText,
+					auto_include: autoInclude,
+					pii_ack: piiAck
+				})
+			});
+			if (response) {
+				context = response;
 				notifications.success('Site context saved');
 			}
 		} catch (e) {
