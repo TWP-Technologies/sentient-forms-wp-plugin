@@ -17,6 +17,40 @@ class Sentient_Forms_Admin_Assets {
     private ?string $dev_base_url = null;
     private ?string $dev_notice_message = null;
     private ?string $sveltekit_runtime_key = null;
+    private ?string $cache_version = null;
+
+    /**
+     * Get a cache-busting version string based on manifest modification time.
+     * This ensures CDN caches are invalidated when assets are rebuilt.
+     *
+     * @return string Version string for cache busting.
+     */
+    public function get_cache_version(): string {
+        if ( null !== $this->cache_version ) {
+            return $this->cache_version;
+        }
+
+        // In dev mode, use current time to always bypass cache.
+        if ( $this->dev_base_url ) {
+            $this->cache_version = (string) time();
+            return $this->cache_version;
+        }
+
+        $manifest_path = $this->get_assets_path( 'manifest.json' );
+
+        if ( file_exists( $manifest_path ) ) {
+            $mtime = filemtime( $manifest_path );
+            if ( false !== $mtime ) {
+                // Use base36 encoding for a shorter version string.
+                $this->cache_version = base_convert( (string) $mtime, 10, 36 );
+                return $this->cache_version;
+            }
+        }
+
+        // Fallback to plugin version if manifest doesn't exist.
+        $this->cache_version = defined( 'SENTIENT_FORMS_VERSION' ) ? SENTIENT_FORMS_VERSION : '1.0.0';
+        return $this->cache_version;
+    }
 
     /**
      * Retrieve the decoded Vite manifest.
@@ -86,10 +120,23 @@ class Sentient_Forms_Admin_Assets {
     }
 
     /**
-     * Resolve a plugin-relative asset URL.
+     * Resolve a plugin-relative asset URL with cache-busting version parameter.
+     *
+     * @param string $relative Relative path to the asset.
+     * @param bool   $with_version Whether to append cache-busting version parameter. Default true.
+     *
+     * @return string Full URL to the asset.
      */
-    public function get_asset_url( string $relative ): string {
-        return trailingslashit( $this->get_assets_base_url() ) . ltrim( $relative, '/' );
+    public function get_asset_url( string $relative, bool $with_version = true ): string {
+        $url = trailingslashit( $this->get_assets_base_url() ) . ltrim( $relative, '/' );
+
+        // Add cache-busting version parameter for production assets.
+        if ( $with_version && ! $this->dev_base_url && '' !== $relative ) {
+            $version = $this->get_cache_version();
+            $url = add_query_arg( 'v', $version, $url );
+        }
+
+        return $url;
     }
 
     /**
