@@ -12,6 +12,7 @@
 		TemplateLibrary,
 		ModelSelector
 	} from '$lib/components/ui';
+	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { formActionsStore, formActionsState } from '$lib/stores/form-actions.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
@@ -436,6 +437,9 @@
 			spam_confidence_threshold: baseSettings.spam_confidence_threshold ?? 0.8,
 			spam_result_display_mode: baseSettings.spam_result_display_mode ?? 'entry_note',
 			spam_indicators_display: baseSettings.spam_indicators_display ?? 'simple',
+			include_site_context: baseSettings.include_site_context ?? 'global',
+			spam_positive_examples: baseSettings.spam_positive_examples ?? [],
+			spam_negative_examples: baseSettings.spam_negative_examples ?? [],
 			...baseSettings
 		};
 		editingLinkageId = linkage.local_mapping_id;
@@ -1000,7 +1004,45 @@
 																{ value: 'detailed', label: 'Detailed (List signals)' }
 															]}
 														/>
+														<SelectField
+															id="spam-context"
+															label="Include Site Context"
+															bind:value={draftSettings.include_site_context}
+															options={[
+																{ value: 'global', label: 'Use global setting' },
+																{ value: 'always', label: 'Always include' },
+																{ value: 'never', label: 'Never include' }
+															]}
+														/>
 													</div>
+
+													<!-- CB-SA-001: Classification Guidance -->
+													<SpamCriteriaEditor
+														positiveExamples={draftSettings.spam_positive_examples ?? []}
+														negativeExamples={draftSettings.spam_negative_examples ?? []}
+														onchange={(data) => {
+															draftSettings = {
+																...draftSettings,
+																spam_positive_examples: data.positive,
+																spam_negative_examples: data.negative
+															};
+														}}
+													/>
+
+													<!-- CB-SA-007: PII Warning Link -->
+													<p
+														class="sf:text-xs sf:text-slate-500 sf:pt-3 sf:flex sf:items-center sf:gap-1"
+													>
+														<span class="sf:text-amber-500">⚠</span>
+														Submission data is processed by AI.
+														<a
+															href="#/settings/context"
+															class="sf:underline hover:sf:text-slate-700"
+														>
+															Review Site Context settings
+														</a>
+														for PII handling options.
+													</p>
 												</div>
 											{/if}
 
