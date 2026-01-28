@@ -14,8 +14,11 @@ import type {
 	CustomActionQuota,
 	CustomActionUpdatePayload,
 	ExecutionStatus,
+	FormActionConfig,
+	FormActionConfigResponse,
 	FormActionLinkage,
 	FormActionMutationPayload,
+	FormAllActionConfigsResponse,
 	FormExecutionStatus,
 	FormFieldInfo,
 	FormMapping,
@@ -318,6 +321,87 @@ export class SentientFormsApiClient {
 		const slug = encodeURIComponent(formSourceSlug);
 		await this.request(
 			`${slug}/forms/${formId}/actions/${encodeURIComponent(localMappingId)}`,
+			{ method: 'DELETE', ...options }
+		);
+	}
+
+	// ==========================================================================
+	// Form-Level Action Configuration (Hierarchical Examples Storage)
+	// ==========================================================================
+
+	/**
+	 * Get all form-level action configs for a form.
+	 * These configs persist at the form level, surviving action mapping deletion.
+	 */
+	async getFormActionConfigs(
+		formSourceSlug: string,
+		formId: number,
+		options: RequestOptions = {}
+	): Promise<Record<string, FormActionConfig>> {
+		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+			console.warn('[ApiClient] getFormActionConfigs called with invalid params:', { formSourceSlug, formId });
+			return {};
+		}
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<FormAllActionConfigsResponse>>(
+			`forms/${slug}/${formId}/action-config`,
+			{ showNotifications: false, ...options }
+		);
+		return this.unwrap<FormAllActionConfigsResponse>(response).configs;
+	}
+
+	/**
+	 * Get form-level config for a specific action on a form.
+	 */
+	async getFormActionConfig(
+		formSourceSlug: string,
+		formId: number,
+		actionId: string,
+		options: RequestOptions = {}
+	): Promise<FormActionConfig> {
+		if (!formSourceSlug || !formId || !actionId) {
+			console.warn('[ApiClient] getFormActionConfig called with invalid params:', { formSourceSlug, formId, actionId });
+			return {};
+		}
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
+			`forms/${slug}/${formId}/action-config/${encodeURIComponent(actionId)}`,
+			{ showNotifications: false, ...options }
+		);
+		return this.unwrap<FormActionConfigResponse>(response).config;
+	}
+
+	/**
+	 * Update form-level config for a specific action on a form.
+	 * These settings act as defaults for all mappings of this action on this form.
+	 */
+	async updateFormActionConfig(
+		formSourceSlug: string,
+		formId: number,
+		actionId: string,
+		config: Partial<FormActionConfig>,
+		options: RequestOptions = {}
+	): Promise<FormActionConfig> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
+			`forms/${slug}/${formId}/action-config/${encodeURIComponent(actionId)}`,
+			{ method: 'POST', body: config, ...options }
+		);
+		return this.unwrap<FormActionConfigResponse>(response).config;
+	}
+
+	/**
+	 * Delete form-level config for a specific action on a form.
+	 */
+	async deleteFormActionConfig(
+		formSourceSlug: string,
+		formId: number,
+		actionId: string,
+		options: RequestOptions = {}
+	): Promise<void> {
+		const slug = encodeURIComponent(formSourceSlug);
+		await this.request(
+			`forms/${slug}/${formId}/action-config/${encodeURIComponent(actionId)}`,
 			{ method: 'DELETE', ...options }
 		);
 	}

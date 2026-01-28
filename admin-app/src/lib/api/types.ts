@@ -201,6 +201,42 @@ export interface FormActionMutationPayload {
 	settings?: FormActionSettings;
 }
 
+/**
+ * Form-level action configuration (hierarchical examples storage)
+ * This configuration persists at the form level, surviving action mapping deletion.
+ */
+export interface FormActionConfig {
+	/** Examples of legitimate submissions (positive examples) */
+	spam_positive_examples?: string[];
+	/** Examples of spam submissions (negative examples) */
+	spam_negative_examples?: string[];
+	/** Site context inclusion: 'global' | 'always' | 'never' */
+	include_site_context?: 'global' | 'always' | 'never';
+	/** Model override for this action on this form */
+	model_override?: string;
+	/** Last update timestamp */
+	updated_at?: string;
+}
+
+/**
+ * Response from GET /forms/{source}/{id}/action-config/{actionId}
+ */
+export interface FormActionConfigResponse {
+	form_source: string;
+	form_id: number;
+	action_id: string;
+	config: FormActionConfig;
+}
+
+/**
+ * Response from GET /forms/{source}/{id}/action-config (all configs)
+ */
+export interface FormAllActionConfigsResponse {
+	form_source: string;
+	form_id: number;
+	configs: Record<string, FormActionConfig>;
+}
+
 export type CustomActionStatus = 'active' | 'archived';
 
 /**

@@ -40,6 +40,7 @@ return [
 	'Sentient_Forms_Error_Type' => __DIR__ . '/utilities/errors.php',
 	'Sentient_Forms_Error_Utils' => __DIR__ . '/utilities/errors.php',
 	'Sentient_Forms_Form_Actions_Controller' => __DIR__ . '/rest-api/controllers/class-form-actions-controller.php',
+	'Sentient_Forms_Form_Action_Config_Controller' => __DIR__ . '/rest-api/controllers/class-form-action-config-controller.php',
 	'Sentient_Forms_Form_Adapter_Registry' => __DIR__ . '/adapters/forms/class-forms-adapter-registry.php',
 	'Sentient_Forms_Form_Controller' => __DIR__ . '/rest-api/controllers/class-form-controller.php',
 	'Sentient_Forms_Form_Sources' => __DIR__ . '/rest-api/class-form-sources.php',
