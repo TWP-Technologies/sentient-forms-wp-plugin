@@ -1,6 +1,6 @@
 import { toStore } from 'svelte/store';
 import { createClientFromConfig } from '$lib/api/client';
-import type { LicenseActivationResult, LicenseInfoResponse } from '$lib/api/types';
+import type { LicenseActivationResult, LicenseInfoResponse, TierSummary } from '$lib/api/types';
 import { notifications } from '$lib/stores/notifications';
 
 export interface LicenseState {
@@ -17,6 +17,15 @@ export interface LicenseState {
 	error: string | null;
 }
 
+/** Extract tier display name from string or TierSummary object */
+function extractTierName(tier: unknown): string | null {
+	if (typeof tier === 'string') return tier;
+	if (tier && typeof tier === 'object' && 'display_name' in tier) {
+		return (tier as TierSummary).display_name ?? (tier as TierSummary).code ?? null;
+	}
+	return null;
+}
+
 const runtimeConfig = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
 const bootstrap = runtimeConfig?.license ?? {};
 
@@ -25,7 +34,7 @@ const initialState: LicenseState = {
 	status: bootstrap.status ?? 'inactive',
 	licenseKeyMasked: bootstrap.licenseKeyMasked ?? '',
 	proxyKeyPresent: bootstrap.proxyKeyPresent ?? false,
-	tier: bootstrap.tier ?? null,
+	tier: extractTierName(bootstrap.tier),
 	expiresAt: bootstrap.expiresAt ?? null,
 	lastSynced: bootstrap.lastSynced ?? null,
 	licenseId: bootstrap.licenseId ?? null,
@@ -40,7 +49,7 @@ function mapResponse(payload: LicenseInfoResponse): LicenseState {
 		status: payload.status,
 		licenseKeyMasked: payload.license_key_masked ?? '',
 		proxyKeyPresent: Boolean(payload.proxy_key_present),
-		tier: payload.tier ?? null,
+		tier: extractTierName(payload.tier),
 		expiresAt: payload.expires_at ?? null,
 		lastSynced: payload.last_synced ?? null,
 		licenseId: payload.license_id ?? null,

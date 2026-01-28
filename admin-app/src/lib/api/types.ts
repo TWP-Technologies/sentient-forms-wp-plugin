@@ -32,7 +32,7 @@ export interface LicenseInfoResponse {
 	proxy_key_present: boolean;
 	expires_at: string | null;
 	last_synced: string | null;
-	tier: string | null;
+	tier: string | TierSummary | null;
 	license_id: string | null;
 	site_id: string | null;
 	site_url: string;
