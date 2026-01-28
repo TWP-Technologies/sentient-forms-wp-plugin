@@ -16,7 +16,7 @@
 		placeholder?: string | undefined;
 		value?: HTMLSelectAttributes['value'];
 		selectClass?: string;
-		[key: string]: any
+		[key: string]: any;
 	}
 
 	let {
@@ -35,25 +35,27 @@
 		...rest
 	}: Props = $props();
 
-	const describedBy = [
-		description ? `${id}-description` : null,
-		help ? `${id}-help` : null,
-		error ? `${id}-error` : null
-	]
-		.filter(Boolean)
-		.join(' ') || undefined;
+	const describedBy =
+		[
+			description ? `${id}-description` : null,
+			help ? `${id}-help` : null,
+			error ? `${id}-error` : null
+		]
+			.filter(Boolean)
+			.join(' ') || undefined;
 </script>
 
 <FormField {id} {label} {description} {help} {error} {required}>
 	<select
-		bind:value
+		{value}
+		onchange={(e) => (value = e.currentTarget.value)}
 		aria-describedby={describedBy}
-	aria-invalid={error ? true : undefined}
+		aria-invalid={error ? true : undefined}
 		class={`sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus:border-primary-500 sf:focus:ring-2 sf:focus:ring-primary-100 sf:disabled:bg-muted-100 sf:disabled:text-muted-400 ${selectClass}`}
 		{disabled}
-		id={id}
-		name={name}
-		required={required}
+		{id}
+		{name}
+		{required}
 		{...rest}
 	>
 		{#if placeholder}
