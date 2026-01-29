@@ -66,6 +66,23 @@
 			formDirty = false;
 		}
 	}
+
+	let showClearConfirm = $state(false);
+
+	async function purgeStaleJobs() {
+		const result = await asyncHealth.purge({ status: 'queued,failed', olderThan: 10080 });
+		if (result) {
+			console.log('Purged stale jobs:', result);
+		}
+	}
+
+	async function clearAllJobs() {
+		const result = await asyncHealth.purge({ clearAll: true });
+		if (result) {
+			console.log('Cleared all jobs:', result);
+		}
+		showClearConfirm = false;
+	}
 </script>
 
 <section class="sf:space-y-6 sf:max-w-3xl">
@@ -103,7 +120,8 @@
 			<div>
 				<p class="sf:font-medium sf:text-slate-900">Enable telemetry sharing</p>
 				<p class="sf:text-sm sf:text-slate-600">
-					Share aggregated action metrics and CPS diagnostics to help Sentient Forms improve reliability.
+					Share aggregated action metrics and CPS diagnostics to help Sentient Forms improve
+					reliability.
 				</p>
 			</div>
 			<label class="sf:flex sf:items-center sf:gap-3">
@@ -131,7 +149,9 @@
 		</div>
 	</div>
 
-	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-3">
+	<div
+		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-3"
+	>
 		<div class="sf:flex sf:items-center sf:justify-between">
 			<div>
 				<p class="sf:font-medium sf:text-slate-900">Enable on-site logging</p>
@@ -155,11 +175,14 @@
 		{/if}
 	</div>
 
-	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4">
+	<div
+		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"
+	>
 		<div class="sf:space-y-1">
 			<p class="sf:font-medium sf:text-slate-900">Async retry policy</p>
 			<p class="sf:text-sm sf:text-slate-600">
-				Configure how many times Sentient Forms retries async jobs and how long it waits between attempts.
+				Configure how many times Sentient Forms retries async jobs and how long it waits between
+				attempts.
 			</p>
 		</div>
 
@@ -228,4 +251,93 @@
 			{/if}
 		</div>
 	</div>
+
+	<div
+		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"
+	>
+		<div class="sf:space-y-1">
+			<p class="sf:font-medium sf:text-slate-900">Queue maintenance</p>
+			<p class="sf:text-sm sf:text-slate-600">
+				Clear stale or stuck jobs from the async processing queue.
+			</p>
+		</div>
+
+		<div class="sf:flex sf:flex-col sf:gap-3">
+			<div class="sf:flex sf:items-center sf:justify-between sf:p-3 sf:bg-slate-50 sf:rounded-lg">
+				<div>
+					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Queue depth</p>
+					<p class="sf:text-xl sf:font-semibold sf:text-slate-900">{$asyncHealth.queue_depth}</p>
+				</div>
+				{#if $asyncHealth.oldest_run_at}
+					<div class="sf:text-right">
+						<p class="sf:text-sm sf:font-medium sf:text-slate-700">Oldest job</p>
+						<p class="sf:text-sm sf:text-slate-600">
+							{new Date($asyncHealth.oldest_run_at * 1000).toLocaleDateString()}
+						</p>
+					</div>
+				{/if}
+			</div>
+
+			{#if $asyncHealth.lastPurgeResult}
+				<div class="sf:text-sm sf:text-green-700 sf:bg-green-50 sf:p-2 sf:rounded-lg">
+					✓ {$asyncHealth.lastPurgeResult.message}
+				</div>
+			{/if}
+
+			<div class="sf:flex sf:gap-3">
+				<button
+					type="button"
+					class="sf:rounded-lg sf:bg-amber-600 sf:text-white sf:px-4 sf:py-2 sf:text-sm sf:font-semibold hover:sf:bg-amber-700 disabled:sf:opacity-50"
+					disabled={$asyncHealth.purging || $asyncHealth.queue_depth === 0}
+					onclick={purgeStaleJobs}
+				>
+					{$asyncHealth.purging ? 'Purging…' : 'Purge stale jobs'}
+				</button>
+				<button
+					type="button"
+					class="sf:rounded-lg sf:border sf:border-red-300 sf:text-red-700 sf:px-4 sf:py-2 sf:text-sm sf:font-semibold hover:sf:bg-red-50 disabled:sf:opacity-50"
+					disabled={$asyncHealth.purging || $asyncHealth.queue_depth === 0}
+					onclick={() => (showClearConfirm = true)}
+				>
+					Clear all
+				</button>
+			</div>
+
+			<p class="sf:text-xs sf:text-slate-500">
+				"Purge stale jobs" removes queued/failed jobs older than 1 week. "Clear all" removes all job
+				metadata.
+			</p>
+		</div>
+	</div>
+
+	{#if showClearConfirm}
+		<div
+			class="sf:fixed sf:inset-0 sf:bg-black/50 sf:flex sf:items-center sf:justify-center sf:z-50"
+		>
+			<div class="sf:bg-white sf:rounded-xl sf:p-6 sf:max-w-sm sf:space-y-4 sf:shadow-xl">
+				<p class="sf:font-semibold sf:text-slate-900">Clear all job metadata?</p>
+				<p class="sf:text-sm sf:text-slate-600">
+					This will remove all tracked async jobs, including successful ones. This action cannot be
+					undone.
+				</p>
+				<div class="sf:flex sf:gap-3 sf:justify-end">
+					<button
+						type="button"
+						class="sf:rounded-lg sf:border sf:border-slate-300 sf:px-4 sf:py-2 sf:text-sm sf:font-semibold sf:text-slate-700 hover:sf:bg-slate-50"
+						onclick={() => (showClearConfirm = false)}
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						class="sf:rounded-lg sf:bg-red-600 sf:text-white sf:px-4 sf:py-2 sf:text-sm sf:font-semibold hover:sf:bg-red-700"
+						disabled={$asyncHealth.purging}
+						onclick={clearAllJobs}
+					>
+						{$asyncHealth.purging ? 'Clearing…' : 'Clear all'}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 </section>

@@ -189,6 +189,40 @@ export class SentientFormsApiClient {
 		return this.unwrap(response);
 	}
 
+	/**
+	 * Purge async jobs based on status and age filters.
+	 * @param status - Comma-separated statuses to purge (default: 'queued,failed')
+	 * @param olderThan - Purge jobs older than this many minutes (default: 10080 = 1 week)
+	 * @param clearAll - If true, clear all job metadata
+	 */
+	async purgeAsyncJobs(
+		options: {
+			status?: string;
+			olderThan?: number;
+			clearAll?: boolean;
+		} = {},
+		requestOptions: RequestOptions = {}
+	): Promise<{ removed: number; message: string }> {
+		const params = new URLSearchParams();
+		if (options.status) {
+			params.set('status', options.status);
+		}
+		if (options.olderThan !== undefined) {
+			params.set('older_than', String(options.olderThan));
+		}
+		if (options.clearAll) {
+			params.set('clear_all', 'true');
+		}
+
+		const query = params.toString();
+		const path = query ? `async-health?${query}` : 'async-health';
+		const response = await this.request<RestEnvelope<{ removed: number; message: string }>>(
+			path,
+			{ method: 'DELETE', ...requestOptions }
+		);
+		return this.unwrap(response);
+	}
+
 	async getCreditBalance(options: RequestOptions = {}): Promise<CreditBalanceResponse> {
 		const response = await this.request<RestEnvelope<CreditBalanceResponse>>('credits/balance', options);
 		return this.unwrap(response);

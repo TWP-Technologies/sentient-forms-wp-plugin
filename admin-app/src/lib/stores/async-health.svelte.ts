@@ -4,7 +4,9 @@ import type { AsyncHealthResponse } from '$lib/api/types';
 
 export interface AsyncHealthState extends AsyncHealthResponse {
 	loading: boolean;
+	purging: boolean;
 	lastFetched: number | null;
+	lastPurgeResult: { removed: number; message: string } | null;
 }
 
 const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig?.asyncHealth;
@@ -15,7 +17,9 @@ const initialState: AsyncHealthState = {
 	recent_failures: runtime?.recent_failures ?? {},
 	warnings: runtime?.warnings ?? [],
 	loading: false,
-	lastFetched: runtime ? Date.now() : null
+	purging: false,
+	lastFetched: runtime ? Date.now() : null,
+	lastPurgeResult: null
 };
 
 export function createAsyncHealthStore(client: SentientFormsApiClient = createClientFromConfig()) {
@@ -27,11 +31,25 @@ export function createAsyncHealthStore(client: SentientFormsApiClient = createCl
 			update((state) => ({ ...state, loading: true }));
 			try {
 				const response = await client.getAsyncHealth({ showNotifications: false });
-				set({ ...response, loading: false, lastFetched: Date.now() });
+				set({ ...response, loading: false, purging: false, lastFetched: Date.now(), lastPurgeResult: null });
 				return response;
 			} catch (error) {
 				console.error('Failed to load async health', error);
 				update((state) => ({ ...state, loading: false }));
+				return null;
+			}
+		},
+		async purge(options: { status?: string; olderThan?: number; clearAll?: boolean } = {}) {
+			update((state) => ({ ...state, purging: true }));
+			try {
+				const result = await client.purgeAsyncJobs(options);
+				// Refresh health after purge
+				const response = await client.getAsyncHealth({ showNotifications: false });
+				set({ ...response, loading: false, purging: false, lastFetched: Date.now(), lastPurgeResult: result });
+				return result;
+			} catch (error) {
+				console.error('Failed to purge async jobs', error);
+				update((state) => ({ ...state, purging: false }));
 				return null;
 			}
 		},
@@ -42,3 +60,4 @@ export function createAsyncHealthStore(client: SentientFormsApiClient = createCl
 }
 
 export const asyncHealthStore = createAsyncHealthStore();
+
