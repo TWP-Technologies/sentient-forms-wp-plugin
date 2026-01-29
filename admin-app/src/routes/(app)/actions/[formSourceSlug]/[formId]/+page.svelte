@@ -23,6 +23,7 @@
 	import type {
 		ActionDefinition,
 		CustomAction,
+		FormActionConfig,
 		FormActionLinkage,
 		FormExecutionStatus,
 		FormFieldInfo,
@@ -61,6 +62,61 @@
 	// CA-MAP-001: Field selection state (loaded from API)
 	let formFields = $state<FormFieldInfo[]>([]);
 	let fieldsLoading = $state(false);
+
+	// Form-level action config state (hierarchical spam examples)
+	let configuringActionId = $state<string | null>(null);
+	let formLevelConfig = $state<FormActionConfig>({ include_site_context: 'global' });
+	let formLevelConfigLoading = $state(false);
+	let formLevelConfigSaving = $state(false);
+
+	async function loadFormLevelConfig(actionId: string) {
+		formLevelConfigLoading = true;
+
+		try {
+			const client = createClientFromConfig();
+			const result = await client.getFormActionConfig(data.formSourceSlug, data.formId, actionId);
+
+			// Ensure result is always an object, not an array or null
+			const configData =
+				result && typeof result === 'object' && !Array.isArray(result)
+					? result
+					: { include_site_context: 'global' as const };
+			formLevelConfig = configData;
+			configuringActionId = actionId;
+		} catch (error) {
+			console.warn('[FormLevelConfig] Failed to load form-level config:', error);
+			formLevelConfig = { include_site_context: 'global' as const };
+			configuringActionId = actionId;
+		} finally {
+			formLevelConfigLoading = false;
+		}
+	}
+
+	async function saveFormLevelConfig() {
+		if (!configuringActionId) return;
+		formLevelConfigSaving = true;
+		try {
+			const client = createClientFromConfig();
+			await client.updateFormActionConfig(
+				data.formSourceSlug,
+				data.formId,
+				configuringActionId,
+				formLevelConfig
+			);
+			notifications.success('Form-level configuration saved successfully.');
+			configuringActionId = null;
+		} catch (error) {
+			console.error('[FormLevelConfig] Failed to save form-level config:', error);
+			notifications.error('Failed to save form-level configuration.');
+		} finally {
+			formLevelConfigSaving = false;
+		}
+	}
+
+	function cancelFormLevelConfig() {
+		configuringActionId = null;
+		formLevelConfig = {};
+	}
 
 	async function loadFormFields() {
 		if (fieldsLoading) return;
@@ -671,6 +727,93 @@
 </script>
 
 <Section heading="Actions" description="Link CPS templates or custom actions to this form.">
+	<!-- Form-Level Action Config Modal - Inside Section slot for Svelte 5 reactivity -->
+	{#if configuringActionId}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="sf:fixed sf:inset-0 sf:z-50 sf:bg-black/40 sf:flex sf:items-center sf:justify-center sf:p-4"
+			onclick={cancelFormLevelConfig}
+		>
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<div
+				class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-2xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
+				onclick={(e) => e.stopPropagation()}
+			>
+				<header
+					class="sf:flex sf:items-center sf:justify-between sf:px-6 sf:py-4 sf:border-b sf:border-slate-200"
+				>
+					<div>
+						<h2 class="sf:text-lg sf:font-semibold sf:text-slate-800">Form-Level Defaults</h2>
+						<p class="sf:text-sm sf:text-slate-500">
+							Configure default examples for all spam detection actions on this form.
+						</p>
+					</div>
+					<button
+						class="sf:text-slate-400 hover:sf:text-slate-600 sf:text-2xl sf:leading-none"
+						onclick={cancelFormLevelConfig}
+						aria-label="Close">×</button
+					>
+				</header>
+
+				<div class="sf:p-6 sf:space-y-6">
+					{#if formLevelConfigLoading}
+						<p class="sf:text-sm sf:text-slate-500">Loading configuration...</p>
+					{:else}
+						<Alert variant="info">
+							<p class="sf:text-sm">
+								These examples serve as defaults for all <strong>Spam Detection</strong> mappings on this
+								form. Individual mappings can override these values.
+							</p>
+						</Alert>
+
+						<SpamCriteriaEditor
+							positiveExamples={formLevelConfig.spam_positive_examples ?? []}
+							negativeExamples={formLevelConfig.spam_negative_examples ?? []}
+							onchange={(data) => {
+								formLevelConfig = {
+									...formLevelConfig,
+									spam_positive_examples: data.positive,
+									spam_negative_examples: data.negative
+								};
+							}}
+						/>
+
+						<SelectField
+							id="form-level-context"
+							label="Include Site Context"
+							bind:value={formLevelConfig.include_site_context}
+							options={[
+								{ value: 'global', label: 'Use global setting' },
+								{ value: 'always', label: 'Always include' },
+								{ value: 'never', label: 'Never include' }
+							]}
+						/>
+
+						<p class="sf:text-xs sf:text-slate-500 sf:pt-2 sf:flex sf:items-center sf:gap-1">
+							<span class="sf:text-amber-500">⚠</span>
+							Submission data is processed by AI.
+							<a href="#/settings/context" class="sf:underline hover:sf:text-slate-700">
+								Review Site Context settings
+							</a>
+							for PII handling options.
+						</p>
+					{/if}
+				</div>
+
+				<footer
+					class="sf:flex sf:justify-end sf:gap-2 sf:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
+				>
+					<Button variant="secondary" onclick={cancelFormLevelConfig}>Cancel</Button>
+					<Button
+						onclick={saveFormLevelConfig}
+						disabled={formLevelConfigSaving || formLevelConfigLoading}
+					>
+						{formLevelConfigSaving ? 'Saving...' : 'Save Defaults'}
+					</Button>
+				</footer>
+			</div>
+		</div>
+	{/if}
 	<div slot="actions" class="sf:flex sf:flex-wrap sf:gap-2">
 		<Button variant="secondary" onclick={() => navigateToAppPath('/actions')}>All forms</Button>
 		<Button variant="secondary" onclick={refresh}>Refresh</Button>
@@ -717,7 +860,7 @@
 						<ul class="sf:space-y-2">
 							{#each definitions.slice(0, 5) as definition (definition.id)}
 								<li class="sf:flex sf:items-start sf:justify-between sf:gap-3">
-									<div>
+									<div class="sf:flex-1">
 										<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
 											{definition.label ?? definition.id}
 										</p>
@@ -730,9 +873,21 @@
 											)}
 										</p>
 									</div>
-									<Badge variant={definitionSourceBadgeVariant(definition)}>
-										{definition.source === 'cps' ? 'CPS' : 'Local'}
-									</Badge>
+									<div class="sf:flex sf:items-center sf:gap-2">
+										{#if definition.id === 'spam_detection_v1' || definition.id === 'spam_analysis'}
+											<Button
+												size="sm"
+												variant="ghost"
+												onclick={() => loadFormLevelConfig(definition.id)}
+												disabled={formLevelConfigLoading}
+											>
+												Defaults
+											</Button>
+										{/if}
+										<Badge variant={definitionSourceBadgeVariant(definition)}>
+											{definition.source === 'cps' ? 'CPS' : 'Local'}
+										</Badge>
+									</div>
 								</li>
 							{/each}
 						</ul>

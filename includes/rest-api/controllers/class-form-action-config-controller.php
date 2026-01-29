@@ -266,7 +266,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
         $action_id   = $request->get_param( 'action_id' );
 
         $configs       = $this->get_all_configs( $form_source, $form_id );
-        $action_config = $configs[ $action_id ] ?? [];
+        $action_config = $configs[ $action_id ] ?? (object) [];
 
         return $this->prepare_item_for_response( [
             'form_source' => $form_source,
