@@ -440,7 +440,43 @@ export class SentientFormsApiClient {
 		);
 	}
 
+	// ============================================================
+	// Global Action Defaults (top of hierarchy)
+	// ============================================================
+
+	/**
+	 * Get global defaults for a specific action (applies across all forms).
+	 */
+	async getActionDefaults(actionId: string, options: RequestOptions = {}): Promise<FormActionConfig> {
+		if (!actionId) {
+			console.warn('[ApiClient] getActionDefaults called without actionId');
+			return {};
+		}
+		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
+			`actions/${encodeURIComponent(actionId)}/defaults`,
+			{ showNotifications: false, ...options }
+		);
+		return this.unwrap<FormActionConfigResponse>(response).config;
+	}
+
+	/**
+	 * Update global defaults for a specific action.
+	 * These settings act as the base defaults for all forms unless overridden.
+	 */
+	async updateActionDefaults(
+		actionId: string,
+		config: Partial<FormActionConfig>,
+		options: RequestOptions = {}
+	): Promise<FormActionConfig> {
+		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
+			`actions/${encodeURIComponent(actionId)}/defaults`,
+			{ method: 'POST', body: config, ...options }
+		);
+		return this.unwrap<FormActionConfigResponse>(response).config;
+	}
+
 	async getCustomActions(
+
 		filters: CustomActionFilters = {},
 		options: RequestOptions = {}
 	): Promise<{ actions: CustomAction[]; quota: CustomActionQuota }> {

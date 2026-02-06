@@ -71,6 +71,13 @@
 
 	async function loadFormLevelConfig(actionId: string) {
 		formLevelConfigLoading = true;
+		// Reset to defaults FIRST, then set configuringActionId to open modal immediately
+		formLevelConfig = {
+			include_site_context: 'global' as const,
+			spam_positive_examples: [],
+			spam_negative_examples: []
+		};
+		configuringActionId = actionId;
 
 		try {
 			const client = createClientFromConfig();
@@ -81,12 +88,16 @@
 				result && typeof result === 'object' && !Array.isArray(result)
 					? result
 					: { include_site_context: 'global' as const };
-			formLevelConfig = configData;
-			configuringActionId = actionId;
+			// Merge with defaults to ensure all props exist
+			formLevelConfig = {
+				include_site_context: configData.include_site_context ?? 'global',
+				spam_positive_examples: configData.spam_positive_examples ?? [],
+				spam_negative_examples: configData.spam_negative_examples ?? []
+			};
 		} catch (error) {
 			console.warn('[FormLevelConfig] Failed to load form-level config:', error);
-			formLevelConfig = { include_site_context: 'global' as const };
-			configuringActionId = actionId;
+			// Keep the defaults we set above - modal will still open
+			notifications.warning('Could not load saved config. Starting with defaults.');
 		} finally {
 			formLevelConfigLoading = false;
 		}
@@ -496,9 +507,16 @@
 			include_site_context: baseSettings.include_site_context ?? 'global',
 			spam_positive_examples: baseSettings.spam_positive_examples ?? [],
 			spam_negative_examples: baseSettings.spam_negative_examples ?? [],
+			// CB-EXEC-002: Execution mode - default to after_submission (async) for safety
+			execution_mode: baseSettings.execution_mode ?? 'after_submission',
 			...baseSettings
 		};
 		editingLinkageId = linkage.local_mapping_id;
+
+		// Load form-level config for spam detection actions (for inheritance display)
+		if (linkage.central_action_id === 'spam_detection_v1') {
+			loadFormLevelConfig(linkage.central_action_id);
+		}
 	}
 
 	function cancelEditingAction() {
@@ -1132,6 +1150,49 @@
 												</div>
 											</div>
 
+											<!-- CB-EXEC-001/002: Execution Mode Selection -->
+											<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+												<p
+													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
+												>
+													Execution Mode
+												</p>
+												<SelectField
+													id="execution-mode"
+													label="When should this action run?"
+													bind:value={draftSettings.execution_mode}
+													options={[
+														{
+															value: 'validation',
+															label: '🔄 Validation (Synchronous)'
+														},
+														{
+															value: 'after_submission',
+															label: '📝 After Submission (Asynchronous)'
+														}
+													]}
+												/>
+												<div
+													class="sf:mt-2 sf:p-3 sf:bg-slate-100 sf:rounded-md sf:text-xs sf:text-slate-600"
+												>
+													{#if draftSettings.execution_mode === 'validation'}
+														<p class="sf:font-medium sf:text-slate-700">⚡ Synchronous execution</p>
+														<p class="sf:mt-1">
+															Runs during form submission. Can block spam or invalid entries before
+															they're saved. User waits for AI response.
+														</p>
+													{:else}
+														<p class="sf:font-medium sf:text-slate-700">
+															📋 Asynchronous execution
+														</p>
+														<p class="sf:mt-1">
+															Runs in background after entry is saved. User gets immediate
+															confirmation. Results are attached to entry notes.
+														</p>
+													{/if}
+												</div>
+											</div>
+
 											{#if linkage.central_action_id === 'spam_detection_v1'}
 												<div class="sf:border-t sf:border-slate-200 sf:pt-4">
 													<p
@@ -1175,6 +1236,12 @@
 													<SpamCriteriaEditor
 														positiveExamples={draftSettings.spam_positive_examples ?? []}
 														negativeExamples={draftSettings.spam_negative_examples ?? []}
+														inheritedPositive={formLevelConfig.spam_positive_examples ?? []}
+														inheritedNegative={formLevelConfig.spam_negative_examples ?? []}
+														inheritanceSource={formLevelConfig.spam_positive_examples?.length > 0 ||
+														formLevelConfig.spam_negative_examples?.length > 0
+															? 'form'
+															: null}
 														onchange={(data) => {
 															draftSettings = {
 																...draftSettings,

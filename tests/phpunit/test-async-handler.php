@@ -750,4 +750,246 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		// This preserves original behavior requiring local action registration
 		$this->assertFalse( $result, 'Non-master actions without local PHP class should fail to schedule' );
 	}
+
+	/**
+	 * Test that process_action merges form-level spam examples when mapping has none.
+	 *
+	 * Hierarchical resolution: mapping → form → action defaults
+	 * When mapping has no spam examples, form-level examples should be used.
+	 */
+	public function test_process_action_merges_form_level_spam_examples(): void
+	{
+		// Set up form-level config in wp_options
+		$form_config = [
+			'spam_detection_v1' => [
+				'spam_positive_examples' => [ 'This is a legitimate inquiry', 'I need help with my account' ],
+				'spam_negative_examples' => [ 'Buy crypto now!!!', 'You won a prize' ],
+			],
+		];
+		update_option( 'sentient_forms_form_config_gravity_forms_220', $form_config );
+
+		// Inject test executor to capture what gets passed
+		$executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+		$reflection = new ReflectionClass( $this->plugin );
+		$property   = $reflection->getProperty( 'action_executor' );
+		$property->setAccessible( true );
+		$property->setValue( $this->plugin, $executor );
+
+		$data = [
+			'form'  => [ 'id' => 220, 'title' => 'Hierarchical Test' ],
+			'entry' => [ 'id' => 801, 'field_1' => 'test content' ],
+		];
+
+		// Mapping settings WITHOUT spam examples
+		$settings = [
+			'central_action_id'     => 'spam_detection_v1',
+			'action_type_indicator' => 'master',
+			// No spam_positive_examples or spam_negative_examples
+		];
+
+		$context = [
+			'hook'        => 'gform_after_submission',
+			'form_source' => 'gravity_forms',
+			'entry_id'    => 801,
+			'form_id'     => 220,
+			'job_id'      => wp_generate_uuid4(),
+			'action_id'   => 'spam_detection_v1',
+		];
+
+		$handler = $this->plugin->get_async_handler();
+		$handler->process_action(
+			'spam_detection_v1',
+			$data,
+			$settings,
+			null,
+			$context
+		);
+
+		// Verify form-level examples were merged into settings passed to executor
+		$captured_settings = $executor->captured['context']['settings'] ?? [];
+		$this->assertSame(
+			[ 'This is a legitimate inquiry', 'I need help with my account' ],
+			$captured_settings['spam_positive_examples'] ?? null,
+			'Form-level positive examples should be merged when mapping has none'
+		);
+		$this->assertSame(
+			[ 'Buy crypto now!!!', 'You won a prize' ],
+			$captured_settings['spam_negative_examples'] ?? null,
+			'Form-level negative examples should be merged when mapping has none'
+		);
+
+		delete_option( 'sentient_forms_form_config_gravity_forms_220' );
+	}
+
+	/**
+	 * Test that mapping-level spam examples override form-level examples.
+	 *
+	 * Hierarchical resolution: mapping → form → action defaults
+	 * When mapping has spam examples, they should take priority over form-level.
+	 */
+	public function test_process_action_mapping_examples_override_form_level(): void
+	{
+		// Set up form-level config (should be overridden)
+		$form_config = [
+			'spam_detection_v1' => [
+				'spam_positive_examples' => [ 'Form level positive' ],
+				'spam_negative_examples' => [ 'Form level negative' ],
+			],
+		];
+		update_option( 'sentient_forms_form_config_gravity_forms_221', $form_config );
+
+		$executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+		$reflection = new ReflectionClass( $this->plugin );
+		$property   = $reflection->getProperty( 'action_executor' );
+		$property->setAccessible( true );
+		$property->setValue( $this->plugin, $executor );
+
+		$data = [
+			'form'  => [ 'id' => 221, 'title' => 'Override Test' ],
+			'entry' => [ 'id' => 802, 'field_1' => 'test' ],
+		];
+
+		// Mapping settings WITH spam examples (should override form-level)
+		$settings = [
+			'central_action_id'       => 'spam_detection_v1',
+			'action_type_indicator'   => 'master',
+			'spam_positive_examples'  => [ 'Mapping level positive' ],
+			'spam_negative_examples'  => [ 'Mapping level negative' ],
+		];
+
+		$context = [
+			'form_source' => 'gravity_forms',
+			'form_id'     => 221,
+			'entry_id'    => 802,
+			'job_id'      => wp_generate_uuid4(),
+			'action_id'   => 'spam_detection_v1',
+		];
+
+		$handler = $this->plugin->get_async_handler();
+		$handler->process_action(
+			'spam_detection_v1',
+			$data,
+			$settings,
+			null,
+			$context
+		);
+
+		// Mapping examples should win over form-level
+		$captured_settings = $executor->captured['context']['settings'] ?? [];
+		$this->assertSame(
+			[ 'Mapping level positive' ],
+			$captured_settings['spam_positive_examples'] ?? null,
+			'Mapping-level examples should override form-level'
+		);
+		$this->assertSame(
+			[ 'Mapping level negative' ],
+			$captured_settings['spam_negative_examples'] ?? null,
+			'Mapping-level examples should override form-level'
+		);
+
+		delete_option( 'sentient_forms_form_config_gravity_forms_221' );
+	}
+
+	/**
+	 * Test that non-spam-detection actions bypass hierarchical resolution.
+	 */
+	public function test_process_action_non_spam_actions_bypass_hierarchical_resolution(): void
+	{
+		// Set up form-level spam config (should be ignored for non-spam actions)
+		$form_config = [
+			'summary_v1' => [
+				'spam_positive_examples' => [ 'Should not appear' ],
+			],
+		];
+		update_option( 'sentient_forms_form_config_gravity_forms_222', $form_config );
+
+		$executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+		$reflection = new ReflectionClass( $this->plugin );
+		$property   = $reflection->getProperty( 'action_executor' );
+		$property->setAccessible( true );
+		$property->setValue( $this->plugin, $executor );
+
+		$data = [
+			'form'  => [ 'id' => 222, 'title' => 'Summary Test' ],
+			'entry' => [ 'id' => 803, 'field_1' => 'content' ],
+		];
+
+		$settings = [
+			'central_action_id'     => 'summary_v1',
+			'action_type_indicator' => 'master',
+		];
+
+		$context = [
+			'form_source' => 'gravity_forms',
+			'form_id'     => 222,
+			'entry_id'    => 803,
+			'job_id'      => wp_generate_uuid4(),
+			'action_id'   => 'summary_v1',
+		];
+
+		$handler = $this->plugin->get_async_handler();
+		$handler->process_action(
+			'summary_v1',
+			$data,
+			$settings,
+			null,
+			$context
+		);
+
+		// Non-spam actions should not have spam examples merged
+		$captured_settings = $executor->captured['context']['settings'] ?? [];
+		$this->assertArrayNotHasKey(
+			'spam_positive_examples',
+			$captured_settings,
+			'Non-spam actions should not have spam examples merged'
+		);
+
+		delete_option( 'sentient_forms_form_config_gravity_forms_222' );
+	}
+
+	/**
+	 * Test that hierarchical resolution handles missing form config gracefully.
+	 */
+	public function test_process_action_handles_missing_form_config(): void
+	{
+		// Ensure no form config exists
+		delete_option( 'sentient_forms_form_config_gravity_forms_223' );
+
+		$executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+		$reflection = new ReflectionClass( $this->plugin );
+		$property   = $reflection->getProperty( 'action_executor' );
+		$property->setAccessible( true );
+		$property->setValue( $this->plugin, $executor );
+
+		$data = [
+			'form'  => [ 'id' => 223, 'title' => 'No Config Test' ],
+			'entry' => [ 'id' => 804, 'field_1' => 'content' ],
+		];
+
+		$settings = [
+			'central_action_id'     => 'spam_detection_v1',
+			'action_type_indicator' => 'master',
+		];
+
+		$context = [
+			'form_source' => 'gravity_forms',
+			'form_id'     => 223,
+			'entry_id'    => 804,
+			'job_id'      => wp_generate_uuid4(),
+			'action_id'   => 'spam_detection_v1',
+		];
+
+		$handler = $this->plugin->get_async_handler();
+		$handler->process_action(
+			'spam_detection_v1',
+			$data,
+			$settings,
+			null,
+			$context
+		);
+
+		// Should execute without error even with no form config
+		$this->assertNotEmpty( $executor->captured, 'Executor should be called even without form config' );
+		$this->assertSame( 'spam_detection_v1', $executor->captured['central_action_id'] );
+	}
 }

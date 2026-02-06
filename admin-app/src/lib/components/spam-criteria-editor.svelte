@@ -4,17 +4,59 @@
 	interface Props {
 		positiveExamples?: string[];
 		negativeExamples?: string[];
+		/** Inherited positive examples from form-level config */
+		inheritedPositive?: string[];
+		/** Inherited negative examples from form-level config */
+		inheritedNegative?: string[];
+		/** Source of inheritance: 'form' or null if no inheritance */
+		inheritanceSource?: 'form' | 'action' | null;
 		onchange?: (data: { positive: string[]; negative: string[] }) => void;
 	}
 
-	let { positiveExamples = [], negativeExamples = [], onchange }: Props = $props();
+	let {
+		positiveExamples = [],
+		negativeExamples = [],
+		inheritedPositive = [],
+		inheritedNegative = [],
+		inheritanceSource = null,
+		onchange
+	}: Props = $props();
 
 	let newPositive = $state('');
 	let newNegative = $state('');
 	let expanded = $state(false);
+	/** Whether user has chosen to override inherited examples */
+	let overriding = $state(false);
 
 	const MAX_EXAMPLES = 10;
 	const MAX_LENGTH = 200;
+
+	// Determine if currently using inherited examples
+	const hasLocalExamples = $derived(positiveExamples.length > 0 || negativeExamples.length > 0);
+	const hasInheritedExamples = $derived(
+		inheritedPositive.length > 0 || inheritedNegative.length > 0
+	);
+	const isInheriting = $derived(
+		inheritanceSource && hasInheritedExamples && !hasLocalExamples && !overriding
+	);
+
+	// Effective examples to display (local or inherited)
+	const effectivePositive = $derived(isInheriting ? inheritedPositive : positiveExamples);
+	const effectiveNegative = $derived(isInheriting ? inheritedNegative : negativeExamples);
+
+	function startOverride() {
+		overriding = true;
+		// Copy inherited examples as starting point for override
+		if (inheritedPositive.length > 0 || inheritedNegative.length > 0) {
+			onchange?.({ positive: [...inheritedPositive], negative: [...inheritedNegative] });
+		}
+	}
+
+	function useInherited() {
+		overriding = false;
+		// Clear local overrides
+		onchange?.({ positive: [], negative: [] });
+	}
 
 	function addPositive() {
 		const trimmed = newPositive.trim();
@@ -60,7 +102,7 @@
 		}
 	}
 
-	const hasExamples = $derived(positiveExamples.length > 0 || negativeExamples.length > 0);
+	const hasExamples = $derived(effectivePositive.length > 0 || effectiveNegative.length > 0);
 </script>
 
 <div class="sf:pt-2">
@@ -73,13 +115,35 @@
 		Classification Guidance
 		{#if hasExamples && !expanded}
 			<span class="sf:text-xs sf:text-slate-500">
-				({positiveExamples.length + negativeExamples.length} examples)
+				({effectivePositive.length + effectiveNegative.length} examples)
 			</span>
+		{/if}
+		{#if isInheriting && !expanded}
+			<span class="sf:text-xs sf:text-blue-600 sf:font-medium">📋 Inherited</span>
 		{/if}
 	</button>
 
 	{#if expanded}
 		<div class="sf:mt-3 sf:space-y-4 sf:pl-4 sf:border-l-2 sf:border-slate-200">
+			<!-- Inheritance indicator -->
+			{#if inheritanceSource && hasInheritedExamples}
+				<div
+					class="sf:flex sf:items-center sf:justify-between sf:bg-slate-50 sf:rounded sf:px-3 sf:py-2"
+				>
+					{#if isInheriting}
+						<span class="sf:text-xs sf:text-blue-700 sf:flex sf:items-center sf:gap-1">
+							📋 Using form-level defaults ({inheritedPositive.length + inheritedNegative.length} examples)
+						</span>
+						<Button size="sm" variant="ghost" onclick={startOverride}>Override</Button>
+					{:else}
+						<span class="sf:text-xs sf:text-slate-600 sf:flex sf:items-center sf:gap-1">
+							✏️ Using custom examples
+						</span>
+						<Button size="sm" variant="ghost" onclick={useInherited}>Use form defaults</Button>
+					{/if}
+				</div>
+			{/if}
+
 			<p class="sf:text-xs sf:text-slate-500">
 				Help the AI understand what's spam for YOUR site. These examples are optional but can
 				improve accuracy.
@@ -88,42 +152,48 @@
 			<!-- Positive Examples -->
 			<div class="sf:space-y-2">
 				<p class="sf:text-xs sf:font-semibold sf:text-green-700">
-					✅ Always Legitimate ({positiveExamples.length}/{MAX_EXAMPLES})
+					✅ Always Legitimate ({effectivePositive.length}/{MAX_EXAMPLES})
 				</p>
-				<div class="sf:flex sf:gap-2">
-					<InputField
-						id="new-positive"
-						label=""
-						placeholder="e.g., Inquiries about pricing"
-						bind:value={newPositive}
-						onkeydown={handlePositiveKeydown}
-						maxlength={MAX_LENGTH}
-						class="sf:flex-1"
-					/>
-					<Button
-						size="sm"
-						variant="secondary"
-						onclick={addPositive}
-						disabled={!newPositive.trim() || positiveExamples.length >= MAX_EXAMPLES}
-					>
-						Add
-					</Button>
-				</div>
-				{#if positiveExamples.length > 0}
+				{#if !isInheriting}
+					<div class="sf:flex sf:gap-2">
+						<InputField
+							id="new-positive"
+							label=""
+							placeholder="e.g., Inquiries about pricing"
+							bind:value={newPositive}
+							onkeydown={handlePositiveKeydown}
+							maxlength={MAX_LENGTH}
+							class="sf:flex-1"
+						/>
+						<Button
+							size="sm"
+							variant="secondary"
+							onclick={addPositive}
+							disabled={!newPositive.trim() || positiveExamples.length >= MAX_EXAMPLES}
+						>
+							Add
+						</Button>
+					</div>
+				{/if}
+				{#if effectivePositive.length > 0}
 					<ul class="sf:space-y-1">
-						{#each positiveExamples as example, i}
+						{#each effectivePositive as example, i (example)}
 							<li
-								class="sf:flex sf:items-center sf:justify-between sf:bg-green-50 sf:rounded sf:px-2 sf:py-1 sf:text-sm sf:text-green-800"
+								class="sf:flex sf:items-center sf:justify-between sf:rounded sf:px-2 sf:py-1 sf:text-sm {isInheriting
+									? 'sf:bg-slate-100 sf:text-slate-600'
+									: 'sf:bg-green-50 sf:text-green-800'}"
 							>
 								<span class="sf:truncate sf:flex-1">{example}</span>
-								<button
-									type="button"
-									class="sf:ml-2 sf:text-green-600 hover:sf:text-red-600 sf:text-xs"
-									onclick={() => removePositive(i)}
-									aria-label="Remove example"
-								>
-									×
-								</button>
+								{#if !isInheriting}
+									<button
+										type="button"
+										class="sf:ml-2 sf:text-green-600 hover:sf:text-red-600 sf:text-xs"
+										onclick={() => removePositive(i)}
+										aria-label="Remove example"
+									>
+										×
+									</button>
+								{/if}
 							</li>
 						{/each}
 					</ul>
@@ -133,42 +203,48 @@
 			<!-- Negative Examples -->
 			<div class="sf:space-y-2">
 				<p class="sf:text-xs sf:font-semibold sf:text-red-700">
-					❌ Always Spam ({negativeExamples.length}/{MAX_EXAMPLES})
+					❌ Always Spam ({effectiveNegative.length}/{MAX_EXAMPLES})
 				</p>
-				<div class="sf:flex sf:gap-2">
-					<InputField
-						id="new-negative"
-						label=""
-						placeholder="e.g., SEO service offers"
-						bind:value={newNegative}
-						onkeydown={handleNegativeKeydown}
-						maxlength={MAX_LENGTH}
-						class="sf:flex-1"
-					/>
-					<Button
-						size="sm"
-						variant="secondary"
-						onclick={addNegative}
-						disabled={!newNegative.trim() || negativeExamples.length >= MAX_EXAMPLES}
-					>
-						Add
-					</Button>
-				</div>
-				{#if negativeExamples.length > 0}
+				{#if !isInheriting}
+					<div class="sf:flex sf:gap-2">
+						<InputField
+							id="new-negative"
+							label=""
+							placeholder="e.g., SEO service offers"
+							bind:value={newNegative}
+							onkeydown={handleNegativeKeydown}
+							maxlength={MAX_LENGTH}
+							class="sf:flex-1"
+						/>
+						<Button
+							size="sm"
+							variant="secondary"
+							onclick={addNegative}
+							disabled={!newNegative.trim() || negativeExamples.length >= MAX_EXAMPLES}
+						>
+							Add
+						</Button>
+					</div>
+				{/if}
+				{#if effectiveNegative.length > 0}
 					<ul class="sf:space-y-1">
-						{#each negativeExamples as example, i}
+						{#each effectiveNegative as example, i (example)}
 							<li
-								class="sf:flex sf:items-center sf:justify-between sf:bg-red-50 sf:rounded sf:px-2 sf:py-1 sf:text-sm sf:text-red-800"
+								class="sf:flex sf:items-center sf:justify-between sf:rounded sf:px-2 sf:py-1 sf:text-sm {isInheriting
+									? 'sf:bg-slate-100 sf:text-slate-600'
+									: 'sf:bg-red-50 sf:text-red-800'}"
 							>
 								<span class="sf:truncate sf:flex-1">{example}</span>
-								<button
-									type="button"
-									class="sf:ml-2 sf:text-red-600 hover:sf:text-red-800 sf:text-xs"
-									onclick={() => removeNegative(i)}
-									aria-label="Remove example"
-								>
-									×
-								</button>
+								{#if !isInheriting}
+									<button
+										type="button"
+										class="sf:ml-2 sf:text-red-600 hover:sf:text-red-800 sf:text-xs"
+										onclick={() => removeNegative(i)}
+										aria-label="Remove example"
+									>
+										×
+									</button>
+								{/if}
 							</li>
 						{/each}
 					</ul>

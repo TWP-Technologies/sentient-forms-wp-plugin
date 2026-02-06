@@ -1,13 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Section, Card, Button, Badge, Alert, Skeleton } from '$lib/components/ui';
+	import { Section, Card, Button, Badge, Alert, Skeleton, SelectField } from '$lib/components/ui';
+	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
+	import { notifications } from '$lib/stores/notifications';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
 	import type {
 		ActionDefinition,
 		ActionCategory,
 		FormSourceSummary,
-		FormSummary
+		FormSummary,
+		FormActionConfig
 	} from '$lib/api/types';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { groupDefinitionsByCategory, getCategoryMeta } from '$lib/utils/action-categories';
@@ -27,6 +30,16 @@
 	let searchTerm = $state('');
 	let currentPage = $state(1);
 	const pageSize = 12;
+
+	// Action-level defaults state (global configuration)
+	let configuringActionId = $state<string | null>(null);
+	let actionDefaults = $state<FormActionConfig>({
+		include_site_context: 'global',
+		spam_positive_examples: [],
+		spam_negative_examples: []
+	});
+	let actionDefaultsLoading = $state(false);
+	let actionDefaultsSaving = $state(false);
 
 	const activeSources = $derived(formSources.filter((source) => source.isActive));
 	const customActions = $derived(
@@ -163,6 +176,64 @@
 		loadForms();
 		customActionsStore.load({ status: 'active' });
 	});
+
+	// ============================================================
+	// Action-Level Defaults Handlers (global configuration)
+	// ============================================================
+
+	async function loadActionDefaults(actionId: string) {
+		actionDefaultsLoading = true;
+		// Reset to defaults FIRST, then set configuringActionId to open modal immediately
+		actionDefaults = {
+			include_site_context: 'global' as const,
+			spam_positive_examples: [],
+			spam_negative_examples: []
+		};
+		configuringActionId = actionId;
+
+		try {
+			const result = await client.getActionDefaults(actionId);
+
+			const configData =
+				result && typeof result === 'object' && !Array.isArray(result)
+					? result
+					: { include_site_context: 'global' as const };
+			actionDefaults = {
+				include_site_context: configData.include_site_context ?? 'global',
+				spam_positive_examples: configData.spam_positive_examples ?? [],
+				spam_negative_examples: configData.spam_negative_examples ?? []
+			};
+		} catch (error) {
+			console.warn('[ActionDefaults] Failed to load action defaults:', error);
+			notifications.warning('Could not load saved defaults. Starting fresh.');
+		} finally {
+			actionDefaultsLoading = false;
+		}
+	}
+
+	async function saveActionDefaults() {
+		if (!configuringActionId) return;
+		actionDefaultsSaving = true;
+		try {
+			await client.updateActionDefaults(configuringActionId, actionDefaults);
+			notifications.success('Global action defaults saved successfully.');
+			configuringActionId = null;
+		} catch (error) {
+			console.error('[ActionDefaults] Failed to save action defaults:', error);
+			notifications.error('Failed to save global action defaults.');
+		} finally {
+			actionDefaultsSaving = false;
+		}
+	}
+
+	function cancelActionDefaults() {
+		configuringActionId = null;
+		actionDefaults = {
+			include_site_context: 'global' as const,
+			spam_positive_examples: [],
+			spam_negative_examples: []
+		};
+	}
 </script>
 
 <Section
@@ -219,9 +290,21 @@
 													{definition.label ?? definition.id}
 												</p>
 											</div>
-											<Badge variant={definition.source === 'cps' ? 'success' : 'warning'}>
-												{definition.source === 'cps' ? 'CPS' : 'Local'}
-											</Badge>
+											<div class="sf:flex sf:items-center sf:gap-2">
+												{#if definition.id === 'spam_detection_v1' || definition.id === 'spam_analysis'}
+													<Button
+														size="sm"
+														variant="ghost"
+														onclick={() => loadActionDefaults(definition.id)}
+														disabled={actionDefaultsLoading}
+													>
+														Defaults
+													</Button>
+												{/if}
+												<Badge variant={definition.source === 'cps' ? 'success' : 'warning'}>
+													{definition.source === 'cps' ? 'CPS' : 'Local'}
+												</Badge>
+											</div>
 										</li>
 									{/each}
 								</ul>
@@ -405,3 +488,87 @@
 		</Card>
 	{/if}
 </Section>
+
+<!-- Action-Level Defaults Modal (global configuration) -->
+{#if configuringActionId}
+	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+	<div
+		class="sf:fixed sf:inset-0 sf:bg-black/50 sf:flex sf:items-center sf:justify-center sf:z-50"
+		onclick={cancelActionDefaults}
+	>
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<div
+			class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-2xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
+			onclick={(e) => e.stopPropagation()}
+		>
+			<header
+				class="sf:flex sf:items-center sf:justify-between sf:px-6 sf:py-4 sf:border-b sf:border-slate-200"
+			>
+				<div>
+					<h2 class="sf:text-lg sf:font-semibold sf:text-slate-800">Global Action Defaults</h2>
+					<p class="sf:text-sm sf:text-slate-500">
+						Configure default examples that apply across ALL forms using this action.
+					</p>
+				</div>
+				<button
+					class="sf:text-slate-400 hover:sf:text-slate-600 sf:text-2xl sf:leading-none"
+					onclick={cancelActionDefaults}
+					aria-label="Close">×</button
+				>
+			</header>
+
+			<div class="sf:p-6 sf:space-y-6">
+				{#if actionDefaultsLoading}
+					<p class="sf:text-sm sf:text-slate-500">Loading configuration...</p>
+				{:else}
+					<Alert variant="info">
+						<p class="sf:text-sm">
+							These examples serve as global defaults for <strong>Spam Detection</strong> across all forms.
+							Form-level and mapping-level settings can override these values.
+						</p>
+					</Alert>
+
+					<SpamCriteriaEditor
+						positiveExamples={actionDefaults.spam_positive_examples ?? []}
+						negativeExamples={actionDefaults.spam_negative_examples ?? []}
+						onchange={(data) => {
+							actionDefaults = {
+								...actionDefaults,
+								spam_positive_examples: data.positive,
+								spam_negative_examples: data.negative
+							};
+						}}
+					/>
+
+					<SelectField
+						id="action-level-context"
+						label="Include Site Context"
+						bind:value={actionDefaults.include_site_context}
+						options={[
+							{ value: 'global', label: 'Use global setting' },
+							{ value: 'always', label: 'Always include' },
+							{ value: 'never', label: 'Never include' }
+						]}
+					/>
+
+					<p class="sf:text-xs sf:text-slate-500 sf:pt-2 sf:flex sf:items-center sf:gap-1">
+						<span class="sf:text-amber-500">⚠</span>
+						These settings apply globally. Override at the form or mapping level for specific cases.
+					</p>
+				{/if}
+			</div>
+
+			<footer
+				class="sf:flex sf:justify-end sf:gap-2 sf:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
+			>
+				<Button variant="secondary" onclick={cancelActionDefaults}>Cancel</Button>
+				<Button
+					onclick={saveActionDefaults}
+					disabled={actionDefaultsSaving || actionDefaultsLoading}
+				>
+					{actionDefaultsSaving ? 'Saving...' : 'Save Global Defaults'}
+				</Button>
+			</footer>
+		</div>
+	</div>
+{/if}

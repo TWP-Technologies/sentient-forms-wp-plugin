@@ -102,6 +102,43 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
                 ],
             ],
         );
+
+        // GET/POST /actions/{action_id}/defaults - Global action defaults (top of hierarchy)
+        register_rest_route(
+            $this->namespace,
+            '/actions/(?P<action_id>[a-z0-9_-]+)/defaults',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_action_defaults' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'action_id' => [
+                            'description'       => __( 'Action ID (e.g., spam_detection_v1).', 'sentient-forms' ),
+                            'type'              => 'string',
+                            'required'          => true,
+                            'sanitize_callback' => 'sanitize_key',
+                        ],
+                    ],
+                ],
+                [
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => [ $this, 'update_action_defaults' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => array_merge(
+                        [
+                            'action_id' => [
+                                'description'       => __( 'Action ID (e.g., spam_detection_v1).', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => true,
+                                'sanitize_callback' => 'sanitize_key',
+                            ],
+                        ],
+                        $this->get_update_args()
+                    ),
+                ],
+            ],
+        );
     }
 
     /**
@@ -384,7 +421,104 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
     }
 
     /**
+     * Option prefix for global action defaults.
+     */
+    private const ACTION_DEFAULTS_PREFIX = 'sentient_forms_action_defaults_';
+
+    /**
+     * Gets the option key for global action defaults.
+     *
+     * @param string $action_id Action ID.
+     * @return string
+     */
+    private function get_action_defaults_key( string $action_id ): string
+    {
+        return self::ACTION_DEFAULTS_PREFIX . $action_id;
+    }
+
+    /**
+     * Gets global defaults for an action (top of hierarchy).
+     *
+     * @param WP_REST_Request $request Request object.
+     *
+     * @return WP_REST_Response|WP_Error
+     */
+    public function get_action_defaults( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $action_id = $request->get_param( 'action_id' );
+        $option_key = $this->get_action_defaults_key( $action_id );
+        $config = get_option( $option_key, [] );
+
+        return $this->prepare_item_for_response( [
+            'action_id' => $action_id,
+            'config'    => is_array( $config ) ? $config : (object) [],
+        ] );
+    }
+
+    /**
+     * Updates global defaults for an action.
+     *
+     * @param WP_REST_Request $request Request object.
+     *
+     * @return WP_REST_Response|WP_Error
+     */
+    public function update_action_defaults( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $action_id = $request->get_param( 'action_id' );
+        $option_key = $this->get_action_defaults_key( $action_id );
+        $config = get_option( $option_key, [] );
+
+        if ( !is_array( $config ) )
+        {
+            $config = [];
+        }
+
+        // Update only provided fields
+        $updateable_fields = [
+            'spam_positive_examples',
+            'spam_negative_examples',
+            'include_site_context',
+            'model_override',
+        ];
+
+        foreach ( $updateable_fields as $field )
+        {
+            if ( $request->has_param( $field ) )
+            {
+                $value = $request->get_param( $field );
+                
+                // If value is null or empty array, remove the field
+                if ( $value === null || ( is_array( $value ) && empty( $value ) ) )
+                {
+                    unset( $config[ $field ] );
+                }
+                else
+                {
+                    $config[ $field ] = $value;
+                }
+            }
+        }
+
+        // If the config is empty, delete the option
+        if ( empty( $config ) )
+        {
+            delete_option( $option_key );
+        }
+        else
+        {
+            $config['updated_at'] = current_time( 'mysql' );
+            update_option( $option_key, $config, false );
+        }
+
+        return $this->prepare_item_for_response( [
+            'action_id' => $action_id,
+            'config'    => $config,
+        ] );
+    }
+
+    /**
      * Retrieves the schema for the form action config response.
+
      *
      * @return array|null Item schema data.
      */

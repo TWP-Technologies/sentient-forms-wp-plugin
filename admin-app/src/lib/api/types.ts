@@ -176,6 +176,8 @@ export interface FormActionSettings {
 	input_mapping?: InputMapping;
 	/** Prompt overrides for this mapping */
 	prompt_overrides?: Record<string, unknown>;
+	/** Execution mode: validation (sync) or after_submission (async) - CB-EXEC-002 */
+	execution_mode?: ExecutionMode;
 	/** Additional runtime settings */
 	[key: string]: unknown;
 }
@@ -188,6 +190,8 @@ export interface FormActionLinkage {
 	is_action_enabled_for_form?: boolean;
 	execution_priority?: number;
 	action_name_label?: string;
+	/** Execution mode: validation (sync) or after_submission (async) - CB-EXEC-001/002 */
+	execution_mode?: ExecutionMode;
 	settings?: FormActionSettings;
 }
 

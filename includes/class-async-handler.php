@@ -515,6 +515,66 @@ class Sentient_Forms_Async_Handler
     }
 
     /**
+     * Resolve hierarchical settings by merging form-level config.
+     *
+     * Implements the waterfall resolution pattern:
+     * 1. Mapping-level settings (highest priority)
+     * 2. Form-level settings from wp_options
+     * 3. Action-level defaults (handled by CPS)
+     *
+     * @param array $settings Mapping-level settings.
+     * @param array $context  Job context with form_source and form_id.
+     *
+     * @return array Resolved settings with form-level values merged in.
+     */
+    private function resolve_hierarchical_settings( array $settings, array $context ): array
+    {
+        // Only applies to spam_detection actions
+        $action_id = $context['action_id'] ?? $settings['central_action_id'] ?? '';
+        if ( strpos( $action_id, 'spam_detection' ) === false )
+        {
+            return $settings;
+        }
+
+        // Get form-level config from wp_options
+        $form_source = $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms';
+        $form_id     = $context['form_id'] ?? '';
+        if ( empty( $form_id ) )
+        {
+            return $settings;
+        }
+
+        $option_key  = sprintf( 'sentient_forms_form_config_%s_%s', sanitize_key( $form_source ), sanitize_key( $form_id ) );
+        $form_config = get_option( $option_key, [] );
+        if ( ! is_array( $form_config ) || empty( $form_config ) )
+        {
+            return $settings;
+        }
+
+        // Get form-level examples from action-specific config
+        $action_config = $form_config[ $action_id ] ?? [];
+        if ( empty( $action_config ) )
+        {
+            return $settings;
+        }
+
+        // Apply waterfall: mapping settings override form-level
+        $resolved = $settings;
+
+        if ( empty( $resolved['spam_positive_examples'] ) && ! empty( $action_config['spam_positive_examples'] ) )
+        {
+            $resolved['spam_positive_examples'] = $action_config['spam_positive_examples'];
+        }
+
+        if ( empty( $resolved['spam_negative_examples'] ) && ! empty( $action_config['spam_negative_examples'] ) )
+        {
+            $resolved['spam_negative_examples'] = $action_config['spam_negative_examples'];
+        }
+
+        return $resolved;
+    }
+
+    /**
      * Initialize the async handler
      *
      * @return void
@@ -859,15 +919,18 @@ class Sentient_Forms_Async_Handler
             // For CPS master actions without a local handler, execute via Action Executor
             if ( !$action && $is_master_action )
             {
+                // Apply hierarchical settings resolution (form-level merging)
+                $resolved_settings = $this->resolve_hierarchical_settings( $settings, $context );
+
                 try
                 {
                     $executor = $this->plugin->get_action_executor();
                     $result = $executor->execute(
-                    $settings['central_action_id'] ?? $action_id,
-                    $data['form'] ?? [],
-                    $data['entry'] ?? [],
-                    $context
-                );
+                        $resolved_settings['central_action_id'] ?? $action_id,
+                        $data['form'] ?? [],
+                        $data['entry'] ?? [],
+                        array_merge( $context, [ 'settings' => $resolved_settings ] )
+                    );
                 } catch ( Throwable $throwable )
                 {
                     $this->handle_failure(
