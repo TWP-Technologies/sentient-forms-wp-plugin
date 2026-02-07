@@ -34,8 +34,8 @@
 	let { data }: Props = $props();
 
 	const FALLBACK_HOOK_LABELS: Record<string, string> = {
-		gform_validation: 'During validation (Gravity Forms)',
-		gform_after_submission: 'After submission (Gravity Forms)'
+		gform_validation: '🔄 During Validation (Sync)',
+		gform_after_submission: '📝 After Submission (Async)'
 	};
 
 	const actionsState = formActionsState;
@@ -512,11 +512,8 @@
 			...baseSettings
 		};
 		editingLinkageId = linkage.local_mapping_id;
-
-		// Load form-level config for spam detection actions (for inheritance display)
-		if (linkage.central_action_id === 'spam_detection_v1') {
-			loadFormLevelConfig(linkage.central_action_id);
-		}
+		// Note: Form-level config is now accessed via a separate "Edit Form Defaults" button
+		// to avoid confusing auto-open modal behavior (UX fix)
 	}
 
 	function cancelEditingAction() {
@@ -1148,48 +1145,14 @@
 														</label>
 													{/each}
 												</div>
-											</div>
-
-											<!-- CB-EXEC-001/002: Execution Mode Selection -->
-											<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-												<p
-													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
-												>
-													Execution Mode
-												</p>
-												<SelectField
-													id="execution-mode"
-													label="When should this action run?"
-													bind:value={draftSettings.execution_mode}
-													options={[
-														{
-															value: 'validation',
-															label: '🔄 Validation (Synchronous)'
-														},
-														{
-															value: 'after_submission',
-															label: '📝 After Submission (Asynchronous)'
-														}
-													]}
-												/>
-												<div
-													class="sf:mt-2 sf:p-3 sf:bg-slate-100 sf:rounded-md sf:text-xs sf:text-slate-600"
-												>
-													{#if draftSettings.execution_mode === 'validation'}
-														<p class="sf:font-medium sf:text-slate-700">⚡ Synchronous execution</p>
-														<p class="sf:mt-1">
-															Runs during form submission. Can block spam or invalid entries before
-															they're saved. User waits for AI response.
-														</p>
-													{:else}
-														<p class="sf:font-medium sf:text-slate-700">
-															📋 Asynchronous execution
-														</p>
-														<p class="sf:mt-1">
-															Runs in background after entry is saved. User gets immediate
-															confirmation. Results are attached to entry notes.
-														</p>
-													{/if}
+												<!-- Help text for Trigger Hooks -->
+												<div class="sf:mt-2 sf:text-xs sf:text-slate-500 sf:space-y-1">
+													<p>
+														<strong>Sync:</strong> AI runs while user waits. Can block spam before saving.
+													</p>
+													<p>
+														<strong>Async:</strong> User gets instant confirmation. AI runs in background.
+													</p>
 												</div>
 											</div>
 
@@ -1265,6 +1228,20 @@
 														</a>
 														for PII handling options.
 													</p>
+
+													<!-- Edit Form Defaults: explicit trigger replaces auto-open -->
+													<div class="sf:pt-3 sf:border-t sf:border-slate-100 sf:mt-3">
+														<Button
+															size="sm"
+															variant="secondary"
+															onclick={() => loadFormLevelConfig(linkage.central_action_id)}
+														>
+															📋 Edit Form Defaults
+														</Button>
+														<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
+															Set default classification examples for all spam actions on this form.
+														</p>
+													</div>
 												</div>
 											{/if}
 
