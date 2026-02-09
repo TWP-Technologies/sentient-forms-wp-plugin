@@ -3,12 +3,15 @@
 	import { Section, Card, Button, Alert, Toggle } from '$lib/components/ui';
 	import { wpFetch } from '$lib/wp';
 	import { notifications } from '$lib/stores/notifications';
+	import type { CreditBalanceResponse } from '$lib/api/types';
 
 	/**
 	 * Site Context Management Page (CB-SA-001)
 	 * Allows webmasters to generate, view, and edit their site context summary
 	 * for personalized spam detection.
 	 */
+
+	const SITE_CONTEXT_CREDIT_COST = 20;
 
 	interface SiteContext {
 		id: string;
@@ -30,6 +33,20 @@
 	let piiAck = $state(false);
 	let error = $state<string | null>(null);
 	let showPiiWarning = $state(false);
+	let showRegenConfirm = $state(false);
+	let creditBalance = $state<CreditBalanceResponse | null>(null);
+	let creditsLoading = $state(false);
+
+	async function loadCredits() {
+		creditsLoading = true;
+		try {
+			creditBalance = await wpFetch<CreditBalanceResponse>('credits/balance');
+		} catch (e) {
+			console.error('Failed to fetch credit balance', e);
+		} finally {
+			creditsLoading = false;
+		}
+	}
 
 	async function loadContext() {
 		loading = true;
@@ -50,12 +67,24 @@
 		}
 	}
 
+	/** Prompt user for regeneration confirmation (shows cost + balance) */
+	function promptRegenerate() {
+		if (!piiAck) {
+			showPiiWarning = true;
+			return;
+		}
+		showRegenConfirm = true;
+		// Refresh credit balance for the dialog
+		loadCredits();
+	}
+
 	async function generateContext() {
 		if (!piiAck) {
 			showPiiWarning = true;
 			return;
 		}
 		showPiiWarning = false;
+		showRegenConfirm = false;
 		generating = true;
 		error = null;
 		try {
@@ -68,6 +97,8 @@
 				editedText = context.summary_text;
 				autoInclude = context.auto_include;
 				notifications.success('Site context generated');
+				// Refresh credit balance after debit
+				loadCredits();
 			}
 		} catch (e) {
 			console.error('Failed to generate site context', e);
@@ -151,8 +182,13 @@
 		return date.toLocaleDateString();
 	}
 
+	const hasInsufficientCredits = $derived(
+		creditBalance !== null && creditBalance.current_balance < SITE_CONTEXT_CREDIT_COST
+	);
+
 	onMount(() => {
 		loadContext();
+		loadCredits();
 	});
 </script>
 
@@ -242,10 +278,49 @@
 								Source: {context.source} · Last updated: {formatDate(context.updated_at)}
 							</p>
 						</div>
-						<Button size="sm" variant="secondary" onclick={generateContext} disabled={generating}>
+						<Button size="sm" variant="secondary" onclick={promptRegenerate} disabled={generating}>
 							{generating ? 'Regenerating...' : 'Regenerate'}
 						</Button>
 					</div>
+
+					{#if showRegenConfirm}
+						<Alert variant="warning">
+							<div class="sf:space-y-3">
+								<p class="sf:font-medium">⚡ Confirm Regeneration</p>
+								<p class="sf:text-sm">
+									Regenerating will use <strong>{SITE_CONTEXT_CREDIT_COST} credits</strong>.
+								</p>
+								<p class="sf:text-sm">
+									{#if creditsLoading}
+										Checking your balance…
+									{:else if creditBalance}
+										Current balance: <strong>{creditBalance.current_balance} credits</strong>
+										{#if hasInsufficientCredits}
+											<span class="sf:text-red-600 sf:font-medium sf:block sf:mt-1">
+												⚠ Insufficient credits. You need at least {SITE_CONTEXT_CREDIT_COST} credits.
+											</span>
+										{/if}
+									{:else}
+										<span class="sf:text-slate-500">Unable to check credit balance.</span>
+									{/if}
+								</p>
+								<div class="sf:flex sf:gap-2">
+									<Button
+										size="sm"
+										onclick={generateContext}
+										disabled={generating || hasInsufficientCredits}
+									>
+										{generating
+											? 'Regenerating…'
+											: `Confirm — Use ${SITE_CONTEXT_CREDIT_COST} Credits`}
+									</Button>
+									<Button size="sm" variant="secondary" onclick={() => (showRegenConfirm = false)}>
+										Cancel
+									</Button>
+								</div>
+							</div>
+						</Alert>
+					{/if}
 
 					<div>
 						<label
