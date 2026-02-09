@@ -23,6 +23,8 @@ export interface FormActionsState {
 	cpsVersion: string | null;
 	requiredCreditsVersion?: string;
 	requiredStatusVersion?: string;
+	/** CB-FORMS-001: Per-form master disable */
+	sfDisabled: boolean;
 }
 
 const client = createClientFromConfig();
@@ -39,7 +41,8 @@ function initialState(): FormActionsState {
 		supportsStatus: true,
 		cpsVersion: null,
 		requiredCreditsVersion: '1.0.0',
-		requiredStatusVersion: '1.0.0'
+		requiredStatusVersion: '1.0.0',
+		sfDisabled: false
 	};
 }
 
@@ -135,6 +138,15 @@ async function load(formSourceSlug: string, formId: number) {
 		]);
 
 		setState({ loading: false, error: null, items, definitions, status });
+
+		// CB-FORMS-001: Load per-form disabled state (best-effort)
+		try {
+			const disableResult = await client.getFormDisabled(formSourceSlug, formId, { showNotifications: false });
+			setState({ sfDisabled: disableResult.sf_disabled });
+		} catch {
+			// Endpoint may not exist on older plugin versions; default false.
+		}
+
 		await refreshBalance();
 	} catch (error) {
 		const message = friendlyMessageFromError(error, 'Failed to load actions');
@@ -353,6 +365,27 @@ async function fetchExecutionStatus(
 	}
 }
 
+/** CB-FORMS-001: Toggle per-form master disable. */
+async function toggleFormDisabled(
+	formSourceSlug: string,
+	formId: number,
+	disabled: boolean
+) {
+	const previous = formActionsState.sfDisabled;
+	// optimistic update
+	formActionsState.sfDisabled = disabled;
+
+	try {
+		const result = await client.toggleFormDisabled(formSourceSlug, formId, disabled);
+		formActionsState.sfDisabled = result.sf_disabled;
+		notifications.success(result.message);
+	} catch (error) {
+		formActionsState.sfDisabled = previous;
+		const message = friendlyMessageFromError(error, 'Failed to update form disabled state');
+		notifications.error(message);
+	}
+}
+
 export const formActionsStore = {
 	subscribe: readable.subscribe,
 	load,
@@ -363,5 +396,6 @@ export const formActionsStore = {
 	remove,
 	refresh,
 	fetchExecutionStatus,
+	toggleFormDisabled,
 	reset: resetState
 };

@@ -10,7 +10,8 @@
 		SelectField,
 		FieldSelector,
 		TemplateLibrary,
-		ModelSelector
+		ModelSelector,
+		Toggle
 	} from '$lib/components/ui';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { navigateToAppPath } from '$lib/navigation';
@@ -829,7 +830,27 @@
 			</div>
 		</div>
 	{/if}
-	<div slot="actions" class="sf:flex sf:flex-wrap sf:gap-2">
+	<div slot="actions" class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+		<!-- CB-FORMS-001: Per-form master disable toggle -->
+		<div
+			class="sf:flex sf:items-center sf:gap-2 sf:mr-3 sf:pr-3 sf:border-r sf:border-slate-300"
+			title={actionsState.sfDisabled
+				? 'Sentient Forms is disabled for this form'
+				: 'Sentient Forms is active for this form'}
+		>
+			<span class="sf:text-xs sf:font-medium sf:text-slate-600"
+				>{actionsState.sfDisabled ? 'Disabled' : 'Active'}</span
+			>
+			<Toggle
+				checked={!actionsState.sfDisabled}
+				onchange={() =>
+					formActionsStore.toggleFormDisabled(
+						data.formSourceSlug,
+						data.formId,
+						!actionsState.sfDisabled
+					)}
+			/>
+		</div>
 		<Button variant="secondary" onclick={() => navigateToAppPath('/actions')}>All forms</Button>
 		<Button variant="secondary" onclick={refresh}>Refresh</Button>
 		<Button onclick={() => (showAddPanel = true)}>Add action</Button>
@@ -838,6 +859,21 @@
 		>
 		<Button variant="secondary" onclick={checkEntryStatus}>Check entry status</Button>
 	</div>
+
+	<!-- CB-FORMS-001: Warning banner when form is disabled -->
+	{#if actionsState.sfDisabled}
+		<Alert variant="warning">
+			<div class="sf:flex sf:items-center sf:justify-between">
+				<div>
+					<p class="sf:font-medium">⚠ Sentient Forms is disabled for this form</p>
+					<p class="sf:text-sm sf:mt-1">
+						All actions (spam detection, summaries, etc.) are paused. Toggle the switch above to
+						re-enable.
+					</p>
+				</div>
+			</div>
+		</Alert>
+	{/if}
 
 	<div class="sf:grid sf:gap-4 sf:xl:grid-cols-3">
 		<Card class="sf:xl:col-span-2" data-testid="action-definitions-card">

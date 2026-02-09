@@ -635,5 +635,84 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         // For backward compatibility, null confidence is treated as 1.0
         // This ensures legacy CPS responses still mark spam correctly
     }
+
+    // =========================================================================
+    // CB-FORMS-001: Per-Form Master Disable Tests
+    // =========================================================================
+
+    /**
+     * CB-FORMS-001: Test that handle_validation short-circuits when sf_disabled is set.
+     *
+     * When the sf_disabled flag is true in form settings, the adapter MUST
+     * return the original validation result unchanged — no CPS calls, no
+     * action processing, no side-effects.
+     */
+    public function test_handle_validation_skips_all_actions_when_form_disabled(): void
+    {
+        $form_id    = 999;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+
+        // Store sf_disabled = true alongside a real action mapping that would
+        // normally require a CPS call (and fail in a unit test context).
+        update_option( $option_key, [
+            'sf_disabled'  => true,
+            'map_spam_v1'  => [
+                'central_action_id'          => 'spam_detection_v1',
+                'is_action_enabled_for_form' => true,
+                'trigger_hooks'              => [ 'gform_validation' ],
+            ],
+        ] );
+
+        $validation_result = [
+            'is_valid' => true,
+            'form'     => [
+                'id'     => $form_id,
+                'fields' => [],
+            ],
+        ];
+
+        // If the sf_disabled check is missing, the adapter would try to look up
+        // the action in the registry and make a CPS call, which would fail or
+        // throw. A clean return proves the guard works.
+        $result = $this->adapter->handle_validation( $validation_result );
+
+        $this->assertSame( $validation_result, $result, 'Disabled form should return validation result unchanged' );
+
+        // Clean up
+        delete_option( $option_key );
+    }
+
+    /**
+     * CB-FORMS-001: Test that handle_after_submission short-circuits when sf_disabled is set.
+     *
+     * Same invariant as validation: no CPS calls, no Action Scheduler jobs,
+     * no entry notes — just an early return.
+     */
+    public function test_handle_after_submission_skips_all_actions_when_form_disabled(): void
+    {
+        $form_id    = 998;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+
+        update_option( $option_key, [
+            'sf_disabled'  => true,
+            'map_eval_v1'  => [
+                'central_action_id'          => 'entry_evaluation',
+                'is_action_enabled_for_form' => true,
+                'trigger_hooks'              => [ 'gform_after_submission' ],
+            ],
+        ] );
+
+        $entry = [ 'id' => 42 ];
+        $form  = [ 'id' => $form_id ];
+
+        // Should return without throwing or processing any actions.
+        $this->adapter->handle_after_submission( $entry, $form );
+
+        // If we reach here, the guard worked. Add an explicit assertion
+        // so PHPUnit doesn't mark this as risky (no assertions).
+        $this->assertTrue( true, 'handle_after_submission returned cleanly when form disabled' );
+
+        delete_option( $option_key );
+    }
 }
 

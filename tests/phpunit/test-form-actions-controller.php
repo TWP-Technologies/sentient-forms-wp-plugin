@@ -46,4 +46,94 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $this->assertSame( [ 'gform_validation' ], $data['trigger_hooks'] );
     }
+
+    // =========================================================================
+    // CB-FORMS-001: Per-Form Master Disable Tests
+    // =========================================================================
+
+    /**
+     * CB-FORMS-001: sf_disabled flag must NOT leak into the actions array.
+     *
+     * The sf_disabled boolean lives in the same WP option as action linkages.
+     * get_form_actions MUST filter it out, otherwise the frontend receives a
+     * phantom "action" whose value is `true` instead of an action object.
+     */
+    public function test_get_form_actions_excludes_sf_disabled_from_response(): void
+    {
+        $option_key = 'sentient_forms_actions_gravity_forms_1';
+
+        // Simulate a form with sf_disabled = true and one real action.
+        update_option( $option_key, [
+            'sf_disabled' => true,
+            'map_spam_v1' => [
+                'local_mapping_id'           => 'map_spam_v1',
+                'central_action_id'          => 'spam_detection_v1',
+                'action_type_indicator'      => 'master',
+                'is_action_enabled_for_form' => true,
+                'trigger_hooks'              => [ 'gform_validation' ],
+            ],
+        ] );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+
+        $response = $this->controller->get_form_actions( $request );
+        $data     = $response->get_data();
+
+        // Response should be an array of action linkages only — no sf_disabled key.
+        $this->assertIsArray( $data );
+
+        // Verify none of the entries is the boolean `true` (the sf_disabled value).
+        foreach ( $data as $item ) {
+            $this->assertIsArray( $item, 'Every item in get_form_actions must be an action array, not a scalar' );
+        }
+
+        // At least one real action should survive.
+        $action_ids = array_column( $data, 'central_action_id' );
+        $this->assertContains( 'spam_detection_v1', $action_ids );
+
+        delete_option( $option_key );
+    }
+
+    /**
+     * CB-FORMS-001: toggle_form_disabled round-trip — set, read, clear.
+     */
+    public function test_toggle_form_disabled_round_trip(): void
+    {
+        $option_key = 'sentient_forms_actions_gravity_forms_2';
+        delete_option( $option_key );
+
+        // — Enable disable flag
+        $put_request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/2/actions/disable' );
+        $put_request->set_param( 'form_source_slug', 'gravity_forms' );
+        $put_request->set_param( 'form_id', 2 );
+        $put_request->set_param( 'sf_disabled', true );
+
+        $response = $this->controller->toggle_form_disabled( $put_request );
+        $data     = $response->get_data();
+        $this->assertTrue( $data['sf_disabled'], 'After toggling ON, sf_disabled should be true' );
+
+        // — READ it back via get_form_disabled
+        $get_request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/2/actions/disable' );
+        $get_request->set_param( 'form_source_slug', 'gravity_forms' );
+        $get_request->set_param( 'form_id', 2 );
+
+        $response = $this->controller->get_form_disabled( $get_request );
+        $data     = $response->get_data();
+        $this->assertTrue( $data['sf_disabled'], 'GET should reflect the stored disabled state' );
+
+        // — Disable it again
+        $put_request->set_param( 'sf_disabled', false );
+        $response = $this->controller->toggle_form_disabled( $put_request );
+        $data     = $response->get_data();
+        $this->assertFalse( $data['sf_disabled'], 'After toggling OFF, sf_disabled should be false' );
+
+        // — Verify GET reflects the cleared state
+        $response = $this->controller->get_form_disabled( $get_request );
+        $data     = $response->get_data();
+        $this->assertFalse( $data['sf_disabled'], 'GET should reflect the cleared disabled state' );
+
+        delete_option( $option_key );
+    }
 }

@@ -258,6 +258,46 @@ export class SentientFormsApiClient {
 	}
 
 	/**
+	 * CB-FORMS-001: Get the per-form disabled state.
+	 */
+	async getFormDisabled(
+		formSourceSlug: string,
+		formId: number,
+		options: RequestOptions = {}
+	): Promise<{ sf_disabled: boolean }> {
+		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+			return { sf_disabled: false };
+		}
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<{ sf_disabled: boolean }>>(
+			`${slug}/forms/${formId}/actions/disable`,
+			options
+		);
+		return this.unwrap(response);
+	}
+
+	/**
+	 * CB-FORMS-001: Toggle the per-form disabled state.
+	 */
+	async toggleFormDisabled(
+		formSourceSlug: string,
+		formId: number,
+		disabled: boolean,
+		options: RequestOptions = {}
+	): Promise<{ sf_disabled: boolean; message: string }> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<{ sf_disabled: boolean; message: string }>>(
+			`${slug}/forms/${formId}/actions/disable`,
+			{
+				...options,
+				method: 'PUT',
+				body: JSON.stringify({ sf_disabled: disabled })
+			}
+		);
+		return this.unwrap(response);
+	}
+
+	/**
 	 * CA-MAP-001: Get form fields for FieldSelector component.
 	 * Returns field metadata (id, label, type, adminLabel) filtered to user-input fields.
 	 */

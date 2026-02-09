@@ -118,6 +118,37 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             ],
         );
 
+        // CB-FORMS-001: Per-form master disable toggle
+        // IMPORTANT: Must be registered BEFORE /{local_mapping_id} to avoid route conflict
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/disable',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_form_disabled' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
+                    'args'                => $this->get_collection_args(),
+                ],
+                [
+                    'methods'             => WP_REST_Server::EDITABLE,
+                    'callback'            => [ $this, 'toggle_form_disabled' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
+                    'args'                => array_merge(
+                        $this->get_collection_args(),
+                        [
+                            'sf_disabled' => [
+                                'description'       => __( 'Whether Sentient Forms is disabled for this form.', 'sentient-forms' ),
+                                'type'              => 'boolean',
+                                'required'          => true,
+                                'sanitize_callback' => 'rest_sanitize_boolean',
+                            ],
+                        ],
+                    ),
+                ],
+            ],
+        );
+
         // CA-MAP-001: Form field discovery endpoint for FieldSelector component
         // IMPORTANT: Must be registered BEFORE /{local_mapping_id} to avoid route conflict
         register_rest_route(
@@ -371,11 +402,71 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $local_actions = [];
         }
 
+        // CB-FORMS-001: Filter out the sf_disabled flag — it's metadata, not an action linkage.
+        unset( $local_actions['sf_disabled'] );
+
         // Phase 7 CSM: Optionally merge CPS mappings
         $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
         $merged = $this->merge_local_and_cps_actions( array_values( $local_actions ), $cps_actions );
 
         return $this->prepare_item_for_response( $merged );
+    }
+
+    /**
+     * CB-FORMS-001: Get the per-form disabled state.
+     *
+     * @param WP_REST_Request $request Request object.
+     *
+     * @return WP_REST_Response
+     */
+    public function get_form_disabled( WP_REST_Request $request ): WP_REST_Response
+    {
+        $form_source_slug = $request->get_param( 'form_source_slug' );
+        $form_id          = (int) $request->get_param( 'form_id' );
+
+        $option_key = $this->get_actions_option_key( $form_source_slug, $form_id );
+        $options    = get_option( $option_key, [] );
+
+        $sf_disabled = is_array( $options ) && ! empty( $options['sf_disabled'] );
+
+        return $this->prepare_item_for_response( [
+            'sf_disabled' => $sf_disabled,
+        ] );
+    }
+
+    /**
+     * CB-FORMS-001: Toggle per-form master disable flag.
+     *
+     * Sets the sf_disabled flag in the form's option array.
+     * When enabled, the GF adapter skips all action processing for this form.
+     *
+     * @param WP_REST_Request $request Request object.
+     *
+     * @return WP_REST_Response
+     */
+    public function toggle_form_disabled( WP_REST_Request $request ): WP_REST_Response
+    {
+        $form_source_slug = $request->get_param( 'form_source_slug' );
+        $form_id          = (int) $request->get_param( 'form_id' );
+        $sf_disabled      = (bool) $request->get_param( 'sf_disabled' );
+
+        $option_key = $this->get_actions_option_key( $form_source_slug, $form_id );
+        $options    = get_option( $option_key, [] );
+
+        if ( ! is_array( $options ) )
+        {
+            $options = [];
+        }
+
+        $options['sf_disabled'] = $sf_disabled;
+        update_option( $option_key, $options, false );
+
+        return $this->prepare_item_for_response( [
+            'sf_disabled' => $sf_disabled,
+            'message'     => $sf_disabled
+                ? __( 'Sentient Forms disabled for this form.', 'sentient-forms' )
+                : __( 'Sentient Forms enabled for this form.', 'sentient-forms' ),
+        ] );
     }
 
     /**

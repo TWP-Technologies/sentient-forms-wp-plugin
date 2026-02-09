@@ -107,6 +107,16 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         // Get form settings
         $settings = $this->get_form_settings( $form_id );
 
+        // CB-FORMS-001: Per-form master disable — skip all actions if form is disabled.
+        if ( ! empty( $settings['sf_disabled'] ) )
+        {
+            $logger->info(
+                'form disabled via sf_disabled flag, skipping all validation actions',
+                [ 'form_id' => $form_id ]
+            );
+            return $validation_result;
+        }
+
         // Iterate over stored action settings (keyed by local_mapping_id like 'map_spam_v1')
         foreach ( $settings as $mapping_id => $action_settings )
         {
@@ -218,6 +228,16 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         // Get form settings - these are stored directly under local_mapping_id keys
         $settings = $this->get_form_settings( $form_id );
+
+        // CB-FORMS-001: Per-form master disable — skip all actions if form is disabled.
+        if ( ! empty( $settings['sf_disabled'] ) )
+        {
+            $logger->info(
+                'form disabled via sf_disabled flag, skipping all after-submission actions',
+                [ 'form_id' => $form_id ]
+            );
+            return;
+        }
 
         // Iterate over stored action settings (keyed by local_mapping_id like 'map_spam_v1')
         foreach ( $settings as $mapping_id => $action_settings )
