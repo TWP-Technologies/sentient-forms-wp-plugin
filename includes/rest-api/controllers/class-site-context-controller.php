@@ -72,6 +72,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
                         'summary_text' => [
                             'description'       => __( 'Updated summary text.', 'sentient-forms' ),
                             'type'              => 'string',
+                            'maxLength'         => 5000,
                             'sanitize_callback' => 'sanitize_textarea_field',
                         ],
                         'auto_include' => [
@@ -189,7 +190,19 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         $body = [];
         if ( $request->has_param( 'summary_text' ) )
         {
-            $body['summary_text'] = $request->get_param( 'summary_text' );
+            $summary_text = $request->get_param( 'summary_text' );
+
+            // CB-SA-006: Server-side length guard (defense-in-depth).
+            if ( mb_strlen( $summary_text ) > 5000 )
+            {
+                return $this->prepare_error_response(
+                    'context_too_long',
+                    __( 'Site context must be 5,000 characters or fewer.', 'sentient-forms' ),
+                    400,
+                );
+            }
+
+            $body['summary_text'] = $summary_text;
         }
         if ( $request->has_param( 'auto_include' ) )
         {

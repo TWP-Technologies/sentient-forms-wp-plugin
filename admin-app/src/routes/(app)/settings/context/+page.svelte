@@ -13,6 +13,11 @@
 
 	const SITE_CONTEXT_CREDIT_COST = 20;
 
+	// CB-SA-006: Context length guard thresholds
+	const CONTEXT_SOFT_LIMIT = 2000;
+	const CONTEXT_WARN_LIMIT = 4500;
+	const CONTEXT_HARD_LIMIT = 5000;
+
 	interface SiteContext {
 		id: string;
 		license_id: string;
@@ -138,6 +143,8 @@
 	}
 
 	const characterCount = $derived(editedText?.length ?? 0);
+	const isOverLimit = $derived(characterCount > CONTEXT_HARD_LIMIT);
+	const limitPercent = $derived(Math.min((characterCount / CONTEXT_HARD_LIMIT) * 100, 100));
 	const hasChanges = $derived(
 		context && (editedText !== context.summary_text || autoInclude !== context.auto_include)
 	);
@@ -333,15 +340,26 @@
 							id="context-text"
 							bind:value={editedText}
 							rows={8}
-							class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 focus:sf:border-indigo-500 focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+							maxlength={CONTEXT_HARD_LIMIT}
+							class="sf:w-full sf:rounded-md sf:border sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 focus:sf:outline-none focus:sf:ring-1 {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:border-red-400 focus:sf:border-red-500 focus:sf:ring-red-500' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:border-amber-400 focus:sf:border-amber-500 focus:sf:ring-amber-500' : 'sf:border-slate-300 focus:sf:border-indigo-500 focus:sf:ring-indigo-500'}"
 							placeholder="Describe your business, services, and typical customer inquiries..."
 						></textarea>
-						<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
-							{characterCount} characters
-							{#if characterCount > 2000}
-								<span class="sf:text-amber-600">
-									(Consider keeping under 2000 characters for optimal performance)
-								</span>
+						<!-- CB-SA-006: Progress bar -->
+						<div class="sf:mt-1 sf:h-1 sf:w-full sf:rounded-full sf:bg-slate-100 sf:overflow-hidden">
+							<div
+								class="sf:h-full sf:rounded-full sf:transition-all sf:duration-300 {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:bg-red-500' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:bg-amber-500' : 'sf:bg-indigo-500'}"
+								style="width: {limitPercent}%"
+							></div>
+						</div>
+						<!-- CB-SA-006: Escalating character count warnings -->
+						<p class="sf:text-xs sf:mt-1 {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:text-red-600 sf:font-medium' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:text-amber-600' : 'sf:text-slate-500'}">
+							{characterCount} / {CONTEXT_HARD_LIMIT} characters
+							{#if characterCount >= CONTEXT_HARD_LIMIT}
+								— <strong>Maximum limit reached</strong>
+							{:else if characterCount >= CONTEXT_WARN_LIMIT}
+								— Approaching {CONTEXT_HARD_LIMIT} character limit
+							{:else if characterCount > CONTEXT_SOFT_LIMIT}
+								— Consider keeping under {CONTEXT_SOFT_LIMIT} for optimal performance
 							{/if}
 						</p>
 					</div>
@@ -360,7 +378,7 @@
 								<span class="sf:text-xs sf:text-green-600">✓ PII acknowledgment on file</span>
 							{/if}
 						</div>
-						<Button onclick={saveContext} disabled={saving || !hasChanges}>
+						<Button onclick={saveContext} disabled={saving || !hasChanges || isOverLimit}>
 							{saving ? 'Saving...' : 'Save Changes'}
 						</Button>
 					</div>
