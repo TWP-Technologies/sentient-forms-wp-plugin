@@ -1,11 +1,12 @@
 import { expect, test } from '@playwright/test';
 import {
 	configureGravityActionMapping,
+	ensureCpsSeeded,
 	ensureCreditBalanceAtLeast,
 	ensureGravityForm,
 	fetchCreditBalance,
+	getEntryMeta,
 	getLatestEntryId,
-	getProxyApiKey,
 	runActionScheduler,
 	submitGravityForm,
 	waitForEntryMeta,
@@ -34,11 +35,12 @@ test.describe('After-submission spam async @after-submission @summary-e2e', () =
 			actionNameLabel: 'Playwright Spam Async',
 			hooks: ['gform_after_submission'],
 			async: true,
+			markAsSpam: true,
 			executionPriority: 5,
 			actionTypeIndicator: 'master'
 		});
 
-		const proxyKey = getProxyApiKey();
+		const proxyKey = ensureCpsSeeded();
 		ensureCreditBalanceAtLeast(50);
 		const balanceBefore = await fetchCreditBalance(page, proxyKey);
 		const baselineEntryId = getLatestEntryId(formId);
@@ -56,20 +58,19 @@ test.describe('After-submission spam async @after-submission @summary-e2e', () =
 		}
 		expect(entryId).toBeGreaterThan(baselineEntryId);
 
-		const meta = (await waitForEntryMeta(
+		// Wait for the async handler to store the spam classification meta
+		const classification = await waitForEntryMeta(
 			entryId,
-			'_sentient_forms_spam_analysis',
+			'sentient_forms_spam_classification',
 			page,
 			(value) => !!value
-		)) as Record<string, unknown> | string;
+		);
 
-		const metaObj = typeof meta === 'string' ? (() => { try { return JSON.parse(meta); } catch { return {}; } })() : meta;
-		expect(metaObj).toBeTruthy();
+		expect(classification).toBeTruthy();
 
-		const classification =
-			(metaObj as Record<string, unknown>)?.['classification'] ??
-			(metaObj as Record<string, unknown>)?.['result']?.['classification'];
-		expect(classification).toBeDefined();
+		// Also verify the full CPS response is stored
+		const lastResponse = getEntryMeta(entryId, 'sentient_forms_last_response');
+		expect(lastResponse).toBeTruthy();
 
 		const balanceAfter = await fetchCreditBalance(page, proxyKey);
 		expect(Math.round(balanceBefore - balanceAfter)).toBe(10);
