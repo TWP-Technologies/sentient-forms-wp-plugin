@@ -10,10 +10,12 @@
 		ActionCategory,
 		FormSourceSummary,
 		FormSummary,
-		FormActionConfig
+		FormActionConfig,
+		FormExecutionStatus
 	} from '$lib/api/types';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { groupDefinitionsByCategory, getCategoryMeta } from '$lib/utils/action-categories';
+	import { getHealthBadge as resolveHealthBadge } from '$lib/utils/form-health';
 
 	const client = createClientFromConfig();
 	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
@@ -30,6 +32,10 @@
 	let searchTerm = $state('');
 	let currentPage = $state(1);
 	const pageSize = 12;
+
+	// CB-FORMS-003: Per-form health status
+	let healthByForm = $state<Map<string, FormExecutionStatus>>(new Map());
+	let healthLoading = $state<Set<string>>(new Set());
 
 	// Action-level defaults state (global configuration)
 	let configuringActionId = $state<string | null>(null);
@@ -149,12 +155,45 @@
 			if (!selectedSource || !selectedSource.isActive) {
 				selectedSource = activeSources[0] ?? null;
 			}
+
+			// CB-FORMS-003: Load health statuses after forms are available
+			loadFormHealthStatuses();
 		} catch (err) {
 			error = friendlyMessageFromError(err, 'Failed to load forms');
 			formsBySource = {};
 		} finally {
 			formsLoading = false;
 		}
+	}
+
+	// CB-FORMS-003: Fetch execution health for all loaded forms
+	function loadFormHealthStatuses() {
+		const nextLoading = new Set<string>();
+		for (const [sourceSlug, forms] of Object.entries(formsBySource)) {
+			for (const form of forms) {
+				const key = `${sourceSlug}:${form.id}`;
+				nextLoading.add(key);
+
+				client
+					.getFormExecutionStatus(sourceSlug, form.id, { showNotifications: false })
+					.then((status) => {
+						healthByForm = new Map(healthByForm).set(key, status);
+						healthLoading = new Set([...healthLoading].filter((k) => k !== key));
+					})
+					.catch(() => {
+						// Silently remove from loading — badge stays as "No runs"
+						healthLoading = new Set([...healthLoading].filter((k) => k !== key));
+					});
+			}
+		}
+		healthLoading = nextLoading;
+	}
+
+	// CB-FORMS-003: Derive badge properties from execution status
+	function getHealthBadge(form: FormSummary) {
+		const sourceSlug = selectedSource?.slug ?? form.adapter;
+		const key = `${sourceSlug}:${form.id}`;
+		return resolveHealthBadge(healthByForm.get(key) ?? null, healthLoading.has(key));
 	}
 
 	function configuredActionCount(form: FormSummary): number {
@@ -190,7 +229,7 @@
 
 	function refreshAll() {
 		loadDefinitions();
-		loadForms();
+		loadForms(); // CB-FORMS-003: also triggers loadFormHealthStatuses()
 		customActionsStore.reload();
 	}
 
@@ -467,6 +506,7 @@
 					{#each displayedForms as form (form.id)}
 						{@const actionCount = configuredActionCount(form)}
 						{@const enabled = isFormEnabled(form)}
+						{@const health = getHealthBadge(form)}
 						<Card>
 							<div class="sf:flex sf:justify-between sf:items-start sf:gap-3">
 								<div class="sf:min-w-0 sf:flex-1">
@@ -477,6 +517,10 @@
 									<Badge variant={enabled ? 'success' : 'neutral'}>
 										{enabled ? 'Active' : 'Inactive'}
 									</Badge>
+									<!-- CB-FORMS-003: Health badge -->
+									<span title={health.tooltip}>
+										<Badge variant={health.variant}>{health.label}</Badge>
+									</span>
 									{#if actionCount > 0}
 										<span class="sf:text-xs sf:text-indigo-600 sf:font-medium">
 											{actionCount} action{actionCount !== 1 ? 's' : ''}
