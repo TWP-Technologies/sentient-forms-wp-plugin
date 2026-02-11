@@ -196,11 +196,11 @@
 	heading="Site Context"
 	description="Configure your site's context to improve spam detection accuracy. This summary helps the AI understand your business and typical form submissions."
 >
-	<div slot="actions">
+	{#snippet actions()}
 		<Button variant="secondary" onclick={loadContext} disabled={loading}>
 			{loading ? 'Loading...' : 'Refresh'}
 		</Button>
-	</div>
+	{/snippet}
 
 	{#if error}
 		<Alert variant="danger" class="sf:mb-4">

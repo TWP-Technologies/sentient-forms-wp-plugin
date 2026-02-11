@@ -830,35 +830,37 @@
 			</div>
 		</div>
 	{/if}
-	<div slot="actions" class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-		<!-- CB-FORMS-001: Per-form master disable toggle -->
-		<div
-			class="sf:flex sf:items-center sf:gap-2 sf:mr-3 sf:pr-3 sf:border-r sf:border-slate-300"
-			title={actionsState.sfDisabled
-				? 'Sentient Forms is disabled for this form'
-				: 'Sentient Forms is active for this form'}
-		>
-			<span class="sf:text-xs sf:font-medium sf:text-slate-600"
-				>{actionsState.sfDisabled ? 'Disabled' : 'Active'}</span
+	{#snippet actions()}
+		<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+			<!-- CB-FORMS-001: Per-form master disable toggle -->
+			<div
+				class="sf:flex sf:items-center sf:gap-2 sf:mr-3 sf:pr-3 sf:border-r sf:border-slate-300"
+				title={actionsState.sfDisabled
+					? 'Sentient Forms is disabled for this form'
+					: 'Sentient Forms is active for this form'}
 			>
-			<Toggle
-				checked={!actionsState.sfDisabled}
-				onchange={() =>
-					formActionsStore.toggleFormDisabled(
-						data.formSourceSlug,
-						data.formId,
-						!actionsState.sfDisabled
-					)}
-			/>
+				<span class="sf:text-xs sf:font-medium sf:text-slate-600"
+					>{actionsState.sfDisabled ? 'Disabled' : 'Active'}</span
+				>
+				<Toggle
+					checked={!actionsState.sfDisabled}
+					onchange={() =>
+						formActionsStore.toggleFormDisabled(
+							data.formSourceSlug,
+							data.formId,
+							!actionsState.sfDisabled
+						)}
+				/>
+			</div>
+			<Button variant="secondary" onclick={() => navigateToAppPath('/actions')}>All forms</Button>
+			<Button variant="secondary" onclick={refresh}>Refresh</Button>
+			<Button onclick={() => (showAddPanel = true)}>Add action</Button>
+			<Button variant="secondary" onclick={() => (showTemplateLibrary = true)}
+				>Import from Library</Button
+			>
+			<Button variant="secondary" onclick={checkEntryStatus}>Check entry status</Button>
 		</div>
-		<Button variant="secondary" onclick={() => navigateToAppPath('/actions')}>All forms</Button>
-		<Button variant="secondary" onclick={refresh}>Refresh</Button>
-		<Button onclick={() => (showAddPanel = true)}>Add action</Button>
-		<Button variant="secondary" onclick={() => (showTemplateLibrary = true)}
-			>Import from Library</Button
-		>
-		<Button variant="secondary" onclick={checkEntryStatus}>Check entry status</Button>
-	</div>
+	{/snippet}
 
 	<!-- CB-FORMS-001: Warning banner when form is disabled -->
 	{#if actionsState.sfDisabled}

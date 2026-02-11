@@ -42,9 +42,9 @@
 	heading="Create Custom Action"
 	description="Configure a new custom action based on a CPS template."
 >
-	<div slot="actions">
+	{#snippet actions()}
 		<Button variant="secondary" onclick={handleCancel}>← Back to List</Button>
-	</div>
+	{/snippet}
 
 	{#if error}
 		<Alert variant="danger" class="sf:mb-4">{error}</Alert>

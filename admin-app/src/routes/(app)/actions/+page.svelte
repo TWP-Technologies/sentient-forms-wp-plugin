@@ -240,12 +240,14 @@
 	heading="Actions"
 	description="Pair CPS templates and custom actions with your active forms."
 >
-	<div slot="actions" class="sf:flex sf:flex-wrap sf:gap-2">
-		<Button variant="secondary" onclick={refreshAll}>Refresh</Button>
-		<Button variant="secondary" onclick={() => navigateToAppPath('/actions/custom')}>
-			Manage custom actions
-		</Button>
-	</div>
+	{#snippet actions()}
+		<div class="sf:flex sf:flex-wrap sf:gap-2">
+			<Button variant="secondary" onclick={refreshAll}>Refresh</Button>
+			<Button variant="secondary" onclick={() => navigateToAppPath('/actions/custom')}>
+				Manage custom actions
+			</Button>
+		</div>
+	{/snippet}
 
 	<div class="sf:grid sf:gap-4 sf:lg:grid-cols-3">
 		<Card>

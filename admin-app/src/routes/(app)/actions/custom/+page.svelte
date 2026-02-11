@@ -59,22 +59,24 @@
 	heading="Custom Actions"
 	description="Create tenant-specific workflows backed by CPS custom actions."
 >
-	<div slot="actions" class="sf:flex sf:gap-2 sf:flex-wrap">
-		<Button
-			variant="secondary"
-			onclick={() => customActionsStore.reload()}
-			disabled={customState.loading}
-		>
-			Refresh
-		</Button>
-		<Button
-			variant="primary"
-			onclick={createAction}
-			disabled={!canCreateAction || customState.loading}
-		>
-			+ Create Action
-		</Button>
-	</div>
+	{#snippet actions()}
+		<div class="sf:flex sf:gap-2 sf:flex-wrap">
+			<Button
+				variant="secondary"
+				onclick={() => customActionsStore.reload()}
+				disabled={customState.loading}
+			>
+				Refresh
+			</Button>
+			<Button
+				variant="primary"
+				onclick={createAction}
+				disabled={!canCreateAction || customState.loading}
+			>
+				+ Create Action
+			</Button>
+		</div>
+	{/snippet}
 
 	{#if customState.error}
 		<Alert variant="danger" class="sf:mb-4">{customState.error}</Alert>

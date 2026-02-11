@@ -52,9 +52,9 @@
 	heading="Edit Custom Action"
 	description="Modify the configuration for this custom action."
 >
-	<div slot="actions">
+	{#snippet actions()}
 		<Button variant="secondary" onclick={handleCancel}>← Back to List</Button>
-	</div>
+	{/snippet}
 
 	{#if loading || customState.loading}
 		<Skeleton className="sf:h-64" />
