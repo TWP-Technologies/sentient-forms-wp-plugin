@@ -470,38 +470,50 @@ class Sentient_Forms_Entry_Evaluation_Action extends Sentient_Forms_Abstract_Act
 
 
 
-        $content = $response['result_data']['llm_output'] ?? '';
+        // CA-EXEC-001: Prefer structured_output when CPS validates it against the output_contract.
+        $structured_output       = $response['result_data']['structured_output'] ?? null;
+        $structured_output_valid = ! empty( $response['result_data']['structured_output_valid'] );
+        $output_schema_version   = $response['result_data']['output_schema_version'] ?? null;
+
+        if ( $structured_output_valid && is_array( $structured_output ) ) {
+            $json_data = $structured_output;
+
+            if ( null !== $output_schema_version ) {
+                $result['output_schema_version'] = (int) $output_schema_version;
+            }
+        } else {
+            // Legacy path: extract JSON from llm_output via regex.
+            $content = $response['result_data']['llm_output'] ?? '';
+
+            if ( empty( $content ) ) {
+
+                $result['error'] = __( 'Empty response content from CPS.', 'sentient-forms' );
+
+                return $result;
+
+            }
 
 
 
-        if ( empty( $content ) ) {
+            preg_match('/\{.*?\}/s', $content, $matches);
 
-            $result['error'] = __( 'Empty response content from CPS.', 'sentient-forms' );
-
-            return $result;
-
-        }
+            $json_string = $matches[0] ?? $content;
 
 
 
-        preg_match('/\{.*?\}/s', $content, $matches);
-
-        $json_string = $matches[0] ?? $content;
+            $json_data = json_decode( $json_string, true );
 
 
 
-        $json_data = json_decode( $json_string, true );
+            if ( json_last_error() !== JSON_ERROR_NONE || ! is_array( $json_data ) ) {
 
+                $result['error'] = __( 'Invalid JSON response format from CPS: ', 'sentient-forms' ) . json_last_error_msg();
 
+                $result['raw_content'] = $content;
 
-        if ( json_last_error() !== JSON_ERROR_NONE || ! is_array( $json_data ) ) {
+                return $result;
 
-            $result['error'] = __( 'Invalid JSON response format from CPS: ', 'sentient-forms' ) . json_last_error_msg();
-
-            $result['raw_content'] = $content;
-
-            return $result;
-
+            }
         }
 
 

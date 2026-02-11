@@ -714,5 +714,50 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         delete_option( $option_key );
     }
+
+    // =========================================================================
+    // CA-EXEC-001: Structured Output Tests
+    // =========================================================================
+
+    /**
+     * T-PHP-034: format_async_result_excerpt prefers structured_output when valid.
+     */
+    public function test_format_async_result_excerpt_prefers_structured_output(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'format_async_result_excerpt' );
+        $method->setAccessible( true );
+
+        // When structured_output_valid is true and structured_output exists
+        $result = [
+            'result_data' => [
+                'llm_output'              => 'Some raw LLM text that should NOT appear in the excerpt.',
+                'structured_output'       => [ 'summary' => 'Concise structured summary', 'sentiment' => 'positive' ],
+                'structured_output_valid' => true,
+            ],
+        ];
+        $excerpt = $method->invoke( $this->adapter, $result );
+        $this->assertStringContainsString( 'Concise structured summary', $excerpt );
+        $this->assertStringNotContainsString( 'should NOT appear', $excerpt );
+
+        // When structured_output_valid is false, fall back to llm_output
+        $result_no_valid = [
+            'result_data' => [
+                'llm_output'              => 'Fallback LLM text content.',
+                'structured_output'       => null,
+                'structured_output_valid' => false,
+            ],
+        ];
+        $excerpt_fallback = $method->invoke( $this->adapter, $result_no_valid );
+        $this->assertStringContainsString( 'Fallback LLM text', $excerpt_fallback );
+
+        // When structured output fields are absent entirely (legacy response)
+        $result_legacy = [
+            'result_data' => [
+                'llm_output' => 'Legacy output text.',
+            ],
+        ];
+        $excerpt_legacy = $method->invoke( $this->adapter, $result_legacy );
+        $this->assertStringContainsString( 'Legacy output text', $excerpt_legacy );
+    }
 }
 

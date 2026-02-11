@@ -237,4 +237,66 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertSame( $prime_response['result_data']['llm_output'], $duplicate_response['result_data']['llm_output'] );
 		$this->assertCount( 0, $duplicate_client->calls );
 	}
+
+	/**
+	 * T-PHP-033: Structured output fields from CPS pass through the executor unchanged.
+	 * Tests CA-EXEC-001: structured_output, output_schema_version, structured_output_valid
+	 * must be present in both result_data and evaluation_payload.
+	 */
+	public function test_execute_passes_through_structured_output_fields(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-structured',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = [
+					'path'    => $path,
+					'payload' => $payload,
+					'options' => $options,
+				];
+
+				return [
+					'result_data' => [
+						'classification'          => 'ham',
+						'llm_output'              => '{"summary":"Looks good"}',
+						'structured_output'       => [ 'summary' => 'Looks good' ],
+						'output_schema_version'   => 5,
+						'structured_output_valid' => true,
+					],
+					'meta'        => [
+						'credits_debited' => 20,
+						'new_balance'     => 80,
+					],
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+
+		$form    = [ 'id' => 30, 'title' => 'Structured Form' ];
+		$entry   = [ 'id' => 400, 'field_1' => 'Test' ];
+		$context = [ 'hook' => 'gform_after_submission', 'action_id' => 'entry_evaluation' ];
+		$result  = $executor->execute( 'central-structured', $form, $entry, $context );
+
+		$this->assertIsArray( $result );
+
+		// Verify structured output fields in result_data.
+		$this->assertArrayHasKey( 'structured_output', $result['result_data'] );
+		$this->assertSame( [ 'summary' => 'Looks good' ], $result['result_data']['structured_output'] );
+		$this->assertSame( 5, $result['result_data']['output_schema_version'] );
+		$this->assertTrue( $result['result_data']['structured_output_valid'] );
+
+		// Verify structured output fields in evaluation_payload.
+		$this->assertArrayHasKey( 'evaluation_payload', $result );
+		$this->assertArrayHasKey( 'structured_output', $result['evaluation_payload']['result_data'] );
+		$this->assertSame( [ 'summary' => 'Looks good' ], $result['evaluation_payload']['result_data']['structured_output'] );
+		$this->assertTrue( $result['evaluation_payload']['result_data']['structured_output_valid'] );
+	}
 }

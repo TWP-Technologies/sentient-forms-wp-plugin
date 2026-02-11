@@ -1168,6 +1168,10 @@ HTML;
 
         $this->update_entry_meta( $entry_id, 'sentient_forms_last_response', wp_json_encode( $result ) );
 
+        // CA-EXEC-001: Store structured output validity for efficient querying.
+        $structured_valid = ! empty( $result['result_data']['structured_output_valid'] );
+        $this->update_entry_meta( $entry_id, 'sentient_forms_structured_output_valid', $structured_valid ? '1' : '0' );
+
         if ( empty( $classification ) )
         {
             $this->add_entry_note(
@@ -1465,17 +1469,18 @@ HTML;
         }
 
         $log_data = [
-            'form_source'    => $context['form_source'] ?? $this->get_id(),
-            'form_id'        => absint( $context['form_id'] ?? 0 ),
-            'entry_id'       => isset( $context['entry_id'] ) ? absint( $context['entry_id'] ) : null,
-            'action_code'    => $context['central_action_id'] ?? $context['action_id'] ?? '',
-            'action_label'   => $context['action_name_label'] ?? $this->get_async_action_label( $context ),
-            'status'         => $status,
-            'result_summary' => $this->format_async_result_excerpt( $result ),
-            'classification' => $classification,
-            'credits_used'   => $credits_used,
-            'error_code'     => $error ? $error->get_error_code() : null,
-            'error_message'  => $error ? $error->get_error_message() : null,
+            'form_source'              => $context['form_source'] ?? $this->get_id(),
+            'form_id'                  => absint( $context['form_id'] ?? 0 ),
+            'entry_id'                 => isset( $context['entry_id'] ) ? absint( $context['entry_id'] ) : null,
+            'action_code'              => $context['central_action_id'] ?? $context['action_id'] ?? '',
+            'action_label'             => $context['action_name_label'] ?? $this->get_async_action_label( $context ),
+            'status'                   => $status,
+            'result_summary'           => $this->format_async_result_excerpt( $result ),
+            'classification'           => $classification,
+            'credits_used'             => $credits_used,
+            'structured_output_valid'  => ! empty( $result['result_data']['structured_output_valid'] ),
+            'error_code'               => $error ? $error->get_error_code() : null,
+            'error_message'            => $error ? $error->get_error_message() : null,
         ];
 
         Sentient_Forms_Action_Log_Controller::log_execution( $log_data );
@@ -1619,6 +1624,14 @@ HTML;
 
     private function format_async_result_excerpt( array $result ): string
     {
+        // CA-EXEC-001: Prefer structured_output for richer excerpts.
+        if ( ! empty( $result['result_data']['structured_output_valid'] )
+             && isset( $result['result_data']['structured_output'] )
+             && is_array( $result['result_data']['structured_output'] ) )
+        {
+            return wp_trim_words( wp_json_encode( $result['result_data']['structured_output'] ), 40 );
+        }
+
         if ( isset( $result['result_data']['llm_output'] ) && is_scalar( $result['result_data']['llm_output'] ) )
         {
             return wp_trim_words( wp_kses_post( (string) $result['result_data']['llm_output'] ), 40 );
