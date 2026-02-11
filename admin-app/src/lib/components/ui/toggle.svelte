@@ -53,9 +53,11 @@
 		aria-describedby={ariaDescribedBy}
 		aria-labelledby={ariaLabelledBy}
 		aria-label={ariaLabelledBy ? undefined : label ?? 'Toggle setting'}
-		class={`sf-relative sf-inline-flex sf-h-6 sf-w-11 sf-items-center sf-rounded-full sf-transition-colors ${
-			checked ? 'sf:bg-primary-600' : 'sf:bg-muted-400'
-		} ${disabled ? 'sf:opacity-60 sf:cursor-not-allowed' : 'sf:cursor-pointer'}`}
+		class="sf:relative sf:inline-flex sf:h-6 sf:w-11 sf:shrink-0 sf:items-center sf:rounded-full sf:border-2 sf:border-transparent sf:transition-colors sf:duration-200 sf:ease-in-out sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-2 {checked
+			? 'sf:bg-primary-600'
+			: 'sf:bg-slate-300'} {disabled
+			? 'sf:opacity-50 sf:cursor-not-allowed'
+			: 'sf:cursor-pointer'}"
 		disabled={disabled}
 		onclick={handleClick}
 		onkeydown={handleKeydown}
@@ -63,9 +65,9 @@
 	>
 		<span
 			aria-hidden="true"
-			class={`sf-inline-block sf-h-5 sf-w-5 sf-rounded-full sf-bg-white sf-shadow-card sf-transition-transform ${
-				checked ? 'sf:translate-x-5' : 'sf:translate-x-1'
-			}`}
+			class="sf:pointer-events-none sf:inline-block sf:h-5 sf:w-5 sf:rounded-full sf:bg-white sf:shadow-md sf:ring-0 sf:transition-transform sf:duration-200 sf:ease-in-out {checked
+				? 'sf:translate-x-5'
+				: 'sf:translate-x-0'}"
 		></span>
 	</button>
 	{#if label}
@@ -79,3 +81,4 @@
 		</div>
 	{/if}
 </div>
+
