@@ -39,12 +39,12 @@ export async function requireWpRestHealthy(page: Page): Promise<void> {
 export async function waitForPreviewInputs(page: Page, formId: number, reloadOnce = true): Promise<void> {
 	const isVisible = async () =>
 		page.locator('input[name="input_1"]').isVisible({ timeout: 2000 }).catch(() => false);
-    if (await isVisible()) return;
-    if (reloadOnce) {
-        await page.reload({ waitUntil: 'domcontentloaded' });
-        if (await isVisible()) return;
-    }
-    throw new Error(`Gravity Forms preview inputs not visible for form ${formId}`);
+	if (await isVisible()) return;
+	if (reloadOnce) {
+		await page.reload({ waitUntil: 'domcontentloaded' });
+		if (await isVisible()) return;
+	}
+	throw new Error(`Gravity Forms preview inputs not visible for form ${formId}`);
 }
 
 type ActionMappingArgs = {
@@ -318,23 +318,22 @@ echo (int) $form_id;
 }
 
 export function configureGravityActionMapping(args: ActionMappingArgs): void {
-	const settings = {
+	const mappingId = args.localMappingId ?? `map_${args.actionId}`;
+	const settings: Record<string, unknown> = {
 		enabled: true,
-		actions: {
-			[args.actionId]: {
-				enabled: true,
-				is_action_enabled_for_form: true,
-				central_action_id: args.centralActionId,
-				action_name_label: args.actionNameLabel ?? args.centralActionId,
-				hooks: args.hooks,
-				async: args.async ?? false,
-				reject_submission: args.rejectSubmission ?? false,
-				mark_as_spam: args.markAsSpam ?? false,
-				execution_priority: args.executionPriority ?? 10,
-				action_type_indicator: args.actionTypeIndicator ?? 'master',
-				action_template_id: args.actionTemplateId,
-				local_mapping_id: args.localMappingId ?? `map_${args.actionId}`
-			}
+		[mappingId]: {
+			enabled: true,
+			is_action_enabled_for_form: true,
+			central_action_id: args.centralActionId,
+			action_name_label: args.actionNameLabel ?? args.centralActionId,
+			trigger_hooks: args.hooks,
+			async: args.async ?? false,
+			reject_submission: args.rejectSubmission ?? false,
+			mark_as_spam: args.markAsSpam ?? false,
+			execution_priority: args.executionPriority ?? 10,
+			action_type_indicator: args.actionTypeIndicator ?? 'master',
+			action_template_id: args.actionTemplateId,
+			local_mapping_id: mappingId
 		}
 	};
 
@@ -353,7 +352,6 @@ $option_name = sprintf( 'sentient_forms_actions_gravity_forms_%d', $form_id );
 $settings    = array_merge(
     [
         'enabled' => true,
-        'actions' => [],
     ],
     $data
 );
@@ -517,11 +515,11 @@ if ( is_wp_error( $entry ) ) {
     echo wp_json_encode([ 'status' => 'error', 'is_spam' => null, 'classification' => null ]);
     return;
 }
-$meta = function_exists( 'gform_get_meta' ) ? gform_get_meta( $entry_id, '_sentient_forms_spam_analysis', true ) : null;
+$meta = function_exists( 'gform_get_meta' ) ? gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) : null;
 echo wp_json_encode([
     'status' => $entry['status'] ?? 'unknown',
-    'is_spam' => is_array( $meta ) ? ! empty( $meta['is_spam'] ) : null,
-    'classification' => is_array( $meta ) ? ( $meta['classification'] ?? null ) : null,
+    'is_spam' => is_string( $meta ) ? in_array( $meta, [ 'spam', 'likely_spam' ], true ) : null,
+    'classification' => is_string( $meta ) ? $meta : null,
 ]);
 `,
 		{
