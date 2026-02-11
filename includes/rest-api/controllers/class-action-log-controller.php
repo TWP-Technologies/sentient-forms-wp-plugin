@@ -259,6 +259,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             'error_message'  => isset( $data['error_message'] )
                                     ? sanitize_textarea_field( $data['error_message'] )
                                     : null,
+            'structured_output_valid' => ! empty( $data['structured_output_valid'] ),
             'created_at'     => gmdate( 'c' ),
             'completed_at'   => ( $data['status'] ?? '' ) !== 'pending' ? gmdate( 'c' ) : null,
         ];
@@ -413,6 +414,11 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                     'description' => __( 'When the action completed.', 'sentient-forms' ),
                     'type'        => [ 'string', 'null' ],
                     'format'      => 'date-time',
+                    'readonly'    => true,
+                ],
+                'structured_output_valid' => [
+                    'description' => __( 'Whether the CPS response included valid structured output.', 'sentient-forms' ),
+                    'type'        => 'boolean',
                     'readonly'    => true,
                 ],
             ],

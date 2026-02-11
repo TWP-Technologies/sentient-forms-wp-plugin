@@ -16,6 +16,7 @@
 		credits_used: number;
 		error_code: string | null;
 		error_message: string | null;
+		structured_output_valid: boolean;
 		created_at: string;
 		completed_at: string | null;
 	}
@@ -190,6 +191,7 @@
 							<th class="sf:pb-2 sf:pr-4">Entry</th>
 							<th class="sf:pb-2 sf:pr-4">Action</th>
 							<th class="sf:pb-2 sf:pr-4">Status</th>
+							<th class="sf:pb-2 sf:pr-4">Output</th>
 							<th class="sf:pb-2 sf:pr-4">Result</th>
 							<th class="sf:pb-2 sf:pr-4">Credits</th>
 							<th class="sf:pb-2">Time</th>
@@ -209,6 +211,15 @@
 									<Badge variant={getStatusVariant(entry.status)}>
 										{entry.status}
 									</Badge>
+								</td>
+								<td class="sf:py-3 sf:pr-4">
+									{#if entry.status === 'success'}
+										<Badge variant={entry.structured_output_valid ? 'success' : 'warning'}>
+											{entry.structured_output_valid ? '✓ Structured' : 'Raw'}
+										</Badge>
+									{:else}
+										—
+									{/if}
 								</td>
 								<td class="sf:py-3 sf:pr-4 sf:max-w-[200px] sf:truncate">
 									{#if entry.classification}

@@ -214,4 +214,41 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
 
         $this->assertCount( 1, $filtered );
     }
+
+    /**
+     * T-PHP-035: Test that log_execution persists structured_output_valid.
+     * Verifies the field is true when provided and defaults to false when omitted.
+     */
+    public function test_log_execution_persists_structured_output_valid(): void
+    {
+        // Entry WITH structured_output_valid = true
+        Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'              => 'gravity_forms',
+            'form_id'                  => 10,
+            'entry_id'                 => 1000,
+            'action_code'              => 'custom_action_v1',
+            'action_label'             => 'Custom Action',
+            'status'                   => 'success',
+            'structured_output_valid'  => true,
+            'credits_used'             => 5,
+        ] );
+
+        // Entry WITHOUT structured_output_valid (should default to false)
+        Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'  => 'gravity_forms',
+            'form_id'      => 10,
+            'entry_id'     => 1001,
+            'action_code'  => 'spam_detection_v1',
+            'action_label' => 'Spam Detection',
+            'status'       => 'success',
+            'credits_used' => 5,
+        ] );
+
+        $entries = get_option( self::OPTION_KEY, [] );
+        $this->assertCount( 2, $entries );
+
+        // Entries are prepended (newest first), so index 0 = second entry, index 1 = first entry
+        $this->assertTrue( $entries[1]['structured_output_valid'], 'structured_output_valid should be true when provided' );
+        $this->assertFalse( $entries[0]['structured_output_valid'], 'structured_output_valid should default to false when omitted' );
+    }
 }
