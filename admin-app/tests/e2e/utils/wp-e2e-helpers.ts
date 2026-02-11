@@ -31,7 +31,7 @@ export async function requireWpRestHealthy(page: Page): Promise<void> {
 		timeout: 5000
 	});
 	if (!res.ok()) {
-		test.skip(`WP REST unavailable (${res.status()})`);
+		test.skip(true, `WP REST unavailable (${res.status()})`);
 	}
 }
 
@@ -399,9 +399,7 @@ export function getProxyApiKey(): string {
 			return proxyKey;
 		}
 	} catch (_error) {
-		// Continue to regex fallback
-		const message = (error as Error)?.message ?? 'unknown';
-		throw new Error(`Failed to parse sentient_forms_settings JSON: ${message}; payload=${payload.slice(0, 200)}`);
+		// JSON parse failed — continue to regex fallback
 	}
 
 	const match = payload.match(/"proxy_api_key":"([^"]+)"/);
