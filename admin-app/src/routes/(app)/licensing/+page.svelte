@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { getNextCreditReset } from '$lib/utils/credits';
 	import { onMount } from 'svelte';
 	import {
 		Section,
@@ -93,6 +94,7 @@
 					{@const quota = credits.tier?.monthly_credit_quota ?? 100}
 					{@const balance = credits.current_balance}
 					{@const percentage = Math.min(100, Math.round((balance / quota) * 100))}
+					{@const resetInfo = getNextCreditReset()}
 
 					<div class="sf:flex sf:items-center sf:justify-between sf:text-sm">
 						<span class="sf:font-medium sf:text-slate-600">Credits remaining</span>
@@ -112,8 +114,8 @@
 					</div>
 
 					<p class="sf:text-xs sf:text-slate-500">
-						Credits reset on the 1st of each month.
-						{credits.tier?.display_name ? ` Tier: ${credits.tier.display_name}` : ''}
+						{resetInfo.summary}
+						{credits.tier?.display_name ? ` · Tier: ${credits.tier.display_name}` : ''}
 					</p>
 
 					{#if percentage <= 10 && percentage > 0}
@@ -122,7 +124,9 @@
 						</Alert>
 					{:else if percentage === 0}
 						<Alert variant="danger">
-							No credits remaining. Actions will not execute until credits reset or you upgrade.
+							No credits remaining. Actions will resume when credits reset on
+							<strong>{resetInfo.nextResetLabel}</strong>
+							({resetInfo.daysUntilReset} day{resetInfo.daysUntilReset !== 1 ? 's' : ''}).
 						</Alert>
 					{/if}
 				{:else}

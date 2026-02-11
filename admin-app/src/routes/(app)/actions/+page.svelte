@@ -46,6 +46,29 @@
 		customActionsState.actions.filter((action) => action.status === 'active')
 	);
 
+	// CB-ACTIONS-002: count how many forms have each action enabled
+	const formsPerAction = $derived.by(() => {
+		const counts = new Map<string, number>();
+		for (const forms of Object.values(formsBySource)) {
+			for (const form of forms) {
+				const actions =
+					form.settings && typeof form.settings === 'object'
+						? (form.settings as Record<string, unknown>)['actions']
+						: null;
+				if (actions && typeof actions === 'object') {
+					for (const [actionId, cfg] of Object.entries(
+						actions as Record<string, { is_action_enabled_for_form?: boolean }>
+					)) {
+						if (cfg?.is_action_enabled_for_form) {
+							counts.set(actionId, (counts.get(actionId) ?? 0) + 1);
+						}
+					}
+				}
+			}
+		}
+		return counts;
+	});
+
 	// Filter forms by search term
 	const filteredForms = $derived(
 		(selectedSource
@@ -286,6 +309,7 @@
 								</p>
 								<ul class="sf:space-y-1">
 									{#each items.slice(0, 3) as definition (definition.id)}
+										{@const formCount = formsPerAction.get(definition.id) ?? 0}
 										<li class="sf:flex sf:items-start sf:justify-between sf:gap-2">
 											<div>
 												<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
@@ -303,6 +327,9 @@
 														Defaults
 													</Button>
 												{/if}
+												<Badge variant={formCount > 0 ? 'info' : 'neutral'}>
+													{formCount} form{formCount !== 1 ? 's' : ''}
+												</Badge>
 												<Badge variant={definition.source === 'cps' ? 'success' : 'warning'}>
 													{definition.source === 'cps' ? 'CPS' : 'Local'}
 												</Badge>
@@ -332,12 +359,18 @@
 			{:else}
 				<ul class="sf:mt-3 sf:space-y-2">
 					{#each customActions.slice(0, 4) as action (action.id)}
+						{@const customFormCount = formsPerAction.get(action.code) ?? 0}
 						<li class="sf:flex sf:items-center sf:justify-between sf:gap-2">
 							<div>
 								<p class="sf:text-sm sf:font-semibold sf:text-slate-800">{action.display_name}</p>
 								<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
 							</div>
-							<Badge variant="success">Active</Badge>
+							<div class="sf:flex sf:items-center sf:gap-2">
+								<Badge variant={customFormCount > 0 ? 'info' : 'neutral'}>
+									{customFormCount} form{customFormCount !== 1 ? 's' : ''}
+								</Badge>
+								<Badge variant="success">Active</Badge>
+							</div>
 						</li>
 					{/each}
 				</ul>

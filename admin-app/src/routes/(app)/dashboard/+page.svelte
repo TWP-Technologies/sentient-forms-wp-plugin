@@ -3,9 +3,11 @@
 	import { Button, Card, Section, Badge } from '$lib/components/ui';
 	import { onMount } from 'svelte';
 	import { wpFetch } from '$lib/wp';
+	import { getNextCreditReset } from '$lib/utils/credits';
 
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let creditData = $state<CreditResponse | null>(null);
 
 	interface LicenseResponse {
 		status: string;
@@ -40,7 +42,7 @@
 			]);
 
 			const licenseData = licenseRes.status === 'fulfilled' ? licenseRes.value : null;
-			const creditData = creditRes.status === 'fulfilled' ? creditRes.value : null;
+			creditData = creditRes.status === 'fulfilled' ? creditRes.value : null;
 
 			sessionStore.hydrate({
 				siteUrl: licenseData?.site_url ?? window.location.origin,
@@ -101,9 +103,12 @@
 			{#if loading}
 				<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-300">Loading...</p>
 			{:else}
+				{@const quota = creditData?.tier?.monthly_credit_quota}
+				{@const resetInfo = getNextCreditReset()}
 				<p class="sf:mt-2 sf:text-lg sf:font-semibold">
-					{$sessionStore.creditsRemaining ?? '—'}
+					{$sessionStore.creditsRemaining ?? '—'}{quota ? ` / ${quota}` : ''}
 				</p>
+				<p class="sf:text-xs sf:text-slate-400 sf:mt-1">{resetInfo.summary}</p>
 			{/if}
 		</Card>
 		<Card>
