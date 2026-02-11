@@ -2,13 +2,13 @@ import { expect, test, type Page } from '@playwright/test';
 import {
 	EntrySpamStatus,
 	configureGravityActionMapping,
+	ensureCpsSeeded,
 	ensureCreditBalanceAtLeast,
 	ensureGravityForm,
 	fetchCreditBalance,
 	findEntryIdByEmail,
 	getEntrySpamStatus,
 	getLatestEntryId,
-	getProxyApiKey,
 	requireWpRestHealthy,
 	runActionScheduler
 } from './utils/wp-e2e-helpers';
@@ -55,7 +55,7 @@ test.describe('Gravity Forms spam e2e @spam-e2e', () => {
 			markAsSpam: true,
 			executionPriority: 10
 		});
-		const proxyKey = getProxyApiKey();
+		const proxyKey = ensureCpsSeeded();
 		ensureCreditBalanceAtLeast(20);
 		const balanceBefore = await fetchCreditBalance(page, proxyKey);
 		expect(balanceBefore).toBeGreaterThanOrEqual(10);
@@ -64,7 +64,7 @@ test.describe('Gravity Forms spam e2e @spam-e2e', () => {
 
 		const email = `spam-${Date.now()}@example.test`;
 		await loginToWpAdmin(page);
-	await requireWpRestHealthy(page);
+		await requireWpRestHealthy(page);
 		await page.goto(`${wpBaseUrl}/?gf_page=preview&id=${formId}`, { waitUntil: 'networkidle' });
 		await page.fill('input[name="input_1"]', 'Playwright Bot');
 		await page.fill('input[name="input_2"]', email);

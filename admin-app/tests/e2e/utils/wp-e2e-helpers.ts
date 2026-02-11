@@ -197,6 +197,137 @@ export function getLicenseIdByKey(licenseKey = 'LIC-LOCAL-DEV'): string {
 	return raw.trim();
 }
 
+/**
+ * Try to get the license ID without throwing if it doesn't exist.
+ */
+function tryGetLicenseId(licenseKey: string): string | null {
+	try {
+		return getLicenseIdByKey(licenseKey);
+	} catch (_error) {
+		return null;
+	}
+}
+
+/**
+ * Ensure the CPS database has a license, an activated site, and that
+ * WordPress is configured with the proxy API key and CPS base URL.
+ *
+ * This function is idempotent — safe to call multiple times. It:
+ * 1. Upserts the license into the CPS PostgreSQL database
+ * 2. Activates the license via the CPS HTTP API (creating a site + proxy key)
+ * 3. Stores the proxy key, cps_base_url, and enable_logging in WP options
+ *
+ * @returns The proxy API key string
+ */
+export function ensureCpsSeeded(
+	licenseKey = 'LIC-LOCAL-DEV',
+	cpsHostUrl = 'http://localhost:10081',
+	siteUrl = 'http://localhost:8080/'
+): string {
+	// 1. Ensure license exists in CPS DB
+	let licenseId = tryGetLicenseId(licenseKey);
+	if (!licenseId) {
+		// Get the "free" tier ID (seeded by CPS migrations)
+		const tierRaw = runDbQuery(`SELECT id FROM tiers WHERE code='free' LIMIT 1;`);
+		if (!tierRaw?.trim()) {
+			throw new Error('No "free" tier found in CPS DB. Ensure CPS migrations have run.');
+		}
+		const tierId = tierRaw.trim();
+
+		runDbQuery(`
+			INSERT INTO licenses (license_key, tier_id, status, max_sites)
+			VALUES ('${sanitizeSqlLiteral(licenseKey)}', '${sanitizeSqlLiteral(tierId)}', 'active', 5)
+			ON CONFLICT (license_key) DO UPDATE SET status = 'active', updated_at = now();
+		`);
+
+		licenseId = tryGetLicenseId(licenseKey);
+		if (!licenseId) {
+			throw new Error(`Failed to create license ${licenseKey}`);
+		}
+	}
+
+	// 2. Check if a site is already activated for this license
+	const existingSite = runDbQuery(
+		`SELECT proxy_api_key_fingerprint FROM sites WHERE license_id='${sanitizeSqlLiteral(licenseId)}' LIMIT 1;`
+	);
+
+	let proxyKey: string;
+
+	if (existingSite?.trim()) {
+		// Site exists — get the proxy key from WP settings (it was stored during activation)
+		try {
+			proxyKey = getProxyApiKey();
+		} catch (_error) {
+			// WP doesn't have the key yet — we need to re-activate to get a new one
+			proxyKey = activateLicenseViaCps(licenseKey, cpsHostUrl, siteUrl);
+		}
+	} else {
+		// No site → activate via CPS API
+		proxyKey = activateLicenseViaCps(licenseKey, cpsHostUrl, siteUrl);
+	}
+
+	// 3. Configure WordPress plugin settings
+	ensureWpCpsConfig(proxyKey);
+
+	return proxyKey;
+}
+
+/**
+ * Call the CPS license/activate endpoint to create a site and generate a proxy API key.
+ */
+function activateLicenseViaCps(licenseKey: string, cpsHostUrl: string, siteUrl: string): string {
+	const activateUrl = `${cpsHostUrl}/v1/license/activate`;
+	const payload = JSON.stringify({ license_key: licenseKey, site_url: siteUrl });
+
+	const result = spawnSync(
+		'curl',
+		['-s', '-X', 'POST', activateUrl, '-H', 'Content-Type: application/json', '-d', payload],
+		{ encoding: 'utf-8', timeout: 15000 }
+	);
+
+	if (result.error) {
+		throw new Error(`CPS activation curl failed: ${result.error.message}`);
+	}
+
+	const stdout = result.stdout?.trim() ?? '';
+	if (result.status !== 0) {
+		throw new Error(`CPS activation HTTP error (exit ${result.status}): ${stdout}`);
+	}
+
+	let body: { success?: boolean; data?: { proxy_api_key?: string } };
+	try {
+		body = JSON.parse(stdout);
+	} catch (_error) {
+		throw new Error(`CPS activation returned non-JSON: ${stdout.slice(0, 300)}`);
+	}
+
+	const proxyApiKey = body?.data?.proxy_api_key;
+	if (!proxyApiKey) {
+		throw new Error(`CPS activation did not return proxy_api_key: ${stdout.slice(0, 300)}`);
+	}
+
+	return proxyApiKey;
+}
+
+/**
+ * Store the proxy API key, CPS base URL, and enable logging in WordPress settings.
+ * Uses the Docker internal URL (http://cps-api:8080/v1) since WP runs inside Docker.
+ */
+function ensureWpCpsConfig(proxyKey: string, cpsDockerUrl = 'http://cps-api:8080/v1'): void {
+	const escaped = sanitizeSqlLiteral(proxyKey);
+	const escapedUrl = sanitizeSqlLiteral(cpsDockerUrl);
+
+	runWpEval(`
+$settings = get_option( 'sentient_forms_settings', [] );
+$settings['proxy_api_key'] = '${escaped}';
+$settings['cps_base_url']  = '${escapedUrl}';
+$settings['enable_logging'] = true;
+update_option( 'sentient_forms_settings', $settings );
+echo 'ok';
+`);
+}
+
+
 export function getActionTemplateIdByCode(code: string): string {
 	const raw = runDbQuery(
 		`SELECT id FROM action_templates WHERE code='${sanitizeSqlLiteral(code)}' LIMIT 1;`
