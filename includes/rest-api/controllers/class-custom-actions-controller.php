@@ -232,11 +232,6 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                 'required'          => false,
                 'sanitize_callback' => 'sanitize_text_field',
             ],
-            'base_credit_cost' => [
-                'type'              => 'integer',
-                'required'          => false,
-                'sanitize_callback' => [ $this, 'sanitize_credit_cost' ],
-            ],
         ];
     }
 
@@ -262,12 +257,6 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             return $prompt_overrides;
         }
 
-        $base_credit_cost = $this->sanitize_credit_cost( $request->get_param( 'base_credit_cost' ) );
-        if ( is_wp_error( $base_credit_cost ) )
-        {
-            return $base_credit_cost;
-        }
-
         $code = $this->sanitize_code( $request->get_param( 'code' ) );
         if ( empty( $code ) )
         {
@@ -284,7 +273,6 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             'description'      => $request->get_param( 'description' ) ? sanitize_textarea_field( (string) $request->get_param( 'description' ) ) : null,
             'prompt_overrides' => $prompt_overrides,
             'model_hint'       => $request->get_param( 'model_hint' ) ? sanitize_text_field( (string) $request->get_param( 'model_hint' ) ) : null,
-            'base_credit_cost' => $base_credit_cost,
         ];
     }
 
@@ -299,18 +287,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             return $prompt_overrides;
         }
 
-        $base_credit_cost = $this->sanitize_credit_cost( $request->get_param( 'base_credit_cost' ) );
-        if ( is_wp_error( $base_credit_cost ) )
-        {
-            return $base_credit_cost;
-        }
-
         return [
             'display_name'     => sanitize_text_field( (string) $request->get_param( 'display_name' ) ),
             'description'      => $request->get_param( 'description' ) ? sanitize_textarea_field( (string) $request->get_param( 'description' ) ) : null,
             'prompt_overrides' => $prompt_overrides,
             'model_hint'       => $request->get_param( 'model_hint' ) ? sanitize_text_field( (string) $request->get_param( 'model_hint' ) ) : null,
-            'base_credit_cost' => $base_credit_cost,
         ];
     }
 
@@ -353,38 +334,6 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
         }
 
         return $value;
-    }
-
-    /**
-     * @param mixed $value
-     */
-    public function sanitize_credit_cost( $value ): int | null | WP_Error
-    {
-        if ( null === $value || '' === $value )
-        {
-            return null;
-        }
-
-        if ( !is_numeric( $value ) )
-        {
-            return $this->prepare_error_response(
-                'rest_invalid_param',
-                __( 'Base credit cost must be numeric.', 'sentient-forms' ),
-                400,
-            );
-        }
-
-        $int_value = (int) $value;
-        if ( $int_value < 0 )
-        {
-            return $this->prepare_error_response(
-                'rest_invalid_param',
-                __( 'Base credit cost must be positive.', 'sentient-forms' ),
-                400,
-            );
-        }
-
-        return $int_value;
     }
 
     /**

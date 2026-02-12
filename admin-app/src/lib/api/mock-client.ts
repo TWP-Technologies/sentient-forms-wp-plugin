@@ -290,7 +290,7 @@ export class MockSentientFormsApiClient {
 			description: payload.description ?? null,
 			prompt_overrides: payload.prompt_overrides ?? {},
 			model_hint: payload.model_hint ?? null,
-			base_credit_cost: payload.base_credit_cost ?? null,
+			base_credit_cost: null,
 			status: 'active',
 			archived_at: null,
 			created_at: now,

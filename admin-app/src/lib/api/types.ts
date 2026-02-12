@@ -169,6 +169,16 @@ export interface InputMapping {
 }
 
 /**
+ * Batch execution settings for after-submission actions (CB-EXEC-003/004)
+ */
+export interface BatchSettings {
+	/** Whether batching is enabled for this mapping */
+	enabled: boolean;
+	/** Delay in seconds before batch fires (default 60, range 10–3600) */
+	delay_seconds: number;
+}
+
+/**
  * Strongly-typed settings for form-level action configuration
  */
 export interface FormActionSettings {
@@ -178,6 +188,8 @@ export interface FormActionSettings {
 	prompt_overrides?: Record<string, unknown>;
 	/** Execution mode: validation (sync) or after_submission (async) - CB-EXEC-002 */
 	execution_mode?: ExecutionMode;
+	/** Batch settings for after-submission execution (CB-EXEC-003/004) */
+	batch_settings?: BatchSettings;
 	/** Additional runtime settings */
 	[key: string]: unknown;
 }
@@ -330,7 +342,6 @@ export interface CustomActionCreatePayload {
 	description?: string | null;
 	prompt_overrides?: Record<string, unknown>;
 	model_hint?: string | null;
-	base_credit_cost?: number | null;
 }
 
 export type CustomActionUpdatePayload = Partial<Omit<CustomActionCreatePayload, 'template_id' | 'code'>> & {

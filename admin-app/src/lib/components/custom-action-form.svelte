@@ -52,7 +52,6 @@
 	let description = $state(initialData?.description ?? '');
 	let promptOverrides = $state<Record<string, unknown>>(initialData?.prompt_overrides ?? {});
 	let modelHint = $state<string | null>(initialData?.model_hint ?? null);
-	let baseCreditCost = $state(initialData?.base_credit_cost?.toString() ?? '');
 
 	// Derive schema from definitions based on selected templateId
 	const selectedDefinition = $derived(
@@ -70,8 +69,7 @@
 			display_name: displayName.trim(),
 			description: description.trim() || null,
 			prompt_overrides: Object.keys(promptOverrides).length > 0 ? promptOverrides : undefined,
-			model_hint: modelHint?.trim() || null,
-			base_credit_cost: baseCreditCost.trim() ? Number(baseCreditCost) : null
+			model_hint: modelHint?.trim() || null
 		};
 
 		if (isEditMode) {
@@ -258,20 +256,11 @@
 			onchange={handlePromptChange}
 		/>
 
-		<div class="sf:grid sf:gap-4 sf:md:grid-cols-2">
+		<div class="sf:grid sf:gap-4 sf:md:grid-cols-1">
 			<ModelSelect
 				id="custom-action-model-hint"
 				bind:value={modelHint}
 				onchange={handleModelChange}
-			/>
-			<InputField
-				id="custom-action-credit-cost"
-				label="Base Credit Cost"
-				type="number"
-				min="0"
-				bind:value={baseCreditCost}
-				placeholder="Optional override"
-				description="Override the template's default credit cost."
 			/>
 		</div>
 

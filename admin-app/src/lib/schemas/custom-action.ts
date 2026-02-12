@@ -32,16 +32,6 @@ const promptOverridesSchema = z
     .describe('JSON object of prompt override key-value pairs');
 
 /**
- * Credit cost: positive integer or null
- */
-const creditCostSchema = z
-    .number()
-    .int('Credit cost must be a whole number')
-    .nonnegative('Credit cost must be zero or positive')
-    .nullable()
-    .optional();
-
-/**
  * Schema for creating a new custom action
  */
 export const customActionCreateSchema = z.object({
@@ -50,8 +40,7 @@ export const customActionCreateSchema = z.object({
     display_name: z.string().min(1, 'Display name is required').trim(),
     description: z.string().trim().nullable().optional(),
     prompt_overrides: promptOverridesSchema,
-    model_hint: z.string().trim().nullable().optional(),
-    base_credit_cost: creditCostSchema
+    model_hint: z.string().trim().nullable().optional()
 });
 
 /**
@@ -63,7 +52,6 @@ export const customActionUpdateSchema = z.object({
     description: z.string().trim().nullable().optional(),
     prompt_overrides: promptOverridesSchema,
     model_hint: z.string().trim().nullable().optional(),
-    base_credit_cost: creditCostSchema,
     status: z.enum(['active', 'archived']).optional()
 });
 
