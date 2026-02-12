@@ -14,6 +14,7 @@
 		Toggle
 	} from '$lib/components/ui';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
+	import { DEFAULT_BATCH_SETTINGS } from '$lib/utils/batch';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { formActionsStore, formActionsState } from '$lib/stores/form-actions.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
@@ -510,6 +511,8 @@
 			spam_negative_examples: baseSettings.spam_negative_examples ?? [],
 			// CB-EXEC-002: Execution mode - default to after_submission (async) for safety
 			execution_mode: baseSettings.execution_mode ?? 'after_submission',
+			// CB-EXEC-003/004: Batch settings with sensible defaults
+			batch_settings: baseSettings.batch_settings ?? { ...DEFAULT_BATCH_SETTINGS },
 			...baseSettings
 		};
 		editingLinkageId = linkage.local_mapping_id;
@@ -921,7 +924,7 @@
 											Hooks: {summarizeDefinitionHooks(definition.hooks)}
 										</p>
 										<p class="sf:text-xs sf:text-slate-500">
-											Cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+											CPS base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
 												definition
 											)}
 										</p>
@@ -1315,6 +1318,49 @@
 												/>
 											</div>
 
+											<!-- CB-EXEC-003/004: Batch Execution Settings -->
+											{#if draftSettings.execution_mode === 'after_submission'}
+												<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+													<div class="sf:flex sf:items-center sf:justify-between sf:mb-2">
+														<p
+															class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500"
+														>
+															Batch Execution
+														</p>
+														<Toggle
+															checked={draftSettings.batch_settings?.enabled ?? false}
+															onchange={() => {
+																const current = draftSettings.batch_settings ?? {
+																	...DEFAULT_BATCH_SETTINGS
+																};
+																draftSettings = {
+																	...draftSettings,
+																	batch_settings: { ...current, enabled: !current.enabled }
+																};
+															}}
+														/>
+													</div>
+													<p class="sf:text-xs sf:text-slate-500 sf:mb-3">
+														Delay execution to reduce peak load. Credit pricing is calculated by CPS at
+														execution time.
+													</p>
+
+													{#if draftSettings.batch_settings?.enabled}
+														<div class="sf:grid sf:gap-3">
+															<InputField
+																id="batch-delay"
+																label="Delay (seconds)"
+																type="number"
+																min="10"
+																max="3600"
+																placeholder="60"
+																bind:value={draftSettings.batch_settings.delay_seconds}
+															/>
+														</div>
+													{/if}
+												</div>
+											{/if}
+
 											<div class="sf:flex sf:gap-2 sf:flex-wrap sf:pt-2">
 												<Button size="sm" onclick={() => saveActionChanges(linkage)}>Save</Button>
 												<Button size="sm" variant="secondary" onclick={cancelEditingAction}>
@@ -1426,7 +1472,7 @@
 											</p>
 											<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
 											<p class="sf:text-xs sf:text-slate-500">
-												Cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+												CPS base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
 													definition
 												)}
 											</p>
@@ -1466,7 +1512,7 @@
 										<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
 										{#if action.base_credit_cost !== null}
 											<p class="sf:text-xs sf:text-slate-500">
-												Cost: {action.base_credit_cost} credits
+												CPS base cost: {action.base_credit_cost} credits
 											</p>
 										{/if}
 									</div>

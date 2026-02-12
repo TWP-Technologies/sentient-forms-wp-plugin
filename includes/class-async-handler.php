@@ -631,6 +631,25 @@ class Sentient_Forms_Async_Handler
 
         $context['job_id'] = wp_generate_uuid4();
 
+        // Enforce runtime shape so stale local state cannot smuggle pricing hints.
+        $settings = $this->normalize_runtime_settings( $settings );
+
+        // CB-EXEC-003/004: Batch delay scheduling (pricing remains CPS-authoritative).
+        $batch_settings = $settings['batch_settings'] ?? null;
+        $batch_enabled  = ! empty( $batch_settings['enabled'] )
+            && ( ( $data['hook'] ?? ( $context['hook'] ?? '' ) ) === 'gform_after_submission' );
+
+        if ( $batch_enabled )
+        {
+            $delay    = max( 10, (int) ( $batch_settings['delay_seconds'] ?? 60 ) );
+            $run_at   = $run_at ?? ( time() + $delay );
+
+            $context['batch_context'] = [
+                'batch_id' => wp_generate_uuid4(),
+                'delay'    => $delay,
+            ];
+        }
+
         $payload = [
             'action_id'            => $action_id,
             'data'                 => $this->prepare_job_data( $data ),
@@ -668,6 +687,27 @@ class Sentient_Forms_Async_Handler
         }
 
         return $scheduled['scheduled'];
+    }
+
+    /**
+     * Normalize mutable runtime settings before dispatch.
+     *
+     * @param array $settings Raw linkage settings.
+     * @return array
+     */
+    private function normalize_runtime_settings( array $settings ): array
+    {
+        if ( !isset( $settings['batch_settings'] ) || !is_array( $settings['batch_settings'] ) )
+        {
+            return $settings;
+        }
+
+        $settings['batch_settings'] = [
+            'enabled'       => ! empty( $settings['batch_settings']['enabled'] ),
+            'delay_seconds' => max( 10, min( 3600, (int) ( $settings['batch_settings']['delay_seconds'] ?? 60 ) ) ),
+        ];
+
+        return $settings;
     }
 
     private function prepare_job_data( array $data ): array

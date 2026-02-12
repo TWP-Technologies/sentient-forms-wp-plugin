@@ -1043,6 +1043,14 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         foreach ( $settings as $key => $value )
         {
             $key = sanitize_key( $key );
+
+            // CB-EXEC-003/004: Dedicated sanitisation for batch_settings.
+            if ( 'batch_settings' === $key && is_array( $value ) )
+            {
+                $sanitized[ $key ] = $this->sanitize_batch_settings( $value );
+                continue;
+            }
+
             if ( is_array( $value ) )
             {
                 $sanitized[ $key ] = $this->sanitize_settings( $value );
@@ -1059,5 +1067,19 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return $sanitized;
+    }
+
+    /**
+     * CB-EXEC-003/004: Sanitise and clamp batch execution settings.
+     *
+     * @param array $raw Raw batch_settings from the client.
+     * @return array {enabled: bool, delay_seconds: int}
+     */
+    private function sanitize_batch_settings( array $raw ): array
+    {
+        return [
+            'enabled'       => ! empty( $raw['enabled'] ),
+            'delay_seconds' => max( 10, min( 3600, (int) ( $raw['delay_seconds'] ?? 60 ) ) ),
+        ];
     }
 }
