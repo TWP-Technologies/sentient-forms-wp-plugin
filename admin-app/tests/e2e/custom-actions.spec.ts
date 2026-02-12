@@ -66,7 +66,7 @@ test.describe('Custom actions admin view', () => {
 						description: (payload.description as string | null | undefined) ?? null,
 						prompt_overrides: (payload.prompt_overrides as Record<string, unknown> | undefined) ?? {},
 						model_hint: (payload.model_hint as string | null | undefined) ?? null,
-						base_credit_cost: (payload.base_credit_cost as number | null | undefined) ?? null,
+						base_credit_cost: null,
 						status: 'active',
 						archived_at: null,
 						created_at: now,

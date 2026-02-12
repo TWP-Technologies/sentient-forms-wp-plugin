@@ -8,11 +8,29 @@
 class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
 {
     private Sentient_Forms_Admin_Assets $assets;
+    /** @var callable */
+    private $asset_base_url_filter;
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        // Force production-style asset URL resolution so cache-busting assertions are deterministic.
+        $this->asset_base_url_filter = static function () {
+            return trailingslashit( SENTIENT_FORMS_PLUGIN_URL ) . 'assets/dist/';
+        };
+
+        add_filter( 'sentient_forms_admin_asset_base_url', $this->asset_base_url_filter );
+        delete_transient( 'sentient_forms_admin_dev_url' );
+
         $this->assets = new Sentient_Forms_Admin_Assets();
+    }
+
+    protected function tearDown(): void
+    {
+        remove_filter( 'sentient_forms_admin_asset_base_url', $this->asset_base_url_filter );
+        delete_transient( 'sentient_forms_admin_dev_url' );
+        parent::tearDown();
     }
 
     /**

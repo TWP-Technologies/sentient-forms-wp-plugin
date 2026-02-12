@@ -157,7 +157,49 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertNotEmpty( $job['args']['context']['job_id'] );
 		$this->assertSame( 3, $job['args']['context']['max_attempts'] );
 		$this->assertSame( 60, $job['args']['context']['backoff_base_delay'] );
-		$this->assertSame( HOUR_IN_SECONDS, $job['args']['context']['backoff_max_delay'] );
+			$this->assertSame( HOUR_IN_SECONDS, $job['args']['context']['backoff_max_delay'] );
+    }
+
+    public function test_process_action_async_batch_settings_strip_discount_percent_at_runtime(): void
+    {
+        $data = [
+            'hook'  => 'gform_after_submission',
+            'form'  => [ 'id' => 43, 'title' => 'Batch Form' ],
+            'entry' => [ 'id' => 102, 'field_1' => 'Hello' ],
+        ];
+
+        $settings = [
+            'central_action_id'   => 'spam_detection_v1',
+            'action_type_indicator' => 'master',
+            'batch_settings'      => [
+                'enabled'          => true,
+                'delay_seconds'    => 120,
+                'discount_percent' => 95,
+            ],
+        ];
+
+        $context = [
+            'hook'        => 'gform_after_submission',
+            'form_source' => 'gravity_forms',
+        ];
+
+        $scheduled = $this->plugin->process_action_async(
+            'nonexistent_local_action',
+            $data,
+            $settings,
+            $context
+        );
+
+        $this->assertTrue( $scheduled );
+        $this->assertNotEmpty( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+
+        $job            = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0];
+        $batch_settings = $job['args']['settings']['batch_settings'] ?? [];
+        $job_context    = $job['args']['context'] ?? [];
+
+        $this->assertArrayHasKey( 'batch_context', $job_context );
+        $this->assertArrayNotHasKey( 'discount_percent', $batch_settings );
+        $this->assertArrayNotHasKey( 'credit_cost_override', $job_context );
     }
 
     public function test_process_action_async_is_idempotent_for_same_payload(): void

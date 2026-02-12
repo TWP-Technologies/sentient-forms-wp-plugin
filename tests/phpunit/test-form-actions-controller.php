@@ -47,6 +47,39 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( [ 'gform_validation' ], $data['trigger_hooks'] );
     }
 
+    public function test_sanitize_settings_drops_batch_discount_and_clamps_delay(): void
+    {
+        $settings = [
+            'batch_settings' => [
+                'enabled'          => true,
+                'delay_seconds'    => 1,
+                'discount_percent' => 95,
+            ],
+        ];
+
+        $sanitized = $this->invoke_private( 'sanitize_settings', [ $settings ] );
+        $batch     = $sanitized['batch_settings'] ?? [];
+
+        $this->assertSame( true, $batch['enabled'] ?? null );
+        $this->assertSame( 10, $batch['delay_seconds'] ?? null );
+        $this->assertArrayNotHasKey( 'discount_percent', $batch );
+    }
+
+    public function test_sanitize_settings_clamps_batch_delay_upper_bound(): void
+    {
+        $settings = [
+            'batch_settings' => [
+                'enabled'       => true,
+                'delay_seconds' => 99999,
+            ],
+        ];
+
+        $sanitized = $this->invoke_private( 'sanitize_settings', [ $settings ] );
+        $batch     = $sanitized['batch_settings'] ?? [];
+
+        $this->assertSame( 3600, $batch['delay_seconds'] ?? null );
+    }
+
     // =========================================================================
     // CB-FORMS-001: Per-Form Master Disable Tests
     // =========================================================================
@@ -135,5 +168,16 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertFalse( $data['sf_disabled'], 'GET should reflect the cleared disabled state' );
 
         delete_option( $option_key );
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     */
+    private function invoke_private( string $method, array $args = [] ): mixed
+    {
+        $reflection = new ReflectionMethod( $this->controller, $method );
+        $reflection->setAccessible( true );
+
+        return $reflection->invokeArgs( $this->controller, $args );
     }
 }
