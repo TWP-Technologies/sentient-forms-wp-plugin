@@ -98,6 +98,38 @@ describe('SentientFormsApiClient', () => {
 		});
 	});
 
+	it('sends a proper form disable payload when toggling per-form active state', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						sf_disabled: true,
+						message: 'Sentient Forms disabled for this form.'
+					}
+				})
+		});
+
+		const result = await client.toggleFormDisabled('gravity_forms', 42, true, {
+			showNotifications: false
+		});
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}gravity_forms/forms/42/actions/disable`,
+			expect.objectContaining({
+				method: 'PUT',
+				body: JSON.stringify({ sf_disabled: true })
+			})
+		);
+		expect(result).toEqual({
+			sf_disabled: true,
+			message: 'Sentient Forms disabled for this form.'
+		});
+	});
+
 	it('surfaces ApiClientError with code and notification', async () => {
 		const notifySpy = vi.spyOn(notifications, 'error');
 

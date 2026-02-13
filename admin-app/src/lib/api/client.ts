@@ -291,7 +291,7 @@ export class SentientFormsApiClient {
 			{
 				...options,
 				method: 'PUT',
-				body: JSON.stringify({ sf_disabled: disabled })
+				body: { sf_disabled: disabled }
 			}
 		);
 		return this.unwrap(response);

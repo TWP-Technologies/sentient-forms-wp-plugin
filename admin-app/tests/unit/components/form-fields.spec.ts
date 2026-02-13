@@ -107,12 +107,16 @@ describe('Form field primitives', () => {
 		});
 
 		const button = target.querySelector('button');
+		const thumb = button?.querySelector('span[aria-hidden="true"]') as HTMLSpanElement;
 		expect(button).toBeTruthy();
+		expect(thumb).toBeTruthy();
 		expect(button!.className).toContain('sf:bg-slate-300');
+		expect(thumb.style.transform).toBe('translateX(0)');
 		button!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 		await tick();
 
 		expect(button!.className).toContain('sf:bg-primary-600');
+		expect(thumb.style.transform).toBe('translateX(1.25rem)');
 		dispose();
 	});
 });

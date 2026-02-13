@@ -24,6 +24,7 @@
 
 	let ariaDescribedBy = $derived(description ? `${id}-description` : undefined);
 	let ariaLabelledBy = $derived(label ? `${id}-label` : undefined);
+	let thumbStyle = $derived(`transform: translateX(${checked ? '1.25rem' : '0'});`);
 
 	function emitChange(next: boolean) {
 		checked = next;
@@ -65,9 +66,8 @@
 	>
 		<span
 			aria-hidden="true"
-			class="sf:pointer-events-none sf:inline-block sf:h-5 sf:w-5 sf:rounded-full sf:bg-white sf:shadow-md sf:ring-0 sf:transition-transform sf:duration-200 sf:ease-in-out {checked
-				? 'sf:translate-x-5'
-				: 'sf:translate-x-0'}"
+			class="sf:pointer-events-none sf:inline-block sf:h-5 sf:w-5 sf:rounded-full sf:bg-white sf:shadow-md sf:ring-0 sf:transition-transform sf:duration-200 sf:ease-in-out"
+			style={thumbStyle}
 		></span>
 	</button>
 	{#if label}
@@ -81,4 +81,3 @@
 		</div>
 	{/if}
 </div>
-

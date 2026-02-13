@@ -5,6 +5,8 @@ type StubClient = {
 	getCreditBalance: ReturnType<typeof vi.fn>;
 	getActionDefinitions: ReturnType<typeof vi.fn>;
 	getFormExecutionStatus: ReturnType<typeof vi.fn>;
+	getFormDisabled: ReturnType<typeof vi.fn>;
+	toggleFormDisabled: ReturnType<typeof vi.fn>;
 	createFormAction: ReturnType<typeof vi.fn>;
 	updateFormAction: ReturnType<typeof vi.fn>;
 	deleteFormAction: ReturnType<typeof vi.fn>;
@@ -17,6 +19,8 @@ const stubClient = vi.hoisted(() => {
 		getCreditBalance: vi.fn(),
 		getActionDefinitions: vi.fn(),
 		getFormExecutionStatus: vi.fn(),
+		getFormDisabled: vi.fn(),
+		toggleFormDisabled: vi.fn(),
 		createFormAction: vi.fn(),
 		updateFormAction: vi.fn(),
 		deleteFormAction: vi.fn(),
@@ -61,12 +65,14 @@ describe('formActionsStore', () => {
 
 	const notifyErrorSpy = vi.spyOn(notifications, 'error');
 	const notifyWarningSpy = vi.spyOn(notifications, 'warning');
+	const notifySuccessSpy = vi.spyOn(notifications, 'success');
 
 	beforeEach(() => {
 		formActionsStore.reset();
 		Object.values(stubClient).forEach((fn) => fn.mockReset());
 		notifyErrorSpy.mockReset();
 		notifyWarningSpy.mockReset();
+		notifySuccessSpy.mockReset();
 	});
 
 	it('stores friendly error message when initial load fails', async () => {
@@ -256,5 +262,29 @@ describe('formActionsStore', () => {
 		const state = snapshotState();
 		expect(state.items[0]?.trigger_hooks).toEqual(['gform_validation']);
 		expect(notifyErrorSpy).toHaveBeenCalledWith('bad hooks');
+	});
+
+	it('keeps per-form disabled state after successful toggle', async () => {
+		stubClient.getFormActions.mockResolvedValue([]);
+		stubClient.getCreditBalance.mockResolvedValue({
+			current_balance: 100,
+			ledger_delta: 0,
+			tier: null
+		});
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+		stubClient.getFormDisabled.mockResolvedValue({ sf_disabled: false });
+		stubClient.toggleFormDisabled.mockResolvedValue({
+			sf_disabled: true,
+			message: 'Sentient Forms disabled for this form.'
+		});
+
+		await formActionsStore.load('gravity_forms', 1);
+		await formActionsStore.toggleFormDisabled('gravity_forms', 1, true);
+
+		const state = snapshotState();
+		expect(stubClient.toggleFormDisabled).toHaveBeenCalledWith('gravity_forms', 1, true);
+		expect(state.sfDisabled).toBe(true);
+		expect(notifySuccessSpy).toHaveBeenCalledWith('Sentient Forms disabled for this form.');
 	});
 });
