@@ -118,6 +118,111 @@ class Sentient_Forms_Async_Metadata_Store
     }
 
     /**
+     * Reconcile metadata rows against Action Scheduler terminal statuses.
+     *
+     * @param array<string, mixed> $args Reconcile args.
+     * @return array<string, mixed>
+     */
+    public function reconcile_with_action_scheduler( array $args = [] ): array
+    {
+        $limit      = isset( $args['limit'] ) ? max( 1, (int) $args['limit'] ) : 100;
+        $older_than = isset( $args['older_than'] ) ? max( 0, (int) $args['older_than'] ) : 300;
+        $apply      = ! empty( $args['apply'] );
+        $statuses   = isset( $args['statuses'] ) && is_array( $args['statuses'] )
+            ? array_values( array_filter( array_map( 'strval', $args['statuses'] ) ) )
+            : [ 'queued', 'retry_scheduled', 'running' ];
+        $cutoff     = $older_than > 0 ? ( time() - $older_than ) : 0;
+        $candidates = [];
+        $scanned    = 0;
+        $updated    = 0;
+        $skipped    = 0;
+
+        foreach ( array_values( $this->all() ) as $job )
+        {
+            if ( $scanned >= $limit )
+            {
+                break;
+            }
+
+            $status = (string) ( $job['status'] ?? '' );
+            if ( ! in_array( $status, $statuses, true ) )
+            {
+                continue;
+            }
+
+            $reference = (int) ( $job['updated_at'] ?? $job['scheduled_at'] ?? $job['run_at'] ?? 0 );
+            if ( $cutoff > 0 && $reference > 0 && $reference > $cutoff )
+            {
+                $skipped++;
+                continue;
+            }
+
+            $scanned++;
+
+            $action_scheduler_id = isset( $job['action_scheduler_id'] ) ? (int) $job['action_scheduler_id'] : 0;
+            if ( $action_scheduler_id <= 0 )
+            {
+                $skipped++;
+                continue;
+            }
+
+            $action_scheduler_status = $this->resolve_action_scheduler_status( $action_scheduler_id );
+            if ( ! $this->is_terminal_action_scheduler_status( $action_scheduler_status ) )
+            {
+                $skipped++;
+                continue;
+            }
+
+            $target_status = $this->map_action_scheduler_status( $action_scheduler_status );
+            if ( null === $target_status || $target_status === $status )
+            {
+                $skipped++;
+                continue;
+            }
+
+            $candidate = [
+                'job_id'                  => (string) ( $job['job_id'] ?? '' ),
+                'hook'                    => (string) ( $job['hook'] ?? '' ),
+                'metadata_status'         => $status,
+                'action_scheduler_id'     => $action_scheduler_id,
+                'action_scheduler_status' => $action_scheduler_status,
+                'target_status'           => $target_status,
+                'reason'                  => 'action_scheduler_terminal_status',
+            ];
+            $candidates[] = $candidate;
+
+            if ( ! $apply )
+            {
+                continue;
+            }
+
+            $this->update_status(
+                $candidate['job_id'],
+                $target_status,
+                [
+                    'completed_at'            => time(),
+                    'reconciled_at'           => time(),
+                    'reconciled_from_status'  => $status,
+                    'reconciled_as_status'    => $action_scheduler_status,
+                    'last_error'              => 'failed' === $target_status
+                        ? ( $job['last_error'] ?? 'Reconciled from Action Scheduler terminal failure status' )
+                        : ( $job['last_error'] ?? null ),
+                ]
+            );
+            $updated++;
+        }
+
+        return [
+            'scanned'    => $scanned,
+            'candidates' => count( $candidates ),
+            'updated'    => $updated,
+            'skipped'    => $skipped,
+            'apply'      => $apply,
+            'rows'       => $candidates,
+        ];
+    }
+
+    /**
      * Remove all tracked jobs (mainly for tests).
      */
     public function clear(): void
@@ -156,6 +261,61 @@ class Sentient_Forms_Async_Metadata_Store
         }
 
         return $jobs;
+    }
+
+    private function resolve_action_scheduler_status( int $action_scheduler_id ): ?string
+    {
+        $filtered_status = apply_filters( 'sentient_forms_async_metadata_action_scheduler_status', null, $action_scheduler_id );
+        if ( is_string( $filtered_status ) && '' !== $filtered_status )
+        {
+            return $filtered_status;
+        }
+
+        if ( ! class_exists( 'ActionScheduler' ) )
+        {
+            return null;
+        }
+
+        try
+        {
+            $store = ActionScheduler::store();
+            if ( ! $store || ! method_exists( $store, 'get_status' ) )
+            {
+                return null;
+            }
+
+            $status = $store->get_status( $action_scheduler_id );
+            if ( ! is_string( $status ) || '' === $status )
+            {
+                return null;
+            }
+
+            return $status;
+        }
+        catch ( Throwable $throwable )
+        {
+            return null;
+        }
+    }
+
+    private function is_terminal_action_scheduler_status( ?string $status ): bool
+    {
+        return in_array( $status, [ 'complete', 'failed', 'canceled' ], true );
+    }
+
+    private function map_action_scheduler_status( string $status ): ?string
+    {
+        if ( 'complete' === $status )
+        {
+            return 'success';
+        }
+
+        if ( in_array( $status, [ 'failed', 'canceled' ], true ) )
+        {
+            return 'failed';
+        }
+
+        return null;
     }
 
     private function filter_payload( array $payload, string $hook ): array

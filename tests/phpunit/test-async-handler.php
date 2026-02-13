@@ -721,6 +721,30 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 5 ] );
         $this->assertSame( 'success', $rows[0]['status'] );
+        $metadata = $this->plugin->get_async_metadata_store()->get( $evaluation_job['args']['context']['job_id'] );
+        $this->assertSame( 'success', $metadata['status'] ?? null );
+    }
+
+    public function test_process_evaluation_marks_request_success_with_action_scheduler_runtime_shape(): void
+    {
+        $job = [
+            'adapter_id' => 'gravity_forms',
+            'entry_id'   => 1234,
+            'form_id'    => 77,
+            'action_id'  => 'entry_evaluation',
+            'payload'    => [ 'result' => 'ok' ],
+        ];
+
+        $this->plugin->dispatch_action_evaluation( $job );
+        $evaluation_job = array_pop( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler        = $this->plugin->get_async_handler();
+        $runtime_args   = array_values( $evaluation_job['args'] );
+        $handler->process_evaluation( $runtime_args[0] );
+
+        $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 5 ] );
+        $this->assertSame( 'success', $rows[0]['status'] );
+        $metadata = $this->plugin->get_async_metadata_store()->get( $evaluation_job['args']['context']['job_id'] );
+        $this->assertSame( 'success', $metadata['status'] ?? null );
     }
 
     public function test_process_evaluation_fails_when_adapter_missing(): void
@@ -742,6 +766,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'evaluation', 'limit' => 1 ] );
         $this->assertSame( 'failed', $rows[0]['status'] );
         $this->assertStringContainsString( 'Adapter not available', $rows[0]['last_error'] ?? '' );
+        $metadata = $this->plugin->get_async_metadata_store()->get( $evaluation_job['args']['context']['job_id'] );
+        $this->assertSame( 'failed', $metadata['status'] ?? null );
     }
 
     public function test_success_can_schedule_evaluation_via_filter(): void

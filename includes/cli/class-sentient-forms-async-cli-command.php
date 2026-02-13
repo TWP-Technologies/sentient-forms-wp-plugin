@@ -226,6 +226,73 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
             WP_CLI::success( sprintf( 'Purged %d job(s).', $removed ) );
         }
 
+        /**
+         * Reconcile metadata rows that drifted from Action Scheduler terminal status.
+         *
+         * ## OPTIONS
+         *
+         * [--apply]
+         * : Apply updates (default is dry-run).
+         *
+         * [--limit=<rows>]
+         * : Max eligible rows to scan. Default: 50.
+         *
+         * [--older-than=<seconds>]
+         * : Minimum age in seconds before a row is eligible. Default: 300.
+         *
+         * [--statuses=<statuses>]
+         * : CSV of metadata statuses to inspect (queued,retry_scheduled,running).
+         */
+        public function reconcile( array $args, array $assoc_args ): void
+        {
+            $limit      = isset( $assoc_args['limit'] ) ? max( 1, (int) $assoc_args['limit'] ) : 50;
+            $older_than = isset( $assoc_args['older-than'] ) ? max( 0, (int) $assoc_args['older-than'] ) : 300;
+            $apply      = array_key_exists( 'apply', $assoc_args );
+            $statuses   = $this->parse_reconcile_statuses( (string) ( $assoc_args['statuses'] ?? 'queued,retry_scheduled,running' ) );
+
+            $result = $this->get_store()->reconcile_with_action_scheduler(
+                [
+                    'apply'      => $apply,
+                    'limit'      => $limit,
+                    'older_than' => $older_than,
+                    'statuses'   => $statuses,
+                ]
+            );
+
+            WP_CLI::line(
+                sprintf(
+                    'Scanned %d row(s); %d candidate(s); %d skipped.',
+                    (int) ( $result['scanned'] ?? 0 ),
+                    (int) ( $result['candidates'] ?? 0 ),
+                    (int) ( $result['skipped'] ?? 0 )
+                )
+            );
+
+            $rows = $result['rows'] ?? [];
+            if ( ! empty( $rows ) )
+            {
+                WP_CLI\Utils\format_items(
+                    'table',
+                    $rows,
+                    [ 'job_id', 'hook', 'metadata_status', 'action_scheduler_id', 'action_scheduler_status', 'target_status', 'reason' ]
+                );
+            }
+
+            if ( 0 === (int) ( $result['candidates'] ?? 0 ) )
+            {
+                WP_CLI::success( 'No stale async metadata rows detected.' );
+                return;
+            }
+
+            if ( ! $apply )
+            {
+                WP_CLI::warning( 'Dry-run only. Re-run with --apply to persist status updates.' );
+                return;
+            }
+
+            WP_CLI::success( sprintf( 'Reconciled %d row(s).', (int) ( $result['updated'] ?? 0 ) ) );
+        }
+
         private function get_store(): Sentient_Forms_Async_Metadata_Store
         {
             return Sentient_Forms_Plugin::instance()->get_async_metadata_store();
@@ -240,6 +307,35 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
 		{
 			return Sentient_Forms_Plugin::instance()->get_async_settings_service();
 		}
+
+        /**
+         * @return list<string>
+         */
+        private function parse_reconcile_statuses( string $status_arg ): array
+        {
+            $allowed  = [ 'queued', 'retry_scheduled', 'running' ];
+            $statuses = array_values( array_filter( array_map( 'trim', explode( ',', $status_arg ) ) ) );
+            if ( empty( $statuses ) )
+            {
+                WP_CLI::error( 'Provide at least one status via --statuses.' );
+                return [];
+            }
+
+            $invalid = array_values( array_diff( $statuses, $allowed ) );
+            if ( ! empty( $invalid ) )
+            {
+                WP_CLI::error(
+                    sprintf(
+                        'Invalid status(es): %s. Allowed values: %s.',
+                        implode( ', ', $invalid ),
+                        implode( ', ', $allowed )
+                    )
+                );
+                return [];
+            }
+
+            return array_values( array_unique( $statuses ) );
+        }
 
 		public function status(): void
 		{
@@ -451,6 +547,7 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
 	WP_CLI::add_command( 'sentient-forms async clear', [ $async_cli, 'clear' ] );
 	WP_CLI::add_command( 'sentient-forms async requeue', [ $async_cli, 'requeue' ] );
 	WP_CLI::add_command( 'sentient-forms async purge', [ $async_cli, 'purge' ] );
+	WP_CLI::add_command( 'sentient-forms async reconcile', [ $async_cli, 'reconcile' ] );
 	WP_CLI::add_command( 'sentient-forms async settings', [ $async_cli, 'settings' ] );
 	WP_CLI::add_command( 'sentient-forms async status', [ $async_cli, 'status' ] );
     WP_CLI::add_command( 'sentient-forms async-requests list', [ $async_cli, 'list_requests' ] );

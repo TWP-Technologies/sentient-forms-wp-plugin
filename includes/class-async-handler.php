@@ -46,11 +46,14 @@ class Sentient_Forms_Async_Handler
 
     public function process_evaluation( array $payload ): void
     {
-        $context = $this->normalize_context(
-            $payload['context'] ?? [],
-            (string) ( $payload['context']['action_id'] ?? 'evaluation' ),
+        $evaluation_context = $this->extract_evaluation_context( $payload );
+        $context            = $this->normalize_context(
+            $evaluation_context,
+            (string) ( $evaluation_context['action_id'] ?? 'evaluation' ),
         );
-
+        $result             = isset( $context['evaluation_payload'] ) && is_array( $context['evaluation_payload'] )
+            ? $context['evaluation_payload']
+            : [];
         $evaluation_request_id = $context['evaluation_request_id']
             ?? $this->generate_evaluation_request_id(
                 [
@@ -58,17 +61,21 @@ class Sentient_Forms_Async_Handler
                     'action_id'  => $context['action_id'] ?? '',
                     'entry_id'   => $context['entry_id'] ?? '',
                     'form_id'    => $context['form_id'] ?? '',
-                    'payload'    => $context['evaluation_payload'] ?? $payload['context']['evaluation_payload'] ?? [],
+                    'payload'    => $result,
                 ]
             );
-
-        $result  = isset( $context['evaluation_payload'] ) && is_array( $context['evaluation_payload'] )
-            ? $context['evaluation_payload']
-            : [];
         $adapter = $this->resolve_async_adapter( $context['form_source'] ?? null, $context );
 
         if ( !$adapter )
         {
+            $this->get_metadata_store()->update_status(
+                $context['job_id'] ?? null,
+                'failed',
+                [
+                    'last_error'   => __( 'Adapter not available', 'sentient-forms' ),
+                    'completed_at' => time(),
+                ]
+            );
             if ( $evaluation_request_id )
             {
                 $this->get_request_store()->mark_status( $evaluation_request_id, 'failed', __( 'Adapter not available', 'sentient-forms' ), 'evaluation' );
@@ -477,12 +484,27 @@ class Sentient_Forms_Async_Handler
 			'backoff_max_delay'    => $max_delay,
 		];
 
-        if ( !isset( $context['form_source'] ) && isset( $context['adapter_id'] ) )
-        {
-            $defaults['form_source'] = $context['adapter_id'];
-        }
+		if ( !isset( $context['form_source'] ) && isset( $context['adapter_id'] ) )
+		{
+			$defaults['form_source'] = $context['adapter_id'];
+		}
 
 		return array_merge( $defaults, $context );
+	}
+
+	private function extract_evaluation_context( array $payload ): array
+	{
+		if ( isset( $payload['context'] ) && is_array( $payload['context'] ) )
+		{
+			return $payload['context'];
+		}
+
+		if ( isset( $payload['job_id'] ) || isset( $payload['action_id'] ) || isset( $payload['evaluation_payload'] ) )
+		{
+			return $payload;
+		}
+
+		return [];
 	}
 
 	private function generate_evaluation_request_id( array $job ): string
