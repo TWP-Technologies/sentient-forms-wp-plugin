@@ -176,6 +176,8 @@ export interface BatchSettings {
 	enabled: boolean;
 	/** Delay in seconds before batch fires (default 60, range 10–3600) */
 	delay_seconds: number;
+	/** Hard upper bound before fallback execution (default 86400, range 43200–604800) */
+	max_wait_seconds: number;
 }
 
 /**

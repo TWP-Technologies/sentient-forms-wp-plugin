@@ -9,13 +9,18 @@ import type { BatchSettings } from '$lib/api/types';
 /** Sensible defaults when batching is first enabled. */
 export const DEFAULT_BATCH_SETTINGS: BatchSettings = {
     enabled: false,
-    delay_seconds: 60
+    delay_seconds: 60,
+    max_wait_seconds: 86400
 } as const;
 
 /** Minimum allowed delay in seconds. */
 export const MIN_DELAY_SECONDS = 10;
 /** Maximum allowed delay in seconds. */
 export const MAX_DELAY_SECONDS = 3600;
+/** Minimum allowed max wait in seconds (12 hours). */
+export const MIN_MAX_WAIT_SECONDS = 43200;
+/** Maximum allowed max wait in seconds (7 days). */
+export const MAX_MAX_WAIT_SECONDS = 604800;
 
 /**
  * Format a delay duration in seconds to a human-readable string.
@@ -47,6 +52,13 @@ export function sanitizeBatchSettings(settings: Partial<BatchSettings>): BatchSe
         delay_seconds: Math.max(
             MIN_DELAY_SECONDS,
             Math.min(MAX_DELAY_SECONDS, Math.round(settings.delay_seconds ?? DEFAULT_BATCH_SETTINGS.delay_seconds))
+        ),
+        max_wait_seconds: Math.max(
+            MIN_MAX_WAIT_SECONDS,
+            Math.min(
+                MAX_MAX_WAIT_SECONDS,
+                Math.round(settings.max_wait_seconds ?? DEFAULT_BATCH_SETTINGS.max_wait_seconds)
+            )
         )
     };
 }

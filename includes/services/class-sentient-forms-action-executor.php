@@ -15,6 +15,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Sentient_Forms_Action_Executor {
 	const TRANSIENT_PREFIX = 'sentient_forms_exec_';
 	const TRANSIENT_TTL    = 600; // 10 minutes.
+	const DEFAULT_ASYNC_DELAY_SECONDS = 60;
+	const DEFAULT_ASYNC_MAX_WAIT_SECONDS = DAY_IN_SECONDS;
+	const MIN_ASYNC_DELAY_SECONDS = 10;
+	const MAX_ASYNC_DELAY_SECONDS = 3600;
+	const MIN_ASYNC_MAX_WAIT_SECONDS = 43200;
+	const MAX_ASYNC_MAX_WAIT_SECONDS = 604800;
 
 	private Sentient_Forms_Plugin $plugin;
 	private ?Sentient_Forms_Api_Client $client;
@@ -104,6 +110,68 @@ class Sentient_Forms_Action_Executor {
 		return $response;
 	}
 
+	/**
+	 * Queue a configured action for asynchronous CPS execution.
+	 *
+	 * @param string $central_action_id CPS central action identifier.
+	 * @param array  $form              Gravity Forms form array.
+	 * @param array  $entry             Gravity Forms entry array.
+	 * @param array  $context           Additional metadata to send to CPS.
+	 * @param array  $async_options     Optional async delay/max wait overrides.
+	 *
+	 * @return array|WP_Error Queue response payload or WP_Error on failure.
+	 */
+	public function enqueue_async(
+		string $central_action_id,
+		array $form,
+		array $entry,
+		array $context = array(),
+		array $async_options = array()
+	) {
+		$proxy_key = $this->plugin->get_proxy_api_key();
+		if ( empty( $proxy_key ) ) {
+			return new WP_Error(
+				'cps_missing_proxy_key',
+				__( 'Sentient Forms proxy API key is missing.', 'sentient-forms' )
+			);
+		}
+
+		$client           = $this->client ?? $this->plugin->get_cps_api_client();
+		$submission_token = self::derive_submission_token( $form, $entry );
+		$execution_request_id = isset( $context['execution_request_id'] )
+			? sanitize_text_field( (string) $context['execution_request_id'] )
+			: self::build_execution_request_id(
+				$central_action_id,
+				$form,
+				$entry,
+				$context,
+				$submission_token
+			);
+
+		// CA-MAP-001: Extract input_mapping from settings if available.
+		$input_mapping = isset( $context['settings']['input_mapping'] ) ? $context['settings']['input_mapping'] : null;
+
+		$payload = array(
+			'central_action_id'    => $central_action_id,
+			'execution_request_id' => $execution_request_id,
+			'form_data_payload'    => $this->build_payload_from_entry( $form, $entry, $input_mapping ),
+			'action_context'       => $this->build_action_context( $form, $entry, $context, $execution_request_id, $submission_token ),
+			'async_options'        => $this->normalize_async_options( $context, $async_options ),
+		);
+
+		if ( defined( 'SENTIENT_FORMS_DEBUG_CPS_PAYLOAD' ) && SENTIENT_FORMS_DEBUG_CPS_PAYLOAD ) {
+			error_log( '[sentient-forms] CPS async payload: ' . wp_json_encode( $payload ) );
+		}
+
+		return $client->post(
+			'/actions/execute-async',
+			$payload,
+			array(
+				'bearer_token' => $proxy_key,
+			)
+		);
+	}
+
 	private function ensure_evaluation_payload( array $response, string $central_action_id, array $context ): array {
 		if ( isset( $response['evaluation_payload'] ) && is_array( $response['evaluation_payload'] ) ) {
 			return $response;
@@ -137,6 +205,32 @@ class Sentient_Forms_Action_Executor {
 
 		$response['evaluation_payload'] = $payload;
 		return $response;
+	}
+
+	/**
+	 * Resolve async queue options from linkage settings and explicit overrides.
+	 *
+	 * @param array $context       Runtime context including optional settings.
+	 * @param array $async_options Explicit delay/max wait overrides.
+	 *
+	 * @return array{delay_seconds:int,max_wait_seconds:int}
+	 */
+	private function normalize_async_options( array $context, array $async_options = array() ): array {
+		$batch_settings = isset( $context['settings']['batch_settings'] ) && is_array( $context['settings']['batch_settings'] )
+			? $context['settings']['batch_settings']
+			: array();
+
+		$delay_seconds = isset( $async_options['delay_seconds'] )
+			? (int) $async_options['delay_seconds']
+			: (int) ( $batch_settings['delay_seconds'] ?? self::DEFAULT_ASYNC_DELAY_SECONDS );
+		$max_wait_seconds = isset( $async_options['max_wait_seconds'] )
+			? (int) $async_options['max_wait_seconds']
+			: (int) ( $batch_settings['max_wait_seconds'] ?? self::DEFAULT_ASYNC_MAX_WAIT_SECONDS );
+
+		return array(
+			'delay_seconds'    => max( self::MIN_ASYNC_DELAY_SECONDS, min( self::MAX_ASYNC_DELAY_SECONDS, $delay_seconds ) ),
+			'max_wait_seconds' => max( self::MIN_ASYNC_MAX_WAIT_SECONDS, min( self::MAX_ASYNC_MAX_WAIT_SECONDS, $max_wait_seconds ) ),
+		);
 	}
 
 	/**

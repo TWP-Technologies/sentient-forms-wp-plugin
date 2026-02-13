@@ -705,6 +705,7 @@ class Sentient_Forms_Async_Handler
         $settings['batch_settings'] = [
             'enabled'       => ! empty( $settings['batch_settings']['enabled'] ),
             'delay_seconds' => max( 10, min( 3600, (int) ( $settings['batch_settings']['delay_seconds'] ?? 60 ) ) ),
+            'max_wait_seconds' => max( 43200, min( 604800, (int) ( $settings['batch_settings']['max_wait_seconds'] ?? DAY_IN_SECONDS ) ) ),
         ];
 
         return $settings;

@@ -1356,6 +1356,19 @@
 																placeholder="60"
 																bind:value={draftSettings.batch_settings.delay_seconds}
 															/>
+															<InputField
+																id="batch-max-wait"
+																label="Max wait before fallback (seconds)"
+																type="number"
+																min="43200"
+																max="604800"
+																placeholder="86400"
+																bind:value={draftSettings.batch_settings.max_wait_seconds}
+															/>
+															<p class="sf:text-xs sf:text-slate-500">
+																If CPS batching cannot be queued immediately, Sentient Forms will fall back
+																to local scheduling by this deadline.
+															</p>
 														</div>
 													{/if}
 												</div>

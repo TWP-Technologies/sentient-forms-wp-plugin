@@ -1073,13 +1073,14 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
      * CB-EXEC-003/004: Sanitise and clamp batch execution settings.
      *
      * @param array $raw Raw batch_settings from the client.
-     * @return array {enabled: bool, delay_seconds: int}
+     * @return array {enabled: bool, delay_seconds: int, max_wait_seconds: int}
      */
     private function sanitize_batch_settings( array $raw ): array
     {
         return [
             'enabled'       => ! empty( $raw['enabled'] ),
             'delay_seconds' => max( 10, min( 3600, (int) ( $raw['delay_seconds'] ?? 60 ) ) ),
+            'max_wait_seconds' => max( 43200, min( 604800, (int) ( $raw['max_wait_seconds'] ?? DAY_IN_SECONDS ) ) ),
         ];
     }
 }

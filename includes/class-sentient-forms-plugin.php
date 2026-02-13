@@ -395,19 +395,20 @@ final class Sentient_Forms_Plugin
             return false;
         }
 
-			$action_label = $settings['action_name_label'] ?? ( $central_action_id ?: $action_id );
-	        $entry_id     = $context['entry_id'] ?? ( $data['entry']['id'] ?? null );
+        $settings     = $this->normalize_batch_settings_for_runtime( $settings );
+        $action_label = $settings['action_name_label'] ?? ( $central_action_id ?: $action_id );
+        $entry_id     = $context['entry_id'] ?? ( $data['entry']['id'] ?? null );
 
         $context = array_merge(
             [
-                'form_source'      => $context['form_source'] ?? null,
-                'source'           => $context['source'] ?? ( $context['form_source'] ?? 'gravity_forms' ),
-                'hook'             => $context['hook'] ?? 'gform_after_submission',
-                'action_id'        => $context['action_id'] ?? $action_id,
-                'form_id'          => isset( $data['form']['id'] ) ? (string) $data['form']['id'] : null,
-                'entry_id'         => isset( $entry_id ) && '' !== $entry_id ? (string) $entry_id : null,
-                'central_action_id'=> (string) $central_action_id,
-                'action_name_label'=> (string) $action_label,
+                'form_source'           => $context['form_source'] ?? null,
+                'source'                => $context['source'] ?? ( $context['form_source'] ?? 'gravity_forms' ),
+                'hook'                  => $context['hook'] ?? 'gform_after_submission',
+                'action_id'             => $context['action_id'] ?? $action_id,
+                'form_id'               => isset( $data['form']['id'] ) ? (string) $data['form']['id'] : null,
+                'entry_id'              => isset( $entry_id ) && '' !== $entry_id ? (string) $entry_id : null,
+                'central_action_id'     => (string) $central_action_id,
+                'action_name_label'     => (string) $action_label,
                 'action_type_indicator' => $settings['action_type_indicator'] ?? null,
                 'local_mapping_id'      => $settings['local_mapping_id'] ?? null,
             ],
@@ -429,15 +430,15 @@ final class Sentient_Forms_Plugin
             $context['action_name_label'] = (string) $context['action_name_label'];
         }
 
-	        if ( isset( $context['action_type_indicator'] ) && is_scalar( $context['action_type_indicator'] ) && '' !== $context['action_type_indicator'] )
-	        {
-	            $context['action_type_indicator'] = (string) $context['action_type_indicator'];
-	        }
+        if ( isset( $context['action_type_indicator'] ) && is_scalar( $context['action_type_indicator'] ) && '' !== $context['action_type_indicator'] )
+        {
+            $context['action_type_indicator'] = (string) $context['action_type_indicator'];
+        }
 
-	        if ( isset( $context['local_mapping_id'] ) && is_scalar( $context['local_mapping_id'] ) && '' !== $context['local_mapping_id'] )
-	        {
-	            $context['local_mapping_id'] = (string) $context['local_mapping_id'];
-	        }
+        if ( isset( $context['local_mapping_id'] ) && is_scalar( $context['local_mapping_id'] ) && '' !== $context['local_mapping_id'] )
+        {
+            $context['local_mapping_id'] = (string) $context['local_mapping_id'];
+        }
 
         $context['central_action_id'] = (string) ( $context['central_action_id'] ?? $central_action_id );
 
@@ -463,6 +464,77 @@ final class Sentient_Forms_Plugin
             ]
         );
 
+        $batch_settings = isset( $settings['batch_settings'] ) && is_array( $settings['batch_settings'] )
+            ? $settings['batch_settings']
+            : [];
+        $batch_enabled = ! empty( $batch_settings['enabled'] )
+            && ( ( $context['hook'] ?? '' ) === 'gform_after_submission' );
+        $is_master_action = ( $settings['action_type_indicator'] ?? '' ) === 'master';
+
+        // CB-EXEC-003/004: Use CPS-managed queue for batched master actions.
+        // If enqueue fails, schedule a local fallback at max_wait_seconds.
+        if ( $is_master_action && $batch_enabled )
+        {
+            $async_options = [
+                'delay_seconds'    => (int) ( $batch_settings['delay_seconds'] ?? 60 ),
+                'max_wait_seconds' => (int) ( $batch_settings['max_wait_seconds'] ?? DAY_IN_SECONDS ),
+            ];
+
+            $enqueue = $this->get_action_executor()->enqueue_async(
+                $central_action_id,
+                $data['form'] ?? [],
+                $data['entry'] ?? [],
+                array_merge(
+                    $context,
+                    [
+                        'execution_request_id' => $execution_request_id,
+                        'central_action_id'    => $central_action_id,
+                        'settings'             => $settings,
+                    ]
+                ),
+                $async_options,
+            );
+
+            if ( ! is_wp_error( $enqueue ) )
+            {
+                return true;
+            }
+
+            $this->get_logger()->error(
+                'cps async enqueue failed; scheduling local fallback',
+                [
+                    'action_id'            => $action_id,
+                    'central_action_id'    => $central_action_id,
+                    'execution_request_id' => $execution_request_id,
+                    'error_code'           => $enqueue->get_error_code(),
+                    'error_message'        => $enqueue->get_error_message(),
+                ]
+            );
+
+            $fallback_run_at = time() + max( 10, (int) ( $async_options['max_wait_seconds'] ?? DAY_IN_SECONDS ) );
+            $scheduled       = $this->get_async_handler()->schedule_action(
+                $action_id,
+                $data,
+                $settings,
+                array_merge(
+                    $context,
+                    [
+                        'execution_request_id' => $execution_request_id,
+                        'central_action_id'    => $central_action_id,
+                        'queue_fallback'       => 'cps_enqueue_failed',
+                    ]
+                ),
+                $fallback_run_at,
+            );
+
+            if ( ! $scheduled )
+            {
+                $request_store->mark_status( $execution_request_id, 'failed', __( 'CPS enqueue + local fallback scheduling failed', 'sentient-forms' ) );
+            }
+
+            return $scheduled;
+        }
+
         $scheduled = $this->get_async_handler()->schedule_action(
             $action_id,
             $data,
@@ -476,6 +548,22 @@ final class Sentient_Forms_Plugin
         }
 
         return $scheduled;
+    }
+
+    private function normalize_batch_settings_for_runtime( array $settings ): array
+    {
+        if ( ! isset( $settings['batch_settings'] ) || ! is_array( $settings['batch_settings'] ) )
+        {
+            return $settings;
+        }
+
+        $settings['batch_settings'] = [
+            'enabled'          => ! empty( $settings['batch_settings']['enabled'] ),
+            'delay_seconds'    => max( 10, min( 3600, (int) ( $settings['batch_settings']['delay_seconds'] ?? 60 ) ) ),
+            'max_wait_seconds' => max( 43200, min( 604800, (int) ( $settings['batch_settings']['max_wait_seconds'] ?? DAY_IN_SECONDS ) ) ),
+        ];
+
+        return $settings;
     }
 
     public function dispatch_action_evaluation( array $job ): bool
