@@ -62,6 +62,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $this->assertSame( true, $batch['enabled'] ?? null );
         $this->assertSame( 10, $batch['delay_seconds'] ?? null );
+        $this->assertSame( DAY_IN_SECONDS, $batch['max_wait_seconds'] ?? null );
         $this->assertArrayNotHasKey( 'discount_percent', $batch );
     }
 
@@ -78,6 +79,27 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $batch     = $sanitized['batch_settings'] ?? [];
 
         $this->assertSame( 3600, $batch['delay_seconds'] ?? null );
+        $this->assertSame( DAY_IN_SECONDS, $batch['max_wait_seconds'] ?? null );
+    }
+
+    public function test_sanitize_settings_clamps_batch_max_wait_bounds(): void
+    {
+        $settings = [
+            'batch_settings' => [
+                'enabled'          => true,
+                'delay_seconds'    => 60,
+                'max_wait_seconds' => 10,
+            ],
+        ];
+
+        $sanitized = $this->invoke_private( 'sanitize_settings', [ $settings ] );
+        $batch     = $sanitized['batch_settings'] ?? [];
+        $this->assertSame( 43200, $batch['max_wait_seconds'] ?? null );
+
+        $settings['batch_settings']['max_wait_seconds'] = 9999999;
+        $sanitized = $this->invoke_private( 'sanitize_settings', [ $settings ] );
+        $batch     = $sanitized['batch_settings'] ?? [];
+        $this->assertSame( 604800, $batch['max_wait_seconds'] ?? null );
     }
 
     // =========================================================================

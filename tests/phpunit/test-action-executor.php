@@ -165,6 +165,141 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertCount( 1, $client->calls );
 	}
 
+	public function test_enqueue_async_invokes_execute_async_endpoint_with_normalized_options(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-123',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = [
+					'path'    => $path,
+					'payload' => $payload,
+					'options' => $options,
+				];
+
+				return [
+					'job_id'               => wp_generate_uuid4(),
+					'status'               => 'queued',
+					'execution_request_id' => $payload['execution_request_id'] ?? '',
+					'not_before'           => gmdate( DATE_ATOM, time() + 60 ),
+					'max_wait_at'          => gmdate( DATE_ATOM, time() + DAY_IN_SECONDS ),
+					'idempotent_reuse'     => false,
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+		$form     = [ 'id' => 21, 'title' => 'Async Form' ];
+		$entry    = [ 'id' => 707, 'field_1' => 'Hello async' ];
+		$context  = [
+			'hook'       => 'gform_after_submission',
+			'action_id'  => 'entry_evaluation',
+			'settings'   => [
+				'batch_settings' => [
+					'enabled'       => true,
+					'delay_seconds' => 120,
+				],
+			],
+		];
+
+		$result = $executor->enqueue_async(
+			'central-async-1',
+			$form,
+			$entry,
+			$context,
+			[
+				'delay_seconds'    => 5,
+				'max_wait_seconds' => 10,
+			]
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertCount( 1, $client->calls );
+
+		$call = $client->calls[0];
+		$this->assertSame( '/actions/execute-async', $call['path'] );
+		$this->assertSame( 'proxy-123', $call['options']['bearer_token'] );
+		$this->assertSame( 'central-async-1', $call['payload']['central_action_id'] );
+		$this->assertSame( '21', $call['payload']['action_context']['form_id'] ?? null );
+		$this->assertSame( 'gravity_forms', $call['payload']['action_context']['source'] ?? null );
+		$this->assertSame( 'Hello async', $call['payload']['form_data_payload']['entry']['field_1'] ?? null );
+		$this->assertSame( 10, $call['payload']['async_options']['delay_seconds'] );
+		$this->assertSame( 43200, $call['payload']['async_options']['max_wait_seconds'] );
+		$this->assertArrayHasKey( 'execution_request_id', $call['payload'] );
+		$this->assertSame(
+			$call['payload']['execution_request_id'],
+			$call['payload']['action_context']['execution_request_id']
+		);
+	}
+
+	public function test_enqueue_async_uses_context_batch_settings_when_async_options_omitted(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-ctx-batch',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = [
+					'path'    => $path,
+					'payload' => $payload,
+					'options' => $options,
+				];
+
+				return [
+					'job_id'               => wp_generate_uuid4(),
+					'status'               => 'queued',
+					'execution_request_id' => $payload['execution_request_id'] ?? '',
+					'not_before'           => gmdate( DATE_ATOM, time() + 60 ),
+					'max_wait_at'          => gmdate( DATE_ATOM, time() + DAY_IN_SECONDS ),
+					'idempotent_reuse'     => false,
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+		$form     = [ 'id' => 99, 'title' => 'Batch Defaults' ];
+		$entry    = [ 'id' => 808, 'field_1' => 'payload' ];
+		$context  = [
+			'hook'      => 'gform_after_submission',
+			'action_id' => 'entry_evaluation',
+			'settings'  => [
+				'batch_settings' => [
+					'enabled'          => true,
+					'delay_seconds'    => 123,
+					'max_wait_seconds' => 234567,
+				],
+			],
+		];
+
+		$result = $executor->enqueue_async(
+			'central-async-ctx',
+			$form,
+			$entry,
+			$context
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertCount( 1, $client->calls );
+
+		$call = $client->calls[0];
+		$this->assertSame( '/actions/execute-async', $call['path'] );
+		$this->assertSame( 123, $call['payload']['async_options']['delay_seconds'] );
+		$this->assertSame( 234567, $call['payload']['async_options']['max_wait_seconds'] );
+	}
+
 	public function test_execute_returns_cached_result_when_duplicate_error_reported(): void {
 		$this->plugin->set_license_data(
 			[

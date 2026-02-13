@@ -4,7 +4,9 @@ import {
     sanitizeBatchSettings,
     DEFAULT_BATCH_SETTINGS,
     MIN_DELAY_SECONDS,
-    MAX_DELAY_SECONDS
+    MAX_DELAY_SECONDS,
+    MIN_MAX_WAIT_SECONDS,
+    MAX_MAX_WAIT_SECONDS
 } from '$lib/utils/batch';
 
 describe('formatBatchDelay (CB-EXEC-003/004)', () => {
@@ -51,7 +53,8 @@ describe('sanitizeBatchSettings (CB-EXEC-003/004)', () => {
         });
         expect(result).toEqual({
             enabled: true,
-            delay_seconds: 120
+            delay_seconds: 120,
+            max_wait_seconds: 86400
         });
     });
 
@@ -77,16 +80,28 @@ describe('sanitizeBatchSettings (CB-EXEC-003/004)', () => {
         expect(sanitizeBatchSettings({ enabled: true }).enabled).toBe(true);
     });
 
+    it('clamps max_wait_seconds to minimum', () => {
+        const result = sanitizeBatchSettings({ max_wait_seconds: 1 });
+        expect(result.max_wait_seconds).toBe(MIN_MAX_WAIT_SECONDS);
+    });
+
+    it('clamps max_wait_seconds to maximum', () => {
+        const result = sanitizeBatchSettings({ max_wait_seconds: 9_999_999 });
+        expect(result.max_wait_seconds).toBe(MAX_MAX_WAIT_SECONDS);
+    });
+
     it('drops legacy discount fields from sanitized output', () => {
         const result = sanitizeBatchSettings({
             enabled: true,
             delay_seconds: 90,
+            max_wait_seconds: 172800,
             discount_percent: 80
         } as unknown as Parameters<typeof sanitizeBatchSettings>[0]);
 
         expect(result).toEqual({
             enabled: true,
-            delay_seconds: 90
+            delay_seconds: 90,
+            max_wait_seconds: 172800
         });
         expect((result as Record<string, unknown>).discount_percent).toBeUndefined();
     });
@@ -96,5 +111,6 @@ describe('DEFAULT_BATCH_SETTINGS', () => {
     it('has expected default values', () => {
         expect(DEFAULT_BATCH_SETTINGS.enabled).toBe(false);
         expect(DEFAULT_BATCH_SETTINGS.delay_seconds).toBe(60);
+        expect(DEFAULT_BATCH_SETTINGS.max_wait_seconds).toBe(86400);
     });
 });

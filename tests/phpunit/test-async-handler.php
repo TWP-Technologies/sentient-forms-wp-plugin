@@ -42,6 +42,30 @@ class Sentient_Forms_Test_Action_Executor extends Sentient_Forms_Action_Executor
     }
 }
 
+class Sentient_Forms_Test_Spy_Async_Handler extends Sentient_Forms_Async_Handler
+{
+    public bool $force_schedule_failure = false;
+    public array $schedule_calls = [];
+
+    public function schedule_action( string $action_id, array $data, array $settings, array $context = [], ?int $run_at = null ): bool
+    {
+        $this->schedule_calls[] = [
+            'action_id' => $action_id,
+            'data'      => $data,
+            'settings'  => $settings,
+            'context'   => $context,
+            'run_at'    => $run_at,
+        ];
+
+        if ( $this->force_schedule_failure )
+        {
+            return false;
+        }
+
+        return parent::schedule_action( $action_id, $data, $settings, $context, $run_at );
+    }
+}
+
 class AsyncHandlerTest extends WP_UnitTestCase
 {
     private Sentient_Forms_Plugin $plugin;
@@ -52,11 +76,37 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $this->plugin = Sentient_Forms_Plugin::instance();
         $this->plugin->set_license_data( [ 'proxy_api_key' => 'test-key' ] );
+        $GLOBALS['__sentient_forms_http_calls'] = [];
 
         // Short-circuit outbound HTTP to CPS with canned success responses.
         add_filter(
             'pre_http_request',
             static function ( $preempt, $args, $url ) {
+                $GLOBALS['__sentient_forms_http_calls'][] = [
+                    'url'    => $url,
+                    'method' => $args['method'] ?? 'GET',
+                    'body'   => $args['body'] ?? null,
+                ];
+
+                if ( strpos( $url, '/v1/actions/execute-async' ) !== false ) {
+                    return [
+                        'response' => [ 'code' => 200 ],
+                        'body'     => wp_json_encode(
+                            [
+                                'success' => true,
+                                'data'    => [
+                                    'job_id'               => wp_generate_uuid4(),
+                                    'status'               => 'queued',
+                                    'execution_request_id' => 'test-async-exec-id',
+                                    'not_before'           => gmdate( DATE_ATOM, time() + 60 ),
+                                    'max_wait_at'          => gmdate( DATE_ATOM, time() + DAY_IN_SECONDS ),
+                                    'idempotent_reuse'     => false,
+                                ],
+                            ]
+                        ),
+                    ];
+                }
+
                 if ( strpos( $url, '/v1/actions/execute' ) !== false ) {
                     return [
                         'response' => [ 'code' => 200 ],
@@ -128,8 +178,45 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $wpdb->query( "TRUNCATE TABLE {$table}" );
         }
         $GLOBALS['__sentient_forms_async_queue'] = [ 'enqueued' => [] ];
+        $GLOBALS['__sentient_forms_http_calls'] = [];
         remove_all_filters( 'pre_http_request' );
         parent::tearDown();
+    }
+
+    private function set_async_handler( Sentient_Forms_Async_Handler $handler ): void
+    {
+        $reflection = new ReflectionClass( $this->plugin );
+        $property   = $reflection->getProperty( 'async_handler' );
+        $property->setAccessible( true );
+        $property->setValue( $this->plugin, $handler );
+        $this->plugin->async = $handler;
+    }
+
+    private function get_execute_async_calls(): array
+    {
+        return array_values(
+            array_filter(
+                $GLOBALS['__sentient_forms_http_calls'],
+                static fn ( array $call ): bool => strpos( $call['url'], '/v1/actions/execute-async' ) !== false
+            )
+        );
+    }
+
+    private function count_unique_fallback_jobs(): int
+    {
+        $job_ids = [];
+        foreach ( $GLOBALS['__sentient_forms_async_queue']['enqueued'] as $job )
+        {
+            $context = $job['args']['context'] ?? [];
+            if ( ( $context['queue_fallback'] ?? null ) !== 'cps_enqueue_failed' )
+            {
+                continue;
+            }
+
+            $job_ids[ (string) ( $context['job_id'] ?? wp_json_encode( $context ) ) ] = true;
+        }
+
+        return count( $job_ids );
     }
 
     public function test_process_action_async_enqueues_action_scheduler_job(): void
@@ -191,15 +278,243 @@ class AsyncHandlerTest extends WP_UnitTestCase
         );
 
         $this->assertTrue( $scheduled );
+        $this->assertEmpty( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+
+        $calls = $this->get_execute_async_calls();
+        $this->assertCount( 1, $calls );
+
+        $payload = json_decode( (string) $calls[0]['body'], true );
+        $this->assertIsArray( $payload );
+        $this->assertSame( 120, $payload['async_options']['delay_seconds'] ?? null );
+        $this->assertSame( DAY_IN_SECONDS, $payload['async_options']['max_wait_seconds'] ?? null );
+
+        $context_settings = $payload['action_context']['settings']['batch_settings'] ?? [];
+        $this->assertArrayNotHasKey( 'discount_percent', $context_settings );
+    }
+
+    public function test_process_action_async_falls_back_to_local_schedule_when_cps_enqueue_fails(): void
+    {
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, $args, $url ) {
+                if ( strpos( $url, '/v1/actions/execute-async' ) !== false ) {
+                    return new WP_Error( 'http_request_failed', 'enqueue unavailable' );
+                }
+
+                return $preempt;
+            },
+            11,
+            3
+        );
+
+        $data = [
+            'hook'  => 'gform_after_submission',
+            'form'  => [ 'id' => 44, 'title' => 'Fallback Form' ],
+            'entry' => [ 'id' => 103, 'field_1' => 'Fallback test' ],
+        ];
+
+        $settings = [
+            'central_action_id'     => 'spam_detection_v1',
+            'action_type_indicator' => 'master',
+            'batch_settings'        => [
+                'enabled'          => true,
+                'delay_seconds'    => 90,
+                'max_wait_seconds' => 43200,
+            ],
+        ];
+        $context = [
+            'hook'        => 'gform_after_submission',
+            'form_source' => 'gravity_forms',
+        ];
+
+        $scheduled = $this->plugin->process_action_async(
+            'nonexistent_local_action',
+            $data,
+            $settings,
+            $context
+        );
+
+        $this->assertTrue( $scheduled );
         $this->assertNotEmpty( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertCount( 1, $this->get_execute_async_calls() );
+        $this->assertSame( 1, $this->count_unique_fallback_jobs() );
 
-        $job            = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0];
-        $batch_settings = $job['args']['settings']['batch_settings'] ?? [];
-        $job_context    = $job['args']['context'] ?? [];
+        $job = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0];
+        $this->assertSame( 'cps_enqueue_failed', $job['args']['context']['queue_fallback'] ?? null );
+        $this->assertGreaterThanOrEqual( time() + 43190, (int) ( $job['run_at'] ?? 0 ) );
+    }
 
-        $this->assertArrayHasKey( 'batch_context', $job_context );
-        $this->assertArrayNotHasKey( 'discount_percent', $batch_settings );
-        $this->assertArrayNotHasKey( 'credit_cost_override', $job_context );
+    public function test_process_action_async_master_batch_enqueue_is_idempotent_without_local_fallback(): void
+    {
+        $data = [
+            'hook'  => 'gform_after_submission',
+            'form'  => [ 'id' => 145, 'title' => 'Batch Idempotent Form' ],
+            'entry' => [ 'id' => 205, 'field_1' => 'idempotent' ],
+        ];
+
+        $settings = [
+            'central_action_id'     => 'spam_detection_v1',
+            'action_type_indicator' => 'master',
+            'batch_settings'        => [
+                'enabled'          => true,
+                'delay_seconds'    => 75,
+                'max_wait_seconds' => 45000,
+            ],
+        ];
+        $context = [
+            'hook'        => 'gform_after_submission',
+            'form_source' => 'gravity_forms',
+        ];
+
+        $first  = $this->plugin->process_action_async( 'nonexistent_local_action', $data, $settings, $context );
+        $second = $this->plugin->process_action_async( 'nonexistent_local_action', $data, $settings, $context );
+
+        $this->assertTrue( $first );
+        $this->assertFalse( $second, 'Second enqueue should be blocked by request idempotency ledger.' );
+        $this->assertCount( 1, $this->get_execute_async_calls() );
+        $this->assertEmpty( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+
+        $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 5 ] );
+        $this->assertCount( 1, $rows );
+        $this->assertSame( 'queued', $rows[0]['status'] );
+    }
+
+    public function test_process_action_async_master_batch_fallback_is_idempotent_when_enqueue_unavailable(): void
+    {
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, $args, $url ) {
+                if ( strpos( $url, '/v1/actions/execute-async' ) !== false ) {
+                    return new WP_Error( 'http_request_failed', 'enqueue unavailable' );
+                }
+
+                return $preempt;
+            },
+            11,
+            3
+        );
+
+        $data = [
+            'hook'  => 'gform_after_submission',
+            'form'  => [ 'id' => 146, 'title' => 'Fallback Idempotent Form' ],
+            'entry' => [ 'id' => 206, 'field_1' => 'retry me' ],
+        ];
+
+        $settings = [
+            'central_action_id'     => 'spam_detection_v1',
+            'action_type_indicator' => 'master',
+            'batch_settings'        => [
+                'enabled'          => true,
+                'delay_seconds'    => 80,
+                'max_wait_seconds' => 43200,
+            ],
+        ];
+        $context = [
+            'hook'        => 'gform_after_submission',
+            'form_source' => 'gravity_forms',
+        ];
+
+        $first  = $this->plugin->process_action_async( 'nonexistent_local_action', $data, $settings, $context );
+        $second = $this->plugin->process_action_async( 'nonexistent_local_action', $data, $settings, $context );
+
+        $this->assertTrue( $first );
+        $this->assertFalse( $second, 'Duplicate fallback should be blocked by request ledger.' );
+        $this->assertCount( 1, $this->get_execute_async_calls() );
+        $this->assertSame( 1, $this->count_unique_fallback_jobs() );
+
+        $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 5 ] );
+        $this->assertCount( 1, $rows );
+        $this->assertSame( 'queued', $rows[0]['status'] );
+    }
+
+    public function test_process_action_async_master_without_batch_uses_local_scheduler_only(): void
+    {
+        $data = [
+            'hook'  => 'gform_after_submission',
+            'form'  => [ 'id' => 147, 'title' => 'Non Batch Master' ],
+            'entry' => [ 'id' => 207, 'field_1' => 'local queue only' ],
+        ];
+
+        $settings = [
+            'central_action_id'     => 'spam_detection_v1',
+            'action_type_indicator' => 'master',
+            'batch_settings'        => [
+                'enabled'       => false,
+                'delay_seconds' => 60,
+            ],
+        ];
+
+        $scheduled = $this->plugin->process_action_async(
+            'nonexistent_local_action',
+            $data,
+            $settings,
+            [ 'hook' => 'gform_after_submission', 'form_source' => 'gravity_forms' ]
+        );
+
+        $this->assertTrue( $scheduled );
+        $this->assertNotEmpty( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $this->assertCount( 0, $this->get_execute_async_calls() );
+    }
+
+    public function test_process_action_async_marks_failed_when_enqueue_and_fallback_schedule_fail(): void
+    {
+        $spy_handler = new Sentient_Forms_Test_Spy_Async_Handler( $this->plugin, false );
+        $spy_handler->force_schedule_failure = true;
+        $this->set_async_handler( $spy_handler );
+
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, $args, $url ) {
+                if ( strpos( $url, '/v1/actions/execute-async' ) !== false ) {
+                    return new WP_Error( 'http_request_failed', 'enqueue unavailable' );
+                }
+
+                return $preempt;
+            },
+            11,
+            3
+        );
+
+        $data = [
+            'hook'  => 'gform_after_submission',
+            'form'  => [ 'id' => 148, 'title' => 'Failure Form' ],
+            'entry' => [ 'id' => 208, 'field_1' => 'force fail' ],
+        ];
+
+        $settings = [
+            'central_action_id'     => 'spam_detection_v1',
+            'action_type_indicator' => 'master',
+            'batch_settings'        => [
+                'enabled'          => true,
+                'delay_seconds'    => 60,
+                'max_wait_seconds' => 43200,
+            ],
+        ];
+        $context = [
+            'hook'        => 'gform_after_submission',
+            'form_source' => 'gravity_forms',
+        ];
+
+        $scheduled = $this->plugin->process_action_async(
+            'nonexistent_local_action',
+            $data,
+            $settings,
+            $context
+        );
+
+        $this->assertFalse( $scheduled );
+        $this->assertCount( 1, $this->get_execute_async_calls() );
+        $this->assertCount( 1, $spy_handler->schedule_calls );
+        $this->assertSame( 'cps_enqueue_failed', $spy_handler->schedule_calls[0]['context']['queue_fallback'] ?? null );
+        $this->assertSame( 0, $this->count_unique_fallback_jobs() );
+
+        $rows = $this->plugin->get_async_request_store()->list( [ 'record_type' => 'job', 'limit' => 5 ] );
+        $this->assertCount( 1, $rows );
+        $this->assertSame( 'failed', $rows[0]['status'] );
+        $this->assertStringContainsString(
+            'CPS enqueue + local fallback scheduling failed',
+            (string) ( $rows[0]['last_error'] ?? '' )
+        );
     }
 
     public function test_process_action_async_is_idempotent_for_same_payload(): void
