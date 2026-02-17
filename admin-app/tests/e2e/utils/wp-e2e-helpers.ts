@@ -26,6 +26,30 @@ export type EntryEvaluation = {
 	raw?: unknown;
 };
 
+export type InputMapping = {
+	mode: 'all' | 'selected' | 'exclude';
+	fieldIds?: string[];
+	includeMetadata?: boolean;
+};
+
+export type BatchSettings = {
+	enabled?: boolean;
+	delaySeconds?: number;
+	maxWaitSeconds?: number;
+};
+
+export type AsyncExecutionJobRecord = {
+	id: string;
+	status: string;
+	execution_request_id: string;
+	central_action_id: string;
+	form_data_payload: Record<string, unknown>;
+	action_context: Record<string, unknown>;
+	delay_seconds: number;
+	max_wait_seconds: number;
+	created_at: string;
+};
+
 export async function requireWpRestHealthy(page: Page): Promise<void> {
 	const res = await page.request.get('http://localhost:8080/index.php?rest_route=/', {
 		timeout: 5000
@@ -60,6 +84,8 @@ type ActionMappingArgs = {
 	actionTypeIndicator?: 'master' | 'custom';
 	actionTemplateId?: string;
 	localMappingId?: string;
+	inputMapping?: InputMapping;
+	batchSettings?: BatchSettings;
 };
 
 type GravityField = {
@@ -222,7 +248,8 @@ function tryGetLicenseId(licenseKey: string): string | null {
 export function ensureCpsSeeded(
 	licenseKey = 'LIC-LOCAL-DEV',
 	cpsHostUrl = 'http://localhost:10081',
-	siteUrl = 'http://localhost:8080/'
+	siteUrl = 'http://localhost:8080/',
+	localSiteIdentifier = 'local-site'
 ): string {
 	// 1. Ensure license exists in CPS DB
 	let licenseId = tryGetLicenseId(licenseKey);
@@ -234,11 +261,14 @@ export function ensureCpsSeeded(
 		}
 		const tierId = tierRaw.trim();
 
-		runDbQuery(`
-			INSERT INTO licenses (license_key, tier_id, status, max_sites)
-			VALUES ('${sanitizeSqlLiteral(licenseKey)}', '${sanitizeSqlLiteral(tierId)}', 'active', 5)
-			ON CONFLICT (license_key) DO UPDATE SET status = 'active', updated_at = now();
-		`);
+			runDbQuery(`
+				INSERT INTO licenses (license_key, tier_id, status, max_sites)
+				VALUES ('${sanitizeSqlLiteral(licenseKey)}', '${sanitizeSqlLiteral(tierId)}', 'active', 100)
+				ON CONFLICT (license_key) DO UPDATE
+				SET status = 'active',
+					max_sites = GREATEST(licenses.max_sites, 100),
+					updated_at = now();
+			`);
 
 		licenseId = tryGetLicenseId(licenseKey);
 		if (!licenseId) {
@@ -246,25 +276,27 @@ export function ensureCpsSeeded(
 		}
 	}
 
-	// 2. Check if a site is already activated for this license
-	const existingSite = runDbQuery(
-		`SELECT proxy_api_key_fingerprint FROM sites WHERE license_id='${sanitizeSqlLiteral(licenseId)}' LIMIT 1;`
+	// Keep local E2E deterministic: ensure the shared dev license can re-activate
+	// repeatedly without tripping the site-limit guard.
+	runDbQuery(`
+		UPDATE licenses
+		SET status = 'active',
+		    max_sites = GREATEST(max_sites, 100),
+		    updated_at = now()
+		WHERE license_key='${sanitizeSqlLiteral(licenseKey)}';
+	`);
+
+	// 2. Re-activate via CPS API to guarantee a valid proxy key for this run.
+	// Reuse an existing site identifier when present to avoid consuming new site slots
+	// on licenses with low tier limits (e.g. free tier site_limit=1).
+	const existingIdentifierRaw = runDbQuery(
+		`SELECT local_site_identifier FROM sites WHERE license_id='${sanitizeSqlLiteral(licenseId)}' ORDER BY created_at ASC LIMIT 1;`
 	);
-
-	let proxyKey: string;
-
-	if (existingSite?.trim()) {
-		// Site exists — get the proxy key from WP settings (it was stored during activation)
-		try {
-			proxyKey = getProxyApiKey();
-		} catch (_error) {
-			// WP doesn't have the key yet — we need to re-activate to get a new one
-			proxyKey = activateLicenseViaCps(licenseKey, cpsHostUrl, siteUrl);
-		}
-	} else {
-		// No site → activate via CPS API
-		proxyKey = activateLicenseViaCps(licenseKey, cpsHostUrl, siteUrl);
-	}
+	const activationIdentifier =
+		typeof existingIdentifierRaw === 'string' && existingIdentifierRaw.trim().length > 0
+			? existingIdentifierRaw.trim()
+			: localSiteIdentifier;
+	const proxyKey = activateLicenseViaCps(licenseKey, cpsHostUrl, siteUrl, activationIdentifier);
 
 	// 3. Configure WordPress plugin settings
 	ensureWpCpsConfig(proxyKey);
@@ -275,9 +307,18 @@ export function ensureCpsSeeded(
 /**
  * Call the CPS license/activate endpoint to create a site and generate a proxy API key.
  */
-function activateLicenseViaCps(licenseKey: string, cpsHostUrl: string, siteUrl: string): string {
+function activateLicenseViaCps(
+	licenseKey: string,
+	cpsHostUrl: string,
+	siteUrl: string,
+	localSiteIdentifier: string
+): string {
 	const activateUrl = `${cpsHostUrl}/v1/license/activate`;
-	const payload = JSON.stringify({ license_key: licenseKey, site_url: siteUrl });
+	const payload = JSON.stringify({
+		license_key: licenseKey,
+		site_url: siteUrl,
+		local_site_identifier: localSiteIdentifier
+	});
 
 	const result = spawnSync(
 		'curl',
@@ -450,6 +491,20 @@ echo (int) $form_id;
 
 export function configureGravityActionMapping(args: ActionMappingArgs): void {
 	const mappingId = args.localMappingId ?? `map_${args.actionId}`;
+	const inputMapping = args.inputMapping
+		? {
+				mode: args.inputMapping.mode,
+				field_ids: args.inputMapping.fieldIds ?? [],
+				include_metadata: args.inputMapping.includeMetadata ?? true
+			}
+		: undefined;
+	const batchSettings = args.batchSettings
+		? {
+				enabled: args.batchSettings.enabled ?? false,
+				delay_seconds: args.batchSettings.delaySeconds ?? 60,
+				max_wait_seconds: args.batchSettings.maxWaitSeconds ?? 43200
+			}
+		: undefined;
 	const settings: Record<string, unknown> = {
 		enabled: true,
 		[mappingId]: {
@@ -464,7 +519,9 @@ export function configureGravityActionMapping(args: ActionMappingArgs): void {
 			execution_priority: args.executionPriority ?? 10,
 			action_type_indicator: args.actionTypeIndicator ?? 'master',
 			action_template_id: args.actionTemplateId,
-			local_mapping_id: mappingId
+			local_mapping_id: mappingId,
+			input_mapping: inputMapping,
+			batch_settings: batchSettings
 		}
 	};
 
@@ -693,6 +750,44 @@ echo '';
 		return JSON.parse(payload);
 	} catch (_error) {
 		return payload;
+	}
+}
+
+export function getLatestAsyncExecutionJobByEntryId(
+	entryId: number,
+	centralActionId?: string
+): AsyncExecutionJobRecord | null {
+	const centralActionFilter = centralActionId
+		? `AND central_action_id = '${sanitizeSqlLiteral(centralActionId)}'`
+		: '';
+	const sql = `
+SELECT json_build_object(
+    'id', id::text,
+    'status', status,
+    'execution_request_id', execution_request_id,
+    'central_action_id', central_action_id,
+    'form_data_payload', form_data_payload,
+    'action_context', action_context,
+    'delay_seconds', delay_seconds,
+    'max_wait_seconds', max_wait_seconds,
+    'created_at', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+)::text
+FROM async_execution_jobs
+WHERE action_context->>'entry_id' = '${sanitizeSqlLiteral(String(entryId))}'
+${centralActionFilter}
+ORDER BY created_at DESC
+LIMIT 1;
+`.trim();
+
+	const raw = runDbQuery(sql);
+	if (!raw) {
+		return null;
+	}
+
+	try {
+		return JSON.parse(raw) as AsyncExecutionJobRecord;
+	} catch (_error) {
+		throw new Error(`Failed to parse async execution job payload: ${raw}`);
 	}
 }
 
