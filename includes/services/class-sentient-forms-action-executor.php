@@ -21,6 +21,32 @@ class Sentient_Forms_Action_Executor {
 	const MAX_ASYNC_DELAY_SECONDS = 3600;
 	const MIN_ASYNC_MAX_WAIT_SECONDS = 43200;
 	const MAX_ASYNC_MAX_WAIT_SECONDS = 604800;
+	const INPUT_MAPPING_SOURCE_EXPLICIT = 'explicit_mapping';
+	const INPUT_MAPPING_SOURCE_EXPLICIT_ALL = 'explicit_all';
+	const INPUT_MAPPING_SOURCE_LEGACY = 'legacy_fallback_field_ids';
+
+	private const LEGACY_ENTRY_METADATA_KEYS = array(
+		'id',
+		'form_id',
+		'post_id',
+		'date_created',
+		'date_updated',
+		'is_starred',
+		'is_read',
+		'ip',
+		'source_url',
+		'user_agent',
+		'currency',
+		'payment_status',
+		'payment_date',
+		'payment_amount',
+		'payment_method',
+		'transaction_id',
+		'transaction_type',
+		'is_fulfilled',
+		'created_by',
+		'status',
+	);
 
 	private Sentient_Forms_Plugin $plugin;
 	private ?Sentient_Forms_Api_Client $client;
@@ -60,13 +86,13 @@ class Sentient_Forms_Action_Executor {
 			return $cached_result;
 		}
 
-		// CA-MAP-001: Extract input_mapping from settings if available
-		$input_mapping = isset( $context['settings']['input_mapping'] ) ? $context['settings']['input_mapping'] : null;
+		$payload_data = $this->build_execution_payload_data( $form, $entry, $context );
 
 		$payload = array(
 			'central_action_id'     => $central_action_id,
 			'execution_request_id'  => $execution_request_id,
-			'form_data_payload'     => $this->build_payload_from_entry( $form, $entry, $input_mapping ),
+			'form_data_payload'     => $payload_data['form_data_payload'],
+			'input_manifest'        => $payload_data['input_manifest'],
 			'action_context'        => $this->build_action_context( $form, $entry, $context, $execution_request_id, $submission_token ),
 		);
 
@@ -148,13 +174,13 @@ class Sentient_Forms_Action_Executor {
 				$submission_token
 			);
 
-		// CA-MAP-001: Extract input_mapping from settings if available.
-		$input_mapping = isset( $context['settings']['input_mapping'] ) ? $context['settings']['input_mapping'] : null;
+		$payload_data = $this->build_execution_payload_data( $form, $entry, $context );
 
 		$payload = array(
 			'central_action_id'    => $central_action_id,
 			'execution_request_id' => $execution_request_id,
-			'form_data_payload'    => $this->build_payload_from_entry( $form, $entry, $input_mapping ),
+			'form_data_payload'    => $payload_data['form_data_payload'],
+			'input_manifest'       => $payload_data['input_manifest'],
 			'action_context'       => $this->build_action_context( $form, $entry, $context, $execution_request_id, $submission_token ),
 			'async_options'        => $this->normalize_async_options( $context, $async_options ),
 		);
@@ -234,6 +260,222 @@ class Sentient_Forms_Action_Executor {
 	}
 
 	/**
+	 * Build execution payload data including form payload and input manifest metadata.
+	 *
+	 * @param array $form    Gravity Forms form array.
+	 * @param array $entry   Gravity Forms entry array.
+	 * @param array $context Runtime execution context.
+	 *
+	 * @return array{form_data_payload:array,input_manifest:array}
+	 */
+	private function build_execution_payload_data( array $form, array $entry, array $context ): array {
+		$input_mapping_context = $this->resolve_input_mapping_context( $context, $entry );
+		$form_data_payload     = $this->build_payload_from_entry( $form, $entry, $input_mapping_context['input_mapping'] );
+		$input_manifest        = $this->build_input_manifest(
+			$input_mapping_context['source'],
+			$input_mapping_context['input_mapping'],
+			$entry,
+			$form_data_payload
+		);
+
+		return array(
+			'form_data_payload' => $form_data_payload,
+			'input_manifest'    => $input_manifest,
+		);
+	}
+
+	/**
+	 * Resolve input mapping from runtime context using precedence:
+	 * 1) context.input_mapping
+	 * 2) context.settings.input_mapping
+	 * 3) context.settings.settings.input_mapping
+	 * 4) legacy field-id-only fallback
+	 *
+	 * @param array $context Runtime context.
+	 * @param array $entry   Gravity Forms entry array.
+	 *
+	 * @return array{input_mapping:array,source:string}
+	 */
+	private function resolve_input_mapping_context( array $context, array $entry ): array {
+		$candidates = array();
+
+		if ( isset( $context['input_mapping'] ) && is_array( $context['input_mapping'] ) ) {
+			$candidates[] = $context['input_mapping'];
+		}
+
+		if ( isset( $context['settings'] ) && is_array( $context['settings'] ) ) {
+			if ( isset( $context['settings']['input_mapping'] ) && is_array( $context['settings']['input_mapping'] ) ) {
+				$candidates[] = $context['settings']['input_mapping'];
+			}
+
+			if (
+				isset( $context['settings']['settings'] )
+				&& is_array( $context['settings']['settings'] )
+				&& isset( $context['settings']['settings']['input_mapping'] )
+				&& is_array( $context['settings']['settings']['input_mapping'] )
+			) {
+				$candidates[] = $context['settings']['settings']['input_mapping'];
+			}
+		}
+
+		foreach ( $candidates as $candidate ) {
+			$sanitized_candidate = $this->sanitize_input_mapping( $candidate );
+			if ( null !== $sanitized_candidate ) {
+				$source = 'all' === $sanitized_candidate['mode']
+					? self::INPUT_MAPPING_SOURCE_EXPLICIT_ALL
+					: self::INPUT_MAPPING_SOURCE_EXPLICIT;
+
+				return array(
+					'input_mapping' => $sanitized_candidate,
+					'source'        => $source,
+				);
+			}
+		}
+
+		return array(
+			'input_mapping' => array(
+				'mode'             => 'selected',
+				'field_ids'        => $this->infer_legacy_field_ids( $entry ),
+				'include_metadata' => false,
+			),
+			'source'        => self::INPUT_MAPPING_SOURCE_LEGACY,
+		);
+	}
+
+	/**
+	 * Sanitize input mapping settings and normalize shape.
+	 *
+	 * @param mixed $mapping Raw mapping value from linkage settings.
+	 *
+	 * @return array|null Sanitized mapping or null when invalid.
+	 */
+	private function sanitize_input_mapping( $mapping ): ?array {
+		if ( ! is_array( $mapping ) ) {
+			return null;
+		}
+
+		$mode = isset( $mapping['mode'] ) ? sanitize_key( (string) $mapping['mode'] ) : 'selected';
+		if ( ! in_array( $mode, array( 'all', 'selected', 'exclude' ), true ) ) {
+			$mode = 'selected';
+		}
+
+		$field_ids = array();
+		if ( isset( $mapping['field_ids'] ) && is_array( $mapping['field_ids'] ) ) {
+			foreach ( $mapping['field_ids'] as $field_id ) {
+				if ( ! is_scalar( $field_id ) ) {
+					continue;
+				}
+
+				$field_id = sanitize_text_field( (string) $field_id );
+				if ( '' !== $field_id ) {
+					$field_ids[] = $field_id;
+				}
+			}
+		}
+
+		$include_metadata = isset( $mapping['include_metadata'] )
+			? rest_sanitize_boolean( $mapping['include_metadata'] )
+			: true;
+
+		return array(
+			'mode'             => $mode,
+			'field_ids'        => array_values( array_unique( $field_ids ) ),
+			'include_metadata' => (bool) $include_metadata,
+		);
+	}
+
+	/**
+	 * Infer entry field IDs for legacy mappings that lack explicit input_mapping.
+	 *
+	 * @param array $entry Gravity Forms entry array.
+	 *
+	 * @return array<int,string>
+	 */
+	private function infer_legacy_field_ids( array $entry ): array {
+		$scalar_entry = $this->extract_scalar_entry_values( $entry );
+		$field_ids    = array();
+
+		foreach ( array_keys( $scalar_entry ) as $key ) {
+			$key_string = (string) $key;
+			if ( preg_match( '/^\d+(?:\.\d+)?$/', $key_string ) || preg_match( '/^field_\d+(?:_\d+)?$/', $key_string ) ) {
+				$field_ids[] = $key_string;
+			}
+		}
+
+		if ( ! empty( $field_ids ) ) {
+			return array_values( array_unique( $field_ids ) );
+		}
+
+		foreach ( array_keys( $scalar_entry ) as $key ) {
+			$key_string = (string) $key;
+			if ( in_array( $key_string, self::LEGACY_ENTRY_METADATA_KEYS, true ) ) {
+				continue;
+			}
+			$field_ids[] = $key_string;
+		}
+
+		return array_values( array_unique( $field_ids ) );
+	}
+
+	/**
+	 * Extract scalar entry values and sanitize them as strings.
+	 *
+	 * @param array $entry Raw Gravity Forms entry array.
+	 *
+	 * @return array<string,string>
+	 */
+	private function extract_scalar_entry_values( array $entry ): array {
+		$scalar_entry = array();
+
+		foreach ( $entry as $key => $value ) {
+			if ( ! is_scalar( $value ) ) {
+				continue;
+			}
+
+			$scalar_entry[ (string) $key ] = sanitize_text_field( (string) $value );
+		}
+
+		return $scalar_entry;
+	}
+
+	/**
+	 * Build an input manifest describing the effective payload selection.
+	 *
+	 * @param string $mapping_source    Mapping resolution source.
+	 * @param array  $input_mapping     Effective input mapping.
+	 * @param array  $entry             Raw Gravity Forms entry.
+	 * @param array  $form_data_payload Effective payload sent to CPS.
+	 *
+	 * @return array
+	 */
+	private function build_input_manifest(
+		string $mapping_source,
+		array $input_mapping,
+		array $entry,
+		array $form_data_payload
+	): array {
+		$scalar_entry       = $this->extract_scalar_entry_values( $entry );
+		$applied_entry_keys = isset( $form_data_payload['entry'] ) && is_array( $form_data_payload['entry'] )
+			? array_values( array_map( 'strval', array_keys( $form_data_payload['entry'] ) ) )
+			: array();
+		$requested_field_ids = isset( $input_mapping['field_ids'] ) && is_array( $input_mapping['field_ids'] )
+			? array_values( array_map( 'strval', $input_mapping['field_ids'] ) )
+			: array();
+		$mode = isset( $input_mapping['mode'] ) ? (string) $input_mapping['mode'] : 'selected';
+
+		return array(
+			'mapping_source'        => $mapping_source,
+			'mode'                  => $mode,
+			'requested_field_ids'   => $requested_field_ids,
+			'applied_entry_keys'    => $applied_entry_keys,
+			'include_metadata'      => ! empty( $input_mapping['include_metadata'] ),
+			'full_entry_sent'       => 'all' === $mode,
+			'entry_key_count_before' => count( $scalar_entry ),
+			'entry_key_count_after' => count( $applied_entry_keys ),
+		);
+	}
+
+	/**
 	 * Build the form data payload from entry, optionally filtered by input_mapping.
 	 *
 	 * CA-MAP-001: Supports field selection modes:
@@ -249,33 +491,28 @@ class Sentient_Forms_Action_Executor {
 	 */
 	private function build_payload_from_entry( array $form, array $entry, ?array $input_mapping = null ): array {
 		$field_values = array();
+		$scalar_entry = $this->extract_scalar_entry_values( $entry );
 
 		// Determine input mapping settings
-		$mode            = $input_mapping['mode'] ?? 'all';
+		$mode            = $input_mapping['mode'] ?? 'selected';
 		$field_ids       = $input_mapping['field_ids'] ?? array();
-		$include_metadata = $input_mapping['include_metadata'] ?? true;
+		$include_metadata = isset( $input_mapping['include_metadata'] )
+			? (bool) $input_mapping['include_metadata']
+			: false;
 
-		if ( ! empty( $entry ) ) {
-			foreach ( $entry as $key => $value ) {
-				if ( ! is_scalar( $value ) ) {
+		if ( ! empty( $scalar_entry ) ) {
+			foreach ( $scalar_entry as $key => $value ) {
+				if ( 'selected' === $mode ) {
+					// Explicitly selecting no fields should send no fields.
+					if ( empty( $field_ids ) || ! in_array( (string) $key, $field_ids, true ) ) {
+						continue;
+					}
+				} elseif ( 'exclude' === $mode && in_array( (string) $key, $field_ids, true ) ) {
 					continue;
 				}
 
-				// Apply field filtering based on mode
-				if ( $mode === 'selected' && ! empty( $field_ids ) ) {
-					// Only include selected fields
-					if ( ! in_array( (string) $key, $field_ids, true ) ) {
-						continue;
-					}
-				} elseif ( $mode === 'exclude' && ! empty( $field_ids ) ) {
-					// Exclude specified fields
-					if ( in_array( (string) $key, $field_ids, true ) ) {
-						continue;
-					}
-				}
-				// mode === 'all' includes all fields (default)
-
-				$field_values[ $key ] = sanitize_text_field( (string) $value );
+				// mode === 'all' includes all scalar entry values.
+				$field_values[ $key ] = $value;
 			}
 		}
 

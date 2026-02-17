@@ -105,6 +105,10 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$call = $client->calls[0];
 		$this->assertSame( '/actions/execute', $call['path'] );
 		$this->assertSame( 'central-123', $call['payload']['central_action_id'] );
+		$this->assertArrayHasKey( 'input_manifest', $call['payload'] );
+		$this->assertSame( 'legacy_fallback_field_ids', $call['payload']['input_manifest']['mapping_source'] ?? null );
+		$this->assertSame( 'selected', $call['payload']['input_manifest']['mode'] ?? null );
+		$this->assertFalse( $call['payload']['input_manifest']['full_entry_sent'] ?? true );
 		$this->assertArrayHasKey( 'execution_request_id', $call['payload'] );
 		$this->assertSame( 32, strlen( $call['payload']['execution_request_id'] ) );
 		$this->assertSame(
@@ -230,6 +234,8 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertSame( '21', $call['payload']['action_context']['form_id'] ?? null );
 		$this->assertSame( 'gravity_forms', $call['payload']['action_context']['source'] ?? null );
 		$this->assertSame( 'Hello async', $call['payload']['form_data_payload']['entry']['field_1'] ?? null );
+		$this->assertArrayHasKey( 'input_manifest', $call['payload'] );
+		$this->assertSame( 'legacy_fallback_field_ids', $call['payload']['input_manifest']['mapping_source'] ?? null );
 		$this->assertSame( 10, $call['payload']['async_options']['delay_seconds'] );
 		$this->assertSame( 43200, $call['payload']['async_options']['max_wait_seconds'] );
 		$this->assertArrayHasKey( 'execution_request_id', $call['payload'] );
@@ -298,6 +304,289 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertSame( '/actions/execute-async', $call['path'] );
 		$this->assertSame( 123, $call['payload']['async_options']['delay_seconds'] );
 		$this->assertSame( 234567, $call['payload']['async_options']['max_wait_seconds'] );
+	}
+
+	public function test_execute_uses_nested_input_mapping_and_includes_manifest(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-mapping',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = [
+					'path'    => $path,
+					'payload' => $payload,
+					'options' => $options,
+				];
+
+				return [
+					'result_data' => [
+						'classification' => 'ham',
+						'llm_output'     => 'Mapped payload',
+					],
+					'meta'        => [
+						'credits_debited' => 5,
+					],
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+		$form     = [ 'id' => 55, 'title' => 'Mapping Test' ];
+		$entry    = [ 'id' => 123, 'field_1' => 'One', 'field_2' => 'Two', 'status' => 'active' ];
+		$context  = [
+			'hook'     => 'gform_validation',
+			'action_id' => 'spam_detection',
+			'settings' => [
+				'settings' => [
+					'input_mapping' => [
+						'mode'             => 'selected',
+						'field_ids'        => [ 'field_2' ],
+						'include_metadata' => true,
+					],
+				],
+			],
+		];
+
+		$result = $executor->execute( 'central-mapping', $form, $entry, $context );
+		$this->assertIsArray( $result );
+		$this->assertCount( 1, $client->calls );
+
+		$payload = $client->calls[0]['payload'];
+		$this->assertSame( [ 'field_2' => 'Two' ], $payload['form_data_payload']['entry'] ?? [] );
+		$this->assertSame( '55', $payload['form_data_payload']['form']['id'] ?? null );
+		$this->assertSame( 'explicit_mapping', $payload['input_manifest']['mapping_source'] ?? null );
+		$this->assertSame( [ 'field_2' ], $payload['input_manifest']['applied_entry_keys'] ?? [] );
+		$this->assertSame( [ 'field_2' ], $payload['input_manifest']['requested_field_ids'] ?? [] );
+	}
+
+	public function test_execute_selected_mode_with_empty_field_ids_sends_no_entry_fields(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-selected-empty',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = [
+					'path'    => $path,
+					'payload' => $payload,
+					'options' => $options,
+				];
+
+				return [
+					'result_data' => [
+						'classification' => 'ham',
+						'llm_output'     => 'Selected empty',
+					],
+					'meta'        => [],
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+		$form     = [ 'id' => 90, 'title' => 'Selected Empty' ];
+		$entry    = [ 'id' => 333, 'field_1' => 'A', 'field_2' => 'B', 'status' => 'active' ];
+		$context  = [
+			'hook'          => 'gform_after_submission',
+			'input_mapping' => [
+				'mode'             => 'selected',
+				'field_ids'        => [],
+				'include_metadata' => false,
+			],
+		];
+
+		$result = $executor->execute( 'central-selected-empty', $form, $entry, $context );
+		$this->assertIsArray( $result );
+		$this->assertCount( 1, $client->calls );
+
+		$payload = $client->calls[0]['payload'];
+		$this->assertSame( [], $payload['form_data_payload']['entry'] ?? [] );
+		$this->assertArrayNotHasKey( 'form', $payload['form_data_payload'] );
+		$this->assertSame( 'explicit_mapping', $payload['input_manifest']['mapping_source'] ?? null );
+		$this->assertSame( 'selected', $payload['input_manifest']['mode'] ?? null );
+		$this->assertSame( [], $payload['input_manifest']['requested_field_ids'] ?? [] );
+		$this->assertSame( [], $payload['input_manifest']['applied_entry_keys'] ?? [] );
+		$this->assertFalse( $payload['input_manifest']['full_entry_sent'] ?? true );
+		$this->assertSame( 0, $payload['input_manifest']['entry_key_count_after'] ?? null );
+	}
+
+	public function test_execute_exclude_mode_omits_only_specified_fields(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-exclude',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = [
+					'path'    => $path,
+					'payload' => $payload,
+					'options' => $options,
+				];
+
+				return [
+					'result_data' => [
+						'classification' => 'ham',
+						'llm_output'     => 'Exclude one field',
+					],
+					'meta'        => [],
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+		$form     = [ 'id' => 91, 'title' => 'Exclude Mode' ];
+		$entry    = [ 'field_1' => 'One', 'field_2' => 'Two', 'field_3' => 'Three' ];
+		$context  = [
+			'hook'          => 'gform_after_submission',
+			'input_mapping' => [
+				'mode'             => 'exclude',
+				'field_ids'        => [ 'field_2' ],
+				'include_metadata' => false,
+			],
+		];
+
+		$result = $executor->execute( 'central-exclude', $form, $entry, $context );
+		$this->assertIsArray( $result );
+		$this->assertCount( 1, $client->calls );
+
+		$payload = $client->calls[0]['payload'];
+		$this->assertSame(
+			[
+				'field_1' => 'One',
+				'field_3' => 'Three',
+			],
+			$payload['form_data_payload']['entry'] ?? []
+		);
+		$this->assertSame( 'exclude', $payload['input_manifest']['mode'] ?? null );
+		$this->assertSame( [ 'field_2' ], $payload['input_manifest']['requested_field_ids'] ?? [] );
+		$this->assertSame( [ 'field_1', 'field_3' ], $payload['input_manifest']['applied_entry_keys'] ?? [] );
+		$this->assertFalse( $payload['input_manifest']['full_entry_sent'] ?? true );
+	}
+
+	public function test_execute_legacy_fallback_avoids_entry_metadata_by_default(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-legacy',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = [
+					'path'    => $path,
+					'payload' => $payload,
+					'options' => $options,
+				];
+
+				return [
+					'result_data' => [
+						'classification' => 'ham',
+						'llm_output'     => 'Fallback payload',
+					],
+					'meta'        => [],
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+		$form     = [ 'id' => 88, 'title' => 'Legacy Fallback' ];
+		$entry    = [
+			'id'          => 909,
+			'field_1'     => 'Hello',
+			'field_2'     => 'World',
+			'status'      => 'spam',
+			'date_created' => '2026-02-16 00:00:00',
+		];
+
+		$result = $executor->execute( 'central-fallback', $form, $entry, [ 'hook' => 'gform_after_submission' ] );
+		$this->assertIsArray( $result );
+		$this->assertCount( 1, $client->calls );
+
+		$payload = $client->calls[0]['payload'];
+		$this->assertSame(
+			[
+				'field_1' => 'Hello',
+				'field_2' => 'World',
+			],
+			$payload['form_data_payload']['entry'] ?? []
+		);
+		$this->assertArrayNotHasKey( 'form', $payload['form_data_payload'] );
+		$this->assertSame( 'legacy_fallback_field_ids', $payload['input_manifest']['mapping_source'] ?? null );
+		$this->assertFalse( $payload['input_manifest']['include_metadata'] ?? true );
+	}
+
+	public function test_execute_explicit_all_mode_marks_manifest_and_includes_full_entry(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-all',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = [
+					'path'    => $path,
+					'payload' => $payload,
+					'options' => $options,
+				];
+
+				return [
+					'result_data' => [
+						'classification' => 'ham',
+						'llm_output'     => 'All fields',
+					],
+					'meta'        => [],
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+		$form     = [ 'id' => 66, 'title' => 'All Mode' ];
+		$entry    = [ 'field_1' => 'A', 'field_2' => 'B', 'status' => 'active' ];
+		$context  = [
+			'hook'          => 'gform_after_submission',
+			'input_mapping' => [
+				'mode'             => 'all',
+				'include_metadata' => true,
+			],
+		];
+
+		$result = $executor->execute( 'central-all', $form, $entry, $context );
+		$this->assertIsArray( $result );
+		$this->assertCount( 1, $client->calls );
+
+		$payload = $client->calls[0]['payload'];
+		$this->assertSame( 'A', $payload['form_data_payload']['entry']['field_1'] ?? null );
+		$this->assertSame( 'active', $payload['form_data_payload']['entry']['status'] ?? null );
+		$this->assertSame( '66', $payload['form_data_payload']['form']['id'] ?? null );
+		$this->assertSame( 'explicit_all', $payload['input_manifest']['mapping_source'] ?? null );
+		$this->assertTrue( $payload['input_manifest']['full_entry_sent'] ?? false );
 	}
 
 	public function test_execute_returns_cached_result_when_duplicate_error_reported(): void {

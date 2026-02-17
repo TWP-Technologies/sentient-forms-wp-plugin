@@ -105,6 +105,14 @@
 			</select>
 		</div>
 
+		{#if value.mode === 'all'}
+			<div
+				class="sf:rounded sf:border sf:border-amber-200 sf:bg-amber-50 sf:px-3 sf:py-2 sf:text-xs sf:text-amber-900"
+			>
+				Send all fields is an explicit full-entry option. Use it only when required.
+			</div>
+		{/if}
+
 		{#if value.mode !== 'all'}
 			<div class="sf:border-t sf:border-slate-100 sf:pt-3">
 				<div class="sf:flex sf:items-center sf:justify-between sf:mb-2">
