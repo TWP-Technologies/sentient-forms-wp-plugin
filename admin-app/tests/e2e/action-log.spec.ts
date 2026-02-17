@@ -83,14 +83,15 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
         await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
 
         await expect(page.getByRole('heading', { name: 'Action Log' })).toBeVisible();
-        await expect(page.getByText('Spam Detection')).toBeVisible();
+        await expect(page.getByText('Spam Detection')).toHaveCount(2);
         await expect(page.getByText('Entry Summary')).toBeVisible();
 
         // Check status badges
-        await expect(page.getByText('success').first()).toBeVisible();
-        await expect(page.getByText('spam')).toBeVisible();
-        await expect(page.getByText('ham')).toBeVisible();
-        await expect(page.getByText('error')).toBeVisible();
+        const tableBody = page.locator('tbody');
+        await expect(tableBody.getByText(/^success$/).first()).toBeVisible();
+        await expect(tableBody.getByText(/^spam$/).first()).toBeVisible();
+        await expect(tableBody.getByText(/^ham$/).first()).toBeVisible();
+        await expect(tableBody.getByText(/^error$/).first()).toBeVisible();
     });
 
     /**
@@ -182,13 +183,12 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
             })
         );
 
-        await page.route('**/wp-json/sentient-forms/v1/credits', (route) =>
+        await page.route('**/wp-json/sentient-forms/v1/credits/balance', (route) =>
             route.fulfill({
                 status: 200,
                 contentType: 'application/json',
                 body: JSON.stringify({
-                    credits_remaining: 875,
-                    credits_used_total: 125
+                    current_balance: 875
                 })
             })
         );
@@ -196,7 +196,7 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
         await page.goto('/#/dashboard', { waitUntil: 'networkidle' });
 
         await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
-        await expect(page.getByText('active')).toBeVisible();
+        await expect(page.getByText(/^active$/).first()).toBeVisible();
         await expect(page.getByText('875')).toBeVisible();
     });
 
@@ -208,14 +208,15 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
             route.fulfill({ status: 500, contentType: 'application/json', body: '{"error": "Internal error"}' })
         );
 
-        await page.route('**/wp-json/sentient-forms/v1/credits', (route) =>
+        await page.route('**/wp-json/sentient-forms/v1/credits/balance', (route) =>
             route.fulfill({ status: 500, contentType: 'application/json', body: '{"error": "Internal error"}' })
         );
 
         await page.goto('/#/dashboard', { waitUntil: 'networkidle' });
 
         await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
-        // Should show some fallback/error state but not crash
-        await expect(page.getByText(/Failed|error|unknown/i)).toBeVisible();
+        // Should gracefully fall back to the default inactive summary state.
+        await expect(page.getByText('No active license')).toBeVisible();
+        await expect(page.getByText(/^inactive$/).first()).toBeVisible();
     });
 });

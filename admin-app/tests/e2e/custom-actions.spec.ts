@@ -40,6 +40,36 @@ test.describe('Custom actions admin view', () => {
 			const url = route.request().url();
 			const method = route.request().method();
 
+			if (method === 'GET' && url.includes('/meta/capabilities')) {
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						success: true,
+						data: {
+							supports_custom_actions: true,
+							cps_version: '1.2.0'
+						}
+					})
+				});
+			}
+
+			if (method === 'GET' && url.includes('/actions/definitions')) {
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify([
+						{
+							id: 'spam_detection_v1',
+							code: 'spam_detection_v1',
+							name: 'Spam Detection',
+							description: 'Detects spam submissions',
+							form_sources: ['gravity_forms']
+						}
+					])
+				});
+			}
+
 			if (url.includes('/custom-actions')) {
 				const reactivateMatch = url.match(/custom-actions\/([^/?]+)\/reactivate$/);
 				const actionMatch = url.match(/custom-actions\/([^/?]+)$/);
@@ -140,14 +170,22 @@ test.describe('Custom actions admin view', () => {
 		await page.waitForFunction(() => document.body.textContent?.includes('Custom Actions'));
 		await expect(page.getByRole('heading', { name: 'Custom Actions' })).toBeVisible();
 
-		const tableRows = page.getByTestId('custom-actions-table').locator('tbody tr');
+		let tableRows = page.getByTestId('custom-actions-table').locator('tbody tr');
 		await expect(tableRows).toHaveCount(1);
 
+		await page.getByRole('button', { name: /Create Action/i }).click();
+		await expect(page).toHaveURL(/#\/actions\/custom\/new$/);
+
 		const createForm = page.getByTestId('custom-action-form');
-		await createForm.getByLabel('Template ID').fill('tmpl-beta');
+		await createForm
+			.getByLabel('Template ID')
+			.fill('11111111-1111-4111-8111-111111111111');
+		await createForm.getByLabel('Display Name').fill('Beta action');
 		await createForm.getByLabel('Code').fill('beta');
-		await createForm.getByLabel('Display name').fill('Beta action');
-		await createForm.getByRole('button', { name: 'Create action' }).click();
+		await createForm.getByRole('button', { name: 'Create Action' }).click();
+
+		await expect(page).toHaveURL(/#\/actions\/custom$/);
+		tableRows = page.getByTestId('custom-actions-table').locator('tbody tr');
 
 		await expect(tableRows).toHaveCount(2);
 

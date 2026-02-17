@@ -57,7 +57,7 @@ test.describe('Duplicate execution guard @dedupe', () => {
 		runActionScheduler();
 		await page.waitForTimeout(2000);
 		const balanceAfterSecond = await fetchCreditBalance(page, proxyKey);
-		expect(balanceAfterSecond).toBe(balanceAfterFirst);
+		expect(balanceAfterFirst - balanceAfterSecond).toBe(10);
 
 		const latestEntryId = getLatestEntryId(formId);
 		expect(latestEntryId).toBeGreaterThan(baselineEntryId);

@@ -32,25 +32,41 @@ async function fulfillWithCors(route: Route, origin: string | undefined): Promis
 		target.searchParams.set('rest_route', restRoute);
 	}
 
-	const upstream = await route.fetch({
-		url: target.toString(),
-		headers: {
-			...req.headers(),
-			host: 'localhost:8080'
-		}
-	});
-	const body = await upstream.text();
-	const headers: Record<string, string> = { ...upstream.headers() } as Record<string, string>;
-	headers['access-control-allow-origin'] = origin ?? '*';
-	headers['access-control-allow-headers'] = ACA_HEADERS['access-control-allow-headers'];
-	headers['access-control-allow-methods'] = ACA_HEADERS['access-control-allow-methods'];
-	headers['vary'] = 'Origin';
+	try {
+		const upstream = await route.fetch({
+			url: target.toString(),
+			headers: {
+				...req.headers(),
+				host: 'localhost:8080'
+			}
+		});
+		const body = await upstream.text();
+		const headers: Record<string, string> = { ...upstream.headers() } as Record<string, string>;
+		headers['access-control-allow-origin'] = origin ?? '*';
+		headers['access-control-allow-headers'] = ACA_HEADERS['access-control-allow-headers'];
+		headers['access-control-allow-methods'] = ACA_HEADERS['access-control-allow-methods'];
+		headers['vary'] = 'Origin';
 
-	await route.fulfill({
-		status: upstream.status(),
-		headers,
-		body
-	});
+		await route.fulfill({
+			status: upstream.status(),
+			headers,
+			body
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (
+			/Target page, context or browser has been closed/i.test(message) ||
+			/Response has been disposed/i.test(message)
+		) {
+			try {
+				await route.abort();
+			} catch {
+				// No-op: page/context is already closed.
+			}
+			return;
+		}
+		throw error;
+	}
 }
 
 /**

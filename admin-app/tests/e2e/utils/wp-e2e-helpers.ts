@@ -579,12 +579,15 @@ export function getProxyApiKey(): string {
 
 	try {
 		const settings = JSON.parse(payload) as Record<string, unknown>;
-		const proxyKey =
-			(settings?.license as Record<string, unknown> | undefined)?.['proxy_api_key'] ??
-			(settings as Record<string, unknown> | undefined)?.['proxy_api_key'] ??
-			'';
-		if (typeof proxyKey === 'string' && proxyKey.length > 0) {
-			return proxyKey;
+		const rootProxyKey = (settings as Record<string, unknown> | undefined)?.['proxy_api_key'] ?? '';
+		if (typeof rootProxyKey === 'string' && rootProxyKey.length > 0) {
+			return rootProxyKey;
+		}
+
+		const nestedProxyKey =
+			(settings?.license as Record<string, unknown> | undefined)?.['proxy_api_key'] ?? '';
+		if (typeof nestedProxyKey === 'string' && nestedProxyKey.length > 0) {
+			return nestedProxyKey;
 		}
 	} catch (_error) {
 		// JSON parse failed — continue to regex fallback

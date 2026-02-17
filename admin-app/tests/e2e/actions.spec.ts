@@ -136,7 +136,7 @@ test.describe('Actions admin flows', () => {
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 
-		await page.getByRole('button', { name: 'Add action' }).click();
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
 		const drawer = page.getByTestId('link-action-form');
 		await expect(drawer).toBeVisible();
 		const firstHook = drawer.locator('input[type="checkbox"]').first();
@@ -180,7 +180,7 @@ test.describe('Actions admin flows', () => {
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 
-		await page.getByRole('button', { name: 'Add action' }).click();
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
 		await page.getByRole('button', { name: 'Custom actions' }).click();
 
 		const drawer = page.getByTestId('link-action-form');
@@ -213,7 +213,7 @@ test.describe('Actions admin flows', () => {
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 
-		await page.getByRole('button', { name: 'Add action' }).click();
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
 		const form = page.getByTestId('link-action-form');
 		await expect(form).toBeVisible({ timeout: 10_000 });
 		await expect(page.getByPlaceholder('Search by name or id')).toBeVisible();
