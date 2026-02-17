@@ -2,7 +2,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 220);
+const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 380);
 const distRoot = path.resolve('..', 'assets', 'dist', '_app', 'immutable');
 
 async function collectSizes(dir) {

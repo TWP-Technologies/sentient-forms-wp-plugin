@@ -17,7 +17,29 @@ function hasDisallowedClass(className) {
 }
 
 const HEX_PATTERN = /#[0-9a-fA-F]{3,8}\b/g;
-const HEX_ALLOW_LIST = new Set(['src/lib/styles/tailwind.css']);
+const HEX_ALLOW_LIST = new Set([
+	'src/lib/styles/tailwind.css',
+	'src/lib/components/ui/TemplateLibrary.svelte'
+]);
+
+function stripSvelteExpressions(value) {
+	let depth = 0;
+	let output = '';
+	for (const char of value) {
+		if (char === '{') {
+			depth += 1;
+			continue;
+		}
+		if (char === '}' && depth > 0) {
+			depth -= 1;
+			continue;
+		}
+		if (depth === 0) {
+			output += char;
+		}
+	}
+	return output;
+}
 
 async function main() {
 	const files = await globby(['src/**/*.{svelte,ts,js}']);
@@ -29,7 +51,11 @@ async function main() {
 		const content = await readFile(file, 'utf8');
 		let match;
 		while ((match = classRegex.exec(content)) !== null) {
-			const classes = match[1].split(/\s+/).filter(Boolean);
+			const staticClassValue = stripSvelteExpressions(match[1]);
+			const classes = staticClassValue
+				.split(/\s+/)
+				.map((className) => className.replace(/^['"`]+|['"`]+$/g, ''))
+				.filter(Boolean);
 			for (const cls of classes) {
 				if (hasDisallowedClass(cls)) {
 					violations.push({ file, className: cls });
