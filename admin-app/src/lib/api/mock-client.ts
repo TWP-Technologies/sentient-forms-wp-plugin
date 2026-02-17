@@ -10,6 +10,7 @@ import type {
 	CustomActionQuota,
 	CustomActionUpdatePayload,
 	ExecutionStatus,
+	FormDisableStateResponse,
 	FormActionLinkage,
 	FormActionMutationPayload,
 	FormExecutionStatus,
@@ -81,6 +82,12 @@ export class MockSentientFormsApiClient {
 	];
 
 	private formActions: FormActionLinkage[] = [];
+	private formDisabled: Record<string, boolean> = {};
+	private pluginSettings: PluginSettingsResponse = {
+		enable_logging: true,
+		execution_global_disabled: false,
+		execution_provider_disabled: {}
+	};
 
 	private creditBalance: CreditBalanceResponse = {
 		current_balance: 10,
@@ -128,11 +135,21 @@ export class MockSentientFormsApiClient {
 	}
 
 	async getPluginSettings(): Promise<PluginSettingsResponse> {
-		return { enable_logging: true };
+		return { ...this.pluginSettings };
 	}
 
 	async updatePluginSettings(settings: PluginSettingsResponse): Promise<PluginSettingsResponse> {
-		return { ...settings };
+		this.pluginSettings = { ...this.pluginSettings, ...settings };
+		return { ...this.pluginSettings };
+	}
+
+	async getSettings(): Promise<PluginSettingsResponse> {
+		return this.getPluginSettings();
+	}
+
+	async updateSettings(settings: Partial<PluginSettingsResponse>): Promise<PluginSettingsResponse> {
+		this.pluginSettings = { ...this.pluginSettings, ...settings };
+		return { ...this.pluginSettings };
 	}
 
 	async getCapabilities(): Promise<CapabilitiesResponse> {
@@ -155,6 +172,36 @@ export class MockSentientFormsApiClient {
 
 	async getFormActions(_formSourceSlug: string, _formId: number): Promise<FormActionLinkage[]> {
 		return this.formActions;
+	}
+
+	async getFormDisabled(formSourceSlug: string, formId: number): Promise<FormDisableStateResponse> {
+		const key = `${formSourceSlug}:${formId}`;
+		const sfDisabled = Boolean(this.formDisabled[key]);
+		const globalDisabled = Boolean(this.pluginSettings.execution_global_disabled);
+		const providerDisabled = Boolean(
+			this.pluginSettings.execution_provider_disabled?.[formSourceSlug]
+		);
+
+		return {
+			sf_disabled: sfDisabled,
+			global_disabled: globalDisabled,
+			provider_disabled: providerDisabled,
+			effective_disabled: sfDisabled || globalDisabled || providerDisabled
+		};
+	}
+
+	async toggleFormDisabled(
+		formSourceSlug: string,
+		formId: number,
+		disabled: boolean
+	): Promise<FormDisableStateResponse> {
+		const key = `${formSourceSlug}:${formId}`;
+		this.formDisabled[key] = disabled;
+		const state = await this.getFormDisabled(formSourceSlug, formId);
+		return {
+			...state,
+			message: disabled ? 'Sentient Forms disabled for this form.' : 'Sentient Forms enabled for this form.'
+		};
 	}
 
 	async getFormExecutionStatus(): Promise<FormExecutionStatus> {

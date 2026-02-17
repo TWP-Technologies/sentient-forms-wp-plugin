@@ -107,12 +107,19 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         // Get form settings
         $settings = $this->get_form_settings( $form_id );
 
-        // CB-FORMS-001: Per-form master disable — skip all actions if form is disabled.
-        if ( ! empty( $settings['sf_disabled'] ) )
+        $disable_flags = $this->get_execution_disable_flags( $settings );
+
+        // CB-FORMS-001 / CB-FORMS-002: Skip all actions when effective execution disable is enabled.
+        if ( ! empty( $disable_flags['effective_disabled'] ) )
         {
             $logger->info(
-                'form disabled via sf_disabled flag, skipping all validation actions',
-                [ 'form_id' => $form_id ]
+                'form execution disabled, skipping all validation actions',
+                [
+                    'form_id'           => $form_id,
+                    'sf_disabled'       => ! empty( $disable_flags['sf_disabled'] ),
+                    'global_disabled'   => ! empty( $disable_flags['global_disabled'] ),
+                    'provider_disabled' => ! empty( $disable_flags['provider_disabled'] ),
+                ]
             );
             return $validation_result;
         }
@@ -229,12 +236,19 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         // Get form settings - these are stored directly under local_mapping_id keys
         $settings = $this->get_form_settings( $form_id );
 
-        // CB-FORMS-001: Per-form master disable — skip all actions if form is disabled.
-        if ( ! empty( $settings['sf_disabled'] ) )
+        $disable_flags = $this->get_execution_disable_flags( $settings );
+
+        // CB-FORMS-001 / CB-FORMS-002: Skip all actions when effective execution disable is enabled.
+        if ( ! empty( $disable_flags['effective_disabled'] ) )
         {
             $logger->info(
-                'form disabled via sf_disabled flag, skipping all after-submission actions',
-                [ 'form_id' => $form_id ]
+                'form execution disabled, skipping all after-submission actions',
+                [
+                    'form_id'           => $form_id,
+                    'sf_disabled'       => ! empty( $disable_flags['sf_disabled'] ),
+                    'global_disabled'   => ! empty( $disable_flags['global_disabled'] ),
+                    'provider_disabled' => ! empty( $disable_flags['provider_disabled'] ),
+                ]
             );
             return;
         }
@@ -682,6 +696,39 @@ HTML;
     private function get_form_option_name( int $form_id ): string
     {
         return sprintf( 'sentient_forms_actions_%s_%d', $this->get_id(), absint( $form_id ) );
+    }
+
+    /**
+     * Resolve effective execution disable flags from form settings + plugin settings.
+     *
+     * @param array $form_settings Form-level settings array.
+     * @return array{sf_disabled: bool, global_disabled: bool, provider_disabled: bool, effective_disabled: bool}
+     */
+    private function get_execution_disable_flags( array $form_settings ): array
+    {
+        $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+        if ( ! is_array( $plugin_settings ) )
+        {
+            $plugin_settings = [];
+        }
+
+        $provider_map = $plugin_settings['execution_provider_disabled'] ?? [];
+        if ( ! is_array( $provider_map ) )
+        {
+            $provider_map = [];
+        }
+
+        $provider_key = sanitize_key( $this->get_id() );
+        $sf_disabled = ! empty( $form_settings['sf_disabled'] );
+        $global_disabled = ! empty( $plugin_settings['execution_global_disabled'] );
+        $provider_disabled = ! empty( $provider_map[ $provider_key ] );
+
+        return [
+            'sf_disabled'       => $sf_disabled,
+            'global_disabled'   => $global_disabled,
+            'provider_disabled' => $provider_disabled,
+            'effective_disabled'=> $sf_disabled || $global_disabled || $provider_disabled,
+        ];
     }
 
     /**

@@ -428,9 +428,14 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $options    = get_option( $option_key, [] );
 
         $sf_disabled = is_array( $options ) && ! empty( $options['sf_disabled'] );
+        $execution_disable = $this->get_execution_disable_flags( $form_source_slug );
+        $effective_disabled = $sf_disabled || $execution_disable['global_disabled'] || $execution_disable['provider_disabled'];
 
         return $this->prepare_item_for_response( [
-            'sf_disabled' => $sf_disabled,
+            'sf_disabled'       => $sf_disabled,
+            'global_disabled'   => $execution_disable['global_disabled'],
+            'provider_disabled' => $execution_disable['provider_disabled'],
+            'effective_disabled'=> $effective_disabled,
         ] );
     }
 
@@ -461,12 +466,46 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $options['sf_disabled'] = $sf_disabled;
         update_option( $option_key, $options, false );
 
+        $execution_disable = $this->get_execution_disable_flags( $form_source_slug );
+        $effective_disabled = $sf_disabled || $execution_disable['global_disabled'] || $execution_disable['provider_disabled'];
+
         return $this->prepare_item_for_response( [
-            'sf_disabled' => $sf_disabled,
-            'message'     => $sf_disabled
+            'sf_disabled'       => $sf_disabled,
+            'global_disabled'   => $execution_disable['global_disabled'],
+            'provider_disabled' => $execution_disable['provider_disabled'],
+            'effective_disabled'=> $effective_disabled,
+            'message'           => $sf_disabled
                 ? __( 'Sentient Forms disabled for this form.', 'sentient-forms' )
                 : __( 'Sentient Forms enabled for this form.', 'sentient-forms' ),
         ] );
+    }
+
+    /**
+     * Read execution disable settings from plugin-level settings.
+     *
+     * @param string $form_source_slug Form provider slug.
+     * @return array{global_disabled: bool, provider_disabled: bool}
+     */
+    private function get_execution_disable_flags( string $form_source_slug ): array
+    {
+        $settings = get_option( 'sentient_forms_plugin_settings', [] );
+        if ( ! is_array( $settings ) )
+        {
+            $settings = [];
+        }
+
+        $provider_map = $settings['execution_provider_disabled'] ?? [];
+        if ( ! is_array( $provider_map ) )
+        {
+            $provider_map = [];
+        }
+
+        $provider_key = sanitize_key( $form_source_slug );
+
+        return [
+            'global_disabled'   => ! empty( $settings['execution_global_disabled'] ),
+            'provider_disabled' => ! empty( $provider_map[ $provider_key ] ),
+        ];
     }
 
     /**
@@ -537,20 +576,49 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
      */
     private function merge_local_and_cps_actions( array $local_actions, array $cps_actions ): array
     {
-        // Mark local actions
-        foreach ( $local_actions as &$action ) {
-            $action['source'] = $action['source'] ?? 'local';
-        }
-        unset( $action );
-
-        // Add CPS actions that don't have a local equivalent
-        $local_central_ids = array_column( $local_actions, 'central_action_id' );
-        foreach ( $cps_actions as $cps_action ) {
-            // Skip if local already has this central action
-            if ( in_array( $cps_action['central_action_id'], $local_central_ids, true ) ) {
+        // Normalize local actions to arrays only (legacy settings may include scalar keys like "enabled").
+        $normalized_local_actions = [];
+        foreach ( $local_actions as $action ) {
+            if ( ! is_array( $action ) ) {
                 continue;
             }
+            $action['source']       = $action['source'] ?? 'local';
+            $normalized_local_actions[] = $action;
+        }
+
+        $local_actions = $normalized_local_actions;
+
+        // Add CPS actions that don't have a local equivalent
+        $local_central_ids = array_values(
+            array_filter(
+                array_map(
+                    static function ( $action ) {
+                        return is_array( $action ) ? (string) ( $action['central_action_id'] ?? '' ) : '';
+                    },
+                    $local_actions
+                ),
+                static function ( $id ) {
+                    return '' !== $id;
+                }
+            )
+        );
+
+        foreach ( $cps_actions as $cps_action ) {
+            if ( ! is_array( $cps_action ) ) {
+                continue;
+            }
+
+            $cps_central_id = (string) ( $cps_action['central_action_id'] ?? '' );
+
+            // Skip if local already has this central action
+            if ( '' !== $cps_central_id && in_array( $cps_central_id, $local_central_ids, true ) ) {
+                continue;
+            }
+
             $local_actions[] = $cps_action;
+            if ( '' !== $cps_central_id ) {
+                $local_central_ids[] = $cps_central_id;
+            }
         }
 
         return $local_actions;

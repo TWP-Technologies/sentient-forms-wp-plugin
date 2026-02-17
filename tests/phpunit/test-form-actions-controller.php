@@ -192,6 +192,36 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( $option_key );
     }
 
+    public function test_get_form_disabled_includes_global_and_provider_disable_flags(): void
+    {
+        $option_key = 'sentient_forms_actions_gravity_forms_3';
+        delete_option( $option_key );
+        update_option( $option_key, [ 'sf_disabled' => false ] );
+
+        update_option(
+            'sentient_forms_plugin_settings',
+            [
+                'execution_global_disabled'   => true,
+                'execution_provider_disabled' => [ 'gravity_forms' => true ],
+            ]
+        );
+
+        $get_request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/3/actions/disable' );
+        $get_request->set_param( 'form_source_slug', 'gravity_forms' );
+        $get_request->set_param( 'form_id', 3 );
+
+        $response = $this->controller->get_form_disabled( $get_request );
+        $data     = $response->get_data();
+
+        $this->assertFalse( $data['sf_disabled'] );
+        $this->assertTrue( $data['global_disabled'] );
+        $this->assertTrue( $data['provider_disabled'] );
+        $this->assertTrue( $data['effective_disabled'] );
+
+        delete_option( $option_key );
+        delete_option( 'sentient_forms_plugin_settings' );
+    }
+
     /**
      * @param array<int, mixed> $args
      */

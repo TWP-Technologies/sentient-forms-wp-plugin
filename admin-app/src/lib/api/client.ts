@@ -16,6 +16,7 @@ import type {
 	ExecutionStatus,
 	FormActionConfig,
 	FormActionConfigResponse,
+	FormDisableStateResponse,
 	FormActionLinkage,
 	FormActionMutationPayload,
 	FormAllActionConfigsResponse,
@@ -152,12 +153,25 @@ export class SentientFormsApiClient {
 		payload: Partial<PluginSettingsResponse>,
 		options: RequestOptions = {}
 	): Promise<PluginSettingsResponse> {
-		const response = await this.request<RestEnvelope<PluginSettingsResponse>>('settings', {
+		const response = await this.request<
+			RestEnvelope<PluginSettingsResponse | { settings: PluginSettingsResponse }>
+		>('settings', {
 			method: 'PUT',
 			body: payload,
 			...options
 		});
-		return this.unwrap(response);
+		const data = this.unwrap<PluginSettingsResponse | { settings: PluginSettingsResponse }>(response);
+		if (
+			data &&
+			typeof data === 'object' &&
+			'settings' in data &&
+			data.settings &&
+			typeof data.settings === 'object'
+		) {
+			return data.settings;
+		}
+
+		return data as PluginSettingsResponse;
 	}
 
 	async updateAsyncSettings(
@@ -264,12 +278,17 @@ export class SentientFormsApiClient {
 		formSourceSlug: string,
 		formId: number,
 		options: RequestOptions = {}
-	): Promise<{ sf_disabled: boolean }> {
+	): Promise<FormDisableStateResponse> {
 		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
-			return { sf_disabled: false };
+			return {
+				sf_disabled: false,
+				global_disabled: false,
+				provider_disabled: false,
+				effective_disabled: false
+			};
 		}
 		const slug = encodeURIComponent(formSourceSlug);
-		const response = await this.request<RestEnvelope<{ sf_disabled: boolean }>>(
+		const response = await this.request<RestEnvelope<FormDisableStateResponse>>(
 			`${slug}/forms/${formId}/actions/disable`,
 			options
 		);
@@ -284,9 +303,9 @@ export class SentientFormsApiClient {
 		formId: number,
 		disabled: boolean,
 		options: RequestOptions = {}
-	): Promise<{ sf_disabled: boolean; message: string }> {
+	): Promise<FormDisableStateResponse> {
 		const slug = encodeURIComponent(formSourceSlug);
-		const response = await this.request<RestEnvelope<{ sf_disabled: boolean; message: string }>>(
+		const response = await this.request<RestEnvelope<FormDisableStateResponse>>(
 			`${slug}/forms/${formId}/actions/disable`,
 			{
 				...options,

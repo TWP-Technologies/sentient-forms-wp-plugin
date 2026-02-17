@@ -64,6 +64,8 @@ export interface CreditBalanceResponse {
 
 export interface PluginSettingsResponse {
 	enable_logging?: boolean;
+	execution_global_disabled?: boolean;
+	execution_provider_disabled?: Record<string, boolean>;
 }
 
 /**
@@ -217,6 +219,14 @@ export interface FormActionMutationPayload {
 	execution_priority?: number;
 	action_name_label?: string;
 	settings?: FormActionSettings;
+}
+
+export interface FormDisableStateResponse {
+	sf_disabled: boolean;
+	global_disabled?: boolean;
+	provider_disabled?: boolean;
+	effective_disabled?: boolean;
+	message?: string;
 }
 
 /**

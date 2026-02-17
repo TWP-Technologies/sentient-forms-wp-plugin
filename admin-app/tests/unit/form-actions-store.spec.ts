@@ -287,4 +287,29 @@ describe('formActionsStore', () => {
 		expect(state.sfDisabled).toBe(true);
 		expect(notifySuccessSpy).toHaveBeenCalledWith('Sentient Forms disabled for this form.');
 	});
+
+	it('tracks effective disable flags from API response', async () => {
+		stubClient.getFormActions.mockResolvedValue([]);
+		stubClient.getCreditBalance.mockResolvedValue({
+			current_balance: 100,
+			ledger_delta: 0,
+			tier: null
+		});
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+		stubClient.getFormDisabled.mockResolvedValue({
+			sf_disabled: false,
+			global_disabled: true,
+			provider_disabled: false,
+			effective_disabled: true
+		});
+
+		await formActionsStore.load('gravity_forms', 1);
+		const state = snapshotState();
+
+		expect(state.sfDisabled).toBe(false);
+		expect(state.globalDisabled).toBe(true);
+		expect(state.providerDisabled).toBe(false);
+		expect(state.effectiveDisabled).toBe(true);
+	});
 });

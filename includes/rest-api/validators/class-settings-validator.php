@@ -119,4 +119,54 @@ class Sentient_Forms_Settings_Validator
 
         return true;
     }
+
+    /**
+     * Validates a provider disable map where each key is a provider slug and each value is boolean-like.
+     *
+     * @param mixed           $value   The value of the parameter.
+     * @param WP_REST_Request $request The current REST API request object.
+     * @param string          $param   The name of the parameter.
+     *
+     * @return true|WP_Error
+     */
+    public function validate_provider_disabled_map_param( mixed $value, WP_REST_Request $request, string $param ): true | WP_Error
+    {
+        if ( null === $value || '' === $value )
+        {
+            return true;
+        }
+
+        if ( ! is_array( $value ) )
+        {
+            return $this->validation_error(
+                $param,
+                __( 'Must be an object map of provider slugs to booleans.', 'sentient-forms' ),
+            );
+        }
+
+        foreach ( $value as $provider_slug => $is_disabled )
+        {
+            if ( ! is_string( $provider_slug ) && ! is_int( $provider_slug ) )
+            {
+                return $this->validation_error(
+                    $param,
+                    __( 'Provider keys must be strings.', 'sentient-forms' ),
+                );
+            }
+
+            if (
+                ! is_bool( $is_disabled ) &&
+                ! in_array( $is_disabled, [ 0, 1, '0', '1' ], true ) &&
+                ! ( is_string( $is_disabled ) && in_array( strtolower( $is_disabled ), [ 'true', 'false' ], true ) )
+            )
+            {
+                return $this->validation_error(
+                    $param,
+                    __( 'Provider values must be boolean-like.', 'sentient-forms' ),
+                );
+            }
+        }
+
+        return true;
+    }
 }

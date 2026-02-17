@@ -6,11 +6,17 @@
 	import { asyncSettingsStore } from '$lib/stores/async-settings.svelte';
 	import { asyncHealthStore } from '$lib/stores/async-health.svelte';
 	import { loggingStore } from '$lib/stores/logging.svelte';
+	import { createClientFromConfig } from '$lib/api/client';
+	import { notifications } from '$lib/stores/notifications';
+	import type { FormSourceSummary } from '$lib/api/types';
 
 	const telemetry = telemetryStore;
 	const asyncSettings = asyncSettingsStore;
 	const asyncHealth = asyncHealthStore;
 	const logging = loggingStore;
+	const client = createClientFromConfig();
+	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
+	const formSources: FormSourceSummary[] = runtime?.formSources ?? [];
 
 	let formDirty = $state(false);
 	let formState = $state({
@@ -18,13 +24,114 @@
 		baseDelaySeconds: 60,
 		maxDelaySeconds: 3600
 	});
+	let executionLoading = $state(false);
+	let executionSaving = $state(false);
+	let executionGlobalDisabled = $state(false);
+	let executionProviderDisabled = $state<Record<string, boolean>>({});
 
 	onMount(() => {
 		telemetry.load();
 		asyncSettings.load();
 		asyncHealth.refresh();
 		logging.load();
+		loadExecutionSettings();
 	});
+
+	function normalizeProviderDisabledMap(
+		value: unknown,
+		knownProviders: FormSourceSummary[]
+	): Record<string, boolean> {
+		const normalized: Record<string, boolean> = {};
+		for (const source of knownProviders) {
+			normalized[source.slug] = false;
+		}
+
+		if (!value || typeof value !== 'object' || Array.isArray(value)) {
+			return normalized;
+		}
+
+		for (const [key, disabled] of Object.entries(value as Record<string, unknown>)) {
+			const slug = key?.toString().trim();
+			if (!slug) continue;
+			normalized[slug] = Boolean(disabled);
+		}
+
+		return normalized;
+	}
+
+	async function loadExecutionSettings() {
+		executionLoading = true;
+		try {
+			const settings = await client.getSettings({ showNotifications: false });
+			executionGlobalDisabled = Boolean(settings.execution_global_disabled);
+			executionProviderDisabled = normalizeProviderDisabledMap(
+				settings.execution_provider_disabled,
+				formSources
+			);
+		} catch {
+			notifications.warning('Failed to load execution control settings');
+		} finally {
+			executionLoading = false;
+		}
+	}
+
+	async function toggleExecutionGlobal(nextDisabled: boolean) {
+		const previous = executionGlobalDisabled;
+		executionGlobalDisabled = nextDisabled;
+		executionSaving = true;
+		try {
+			const settings = await client.updateSettings(
+				{
+					execution_global_disabled: nextDisabled,
+					execution_provider_disabled: executionProviderDisabled
+				},
+				{ showNotifications: false }
+			);
+			executionGlobalDisabled = Boolean(settings.execution_global_disabled);
+			executionProviderDisabled = normalizeProviderDisabledMap(
+				settings.execution_provider_disabled,
+				formSources
+			);
+			notifications.success(
+				executionGlobalDisabled ? 'Global execution paused' : 'Global execution resumed'
+			);
+		} catch {
+			executionGlobalDisabled = previous;
+			notifications.error('Unable to update global execution control');
+		} finally {
+			executionSaving = false;
+		}
+	}
+
+	async function toggleExecutionProvider(providerSlug: string, nextDisabled: boolean) {
+		const previousMap = { ...executionProviderDisabled };
+		executionProviderDisabled = { ...executionProviderDisabled, [providerSlug]: nextDisabled };
+		executionSaving = true;
+		try {
+			const settings = await client.updateSettings(
+				{
+					execution_global_disabled: executionGlobalDisabled,
+					execution_provider_disabled: executionProviderDisabled
+				},
+				{ showNotifications: false }
+			);
+			executionGlobalDisabled = Boolean(settings.execution_global_disabled);
+			executionProviderDisabled = normalizeProviderDisabledMap(
+				settings.execution_provider_disabled,
+				formSources
+			);
+			notifications.success(
+				nextDisabled
+					? `Execution paused for ${providerSlug}`
+					: `Execution resumed for ${providerSlug}`
+			);
+		} catch {
+			executionProviderDisabled = previousMap;
+			notifications.error('Unable to update provider execution control');
+		} finally {
+			executionSaving = false;
+		}
+	}
 
 	function toggle(event: Event) {
 		const target = event.currentTarget as HTMLInputElement;
@@ -172,6 +279,64 @@
 		</div>
 		{#if $logging.lastError}
 			<p class="sf:text-xs sf:text-red-600">{$logging.lastError}</p>
+		{/if}
+	</div>
+
+	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4">
+		<div class="sf:space-y-1">
+			<p class="sf:font-medium sf:text-slate-900">Execution controls</p>
+			<p class="sf:text-sm sf:text-slate-600">
+				Pause Sentient Forms execution globally or by form provider while keeping mappings editable.
+			</p>
+		</div>
+
+		<div class="sf:flex sf:items-center sf:justify-between sf:p-3 sf:bg-slate-50 sf:rounded-lg">
+			<div>
+				<p class="sf:text-sm sf:font-medium sf:text-slate-700">Global execution</p>
+				<p class="sf:text-xs sf:text-slate-500">Stops all providers when enabled.</p>
+			</div>
+			<label class="sf:flex sf:items-center sf:gap-3">
+				<span class="sf:text-sm sf:font-semibold">{executionGlobalDisabled ? 'Paused' : 'Active'}</span>
+				<input
+					type="checkbox"
+					class="sf:h-5 sf:w-5"
+					checked={!executionGlobalDisabled}
+					disabled={executionSaving || executionLoading}
+					onchange={(event) =>
+						toggleExecutionGlobal(!(event.currentTarget as HTMLInputElement).checked)}
+				/>
+			</label>
+		</div>
+
+		{#if formSources.length > 0}
+			<div class="sf:space-y-2">
+				{#each formSources as source}
+					<div class="sf:flex sf:items-center sf:justify-between sf:p-3 sf:border sf:border-slate-200 sf:rounded-lg">
+						<div class="sf:flex sf:items-center sf:gap-2">
+							<p class="sf:text-sm sf:text-slate-800">{source.label}</p>
+							<span class="sf:text-xs sf:text-slate-500">
+								{source.isActive ? 'Plugin active' : 'Plugin inactive'}
+							</span>
+						</div>
+						<label class="sf:flex sf:items-center sf:gap-3">
+							<span class="sf:text-sm sf:font-semibold">
+								{executionProviderDisabled[source.slug] ? 'Paused' : 'Active'}
+							</span>
+							<input
+								type="checkbox"
+								class="sf:h-5 sf:w-5"
+								checked={!executionProviderDisabled[source.slug]}
+								disabled={executionSaving || executionLoading || !source.isActive}
+								onchange={(event) =>
+									toggleExecutionProvider(
+										source.slug,
+										!(event.currentTarget as HTMLInputElement).checked
+									)}
+							/>
+						</label>
+					</div>
+				{/each}
+			</div>
 		{/if}
 	</div>
 

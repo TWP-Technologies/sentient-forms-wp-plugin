@@ -226,8 +226,52 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
                 'validate_callback' => [ $this->validator, 'validate_boolean_param' ],
                 'default'           => false,
             ];
+            $args[ 'execution_global_disabled' ] = [
+                'description'       => __( 'Pause Sentient Forms execution for all form providers.', 'sentient-forms' ),
+                'type'              => 'boolean',
+                'required'          => false,
+                'sanitize_callback' => 'wp_validate_boolean',
+                'validate_callback' => [ $this->validator, 'validate_boolean_param' ],
+                'default'           => false,
+            ];
+            $args[ 'execution_provider_disabled' ] = [
+                'description'       => __( 'Per-provider execution disable map keyed by provider slug.', 'sentient-forms' ),
+                'type'              => 'object',
+                'required'          => false,
+                'sanitize_callback' => [ $this, 'sanitize_provider_disabled_map' ],
+                'validate_callback' => [ $this->validator, 'validate_provider_disabled_map_param' ],
+                'default'           => [],
+            ];
         }
         return $args;
+    }
+
+    /**
+     * Sanitize provider execution disable map values.
+     *
+     * @param mixed $value Raw request value.
+     * @return array<string, bool>
+     */
+    public function sanitize_provider_disabled_map( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $sanitized = [];
+        foreach ( $value as $provider_slug => $is_disabled )
+        {
+            $provider_key = sanitize_key( (string) $provider_slug );
+            if ( '' === $provider_key )
+            {
+                continue;
+            }
+
+            $sanitized[ $provider_key ] = rest_sanitize_boolean( $is_disabled );
+        }
+
+        return $sanitized;
     }
 
     /**

@@ -25,6 +25,12 @@ export interface FormActionsState {
 	requiredStatusVersion?: string;
 	/** CB-FORMS-001: Per-form master disable */
 	sfDisabled: boolean;
+	/** CB-FORMS-002: Global execution disable flag */
+	globalDisabled: boolean;
+	/** CB-FORMS-002: Provider-level execution disable flag */
+	providerDisabled: boolean;
+	/** CB-FORMS-002: Effective disable state (form OR global OR provider) */
+	effectiveDisabled: boolean;
 }
 
 const client = createClientFromConfig();
@@ -42,7 +48,10 @@ function initialState(): FormActionsState {
 		cpsVersion: null,
 		requiredCreditsVersion: '1.0.0',
 		requiredStatusVersion: '1.0.0',
-		sfDisabled: false
+		sfDisabled: false,
+		globalDisabled: false,
+		providerDisabled: false,
+		effectiveDisabled: false
 	};
 }
 
@@ -142,7 +151,16 @@ async function load(formSourceSlug: string, formId: number) {
 		// CB-FORMS-001: Load per-form disabled state (best-effort)
 		try {
 			const disableResult = await client.getFormDisabled(formSourceSlug, formId, { showNotifications: false });
-			setState({ sfDisabled: disableResult.sf_disabled });
+			setState({
+				sfDisabled: disableResult.sf_disabled,
+				globalDisabled: disableResult.global_disabled ?? false,
+				providerDisabled: disableResult.provider_disabled ?? false,
+				effectiveDisabled:
+					disableResult.effective_disabled ??
+					(disableResult.sf_disabled ||
+						disableResult.global_disabled === true ||
+						disableResult.provider_disabled === true)
+			});
 		} catch {
 			// Endpoint may not exist on older plugin versions; default false.
 		}
@@ -371,16 +389,38 @@ async function toggleFormDisabled(
 	formId: number,
 	disabled: boolean
 ) {
-	const previous = formActionsState.sfDisabled;
+	const previous = {
+		sfDisabled: formActionsState.sfDisabled,
+		globalDisabled: formActionsState.globalDisabled,
+		providerDisabled: formActionsState.providerDisabled,
+		effectiveDisabled: formActionsState.effectiveDisabled
+	};
 	// optimistic update
 	formActionsState.sfDisabled = disabled;
+	formActionsState.effectiveDisabled =
+		disabled || formActionsState.globalDisabled || formActionsState.providerDisabled;
 
 	try {
 		const result = await client.toggleFormDisabled(formSourceSlug, formId, disabled);
 		formActionsState.sfDisabled = result.sf_disabled;
-		notifications.success(result.message);
+		formActionsState.globalDisabled = result.global_disabled ?? false;
+		formActionsState.providerDisabled = result.provider_disabled ?? false;
+		formActionsState.effectiveDisabled =
+			result.effective_disabled ??
+			(result.sf_disabled ||
+				result.global_disabled === true ||
+				result.provider_disabled === true);
+		notifications.success(
+			result.message ??
+				(result.sf_disabled
+					? 'Sentient Forms disabled for this form.'
+					: 'Sentient Forms enabled for this form.')
+		);
 	} catch (error) {
-		formActionsState.sfDisabled = previous;
+		formActionsState.sfDisabled = previous.sfDisabled;
+		formActionsState.globalDisabled = previous.globalDisabled;
+		formActionsState.providerDisabled = previous.providerDisabled;
+		formActionsState.effectiveDisabled = previous.effectiveDisabled;
 		const message = friendlyMessageFromError(error, 'Failed to update form disabled state');
 		notifications.error(message);
 	}

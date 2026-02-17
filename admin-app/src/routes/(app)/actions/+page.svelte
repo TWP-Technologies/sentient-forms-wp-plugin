@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Section, Card, Button, Badge, Alert, Skeleton, SelectField } from '$lib/components/ui';
+	import { Section, Card, Button, Badge, Alert, Skeleton, SelectField, Toggle } from '$lib/components/ui';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { notifications } from '$lib/stores/notifications';
 	import { navigateToAppPath } from '$lib/navigation';
@@ -46,6 +46,12 @@
 	});
 	let actionDefaultsLoading = $state(false);
 	let actionDefaultsSaving = $state(false);
+
+	// CB-FORMS-002: Execution disable controls (global + provider)
+	let executionSettingsLoading = $state(false);
+	let executionSettingsSaving = $state(false);
+	let executionGlobalDisabled = $state(false);
+	let executionProviderDisabled = $state<Record<string, boolean>>({});
 
 	const activeSources = $derived(formSources.filter((source) => source.isActive));
 	const customActions = $derived(
@@ -119,6 +125,111 @@
 		}
 		if (err instanceof Error) return err.message ?? fallback;
 		return fallback;
+	}
+
+	function normalizeProviderDisabledMap(
+		value: unknown,
+		knownProviders: FormSourceSummary[]
+	): Record<string, boolean> {
+		const normalized: Record<string, boolean> = {};
+		for (const source of knownProviders) {
+			normalized[source.slug] = false;
+		}
+
+		if (!value || typeof value !== 'object' || Array.isArray(value)) {
+			return normalized;
+		}
+
+		for (const [key, disabled] of Object.entries(value as Record<string, unknown>)) {
+			const slug = key?.toString().trim();
+			if (!slug) continue;
+			normalized[slug] = Boolean(disabled);
+		}
+
+		return normalized;
+	}
+
+	async function loadExecutionSettings() {
+		executionSettingsLoading = true;
+		try {
+			const settings = await client.getSettings({ showNotifications: false });
+			executionGlobalDisabled = Boolean(settings.execution_global_disabled);
+			executionProviderDisabled = normalizeProviderDisabledMap(
+				settings.execution_provider_disabled,
+				formSources
+			);
+		} catch (err) {
+			const message = friendlyMessageFromError(err, 'Failed to load execution controls');
+			notifications.warning(message);
+		} finally {
+			executionSettingsLoading = false;
+		}
+	}
+
+	async function toggleGlobalExecutionDisabled(nextDisabled: boolean) {
+		const previousGlobal = executionGlobalDisabled;
+		executionGlobalDisabled = nextDisabled;
+		executionSettingsSaving = true;
+
+		try {
+			const settings = await client.updateSettings(
+				{
+					execution_global_disabled: nextDisabled,
+					execution_provider_disabled: executionProviderDisabled
+				},
+				{ showNotifications: false }
+			);
+			executionGlobalDisabled = Boolean(settings.execution_global_disabled);
+			executionProviderDisabled = normalizeProviderDisabledMap(
+				settings.execution_provider_disabled,
+				formSources
+			);
+			notifications.success(
+				executionGlobalDisabled ? 'Global execution paused' : 'Global execution resumed'
+			);
+		} catch (err) {
+			executionGlobalDisabled = previousGlobal;
+			const message = friendlyMessageFromError(err, 'Failed to update global execution control');
+			notifications.error(message);
+		} finally {
+			executionSettingsSaving = false;
+		}
+	}
+
+	async function toggleProviderExecutionDisabled(providerSlug: string, nextDisabled: boolean) {
+		const previousMap = { ...executionProviderDisabled };
+		executionProviderDisabled = { ...executionProviderDisabled, [providerSlug]: nextDisabled };
+		executionSettingsSaving = true;
+
+		try {
+			const settings = await client.updateSettings(
+				{
+					execution_global_disabled: executionGlobalDisabled,
+					execution_provider_disabled: executionProviderDisabled
+				},
+				{ showNotifications: false }
+			);
+			executionGlobalDisabled = Boolean(settings.execution_global_disabled);
+			executionProviderDisabled = normalizeProviderDisabledMap(
+				settings.execution_provider_disabled,
+				formSources
+			);
+			notifications.success(
+				nextDisabled
+					? `Execution paused for ${providerSlug}`
+					: `Execution resumed for ${providerSlug}`
+			);
+		} catch (err) {
+			executionProviderDisabled = previousMap;
+			const message = friendlyMessageFromError(err, 'Failed to update provider execution control');
+			notifications.error(message);
+		} finally {
+			executionSettingsSaving = false;
+		}
+	}
+
+	function providerExecutionIsPaused(providerSlug: string): boolean {
+		return executionGlobalDisabled || Boolean(executionProviderDisabled[providerSlug]);
 	}
 
 	async function loadDefinitions() {
@@ -231,12 +342,14 @@
 		loadDefinitions();
 		loadForms(); // CB-FORMS-003: also triggers loadFormHealthStatuses()
 		customActionsStore.reload();
+		loadExecutionSettings();
 	}
 
 	onMount(() => {
 		loadDefinitions();
 		loadForms();
 		customActionsStore.load({ status: 'active' });
+		loadExecutionSettings();
 	});
 
 	// ============================================================
@@ -424,16 +537,59 @@
 					actions.
 				</p>
 			{:else}
-				<div class="sf:flex sf:flex-wrap sf:gap-2 sf:mt-3">
+				<div class="sf:mt-3 sf:space-y-3">
+					<div class="sf:flex sf:items-center sf:justify-between sf:gap-3">
+						<div>
+							<p class="sf:text-sm sf:font-medium sf:text-slate-700">Global execution</p>
+							<p class="sf:text-xs sf:text-slate-500">
+								Pause all Sentient Forms runs without locking mapping edits.
+							</p>
+						</div>
+						<div class="sf:flex sf:items-center sf:gap-2">
+							<Badge variant={executionGlobalDisabled ? 'warning' : 'success'}>
+								{executionGlobalDisabled ? 'Paused' : 'Active'}
+							</Badge>
+							<Toggle
+								checked={!executionGlobalDisabled}
+								disabled={executionSettingsSaving || executionSettingsLoading}
+								onchange={() => toggleGlobalExecutionDisabled(!executionGlobalDisabled)}
+							/>
+						</div>
+					</div>
+
 					{#each formSources as source}
-						<Badge variant={source.isActive ? 'success' : 'warning'}>
-							{source.label}
-						</Badge>
+						<div class="sf:flex sf:items-center sf:justify-between sf:gap-3">
+							<div class="sf:flex sf:items-center sf:gap-2">
+								<span class="sf:text-sm sf:text-slate-800">{source.label}</span>
+								<Badge variant={source.isActive ? 'success' : 'warning'}>
+									{source.isActive ? 'Plugin active' : 'Plugin inactive'}
+								</Badge>
+							</div>
+							<div class="sf:flex sf:items-center sf:gap-2">
+								<Badge variant={providerExecutionIsPaused(source.slug) ? 'warning' : 'success'}>
+									{providerExecutionIsPaused(source.slug) ? 'Execution paused' : 'Execution active'}
+								</Badge>
+								<Toggle
+									checked={!Boolean(executionProviderDisabled[source.slug])}
+									disabled={executionSettingsSaving || executionSettingsLoading || !source.isActive}
+									onchange={() =>
+										toggleProviderExecutionDisabled(
+											source.slug,
+											!Boolean(executionProviderDisabled[source.slug])
+										)}
+								/>
+							</div>
+						</div>
 					{/each}
 				</div>
 				{#if activeSources.length === 0}
 					<Alert variant="warning" class="sf:mt-3">
 						Activate at least one form provider to configure actions.
+					</Alert>
+				{/if}
+				{#if executionGlobalDisabled}
+					<Alert variant="warning" class="sf:mt-3">
+						Global execution is paused. You can still configure mappings while runs are paused.
 					</Alert>
 				{/if}
 			{/if}

@@ -838,13 +838,22 @@
 			<!-- CB-FORMS-001: Per-form master disable toggle -->
 			<div
 				class="sf:flex sf:items-center sf:gap-2 sf:mr-3 sf:pr-3 sf:border-r sf:border-slate-300"
-				title={actionsState.sfDisabled
-					? 'Sentient Forms is disabled for this form'
+				title={actionsState.effectiveDisabled
+					? 'Sentient Forms execution is paused for this form'
 					: 'Sentient Forms is active for this form'}
 			>
 				<span class="sf:text-xs sf:font-medium sf:text-slate-600"
-					>{actionsState.sfDisabled ? 'Disabled' : 'Active'}</span
+					>{actionsState.effectiveDisabled ? 'Paused' : 'Active'}</span
 				>
+				{#if actionsState.globalDisabled}
+					<Badge variant="warning">Global pause</Badge>
+				{/if}
+				{#if actionsState.providerDisabled}
+					<Badge variant="warning">Provider pause</Badge>
+				{/if}
+				{#if actionsState.sfDisabled}
+					<Badge variant="warning">Form pause</Badge>
+				{/if}
 				<Toggle
 					checked={!actionsState.sfDisabled}
 					onchange={() =>
@@ -866,15 +875,25 @@
 	{/snippet}
 
 	<!-- CB-FORMS-001: Warning banner when form is disabled -->
-	{#if actionsState.sfDisabled}
+	{#if actionsState.effectiveDisabled}
 		<Alert variant="warning">
 			<div class="sf:flex sf:items-center sf:justify-between">
 				<div>
-					<p class="sf:font-medium">⚠ Sentient Forms is disabled for this form</p>
+					<p class="sf:font-medium">⚠ Sentient Forms execution is paused for this form</p>
 					<p class="sf:text-sm sf:mt-1">
-						All actions (spam detection, summaries, etc.) are paused. Toggle the switch above to
-						re-enable.
+						All runs are paused. Mapping and action edits remain available while paused.
 					</p>
+					<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
+						{#if actionsState.globalDisabled}
+							<Badge variant="warning">Global execution pause is enabled</Badge>
+						{/if}
+						{#if actionsState.providerDisabled}
+							<Badge variant="warning">Provider execution pause is enabled</Badge>
+						{/if}
+						{#if actionsState.sfDisabled}
+							<Badge variant="warning">This form is paused</Badge>
+						{/if}
+					</div>
 				</div>
 			</div>
 		</Alert>

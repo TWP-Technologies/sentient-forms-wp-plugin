@@ -715,6 +715,43 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         delete_option( $option_key );
     }
 
+    public function test_handle_validation_skips_all_actions_when_provider_is_globally_disabled(): void
+    {
+        $form_id    = 997;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+
+        update_option( $option_key, [
+            'sf_disabled'  => false,
+            'map_spam_v1'  => [
+                'central_action_id'          => 'spam_detection_v1',
+                'is_action_enabled_for_form' => true,
+                'trigger_hooks'              => [ 'gform_validation' ],
+            ],
+        ] );
+
+        update_option(
+            'sentient_forms_plugin_settings',
+            [
+                'execution_global_disabled'   => false,
+                'execution_provider_disabled' => [ 'gravity_forms' => true ],
+            ]
+        );
+
+        $validation_result = [
+            'is_valid' => true,
+            'form'     => [
+                'id'     => $form_id,
+                'fields' => [],
+            ],
+        ];
+
+        $result = $this->adapter->handle_validation( $validation_result );
+        $this->assertSame( $validation_result, $result, 'Provider-level disable should skip execution' );
+
+        delete_option( $option_key );
+        delete_option( 'sentient_forms_plugin_settings' );
+    }
+
     // =========================================================================
     // CA-EXEC-001: Structured Output Tests
     // =========================================================================
