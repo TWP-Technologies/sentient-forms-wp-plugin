@@ -389,7 +389,9 @@ test.describe('Actions admin flows', () => {
 		const summarizeRow = table.locator('tbody tr').filter({ hasText: 'Summarize' });
 		await summarizeRow.getByRole('button', { name: 'Configure' }).click();
 
+		await page.getByTestId('linked-actions-view-graph').click();
 		await page.getByTestId('dependency-node-map-1').click();
+		await page.getByTestId('linked-actions-view-table').click();
 
 		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
 		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
@@ -400,6 +402,48 @@ test.describe('Actions admin flows', () => {
 		const payload = request.postDataJSON() as Record<string, unknown>;
 		const settings = (payload.settings ?? {}) as Record<string, unknown>;
 		expect(settings.dependency_ids).toEqual(['map-1']);
+	});
+
+	test('toggles linked-actions views and exposes graph card controls', async ({ page }) => {
+		const linkages = [
+			{
+				local_mapping_id: 'map-1',
+				central_action_id: 'spam-check',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam check',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('form-actions-table')).toBeVisible();
+		await expect(page.getByTestId('dependency-graph')).toHaveCount(0);
+
+		await page.getByTestId('linked-actions-view-graph').click();
+		await expect(page.getByTestId('dependency-graph')).toBeVisible();
+		await expect(page.getByTestId('form-actions-table')).toHaveCount(0);
+		await expect(page.getByTestId('dependency-node-configure-map-1')).toBeVisible();
+		await expect(page.getByTestId('dependency-node-toggle-enabled-map-1')).toBeVisible();
+		await expect(page.getByTestId('dependency-node-remove-map-1')).toBeVisible();
+
+		await page.getByTestId('linked-actions-view-table').click();
+		await expect(page.getByTestId('form-actions-table')).toBeVisible();
+		await expect(page.getByTestId('dependency-graph')).toHaveCount(0);
 	});
 
 	test('prevents saving a cycle in dependency graph', async ({ page }) => {
@@ -442,14 +486,18 @@ test.describe('Actions admin flows', () => {
 		// First save map-1 -> map-2 (valid edge)
 		const spamRow = table.locator('tbody tr').filter({ hasText: 'Spam check' });
 		await spamRow.getByRole('button', { name: 'Configure' }).click();
+		await page.getByTestId('linked-actions-view-graph').click();
 		await page.getByTestId('dependency-node-map-2').click();
+		await page.getByTestId('linked-actions-view-table').click();
 		await spamRow.getByRole('button', { name: /^Save$/ }).click();
 		await page.waitForResponse(/forms\/\d+\/actions\/map-1$/, { timeout: 15_000 });
 
 		// Then attempt map-2 -> map-1 (cycle) and ensure request is blocked client-side.
 		const summarizeRow = table.locator('tbody tr').filter({ hasText: 'Summarize' });
 		await summarizeRow.getByRole('button', { name: 'Configure' }).click();
+		await page.getByTestId('linked-actions-view-graph').click();
 		await page.getByTestId('dependency-node-map-1').click();
+		await page.getByTestId('linked-actions-view-table').click();
 
 		const cycleRequestPromise = page
 			.waitForRequest(
@@ -504,7 +552,9 @@ test.describe('Actions admin flows', () => {
 		const summarizeRow = table.locator('tbody tr').filter({ hasText: 'Summarize' });
 
 		await summarizeRow.getByRole('button', { name: 'Configure' }).click();
+		await page.getByTestId('linked-actions-view-graph').click();
 		await page.getByTestId('dependency-node-map-1').click();
+		await page.getByTestId('linked-actions-view-table').click();
 
 		const mismatchRequestPromise = page
 			.waitForRequest(
