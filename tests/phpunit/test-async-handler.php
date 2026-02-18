@@ -576,6 +576,132 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertSame( HOUR_IN_SECONDS, $job_context['backoff_max_delay'] );
     }
 
+    public function test_process_action_requeues_when_dependency_is_pending(): void
+    {
+        $request_store = $this->plugin->get_async_request_store();
+        $request_store->record(
+            'dep_req_pending',
+            [
+                'status'    => 'queued',
+                'action_id' => 'spam_detection_v1',
+            ]
+        );
+
+        $data = [
+            'hook'  => 'gform_after_submission',
+            'form'  => [ 'id' => 201, 'title' => 'Dependency Wait' ],
+            'entry' => [ 'id' => 901, 'field_1' => 'wait' ],
+        ];
+        $settings = [
+            'central_action_id'     => 'summary_v1',
+            'action_type_indicator' => 'master',
+            'batch_settings'        => [ 'enabled' => false, 'delay_seconds' => 60, 'max_wait_seconds' => DAY_IN_SECONDS ],
+        ];
+        $context = [
+            'hook'                           => 'gform_after_submission',
+            'form_source'                    => 'gravity_forms',
+            'action_id'                      => 'map_dependent',
+            'local_mapping_id'               => 'map_dependent',
+            'dependency_mapping_ids'         => [ 'map_prereq' ],
+            'dependency_execution_request_ids' => [ 'map_prereq' => 'dep_req_pending' ],
+            'dependency_wait_started_at'     => time(),
+            'dependency_wait_max_seconds'    => 120,
+            'dependency_wait_poll_seconds'   => 5,
+        ];
+
+        $scheduled = $this->plugin->process_action_async(
+            'nonexistent_local_action',
+            $data,
+            $settings,
+            $context
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $queued_before = count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $job = $GLOBALS['__sentient_forms_async_queue']['enqueued'][ $queued_before - 1 ];
+
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $this->assertGreaterThan( $queued_before, count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] ) );
+
+        $metadata = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] );
+        $this->assertSame( 'retry_scheduled', $metadata['status'] ?? null );
+
+        $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'queued', $row['status'] ?? null );
+    }
+
+    public function test_process_action_marks_skipped_when_dependency_failed(): void
+    {
+        $request_store = $this->plugin->get_async_request_store();
+        $request_store->record(
+            'dep_req_failed',
+            [
+                'status'    => 'failed',
+                'action_id' => 'spam_detection_v1',
+            ]
+        );
+
+        $data = [
+            'hook'  => 'gform_after_submission',
+            'form'  => [ 'id' => 202, 'title' => 'Dependency Fail' ],
+            'entry' => [ 'id' => 902, 'field_1' => 'skip' ],
+        ];
+        $settings = [
+            'central_action_id'     => 'summary_v1',
+            'action_type_indicator' => 'master',
+            'batch_settings'        => [ 'enabled' => false, 'delay_seconds' => 60, 'max_wait_seconds' => DAY_IN_SECONDS ],
+        ];
+        $context = [
+            'hook'                           => 'gform_after_submission',
+            'form_source'                    => 'gravity_forms',
+            'action_id'                      => 'map_dependent',
+            'local_mapping_id'               => 'map_dependent',
+            'dependency_mapping_ids'         => [ 'map_prereq' ],
+            'dependency_execution_request_ids' => [ 'map_prereq' => 'dep_req_failed' ],
+            'dependency_wait_started_at'     => time(),
+            'dependency_wait_max_seconds'    => 120,
+            'dependency_wait_poll_seconds'   => 5,
+        ];
+
+        $scheduled = $this->plugin->process_action_async(
+            'nonexistent_local_action',
+            $data,
+            $settings,
+            $context
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $queued_before = count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $job = $GLOBALS['__sentient_forms_async_queue']['enqueued'][ $queued_before - 1 ];
+
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $this->assertSame( $queued_before, count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] ) );
+
+        $metadata = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] );
+        $this->assertSame( 'skipped', $metadata['status'] ?? null );
+
+        $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'skipped', $row['status'] ?? null );
+    }
+
     public function test_dispatch_action_evaluation_enqueues_evaluation_job(): void
     {
         $job = [

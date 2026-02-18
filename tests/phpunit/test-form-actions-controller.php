@@ -371,6 +371,180 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( [], $rules );
     }
 
+    public function test_sanitize_settings_dependency_ids_deduplicates_and_sanitizes(): void
+    {
+        $settings = [
+            'dependency_ids' => [ ' map_a ', 'map_a', '', 123 ],
+        ];
+
+        $sanitized = $this->invoke_private( 'sanitize_settings', [ $settings ] );
+        $this->assertSame( [ 'map_a', '123' ], $sanitized['dependency_ids'] ?? [] );
+    }
+
+    public function test_validate_mapping_dependencies_rejects_unknown_dependency(): void
+    {
+        $actions = [
+            'map_a' => [
+                'local_mapping_id'      => 'map_a',
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation' ],
+                'settings'              => [ 'dependency_ids' => [ 'missing_map' ] ],
+            ],
+        ];
+
+        $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
+        $this->assertWPError( $result );
+        $this->assertSame( 'rest_invalid_dependency_missing', $result->get_error_code() );
+    }
+
+    public function test_validate_mapping_dependencies_rejects_hook_mismatch(): void
+    {
+        $actions = [
+            'map_a' => [
+                'local_mapping_id'      => 'map_a',
+                'central_action_id'     => 'summary_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation', 'gform_after_submission' ],
+                'settings'              => [ 'dependency_ids' => [ 'map_b' ] ],
+            ],
+            'map_b' => [
+                'local_mapping_id'      => 'map_b',
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation' ],
+                'settings'              => [],
+            ],
+        ];
+
+        $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
+        $this->assertWPError( $result );
+        $this->assertSame( 'rest_invalid_dependency_hooks', $result->get_error_code() );
+    }
+
+    public function test_validate_mapping_dependencies_rejects_async_dependency_for_sync_after_submission_mapping(): void
+    {
+        $actions = [
+            'map_async' => [
+                'local_mapping_id'      => 'map_async',
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_after_submission' ],
+                'settings'              => [],
+            ],
+            'map_sync'  => [
+                'local_mapping_id'      => 'map_sync',
+                'central_action_id'     => 'custom_hello',
+                'action_type_indicator' => 'custom',
+                'trigger_hooks'         => [ 'gform_after_submission' ],
+                'settings'              => [
+                    'dependency_ids' => [ 'map_async' ],
+                    'execution_mode' => 'validation',
+                ],
+            ],
+        ];
+
+        $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
+        $this->assertWPError( $result );
+        $this->assertSame( 'rest_invalid_dependency_execution_mode', $result->get_error_code() );
+    }
+
+    public function test_validate_mapping_dependencies_allows_async_dependent_mapping_for_async_after_submission_dependency(): void
+    {
+        $actions = [
+            'map_async' => [
+                'local_mapping_id'      => 'map_async',
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_after_submission' ],
+                'settings'              => [],
+            ],
+            'map_child' => [
+                'local_mapping_id'      => 'map_child',
+                'central_action_id'     => 'custom_hello',
+                'action_type_indicator' => 'custom',
+                'trigger_hooks'         => [ 'gform_after_submission' ],
+                'settings'              => [
+                    'dependency_ids' => [ 'map_async' ],
+                    'execution_mode' => 'after_submission',
+                ],
+            ],
+        ];
+
+        $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
+        $this->assertTrue( $result );
+    }
+
+    public function test_validate_mapping_dependencies_rejects_cycles(): void
+    {
+        $actions = [
+            'map_a' => [
+                'local_mapping_id'      => 'map_a',
+                'central_action_id'     => 'summary_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation' ],
+                'settings'              => [ 'dependency_ids' => [ 'map_c' ] ],
+            ],
+            'map_b' => [
+                'local_mapping_id'      => 'map_b',
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation' ],
+                'settings'              => [ 'dependency_ids' => [ 'map_a' ] ],
+            ],
+            'map_c' => [
+                'local_mapping_id'      => 'map_c',
+                'central_action_id'     => 'entry_evaluation',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation' ],
+                'settings'              => [ 'dependency_ids' => [ 'map_b' ] ],
+            ],
+        ];
+
+        $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
+        $this->assertWPError( $result );
+        $this->assertSame( 'rest_invalid_dependency_cycle', $result->get_error_code() );
+    }
+
+    public function test_delete_form_action_item_removes_dependency_reference(): void
+    {
+        $option_key = 'sentient_forms_actions_gravity_forms_12';
+        update_option(
+            $option_key,
+            [
+                'map_a' => [
+                    'local_mapping_id'      => 'map_a',
+                    'central_action_id'     => 'spam_detection_v1',
+                    'action_type_indicator' => 'master',
+                    'trigger_hooks'         => [ 'gform_after_submission' ],
+                    'settings'              => [],
+                ],
+                'map_b' => [
+                    'local_mapping_id'      => 'map_b',
+                    'central_action_id'     => 'entry_evaluation',
+                    'action_type_indicator' => 'master',
+                    'trigger_hooks'         => [ 'gform_after_submission' ],
+                    'settings'              => [ 'dependency_ids' => [ 'map_a', 'map_a' ] ],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'DELETE', '/sentient-forms/v1/gravity_forms/forms/12/actions/map_a' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 12 );
+        $request->set_param( 'local_mapping_id', 'map_a' );
+
+        $response = $this->controller->delete_form_action_item( $request );
+        $data     = $response->get_data();
+        $stored   = get_option( $option_key, [] );
+
+        $this->assertTrue( $data['deleted'] ?? false );
+        $this->assertArrayNotHasKey( 'map_a', $stored );
+        $this->assertSame( [], $stored['map_b']['settings']['dependency_ids'] ?? [] );
+
+        delete_option( $option_key );
+    }
+
     // =========================================================================
     // CB-FORMS-001: Per-Form Master Disable Tests
     // =========================================================================

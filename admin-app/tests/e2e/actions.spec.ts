@@ -349,6 +349,177 @@ test.describe('Actions admin flows', () => {
 		expect(numericRule.value).toBe(100);
 	});
 
+	test('saves dependency_ids from the dependency graph editor', async ({ page }) => {
+		const linkages = [
+			{
+				local_mapping_id: 'map-1',
+				central_action_id: 'spam-check',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam check',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-2',
+				central_action_id: 'summarize',
+				action_type_indicator: 'master',
+				action_name_label: 'Summarize',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+
+		const table = page.getByTestId('form-actions-table');
+		const summarizeRow = table.locator('tbody tr').filter({ hasText: 'Summarize' });
+		await summarizeRow.getByRole('button', { name: 'Configure' }).click();
+
+		await page.getByTestId('dependency-node-map-1').click();
+
+		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
+		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
+		await summarizeRow.getByRole('button', { name: /^Save$/ }).click();
+
+		const request = await updateReq;
+		await updateRes;
+		const payload = request.postDataJSON() as Record<string, unknown>;
+		const settings = (payload.settings ?? {}) as Record<string, unknown>;
+		expect(settings.dependency_ids).toEqual(['map-1']);
+	});
+
+	test('prevents saving a cycle in dependency graph', async ({ page }) => {
+		const linkages = [
+			{
+				local_mapping_id: 'map-1',
+				central_action_id: 'spam-check',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam check',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-2',
+				central_action_id: 'summarize',
+				action_type_indicator: 'master',
+				action_name_label: 'Summarize',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = page.getByTestId('form-actions-table');
+
+		// First save map-1 -> map-2 (valid edge)
+		const spamRow = table.locator('tbody tr').filter({ hasText: 'Spam check' });
+		await spamRow.getByRole('button', { name: 'Configure' }).click();
+		await page.getByTestId('dependency-node-map-2').click();
+		await spamRow.getByRole('button', { name: /^Save$/ }).click();
+		await page.waitForResponse(/forms\/\d+\/actions\/map-1$/, { timeout: 15_000 });
+
+		// Then attempt map-2 -> map-1 (cycle) and ensure request is blocked client-side.
+		const summarizeRow = table.locator('tbody tr').filter({ hasText: 'Summarize' });
+		await summarizeRow.getByRole('button', { name: 'Configure' }).click();
+		await page.getByTestId('dependency-node-map-1').click();
+
+		const cycleRequestPromise = page
+			.waitForRequest(
+				(request) => request.method() === 'PUT' && /forms\/\d+\/actions\/map-2$/.test(request.url()),
+				{ timeout: 1_000 }
+			)
+			.then(() => true)
+			.catch(() => false);
+		await summarizeRow.getByRole('button', { name: /^Save$/ }).click();
+		const cycleRequestSent = await cycleRequestPromise;
+
+		expect(cycleRequestSent).toBe(false);
+		await expect(summarizeRow.getByRole('button', { name: /^Save$/ })).toBeVisible();
+	});
+
+	test('prevents saving async dependency to sync after-submission mapping', async ({ page }) => {
+		const linkages = [
+			{
+				local_mapping_id: 'map-1',
+				central_action_id: 'spam-check',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam check',
+				trigger_hooks: ['gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-2',
+				central_action_id: 'summarize',
+				action_type_indicator: 'custom',
+				action_name_label: 'Summarize',
+				trigger_hooks: ['gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: { execution_mode: 'validation' }
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = page.getByTestId('form-actions-table');
+		const summarizeRow = table.locator('tbody tr').filter({ hasText: 'Summarize' });
+
+		await summarizeRow.getByRole('button', { name: 'Configure' }).click();
+		await page.getByTestId('dependency-node-map-1').click();
+
+		const mismatchRequestPromise = page
+			.waitForRequest(
+				(request) => request.method() === 'PUT' && /forms\/\d+\/actions\/map-2$/.test(request.url()),
+				{ timeout: 1_000 }
+			)
+			.then(() => true)
+			.catch(() => false);
+		await summarizeRow.getByRole('button', { name: /^Save$/ }).click();
+		const mismatchRequestSent = await mismatchRequestPromise;
+
+		expect(mismatchRequestSent).toBe(false);
+		await expect(summarizeRow.getByRole('button', { name: /^Save$/ })).toBeVisible();
+	});
+
 		test('custom actions page renders even when backend endpoint is missing (404)', async ({
 			page
 		}) => {

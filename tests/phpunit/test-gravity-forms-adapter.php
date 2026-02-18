@@ -1,5 +1,74 @@
 <?php
 
+final class Sentient_Forms_Test_Tracking_Action implements Sentient_Forms_Action_Interface
+{
+    /** @var callable */
+    private $on_execute;
+    private string $id;
+
+    public function __construct( string $id, callable $on_execute )
+    {
+        $this->id         = $id;
+        $this->on_execute = $on_execute;
+    }
+
+    public function get_id(): string
+    {
+        return $this->id;
+    }
+
+    public function get_name(): string
+    {
+        return 'Tracking Action';
+    }
+
+    public function get_description(): string
+    {
+        return 'Test action that records executions.';
+    }
+
+    public function get_icon(): string
+    {
+        return 'dashicons-admin-tools';
+    }
+
+    public function get_settings(): array
+    {
+        return [];
+    }
+
+    public function get_hooks(): array
+    {
+        return [ 'gform_after_submission' ];
+    }
+
+    public function get_compatibility(): array
+    {
+        return [ 'gravity_forms' ];
+    }
+
+    public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | bool | array
+    {
+        call_user_func( $this->on_execute, $form_data, $settings, $entry_id, $form_id );
+        return [ 'ok' => true ];
+    }
+
+    public function estimate_cost( array $data, array $settings ): int
+    {
+        return 0;
+    }
+
+    public function get_settings_fields(): array
+    {
+        return [];
+    }
+
+    public function validate_settings( array $settings ): array
+    {
+        return $settings;
+    }
+}
+
 class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 {
     private Sentient_Forms_Gravity_Forms_Adapter $adapter;
@@ -962,6 +1031,226 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         remove_action( 'sentient_forms_async_job_scheduled', $listener, 10 );
 
         $this->assertGreaterThanOrEqual( 1, $scheduled_jobs );
+
+        delete_option( $option_key );
+    }
+
+    public function test_handle_validation_skips_dependent_mapping_when_prerequisite_is_skipped(): void
+    {
+        $form_id    = 992;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_prereq' => [
+                    'local_mapping_id'           => 'map_prereq',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'settings'                   => [
+                        'conditions' => [
+                            'enabled' => true,
+                            'root'    => [
+                                'type'  => 'group',
+                                'logic' => 'all',
+                                'rules' => [
+                                    [
+                                        'type'     => 'rule',
+                                        'field_id' => '999',
+                                        'operator' => 'eq',
+                                        'value'    => 'run',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+                'map_dependent' => [
+                    'local_mapping_id'           => 'map_dependent',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'fail_open'                  => false,
+                    'settings'                   => [
+                        'dependency_ids' => [ 'map_prereq' ],
+                    ],
+                ],
+            ]
+        );
+
+        $validation_result = [
+            'is_valid' => true,
+            'form'     => [
+                'id'     => $form_id,
+                'fields' => [],
+            ],
+        ];
+
+        $result = $this->adapter->handle_validation( $validation_result );
+        $this->assertTrue( $result['is_valid'] );
+        $this->assertEmpty( $result['form']['validation_message'] ?? '' );
+
+        delete_option( $option_key );
+    }
+
+    public function test_handle_after_submission_skips_dependent_mapping_when_prerequisite_disabled(): void
+    {
+        $form_id    = 991;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_prereq' => [
+                    'local_mapping_id'           => 'map_prereq',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => false,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                ],
+                'map_dependent' => [
+                    'local_mapping_id'           => 'map_dependent',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [
+                        'dependency_ids' => [ 'map_prereq' ],
+                    ],
+                ],
+            ]
+        );
+
+        $scheduled_jobs = 0;
+        $listener = static function () use ( &$scheduled_jobs ): void {
+            $scheduled_jobs++;
+        };
+
+        add_action( 'sentient_forms_async_job_scheduled', $listener, 10, 5 );
+        $this->adapter->handle_after_submission( [ 'id' => 303 ], [ 'id' => $form_id ] );
+        remove_action( 'sentient_forms_async_job_scheduled', $listener, 10 );
+
+        $this->assertSame( 0, $scheduled_jobs );
+        delete_option( $option_key );
+    }
+
+    public function test_handle_after_submission_blocks_sync_dependent_mapping_when_prerequisite_is_queued(): void
+    {
+        $form_id            = 989;
+        $option_key         = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $tracking_action_id = 'test_sync_dependency_action';
+        $execution_calls    = 0;
+
+        Sentient_Forms_Plugin::instance()->get_action_registry()->register_action(
+            new Sentient_Forms_Test_Tracking_Action(
+                $tracking_action_id,
+                static function () use ( &$execution_calls ): void {
+                    $execution_calls++;
+                }
+            )
+        );
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_prereq' => [
+                    'local_mapping_id'           => 'map_prereq',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [],
+                ],
+                'map_dependent' => [
+                    'local_mapping_id'           => 'map_dependent',
+                    'central_action_id'          => $tracking_action_id,
+                    'action_type_indicator'      => 'custom',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [
+                        'dependency_ids' => [ 'map_prereq' ],
+                        'execution_mode' => 'validation',
+                    ],
+                ],
+            ]
+        );
+
+        $scheduled_jobs = 0;
+        $listener = static function () use ( &$scheduled_jobs ): void {
+            $scheduled_jobs++;
+        };
+
+        add_action( 'sentient_forms_async_job_scheduled', $listener, 10, 5 );
+        $this->adapter->handle_after_submission( [ 'id' => 306 ], [ 'id' => $form_id ] );
+        remove_action( 'sentient_forms_async_job_scheduled', $listener, 10 );
+
+        $this->assertSame( 1, $scheduled_jobs );
+        $this->assertSame( 0, $execution_calls );
+
+        delete_option( $option_key );
+    }
+
+    public function test_handle_after_submission_passes_dependency_context_for_dependent_mapping(): void
+    {
+        $form_id    = 990;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_prereq' => [
+                    'local_mapping_id'           => 'map_prereq',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                ],
+                'map_dependent' => [
+                    'local_mapping_id'           => 'map_dependent',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [
+                        'dependency_ids' => [ 'map_prereq' ],
+                    ],
+                ],
+            ]
+        );
+
+        $captured_jobs = [];
+        $listener = static function ( $hook, $args ) use ( &$captured_jobs ): void {
+            $captured_jobs[] = [
+                'hook' => $hook,
+                'args' => $args,
+            ];
+        };
+
+        add_action( 'sentient_forms_async_job_scheduled', $listener, 10, 5 );
+        $this->adapter->handle_after_submission( [ 'id' => 304 ], [ 'id' => $form_id ] );
+        remove_action( 'sentient_forms_async_job_scheduled', $listener, 10 );
+
+        $dependent = null;
+        foreach ( $captured_jobs as $job )
+        {
+            $context = $job['args']['context'] ?? [];
+            if ( ( $context['local_mapping_id'] ?? '' ) === 'map_dependent' )
+            {
+                $dependent = $context;
+                break;
+            }
+        }
+
+        $this->assertNotNull( $dependent );
+        $this->assertSame( [ 'map_prereq' ], $dependent['dependency_mapping_ids'] ?? [] );
+        $this->assertArrayHasKey( 'map_prereq', $dependent['dependency_execution_request_ids'] ?? [] );
 
         delete_option( $option_key );
     }
