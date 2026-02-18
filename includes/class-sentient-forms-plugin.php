@@ -83,6 +83,7 @@ final class Sentient_Forms_Plugin
     private ?Sentient_Forms_Async_Request_Store $async_request_store = null;
 
     private ?Sentient_Forms_Telemetry_Service $telemetry_service = null;
+    private ?Sentient_Forms_Condition_Evaluator $condition_evaluator = null;
     private ?Sentient_Forms_Logger $logger = null;
 
     /**
@@ -610,6 +611,16 @@ final class Sentient_Forms_Plugin
         }
 
         return $this->async_request_store;
+    }
+
+    public function get_condition_evaluator(): Sentient_Forms_Condition_Evaluator
+    {
+        if ( null === $this->condition_evaluator )
+        {
+            $this->condition_evaluator = new Sentient_Forms_Condition_Evaluator();
+        }
+
+        return $this->condition_evaluator;
     }
 
     public function get_telemetry_service(): Sentient_Forms_Telemetry_Service

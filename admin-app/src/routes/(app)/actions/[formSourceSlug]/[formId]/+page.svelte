@@ -9,12 +9,14 @@
 		InputField,
 		SelectField,
 		FieldSelector,
+		ConditionBuilder,
 		TemplateLibrary,
 		ModelSelector,
 		Toggle
 	} from '$lib/components/ui';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { DEFAULT_BATCH_SETTINGS } from '$lib/utils/batch';
+	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { formActionsStore, formActionsState } from '$lib/stores/form-actions.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
@@ -513,7 +515,8 @@
 			execution_mode: baseSettings.execution_mode ?? 'after_submission',
 			// CB-EXEC-003/004: Batch settings with sensible defaults
 			batch_settings: baseSettings.batch_settings ?? { ...DEFAULT_BATCH_SETTINGS },
-			...baseSettings
+			...baseSettings,
+			conditions: baseSettings.conditions ?? createDefaultConditionConfig()
 		};
 		editingLinkageId = linkage.local_mapping_id;
 		// Note: Form-level config is now accessed via a separate "Edit Form Defaults" button
@@ -545,6 +548,14 @@
 					String(draftSettings.spam_confidence_threshold)
 				);
 			}
+		}
+
+		const conditionErrors = validateConditionConfig(
+			draftSettings.conditions ?? createDefaultConditionConfig()
+		);
+		if (conditionErrors.length > 0) {
+			notifications.error(conditionErrors[0]);
+			return;
 		}
 
 		await formActionsStore.updateAction(data.formSourceSlug, data.formId, linkage, {
@@ -1315,6 +1326,22 @@
 													}}
 													onchange={(mapping) => {
 														draftSettings = { ...draftSettings, input_mapping: mapping };
+													}}
+												/>
+											</div>
+
+											<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+												{#if fieldsLoading}
+													<p class="sf:text-sm sf:text-slate-500">
+														Loading form fields for conditional run options...
+													</p>
+												{/if}
+												<ConditionBuilder
+													fields={formFields}
+													value={draftSettings.conditions ?? createDefaultConditionConfig()}
+													disabled={fieldsLoading}
+													onchange={(conditions) => {
+														draftSettings = { ...draftSettings, conditions };
 													}}
 												/>
 											</div>

@@ -102,6 +102,275 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 604800, $batch['max_wait_seconds'] ?? null );
     }
 
+    public function test_sanitize_settings_conditions_keeps_nested_rules_and_numeric_values(): void
+    {
+        $settings = [
+            'conditions' => [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'any',
+                    'rules' => [
+                        [
+                            'type'     => 'rule',
+                            'field_id' => '1',
+                            'operator' => 'contains',
+                            'value'    => 'urgent',
+                        ],
+                        [
+                            'type'  => 'group',
+                            'logic' => 'all',
+                            'rules' => [
+                                [
+                                    'type'     => 'rule',
+                                    'field_id' => '2',
+                                    'operator' => 'gte',
+                                    'value'    => '10.5',
+                                ],
+                                [
+                                    'type'     => 'rule',
+                                    'field_id' => '3',
+                                    'operator' => 'in',
+                                    'value'    => [ 'sales', 'billing', '' ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $sanitized  = $this->invoke_private( 'sanitize_settings', [ $settings ] );
+        $conditions = $sanitized['conditions'] ?? null;
+
+        $this->assertIsArray( $conditions );
+        $this->assertTrue( $conditions['enabled'] ?? false );
+        $this->assertSame( 'group', $conditions['root']['type'] ?? null );
+        $this->assertSame( 'any', $conditions['root']['logic'] ?? null );
+
+        $nested_rules = $conditions['root']['rules'][1]['rules'] ?? [];
+        $this->assertSame( 10.5, $nested_rules[0]['value'] ?? null );
+        $this->assertSame( [ 'sales', 'billing' ], $nested_rules[1]['value'] ?? [] );
+    }
+
+    public function test_sanitize_settings_conditions_drops_invalid_rules(): void
+    {
+        $settings = [
+            'conditions' => [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [
+                        [
+                            'type'     => 'rule',
+                            'field_id' => '',
+                            'operator' => 'eq',
+                            'value'    => 'x',
+                        ],
+                        [
+                            'type'     => 'rule',
+                            'field_id' => '4',
+                            'operator' => 'invalid_operator',
+                            'value'    => 'x',
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $sanitized = $this->invoke_private( 'sanitize_settings', [ $settings ] );
+        $rules     = $sanitized['conditions']['root']['rules'] ?? [];
+
+        $this->assertSame( [], $rules );
+    }
+
+    public function test_sanitize_settings_conditions_preserves_rule_inside_depth_three_group(): void
+    {
+        $settings = [
+            'conditions' => [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [
+                        [
+                            'type'  => 'group',
+                            'logic' => 'all',
+                            'rules' => [
+                                [
+                                    'type'  => 'group',
+                                    'logic' => 'all',
+                                    'rules' => [
+                                        [
+                                            'type'     => 'rule',
+                                            'field_id' => '9',
+                                            'operator' => 'eq',
+                                            'value'    => 'run',
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $sanitized = $this->invoke_private( 'sanitize_settings', [ $settings ] );
+        $rule      = $sanitized['conditions']['root']['rules'][0]['rules'][0]['rules'][0] ?? null;
+
+        $this->assertIsArray( $rule );
+        $this->assertSame( '9', $rule['field_id'] ?? null );
+        $this->assertSame( 'eq', $rule['operator'] ?? null );
+        $this->assertSame( 'run', $rule['value'] ?? null );
+    }
+
+    public function test_sanitize_settings_conditions_prunes_nodes_deeper_than_depth_limit(): void
+    {
+        $settings = [
+            'conditions' => [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [
+                        [
+                            'type'  => 'group',
+                            'logic' => 'all',
+                            'rules' => [
+                                [
+                                    'type'  => 'group',
+                                    'logic' => 'all',
+                                    'rules' => [
+                                        [
+                                            'type'  => 'group',
+                                            'logic' => 'all',
+                                            'rules' => [
+                                                [
+                                                    'type'     => 'rule',
+                                                    'field_id' => '10',
+                                                    'operator' => 'eq',
+                                                    'value'    => 'run',
+                                                ],
+                                            ],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $sanitized = $this->invoke_private( 'sanitize_settings', [ $settings ] );
+        $rules     = $sanitized['conditions']['root']['rules'][0]['rules'][0]['rules'] ?? [];
+
+        $this->assertSame( [], $rules );
+    }
+
+    public function test_sanitize_settings_conditions_enforces_node_limit(): void
+    {
+        $rules = [];
+        for ( $index = 0; $index < 60; $index++ )
+        {
+            $rules[] = [
+                'type'     => 'rule',
+                'field_id' => (string) ( $index + 1 ),
+                'operator' => 'is_empty',
+            ];
+        }
+
+        $settings = [
+            'conditions' => [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => $rules,
+                ],
+            ],
+        ];
+
+        $sanitized_rules = $this->invoke_private( 'sanitize_settings', [ $settings ] )['conditions']['root']['rules'] ?? [];
+
+        $this->assertLessThanOrEqual( 49, count( $sanitized_rules ) );
+        $this->assertNotEmpty( $sanitized_rules );
+    }
+
+    public function test_sanitize_settings_conditions_keeps_is_empty_without_value(): void
+    {
+        $settings = [
+            'conditions' => [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [
+                        [
+                            'type'     => 'rule',
+                            'field_id' => '5',
+                            'operator' => 'is_empty',
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $rule = $this->invoke_private( 'sanitize_settings', [ $settings ] )['conditions']['root']['rules'][0] ?? null;
+        $this->assertIsArray( $rule );
+        $this->assertSame( 'is_empty', $rule['operator'] ?? null );
+        $this->assertArrayNotHasKey( 'value', $rule );
+    }
+
+    public function test_sanitize_settings_conditions_drops_eq_rule_when_value_missing(): void
+    {
+        $settings = [
+            'conditions' => [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [
+                        [
+                            'type'     => 'rule',
+                            'field_id' => '5',
+                            'operator' => 'eq',
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $rules = $this->invoke_private( 'sanitize_settings', [ $settings ] )['conditions']['root']['rules'] ?? [];
+        $this->assertSame( [], $rules );
+    }
+
+    public function test_sanitize_settings_conditions_drops_numeric_rule_when_value_not_numeric(): void
+    {
+        $settings = [
+            'conditions' => [
+                'enabled' => true,
+                'root'    => [
+                    'type'  => 'group',
+                    'logic' => 'all',
+                    'rules' => [
+                        [
+                            'type'     => 'rule',
+                            'field_id' => '2',
+                            'operator' => 'gt',
+                            'value'    => 'not-a-number',
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $rules = $this->invoke_private( 'sanitize_settings', [ $settings ] )['conditions']['root']['rules'] ?? [];
+        $this->assertSame( [], $rules );
+    }
+
     // =========================================================================
     // CB-FORMS-001: Per-Form Master Disable Tests
     // =========================================================================

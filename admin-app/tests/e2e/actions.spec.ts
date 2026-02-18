@@ -70,6 +70,12 @@ const baseLinkages = [
 	}
 ];
 
+const baseFormFields = [
+	{ id: '1', label: 'Subject', type: 'text' },
+	{ id: '2', label: 'Message', type: 'textarea' },
+	{ id: '3', label: 'Amount', type: 'number' }
+];
+
 const statusUnknown = {
 	status: 'unknown',
 	last_run_at: null,
@@ -222,6 +228,125 @@ test.describe('Actions admin flows', () => {
 		// Switch to custom actions tab and ensure the sample action is shown
 		await page.getByRole('button', { name: 'Custom actions' }).click();
 		await expect(form.getByText('Hello action')).toBeVisible();
+	});
+
+	test('saves conditional run settings from mapping editor', async ({ page }) => {
+		const linkages = [
+			{
+				...baseLinkages[0],
+				settings: {}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = page.getByTestId('form-actions-table');
+		const firstRow = table.locator('tbody tr').first();
+		await firstRow.getByRole('button', { name: 'Configure' }).click();
+
+		const enableConditionalRun = page.getByRole('checkbox', { name: 'Enable conditional run' });
+		await expect(enableConditionalRun).toBeVisible();
+		await enableConditionalRun.check();
+		await page.getByRole('button', { name: 'Add rule' }).click();
+		await page.locator('label:has-text("Field") select').first().selectOption('1');
+		await page.locator('label:has-text("Value") input').first().fill('urgent');
+
+		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-1$/, { timeout: 15_000 });
+		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-1$/, { timeout: 15_000 });
+		await page.getByRole('button', { name: /^Save$/ }).click();
+
+		const request = await updateReq;
+		await updateRes;
+		const payload = request.postDataJSON() as Record<string, unknown>;
+		const settings = (payload.settings ?? {}) as Record<string, unknown>;
+		const conditions = (settings.conditions ?? {}) as Record<string, unknown>;
+		const root = (conditions.root ?? {}) as Record<string, unknown>;
+		const rules = (root.rules ?? []) as Array<Record<string, unknown>>;
+
+		expect(conditions.enabled).toBe(true);
+		expect(root.logic).toBe('all');
+		expect(rules[0]?.field_id).toBe('1');
+		expect(rules[0]?.operator).toBe('eq');
+		expect(rules[0]?.value).toBe('urgent');
+	});
+
+	test('saves nested conditional run settings with list and numeric operators', async ({ page }) => {
+		const linkages = [
+			{
+				...baseLinkages[0],
+				settings: {}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = page.getByTestId('form-actions-table');
+		const firstRow = table.locator('tbody tr').first();
+		await firstRow.getByRole('button', { name: 'Configure' }).click();
+
+		const enableConditionalRun = page.getByRole('checkbox', { name: 'Enable conditional run' });
+		await expect(enableConditionalRun).toBeVisible();
+		await enableConditionalRun.check();
+
+		await page.getByRole('button', { name: 'Add group' }).first().click();
+		await page.getByRole('button', { name: 'Add rule' }).first().click();
+
+		await page.locator('label:has-text("Field") select').first().selectOption('2');
+		await page.locator('label:has-text("Operator") select').first().selectOption('in');
+		await page
+			.locator('label:has-text("Values (comma-separated)") input')
+			.first()
+			.fill('sales, billing');
+
+		await page.getByRole('button', { name: 'Add rule' }).last().click();
+		await page.locator('label:has-text("Field") select').nth(1).selectOption('3');
+		await page.locator('label:has-text("Operator") select').nth(1).selectOption('gt');
+		await page.locator('label:has-text("Numeric value") input').first().fill('100');
+
+		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-1$/, { timeout: 15_000 });
+		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-1$/, { timeout: 15_000 });
+		await page.getByRole('button', { name: /^Save$/ }).click();
+
+		const request = await updateReq;
+		await updateRes;
+		const payload = request.postDataJSON() as Record<string, unknown>;
+		const settings = (payload.settings ?? {}) as Record<string, unknown>;
+		const conditions = (settings.conditions ?? {}) as Record<string, unknown>;
+		const root = (conditions.root ?? {}) as Record<string, unknown>;
+		const rules = (root.rules ?? []) as Array<Record<string, unknown>>;
+		const nestedGroup = (rules[0] ?? {}) as Record<string, unknown>;
+		const nestedRules = (nestedGroup.rules ?? []) as Array<Record<string, unknown>>;
+		const numericRule = (rules[1] ?? {}) as Record<string, unknown>;
+
+		expect(conditions.enabled).toBe(true);
+		expect(root.logic).toBe('all');
+		expect(nestedGroup.type).toBe('group');
+		expect(nestedRules[0]?.operator).toBe('in');
+		expect(nestedRules[0]?.value).toEqual(['sales', 'billing']);
+		expect(numericRule.operator).toBe('gt');
+		expect(numericRule.value).toBe(100);
 	});
 
 		test('custom actions page renders even when backend endpoint is missing (404)', async ({

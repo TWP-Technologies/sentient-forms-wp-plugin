@@ -44,6 +44,30 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         'gform_after_submission',
     ];
 
+    /** Maximum allowed nested depth for mapping condition groups. */
+    private const MAX_CONDITION_DEPTH = 3;
+
+    /** Maximum allowed node count for a mapping condition tree. */
+    private const MAX_CONDITION_NODES = 50;
+
+    /** Supported operators for conditional run rules (CB-FORMS-006). */
+    private const CONDITION_OPERATORS = [
+        'eq',
+        'neq',
+        'contains',
+        'not_contains',
+        'starts_with',
+        'ends_with',
+        'in',
+        'not_in',
+        'is_empty',
+        'is_not_empty',
+        'gt',
+        'gte',
+        'lt',
+        'lte',
+    ];
+
     public function __construct()
     {
         parent::__construct();
@@ -1119,6 +1143,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 continue;
             }
 
+            if ( 'conditions' === $key && is_array( $value ) )
+            {
+                $sanitized[ $key ] = $this->sanitize_conditions( $value );
+                continue;
+            }
+
             if ( is_array( $value ) )
             {
                 $sanitized[ $key ] = $this->sanitize_settings( $value );
@@ -1150,5 +1180,204 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             'delay_seconds' => max( 10, min( 3600, (int) ( $raw['delay_seconds'] ?? 60 ) ) ),
             'max_wait_seconds' => max( 43200, min( 604800, (int) ( $raw['max_wait_seconds'] ?? DAY_IN_SECONDS ) ) ),
         ];
+    }
+
+    /**
+     * CB-FORMS-006: Sanitize conditional run settings.
+     *
+     * @param array $raw Raw condition config.
+     *
+     * @return array
+     */
+    private function sanitize_conditions( array $raw ): array
+    {
+        $node_count = 0;
+        $root       = null;
+
+        if ( isset( $raw['root'] ) && is_array( $raw['root'] ) )
+        {
+            $root = $this->sanitize_condition_node( $raw['root'], 1, $node_count );
+        }
+
+        if ( ! is_array( $root ) )
+        {
+            $root = [
+                'type'  => 'group',
+                'logic' => 'all',
+                'rules' => [],
+            ];
+        }
+
+        return [
+            'enabled' => ! empty( $raw['enabled'] ),
+            'root'    => $root,
+        ];
+    }
+
+    /**
+     * Sanitize a condition node recursively.
+     *
+     * @param array $node       Raw condition node.
+     * @param int   $depth      Current recursion depth.
+     * @param int   $node_count Running node counter.
+     *
+     * @return array|null
+     */
+    private function sanitize_condition_node( array $node, int $depth, int &$node_count ): ?array
+    {
+        if ( $depth > self::MAX_CONDITION_DEPTH )
+        {
+            return null;
+        }
+
+        $node_count++;
+        if ( $node_count > self::MAX_CONDITION_NODES )
+        {
+            return null;
+        }
+
+        $type = sanitize_key( (string) ( $node['type'] ?? '' ) );
+        if ( 'group' === $type )
+        {
+            $logic = sanitize_key( (string) ( $node['logic'] ?? 'all' ) );
+            $logic = in_array( $logic, [ 'all', 'any' ], true ) ? $logic : 'all';
+            $rules = [];
+
+            if ( isset( $node['rules'] ) && is_array( $node['rules'] ) )
+            {
+                foreach ( $node['rules'] as $child )
+                {
+                    if ( ! is_array( $child ) )
+                    {
+                        continue;
+                    }
+
+                    $child_type      = sanitize_key( (string) ( $child['type'] ?? '' ) );
+                    $child_depth     = 'group' === $child_type ? $depth + 1 : $depth;
+                    $sanitized_child = $this->sanitize_condition_node( $child, $child_depth, $node_count );
+                    if ( null !== $sanitized_child )
+                    {
+                        $rules[] = $sanitized_child;
+                    }
+                }
+            }
+
+            return [
+                'type'  => 'group',
+                'logic' => $logic,
+                'rules' => array_values( $rules ),
+            ];
+        }
+
+        if ( 'rule' !== $type )
+        {
+            return null;
+        }
+
+        $field_id = isset( $node['field_id'] ) ? sanitize_text_field( (string) $node['field_id'] ) : '';
+        if ( '' === $field_id )
+        {
+            return null;
+        }
+
+        $operator = sanitize_key( (string) ( $node['operator'] ?? '' ) );
+        if ( ! in_array( $operator, self::CONDITION_OPERATORS, true ) )
+        {
+            return null;
+        }
+
+        $sanitized = [
+            'type'     => 'rule',
+            'field_id' => $field_id,
+            'operator' => $operator,
+        ];
+
+        if ( $this->condition_operator_requires_value( $operator ) )
+        {
+            if ( ! array_key_exists( 'value', $node ) )
+            {
+                return null;
+            }
+
+            $value = $this->sanitize_condition_value( $operator, $node['value'] );
+            if ( null === $value )
+            {
+                return null;
+            }
+
+            $sanitized['value'] = $value;
+        }
+
+        return $sanitized;
+    }
+
+    /**
+     * Determine whether a condition operator requires a value.
+     *
+     * @param string $operator Operator key.
+     *
+     * @return bool
+     */
+    private function condition_operator_requires_value( string $operator ): bool
+    {
+        return ! in_array( $operator, [ 'is_empty', 'is_not_empty' ], true );
+    }
+
+    /**
+     * Sanitize condition rule value by operator.
+     *
+     * @param string $operator Operator key.
+     * @param mixed  $raw      Raw value.
+     *
+     * @return mixed|null
+     */
+    private function sanitize_condition_value( string $operator, $raw )
+    {
+        if ( in_array( $operator, [ 'in', 'not_in' ], true ) )
+        {
+            if ( ! is_array( $raw ) )
+            {
+                return null;
+            }
+
+            $items = [];
+            foreach ( $raw as $value )
+            {
+                if ( ! is_scalar( $value ) )
+                {
+                    continue;
+                }
+
+                $text = sanitize_text_field( (string) $value );
+                if ( '' !== $text )
+                {
+                    $items[] = $text;
+                }
+            }
+
+            if ( empty( $items ) )
+            {
+                return null;
+            }
+
+            return array_values( array_unique( $items ) );
+        }
+
+        if ( in_array( $operator, [ 'gt', 'gte', 'lt', 'lte' ], true ) )
+        {
+            if ( ! is_scalar( $raw ) || ! is_numeric( $raw ) )
+            {
+                return null;
+            }
+
+            return (float) $raw;
+        }
+
+        if ( ! is_scalar( $raw ) )
+        {
+            return null;
+        }
+
+        return sanitize_text_field( (string) $raw );
     }
 }

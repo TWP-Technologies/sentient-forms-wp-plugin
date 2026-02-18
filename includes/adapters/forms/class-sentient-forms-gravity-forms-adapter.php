@@ -146,6 +146,24 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
+            // Prepare entry data before condition evaluation.
+            $entry = $this->prepare_entry_from_submission();
+
+            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $action_settings, $entry ) )
+            {
+                $logger->info(
+                    'validation skipped by mapping conditions',
+                    [
+                        'hook'           => 'gform_validation',
+                        'action_id'      => $action_id,
+                        'mapping_id'     => $mapping_id,
+                        'form_id'        => $form_id,
+                        'correlation_id' => $correlation_id,
+                    ]
+                );
+                continue;
+            }
+
             $logger->info(
                 'validation start',
                 [
@@ -157,7 +175,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             );
 
             // Prepare data for the action
-            $entry = $this->prepare_entry_from_submission();
             $data  = [
                 'form'              => $form,
                 'entry'             => $entry,
@@ -267,6 +284,22 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                  empty( $action_settings[ 'trigger_hooks' ] ) ||
                  !in_array( 'gform_after_submission', (array) $action_settings[ 'trigger_hooks' ] ) )
             {
+                continue;
+            }
+
+            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $action_settings, $entry ) )
+            {
+                $logger->info(
+                    'after-submission skipped by mapping conditions',
+                    [
+                        'hook'           => 'gform_after_submission',
+                        'action_id'      => $action_settings['central_action_id'] ?? '',
+                        'mapping_id'     => $mapping_id,
+                        'form_id'        => $form_id,
+                        'entry_id'       => $entry['id'] ?? null,
+                        'correlation_id' => $correlation_id,
+                    ]
+                );
                 continue;
             }
 

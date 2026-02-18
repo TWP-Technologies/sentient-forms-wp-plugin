@@ -752,6 +752,220 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         delete_option( 'sentient_forms_plugin_settings' );
     }
 
+    public function test_handle_validation_skips_mapping_when_conditions_do_not_match(): void
+    {
+        $form_id    = 996;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_conditional' => [
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'fail_open'                  => false,
+                    'settings'                   => [
+                        'conditions' => [
+                            'enabled' => true,
+                            'root'    => [
+                                'type'  => 'group',
+                                'logic' => 'all',
+                                'rules' => [
+                                    [
+                                        'type'     => 'rule',
+                                        'field_id' => '999',
+                                        'operator' => 'eq',
+                                        'value'    => 'run',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $validation_result = [
+            'is_valid' => true,
+            'form'     => [
+                'id'     => $form_id,
+                'fields' => [],
+            ],
+        ];
+
+        $result = $this->adapter->handle_validation( $validation_result );
+        $this->assertSame( $validation_result, $result );
+
+        delete_option( $option_key );
+    }
+
+    public function test_handle_after_submission_skips_mapping_when_conditions_do_not_match(): void
+    {
+        $form_id    = 995;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_conditional' => [
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [
+                        'conditions' => [
+                            'enabled' => true,
+                            'root'    => [
+                                'type'  => 'group',
+                                'logic' => 'all',
+                                'rules' => [
+                                    [
+                                        'type'     => 'rule',
+                                        'field_id' => '7',
+                                        'operator' => 'contains',
+                                        'value'    => 'approved',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $scheduled_jobs = 0;
+        $listener = static function () use ( &$scheduled_jobs ): void {
+            $scheduled_jobs++;
+        };
+
+        add_action( 'sentient_forms_async_job_scheduled', $listener, 10, 5 );
+
+        $entry = [
+            'id' => 42,
+            '1'  => 'hello world',
+        ];
+        $form = [ 'id' => $form_id ];
+
+        $this->adapter->handle_after_submission( $entry, $form );
+
+        remove_action( 'sentient_forms_async_job_scheduled', $listener, 10 );
+
+        $this->assertSame( 0, $scheduled_jobs );
+
+        delete_option( $option_key );
+    }
+
+    public function test_handle_after_submission_enqueues_mapping_when_conditions_match(): void
+    {
+        $form_id    = 994;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_conditional' => [
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [
+                        'conditions' => [
+                            'enabled' => true,
+                            'root'    => [
+                                'type'  => 'group',
+                                'logic' => 'all',
+                                'rules' => [
+                                    [
+                                        'type'     => 'rule',
+                                        'field_id' => '7',
+                                        'operator' => 'contains',
+                                        'value'    => 'approved',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $scheduled_jobs = 0;
+        $listener = static function () use ( &$scheduled_jobs ): void {
+            $scheduled_jobs++;
+        };
+
+        add_action( 'sentient_forms_async_job_scheduled', $listener, 10, 5 );
+
+        $entry = [
+            'id' => 142,
+            '7'  => 'approved by reviewer',
+        ];
+        $form = [ 'id' => $form_id ];
+
+        $this->adapter->handle_after_submission( $entry, $form );
+
+        remove_action( 'sentient_forms_async_job_scheduled', $listener, 10 );
+
+        $this->assertGreaterThanOrEqual( 1, $scheduled_jobs );
+
+        delete_option( $option_key );
+    }
+
+    public function test_handle_after_submission_enqueues_mapping_when_conditions_disabled(): void
+    {
+        $form_id    = 993;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_conditional' => [
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [
+                        'conditions' => [
+                            'enabled' => false,
+                            'root'    => [
+                                'type'  => 'group',
+                                'logic' => 'all',
+                                'rules' => [],
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $scheduled_jobs = 0;
+        $listener = static function () use ( &$scheduled_jobs ): void {
+            $scheduled_jobs++;
+        };
+
+        add_action( 'sentient_forms_async_job_scheduled', $listener, 10, 5 );
+
+        $entry = [
+            'id' => 143,
+            '1'  => 'anything',
+        ];
+        $form = [ 'id' => $form_id ];
+
+        $this->adapter->handle_after_submission( $entry, $form );
+
+        remove_action( 'sentient_forms_async_job_scheduled', $listener, 10 );
+
+        $this->assertGreaterThanOrEqual( 1, $scheduled_jobs );
+
+        delete_option( $option_key );
+    }
+
     // =========================================================================
     // CA-EXEC-001: Structured Output Tests
     // =========================================================================

@@ -15,6 +15,7 @@ export { default as SlugGenerator } from './slug-generator.svelte';
 export { default as PromptBuilder } from './prompt-builder.svelte';
 export { default as ModelSelect } from './model-select.svelte';
 export { default as FieldSelector } from './field-selector.svelte';
+export { default as ConditionBuilder } from './condition-builder.svelte';
 export { default as TemplateLibrary } from './TemplateLibrary.svelte';
 export { default as ExecutionStatusBadge } from './execution-status-badge.svelte';
 export { default as ModelSelector } from './model-selector.svelte';

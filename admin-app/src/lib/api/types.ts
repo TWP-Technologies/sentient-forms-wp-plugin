@@ -170,6 +170,44 @@ export interface InputMapping {
 	include_metadata?: boolean;
 }
 
+export type ConditionLogic = 'all' | 'any';
+
+export type ConditionOperator =
+	| 'eq'
+	| 'neq'
+	| 'contains'
+	| 'not_contains'
+	| 'starts_with'
+	| 'ends_with'
+	| 'in'
+	| 'not_in'
+	| 'is_empty'
+	| 'is_not_empty'
+	| 'gt'
+	| 'gte'
+	| 'lt'
+	| 'lte';
+
+export interface ConditionRule {
+	type: 'rule';
+	field_id: string;
+	operator: ConditionOperator;
+	value?: string | number | Array<string | number>;
+}
+
+export interface ConditionGroup {
+	type: 'group';
+	logic: ConditionLogic;
+	rules: ConditionNode[];
+}
+
+export type ConditionNode = ConditionRule | ConditionGroup;
+
+export interface MappingConditionsConfig {
+	enabled: boolean;
+	root: ConditionGroup;
+}
+
 /**
  * Batch execution settings for after-submission actions (CB-EXEC-003/004)
  */
@@ -188,6 +226,8 @@ export interface BatchSettings {
 export interface FormActionSettings {
 	/** Field selection configuration */
 	input_mapping?: InputMapping;
+	/** Conditional run gates for this mapping (CB-FORMS-006) */
+	conditions?: MappingConditionsConfig;
 	/** Prompt overrides for this mapping */
 	prompt_overrides?: Record<string, unknown>;
 	/** Execution mode: validation (sync) or after_submission (async) - CB-EXEC-002 */
@@ -443,6 +483,7 @@ export interface MappingSettings {
 		field_ids?: string[];
 		include_metadata?: boolean;
 	};
+	conditions?: MappingConditionsConfig;
 	effect_mapping?: Record<string, {
 		mark_spam?: boolean;
 		notify_admin?: boolean;

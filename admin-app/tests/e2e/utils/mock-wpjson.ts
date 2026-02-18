@@ -7,6 +7,7 @@ type Routes = {
 		status?: unknown;
 		settings?: Record<string, unknown>;
 		formsActions?: unknown[];
+		formFields?: unknown[];
 		creditBalance?: unknown;
 		executionStatus?: Record<number, unknown>;
 		createResponse?: (payload: Record<string, unknown>) => unknown;
@@ -107,6 +108,14 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
+		if (routes.actions?.formFields && /forms\/\d+\/actions\/fields$/.test(url) && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(routes.actions.formFields)
+			});
+		}
+
 		if (routes.actions?.formsActions && /forms\/\d+\/actions$/.test(url) && method === 'POST') {
 			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			const newLinkage =
@@ -126,6 +135,47 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				status: 201,
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify(newLinkage)
+			});
+		}
+
+		if (
+			routes.actions?.formsActions &&
+			/forms\/\d+\/actions\/[^/]+$/.test(url) &&
+			method === 'PUT'
+		) {
+			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+			const localMappingId = decodeURIComponent(url.split('/').pop() ?? '');
+			const index = routes.actions.formsActions.findIndex(
+				(item) =>
+					typeof item === 'object' &&
+					item !== null &&
+					(item as Record<string, unknown>).local_mapping_id === localMappingId
+			);
+
+			if (index === -1) {
+				return route.fulfill({
+					status: 404,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ success: false, message: 'Not found' })
+				});
+			}
+
+			const current = routes.actions.formsActions[index] as Record<string, unknown>;
+			const merged = {
+				...current,
+				...body,
+				settings: {
+					...(typeof current.settings === 'object' && current.settings ? current.settings : {}),
+					...(typeof body.settings === 'object' && body.settings ? body.settings : {})
+				}
+			};
+
+			routes.actions.formsActions[index] = merged;
+
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(merged)
 			});
 		}
 
