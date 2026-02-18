@@ -58,7 +58,9 @@ export function setMappingDependencyIds(
 	return nextSettings;
 }
 
-export function validateMappingDependencies(items: FormActionLinkage[]): DependencyValidationIssue[] {
+export function validateMappingDependencies(
+	items: FormActionLinkage[]
+): DependencyValidationIssue[] {
 	const issues: DependencyValidationIssue[] = [];
 	const byId = new Map(items.map((item) => [item.local_mapping_id, item]));
 
@@ -215,7 +217,13 @@ function normalizeBoolean(value: unknown): boolean {
 	if (typeof value !== 'string') return Boolean(value);
 
 	const normalized = value.trim().toLowerCase();
-	if (normalized === '' || normalized === '0' || normalized === 'false' || normalized === 'off' || normalized === 'no') {
+	if (
+		normalized === '' ||
+		normalized === '0' ||
+		normalized === 'false' ||
+		normalized === 'off' ||
+		normalized === 'no'
+	) {
 		return false;
 	}
 

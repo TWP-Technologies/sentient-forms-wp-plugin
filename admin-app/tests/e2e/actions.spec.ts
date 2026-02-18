@@ -281,7 +281,9 @@ test.describe('Actions admin flows', () => {
 		expect(rules[0]?.value).toBe('urgent');
 	});
 
-	test('saves nested conditional run settings with list and numeric operators', async ({ page }) => {
+	test('saves nested conditional run settings with list and numeric operators', async ({
+		page
+	}) => {
 		const linkages = [
 			{
 				...baseLinkages[0],
@@ -465,7 +467,10 @@ test.describe('Actions admin flows', () => {
 		await page.getByTestId('dependency-node-toggle-enabled-map-1').click();
 		const disableRequest = await disableReq;
 		await disableRes;
-		expect((disableRequest.postDataJSON() as { is_action_enabled_for_form?: boolean }).is_action_enabled_for_form).toBe(false);
+		expect(
+			(disableRequest.postDataJSON() as { is_action_enabled_for_form?: boolean })
+				.is_action_enabled_for_form
+		).toBe(false);
 		await expect(page.getByTestId('dependency-node-toggle-enabled-map-1')).toHaveText('Enable');
 
 		await page.getByTestId('dependency-node-remove-map-1').click();
@@ -534,7 +539,8 @@ test.describe('Actions admin flows', () => {
 
 		const cycleRequestPromise = page
 			.waitForRequest(
-				(request) => request.method() === 'PUT' && /forms\/\d+\/actions\/map-2$/.test(request.url()),
+				(request) =>
+					request.method() === 'PUT' && /forms\/\d+\/actions\/map-2$/.test(request.url()),
 				{ timeout: 1_000 }
 			)
 			.then(() => true)
@@ -591,7 +597,8 @@ test.describe('Actions admin flows', () => {
 
 		const mismatchRequestPromise = page
 			.waitForRequest(
-				(request) => request.method() === 'PUT' && /forms\/\d+\/actions\/map-2$/.test(request.url()),
+				(request) =>
+					request.method() === 'PUT' && /forms\/\d+\/actions\/map-2$/.test(request.url()),
 				{ timeout: 1_000 }
 			)
 			.then(() => true)
@@ -603,25 +610,25 @@ test.describe('Actions admin flows', () => {
 		await expect(summarizeRow.getByRole('button', { name: /^Save$/ })).toBeVisible();
 	});
 
-		test('custom actions page renders even when backend endpoint is missing (404)', async ({
-			page
-		}) => {
-			// Keep the preview-host runtime config from beforeEach so requests remain same-origin.
-			// This spec only verifies the UI handles a 404 from the custom actions endpoint gracefully.
+	test('custom actions page renders even when backend endpoint is missing (404)', async ({
+		page
+	}) => {
+		// Keep the preview-host runtime config from beforeEach so requests remain same-origin.
+		// This spec only verifies the UI handles a 404 from the custom actions endpoint gracefully.
 
-			// Simulate missing endpoint
-			await page.route('**/wp-json/sentient-forms/v1/custom-actions**', (route) =>
-				route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
-			);
+		// Simulate missing endpoint
+		await page.route('**/wp-json/sentient-forms/v1/custom-actions**', (route) =>
+			route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
+		);
 
-			// Fail fast on page errors
-			const pageErrors: string[] = [];
-			page.on('pageerror', (err) => pageErrors.push(err.message));
+		// Fail fast on page errors
+		const pageErrors: string[] = [];
+		page.on('pageerror', (err) => pageErrors.push(err.message));
 
-			await page.goto('/#/actions/custom', { waitUntil: 'networkidle' });
+		await page.goto('/#/actions/custom', { waitUntil: 'networkidle' });
 
-			await expect(page.getByRole('heading', { name: 'Custom Actions' })).toBeVisible();
-			await expect(page.getByText(/No active custom actions yet/i)).toBeVisible();
-			expect(pageErrors, 'no runtime errors should surface').toEqual([]);
-		});
+		await expect(page.getByRole('heading', { name: 'Custom Actions' })).toBeVisible();
+		await expect(page.getByText(/No active custom actions yet/i)).toBeVisible();
+		expect(pageErrors, 'no runtime errors should surface').toEqual([]);
 	});
+});
