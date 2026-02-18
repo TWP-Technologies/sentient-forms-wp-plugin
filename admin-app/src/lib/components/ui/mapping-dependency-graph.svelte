@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Badge from './badge.svelte';
+	import Button from './button.svelte';
 	import type { FormActionLinkage } from '$lib/api/types';
 	import { buildDependencyGraph, getMappingDependencyIds } from '$lib/utils/mapping-dependencies';
 
@@ -8,22 +9,37 @@
 		editingMappingId?: string | null;
 		draftDependencyIds?: string[];
 		onToggleDependency?: (mappingId: string) => void;
+		pendingRemovalId?: string | null;
+		onConfigureMapping?: (linkage: FormActionLinkage) => void;
+		onToggleMappingEnabled?: (linkage: FormActionLinkage) => void | Promise<void>;
+		onRequestRemoveMapping?: (linkage: FormActionLinkage) => void;
+		onConfirmRemoveMapping?: (linkage: FormActionLinkage) => void | Promise<void>;
+		onCancelRemoveMapping?: () => void;
 	};
+
+	const NODE_WIDTH = 320;
+	const NODE_HEIGHT = 168;
 
 	let {
 		linkages = [],
 		editingMappingId = null,
 		draftDependencyIds = [],
-		onToggleDependency = () => {}
+		onToggleDependency = () => {},
+		pendingRemovalId = null,
+		onConfigureMapping = () => {},
+		onToggleMappingEnabled = () => {},
+		onRequestRemoveMapping = () => {},
+		onConfirmRemoveMapping = () => {},
+		onCancelRemoveMapping = () => {}
 	}: Props = $props();
 
 	const graph = $derived(buildDependencyGraph(linkages));
 	const nodeById = $derived.by(() => new Map(graph.nodes.map((node) => [node.id, node])));
 	const canvasWidth = $derived(
-		Math.max(420, ...graph.nodes.map((node) => node.x + 260), graph.edges.length > 0 ? 420 : 0)
+		Math.max(520, ...graph.nodes.map((node) => node.x + NODE_WIDTH + 48), graph.edges.length > 0 ? 520 : 0)
 	);
 	const canvasHeight = $derived(
-		Math.max(220, ...graph.nodes.map((node) => node.y + 110), graph.edges.length > 0 ? 220 : 0)
+		Math.max(260, ...graph.nodes.map((node) => node.y + NODE_HEIGHT + 28), graph.edges.length > 0 ? 260 : 0)
 	);
 
 	function isEditingTarget(nodeId: string): boolean {
@@ -53,12 +69,16 @@
 		const from = nodeById.get(fromId);
 		const to = nodeById.get(toId);
 		if (!from || !to) return '';
-		const startX = from.x + 238;
-		const startY = from.y + 42;
-		const endX = to.x - 6;
-		const endY = to.y + 42;
-		const curve = Math.max(60, (endX - startX) / 2);
+		const startX = from.x + NODE_WIDTH + 8;
+		const startY = from.y + NODE_HEIGHT / 2;
+		const endX = to.x - 8;
+		const endY = to.y + NODE_HEIGHT / 2;
+		const curve = Math.max(80, (endX - startX) / 2);
 		return `M ${startX} ${startY} C ${startX + curve} ${startY}, ${endX - curve} ${endY}, ${endX} ${endY}`;
+	}
+
+	function isNodeEnabled(linkage: FormActionLinkage): boolean {
+		return linkage.is_action_enabled_for_form !== false;
 	}
 
 	const editingLabel = $derived.by(() => {
@@ -99,7 +119,7 @@
 		<p class="sf:text-sm sf:text-slate-500">No mappings yet.</p>
 	{:else}
 		<div class="sf:relative sf:overflow-x-auto sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50">
-			<div class="sf:relative sf:min-h-[220px]" style={`width:${canvasWidth}px; height:${canvasHeight}px;`}>
+			<div class="sf:relative sf:min-h-[260px]" style={`width:${canvasWidth}px; height:${canvasHeight}px;`}>
 				<svg class="sf:absolute sf:inset-0" width={canvasWidth} height={canvasHeight}>
 					<defs>
 						<marker
@@ -126,38 +146,95 @@
 							/>
 						{/if}
 					{/each}
-				</svg>
+					</svg>
 
-				{#each graph.nodes as node (node.id)}
-					<button
-						type="button"
-						class={`sf:absolute sf:w-[240px] sf:rounded-md sf:border sf:bg-white sf:p-3 sf:shadow-sm sf:text-left ${nodeClass(node.linkage)} ${editingMappingId && editingMappingId !== node.id ? 'sf:cursor-pointer' : ''}`}
-						style={`left:${node.x}px; top:${node.y}px;`}
-						onclick={() => toggleDependency(node.id)}
-						disabled={!editingMappingId || editingMappingId === node.id}
-						data-testid={`dependency-node-${node.id}`}
-					>
-						<div class="sf:flex sf:items-start sf:justify-between sf:gap-2">
-							<div>
-								<p class="sf:text-sm sf:font-semibold sf:text-slate-800">{node.label}</p>
-								<p class="sf:text-[11px] sf:text-slate-500">{node.id}</p>
+					{#each graph.nodes as node (node.id)}
+						<div
+							class={`sf:absolute sf:w-[320px] sf:rounded-md sf:border sf:bg-white sf:p-3 sf:shadow-sm sf:text-left sf:space-y-2 ${nodeClass(node.linkage)}`}
+							style={`left:${node.x}px; top:${node.y}px;`}
+							data-testid={`dependency-node-card-${node.id}`}
+						>
+							<div class="sf:flex sf:items-start sf:justify-between sf:gap-2">
+								<div>
+									<p class="sf:text-sm sf:font-semibold sf:text-slate-800">{node.label}</p>
+									<p class="sf:text-[11px] sf:text-slate-500">{node.id}</p>
+								</div>
+								<Badge variant={isNodeEnabled(node.linkage) ? 'success' : 'warning'}>
+									{isNodeEnabled(node.linkage) ? 'Enabled' : 'Disabled'}
+								</Badge>
 							</div>
-							<Badge variant={node.linkage.is_action_enabled_for_form === false ? 'warning' : 'success'}>
-								{node.linkage.is_action_enabled_for_form === false ? 'Disabled' : 'Enabled'}
-							</Badge>
-						</div>
-						<p class="sf:mt-2 sf:text-[11px] sf:text-slate-500">
-							{node.linkage.trigger_hooks?.join(', ') || 'No hooks'}
-						</p>
-						{#if editingMappingId && editingMappingId !== node.id}
-							<p class="sf:mt-1 sf:text-[11px] sf:text-slate-500">
-								{isSelectedDependency(node.id) ? 'Selected dependency' : 'Click to set as dependency'}
+							<p class="sf:mt-2 sf:text-[11px] sf:text-slate-500">
+								{node.linkage.trigger_hooks?.join(', ') || 'No hooks'}
 							</p>
-						{/if}
-					</button>
-				{/each}
+							{#if editingMappingId && editingMappingId !== node.id}
+								<Button
+									size="sm"
+									variant={isSelectedDependency(node.id) ? 'secondary' : 'ghost'}
+									onclick={() => toggleDependency(node.id)}
+									data-testid={`dependency-node-${node.id}`}
+								>
+									{isSelectedDependency(node.id) ? 'Remove dependency' : 'Add dependency'}
+								</Button>
+							{/if}
+							{#if editingMappingId && editingMappingId !== node.id}
+								<p class="sf:mt-1 sf:text-[11px] sf:text-slate-500">
+									{isSelectedDependency(node.id) ? 'Selected dependency' : 'Click to set as dependency'}
+								</p>
+							{/if}
+							<div class="sf:flex sf:flex-wrap sf:gap-2 sf:pt-1 sf:border-t sf:border-slate-100">
+								<Button
+									size="sm"
+									variant="ghost"
+									onclick={() => onConfigureMapping(node.linkage)}
+									data-testid={`dependency-node-configure-${node.id}`}
+								>
+									Configure
+								</Button>
+								<Button
+									size="sm"
+									variant="ghost"
+									onclick={() => onToggleMappingEnabled(node.linkage)}
+									data-testid={`dependency-node-toggle-enabled-${node.id}`}
+								>
+									{isNodeEnabled(node.linkage) ? 'Disable' : 'Enable'}
+								</Button>
+								{#if pendingRemovalId === node.id}
+									<Button
+										size="sm"
+										variant="danger"
+										onclick={() => onConfirmRemoveMapping(node.linkage)}
+										data-testid={`dependency-node-remove-confirm-${node.id}`}
+									>
+										Confirm remove
+									</Button>
+									<Button
+										size="sm"
+										variant="secondary"
+										onclick={() => onCancelRemoveMapping()}
+										data-testid={`dependency-node-remove-cancel-${node.id}`}
+									>
+										Cancel
+									</Button>
+								{:else}
+									<Button
+										size="sm"
+										variant="ghost"
+										onclick={() => onRequestRemoveMapping(node.linkage)}
+										data-testid={`dependency-node-remove-${node.id}`}
+									>
+										Remove
+									</Button>
+								{/if}
+							</div>
+						</div>
+					{/each}
+				</div>
 			</div>
-		</div>
+		{/if}
+	{#if graph.nodes.length > 1 && graph.edges.length === 0}
+		<p class="sf:text-xs sf:text-slate-500">
+			No dependency links configured yet. Add dependencies to render connector lines.
+		</p>
 	{/if}
 
 	{#if graph.cycleIds.length > 0}

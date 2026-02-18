@@ -29,8 +29,8 @@ export interface DependencyGraphData {
 	cycleIds: string[];
 }
 
-const COLUMN_GAP = 300;
-const ROW_GAP = 120;
+const COLUMN_GAP = 420;
+const ROW_GAP = 220;
 
 export function normalizeDependencyIds(value: unknown): string[] {
 	if (!Array.isArray(value)) return [];

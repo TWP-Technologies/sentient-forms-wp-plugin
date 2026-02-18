@@ -65,6 +65,7 @@
 	let draftHooks = $state<Set<string>>(new Set());
 	let draftSettings = $state<Record<string, any>>({});
 	const draftDependencyIds = $derived(normalizeDependencyIds(draftSettings.dependency_ids));
+	let linkedActionsView = $state<'graph' | 'table'>('table');
 	let pendingRemovalId = $state<string | null>(null);
 	let entryLookupId = $state('');
 	let refreshInterval: number | null = null;
@@ -1184,20 +1185,63 @@
 					Enable, disable, or retarget hooks for actions connected to this form.
 				</p>
 			</div>
-			<Button variant="secondary" size="sm" onclick={refresh}>Refresh</Button>
+			<div class="sf:flex sf:items-center sf:gap-2">
+				{#if actionsState.items.length > 0}
+					<Button
+						variant={linkedActionsView === 'graph' ? 'primary' : 'secondary'}
+						size="sm"
+						onclick={() => {
+							linkedActionsView = 'graph';
+						}}
+						data-testid="linked-actions-view-graph"
+					>
+						Graph
+					</Button>
+					<Button
+						variant={linkedActionsView === 'table' ? 'primary' : 'secondary'}
+						size="sm"
+						onclick={() => {
+							linkedActionsView = 'table';
+						}}
+						data-testid="linked-actions-view-table"
+					>
+						Table
+					</Button>
+				{/if}
+				<Button variant="secondary" size="sm" onclick={refresh}>Refresh</Button>
+			</div>
 		</div>
-
-		<MappingDependencyGraph
-			linkages={actionsState.items}
-			editingMappingId={editingLinkageId}
-			{draftDependencyIds}
-			onToggleDependency={toggleDraftDependency}
-		/>
 
 		{#if actionsState.loading}
 			<p class="sf:text-sm sf:text-slate-600">Loading action mappings…</p>
 		{:else if actionsState.items.length === 0}
 			<p class="sf:text-sm sf:text-slate-600">No CPS actions linked to this form yet.</p>
+		{:else if linkedActionsView === 'graph'}
+			<MappingDependencyGraph
+				linkages={actionsState.items}
+				editingMappingId={editingLinkageId}
+				{draftDependencyIds}
+				{pendingRemovalId}
+				onToggleDependency={toggleDraftDependency}
+				onConfigureMapping={(linkage) => {
+					linkedActionsView = 'table';
+					startEditingAction(linkage);
+				}}
+				onToggleMappingEnabled={toggleEnabled}
+				onRequestRemoveMapping={requestRemove}
+				onConfirmRemoveMapping={confirmRemove}
+				onCancelRemoveMapping={cancelRemove}
+			/>
+			{#if editingLinkageId}
+				<Alert variant="info" class="sf:mt-3">
+					<div class="sf:flex sf:flex-col sf:md:flex-row sf:md:items-center sf:md:justify-between sf:gap-2">
+						<span>Dependency selection updated. Switch to table view to save changes.</span>
+						<Button size="sm" variant="secondary" onclick={() => (linkedActionsView = 'table')}>
+							Switch to table
+						</Button>
+					</div>
+				</Alert>
+			{/if}
 		{:else}
 			<div class="sf:overflow-x-auto">
 				<table
@@ -1281,21 +1325,32 @@
 												</div>
 											</div>
 
-											<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-												<p
-													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
-												>
-													Dependencies
-												</p>
-												<p class="sf:text-xs sf:text-slate-500">
-													Select prerequisites in the dependency graph above. This mapping runs only
-													after all selected dependencies succeed.
-												</p>
-												{#if draftDependencyIds.length > 0}
-													<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
-														{#each draftDependencyIds as dependencyId (dependencyId)}
-															<Badge variant="info">{dependencyId}</Badge>
-														{/each}
+												<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+													<p
+														class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
+													>
+														Dependencies
+													</p>
+													<div class="sf:flex sf:flex-col sf:sm:flex-row sf:sm:items-center sf:sm:justify-between sf:gap-2">
+														<p class="sf:text-xs sf:text-slate-500">
+															Select prerequisites in graph view. This mapping runs only after all selected
+															dependencies succeed.
+														</p>
+														<Button
+															size="sm"
+															variant="ghost"
+															onclick={() => {
+																linkedActionsView = 'graph';
+															}}
+														>
+															Open graph view
+														</Button>
+													</div>
+													{#if draftDependencyIds.length > 0}
+														<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
+															{#each draftDependencyIds as dependencyId (dependencyId)}
+																<Badge variant="info">{dependencyId}</Badge>
+															{/each}
 													</div>
 												{/if}
 											</div>
