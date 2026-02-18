@@ -441,6 +441,39 @@ test.describe('Actions admin flows', () => {
 		await expect(page.getByTestId('dependency-node-toggle-enabled-map-1')).toBeVisible();
 		await expect(page.getByTestId('dependency-node-remove-map-1')).toBeVisible();
 
+		await page.getByTestId('dependency-node-configure-map-1').click();
+		await expect(page.getByTestId('form-actions-table')).toBeVisible();
+		const spamRow = page
+			.getByTestId('form-actions-table')
+			.locator('tbody tr')
+			.filter({ hasText: 'Spam check' });
+		await expect(spamRow.getByRole('button', { name: /^Save$/ })).toBeVisible();
+		await spamRow.getByRole('button', { name: 'Cancel' }).click();
+
+		await page.getByTestId('linked-actions-view-graph').click();
+		const disableReq = page.waitForRequest(
+			(request) => request.method() === 'PUT' && /forms\/\d+\/actions\/map-1$/.test(request.url()),
+			{ timeout: 15_000 }
+		);
+		const disableRes = page.waitForResponse(
+			(response) =>
+				response.request().method() === 'PUT' &&
+				/forms\/\d+\/actions\/map-1$/.test(response.url()) &&
+				response.status() === 200,
+			{ timeout: 15_000 }
+		);
+		await page.getByTestId('dependency-node-toggle-enabled-map-1').click();
+		const disableRequest = await disableReq;
+		await disableRes;
+		expect((disableRequest.postDataJSON() as { is_action_enabled_for_form?: boolean }).is_action_enabled_for_form).toBe(false);
+		await expect(page.getByTestId('dependency-node-toggle-enabled-map-1')).toHaveText('Enable');
+
+		await page.getByTestId('dependency-node-remove-map-1').click();
+		await expect(page.getByTestId('dependency-node-remove-confirm-map-1')).toBeVisible();
+		await expect(page.getByTestId('dependency-node-remove-cancel-map-1')).toBeVisible();
+		await page.getByTestId('dependency-node-remove-cancel-map-1').click();
+		await expect(page.getByTestId('dependency-node-remove-map-1')).toBeVisible();
+
 		await page.getByTestId('linked-actions-view-table').click();
 		await expect(page.getByTestId('form-actions-table')).toBeVisible();
 		await expect(page.getByTestId('dependency-graph')).toHaveCount(0);

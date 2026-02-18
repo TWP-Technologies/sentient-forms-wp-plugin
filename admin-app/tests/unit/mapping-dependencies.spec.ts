@@ -107,9 +107,29 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 		const byId = new Map(graph.nodes.map((node) => [node.id, node]));
 
 		expect(graph.edges).toHaveLength(2);
+		expect(graph.edges.every((edge) => edge.kind === 'dependency')).toBe(true);
 		expect(byId.get('map_root')?.depth).toBe(0);
 		expect(byId.get('map_mid')?.depth).toBe(1);
 		expect(byId.get('map_leaf')?.depth).toBe(2);
 		expect(graph.cycleIds).toEqual([]);
+	});
+
+	it('builds left-to-right execution connectors when dependencies are empty', () => {
+		const items: FormActionLinkage[] = [
+			linkage('map_a', ['gform_validation']),
+			linkage('map_b', ['gform_validation']),
+			linkage('map_c', ['gform_validation'])
+		];
+
+		const graph = buildDependencyGraph(items);
+		const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+
+		expect(graph.edges).toEqual([
+			{ from: 'map_a', to: 'map_b', missing: false, kind: 'execution' },
+			{ from: 'map_b', to: 'map_c', missing: false, kind: 'execution' }
+		]);
+		expect(byId.get('map_a')?.depth).toBe(0);
+		expect(byId.get('map_b')?.depth).toBe(1);
+		expect(byId.get('map_c')?.depth).toBe(2);
 	});
 });

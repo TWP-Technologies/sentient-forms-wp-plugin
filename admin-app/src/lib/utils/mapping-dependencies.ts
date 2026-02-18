@@ -21,6 +21,7 @@ export interface DependencyGraphEdge {
 	from: string;
 	to: string;
 	missing: boolean;
+	kind: 'dependency' | 'execution';
 }
 
 export interface DependencyGraphData {
@@ -30,7 +31,6 @@ export interface DependencyGraphData {
 }
 
 const COLUMN_GAP = 420;
-const ROW_GAP = 220;
 
 export function normalizeDependencyIds(value: unknown): string[] {
 	if (!Array.isArray(value)) return [];
@@ -130,56 +130,54 @@ export function buildDependencyGraph(items: FormActionLinkage[]): DependencyGrap
 	const byId = new Map(items.map((item) => [item.local_mapping_id, item]));
 	const cycleIds = detectCycleIds(items);
 	const order = topologicalOrder(items);
-	const depths = new Map<string, number>();
+	const layoutOrder = order.filter((mappingId) => byId.has(mappingId));
 
-	for (const mappingId of order) {
-		const linkage = byId.get(mappingId);
-		if (!linkage) continue;
-
-		const deps = getMappingDependencyIds(linkage).filter((dep) => byId.has(dep));
-		if (deps.length === 0) {
-			depths.set(mappingId, 0);
-			continue;
-		}
-
-		const maxDepth = deps.reduce((acc, depId) => {
-			const depDepth = depths.get(depId) ?? 0;
-			return Math.max(acc, depDepth);
-		}, 0);
-		depths.set(mappingId, maxDepth + 1);
-	}
-
-	const rowsByDepth = new Map<number, number>();
 	const nodes: DependencyGraphNode[] = [];
-	for (const linkage of items) {
-		const id = linkage.local_mapping_id;
-		const depth = depths.get(id) ?? 0;
-		const row = rowsByDepth.get(depth) ?? 0;
-		rowsByDepth.set(depth, row + 1);
+	for (let index = 0; index < layoutOrder.length; index += 1) {
+		const id = layoutOrder[index];
+		const linkage = byId.get(id);
+		if (!linkage) continue;
 
 		nodes.push({
 			id,
 			label: linkage.action_name_label || linkage.central_action_id,
-			depth,
-			row,
-			x: depth * COLUMN_GAP,
-			y: row * ROW_GAP,
+			depth: index,
+			row: 0,
+			x: index * COLUMN_GAP,
+			y: 0,
 			linkage
 		});
 	}
 
-	const edges: DependencyGraphEdge[] = [];
+	const dependencyEdges: DependencyGraphEdge[] = [];
+	const dependencyEdgeKeys = new Set<string>();
 	for (const linkage of items) {
 		for (const dependencyId of getMappingDependencyIds(linkage)) {
-			edges.push({
+			dependencyEdges.push({
 				from: dependencyId,
 				to: linkage.local_mapping_id,
-				missing: !byId.has(dependencyId)
+				missing: !byId.has(dependencyId),
+				kind: 'dependency'
 			});
+			dependencyEdgeKeys.add(`${dependencyId}->${linkage.local_mapping_id}`);
 		}
 	}
 
-	return { nodes, edges, cycleIds };
+	const executionEdges: DependencyGraphEdge[] = [];
+	for (let index = 1; index < layoutOrder.length; index += 1) {
+		const from = layoutOrder[index - 1];
+		const to = layoutOrder[index];
+		const key = `${from}->${to}`;
+		if (dependencyEdgeKeys.has(key)) continue;
+		executionEdges.push({
+			from,
+			to,
+			missing: false,
+			kind: 'execution'
+		});
+	}
+
+	return { nodes, edges: [...executionEdges, ...dependencyEdges], cycleIds };
 }
 
 function normalizeHooks(hooks: string[] | undefined): string[] {
