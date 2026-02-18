@@ -226,6 +226,8 @@ export interface BatchSettings {
 export interface FormActionSettings {
 	/** Field selection configuration */
 	input_mapping?: InputMapping;
+	/** Upstream mapping prerequisites that must complete successfully first */
+	dependency_ids?: string[];
 	/** Conditional run gates for this mapping (CB-FORMS-006) */
 	conditions?: MappingConditionsConfig;
 	/** Prompt overrides for this mapping */
@@ -478,6 +480,7 @@ export interface FormSourceSummary {
  */
 export interface MappingSettings {
 	trigger_hooks?: string[];
+	dependency_ids?: string[];
 	input_mapping?: {
 		mode: 'all' | 'selected' | 'exclude';
 		field_ids?: string[];

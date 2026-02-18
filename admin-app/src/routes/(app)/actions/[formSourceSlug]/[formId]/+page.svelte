@@ -12,11 +12,17 @@
 		ConditionBuilder,
 		TemplateLibrary,
 		ModelSelector,
-		Toggle
+		Toggle,
+		MappingDependencyGraph
 	} from '$lib/components/ui';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { DEFAULT_BATCH_SETTINGS } from '$lib/utils/batch';
 	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
+	import {
+		formatDependencyIssues,
+		normalizeDependencyIds,
+		validateMappingDependencies
+	} from '$lib/utils/mapping-dependencies';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { formActionsStore, formActionsState } from '$lib/stores/form-actions.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
@@ -58,6 +64,7 @@
 	let editingLinkageId = $state<string | null>(null);
 	let draftHooks = $state<Set<string>>(new Set());
 	let draftSettings = $state<Record<string, any>>({});
+	const draftDependencyIds = $derived(normalizeDependencyIds(draftSettings.dependency_ids));
 	let pendingRemovalId = $state<string | null>(null);
 	let entryLookupId = $state('');
 	let refreshInterval: number | null = null;
@@ -515,6 +522,7 @@
 			execution_mode: baseSettings.execution_mode ?? 'after_submission',
 			// CB-EXEC-003/004: Batch settings with sensible defaults
 			batch_settings: baseSettings.batch_settings ?? { ...DEFAULT_BATCH_SETTINGS },
+			dependency_ids: normalizeDependencyIds(baseSettings.dependency_ids),
 			...baseSettings,
 			conditions: baseSettings.conditions ?? createDefaultConditionConfig()
 		};
@@ -533,6 +541,22 @@
 		const next = new Set(draftHooks);
 		next.has(hook) ? next.delete(hook) : next.add(hook);
 		draftHooks = next;
+	}
+
+	function toggleDraftDependency(mappingId: string) {
+		if (!editingLinkageId || editingLinkageId === mappingId) {
+			return;
+		}
+
+		const current = normalizeDependencyIds(draftSettings.dependency_ids);
+		const next = current.includes(mappingId)
+			? current.filter((id) => id !== mappingId)
+			: [...current, mappingId];
+
+		draftSettings = {
+			...draftSettings,
+			dependency_ids: next
+		};
 	}
 
 	async function saveActionChanges(linkage: FormActionLinkage) {
@@ -558,9 +582,32 @@
 			return;
 		}
 
+		const normalizedDependencyIds = normalizeDependencyIds(draftSettings.dependency_ids);
+		const nextSettings = {
+			...draftSettings,
+			dependency_ids: normalizedDependencyIds
+		};
+		if (normalizedDependencyIds.length === 0) {
+			delete nextSettings.dependency_ids;
+		}
+
+		const updatedLinkage: FormActionLinkage = {
+			...linkage,
+			trigger_hooks: Array.from(draftHooks),
+			settings: nextSettings
+		};
+		const candidateItems = actionsState.items.map((item) =>
+			item.local_mapping_id === linkage.local_mapping_id ? updatedLinkage : item
+		);
+		const dependencyIssues = validateMappingDependencies(candidateItems);
+		if (dependencyIssues.length > 0) {
+			notifications.error(formatDependencyIssues(dependencyIssues)[0]);
+			return;
+		}
+
 		await formActionsStore.updateAction(data.formSourceSlug, data.formId, linkage, {
 			trigger_hooks: Array.from(draftHooks),
-			settings: draftSettings
+			settings: nextSettings
 		});
 		editingLinkageId = null;
 		draftHooks = new Set();
@@ -1140,6 +1187,13 @@
 			<Button variant="secondary" size="sm" onclick={refresh}>Refresh</Button>
 		</div>
 
+		<MappingDependencyGraph
+			linkages={actionsState.items}
+			editingMappingId={editingLinkageId}
+			{draftDependencyIds}
+			onToggleDependency={toggleDraftDependency}
+		/>
+
 		{#if actionsState.loading}
 			<p class="sf:text-sm sf:text-slate-600">Loading action mappings…</p>
 		{:else if actionsState.items.length === 0}
@@ -1225,6 +1279,25 @@
 														<strong>Async:</strong> User gets instant confirmation. AI runs in background.
 													</p>
 												</div>
+											</div>
+
+											<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+												<p
+													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
+												>
+													Dependencies
+												</p>
+												<p class="sf:text-xs sf:text-slate-500">
+													Select prerequisites in the dependency graph above. This mapping runs only
+													after all selected dependencies succeed.
+												</p>
+												{#if draftDependencyIds.length > 0}
+													<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
+														{#each draftDependencyIds as dependencyId (dependencyId)}
+															<Badge variant="info">{dependencyId}</Badge>
+														{/each}
+													</div>
+												{/if}
 											</div>
 
 											{#if linkage.central_action_id === 'spam_detection_v1'}
