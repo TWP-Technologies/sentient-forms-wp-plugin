@@ -124,33 +124,79 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return $validation_result;
         }
 
-        // Iterate over stored action settings (keyed by local_mapping_id like 'map_spam_v1')
-        foreach ( $settings as $mapping_id => $action_settings )
+        $entry            = $this->prepare_entry_from_submission();
+        $planner          = $this->plugin->get_mapping_dependency_planner();
+        $plan             = $planner->build_execution_plan( $settings, 'gform_validation' );
+        $mapping_outcomes = [];
+
+        if ( ! empty( $plan['cycle_ids'] ) )
         {
-            // Skip non-action entries (like 'enabled', 'actions' wrapper if it exists)
-            if ( !is_array( $action_settings ) || !isset( $action_settings['central_action_id'] ) )
+            $logger->error(
+                'validation dependency cycle detected; skipping blocked mappings',
+                [
+                    'hook'       => 'gform_validation',
+                    'form_id'    => $form_id,
+                    'cycle_ids'  => $plan['cycle_ids'],
+                ]
+            );
+            foreach ( $plan['cycle_ids'] as $cycle_id )
+            {
+                $mapping_outcomes[ $cycle_id ] = 'skipped';
+            }
+        }
+
+        foreach ( $plan['order'] as $mapping_id )
+        {
+            $node = $plan['nodes'][ $mapping_id ] ?? null;
+            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
             {
                 continue;
             }
 
-            // Use central_action_id to find the action
-            $action_id = $action_settings['central_action_id'];
-            $action    = $this->plugin->get_action( $action_id );
+            $action_settings = $node['mapping'];
+            $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
+            $should_async = $this->is_mapping_async( $action_settings );
 
-            // Skip if action is not enabled for this form or not configured for validation
-            // Note: stored settings use 'is_action_enabled_for_form' and 'trigger_hooks'
-            if ( empty( $action_settings[ 'is_action_enabled_for_form' ] ) ||
-                 empty( $action_settings[ 'trigger_hooks' ] ) ||
-                 !in_array( 'gform_validation', (array) $action_settings[ 'trigger_hooks' ] ) )
+            if ( empty( $node['enabled'] ) || empty( $node['hook_enabled'] ) )
             {
+                $mapping_outcomes[ $mapping_id ] = 'skipped';
                 continue;
             }
 
-            // Prepare entry data before condition evaluation.
-            $entry = $this->prepare_entry_from_submission();
+            $blocked_by_dependency = $this->resolve_dependency_blocking_mapping(
+                is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [],
+                $mapping_outcomes,
+                $should_async,
+            );
+            if ( null !== $blocked_by_dependency )
+            {
+                $mapping_outcomes[ $mapping_id ] = 'skipped';
+                $logger->info(
+                    'validation skipped due to dependency outcome',
+                    [
+                        'hook'                   => 'gform_validation',
+                        'mapping_id'             => $mapping_id,
+                        'blocked_by_dependency'  => $blocked_by_dependency,
+                        'dependency_outcome'     => $mapping_outcomes[ $blocked_by_dependency ] ?? null,
+                        'form_id'                => $form_id,
+                        'correlation_id'         => $correlation_id,
+                    ]
+                );
+                continue;
+            }
+
+            $action_id = (string) ( $action_settings['central_action_id'] ?? '' );
+            if ( '' === $action_id )
+            {
+                $mapping_outcomes[ $mapping_id ] = 'failed';
+                continue;
+            }
+
+            $action = $this->plugin->get_action( $action_id );
 
             if ( ! $this->plugin->get_condition_evaluator()->should_execute( $action_settings, $entry ) )
             {
+                $mapping_outcomes[ $mapping_id ] = 'skipped';
                 $logger->info(
                     'validation skipped by mapping conditions',
                     [
@@ -169,35 +215,36 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 [
                     'hook'           => 'gform_validation',
                     'action_id'      => $action_id,
+                    'mapping_id'     => $mapping_id,
                     'form_id'        => $form_id,
                     'correlation_id' => $correlation_id,
                 ]
             );
 
-            // Prepare data for the action
             $data  = [
                 'form'              => $form,
                 'entry'             => $entry,
                 'validation_result' => $validation_result,
             ];
 
-            // Execute the action synchronously for validation if local action exists.
-            $entry_id = $entry['id'] ?? ( $data['entry']['id'] ?? 0 );
-            $form_id  = $form['id'] ?? 0;
-            
+            $entry_id        = $entry['id'] ?? ( $data['entry']['id'] ?? 0 );
+            $runtime_form_id = $form['id'] ?? 0;
+            $local_failed    = false;
+
             if ( $action )
             {
-                $result = $action->execute( $data, $action_settings, $entry_id, $form_id );
+                $result = $action->execute( $data, $action_settings, $entry_id, $runtime_form_id );
 
                 if ( is_wp_error( $result ) )
                 {
+                    $local_failed = true;
                     $logger->info(
                         'validation wp_error',
                         [
                             'hook'           => 'gform_validation',
                             'action_id'      => $action_id,
                             'mapping_id'     => $mapping_id,
-                            'form_id'        => $form_id,
+                            'form_id'        => $runtime_form_id,
                             'correlation_id' => $correlation_id,
                             'error_code'     => $result->get_error_code(),
                         ]
@@ -214,20 +261,26 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 }
             }
 
-            $validation_result = $this->maybe_execute_cps_validation(
+            $cps_execution_status = 'success';
+            $validation_result    = $this->maybe_execute_cps_validation(
                 $validation_result,
                 $form,
                 $entry,
                 $action_id,
                 $action_settings,
+                $cps_execution_status,
             );
+
+            $mapping_outcomes[ $mapping_id ] = ( $local_failed || 'failed' === $cps_execution_status ) ? 'failed' : 'succeeded';
 
             $logger->info(
                 'validation complete',
                 [
                     'hook'           => 'gform_validation',
                     'action_id'      => $action_id,
-                    'form_id'        => $form_id,
+                    'mapping_id'     => $mapping_id,
+                    'outcome'        => $mapping_outcomes[ $mapping_id ],
+                    'form_id'        => $runtime_form_id,
                     'correlation_id' => $correlation_id,
                 ]
             );
@@ -270,25 +323,103 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return;
         }
 
-        // Iterate over stored action settings (keyed by local_mapping_id like 'map_spam_v1')
-        foreach ( $settings as $mapping_id => $action_settings )
+        $planner             = $this->plugin->get_mapping_dependency_planner();
+        $plan                = $planner->build_execution_plan( $settings, 'gform_after_submission' );
+        $mapping_outcomes    = [];
+        $execution_request_ids = [];
+
+        if ( ! empty( $plan['cycle_ids'] ) )
         {
-            // Skip non-action entries (like 'enabled', 'actions' wrapper if it exists)
-            if ( !is_array( $action_settings ) || !isset( $action_settings['central_action_id'] ) )
+            $logger->error(
+                'after-submission dependency cycle detected; skipping blocked mappings',
+                [
+                    'hook'       => 'gform_after_submission',
+                    'form_id'    => $form_id,
+                    'entry_id'   => $entry['id'] ?? null,
+                    'cycle_ids'  => $plan['cycle_ids'],
+                ]
+            );
+            foreach ( $plan['cycle_ids'] as $cycle_id )
+            {
+                $mapping_outcomes[ $cycle_id ] = 'skipped';
+            }
+        }
+
+        foreach ( $plan['order'] as $mapping_id )
+        {
+            $node = $plan['nodes'][ $mapping_id ] ?? null;
+            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
             {
                 continue;
             }
-            // Skip if action is not enabled for this form or not configured for after submission
-            // Note: stored settings use 'is_action_enabled_for_form' and 'trigger_hooks'
-            if ( empty( $action_settings[ 'is_action_enabled_for_form' ] ) ||
-                 empty( $action_settings[ 'trigger_hooks' ] ) ||
-                 !in_array( 'gform_after_submission', (array) $action_settings[ 'trigger_hooks' ] ) )
+
+            $action_settings = $node['mapping'];
+            if ( empty( $node['enabled'] ) || empty( $node['hook_enabled'] ) )
             {
+                continue;
+            }
+
+            $central_action_id = (string) ( $action_settings['central_action_id'] ?? '' );
+            if ( '' === $central_action_id )
+            {
+                continue;
+            }
+
+            $execution_request_ids[ $mapping_id ] = Sentient_Forms_Action_Executor::generate_execution_request_id(
+                $central_action_id,
+                $form,
+                $entry,
+                [
+                    'hook'      => 'gform_after_submission',
+                    'action_id' => $mapping_id,
+                ],
+            );
+        }
+
+        foreach ( $plan['order'] as $mapping_id )
+        {
+            $node = $plan['nodes'][ $mapping_id ] ?? null;
+            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
+            {
+                continue;
+            }
+
+            $action_settings = $node['mapping'];
+            $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
+            $should_async = $this->is_mapping_async( $action_settings );
+
+            if ( empty( $node['enabled'] ) || empty( $node['hook_enabled'] ) )
+            {
+                $mapping_outcomes[ $mapping_id ] = 'skipped';
+                continue;
+            }
+
+            $blocked_by_dependency = $this->resolve_dependency_blocking_mapping(
+                is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [],
+                $mapping_outcomes,
+                $should_async,
+            );
+            if ( null !== $blocked_by_dependency )
+            {
+                $mapping_outcomes[ $mapping_id ] = 'skipped';
+                $logger->info(
+                    'after-submission skipped due to dependency outcome',
+                    [
+                        'hook'                   => 'gform_after_submission',
+                        'mapping_id'             => $mapping_id,
+                        'blocked_by_dependency'  => $blocked_by_dependency,
+                        'dependency_outcome'     => $mapping_outcomes[ $blocked_by_dependency ] ?? null,
+                        'form_id'                => $form_id,
+                        'entry_id'               => $entry['id'] ?? null,
+                        'correlation_id'         => $correlation_id,
+                    ]
+                );
                 continue;
             }
 
             if ( ! $this->plugin->get_condition_evaluator()->should_execute( $action_settings, $entry ) )
             {
+                $mapping_outcomes[ $mapping_id ] = 'skipped';
                 $logger->info(
                     'after-submission skipped by mapping conditions',
                     [
@@ -303,24 +434,39 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
-            // Use central_action_id to find the action in the registry
-            $action_id = $action_settings['central_action_id'];
+            $action_id = (string) ( $action_settings['central_action_id'] ?? '' );
+            if ( '' === $action_id )
+            {
+                $mapping_outcomes[ $mapping_id ] = 'failed';
+                continue;
+            }
+
             $action = $this->plugin->get_action( $action_id );
 
-            // Prepare data for the action
             $data = [
                 'form'  => $form,
                 'entry' => $entry,
             ];
 
-            // Check if we should process asynchronously.
-            // CPS-managed master actions have no local PHP handler, so default to async.
-            $should_async = !empty( $action_settings[ 'async' ] )
-                || ( ( $action_settings['action_type_indicator'] ?? '' ) === 'master' );
-
             if ( $should_async )
             {
-                // Process the action asynchronously
+                $dependency_ids                 = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
+                $dependency_initial_outcomes    = [];
+                $dependency_execution_request_ids = [];
+
+                foreach ( $dependency_ids as $dependency_id )
+                {
+                    if ( isset( $mapping_outcomes[ $dependency_id ] ) )
+                    {
+                        $dependency_initial_outcomes[ $dependency_id ] = $mapping_outcomes[ $dependency_id ];
+                    }
+
+                    if ( isset( $execution_request_ids[ $dependency_id ] ) )
+                    {
+                        $dependency_execution_request_ids[ $dependency_id ] = $execution_request_ids[ $dependency_id ];
+                    }
+                }
+
                 $logger->info(
                     'async action enqueued',
                     [
@@ -332,37 +478,121 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                         'correlation_id' => $correlation_id,
                     ]
                 );
-                
-                $this->plugin->process_action_async(
+
+                $scheduled = $this->plugin->process_action_async(
                     $action_id,
                     $data,
                     $action_settings,
                     [
-                        'hook'        => 'gform_after_submission',
-                        'form_source' => $this->get_id(),
-                        'action_id'   => $action_id,
-                        'mapping_id'  => $mapping_id,
-                        'form_id'     => $form_id,
-                        'entry_id'    => $entry['id'] ?? null,
-                        'action_name_label' => $action_settings['action_name_label'] ?? ($action_settings['central_action_id'] ?? $action_id),
-                        // FR-001: Pass spam marking setting for finalize_async_success
-                        'mark_as_spam' => !empty( $action_settings['mark_as_spam'] ),
-                        // Structured spam detection settings
-                        'spam_confidence_threshold' => $action_settings['settings']['spam_confidence_threshold'] ?? $action_settings['spam_confidence_threshold'] ?? 0.80,
-                        'spam_indicators_display'   => $action_settings['settings']['spam_indicators_display'] ?? $action_settings['spam_indicators_display'] ?? 'simple',
-                        'spam_result_display_mode'  => $action_settings['settings']['spam_result_display_mode'] ?? $action_settings['spam_result_display_mode'] ?? 'entry_note',
-                        'central_action_id' => $action_settings['central_action_id'] ?? null,
+                        'hook'                           => 'gform_after_submission',
+                        'form_source'                    => $this->get_id(),
+                        'action_id'                      => $mapping_id,
+                        'mapping_id'                     => $mapping_id,
+                        'local_mapping_id'               => $mapping_id,
+                        'form_id'                        => $form_id,
+                        'entry_id'                       => $entry['id'] ?? null,
+                        'action_name_label'              => $action_settings['action_name_label'] ?? ( $action_settings['central_action_id'] ?? $action_id ),
+                        'mark_as_spam'                   => ! empty( $action_settings['mark_as_spam'] ),
+                        'spam_confidence_threshold'      => $action_settings['settings']['spam_confidence_threshold'] ?? $action_settings['spam_confidence_threshold'] ?? 0.80,
+                        'spam_indicators_display'        => $action_settings['settings']['spam_indicators_display'] ?? $action_settings['spam_indicators_display'] ?? 'simple',
+                        'spam_result_display_mode'       => $action_settings['settings']['spam_result_display_mode'] ?? $action_settings['spam_result_display_mode'] ?? 'entry_note',
+                        'central_action_id'              => $action_settings['central_action_id'] ?? null,
+                        'dependency_mapping_ids'         => $dependency_ids,
+                        'dependency_execution_request_ids' => $dependency_execution_request_ids,
+                        'dependency_initial_outcomes'    => $dependency_initial_outcomes,
+                        'dependency_wait_started_at'     => time(),
+                        'dependency_wait_max_seconds'    => max(
+                            30,
+                            (int) ( $action_settings['settings']['batch_settings']['max_wait_seconds'] ?? 600 )
+                        ),
+                        'dependency_wait_poll_seconds'   => 10,
                     ],
                 );
+
+                $mapping_outcomes[ $mapping_id ] = $scheduled ? 'queued' : 'failed';
+                continue;
             }
-            elseif ( $action )
+
+            if ( ! $action )
             {
-                // Execute the action immediately (synchronous mode).
-                $entry_id = $entry['id'] ?? 0;
-                $form_id  = $form['id'] ?? 0;
-                $action->execute( $data, $action_settings, $entry_id, $form_id );
+                $mapping_outcomes[ $mapping_id ] = 'failed';
+                continue;
+            }
+
+            $entry_id        = $entry['id'] ?? 0;
+            $runtime_form_id = $form['id'] ?? 0;
+            $result          = $action->execute( $data, $action_settings, $entry_id, $runtime_form_id );
+            $mapping_outcomes[ $mapping_id ] = is_wp_error( $result ) ? 'failed' : 'succeeded';
+        }
+    }
+
+    /**
+     * Resolve whether a mapping should be blocked by prerequisite outcomes.
+     *
+     * @param array<int, string>         $dependency_ids  Dependency mapping ids.
+     * @param array<string, string>      $mapping_outcomes Known outcomes keyed by mapping id.
+     * @param bool                       $allow_queued_dependencies Whether queued prerequisites are allowed.
+     *
+     * @return string|null Mapping id that blocks execution, or null.
+     */
+    private function resolve_dependency_blocking_mapping( array $dependency_ids, array $mapping_outcomes, bool $allow_queued_dependencies = true ): ?string
+    {
+        foreach ( $dependency_ids as $dependency_id )
+        {
+            if ( ! is_string( $dependency_id ) || '' === $dependency_id )
+            {
+                continue;
+            }
+
+            $outcome = $mapping_outcomes[ $dependency_id ] ?? null;
+            if ( 'failed' === $outcome || 'skipped' === $outcome )
+            {
+                return $dependency_id;
+            }
+
+            if ( ! $allow_queued_dependencies && 'queued' === $outcome )
+            {
+                return $dependency_id;
             }
         }
+
+        return null;
+    }
+
+    /**
+     * Determine whether a mapping executes asynchronously.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     *
+     * @return bool
+     */
+    private function is_mapping_async( array $mapping ): bool
+    {
+        $indicator = isset( $mapping['action_type_indicator'] ) && is_scalar( $mapping['action_type_indicator'] )
+            ? sanitize_key( (string) $mapping['action_type_indicator'] )
+            : '';
+
+        if ( 'master' === $indicator )
+        {
+            return true;
+        }
+
+        if ( isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) && array_key_exists( 'async', $mapping['settings'] ) )
+        {
+            return rest_sanitize_boolean( $mapping['settings']['async'] );
+        }
+
+        if ( isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) && isset( $mapping['settings']['execution_mode'] ) && is_scalar( $mapping['settings']['execution_mode'] ) )
+        {
+            return 'after_submission' === sanitize_key( (string) $mapping['settings']['execution_mode'] );
+        }
+
+        if ( array_key_exists( 'async', $mapping ) )
+        {
+            return rest_sanitize_boolean( $mapping['async'] );
+        }
+
+        return false;
     }
 
     /**
@@ -398,11 +628,19 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         return $entry;
     }
 
-    private function maybe_execute_cps_validation( array $validation_result, array $form, array $entry, string $action_id, array $action_settings ): array
+    private function maybe_execute_cps_validation(
+        array $validation_result,
+        array $form,
+        array $entry,
+        string $action_id,
+        array $action_settings,
+        ?string &$execution_status = null
+    ): array
     {
         $central_action_id = $action_settings['central_action_id'] ?? '';
         if ( empty( $central_action_id ) )
         {
+            $execution_status = 'skipped';
             return $validation_result;
         }
 
@@ -434,6 +672,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $entry,
             $context,
         );
+
+        $execution_status = is_wp_error( $response ) ? 'failed' : 'success';
 
         return $this->apply_cps_validation_response( $validation_result, $response, $action_settings );
     }

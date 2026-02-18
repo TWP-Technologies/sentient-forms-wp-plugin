@@ -84,6 +84,7 @@ final class Sentient_Forms_Plugin
 
     private ?Sentient_Forms_Telemetry_Service $telemetry_service = null;
     private ?Sentient_Forms_Condition_Evaluator $condition_evaluator = null;
+    private ?Sentient_Forms_Mapping_Dependency_Planner $mapping_dependency_planner = null;
     private ?Sentient_Forms_Logger $logger = null;
 
     /**
@@ -621,6 +622,16 @@ final class Sentient_Forms_Plugin
         }
 
         return $this->condition_evaluator;
+    }
+
+    public function get_mapping_dependency_planner(): Sentient_Forms_Mapping_Dependency_Planner
+    {
+        if ( null === $this->mapping_dependency_planner )
+        {
+            $this->mapping_dependency_planner = new Sentient_Forms_Mapping_Dependency_Planner();
+        }
+
+        return $this->mapping_dependency_planner;
     }
 
     public function get_telemetry_service(): Sentient_Forms_Telemetry_Service

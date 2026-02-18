@@ -709,7 +709,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     /**
      * Add a new action linkage to a form.
      */
-    public function add_form_action( WP_REST_Request $request ): WP_REST_Response
+    public function add_form_action( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
         $option_key = $this->get_actions_option_key( $request->get_param( 'form_source_slug' ), (int)$request->get_param( 'form_id' ) );
         $actions    = get_option( $option_key, [] );
@@ -741,6 +741,19 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         if ( $request->has_param( 'settings' ) )
         {
             $action[ 'settings' ] = $this->sanitize_settings( $request->get_param( 'settings' ) );
+        }
+
+        $actions_to_validate            = $actions;
+        $actions_to_validate[ $new_id ] = $action;
+
+        $dependency_validation = $this->validate_mapping_dependencies( $actions_to_validate );
+        if ( is_wp_error( $dependency_validation ) )
+        {
+            return $this->prepare_error_response(
+                $dependency_validation->get_error_code(),
+                $dependency_validation->get_error_message(),
+                400
+            );
         }
 
         $actions[ $new_id ] = $action;
@@ -809,6 +822,19 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $linkage[ 'settings' ] = $this->sanitize_settings( $request->get_param( 'settings' ) );
         }
 
+        $actions_to_validate       = $actions;
+        $actions_to_validate[ $id ] = $linkage;
+
+        $dependency_validation = $this->validate_mapping_dependencies( $actions_to_validate );
+        if ( is_wp_error( $dependency_validation ) )
+        {
+            return $this->prepare_error_response(
+                $dependency_validation->get_error_code(),
+                $dependency_validation->get_error_message(),
+                400
+            );
+        }
+
         $actions[ $id ] = $linkage;
         update_option( $option_key, $actions, false );
 
@@ -828,6 +854,34 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
         $deleted = $actions[ $id ];
         unset( $actions[ $id ] );
+
+        foreach ( $actions as &$mapping )
+        {
+            if ( ! is_array( $mapping ) )
+            {
+                continue;
+            }
+
+            if ( ! isset( $mapping['settings'] ) || ! is_array( $mapping['settings'] ) )
+            {
+                continue;
+            }
+
+            if ( ! isset( $mapping['settings']['dependency_ids'] ) || ! is_array( $mapping['settings']['dependency_ids'] ) )
+            {
+                continue;
+            }
+
+            $dependency_ids = $this->sanitize_dependency_ids( $mapping['settings']['dependency_ids'] );
+            $mapping['settings']['dependency_ids'] = array_values(
+                array_filter(
+                    $dependency_ids,
+                    static fn( string $dependency_id ): bool => $dependency_id !== $id
+                )
+            );
+        }
+        unset( $mapping );
+
         update_option( $option_key, $actions, false );
 
         return $this->prepare_item_for_response( [ 'deleted' => true, 'previous' => $deleted ] );
@@ -1149,6 +1203,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 continue;
             }
 
+            if ( 'dependency_ids' === $key && is_array( $value ) )
+            {
+                $sanitized[ $key ] = $this->sanitize_dependency_ids( $value );
+                continue;
+            }
+
             if ( is_array( $value ) )
             {
                 $sanitized[ $key ] = $this->sanitize_settings( $value );
@@ -1180,6 +1240,209 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             'delay_seconds' => max( 10, min( 3600, (int) ( $raw['delay_seconds'] ?? 60 ) ) ),
             'max_wait_seconds' => max( 43200, min( 604800, (int) ( $raw['max_wait_seconds'] ?? DAY_IN_SECONDS ) ) ),
         ];
+    }
+
+    /**
+     * Sanitize dependency IDs for mapping DAG relationships.
+     *
+     * @param array $dependency_ids Raw dependency identifiers.
+     *
+     * @return array<int, string>
+     */
+    private function sanitize_dependency_ids( array $dependency_ids ): array
+    {
+        $result = [];
+        foreach ( $dependency_ids as $dependency_id )
+        {
+            if ( ! is_scalar( $dependency_id ) )
+            {
+                continue;
+            }
+
+            $normalized = sanitize_text_field( (string) $dependency_id );
+            if ( '' === $normalized )
+            {
+                continue;
+            }
+
+            $result[] = $normalized;
+        }
+
+        return array_values( array_unique( $result ) );
+    }
+
+    /**
+     * Validate dependency graph integrity for current form mappings.
+     *
+     * @param array $actions Raw stored action map keyed by local mapping id.
+     *
+     * @return true|WP_Error
+     */
+    private function validate_mapping_dependencies( array $actions ): true | WP_Error
+    {
+        $normalized = $this->normalize_local_action_mappings( $actions );
+        if ( empty( $normalized ) )
+        {
+            return true;
+        }
+
+        $planner = Sentient_Forms_Plugin::instance()->get_mapping_dependency_planner();
+        $plan    = $planner->build_execution_plan( $normalized, 'gform_validation' );
+
+        if ( ! empty( $plan['cycle_ids'] ) )
+        {
+            return new WP_Error(
+                'rest_invalid_dependency_cycle',
+                sprintf(
+                    /* translators: %s: comma-separated mapping ids */
+                    __( 'Dependency graph contains a cycle: %s', 'sentient-forms' ),
+                    implode( ', ', array_map( 'sanitize_text_field', (array) $plan['cycle_ids'] ) )
+                )
+            );
+        }
+
+        foreach ( $normalized as $mapping_id => $mapping )
+        {
+            $dependency_ids = $planner->extract_dependency_ids( $mapping );
+            if ( empty( $dependency_ids ) )
+            {
+                continue;
+            }
+
+            $trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
+
+            foreach ( $dependency_ids as $dependency_id )
+            {
+                if ( $dependency_id === $mapping_id )
+                {
+                    return new WP_Error(
+                        'rest_invalid_dependency_self',
+                        sprintf(
+                            /* translators: %s: mapping id */
+                            __( 'Mapping %s cannot depend on itself.', 'sentient-forms' ),
+                            sanitize_text_field( $mapping_id )
+                        )
+                    );
+                }
+
+                if ( ! isset( $normalized[ $dependency_id ] ) )
+                {
+                    return new WP_Error(
+                        'rest_invalid_dependency_missing',
+                        sprintf(
+                            /* translators: 1: mapping id, 2: dependency id */
+                            __( 'Mapping %1$s depends on unknown mapping %2$s.', 'sentient-forms' ),
+                            sanitize_text_field( $mapping_id ),
+                            sanitize_text_field( $dependency_id )
+                        )
+                    );
+                }
+
+                $dependency_hooks = $this->sanitize_trigger_hooks( (array) ( $normalized[ $dependency_id ]['trigger_hooks'] ?? [] ) );
+                $missing_hooks    = array_values( array_diff( $trigger_hooks, $dependency_hooks ) );
+                if ( ! empty( $missing_hooks ) )
+                {
+                    return new WP_Error(
+                        'rest_invalid_dependency_hooks',
+                        sprintf(
+                            /* translators: 1: mapping id, 2: dependency id, 3: hook list */
+                            __( 'Mapping %1$s depends on %2$s, but %2$s is missing required hooks: %3$s.', 'sentient-forms' ),
+                            sanitize_text_field( $mapping_id ),
+                            sanitize_text_field( $dependency_id ),
+                            implode( ', ', array_map( 'sanitize_text_field', $missing_hooks ) )
+                        )
+                    );
+                }
+
+                $runs_after_submission = in_array( 'gform_after_submission', $trigger_hooks, true );
+                $dependency_runs_after_submission = in_array( 'gform_after_submission', $dependency_hooks, true );
+                if ( $runs_after_submission && $dependency_runs_after_submission )
+                {
+                    $mapping_is_async = $this->is_mapping_async( $mapping );
+                    $dependency_is_async = $this->is_mapping_async( $normalized[ $dependency_id ] );
+
+                    if ( $dependency_is_async && ! $mapping_is_async )
+                    {
+                        return new WP_Error(
+                            'rest_invalid_dependency_execution_mode',
+                            sprintf(
+                                /* translators: 1: mapping id, 2: dependency id */
+                                __( 'Mapping %1$s depends on async mapping %2$s during after-submission, so %1$s must also run async.', 'sentient-forms' ),
+                                sanitize_text_field( $mapping_id ),
+                                sanitize_text_field( $dependency_id )
+                            )
+                        );
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Determine whether a mapping executes asynchronously for after-submission flow.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     *
+     * @return bool
+     */
+    private function is_mapping_async( array $mapping ): bool
+    {
+        $indicator = isset( $mapping['action_type_indicator'] ) && is_scalar( $mapping['action_type_indicator'] )
+            ? sanitize_key( (string) $mapping['action_type_indicator'] )
+            : '';
+
+        if ( 'master' === $indicator )
+        {
+            return true;
+        }
+
+        if ( isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) && array_key_exists( 'async', $mapping['settings'] ) )
+        {
+            return rest_sanitize_boolean( $mapping['settings']['async'] );
+        }
+
+        if ( isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) && isset( $mapping['settings']['execution_mode'] ) && is_scalar( $mapping['settings']['execution_mode'] ) )
+        {
+            return 'after_submission' === sanitize_key( (string) $mapping['settings']['execution_mode'] );
+        }
+
+        return false;
+    }
+
+    /**
+     * Normalize local mapping payloads while filtering non-action metadata keys.
+     *
+     * @param array $actions Raw actions payload.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function normalize_local_action_mappings( array $actions ): array
+    {
+        $normalized = [];
+
+        foreach ( $actions as $mapping_key => $mapping )
+        {
+            if ( ! is_array( $mapping ) || ! isset( $mapping['central_action_id'] ) )
+            {
+                continue;
+            }
+
+            $mapping_id = isset( $mapping['local_mapping_id'] ) && is_scalar( $mapping['local_mapping_id'] )
+                ? sanitize_text_field( (string) $mapping['local_mapping_id'] )
+                : sanitize_text_field( (string) $mapping_key );
+
+            if ( '' === $mapping_id )
+            {
+                continue;
+            }
+
+            $mapping['local_mapping_id'] = $mapping_id;
+            $normalized[ $mapping_id ]   = $mapping;
+        }
+
+        return $normalized;
     }
 
     /**

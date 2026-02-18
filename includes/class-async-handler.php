@@ -945,11 +945,6 @@ class Sentient_Forms_Async_Handler
     public function process_action( string $action_id, array $data, array $settings, $execution_request_id = null, array $context = [] ): void
     {
 		$context = $this->normalize_context( $context, $action_id );
-		$this->get_metadata_store()->update_status( $context['job_id'] ?? null, 'running' );
-		if ( $execution_request_id )
-		{
-			$this->get_request_store()->mark_status( $execution_request_id, 'running' );
-		}
 
         $job = [
             'action_id'            => $action_id,
@@ -958,6 +953,31 @@ class Sentient_Forms_Async_Handler
             'execution_request_id' => $execution_request_id,
             'context'              => $context,
         ];
+
+        $dependency_gate = $this->evaluate_dependency_gate( $job );
+        if ( 'skip' === $dependency_gate['state'] )
+        {
+            $this->handle_dependency_skip( $job, $dependency_gate['reason'] ?? __( 'Dependency failed or skipped', 'sentient-forms' ) );
+            $this->sweep_stale_async_rows();
+            return;
+        }
+
+        if ( 'wait' === $dependency_gate['state'] )
+        {
+            $this->requeue_action_waiting_on_dependencies(
+                $job,
+                (int) ( $dependency_gate['delay_seconds'] ?? 10 ),
+                $dependency_gate['reason'] ?? __( 'Waiting for dependency completion', 'sentient-forms' ),
+            );
+            $this->sweep_stale_async_rows();
+            return;
+        }
+
+		$this->get_metadata_store()->update_status( $context['job_id'] ?? null, 'running' );
+		if ( $execution_request_id )
+		{
+			$this->get_request_store()->mark_status( $execution_request_id, 'running' );
+		}
 
         try
         {
@@ -1051,6 +1071,236 @@ class Sentient_Forms_Async_Handler
         {
             $this->sweep_stale_async_rows();
         }
+    }
+
+    /**
+     * Determine whether this job can execute based on dependency outcomes.
+     *
+     * @param array<string, mixed> $job Job payload.
+     *
+     * @return array{state: string, reason?: string, delay_seconds?: int}
+     */
+    private function evaluate_dependency_gate( array $job ): array
+    {
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $dependency_ids = isset( $context['dependency_mapping_ids'] ) && is_array( $context['dependency_mapping_ids'] )
+            ? array_values(
+                array_filter(
+                    array_map(
+                        static fn ( $dependency_id ): string => sanitize_text_field( (string) $dependency_id ),
+                        $context['dependency_mapping_ids']
+                    )
+                )
+            )
+            : [];
+
+        if ( empty( $dependency_ids ) )
+        {
+            return [ 'state' => 'pass' ];
+        }
+
+        $initial_outcomes = isset( $context['dependency_initial_outcomes'] ) && is_array( $context['dependency_initial_outcomes'] )
+            ? $context['dependency_initial_outcomes']
+            : [];
+        $dependency_request_ids = isset( $context['dependency_execution_request_ids'] ) && is_array( $context['dependency_execution_request_ids'] )
+            ? $context['dependency_execution_request_ids']
+            : [];
+
+        $pending_dependencies = [];
+
+        foreach ( $dependency_ids as $dependency_id )
+        {
+            $initial = isset( $initial_outcomes[ $dependency_id ] ) ? sanitize_key( (string) $initial_outcomes[ $dependency_id ] ) : '';
+            if ( in_array( $initial, [ 'failed', 'skipped' ], true ) )
+            {
+                return [
+                    'state'  => 'skip',
+                    'reason' => sprintf(
+                        /* translators: 1: dependency id, 2: dependency outcome */
+                        __( 'Dependency %1$s is %2$s.', 'sentient-forms' ),
+                        $dependency_id,
+                        $initial
+                    ),
+                ];
+            }
+
+            if ( in_array( $initial, [ 'succeeded', 'success' ], true ) )
+            {
+                continue;
+            }
+
+            $dependency_request_id = isset( $dependency_request_ids[ $dependency_id ] )
+                ? sanitize_text_field( (string) $dependency_request_ids[ $dependency_id ] )
+                : '';
+
+            if ( '' === $dependency_request_id )
+            {
+                continue;
+            }
+
+            if (
+                isset( $job['execution_request_id'] )
+                && (string) $job['execution_request_id'] !== ''
+                && (string) $job['execution_request_id'] === $dependency_request_id
+            )
+            {
+                continue;
+            }
+
+            $record = $this->get_request_store()->get( $dependency_request_id, 'job' );
+            if ( ! $record )
+            {
+                $pending_dependencies[] = $dependency_id;
+                continue;
+            }
+
+            $status = sanitize_key( (string) ( $record['status'] ?? 'queued' ) );
+            if ( in_array( $status, [ 'failed', 'skipped' ], true ) )
+            {
+                return [
+                    'state'  => 'skip',
+                    'reason' => sprintf(
+                        /* translators: 1: dependency id, 2: dependency status */
+                        __( 'Dependency %1$s is %2$s.', 'sentient-forms' ),
+                        $dependency_id,
+                        $status
+                    ),
+                ];
+            }
+
+            if ( 'success' !== $status )
+            {
+                $pending_dependencies[] = $dependency_id;
+            }
+        }
+
+        if ( empty( $pending_dependencies ) )
+        {
+            return [ 'state' => 'pass' ];
+        }
+
+        $wait_started_at = isset( $context['dependency_wait_started_at'] )
+            ? (int) $context['dependency_wait_started_at']
+            : time();
+        $wait_max_seconds = max( 30, (int) ( $context['dependency_wait_max_seconds'] ?? 600 ) );
+
+        if ( ( time() - $wait_started_at ) >= $wait_max_seconds )
+        {
+            return [
+                'state'  => 'skip',
+                'reason' => sprintf(
+                    /* translators: %s: comma-separated dependency ids */
+                    __( 'Timed out waiting for dependencies: %s.', 'sentient-forms' ),
+                    implode( ', ', $pending_dependencies )
+                ),
+            ];
+        }
+
+        return [
+            'state'         => 'wait',
+            'delay_seconds' => max( 5, (int) ( $context['dependency_wait_poll_seconds'] ?? 10 ) ),
+            'reason'        => sprintf(
+                /* translators: %s: comma-separated dependency ids */
+                __( 'Waiting for dependencies: %s.', 'sentient-forms' ),
+                implode( ', ', $pending_dependencies )
+            ),
+        ];
+    }
+
+    /**
+     * Mark a job as skipped due to dependency outcome.
+     *
+     * @param array<string, mixed> $job    Job payload.
+     * @param string               $reason Skip reason.
+     *
+     * @return void
+     */
+    private function handle_dependency_skip( array $job, string $reason ): void
+    {
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+
+        $this->get_metadata_store()->update_status(
+            $context['job_id'] ?? null,
+            'skipped',
+            [
+                'last_error'   => $reason,
+                'completed_at' => time(),
+            ]
+        );
+
+        if ( ! empty( $job['execution_request_id'] ) )
+        {
+            $this->get_request_store()->mark_status( (string) $job['execution_request_id'], 'skipped', $reason );
+        }
+
+        $this->emit_async_event(
+            'skipped',
+            $context,
+            [ 'reason' => $reason ]
+        );
+    }
+
+    /**
+     * Requeue a job while it waits for dependencies to complete.
+     *
+     * @param array<string, mixed> $job          Job payload.
+     * @param int                  $delay_seconds Delay before retry.
+     * @param string               $reason        Wait reason.
+     *
+     * @return void
+     */
+    private function requeue_action_waiting_on_dependencies( array $job, int $delay_seconds, string $reason ): void
+    {
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        if ( ! isset( $context['dependency_wait_started_at'] ) )
+        {
+            $context['dependency_wait_started_at'] = time();
+        }
+
+        $run_at = time() + max( 5, $delay_seconds );
+
+        $this->get_metadata_store()->update_status(
+            $context['job_id'] ?? null,
+            'retry_scheduled',
+            [
+                'last_error' => $reason,
+                'run_at'     => $run_at,
+            ]
+        );
+
+        if ( ! empty( $job['execution_request_id'] ) )
+        {
+            $this->get_request_store()->mark_status( (string) $job['execution_request_id'], 'queued', $reason );
+        }
+
+        $reschedule_context = $context;
+        unset( $reschedule_context['job_id'] );
+
+        $scheduled = $this->schedule_action(
+            (string) $job['action_id'],
+            is_array( $job['data'] ?? null ) ? $job['data'] : [],
+            is_array( $job['settings'] ?? null ) ? $job['settings'] : [],
+            $reschedule_context,
+            $run_at,
+        );
+
+        if ( ! $scheduled )
+        {
+            $this->handle_failure(
+                $job,
+                new WP_Error( 'sentient_forms_dependency_wait_reschedule_failed', $reason ),
+            );
+            return;
+        }
+
+        $this->emit_async_event(
+            'dependency_wait',
+            $context,
+            [
+                'reason' => $reason,
+                'run_at' => $run_at,
+            ],
+        );
     }
 
     /**

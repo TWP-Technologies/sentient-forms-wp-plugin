@@ -60,6 +60,7 @@ return [
 	'Sentient_Forms_Llm_Provider' => __DIR__ . '/enums/LLMs.php',
 	'Sentient_Forms_Llm_Status' => __DIR__ . '/enums/LLMs.php',
 	'Sentient_Forms_Logger' => __DIR__ . '/logging/class-sentient-forms-logger.php',
+	'Sentient_Forms_Mapping_Dependency_Planner' => __DIR__ . '/services/class-sentient-forms-mapping-dependency-planner.php',
 	'Sentient_Forms_Mappings_Controller' => __DIR__ . '/rest-api/controllers/class-mappings-controller.php',
 	'Sentient_Forms_Mappings_Sync' => __DIR__ . '/services/class-sentient-forms-mappings-sync.php',
 	'Sentient_Forms_Meta_Controller' => __DIR__ . '/rest-api/controllers/class-meta-controller.php',
