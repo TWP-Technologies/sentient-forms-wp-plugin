@@ -62,10 +62,6 @@ function operatorRequiresNumeric(operator: ConditionOperator): boolean {
 	return operator === 'gt' || operator === 'gte' || operator === 'lt' || operator === 'lte';
 }
 
-function isRule(node: ConditionNode): node is ConditionRule {
-	return node.type === 'rule';
-}
-
 function isGroup(node: ConditionNode): node is ConditionGroup {
 	return node.type === 'group';
 }

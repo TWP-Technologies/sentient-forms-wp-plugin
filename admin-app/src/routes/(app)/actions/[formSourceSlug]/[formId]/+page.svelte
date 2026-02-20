@@ -19,8 +19,14 @@
 	import { DEFAULT_BATCH_SETTINGS } from '$lib/utils/batch';
 	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
 	import {
+		canDependencySatisfyHook,
+		deriveDependencyIdsFromTriggerSources,
+		findIntroducedDependencyIssues,
 		formatDependencyIssues,
+		getMappingTriggerHooks,
+		getMappingTriggerSources,
 		normalizeDependencyIds,
+		serializeTriggerSources,
 		validateMappingDependencies
 	} from '$lib/utils/mapping-dependencies';
 	import { navigateToAppPath } from '$lib/navigation';
@@ -33,11 +39,14 @@
 	import type {
 		ActionDefinition,
 		CustomAction,
+		DuplicateParentSelection,
 		FormActionConfig,
 		FormActionLinkage,
+		FormActionMutationPayload,
 		FormExecutionStatus,
 		FormFieldInfo,
-		InputMapping
+		InputMapping,
+		WorkflowPlanResponse
 	} from '$lib/api/types';
 
 	type Props = { data: { formSourceSlug: string; formId: number } };
@@ -60,12 +69,42 @@
 	let showAddPanel = $state(false);
 	let showTemplateLibrary = $state(false);
 	let searchTerm = $state('');
+	let selectedCreateDependencyIds = $state<Set<string>>(new Set());
 
 	let editingLinkageId = $state<string | null>(null);
+	let showMappingConfigModal = $state(false);
 	let draftHooks = $state<Set<string>>(new Set());
 	let draftSettings = $state<Record<string, any>>({});
-	const draftDependencyIds = $derived(normalizeDependencyIds(draftSettings.dependency_ids));
-	let linkedActionsView = $state<'graph' | 'table'>('table');
+	let editBaselineSignature = $state<string | null>(null);
+	type DraftTriggerSource = { type: 'hook_root' | 'mapping'; mapping_id?: string };
+	type DraftTriggerSourceRecord = Record<string, DraftTriggerSource>;
+	let graphDraftByMappingId = $state<
+		Record<
+			string,
+			{ dependencyIds: string[]; triggerHooks: string[]; triggerSources: DraftTriggerSourceRecord }
+		>
+	>({});
+	let workflowPlan = $state<WorkflowPlanResponse | null>(null);
+	let workflowPlanLoading = $state(false);
+	let workflowPlanError = $state<string | null>(null);
+	let workflowPlanScope = $state<'all' | string>('all');
+	let lastWorkflowPlanSignature = $state<string>('');
+	let duplicatingMappingId = $state<string | null>(null);
+	let rootAttachUndo = $state<{
+		mappingId: string;
+		hooks: string[];
+		dependencyIds: string[];
+		triggerSources: DraftTriggerSourceRecord;
+		hook: string;
+	} | null>(null);
+	let rootAttachUndoTimer: number | null = null;
+	const draftDependencyIds = $derived.by(() => {
+		const hooks = normalizeHookIds(draftHooks);
+		const triggerSources = normalizeDraftTriggerSources(draftSettings.trigger_sources, hooks);
+		return deriveDependencyIdsForDraft(triggerSources);
+	});
+	let savingDependencies = $state(false);
+	let linkedActionsView = $state<'graph' | 'table'>('graph');
 	let pendingRemovalId = $state<string | null>(null);
 	let entryLookupId = $state('');
 	let refreshInterval: number | null = null;
@@ -200,6 +239,59 @@
 	});
 
 	const hookEntries = $derived<[string, string][]>(Object.entries(hookOptions));
+	const editingLinkage = $derived.by(() => {
+		if (!editingLinkageId) return null;
+		return actionsState.items.find((item) => item.local_mapping_id === editingLinkageId) ?? null;
+	});
+	const currentDraftSignature = $derived.by(() => {
+		if (!editingLinkageId) return null;
+		return createDraftSignature(draftHooks, draftSettings);
+	});
+	const hasUnsavedMappingChanges = $derived.by(() => {
+		if (!editingLinkageId || !editBaselineSignature || !currentDraftSignature) return false;
+		return editBaselineSignature !== currentDraftSignature;
+	});
+	const graphHasDraftChanges = $derived.by(() => Object.keys(graphDraftByMappingId).length > 0);
+	const hasGraphUnsavedChanges = $derived(hasUnsavedMappingChanges || graphHasDraftChanges);
+	const graphEditingDependencyIds = $derived.by(() => {
+		if (!editingLinkageId) return [] as string[];
+		return readEffectiveDraftForMapping(editingLinkageId).dependencyIds;
+	});
+	const graphRenderLinkages = $derived.by<FormActionLinkage[]>(() =>
+		actionsState.items.map((item) => {
+			const draft = graphDraftByMappingId[item.local_mapping_id];
+			const nextHooks = draft?.triggerHooks ?? item.trigger_hooks ?? [];
+			const nextDependencyIds =
+				draft?.dependencyIds ?? normalizeDependencyIds(item.settings?.dependency_ids);
+			const nextTriggerSources =
+				draft?.triggerSources ?? serializeTriggerSources(getMappingTriggerSources(item));
+			const nextSettings: Record<string, unknown> = {
+				...(item.settings ?? {})
+			};
+			if (nextDependencyIds.length > 0) {
+				nextSettings.dependency_ids = nextDependencyIds;
+			} else {
+				delete nextSettings.dependency_ids;
+			}
+			nextSettings.trigger_sources = nextTriggerSources;
+
+			return {
+				...item,
+				trigger_hooks: nextHooks,
+				settings: nextSettings as FormActionLinkage['settings']
+			};
+		})
+	);
+	const editableDependenciesForCreate = $derived.by(() => {
+		const requiredHooks = normalizeHookIds(selectedHooks);
+		if (requiredHooks.length === 0) return [] as FormActionLinkage[];
+
+		return actionsState.items.filter((linkage) => {
+			if (linkage.is_action_enabled_for_form === false) return false;
+			const dependencyHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
+			return dependencySupportsSelectedHooks(dependencyHooks, requiredHooks);
+		});
+	});
 
 	const hasDefinitions = $derived(definitions.length > 0);
 	const hasCpsDefinitions = $derived(
@@ -257,6 +349,41 @@
 		if (showAddPanel && selectedHooks.size === 0) {
 			const firstHook = Object.keys(hookOptions)[0] ?? 'gform_validation';
 			selectedHooks = new Set([firstHook]);
+		}
+	});
+
+	$effect(() => {
+		const eligibleIds = new Set(editableDependenciesForCreate.map((item) => item.local_mapping_id));
+		let changed = false;
+		const next = new Set<string>();
+		for (const mappingId of selectedCreateDependencyIds) {
+			if (eligibleIds.has(mappingId)) {
+				next.add(mappingId);
+			} else {
+				changed = true;
+			}
+		}
+		if (changed) {
+			selectedCreateDependencyIds = next;
+		}
+	});
+
+	$effect(() => {
+		const validIds = new Set(actionsState.items.map((item) => item.local_mapping_id));
+		let changed = false;
+		const next: Record<
+			string,
+			{ dependencyIds: string[]; triggerHooks: string[]; triggerSources: DraftTriggerSourceRecord }
+		> = {};
+		for (const [mappingId, draft] of Object.entries(graphDraftByMappingId)) {
+			if (!validIds.has(mappingId)) {
+				changed = true;
+				continue;
+			}
+			next[mappingId] = draft;
+		}
+		if (changed) {
+			graphDraftByMappingId = next;
 		}
 	});
 
@@ -318,8 +445,22 @@
 			if (visibilityHandler) {
 				document.removeEventListener('visibilitychange', visibilityHandler);
 			}
+			clearRootAttachUndoState();
 			formActionsStore.reset();
 		};
+	});
+
+	$effect(() => {
+		actionsState.items;
+		actionsState.loading;
+		if (actionsState.loading) return;
+		if ((actionsState.items ?? []).length === 0) {
+			workflowPlan = null;
+			workflowPlanError = null;
+			lastWorkflowPlanSignature = '';
+			return;
+		}
+		void loadWorkflowPlan(workflowPlanScope);
 	});
 
 	function normalizeDefinitionHooks(hooks?: Record<string, string> | string[]): string[] {
@@ -497,6 +638,212 @@
 		return linkage.central_action_id ?? 'Unnamed action';
 	}
 
+	function dependencyBadgeLabel(mappingId: string): string {
+		const linked = actionsState.items.find((item) => item.local_mapping_id === mappingId);
+		if (!linked) return mappingId;
+		return friendlyActionLabel(linked);
+	}
+
+	function normalizeHookIds(hooks: Iterable<string>): string[] {
+		return Array.from(
+			new Set(
+				Array.from(hooks)
+					.map((hook) => hook?.toString().trim())
+					.filter(Boolean)
+			)
+		).sort();
+	}
+
+	function dependencySupportsSelectedHooks(
+		dependencyHooks: string[],
+		requiredHooks: string[]
+	): boolean {
+		for (const requiredHook of requiredHooks) {
+			if (!canDependencySatisfyHook(dependencyHooks, requiredHook)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	function getLinkageById(mappingId: string): FormActionLinkage | null {
+		return actionsState.items.find((item) => item.local_mapping_id === mappingId) ?? null;
+	}
+
+	function normalizeDraftTriggerSources(value: unknown, hooks: string[]): DraftTriggerSourceRecord {
+		const hookSet = new Set(hooks);
+		if (!value || typeof value !== 'object' || Array.isArray(value)) {
+			return {};
+		}
+
+		const normalized: DraftTriggerSourceRecord = {};
+		for (const [hook, rawSource] of Object.entries(value as Record<string, unknown>)) {
+			if (!hookSet.has(hook)) continue;
+			if (!rawSource || typeof rawSource !== 'object' || Array.isArray(rawSource)) continue;
+			const source = rawSource as Record<string, unknown>;
+			const type = typeof source.type === 'string' ? source.type.trim().toLowerCase() : '';
+			if (type === 'hook_root' || type === 'root') {
+				normalized[hook] = { type: 'hook_root' };
+				continue;
+			}
+			if (type !== 'mapping') continue;
+			const mappingId =
+				typeof source.mapping_id === 'string'
+					? source.mapping_id.trim()
+					: typeof source.mappingId === 'string'
+						? source.mappingId.trim()
+						: '';
+			if (!mappingId) continue;
+			normalized[hook] = { type: 'mapping', mapping_id: mappingId };
+		}
+		return normalized;
+	}
+
+	function deriveTriggerSourcesForDraft(
+		triggerHooks: string[],
+		dependencyIds: string[],
+		existing: DraftTriggerSourceRecord
+	): DraftTriggerSourceRecord {
+		const next: DraftTriggerSourceRecord = {};
+		const primaryDependency = dependencyIds[0] ?? null;
+		for (const hook of triggerHooks) {
+			const source = existing[hook];
+			if (source?.type === 'mapping' && source.mapping_id) {
+				next[hook] = { type: 'mapping', mapping_id: source.mapping_id };
+				continue;
+			}
+			if (source?.type === 'hook_root') {
+				next[hook] = { type: 'hook_root' };
+				continue;
+			}
+			if (primaryDependency) {
+				next[hook] = { type: 'mapping', mapping_id: primaryDependency };
+				continue;
+			}
+			next[hook] = { type: 'hook_root' };
+		}
+		return next;
+	}
+
+	function deriveDependencyIdsForDraft(triggerSources: DraftTriggerSourceRecord): string[] {
+		return Array.from(
+			new Set(
+				Object.values(triggerSources)
+					.filter((source) => source.type === 'mapping' && Boolean(source.mapping_id))
+					.map((source) => source.mapping_id as string)
+			)
+		);
+	}
+
+	function readEffectiveDraftForMapping(mappingId: string): {
+		dependencyIds: string[];
+		triggerHooks: string[];
+		triggerSources: DraftTriggerSourceRecord;
+	} {
+		const linkage = getLinkageById(mappingId);
+		const fallback = {
+			dependencyIds: [] as string[],
+			triggerHooks: [] as string[],
+			triggerSources: {} as DraftTriggerSourceRecord
+		};
+		if (!linkage) return fallback;
+
+		const explicitDraft = graphDraftByMappingId[mappingId];
+		if (explicitDraft) {
+			const hooks = normalizeHookIds(explicitDraft.triggerHooks);
+			const sources = deriveTriggerSourcesForDraft(
+				hooks,
+				normalizeDependencyIds(explicitDraft.dependencyIds),
+				normalizeDraftTriggerSources(explicitDraft.triggerSources, hooks)
+			);
+			return {
+				dependencyIds: deriveDependencyIdsForDraft(sources),
+				triggerHooks: hooks,
+				triggerSources: sources
+			};
+		}
+
+		if (editingLinkageId === mappingId && hasUnsavedMappingChanges) {
+			const hooks = normalizeHookIds(draftHooks);
+			const sources = deriveTriggerSourcesForDraft(
+				hooks,
+				normalizeDependencyIds(draftSettings.dependency_ids),
+				normalizeDraftTriggerSources(draftSettings.trigger_sources, hooks)
+			);
+			return {
+				dependencyIds: deriveDependencyIdsForDraft(sources),
+				triggerHooks: hooks,
+				triggerSources: sources
+			};
+		}
+
+		const hooks = normalizeHookIds(getMappingTriggerHooks(linkage));
+		const baseSources = getMappingTriggerSources(linkage);
+		const normalizedSources: DraftTriggerSourceRecord = {};
+		for (const hook of hooks) {
+			const source = baseSources[hook];
+			if (!source || source.type === 'hook_root') {
+				normalizedSources[hook] = { type: 'hook_root' };
+				continue;
+			}
+			if (!source.mappingId) {
+				normalizedSources[hook] = { type: 'hook_root' };
+				continue;
+			}
+			normalizedSources[hook] = {
+				type: 'mapping',
+				mapping_id: source.mappingId
+			};
+		}
+
+		return {
+			dependencyIds: deriveDependencyIdsForDraft(normalizedSources),
+			triggerHooks: hooks,
+			triggerSources: normalizedSources
+		};
+	}
+
+	function hasDraftDifference(
+		mappingId: string,
+		dependencyIds: string[],
+		triggerHooks: string[],
+		triggerSources: DraftTriggerSourceRecord
+	): boolean {
+		const linkage = getLinkageById(mappingId);
+		if (!linkage) return false;
+		const baseHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
+		const baseSourceMap = getMappingTriggerSources(linkage);
+		const baseTriggerSources: DraftTriggerSourceRecord = {};
+		for (const hook of baseHooks) {
+			const source = baseSourceMap[hook];
+			if (!source || source.type === 'hook_root') {
+				baseTriggerSources[hook] = { type: 'hook_root' };
+				continue;
+			}
+			baseTriggerSources[hook] = {
+				type: 'mapping',
+				mapping_id: source.mappingId
+			};
+		}
+		const baseDependencyIds = deriveDependencyIdsForDraft(baseTriggerSources);
+		if (
+			dependencyIds.length !== baseDependencyIds.length ||
+			triggerHooks.length !== baseHooks.length
+		) {
+			return true;
+		}
+		if (
+			dependencyIds.some((id, index) => id !== baseDependencyIds[index]) ||
+			triggerHooks.some((hook, index) => hook !== baseHooks[index])
+		) {
+			return true;
+		}
+
+		const baseSerialized = JSON.stringify(sortKeysDeep(baseTriggerSources));
+		const nextSerialized = JSON.stringify(sortKeysDeep(triggerSources));
+		return baseSerialized !== nextSerialized;
+	}
+
 	function toggleHookSelection(hook: string) {
 		const next = new Set(selectedHooks);
 		next.has(hook) ? next.delete(hook) : next.add(hook);
@@ -504,15 +851,220 @@
 		persistLastHooks(Array.from(next));
 	}
 
-	function startEditingAction(linkage: FormActionLinkage) {
+	function toggleCreateDependencySelection(mappingId: string) {
+		if (selectedCreateDependencyIds.has(mappingId)) {
+			selectedCreateDependencyIds = new Set();
+			return;
+		}
+		selectedCreateDependencyIds = new Set([mappingId]);
+	}
+
+	function normalizeDraftHooks(hooks: Iterable<string>): string[] {
+		return Array.from(
+			new Set(
+				Array.from(hooks)
+					.map((hook) => hook?.toString().trim())
+					.filter(Boolean)
+			)
+		).sort();
+	}
+
+	function sortKeysDeep(value: unknown): unknown {
+		if (Array.isArray(value)) {
+			return value.map((item) => sortKeysDeep(item));
+		}
+
+		if (!value || typeof value !== 'object') {
+			return value;
+		}
+
+		const entries = Object.entries(value as Record<string, unknown>)
+			.filter(([, entry]) => typeof entry !== 'undefined')
+			.sort(([a], [b]) => a.localeCompare(b));
+		const normalized: Record<string, unknown> = {};
+		for (const [key, entry] of entries) {
+			normalized[key] = sortKeysDeep(entry);
+		}
+		return normalized;
+	}
+
+	function normalizeDraftSettings(
+		settings: Record<string, any>,
+		hooks: string[]
+	): Record<string, unknown> {
+		const normalized = sortKeysDeep(settings) as Record<string, unknown>;
+		const dependencyIds = normalizeDependencyIds(normalized.dependency_ids);
+		if (dependencyIds.length > 0) {
+			normalized.dependency_ids = dependencyIds;
+		} else {
+			delete normalized.dependency_ids;
+		}
+		const triggerSources = normalizeDraftTriggerSources(normalized.trigger_sources, hooks);
+		normalized.trigger_sources = triggerSources;
+		normalized.dependency_ids = deriveDependencyIdsForDraft(triggerSources);
+		return normalized;
+	}
+
+	function createDraftSignature(hooks: Iterable<string>, settings: Record<string, any>): string {
+		const normalizedHooks = normalizeDraftHooks(hooks);
+		return JSON.stringify(
+			sortKeysDeep({
+				hooks: normalizedHooks,
+				settings: normalizeDraftSettings(settings, normalizedHooks)
+			})
+		);
+	}
+
+	function createWorkflowPlanSignature(
+		items: FormActionLinkage[],
+		hookScope: 'all' | string
+	): string {
+		return JSON.stringify(
+			items.map((item) => ({
+				id: item.local_mapping_id,
+				hooks: normalizeHookIds(getMappingTriggerHooks(item)),
+				enabled: item.is_action_enabled_for_form !== false,
+				dependency_ids: normalizeDependencyIds(item.settings?.dependency_ids),
+				trigger_sources: serializeTriggerSources(getMappingTriggerSources(item)),
+				scope: hookScope
+			}))
+		);
+	}
+
+	function buildLinkagesFromDraftMap(
+		draftMap: Record<
+			string,
+			{ dependencyIds: string[]; triggerHooks: string[]; triggerSources: DraftTriggerSourceRecord }
+		>
+	): FormActionLinkage[] {
+		return actionsState.items.map((item) => {
+			const draft = draftMap[item.local_mapping_id];
+			if (!draft) return item;
+			const nextSettings: Record<string, unknown> = {
+				...(item.settings ?? {})
+			};
+			if (draft.dependencyIds.length > 0) {
+				nextSettings.dependency_ids = draft.dependencyIds;
+			} else {
+				delete nextSettings.dependency_ids;
+			}
+			nextSettings.trigger_sources = draft.triggerSources;
+
+			return {
+				...item,
+				trigger_hooks: draft.triggerHooks,
+				settings: nextSettings as FormActionLinkage['settings']
+			};
+		});
+	}
+
+	function applyGraphDraftMutation(
+		mappingId: string,
+		dependencyIds: string[],
+		triggerHooks: string[],
+		triggerSources: DraftTriggerSourceRecord,
+		options: { syncModal?: boolean; showErrors?: boolean } = {}
+	): boolean {
+		const linkage = getLinkageById(mappingId);
+		if (!linkage) return false;
+
+		const nextHooks = normalizeHookIds(triggerHooks);
+		const normalizedSources = deriveTriggerSourcesForDraft(
+			nextHooks,
+			normalizeDependencyIds(dependencyIds),
+			normalizeDraftTriggerSources(triggerSources, nextHooks)
+		);
+		const nextDependencies = deriveDependencyIdsForDraft(normalizedSources);
+		const nextDraftMap = { ...graphDraftByMappingId };
+		if (hasDraftDifference(mappingId, nextDependencies, nextHooks, normalizedSources)) {
+			nextDraftMap[mappingId] = {
+				dependencyIds: nextDependencies,
+				triggerHooks: nextHooks,
+				triggerSources: normalizedSources
+			};
+		} else {
+			delete nextDraftMap[mappingId];
+		}
+
+		const candidateItems = buildLinkagesFromDraftMap(nextDraftMap);
+		const baselineItems = buildLinkagesFromDraftMap(graphDraftByMappingId);
+		const introducedIssues = findIntroducedDependencyIssues(
+			validateMappingDependencies(baselineItems),
+			validateMappingDependencies(candidateItems)
+		);
+		if (introducedIssues.length > 0) {
+			if (options.showErrors ?? true) {
+				notifications.error(formatDependencyIssues(introducedIssues)[0]);
+			}
+			return false;
+		}
+
+		graphDraftByMappingId = nextDraftMap;
+		if (options.syncModal && showMappingConfigModal && editingLinkageId === mappingId) {
+			draftHooks = new Set(nextHooks);
+			draftSettings = {
+				...draftSettings,
+				dependency_ids: nextDependencies,
+				trigger_sources: normalizedSources
+			};
+		}
+		return true;
+	}
+
+	function clearRootAttachUndoState() {
+		rootAttachUndo = null;
+		if (rootAttachUndoTimer !== null) {
+			window.clearTimeout(rootAttachUndoTimer);
+			rootAttachUndoTimer = null;
+		}
+	}
+
+	function scheduleRootAttachUndoExpiry() {
+		if (rootAttachUndoTimer !== null) {
+			window.clearTimeout(rootAttachUndoTimer);
+		}
+		rootAttachUndoTimer = window.setTimeout(() => {
+			rootAttachUndo = null;
+			rootAttachUndoTimer = null;
+		}, 9000);
+	}
+
+	async function loadWorkflowPlan(hookScope: 'all' | string = workflowPlanScope) {
+		workflowPlanScope = hookScope;
+		const signature = createWorkflowPlanSignature(actionsState.items ?? [], hookScope);
+		if (signature === lastWorkflowPlanSignature && workflowPlan && !workflowPlanError) {
+			return;
+		}
+
+		workflowPlanLoading = true;
+		workflowPlanError = null;
+		try {
+			const client = createClientFromConfig();
+			workflowPlan = await client.getWorkflowPlan(data.formSourceSlug, data.formId, hookScope, {
+				showNotifications: false
+			});
+			lastWorkflowPlanSignature = signature;
+		} catch (error) {
+			workflowPlanError =
+				error instanceof Error
+					? error.message
+					: 'Workflow plan unavailable; using local fallback preview.';
+			workflowPlan = null;
+		} finally {
+			workflowPlanLoading = false;
+		}
+	}
+
+	function startEditingAction(linkage: FormActionLinkage, openModal = true) {
+		const draftSnapshot = readEffectiveDraftForMapping(linkage.local_mapping_id);
 		const initialHooks =
-			linkage.trigger_hooks && linkage.trigger_hooks.length > 0
-				? linkage.trigger_hooks
+			draftSnapshot.triggerHooks.length > 0
+				? draftSnapshot.triggerHooks
 				: [hookEntries[0]?.[0] ?? 'gform_validation'];
 		draftHooks = new Set(initialHooks);
 		// Clone settings with sensible defaults to avoid Svelte 5 $bindable() issues with undefined
 		const baseSettings = linkage.settings ?? {};
-		draftSettings = {
+		const nextDraftSettings = {
 			spam_confidence_threshold: baseSettings.spam_confidence_threshold ?? 0.8,
 			spam_result_display_mode: baseSettings.spam_result_display_mode ?? 'entry_note',
 			spam_indicators_display: baseSettings.spam_indicators_display ?? 'simple',
@@ -523,25 +1075,127 @@
 			execution_mode: baseSettings.execution_mode ?? 'after_submission',
 			// CB-EXEC-003/004: Batch settings with sensible defaults
 			batch_settings: baseSettings.batch_settings ?? { ...DEFAULT_BATCH_SETTINGS },
-			dependency_ids: normalizeDependencyIds(baseSettings.dependency_ids),
 			...baseSettings,
+			dependency_ids: draftSnapshot.dependencyIds,
+			trigger_sources: draftSnapshot.triggerSources,
 			conditions: baseSettings.conditions ?? createDefaultConditionConfig()
 		};
+		draftSettings = nextDraftSettings;
 		editingLinkageId = linkage.local_mapping_id;
+		showMappingConfigModal = openModal;
+		editBaselineSignature = createDraftSignature(initialHooks, nextDraftSettings);
+		clearRootAttachUndoState();
 		// Note: Form-level config is now accessed via a separate "Edit Form Defaults" button
 		// to avoid confusing auto-open modal behavior (UX fix)
 	}
 
 	function cancelEditingAction() {
 		editingLinkageId = null;
+		showMappingConfigModal = false;
 		draftHooks = new Set();
 		draftSettings = {};
+		editBaselineSignature = null;
+		clearRootAttachUndoState();
+	}
+
+	function clearDraftDependencies() {
+		if (!editingLinkageId) return;
+		const current = readEffectiveDraftForMapping(editingLinkageId);
+		const nextSources: DraftTriggerSourceRecord = Object.fromEntries(
+			current.triggerHooks.map((hook) => [hook, { type: 'hook_root' as const }])
+		);
+		applyGraphDraftMutation(editingLinkageId, [], current.triggerHooks, nextSources, {
+			syncModal: true
+		});
+		clearRootAttachUndoState();
+	}
+
+	function attachMappingToHookRoot(mappingId: string, hook: string) {
+		const normalizedMappingId = mappingId?.toString().trim();
+		if (!normalizedMappingId) return;
+		const normalizedHook = hook?.toString().trim();
+		if (!normalizedHook) return;
+		const current = readEffectiveDraftForMapping(normalizedMappingId);
+
+		const previous = {
+			mappingId: normalizedMappingId,
+			hooks: current.triggerHooks,
+			dependencyIds: current.dependencyIds,
+			triggerSources: current.triggerSources,
+			hook: normalizedHook
+		};
+
+		const nextHooks = normalizeHookIds([...current.triggerHooks, normalizedHook]);
+		const nextSources: DraftTriggerSourceRecord = {
+			...current.triggerSources,
+			[normalizedHook]: { type: 'hook_root' }
+		};
+		const applied = applyGraphDraftMutation(
+			normalizedMappingId,
+			deriveDependencyIdsForDraft(nextSources),
+			nextHooks,
+			nextSources,
+			{
+				syncModal: true
+			}
+		);
+		if (!applied) return;
+
+		editingLinkageId = normalizedMappingId;
+		rootAttachUndo = previous;
+		scheduleRootAttachUndoExpiry();
+
+		const hookLabel = hookOptions[normalizedHook] ?? normalizedHook;
+		notifications.info(`Attached to root "${hookLabel}". Hook trigger updated in draft.`);
+	}
+
+	function undoLastRootAttach() {
+		if (!rootAttachUndo) return;
+		const restored = applyGraphDraftMutation(
+			rootAttachUndo.mappingId,
+			rootAttachUndo.dependencyIds,
+			rootAttachUndo.hooks,
+			rootAttachUndo.triggerSources,
+			{ syncModal: true }
+		);
+		if (!restored) return;
+		editingLinkageId = rootAttachUndo.mappingId;
+		notifications.info('Restored previous dependencies and hooks.');
+		clearRootAttachUndoState();
+	}
+
+	function openGraphDependencyEditor() {
+		if (editingLinkageId && showMappingConfigModal) {
+			const current = readEffectiveDraftForMapping(editingLinkageId);
+			applyGraphDraftMutation(
+				editingLinkageId,
+				current.dependencyIds,
+				current.triggerHooks,
+				current.triggerSources,
+				{
+					syncModal: true
+				}
+			);
+		}
+		linkedActionsView = 'graph';
+		showMappingConfigModal = false;
 	}
 
 	function toggleDraftHook(hook: string) {
 		const next = new Set(draftHooks);
 		next.has(hook) ? next.delete(hook) : next.add(hook);
 		draftHooks = next;
+		const nextHooks = normalizeHookIds(next);
+		const nextSources = deriveTriggerSourcesForDraft(
+			nextHooks,
+			normalizeDependencyIds(draftSettings.dependency_ids),
+			normalizeDraftTriggerSources(draftSettings.trigger_sources, nextHooks)
+		);
+		draftSettings = {
+			...draftSettings,
+			trigger_sources: nextSources,
+			dependency_ids: deriveDependencyIdsForDraft(nextSources)
+		};
 	}
 
 	function toggleDraftDependency(mappingId: string) {
@@ -549,19 +1203,286 @@
 			return;
 		}
 
-		const current = normalizeDependencyIds(draftSettings.dependency_ids);
+		const currentDraft = readEffectiveDraftForMapping(editingLinkageId);
+		const current = currentDraft.dependencyIds;
 		const next = current.includes(mappingId)
 			? current.filter((id) => id !== mappingId)
 			: [...current, mappingId];
+		applyGraphDraftMutation(
+			editingLinkageId,
+			next,
+			currentDraft.triggerHooks,
+			currentDraft.triggerSources,
+			{
+				syncModal: true
+			}
+		);
+	}
 
-		draftSettings = {
-			...draftSettings,
-			dependency_ids: next
+	function setGraphEditingMapping(mappingId: string | null) {
+		editingLinkageId = mappingId;
+		if (!mappingId) return;
+		if (showMappingConfigModal && editingLinkageId === mappingId) {
+			const current = readEffectiveDraftForMapping(mappingId);
+			draftHooks = new Set(current.triggerHooks);
+			draftSettings = {
+				...draftSettings,
+				dependency_ids: current.dependencyIds,
+				trigger_sources: current.triggerSources
+			};
+		}
+	}
+
+	function connectGraphDependency(
+		sourceMappingId: string,
+		targetMappingId: string,
+		hook: string | null
+	) {
+		if (!sourceMappingId || !targetMappingId || sourceMappingId === targetMappingId) return;
+		if (!hook) {
+			notifications.warning(
+				'Select a hook tab or connect into a hook-specific left handle to set dependency order.'
+			);
+			return;
+		}
+		const current = readEffectiveDraftForMapping(targetMappingId);
+		const nextHooks = normalizeHookIds([...current.triggerHooks, hook]);
+		const nextSources: DraftTriggerSourceRecord = {
+			...current.triggerSources,
+			[hook]: {
+				type: 'mapping',
+				mapping_id: sourceMappingId
+			}
 		};
+
+		const applied = applyGraphDraftMutation(
+			targetMappingId,
+			deriveDependencyIdsForDraft(nextSources),
+			nextHooks,
+			nextSources,
+			{
+				syncModal: true
+			}
+		);
+		if (applied) {
+			editingLinkageId = targetMappingId;
+			clearRootAttachUndoState();
+		}
+	}
+
+	function disconnectGraphDependency(
+		sourceMappingId: string,
+		targetMappingId: string,
+		hook: string | null
+	) {
+		if (!sourceMappingId || !targetMappingId || sourceMappingId === targetMappingId) return;
+		const current = readEffectiveDraftForMapping(targetMappingId);
+		const targetHooks = hook
+			? [hook]
+			: current.triggerHooks.filter(
+					(hookKey) => current.triggerSources[hookKey]?.mapping_id === sourceMappingId
+				);
+		if (targetHooks.length === 0) {
+			editingLinkageId = targetMappingId;
+			return;
+		}
+
+		const nextSources: DraftTriggerSourceRecord = {
+			...current.triggerSources
+		};
+		for (const hookKey of targetHooks) {
+			nextSources[hookKey] = { type: 'hook_root' };
+		}
+		const applied = applyGraphDraftMutation(
+			targetMappingId,
+			deriveDependencyIdsForDraft(nextSources),
+			current.triggerHooks,
+			nextSources,
+			{
+				syncModal: true
+			}
+		);
+		if (applied) {
+			editingLinkageId = targetMappingId;
+		}
+	}
+
+	async function duplicateGraphMapping(
+		linkage: FormActionLinkage,
+		parent: DuplicateParentSelection
+	) {
+		if (!linkage?.local_mapping_id) return;
+
+		if (hasGraphUnsavedChanges) {
+			notifications.warning(
+				'Save or cancel dependency drafts before duplicating a mapping so insertion runs from a consistent graph state.'
+			);
+			return;
+		}
+
+		try {
+			duplicatingMappingId = linkage.local_mapping_id;
+			const client = createClientFromConfig();
+			const result = await client.duplicateFormAction(
+				data.formSourceSlug,
+				data.formId,
+				linkage.local_mapping_id,
+				{ parent },
+				{ showNotifications: false }
+			);
+
+			await formActionsStore.load(data.formSourceSlug, data.formId);
+			graphDraftByMappingId = {};
+			selectedCreateDependencyIds = new Set();
+			clearRootAttachUndoState();
+			pendingRemovalId = null;
+			linkedActionsView = 'graph';
+			editingLinkageId = result.duplicate.local_mapping_id;
+
+			const movedCount = result.insertion?.moved_children?.length ?? 0;
+			const skippedCount = result.insertion?.skipped_children?.length ?? 0;
+
+			if (movedCount > 0) {
+				notifications.success(
+					`Duplicate inserted. Rewired ${movedCount} downstream mapping${movedCount === 1 ? '' : 's'}.`
+				);
+			} else {
+				notifications.success('Duplicate inserted.');
+			}
+
+			if (skippedCount > 0) {
+				const skippedPreview = result.insertion.skipped_children
+					.slice(0, 2)
+					.map((child) => `${child.child_id} (${child.code})`)
+					.join(', ');
+				notifications.warning(
+					`Skipped ${skippedCount} downstream mapping${skippedCount === 1 ? '' : 's'} due to policy constraints${skippedPreview ? `: ${skippedPreview}` : ''}.`
+				);
+			}
+			for (const warning of result.insertion?.warnings ?? []) {
+				if (warning) notifications.warning(warning);
+			}
+
+			await loadWorkflowPlan(workflowPlanScope);
+		} catch (error) {
+			const message =
+				error instanceof Error
+					? error.message
+					: 'Failed to duplicate mapping from dependency graph.';
+			notifications.error(message);
+		} finally {
+			duplicatingMappingId = null;
+		}
+	}
+
+	async function saveDependenciesFromGraph() {
+		const pendingDraftMap = { ...graphDraftByMappingId };
+		if (editingLinkageId && hasUnsavedMappingChanges) {
+			const modalDraft = readEffectiveDraftForMapping(editingLinkageId);
+			if (
+				hasDraftDifference(
+					editingLinkageId,
+					modalDraft.dependencyIds,
+					modalDraft.triggerHooks,
+					modalDraft.triggerSources
+				)
+			) {
+				pendingDraftMap[editingLinkageId] = {
+					dependencyIds: modalDraft.dependencyIds,
+					triggerHooks: modalDraft.triggerHooks,
+					triggerSources: modalDraft.triggerSources
+				};
+			}
+		}
+
+		const draftEntries = Object.entries(pendingDraftMap);
+		if (draftEntries.length === 0) {
+			notifications.info('No dependency graph changes to save.');
+			return;
+		}
+		const candidateItems = buildLinkagesFromDraftMap(pendingDraftMap);
+		const introducedIssues = findIntroducedDependencyIssues(
+			validateMappingDependencies(actionsState.items),
+			validateMappingDependencies(candidateItems)
+		);
+		if (introducedIssues.length > 0) {
+			notifications.error(formatDependencyIssues(introducedIssues)[0]);
+			return;
+		}
+
+		try {
+			savingDependencies = true;
+			const client = createClientFromConfig();
+			let savedCount = 0;
+			for (const [mappingId, draft] of draftEntries) {
+				const linkage = getLinkageById(mappingId);
+				if (!linkage) continue;
+
+				const nextSettings: Record<string, unknown> = {
+					...(linkage.settings ?? {})
+				};
+				if (draft.dependencyIds.length > 0) {
+					nextSettings.dependency_ids = draft.dependencyIds;
+				} else {
+					delete nextSettings.dependency_ids;
+				}
+				nextSettings.trigger_sources = draft.triggerSources;
+
+				const payload: Partial<FormActionMutationPayload> = {
+					settings: nextSettings as FormActionMutationPayload['settings']
+				};
+				const baseHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
+				if (
+					draft.triggerHooks.length !== baseHooks.length ||
+					draft.triggerHooks.some((hook, index) => hook !== baseHooks[index])
+				) {
+					payload.trigger_hooks = draft.triggerHooks;
+				}
+
+				await client.updateFormAction(data.formSourceSlug, data.formId, mappingId, payload, {
+					showNotifications: false
+				});
+				savedCount += 1;
+			}
+
+			await formActionsStore.load(data.formSourceSlug, data.formId);
+			graphDraftByMappingId = {};
+			selectedCreateDependencyIds = new Set();
+			if (editingLinkageId) {
+				const refreshed = getLinkageById(editingLinkageId);
+				if (refreshed) {
+					const refreshedHooks = normalizeHookIds(refreshed.trigger_hooks ?? []);
+					const refreshedDraft = readEffectiveDraftForMapping(editingLinkageId);
+					draftHooks = new Set(refreshedHooks);
+					draftSettings = {
+						...draftSettings,
+						dependency_ids: refreshedDraft.dependencyIds,
+						trigger_sources: refreshedDraft.triggerSources
+					};
+					editBaselineSignature = createDraftSignature(refreshedHooks, {
+						...draftSettings,
+						dependency_ids: refreshedDraft.dependencyIds,
+						trigger_sources: refreshedDraft.triggerSources
+					});
+				}
+			}
+			if (savedCount > 0) {
+				notifications.success(
+					savedCount === 1
+						? 'Dependency mapping saved.'
+						: `Saved dependency updates for ${savedCount} mappings.`
+				);
+			}
+			clearRootAttachUndoState();
+			await loadWorkflowPlan(workflowPlanScope);
+		} finally {
+			savingDependencies = false;
+		}
 	}
 
 	async function saveActionChanges(linkage: FormActionLinkage) {
-		if (draftHooks.size === 0) {
+		const normalizedHooks = normalizeHookIds(draftHooks);
+		if (normalizedHooks.length === 0) {
 			notifications.error('Select at least one trigger hook.');
 			return;
 		}
@@ -583,10 +1504,16 @@
 			return;
 		}
 
-		const normalizedDependencyIds = normalizeDependencyIds(draftSettings.dependency_ids);
+		const normalizedTriggerSources = deriveTriggerSourcesForDraft(
+			normalizedHooks,
+			normalizeDependencyIds(draftSettings.dependency_ids),
+			normalizeDraftTriggerSources(draftSettings.trigger_sources, normalizedHooks)
+		);
+		const normalizedDependencyIds = deriveDependencyIdsForDraft(normalizedTriggerSources);
 		const nextSettings = {
 			...draftSettings,
-			dependency_ids: normalizedDependencyIds
+			dependency_ids: normalizedDependencyIds,
+			trigger_sources: normalizedTriggerSources
 		};
 		if (normalizedDependencyIds.length === 0) {
 			delete nextSettings.dependency_ids;
@@ -594,25 +1521,36 @@
 
 		const updatedLinkage: FormActionLinkage = {
 			...linkage,
-			trigger_hooks: Array.from(draftHooks),
+			trigger_hooks: normalizedHooks,
 			settings: nextSettings
 		};
 		const candidateItems = actionsState.items.map((item) =>
 			item.local_mapping_id === linkage.local_mapping_id ? updatedLinkage : item
 		);
-		const dependencyIssues = validateMappingDependencies(candidateItems);
-		if (dependencyIssues.length > 0) {
-			notifications.error(formatDependencyIssues(dependencyIssues)[0]);
+		const introducedIssues = findIntroducedDependencyIssues(
+			validateMappingDependencies(actionsState.items),
+			validateMappingDependencies(candidateItems)
+		);
+		if (introducedIssues.length > 0) {
+			notifications.error(formatDependencyIssues(introducedIssues)[0]);
 			return;
 		}
 
 		await formActionsStore.updateAction(data.formSourceSlug, data.formId, linkage, {
-			trigger_hooks: Array.from(draftHooks),
+			trigger_hooks: normalizedHooks,
 			settings: nextSettings
 		});
+		if (graphDraftByMappingId[linkage.local_mapping_id]) {
+			const nextDraftMap = { ...graphDraftByMappingId };
+			delete nextDraftMap[linkage.local_mapping_id];
+			graphDraftByMappingId = nextDraftMap;
+		}
+		await loadWorkflowPlan(workflowPlanScope);
 		editingLinkageId = null;
+		showMappingConfigModal = false;
 		draftHooks = new Set();
 		draftSettings = {};
+		editBaselineSignature = null;
 	}
 
 	async function handleCreate(event?: Event) {
@@ -629,6 +1567,24 @@
 		if (hooks.length === 0) {
 			createError = 'Select at least one trigger hook.';
 			return;
+		}
+		const dependencyIds = normalizeDependencyIds(Array.from(selectedCreateDependencyIds));
+		const primaryDependencyId = dependencyIds[0] ?? null;
+		if (dependencyIds.length > 0) {
+			const requiredHooks = normalizeHookIds(selectedHooks);
+			const invalid = dependencyIds.filter((dependencyId) => {
+				const linkage = getLinkageById(dependencyId);
+				if (!linkage || linkage.is_action_enabled_for_form === false) {
+					return true;
+				}
+				const dependencyHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
+				return !dependencySupportsSelectedHooks(dependencyHooks, requiredHooks);
+			});
+			if (invalid.length > 0) {
+				createError =
+					'Some selected dependencies are not compatible with the chosen trigger hooks. Adjust hooks or dependency selection.';
+				return;
+			}
 		}
 
 		const chosenDefinition =
@@ -666,13 +1622,26 @@
 				createKind === 'template'
 					? (chosenDefinition?.label ?? centralActionId)
 					: (chosenCustom?.display_name ?? chosenCustom?.code ?? centralActionId);
+			const triggerSources: DraftTriggerSourceRecord = Object.fromEntries(
+				hooks.map((hook) => [
+					hook,
+					primaryDependencyId
+						? { type: 'mapping' as const, mapping_id: primaryDependencyId }
+						: { type: 'hook_root' as const }
+				])
+			);
 			await formActionsStore.create(data.formSourceSlug, data.formId, {
 				central_action_id: centralActionId,
 				action_type_indicator: createKind === 'template' ? 'master' : 'custom',
 				trigger_hooks: hooks,
-				action_name_label: label
+				action_name_label: label,
+				settings: {
+					...(dependencyIds.length > 0 ? { dependency_ids: dependencyIds } : {}),
+					trigger_sources: triggerSources
+				}
 			});
 			pendingRemovalId = null;
+			selectedCreateDependencyIds = new Set();
 			showAddPanel = false;
 		} catch (error) {
 			createError = error instanceof Error ? error.message : 'Failed to create action mapping';
@@ -746,7 +1715,7 @@
 					linkage.action_type_indicator === 'custom' ? linkage.central_action_id : undefined,
 				is_template: true,
 				settings: {
-					trigger_hooks: linkage.trigger_hooks,
+					trigger_hooks: getMappingTriggerHooks(linkage),
 					portable_fields: portableFields, // CSM-006: field labels for cross-site portability
 					...(linkage.settings ?? {})
 				}
@@ -925,7 +1894,15 @@
 			</div>
 			<Button variant="secondary" onclick={() => navigateToAppPath('/actions')}>All forms</Button>
 			<Button variant="secondary" onclick={refresh}>Refresh</Button>
-			<Button onclick={() => (showAddPanel = true)}>Add action</Button>
+			<Button
+				onclick={() => {
+					selectedCreateDependencyIds = new Set();
+					createError = null;
+					showAddPanel = true;
+				}}
+			>
+				Add action
+			</Button>
 			<Button variant="secondary" onclick={() => (showTemplateLibrary = true)}
 				>Import from Library</Button
 			>
@@ -1073,7 +2050,16 @@
 						Choose a CPS template or custom action, then select hooks.
 					</p>
 				</div>
-				<Button size="sm" onclick={() => (showAddPanel = true)}>Add action</Button>
+				<Button
+					size="sm"
+					onclick={() => {
+						selectedCreateDependencyIds = new Set();
+						createError = null;
+						showAddPanel = true;
+					}}
+				>
+					Add action
+				</Button>
 			</div>
 		</Card>
 
@@ -1179,12 +2165,14 @@
 
 	<Card class="sf:mt-4">
 		<div class="sf:flex sf:items-center sf:justify-between sf:gap-3 sf:mb-3">
-			<div>
-				<p class="sf:text-sm sf:font-medium sf:text-slate-700">Linked actions</p>
-				<p class="sf:text-xs sf:text-slate-500">
-					Enable, disable, or retarget hooks for actions connected to this form.
-				</p>
-			</div>
+			{#if linkedActionsView !== 'graph'}
+				<div>
+					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Linked actions</p>
+					<p class="sf:text-xs sf:text-slate-500">
+						Enable, disable, or retarget hooks for actions connected to this form.
+					</p>
+				</div>
+			{/if}
 			<div class="sf:flex sf:items-center sf:gap-2">
 				{#if actionsState.items.length > 0}
 					<Button
@@ -1218,13 +2206,29 @@
 			<p class="sf:text-sm sf:text-slate-600">No CPS actions linked to this form yet.</p>
 		{:else if linkedActionsView === 'graph'}
 			<MappingDependencyGraph
-				linkages={actionsState.items}
+				linkages={graphRenderLinkages}
 				editingMappingId={editingLinkageId}
-				{draftDependencyIds}
+				draftDependencyIds={graphEditingDependencyIds}
+				hookLabels={hookOptions}
+				hasUnsavedChanges={hasGraphUnsavedChanges}
+				{workflowPlan}
+				{workflowPlanLoading}
+				{workflowPlanError}
 				{pendingRemovalId}
+				onSetEditingMapping={setGraphEditingMapping}
 				onToggleDependency={toggleDraftDependency}
+				onConnectDependency={connectGraphDependency}
+				onDisconnectDependency={disconnectGraphDependency}
+				onAttachRootDependency={attachMappingToHookRoot}
+				onUndoLastRootAttach={undoLastRootAttach}
+				canUndoRootAttach={Boolean(rootAttachUndo)}
+				onClearDependencies={clearDraftDependencies}
+				onDuplicateMapping={duplicateGraphMapping}
+				{duplicatingMappingId}
+				onSaveDependencies={saveDependenciesFromGraph}
+				onCancelDependencyEdit={cancelEditingAction}
+				{savingDependencies}
 				onConfigureMapping={(linkage) => {
-					linkedActionsView = 'table';
 					startEditingAction(linkage);
 				}}
 				onToggleMappingEnabled={toggleEnabled}
@@ -1232,16 +2236,6 @@
 				onConfirmRemoveMapping={confirmRemove}
 				onCancelRemoveMapping={cancelRemove}
 			/>
-			{#if editingLinkageId}
-				<Alert variant="info" class="sf:mt-3">
-					<div class="sf:flex sf:flex-col sf:md:flex-row sf:md:items-center sf:md:justify-between sf:gap-2">
-						<span>Dependency selection updated. Switch to table view to save changes.</span>
-						<Button size="sm" variant="secondary" onclick={() => (linkedActionsView = 'table')}>
-							Switch to table
-						</Button>
-					</div>
-				</Alert>
-			{/if}
 		{:else}
 			<div class="sf:overflow-x-auto">
 				<table
@@ -1270,8 +2264,8 @@
 								</td>
 								<td class="sf:px-4 sf:py-3">
 									<div class="sf:flex sf:flex-wrap sf:gap-2">
-										{#if linkage.trigger_hooks && linkage.trigger_hooks.length > 0}
-											{#each linkage.trigger_hooks as hook (hook)}
+										{#if getMappingTriggerHooks(linkage).length > 0}
+											{#each getMappingTriggerHooks(linkage) as hook (hook)}
 												<Badge variant="info">{hookOptions[hook] ?? hook}</Badge>
 											{/each}
 										{:else}
@@ -1292,269 +2286,9 @@
 										</Button>
 									</div>
 									{#if editingLinkageId === linkage.local_mapping_id}
-										<div
-											class="sf:mt-3 sf:rounded-md sf:border sf:border-slate-200 sf:p-4 sf:space-y-4 sf:bg-slate-50"
-										>
-											<div>
-												<p
-													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
-												>
-													Trigger Hooks
-												</p>
-												<div class="sf:space-y-2">
-													{#each hookEntries as [hookKey, hookLabel] (hookKey)}
-														<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm">
-															<input
-																type="checkbox"
-																class="sf:form-checkbox"
-																checked={draftHooks.has(hookKey)}
-																onchange={() => toggleDraftHook(hookKey)}
-															/>
-															<span>{hookLabel}</span>
-														</label>
-													{/each}
-												</div>
-												<!-- Help text for Trigger Hooks -->
-												<div class="sf:mt-2 sf:text-xs sf:text-slate-500 sf:space-y-1">
-													<p>
-														<strong>Sync:</strong> AI runs while user waits. Can block spam before saving.
-													</p>
-													<p>
-														<strong>Async:</strong> User gets instant confirmation. AI runs in background.
-													</p>
-												</div>
-											</div>
-
-												<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-													<p
-														class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
-													>
-														Dependencies
-													</p>
-													<div class="sf:flex sf:flex-col sf:sm:flex-row sf:sm:items-center sf:sm:justify-between sf:gap-2">
-														<p class="sf:text-xs sf:text-slate-500">
-															Select prerequisites in graph view. This mapping runs only after all selected
-															dependencies succeed.
-														</p>
-														<Button
-															size="sm"
-															variant="ghost"
-															onclick={() => {
-																linkedActionsView = 'graph';
-															}}
-														>
-															Open graph view
-														</Button>
-													</div>
-													{#if draftDependencyIds.length > 0}
-														<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
-															{#each draftDependencyIds as dependencyId (dependencyId)}
-																<Badge variant="info">{dependencyId}</Badge>
-															{/each}
-													</div>
-												{/if}
-											</div>
-
-											{#if linkage.central_action_id === 'spam_detection_v1'}
-												<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-													<p
-														class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-3"
-													>
-														Spam Settings
-													</p>
-													<div class="sf:grid sf:gap-4">
-														<InputField
-															id="spam-threshold"
-															label="Confidence Threshold (0.0 - 1.0)"
-															type="number"
-															step="0.05"
-															min="0"
-															max="1"
-															bind:value={draftSettings.spam_confidence_threshold}
-															placeholder="0.80"
-														/>
-														<SelectField
-															id="spam-display"
-															label="Indicators Display"
-															bind:value={draftSettings.spam_indicators_display}
-															options={[
-																{ value: 'simple', label: 'Simple (Summary only)' },
-																{ value: 'detailed', label: 'Detailed (List signals)' }
-															]}
-														/>
-														<SelectField
-															id="spam-context"
-															label="Include Site Context"
-															bind:value={draftSettings.include_site_context}
-															options={[
-																{ value: 'global', label: 'Use global setting' },
-																{ value: 'always', label: 'Always include' },
-																{ value: 'never', label: 'Never include' }
-															]}
-														/>
-													</div>
-
-													<!-- CB-SA-001: Classification Guidance -->
-													<SpamCriteriaEditor
-														positiveExamples={draftSettings.spam_positive_examples ?? []}
-														negativeExamples={draftSettings.spam_negative_examples ?? []}
-														inheritedPositive={formLevelConfig.spam_positive_examples ?? []}
-														inheritedNegative={formLevelConfig.spam_negative_examples ?? []}
-														inheritanceSource={formLevelConfig.spam_positive_examples?.length > 0 ||
-														formLevelConfig.spam_negative_examples?.length > 0
-															? 'form'
-															: null}
-														onchange={(data) => {
-															draftSettings = {
-																...draftSettings,
-																spam_positive_examples: data.positive,
-																spam_negative_examples: data.negative
-															};
-														}}
-													/>
-
-													<!-- CB-SA-007: PII Warning Link -->
-													<p
-														class="sf:text-xs sf:text-slate-500 sf:pt-3 sf:flex sf:items-center sf:gap-1"
-													>
-														<span class="sf:text-amber-500">⚠</span>
-														Submission data is processed by AI.
-														<a
-															href="#/settings/context"
-															class="sf:underline hover:sf:text-slate-700"
-														>
-															Review Site Context settings
-														</a>
-														for PII handling options.
-													</p>
-
-													<!-- Edit Form Defaults: explicit trigger replaces auto-open -->
-													<div class="sf:pt-3 sf:border-t sf:border-slate-100 sf:mt-3">
-														<Button
-															size="sm"
-															variant="secondary"
-															onclick={() => loadFormLevelConfig(linkage.central_action_id)}
-														>
-															📋 Edit Form Defaults
-														</Button>
-														<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
-															Set default classification examples for all spam actions on this form.
-														</p>
-													</div>
-												</div>
-											{/if}
-
-											<!-- CA-MAP-001: Field Selection -->
-											<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-												<FieldSelector
-													fields={formFields}
-													value={draftSettings.input_mapping ?? {
-														mode: 'selected',
-														include_metadata: false
-													}}
-													onchange={(mapping) => {
-														draftSettings = { ...draftSettings, input_mapping: mapping };
-													}}
-												/>
-											</div>
-
-											<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-												{#if fieldsLoading}
-													<p class="sf:text-sm sf:text-slate-500">
-														Loading form fields for conditional run options...
-													</p>
-												{/if}
-												<ConditionBuilder
-													fields={formFields}
-													value={draftSettings.conditions ?? createDefaultConditionConfig()}
-													disabled={fieldsLoading}
-													onchange={(conditions) => {
-														draftSettings = { ...draftSettings, conditions };
-													}}
-												/>
-											</div>
-
-											<!-- CB-MODEL-004: Per-Mapping Model Selection -->
-											<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-												<p
-													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-3"
-												>
-													AI Model
-												</p>
-												<ModelSelector
-													value={draftSettings.model_selection ?? {
-														primary: 'sf_default',
-														is_preset: true
-													}}
-													onchange={(selection) => {
-														draftSettings = { ...draftSettings, model_selection: selection };
-													}}
-												/>
-											</div>
-
-											<!-- CB-EXEC-003/004: Batch Execution Settings -->
-											{#if draftSettings.execution_mode === 'after_submission'}
-												<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-													<div class="sf:flex sf:items-center sf:justify-between sf:mb-2">
-														<p
-															class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500"
-														>
-															Batch Execution
-														</p>
-														<Toggle
-															checked={draftSettings.batch_settings?.enabled ?? false}
-															onchange={() => {
-																const current = draftSettings.batch_settings ?? {
-																	...DEFAULT_BATCH_SETTINGS
-																};
-																draftSettings = {
-																	...draftSettings,
-																	batch_settings: { ...current, enabled: !current.enabled }
-																};
-															}}
-														/>
-													</div>
-													<p class="sf:text-xs sf:text-slate-500 sf:mb-3">
-														Delay execution to reduce peak load. Credit pricing is calculated by CPS at
-														execution time.
-													</p>
-
-													{#if draftSettings.batch_settings?.enabled}
-														<div class="sf:grid sf:gap-3">
-															<InputField
-																id="batch-delay"
-																label="Delay (seconds)"
-																type="number"
-																min="10"
-																max="3600"
-																placeholder="60"
-																bind:value={draftSettings.batch_settings.delay_seconds}
-															/>
-															<InputField
-																id="batch-max-wait"
-																label="Max wait before fallback (seconds)"
-																type="number"
-																min="43200"
-																max="604800"
-																placeholder="86400"
-																bind:value={draftSettings.batch_settings.max_wait_seconds}
-															/>
-															<p class="sf:text-xs sf:text-slate-500">
-																If CPS batching cannot be queued immediately, Sentient Forms will fall back
-																to local scheduling by this deadline.
-															</p>
-														</div>
-													{/if}
-												</div>
-											{/if}
-
-											<div class="sf:flex sf:gap-2 sf:flex-wrap sf:pt-2">
-												<Button size="sm" onclick={() => saveActionChanges(linkage)}>Save</Button>
-												<Button size="sm" variant="secondary" onclick={cancelEditingAction}>
-													Cancel
-												</Button>
-											</div>
-										</div>
+										<p class="sf:mt-2 sf:text-xs sf:text-primary-700">
+											Configuration is open in the modal editor.
+										</p>
 									{/if}
 								</td>
 								<td class="sf:px-4 sf:py-3">
@@ -1588,6 +2322,340 @@
 		{/if}
 	</Card>
 
+	{#if showMappingConfigModal && editingLinkage}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="sf:fixed sf:inset-0 sf:z-40 sf:bg-black/45 sf:flex sf:items-center sf:justify-center sf:p-4"
+			onclick={() => {
+				showMappingConfigModal = false;
+			}}
+			data-testid="mapping-config-modal"
+		>
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<div
+				class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-4xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
+				onclick={(event) => event.stopPropagation()}
+			>
+				<header
+					class="sf:flex sf:items-center sf:justify-between sf:gap-4 sf:px-6 sf:py-4 sf:border-b sf:border-slate-200"
+				>
+					<div>
+						<p class="sf:text-base sf:font-semibold sf:text-slate-800">Configure Action Mapping</p>
+						<p class="sf:text-sm sf:text-slate-500">
+							{friendlyActionLabel(editingLinkage)} ({editingLinkage.local_mapping_id})
+						</p>
+					</div>
+					<div class="sf:flex sf:items-center sf:gap-2">
+						<Button
+							size="sm"
+							variant="secondary"
+							onclick={openGraphDependencyEditor}
+							data-testid="mapping-config-open-graph"
+						>
+							Open graph editor
+						</Button>
+						<Button
+							size="sm"
+							variant="ghost"
+							onclick={() => {
+								showMappingConfigModal = false;
+							}}
+						>
+							Close
+						</Button>
+					</div>
+				</header>
+				{#if hasUnsavedMappingChanges}
+					<div
+						class="sf:sticky sf:top-0 sf:z-10 sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2 sf:border-b sf:border-amber-300 sf:bg-amber-50 sf:px-6 sf:py-2"
+						data-testid="mapping-dirty-bar-modal"
+					>
+						<div class="sf:flex sf:items-center sf:gap-2">
+							<Badge variant="warning">Unsaved changes</Badge>
+							<p class="sf:text-xs sf:text-amber-800">
+								Edits in this mapping are local until you save.
+							</p>
+						</div>
+						<Button size="sm" variant="secondary" onclick={() => saveActionChanges(editingLinkage)}>
+							Save changes
+						</Button>
+					</div>
+				{/if}
+
+				<div class="sf:p-6 sf:space-y-5">
+					<div>
+						<p
+							class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
+						>
+							Triggers
+						</p>
+						<div class="sf:grid sf:gap-2 sf:sm:grid-cols-2">
+							{#each hookEntries as [hookKey, hookLabel] (hookKey)}
+								<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm">
+									<input
+										type="checkbox"
+										class="sf:form-checkbox"
+										checked={draftHooks.has(hookKey)}
+										onchange={() => toggleDraftHook(hookKey)}
+									/>
+									<span>{hookLabel}</span>
+								</label>
+							{/each}
+						</div>
+						<div class="sf:mt-2 sf:text-xs sf:text-slate-500 sf:space-y-1">
+							<p>
+								Triggers can come from hook roots (autonomous) or mapped actions (dependency). Use
+								the graph editor for per-hook trigger source wiring.
+							</p>
+							<p><strong>Sync:</strong> AI runs while user waits. Can block spam before saving.</p>
+							<p><strong>Async:</strong> User gets instant confirmation. AI runs in background.</p>
+						</div>
+					</div>
+
+					<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+						<p
+							class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
+						>
+							Upstream Dependencies
+						</p>
+						<div
+							class="sf:flex sf:flex-col sf:md:flex-row sf:md:items-center sf:md:justify-between sf:gap-2"
+						>
+							<p class="sf:text-xs sf:text-slate-500">
+								This mapping runs after all selected dependencies succeed.
+							</p>
+							<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+								<Button size="sm" variant="ghost" onclick={openGraphDependencyEditor}>
+									Edit on graph
+								</Button>
+								<Button
+									size="sm"
+									variant="secondary"
+									onclick={clearDraftDependencies}
+									disabled={draftDependencyIds.length === 0}
+									data-testid="mapping-config-make-autonomous"
+								>
+									Make autonomous
+								</Button>
+							</div>
+						</div>
+						{#if draftDependencyIds.length > 0}
+							<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
+								{#each draftDependencyIds as dependencyId (dependencyId)}
+									<Badge variant="info">{dependencyBadgeLabel(dependencyId)}</Badge>
+								{/each}
+							</div>
+						{:else}
+							<p class="sf:mt-2 sf:text-xs sf:text-slate-500">
+								No dependencies configured. This action is autonomous.
+							</p>
+						{/if}
+					</div>
+
+					{#if editingLinkage.central_action_id === 'spam_detection_v1'}
+						<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+							<p
+								class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-3"
+							>
+								Spam Settings
+							</p>
+							<div class="sf:grid sf:gap-4">
+								<InputField
+									id="spam-threshold"
+									label="Confidence Threshold (0.0 - 1.0)"
+									type="number"
+									step="0.05"
+									min="0"
+									max="1"
+									bind:value={draftSettings.spam_confidence_threshold}
+									placeholder="0.80"
+								/>
+								<SelectField
+									id="spam-display"
+									label="Indicators Display"
+									bind:value={draftSettings.spam_indicators_display}
+									options={[
+										{ value: 'simple', label: 'Simple (Summary only)' },
+										{ value: 'detailed', label: 'Detailed (List signals)' }
+									]}
+								/>
+								<SelectField
+									id="spam-context"
+									label="Include Site Context"
+									bind:value={draftSettings.include_site_context}
+									options={[
+										{ value: 'global', label: 'Use global setting' },
+										{ value: 'always', label: 'Always include' },
+										{ value: 'never', label: 'Never include' }
+									]}
+								/>
+							</div>
+
+							<SpamCriteriaEditor
+								positiveExamples={draftSettings.spam_positive_examples ?? []}
+								negativeExamples={draftSettings.spam_negative_examples ?? []}
+								inheritedPositive={formLevelConfig.spam_positive_examples ?? []}
+								inheritedNegative={formLevelConfig.spam_negative_examples ?? []}
+								inheritanceSource={formLevelConfig.spam_positive_examples?.length > 0 ||
+								formLevelConfig.spam_negative_examples?.length > 0
+									? 'form'
+									: null}
+								onchange={(details) => {
+									draftSettings = {
+										...draftSettings,
+										spam_positive_examples: details.positive,
+										spam_negative_examples: details.negative
+									};
+								}}
+							/>
+
+							<p class="sf:text-xs sf:text-slate-500 sf:pt-3 sf:flex sf:items-center sf:gap-1">
+								<span class="sf:text-amber-500">⚠</span>
+								Submission data is processed by AI.
+								<a href="#/settings/context" class="sf:underline hover:sf:text-slate-700">
+									Review Site Context settings
+								</a>
+								for PII handling options.
+							</p>
+
+							<div class="sf:pt-3 sf:border-t sf:border-slate-100 sf:mt-3">
+								<Button
+									size="sm"
+									variant="secondary"
+									onclick={() => loadFormLevelConfig(editingLinkage.central_action_id)}
+								>
+									📋 Edit Form Defaults
+								</Button>
+								<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
+									Set default classification examples for all spam actions on this form.
+								</p>
+							</div>
+						</div>
+					{/if}
+
+					<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+						<FieldSelector
+							fields={formFields}
+							value={draftSettings.input_mapping ?? {
+								mode: 'selected',
+								include_metadata: false
+							}}
+							onchange={(mapping) => {
+								draftSettings = { ...draftSettings, input_mapping: mapping };
+							}}
+						/>
+					</div>
+
+					<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+						{#if fieldsLoading}
+							<p class="sf:text-sm sf:text-slate-500">
+								Loading form fields for conditional run options...
+							</p>
+						{/if}
+						<ConditionBuilder
+							fields={formFields}
+							value={draftSettings.conditions ?? createDefaultConditionConfig()}
+							disabled={fieldsLoading}
+							onchange={(conditions) => {
+								draftSettings = { ...draftSettings, conditions };
+							}}
+						/>
+					</div>
+
+					<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+						<p
+							class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-3"
+						>
+							AI Model
+						</p>
+						<ModelSelector
+							value={draftSettings.model_selection ?? {
+								primary: 'sf_default',
+								is_preset: true
+							}}
+							onchange={(selection) => {
+								draftSettings = { ...draftSettings, model_selection: selection };
+							}}
+						/>
+					</div>
+
+					{#if draftSettings.execution_mode === 'after_submission'}
+						<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+							<div class="sf:flex sf:items-center sf:justify-between sf:mb-2">
+								<p
+									class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500"
+								>
+									Batch Execution
+								</p>
+								<Toggle
+									checked={draftSettings.batch_settings?.enabled ?? false}
+									onchange={() => {
+										const current = draftSettings.batch_settings ?? { ...DEFAULT_BATCH_SETTINGS };
+										draftSettings = {
+											...draftSettings,
+											batch_settings: { ...current, enabled: !current.enabled }
+										};
+									}}
+								/>
+							</div>
+							<p class="sf:text-xs sf:text-slate-500 sf:mb-3">
+								Delay execution to reduce peak load. Credit pricing is calculated by CPS at
+								execution time.
+							</p>
+
+							{#if draftSettings.batch_settings?.enabled}
+								<div class="sf:grid sf:gap-3">
+									<InputField
+										id="batch-delay"
+										label="Delay (seconds)"
+										type="number"
+										min="10"
+										max="3600"
+										placeholder="60"
+										bind:value={draftSettings.batch_settings.delay_seconds}
+									/>
+									<InputField
+										id="batch-max-wait"
+										label="Max wait before fallback (seconds)"
+										type="number"
+										min="43200"
+										max="604800"
+										placeholder="86400"
+										bind:value={draftSettings.batch_settings.max_wait_seconds}
+									/>
+									<p class="sf:text-xs sf:text-slate-500">
+										If CPS batching cannot be queued immediately, Sentient Forms will fall back to
+										local scheduling by this deadline.
+									</p>
+								</div>
+							{/if}
+						</div>
+					{/if}
+				</div>
+
+				<footer
+					class="sf:flex sf:flex-wrap sf:items-center sf:justify-end sf:gap-2 sf:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
+				>
+					<Button
+						variant="secondary"
+						onclick={() => {
+							showMappingConfigModal = false;
+						}}
+					>
+						Close
+					</Button>
+					<Button variant="secondary" onclick={cancelEditingAction}>Cancel editing</Button>
+					<Button
+						variant={hasUnsavedMappingChanges ? 'secondary' : 'primary'}
+						onclick={() => saveActionChanges(editingLinkage)}
+					>
+						{hasUnsavedMappingChanges ? 'Save changes' : 'Save'}
+					</Button>
+				</footer>
+			</div>
+		</div>
+	{/if}
+
 	{#if showAddPanel}
 		<div class="sf:fixed sf:inset-0 sf:z-30 sf:bg-black/40 sf:flex sf:justify-end">
 			<div class="sf:h-full sf:w-full sf:max-w-xl sf:bg-white sf:shadow-2xl sf:flex sf:flex-col">
@@ -1598,7 +2666,17 @@
 						<p class="sf:text-sm sf:font-semibold sf:text-slate-800">Add action</p>
 						<p class="sf:text-xs sf:text-slate-500">Link a CPS template or custom action.</p>
 					</div>
-					<Button variant="ghost" size="sm" onclick={() => (showAddPanel = false)}>Close</Button>
+					<Button
+						variant="ghost"
+						size="sm"
+						onclick={() => {
+							selectedCreateDependencyIds = new Set();
+							createError = null;
+							showAddPanel = false;
+						}}
+					>
+						Close
+					</Button>
 				</div>
 
 				<div class="sf:flex sf:flex-wrap sf:items-end sf:gap-2 sf:px-4 sf:py-3">
@@ -1710,7 +2788,7 @@
 
 					<div>
 						<div class="sf:flex sf:items-center sf:gap-2 sf:mb-2">
-							<p class="sf:text-sm sf:font-medium sf:text-slate-700">Trigger hooks</p>
+							<p class="sf:text-sm sf:font-medium sf:text-slate-700">Triggers</p>
 							{#if selectedHooks.size === 0}
 								<span class="sf:text-xs sf:text-amber-600">Select at least one</span>
 							{/if}
@@ -1748,12 +2826,73 @@
 						</div>
 					</div>
 
+					<div class="sf:border-t sf:border-slate-200 sf:pt-3 sf:space-y-2">
+						<div class="sf:flex sf:items-center sf:justify-between sf:gap-2">
+							<p class="sf:text-sm sf:font-medium sf:text-slate-700">
+								Triggered by action (optional)
+							</p>
+							{#if selectedCreateDependencyIds.size > 0}
+								<Badge variant="info">1 selected</Badge>
+							{/if}
+						</div>
+						<p class="sf:text-xs sf:text-slate-500">
+							Choose one mapped action as upstream trigger source, or leave empty for autonomous
+							hook roots.
+						</p>
+						{#if selectedHooks.size === 0}
+							<p class="sf:text-xs sf:text-amber-700">
+								Choose trigger hooks first to see compatible upstream actions.
+							</p>
+						{:else if editableDependenciesForCreate.length === 0}
+							<p class="sf:text-xs sf:text-slate-500">
+								No compatible existing actions match the selected hooks.
+							</p>
+						{:else}
+							<div class="sf:grid sf:gap-2">
+								{#each editableDependenciesForCreate as linkage (linkage.local_mapping_id)}
+									<label
+										class="sf:flex sf:items-start sf:gap-2 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2 sf:cursor-pointer sf:hover:border-primary-300"
+									>
+										<input
+											type="radio"
+											name="create-dependency-trigger"
+											class="sf:mt-1"
+											checked={selectedCreateDependencyIds.has(linkage.local_mapping_id)}
+											onchange={() => toggleCreateDependencySelection(linkage.local_mapping_id)}
+										/>
+										<div class="sf:min-w-0 sf:flex-1">
+											<p class="sf:text-sm sf:font-medium sf:text-slate-800">
+												{friendlyActionLabel(linkage)}
+											</p>
+											<p class="sf:text-xs sf:text-slate-500">
+												ID: {linkage.local_mapping_id}
+											</p>
+											<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1">
+												{#each getMappingTriggerHooks(linkage) as hook (hook)}
+													<Badge variant="info">{hookOptions[hook] ?? hook}</Badge>
+												{/each}
+											</div>
+										</div>
+									</label>
+								{/each}
+							</div>
+						{/if}
+					</div>
+
 					{#if createError}
 						<Alert variant="danger">{createError}</Alert>
 					{/if}
 
 					<div class="sf:flex sf:justify-end sf:gap-2 sf:pb-2">
-						<Button type="button" variant="secondary" onclick={() => (showAddPanel = false)}>
+						<Button
+							type="button"
+							variant="secondary"
+							onclick={() => {
+								selectedCreateDependencyIds = new Set();
+								createError = null;
+								showAddPanel = false;
+							}}
+						>
 							Cancel
 						</Button>
 						<Button

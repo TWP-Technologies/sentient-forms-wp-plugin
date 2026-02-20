@@ -130,6 +130,36 @@ class Sentient_Forms_Mappings_Sync {
     }
 
     /**
+     * Request a dependency workflow plan from CPS for a specific form.
+     *
+     * @param string $form_source_slug Form adapter slug.
+     * @param int    $form_id          Form identifier.
+     * @param string $hook_scope       Hook scope ("all" or hook slug).
+     *
+     * @return array|WP_Error
+     */
+    public function plan_workflow( string $form_source_slug, int $form_id, string $hook_scope = 'all' ) {
+        $client = $this->get_cps_client();
+        $api_key = $this->get_api_key();
+
+        if ( ! $client || ! $api_key ) {
+            return new WP_Error( 'cps_unavailable', 'CPS is not configured.' );
+        }
+
+        return $client->post(
+            '/workflows/plan',
+            [
+                'form_source' => sanitize_key( $form_source_slug ),
+                'form_id'     => absint( $form_id ),
+                'hook_scope'  => sanitize_text_field( $hook_scope ),
+            ],
+            [
+                'bearer_token' => $api_key,
+            ],
+        );
+    }
+
+    /**
      * Fetch mappings from CPS.
      *
      * @return array|WP_Error Mappings array or error.

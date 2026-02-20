@@ -4,9 +4,21 @@ import { readFile } from 'node:fs/promises';
 import process from 'node:process';
 import { globby } from 'globby';
 
+async function commandExists(command) {
+	return new Promise((resolve) => {
+		const probe = spawn(command, ['--version'], {
+			stdio: 'ignore',
+			shell: process.platform === 'win32'
+		});
+		probe.on('error', () => resolve(false));
+		probe.on('close', (code) => resolve(code === 0));
+	});
+}
+
 async function run(command, args) {
 	return new Promise((resolve, reject) => {
 		const child = spawn(command, args, { stdio: 'inherit', shell: process.platform === 'win32' });
+		child.on('error', (error) => reject(error));
 		child.on('close', (code) => {
 			if (code === 0) {
 				resolve();
@@ -45,7 +57,13 @@ async function ensureNoLegacyPatterns() {
 }
 
 (async () => {
-	await run('npx', ['sv', 'check']);
+	if (await commandExists('npx')) {
+		await run('npx', ['sv', 'check']);
+	} else if (await commandExists('bunx')) {
+		await run('bunx', ['sv', 'check']);
+	} else {
+		throw new Error('Neither npx nor bunx is available to run `sv check`.');
+	}
 	await ensureNoLegacyPatterns();
 	console.log('Svelte guard completed successfully.');
 })().catch((error) => {

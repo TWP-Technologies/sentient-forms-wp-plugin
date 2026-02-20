@@ -13,6 +13,8 @@ import type {
 	CustomActionFilters,
 	CustomActionQuota,
 	CustomActionUpdatePayload,
+	DuplicateFormActionRequest,
+	DuplicateFormActionResponse,
 	ExecutionStatus,
 	FormActionConfig,
 	FormActionConfigResponse,
@@ -22,6 +24,7 @@ import type {
 	FormAllActionConfigsResponse,
 	FormExecutionStatus,
 	FormFieldInfo,
+	WorkflowPlanResponse,
 	FormMapping,
 	FormSummary,
 	CapabilitiesResponse,
@@ -271,6 +274,41 @@ export class SentientFormsApiClient {
 		return this.unwrap(response);
 	}
 
+	async getWorkflowPlan(
+		formSourceSlug: string,
+		formId: number,
+		hookScope: 'all' | string = 'all',
+		options: RequestOptions = {}
+	): Promise<WorkflowPlanResponse> {
+		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+			console.warn('[ApiClient] getWorkflowPlan called with invalid params:', {
+				formSourceSlug,
+				formId,
+				hookScope
+			});
+			return {
+				authority: 'local_fallback',
+				authority_reason: 'invalid_request',
+				cps_unreachable: true,
+				policy_version: '2026-02-mixed-sync-async-v1',
+				hook_scope: hookScope,
+				available_hooks: [],
+				nodes: [],
+				edges: [],
+				hooks: [],
+				policy_violations: []
+			};
+		}
+
+		const slug = encodeURIComponent(formSourceSlug);
+		const scope = encodeURIComponent(hookScope);
+		const response = await this.request<RestEnvelope<WorkflowPlanResponse>>(
+			`${slug}/forms/${formId}/actions/workflow-plan?hook_scope=${scope}`,
+			options
+		);
+		return this.unwrap(response);
+	}
+
 	/**
 	 * CB-FORMS-001: Get the per-form disabled state.
 	 */
@@ -387,6 +425,21 @@ export class SentientFormsApiClient {
 			{ method: 'POST', body: payload, ...options }
 		);
 		console.log('client.createFormAction response', response);
+		return this.unwrap(response);
+	}
+
+	async duplicateFormAction(
+		formSourceSlug: string,
+		formId: number,
+		localMappingId: string,
+		payload: DuplicateFormActionRequest,
+		options: RequestOptions = {}
+	): Promise<DuplicateFormActionResponse> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<DuplicateFormActionResponse>>(
+			`${slug}/forms/${formId}/actions/${encodeURIComponent(localMappingId)}/duplicate`,
+			{ method: 'POST', body: payload, ...options }
+		);
 		return this.unwrap(response);
 	}
 

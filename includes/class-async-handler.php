@@ -1135,6 +1135,7 @@ class Sentient_Forms_Async_Handler
 
             if ( '' === $dependency_request_id )
             {
+                $pending_dependencies[] = $dependency_id;
                 continue;
             }
 

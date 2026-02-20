@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { FormActionLinkage } from '$lib/api/types';
 import {
+	buildExecutionPreview,
 	buildDependencyGraph,
+	dependencyIssueIdentity,
+	findIntroducedDependencyIssues,
 	formatDependencyIssues,
 	getMappingDependencyIds,
 	normalizeDependencyIds,
@@ -46,8 +49,8 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 		const items: FormActionLinkage[] = [
 			linkage('map_a', ['gform_validation'], ['map_missing']),
 			linkage('map_b', ['gform_validation'], ['map_b']),
-			linkage('map_c', ['gform_validation', 'gform_after_submission'], ['map_d']),
-			linkage('map_d', ['gform_validation'])
+			linkage('map_c', ['gform_validation'], ['map_d']),
+			linkage('map_d', ['gform_after_submission'])
 		];
 
 		const issues = validateMappingDependencies(items);
@@ -56,6 +59,102 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 		expect(messages.some((message) => message.includes('map_missing'))).toBe(true);
 		expect(messages.some((message) => message.includes('cannot depend on itself'))).toBe(true);
 		expect(messages.some((message) => message.includes('missing hooks'))).toBe(true);
+	});
+
+	it('keeps stable issue identities for hook mismatch issues', () => {
+		const items: FormActionLinkage[] = [
+			linkage('map_a', ['gform_validation'], ['map_b']),
+			linkage('map_b', ['gform_after_submission'])
+		];
+		const issues = validateMappingDependencies(items);
+		const hookMismatch = issues.find((issue) => issue.code === 'hook_mismatch');
+		expect(hookMismatch).toBeTruthy();
+		expect(dependencyIssueIdentity(hookMismatch!)).toContain('hook_mismatch:map_a:map_b');
+	});
+
+	it('finds only newly introduced dependency issues', () => {
+		const baselineItems: FormActionLinkage[] = [
+			linkage('map_a', ['gform_after_submission'], ['map_b']),
+			linkage('map_b', ['gform_validation'])
+		];
+		const candidateItems: FormActionLinkage[] = [
+			...baselineItems,
+			linkage('map_c', ['gform_validation'])
+		];
+
+		const introduced = findIntroducedDependencyIssues(
+			validateMappingDependencies(baselineItems),
+			validateMappingDependencies(candidateItems)
+		);
+
+		expect(introduced).toEqual([]);
+	});
+
+	it('detects introduced issues when a new invalid edge is added', () => {
+		const baselineItems: FormActionLinkage[] = [
+			linkage('map_a', ['gform_validation']),
+			linkage('map_b', ['gform_validation'])
+		];
+		const candidateItems: FormActionLinkage[] = [
+			linkage('map_a', ['gform_validation'], ['map_b']),
+			linkage('map_b', ['gform_validation'], ['map_a'])
+		];
+
+		const introduced = findIntroducedDependencyIssues(
+			validateMappingDependencies(baselineItems),
+			validateMappingDependencies(candidateItems)
+		);
+
+		expect(introduced.some((issue) => issue.code === 'cycle')).toBe(true);
+	});
+
+	it('allows validation-hook dependency for after-submission dependant', () => {
+		const items: FormActionLinkage[] = [
+			linkage('map_sync_upstream', ['gform_validation']),
+			{
+				local_mapping_id: 'map_async_downstream',
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				trigger_hooks: ['gform_after_submission'],
+				action_name_label: 'map_async_downstream',
+				settings: { dependency_ids: ['map_sync_upstream'] }
+			}
+		];
+
+		const issues = validateMappingDependencies(items);
+		expect(issues.some((issue) => issue.code === 'hook_mismatch')).toBe(false);
+
+		const preview = buildExecutionPreview(items, 'all');
+		const afterSubmission = preview.hooks.find((hook) => hook.hook === 'gform_after_submission');
+		expect(afterSubmission?.runnable).toEqual(['map_async_downstream']);
+	});
+
+	it('allows per-hook dependency source when mapping runs on sync and async hooks', () => {
+		const items: FormActionLinkage[] = [
+			linkage('map_async_parent', ['gform_after_submission']),
+			{
+				local_mapping_id: 'map_dual_child',
+				central_action_id: 'dual_child',
+				action_type_indicator: 'custom',
+				trigger_hooks: ['gform_validation', 'gform_after_submission'],
+				action_name_label: 'map_dual_child',
+				settings: {
+					trigger_sources: {
+						gform_validation: { type: 'hook_root' },
+						gform_after_submission: { type: 'mapping', mapping_id: 'map_async_parent' }
+					},
+					dependency_ids: ['map_async_parent']
+				}
+			}
+		];
+
+		const issues = validateMappingDependencies(items);
+		expect(issues.some((issue) => issue.code === 'hook_mismatch')).toBe(false);
+
+		const validationPreview = buildExecutionPreview(items, 'gform_validation').hooks[0];
+		const afterPreview = buildExecutionPreview(items, 'gform_after_submission').hooks[0];
+		expect(validationPreview?.runnable).toContain('map_dual_child');
+		expect(afterPreview?.runnable).toEqual(['map_async_parent', 'map_dual_child']);
 	});
 
 	it('detects dependency cycles', () => {
@@ -96,6 +195,46 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 		expect(messages.some((message) => message.includes('must also run async'))).toBe(true);
 	});
 
+	it('marks execution-mode mismatch as blocked in after-submission preview', () => {
+		const items: FormActionLinkage[] = [
+			linkage('map_async', ['gform_after_submission']),
+			{
+				local_mapping_id: 'map_sync',
+				central_action_id: 'custom-hello',
+				action_type_indicator: 'custom',
+				trigger_hooks: ['gform_after_submission'],
+				action_name_label: 'map_sync',
+				settings: { dependency_ids: ['map_async'], execution_mode: 'validation' }
+			}
+		];
+
+		const preview = buildExecutionPreview(items, 'gform_after_submission');
+		const hookPreview = preview.hooks[0];
+
+		expect(hookPreview?.runnable).toEqual(['map_async']);
+		expect(
+			hookPreview?.blocked.some(
+				(item) => item.mappingId === 'map_sync' && item.reason === 'policy_violation'
+			)
+		).toBe(true);
+	});
+
+	it('includes both sync and async autonomous mappings in all-hook preview', () => {
+		const items: FormActionLinkage[] = [
+			linkage('map_sync_a', ['gform_validation']),
+			linkage('map_sync_b', ['gform_validation']),
+			linkage('map_async_c', ['gform_after_submission'])
+		];
+
+		const preview = buildExecutionPreview(items, 'all');
+		expect(preview.availableHooks).toEqual(['gform_validation', 'gform_after_submission']);
+
+		const runnableUnion = new Set(
+			preview.hooks.flatMap((hookPreview) => hookPreview.runnable ?? [])
+		);
+		expect(runnableUnion).toEqual(new Set(['map_sync_a', 'map_sync_b', 'map_async_c']));
+	});
+
 	it('builds graph node depth and edges', () => {
 		const items: FormActionLinkage[] = [
 			linkage('map_root', ['gform_validation']),
@@ -105,16 +244,25 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 
 		const graph = buildDependencyGraph(items);
 		const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+		const dependencyEdges = graph.edges.filter((edge) => edge.kind === 'dependency');
+		const rootEdges = graph.edges.filter((edge) => edge.kind === 'hook_root');
 
-		expect(graph.edges).toHaveLength(2);
-		expect(graph.edges.every((edge) => edge.kind === 'dependency')).toBe(true);
+		expect(dependencyEdges).toHaveLength(2);
+		expect(rootEdges).toHaveLength(1);
+		expect(rootEdges[0]).toEqual({
+			from: '__hook_root__:gform_validation',
+			to: 'map_root',
+			missing: false,
+			kind: 'hook_root',
+			hook: 'gform_validation'
+		});
 		expect(byId.get('map_root')?.depth).toBe(0);
 		expect(byId.get('map_mid')?.depth).toBe(1);
 		expect(byId.get('map_leaf')?.depth).toBe(2);
 		expect(graph.cycleIds).toEqual([]);
 	});
 
-	it('builds left-to-right execution connectors when dependencies are empty', () => {
+	it('builds hook-root connectors when dependencies are empty', () => {
 		const items: FormActionLinkage[] = [
 			linkage('map_a', ['gform_validation']),
 			linkage('map_b', ['gform_validation']),
@@ -123,13 +271,142 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 
 		const graph = buildDependencyGraph(items);
 		const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+		const rootEdges = graph.edges.filter((edge) => edge.kind === 'hook_root');
+		const dependencyEdges = graph.edges.filter((edge) => edge.kind === 'dependency');
 
-		expect(graph.edges).toEqual([
-			{ from: 'map_a', to: 'map_b', missing: false, kind: 'execution' },
-			{ from: 'map_b', to: 'map_c', missing: false, kind: 'execution' }
+		expect(rootEdges).toEqual([
+			{
+				from: '__hook_root__:gform_validation',
+				to: 'map_a',
+				missing: false,
+				kind: 'hook_root',
+				hook: 'gform_validation'
+			},
+			{
+				from: '__hook_root__:gform_validation',
+				to: 'map_b',
+				missing: false,
+				kind: 'hook_root',
+				hook: 'gform_validation'
+			},
+			{
+				from: '__hook_root__:gform_validation',
+				to: 'map_c',
+				missing: false,
+				kind: 'hook_root',
+				hook: 'gform_validation'
+			}
 		]);
+		expect(dependencyEdges).toEqual([]);
 		expect(byId.get('map_a')?.depth).toBe(0);
 		expect(byId.get('map_b')?.depth).toBe(1);
 		expect(byId.get('map_c')?.depth).toBe(2);
+	});
+
+	it('omits hook-root edges for non-autonomous mappings', () => {
+		const items: FormActionLinkage[] = [
+			linkage('map_a', ['gform_validation']),
+			linkage('map_b', ['gform_validation'], ['map_a']),
+			linkage('map_c', ['gform_validation'], ['map_b'])
+		];
+
+		const graph = buildDependencyGraph(items);
+		const rootEdges = graph.edges.filter((edge) => edge.kind === 'hook_root');
+
+		expect(rootEdges).toEqual([
+			{
+				from: '__hook_root__:gform_validation',
+				to: 'map_a',
+				missing: false,
+				kind: 'hook_root',
+				hook: 'gform_validation'
+			}
+		]);
+		expect(rootEdges.some((edge) => edge.to === 'map_b')).toBe(false);
+		expect(rootEdges.some((edge) => edge.to === 'map_c')).toBe(false);
+	});
+
+	it('adds one hook-root edge per hook for autonomous mappings', () => {
+		const items: FormActionLinkage[] = [
+			linkage('map_multi', ['gform_validation', 'gform_after_submission'])
+		];
+
+		const graph = buildDependencyGraph(items);
+		const rootEdges = graph.edges.filter((edge) => edge.kind === 'hook_root');
+
+		expect(rootEdges).toEqual([
+			{
+				from: '__hook_root__:gform_validation',
+				to: 'map_multi',
+				missing: false,
+				kind: 'hook_root',
+				hook: 'gform_validation'
+			},
+			{
+				from: '__hook_root__:gform_after_submission',
+				to: 'map_multi',
+				missing: false,
+				kind: 'hook_root',
+				hook: 'gform_after_submission'
+			}
+		]);
+	});
+
+	it('builds mixed trigger sources with one root edge and one dependency edge per hook', () => {
+		const items: FormActionLinkage[] = [
+			linkage('map_parent', ['gform_after_submission']),
+			{
+				local_mapping_id: 'map_child',
+				central_action_id: 'content_quality',
+				action_type_indicator: 'master',
+				trigger_hooks: ['gform_validation', 'gform_after_submission'],
+				action_name_label: 'map_child',
+				settings: {
+					trigger_sources: {
+						gform_validation: { type: 'hook_root' },
+						gform_after_submission: { type: 'mapping', mapping_id: 'map_parent' }
+					}
+				}
+			}
+		];
+
+		const graph = buildDependencyGraph(items);
+		const rootEdges = graph.edges.filter(
+			(edge) => edge.kind === 'hook_root' && edge.to === 'map_child'
+		);
+		const dependencyEdges = graph.edges.filter(
+			(edge) => edge.kind === 'dependency' && edge.to === 'map_child'
+		);
+
+		expect(rootEdges).toEqual([
+			{
+				from: '__hook_root__:gform_validation',
+				to: 'map_child',
+				missing: false,
+				kind: 'hook_root',
+				hook: 'gform_validation'
+			}
+		]);
+		expect(dependencyEdges).toEqual([
+			{
+				from: 'map_parent',
+				to: 'map_child',
+				missing: false,
+				kind: 'dependency',
+				hook: 'gform_after_submission'
+			}
+		]);
+	});
+
+	it('renders hook root nodes even when every action has dependencies', () => {
+		const items: FormActionLinkage[] = [
+			linkage('map_a', ['gform_validation', 'gform_after_submission'], ['map_b']),
+			linkage('map_b', ['gform_validation', 'gform_after_submission'], ['map_c']),
+			linkage('map_c', ['gform_validation', 'gform_after_submission'], ['map_a'])
+		];
+		const graph = buildDependencyGraph(items);
+		const rootNodes = graph.nodes.filter((node) => node.kind === 'hook_root');
+		expect(rootNodes.some((node) => node.id === '__hook_root__:gform_validation')).toBe(true);
+		expect(rootNodes.some((node) => node.id === '__hook_root__:gform_after_submission')).toBe(true);
 	});
 });

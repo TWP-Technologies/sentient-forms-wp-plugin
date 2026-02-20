@@ -1,7 +1,7 @@
 import { cva } from 'class-variance-authority';
 
 export const buttonStyles = cva(
-	'sf:inline-flex sf:items-center sf:justify-center sf:gap-2 sf:rounded sf:font-medium sf:transition-colors sf:focus:outline-hidden sf:focus-visible:ring-2 sf:focus-visible:ring-offset-2 sf:disabled:opacity-50 sf:disabled:cursor-not-allowed',
+	'sf:inline-flex sf:cursor-pointer sf:items-center sf:justify-center sf:gap-2 sf:rounded sf:font-medium sf:transition-colors sf:focus:outline-hidden sf:focus-visible:ring-2 sf:focus-visible:ring-offset-2 sf:disabled:opacity-50 sf:disabled:cursor-not-allowed',
 	{
 		variants: {
 			variant: {

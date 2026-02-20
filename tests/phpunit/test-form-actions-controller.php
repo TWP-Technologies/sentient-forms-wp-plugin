@@ -412,7 +412,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                 'local_mapping_id'      => 'map_b',
                 'central_action_id'     => 'spam_detection_v1',
                 'action_type_indicator' => 'master',
-                'trigger_hooks'         => [ 'gform_validation' ],
+                'trigger_hooks'         => [ 'gform_after_submission' ],
                 'settings'              => [],
             ],
         ];
@@ -473,6 +473,71 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
         $this->assertTrue( $result );
+    }
+
+    public function test_validate_mapping_dependencies_allows_hook_scoped_trigger_sources_for_mixed_hooks(): void
+    {
+        $actions = [
+            'map_async' => [
+                'local_mapping_id'      => 'map_async',
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_after_submission' ],
+                'settings'              => [
+                    'execution_mode' => 'after_submission',
+                ],
+            ],
+            'map_dual' => [
+                'local_mapping_id'      => 'map_dual',
+                'central_action_id'     => 'content_quality_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation', 'gform_after_submission' ],
+                'settings'              => [
+                    'execution_mode'  => 'after_submission',
+                    'trigger_sources' => [
+                        'gform_validation'       => [ 'type' => 'hook_root' ],
+                        'gform_after_submission' => [
+                            'type'       => 'mapping',
+                            'mapping_id' => 'map_async',
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
+        $this->assertTrue( $result );
+    }
+
+    public function test_validate_mapping_dependencies_rejects_hook_scoped_mismatch_for_trigger_sources(): void
+    {
+        $actions = [
+            'map_after_submission_only' => [
+                'local_mapping_id'      => 'map_after_submission_only',
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_after_submission' ],
+                'settings'              => [],
+            ],
+            'map_validation' => [
+                'local_mapping_id'      => 'map_validation',
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation' ],
+                'settings'              => [
+                    'trigger_sources' => [
+                        'gform_validation' => [
+                            'type'       => 'mapping',
+                            'mapping_id' => 'map_after_submission_only',
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
+        $this->assertWPError( $result );
+        $this->assertSame( 'rest_invalid_dependency_hooks', $result->get_error_code() );
     }
 
     public function test_validate_mapping_dependencies_rejects_cycles(): void
@@ -541,6 +606,125 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $data['deleted'] ?? false );
         $this->assertArrayNotHasKey( 'map_a', $stored );
         $this->assertSame( [], $stored['map_b']['settings']['dependency_ids'] ?? [] );
+
+        delete_option( $option_key );
+    }
+
+    public function test_duplicate_form_action_item_inserts_duplicate_and_rewires_parent_children(): void
+    {
+        $option_key = 'sentient_forms_actions_gravity_forms_13';
+        update_option(
+            $option_key,
+            [
+                'map_parent' => [
+                    'local_mapping_id'      => 'map_parent',
+                    'central_action_id'     => 'parent_v1',
+                    'action_type_indicator' => 'master',
+                    'trigger_hooks'         => [ 'gform_validation' ],
+                    'settings'              => [
+                        'trigger_sources' => [
+                            'gform_validation' => [ 'type' => 'hook_root' ],
+                        ],
+                    ],
+                ],
+                'map_source' => [
+                    'local_mapping_id'      => 'map_source',
+                    'central_action_id'     => 'source_v1',
+                    'action_type_indicator' => 'master',
+                    'trigger_hooks'         => [ 'gform_validation' ],
+                    'settings'              => [
+                        'trigger_sources' => [
+                            'gform_validation' => [ 'type' => 'hook_root' ],
+                        ],
+                    ],
+                ],
+                'map_child'  => [
+                    'local_mapping_id'      => 'map_child',
+                    'central_action_id'     => 'child_v1',
+                    'action_type_indicator' => 'master',
+                    'trigger_hooks'         => [ 'gform_validation' ],
+                    'settings'              => [
+                        'dependency_ids'  => [ 'map_parent' ],
+                        'trigger_sources' => [
+                            'gform_validation' => [
+                                'type'       => 'mapping',
+                                'mapping_id' => 'map_parent',
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/13/actions/map_source/duplicate' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 13 );
+        $request->set_param( 'local_mapping_id', 'map_source' );
+        $request->set_param(
+            'parent',
+            [
+                'type'       => 'mapping',
+                'hook'       => 'gform_validation',
+                'mapping_id' => 'map_parent',
+            ]
+        );
+
+        $response = $this->controller->duplicate_form_action_item( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 201, $response->get_status() );
+
+        $data         = $response->get_data();
+        $duplicate    = $data['duplicate'] ?? [];
+        $duplicate_id = $duplicate['local_mapping_id'] ?? '';
+        $this->assertIsString( $duplicate_id );
+        $this->assertNotSame( '', $duplicate_id );
+        $this->assertNotSame( 'map_source', $duplicate_id );
+
+        $moved_children = $data['insertion']['moved_children'] ?? [];
+        $this->assertContains( 'map_child', $moved_children );
+
+        $stored = get_option( $option_key, [] );
+        $this->assertArrayHasKey( $duplicate_id, $stored );
+        $this->assertSame(
+            $duplicate_id,
+            $stored['map_child']['settings']['trigger_sources']['gform_validation']['mapping_id'] ?? null
+        );
+        $this->assertSame( [ $duplicate_id ], $stored['map_child']['settings']['dependency_ids'] ?? [] );
+
+        delete_option( $option_key );
+    }
+
+    public function test_duplicate_form_action_item_rejects_parent_hook_not_on_source_mapping(): void
+    {
+        $option_key = 'sentient_forms_actions_gravity_forms_14';
+        update_option(
+            $option_key,
+            [
+                'map_source' => [
+                    'local_mapping_id'      => 'map_source',
+                    'central_action_id'     => 'source_v1',
+                    'action_type_indicator' => 'master',
+                    'trigger_hooks'         => [ 'gform_validation' ],
+                    'settings'              => [],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/14/actions/map_source/duplicate' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 14 );
+        $request->set_param( 'local_mapping_id', 'map_source' );
+        $request->set_param(
+            'parent',
+            [
+                'type' => 'hook_root',
+                'hook' => 'gform_after_submission',
+            ]
+        );
+
+        $response = $this->controller->duplicate_form_action_item( $request );
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_duplicate_parent_hook', $response->get_error_code() );
 
         delete_option( $option_key );
     }

@@ -44,6 +44,9 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         'gform_after_submission',
     ];
 
+    /** Policy version exposed to admin workflow planner clients. */
+    private const WORKFLOW_POLICY_VERSION = '2026-02-mixed-sync-async-v1';
+
     /** Maximum allowed nested depth for mapping condition groups. */
     private const MAX_CONDITION_DEPTH = 3;
 
@@ -184,6 +187,53 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     'callback'            => [ $this, 'get_form_fields' ],
                     'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
                     'args'                => $this->get_collection_args(),
+                ],
+            ],
+        );
+
+        // Workflow planning endpoint (graph execution preview + policy diagnostics).
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/workflow-plan',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_workflow_plan' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
+                    'args'                => array_merge(
+                        $this->get_collection_args(),
+                        [
+                            'hook_scope' => [
+                                'description'       => __( 'Hook scope for plan output (all or specific hook).', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => false,
+                                'default'           => 'all',
+                                'sanitize_callback' => 'sanitize_text_field',
+                            ],
+                        ],
+                    ),
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/(?P<local_mapping_id>[a-zA-Z0-9_]+)/duplicate',
+            [
+                [
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => [ $this, 'duplicate_form_action_item' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
+                    'args'                => array_merge(
+                        $this->get_item_args(),
+                        [
+                            'parent' => [
+                                'description' => __( 'Parent insertion selection for duplicated mapping.', 'sentient-forms' ),
+                                'type'        => 'object',
+                                'required'    => true,
+                            ],
+                        ],
+                    ),
                 ],
             ],
         );
@@ -434,6 +484,71 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $merged = $this->merge_local_and_cps_actions( array_values( $local_actions ), $cps_actions );
 
         return $this->prepare_item_for_response( $merged );
+    }
+
+    /**
+     * Return workflow planning data for dependency graph execution previews.
+     *
+     * Attempts CPS authority first; falls back to a local deterministic planner when CPS is
+     * unavailable so the UI can remain readable.
+     *
+     * @param WP_REST_Request $request Request object.
+     *
+     * @return WP_REST_Response
+     */
+    public function get_workflow_plan( WP_REST_Request $request ): WP_REST_Response
+    {
+        $form_source_slug = $request->get_param( 'form_source_slug' );
+        $form_id          = (int) $request->get_param( 'form_id' );
+        $hook_scope       = sanitize_text_field( (string) ( $request->get_param( 'hook_scope' ) ?? 'all' ) );
+
+        if ( 'all' !== $hook_scope && ! in_array( $hook_scope, self::ALLOWED_TRIGGER_HOOKS, true ) )
+        {
+            $hook_scope = 'all';
+        }
+
+        $cps_error = null;
+        $authority_reason = 'cps_unavailable';
+        if ( $this->mappings_sync )
+        {
+            $cps_plan = $this->mappings_sync->plan_workflow( $form_source_slug, $form_id, $hook_scope );
+            if ( ! is_wp_error( $cps_plan ) && is_array( $cps_plan ) )
+            {
+                return $this->prepare_item_for_response( $this->normalize_workflow_plan_payload( $cps_plan, $hook_scope ) );
+            }
+
+            if ( is_wp_error( $cps_plan ) )
+            {
+                $cps_error = $cps_plan->get_error_code();
+                if ( is_string( $cps_error ) && '' !== $cps_error )
+                {
+                    $lower_error = strtolower( $cps_error );
+                    if ( false !== strpos( $lower_error, 'mismatch' ) )
+                    {
+                        $authority_reason = 'cps_mismatch';
+                    }
+                }
+            }
+        }
+
+        $option_key    = $this->get_actions_option_key( $form_source_slug, $form_id );
+        $local_actions = get_option( $option_key, [] );
+        if ( ! is_array( $local_actions ) )
+        {
+            $local_actions = [];
+        }
+        unset( $local_actions['sf_disabled'] );
+
+        $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
+        $merged      = $this->merge_local_and_cps_actions( array_values( $local_actions ), $cps_actions );
+        $fallback = $this->build_local_workflow_plan_payload( $merged, $hook_scope, $authority_reason );
+        $fallback['cps_unreachable'] = 'cps_mismatch' !== $authority_reason;
+        if ( is_string( $cps_error ) && '' !== $cps_error )
+        {
+            $fallback['cps_error_code'] = $cps_error;
+        }
+
+        return $this->prepare_item_for_response( $fallback );
     }
 
     /**
@@ -841,6 +956,225 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         return $this->prepare_item_for_response( $linkage );
     }
 
+    /**
+     * Duplicate an existing action mapping and insert it under a selected parent.
+     *
+     * The duplicate copies the original mapping configuration (except local_mapping_id), then
+     * rewires parent pre-existing children for the selected hook to run through the duplicate.
+     * Incompatible rewires are skipped and reported in the response.
+     */
+    public function duplicate_form_action_item( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $option_key = $this->get_actions_option_key( $request->get_param( 'form_source_slug' ), (int) $request->get_param( 'form_id' ) );
+        $actions    = get_option( $option_key, [] );
+        if ( ! is_array( $actions ) )
+        {
+            $actions = [];
+        }
+
+        $source_id = sanitize_text_field( (string) $request->get_param( 'local_mapping_id' ) );
+        if ( '' === $source_id || ! isset( $actions[ $source_id ] ) || ! is_array( $actions[ $source_id ] ) )
+        {
+            return $this->prepare_error_response(
+                'rest_action_not_found',
+                __( 'Action linkage not found to duplicate.', 'sentient-forms' ),
+                404
+            );
+        }
+
+        $parent = $this->sanitize_duplicate_parent_request( $request->get_param( 'parent' ) );
+        if ( is_wp_error( $parent ) )
+        {
+            return $this->prepare_error_response(
+                $parent->get_error_code(),
+                $parent->get_error_message(),
+                400
+            );
+        }
+
+        $source_mapping      = $actions[ $source_id ];
+        $source_trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $source_mapping['trigger_hooks'] ?? [] ) );
+        $target_hook         = sanitize_key( (string) $parent['hook'] );
+        if ( ! in_array( $target_hook, $source_trigger_hooks, true ) )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_duplicate_parent_hook',
+                sprintf(
+                    /* translators: %s: hook id */
+                    __( 'Duplicate insertion hook %s is not configured on the source mapping.', 'sentient-forms' ),
+                    sanitize_text_field( $target_hook )
+                ),
+                400
+            );
+        }
+
+        if ( 'mapping' === $parent['type'] )
+        {
+            $parent_mapping_id = sanitize_text_field( (string) ( $parent['mapping_id'] ?? '' ) );
+            if ( '' === $parent_mapping_id || ! isset( $actions[ $parent_mapping_id ] ) || ! is_array( $actions[ $parent_mapping_id ] ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_duplicate_parent',
+                    __( 'Selected parent mapping does not exist.', 'sentient-forms' ),
+                    400
+                );
+            }
+
+            $parent_mapping_hooks = $this->sanitize_trigger_hooks( (array) ( $actions[ $parent_mapping_id ]['trigger_hooks'] ?? [] ) );
+            if ( ! $this->dependency_satisfies_hook( $target_hook, $parent_mapping_hooks ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_duplicate_parent_hooks',
+                    __( 'Selected parent mapping does not satisfy the selected hook.', 'sentient-forms' ),
+                    400
+                );
+            }
+
+            if ( 'gform_after_submission' === $target_hook )
+            {
+                $parent_is_async = $this->is_mapping_async( $actions[ $parent_mapping_id ] );
+                $source_is_async = $this->is_mapping_async( $source_mapping );
+                if ( $parent_is_async && ! $source_is_async )
+                {
+                    return $this->prepare_error_response(
+                        'rest_invalid_duplicate_parent_execution_mode',
+                        __( 'Selected parent mapping runs async in after-submission, but the source mapping does not.', 'sentient-forms' ),
+                        400
+                    );
+                }
+            }
+        }
+
+        $new_id = uniqid( 'map_', false );
+        while ( isset( $actions[ $new_id ] ) )
+        {
+            $new_id = uniqid( 'map_', false );
+        }
+
+        $duplicate = $source_mapping;
+        $duplicate['local_mapping_id'] = $new_id;
+        $duplicate['trigger_hooks'] = $source_trigger_hooks;
+        if ( ! array_key_exists( 'is_action_enabled_for_form', $duplicate ) )
+        {
+            $duplicate['is_action_enabled_for_form'] = true;
+        }
+        if ( ! isset( $duplicate['settings'] ) || ! is_array( $duplicate['settings'] ) )
+        {
+            $duplicate['settings'] = [];
+        }
+
+        $parent_source = 'mapping' === $parent['type']
+            ? [
+                'type'       => 'mapping',
+                'mapping_id' => sanitize_text_field( (string) ( $parent['mapping_id'] ?? '' ) ),
+            ]
+            : [
+                'type' => 'hook_root',
+            ];
+        $duplicate = $this->set_mapping_trigger_source_for_hook( $duplicate, $target_hook, $parent_source );
+        if ( is_wp_error( $duplicate ) )
+        {
+            return $this->prepare_error_response(
+                $duplicate->get_error_code(),
+                $duplicate->get_error_message(),
+                400
+            );
+        }
+
+        $candidate = $actions;
+        $candidate[ $new_id ] = $duplicate;
+        $duplicate_validation = $this->validate_mapping_dependencies( $candidate );
+        if ( is_wp_error( $duplicate_validation ) )
+        {
+            return $this->prepare_error_response(
+                $duplicate_validation->get_error_code(),
+                $duplicate_validation->get_error_message(),
+                400
+            );
+        }
+
+        $planner = Sentient_Forms_Plugin::instance()->get_mapping_dependency_planner();
+        $children_to_move = $this->find_parent_children_for_hook( $actions, $parent, $target_hook, $planner );
+        $moved_children = [];
+        $skipped_children = [];
+        $working = $candidate;
+
+        foreach ( $children_to_move as $child_id )
+        {
+            if ( ! isset( $working[ $child_id ] ) || ! is_array( $working[ $child_id ] ) )
+            {
+                continue;
+            }
+
+            $next_child = $this->set_mapping_trigger_source_for_hook(
+                $working[ $child_id ],
+                $target_hook,
+                [
+                    'type'       => 'mapping',
+                    'mapping_id' => $new_id,
+                ]
+            );
+            if ( is_wp_error( $next_child ) )
+            {
+                $skipped_children[] = [
+                    'child_id' => $child_id,
+                    'hook'     => $target_hook,
+                    'code'     => 'policy_violation',
+                    'message'  => $next_child->get_error_message(),
+                ];
+                continue;
+            }
+
+            $child_candidate = $working;
+            $child_candidate[ $child_id ] = $next_child;
+            $child_validation = $this->validate_mapping_dependencies( $child_candidate );
+            if ( is_wp_error( $child_validation ) )
+            {
+                $skipped_children[] = [
+                    'child_id' => $child_id,
+                    'hook'     => $target_hook,
+                    'code'     => $this->map_dependency_validation_error_to_skip_code( $child_validation->get_error_code() ),
+                    'message'  => $child_validation->get_error_message(),
+                ];
+                continue;
+            }
+
+            $working[ $child_id ] = $next_child;
+            $moved_children[] = $child_id;
+        }
+
+        $final_validation = $this->validate_mapping_dependencies( $working );
+        if ( is_wp_error( $final_validation ) )
+        {
+            return $this->prepare_error_response(
+                $final_validation->get_error_code(),
+                $final_validation->get_error_message(),
+                400
+            );
+        }
+
+        update_option( $option_key, $working, false );
+
+        $warnings = [];
+        if ( ! empty( $skipped_children ) )
+        {
+            $warnings[] = __( 'Some parent children could not be rewired due to dependency policy constraints.', 'sentient-forms' );
+        }
+
+        return $this->prepare_item_for_response(
+            [
+                'duplicate' => $working[ $new_id ],
+                'insertion' => [
+                    'parent'           => $parent,
+                    'moved_children'   => array_values( $moved_children ),
+                    'skipped_children' => array_values( $skipped_children ),
+                    'warnings'         => $warnings,
+                ],
+            ],
+            201
+        );
+    }
+
     /** Delete an action linkage. */
     public function delete_form_action_item( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
@@ -1176,6 +1510,475 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     }
 
     /**
+     * Normalize CPS workflow planner payload shape for UI compatibility.
+     *
+     * @param array  $payload    Raw CPS planner payload.
+     * @param string $hook_scope Requested hook scope.
+     *
+     * @return array
+     */
+    private function normalize_workflow_plan_payload( array $payload, string $hook_scope ): array
+    {
+        return [
+            'authority'         => 'cps',
+            'authority_reason'  => isset( $payload['authority_reason'] ) && is_scalar( $payload['authority_reason'] )
+                ? sanitize_key( (string) $payload['authority_reason'] )
+                : null,
+            'cps_unreachable'   => false,
+            'policy_version'    => is_string( $payload['policy_version'] ?? null )
+                ? $payload['policy_version']
+                : self::WORKFLOW_POLICY_VERSION,
+            'hook_scope'        => $hook_scope,
+            'available_hooks'   => isset( $payload['available_hooks'] ) && is_array( $payload['available_hooks'] )
+                ? array_values( $payload['available_hooks'] )
+                : [],
+            'nodes'             => isset( $payload['nodes'] ) && is_array( $payload['nodes'] )
+                ? array_values( $payload['nodes'] )
+                : [],
+            'edges'             => isset( $payload['edges'] ) && is_array( $payload['edges'] )
+                ? array_values( $payload['edges'] )
+                : [],
+            'hooks'             => isset( $payload['hooks'] ) && is_array( $payload['hooks'] )
+                ? array_values( $payload['hooks'] )
+                : [],
+            'policy_violations' => isset( $payload['policy_violations'] ) && is_array( $payload['policy_violations'] )
+                ? array_values( $payload['policy_violations'] )
+                : [],
+        ];
+    }
+
+    /**
+     * Build a local fallback workflow plan when CPS planner is unavailable.
+     *
+     * @param array  $actions    Merged linkage payload.
+     * @param string $hook_scope        Requested hook scope.
+     * @param string $authority_reason  Reason why local fallback is authoritative.
+     *
+     * @return array
+     */
+    private function build_local_workflow_plan_payload( array $actions, string $hook_scope, string $authority_reason = 'cps_unavailable' ): array
+    {
+        $normalized = $this->normalize_local_action_mappings( $actions );
+        $planner    = Sentient_Forms_Plugin::instance()->get_mapping_dependency_planner();
+
+        $nodes = [];
+        $edges = [];
+        $edge_lookup = [];
+        $available_hooks = [];
+
+        foreach ( $normalized as $mapping_id => $mapping )
+        {
+            $trigger_hooks   = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
+            $trigger_sources = $planner->extract_trigger_sources( $mapping, $trigger_hooks );
+            $dependency_ids  = $planner->extract_dependency_ids( $mapping );
+            $is_enabled     = ! empty( $mapping['is_action_enabled_for_form'] );
+            $is_async       = $this->is_mapping_async( $mapping );
+
+            $available_hooks = array_values( array_unique( array_merge( $available_hooks, $trigger_hooks ) ) );
+
+            $nodes[] = [
+                'mapping_id'        => $mapping_id,
+                'label'             => sanitize_text_field( (string) ( $mapping['action_name_label'] ?? $mapping['central_action_id'] ?? $mapping_id ) ),
+                'central_action_id' => sanitize_text_field( (string) ( $mapping['central_action_id'] ?? '' ) ),
+                'trigger_hooks'     => $trigger_hooks,
+                'trigger_sources'   => $trigger_sources,
+                'dependency_ids'    => $dependency_ids,
+                'is_enabled'        => $is_enabled,
+                'is_async'          => $is_async,
+            ];
+
+            foreach ( $trigger_hooks as $hook )
+            {
+                $hook_dependency_ids = $planner->extract_dependency_ids_for_hook( $mapping, $hook );
+                if ( empty( $hook_dependency_ids ) )
+                {
+                    $edge_id = sprintf( 'hook_root:%s->%s:%s', $hook, $mapping_id, $hook );
+                    if ( isset( $edge_lookup[ $edge_id ] ) )
+                    {
+                        continue;
+                    }
+
+                    $edges[] = [
+                        'from' => sprintf( '__hook_root__:%s', $hook ),
+                        'to'   => $mapping_id,
+                        'kind' => 'hook_root',
+                        'hook' => $hook,
+                    ];
+                    $edge_lookup[ $edge_id ] = true;
+                    continue;
+                }
+
+                foreach ( $hook_dependency_ids as $dependency_id )
+                {
+                    $edge_id = sprintf( 'dependency:%s->%s:%s', $dependency_id, $mapping_id, $hook );
+                    if ( isset( $edge_lookup[ $edge_id ] ) )
+                    {
+                        continue;
+                    }
+
+                    $edges[] = [
+                        'from' => $dependency_id,
+                        'to'   => $mapping_id,
+                        'kind' => 'dependency',
+                        'hook' => $hook,
+                    ];
+                    $edge_lookup[ $edge_id ] = true;
+                }
+            }
+        }
+
+        sort( $available_hooks );
+        $hooks_to_plan = 'all' === $hook_scope
+            ? $available_hooks
+            : ( in_array( $hook_scope, $available_hooks, true ) ? [ $hook_scope ] : [] );
+
+        $hook_payloads = [];
+        foreach ( $hooks_to_plan as $hook )
+        {
+            $plan = $planner->build_execution_plan( $normalized, $hook );
+            $order = [];
+            $blocked = [];
+            $blocked_lookup = [];
+
+            foreach ( (array) ( $plan['order'] ?? [] ) as $mapping_id )
+            {
+                if ( ! isset( $plan['nodes'][ $mapping_id ] ) || ! is_array( $plan['nodes'][ $mapping_id ] ) )
+                {
+                    continue;
+                }
+
+                $node = $plan['nodes'][ $mapping_id ];
+                if ( empty( $node['hook_enabled'] ) )
+                {
+                    continue;
+                }
+
+                $order[] = $mapping_id;
+                $dependency_ids = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
+
+                if ( in_array( $mapping_id, (array) ( $plan['cycle_ids'] ?? [] ), true ) )
+                {
+                    $blocked_lookup[ $mapping_id ] = 'cycle';
+                    $blocked[] = [
+                        'mapping_id' => $mapping_id,
+                        'reason'     => 'cycle',
+                    ];
+                    continue;
+                }
+
+                if ( empty( $node['enabled'] ) )
+                {
+                    $blocked_lookup[ $mapping_id ] = 'disabled';
+                    $blocked[] = [
+                        'mapping_id' => $mapping_id,
+                        'reason'     => 'disabled',
+                    ];
+                    continue;
+                }
+
+                $missing_dependencies = [];
+                foreach ( $dependency_ids as $dependency_id )
+                {
+                    if ( ! isset( $plan['nodes'][ $dependency_id ] ) || ! is_array( $plan['nodes'][ $dependency_id ] ) )
+                    {
+                        $missing_dependencies[] = $dependency_id;
+                        continue;
+                    }
+
+                    if ( empty( $plan['nodes'][ $dependency_id ]['hook_enabled'] ) )
+                    {
+                        $dependency_hooks = isset( $plan['nodes'][ $dependency_id ]['trigger_hooks'] ) && is_array( $plan['nodes'][ $dependency_id ]['trigger_hooks'] )
+                            ? $plan['nodes'][ $dependency_id ]['trigger_hooks']
+                            : [];
+                        if ( ! $this->dependency_satisfies_hook( $hook, $dependency_hooks ) )
+                        {
+                            $missing_dependencies[] = $dependency_id;
+                        }
+                    }
+                }
+
+                if ( ! empty( $missing_dependencies ) )
+                {
+                    $blocked_lookup[ $mapping_id ] = 'missing_dependency';
+                    $blocked[] = [
+                        'mapping_id' => $mapping_id,
+                        'reason'     => 'missing_dependency',
+                        'details'    => implode( ', ', array_map( 'sanitize_text_field', $missing_dependencies ) ),
+                    ];
+                    continue;
+                }
+
+                if ( 'gform_after_submission' === $hook )
+                {
+                    $invalid_dependency = null;
+                    foreach ( $dependency_ids as $dependency_id )
+                    {
+                        if ( ! isset( $plan['nodes'][ $dependency_id ] ) || ! is_array( $plan['nodes'][ $dependency_id ] ) )
+                        {
+                            continue;
+                        }
+
+                        $dependency_hooks = isset( $plan['nodes'][ $dependency_id ]['trigger_hooks'] ) && is_array( $plan['nodes'][ $dependency_id ]['trigger_hooks'] )
+                            ? $plan['nodes'][ $dependency_id ]['trigger_hooks']
+                            : [];
+                        if ( ! $this->dependency_satisfies_hook( $hook, $dependency_hooks ) )
+                        {
+                            continue;
+                        }
+
+                        $dependency_is_async = $this->is_mapping_async( (array) ( $plan['nodes'][ $dependency_id ]['mapping'] ?? [] ) );
+                        $mapping_is_async    = $this->is_mapping_async( (array) ( $node['mapping'] ?? [] ) );
+                        if ( $dependency_is_async && ! $mapping_is_async )
+                        {
+                            $invalid_dependency = $dependency_id;
+                            break;
+                        }
+                    }
+
+                    if ( null !== $invalid_dependency )
+                    {
+                        $blocked_lookup[ $mapping_id ] = 'policy_violation';
+                        $blocked[] = [
+                            'mapping_id' => $mapping_id,
+                            'reason'     => 'policy_violation',
+                            'details'    => sanitize_text_field( (string) $invalid_dependency ) . ':execution_mode_mismatch',
+                        ];
+                        continue;
+                    }
+                }
+            }
+
+            $runnable = [];
+            foreach ( $order as $mapping_id )
+            {
+                if ( isset( $blocked_lookup[ $mapping_id ] ) )
+                {
+                    continue;
+                }
+
+                $node = $plan['nodes'][ $mapping_id ] ?? null;
+                $dependency_ids = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
+                $upstream_blocking_dependency = null;
+                foreach ( $dependency_ids as $dependency_id )
+                {
+                    if ( isset( $blocked_lookup[ $dependency_id ] ) )
+                    {
+                        $upstream_blocking_dependency = $dependency_id;
+                        break;
+                    }
+                }
+
+                if ( null !== $upstream_blocking_dependency )
+                {
+                    $blocked_lookup[ $mapping_id ] = 'upstream_blocked';
+                    $blocked[] = [
+                        'mapping_id' => $mapping_id,
+                        'reason'     => 'upstream_blocked',
+                        'details'    => sanitize_text_field( $upstream_blocking_dependency ),
+                    ];
+                    continue;
+                }
+
+                $runnable[] = $mapping_id;
+            }
+
+            $waves = $this->build_local_workflow_waves( $runnable, $plan['nodes'] ?? [] );
+            $hook_payloads[] = [
+                'hook'      => $hook,
+                'order'     => $order,
+                'waves'     => $waves,
+                'runnable'  => $runnable,
+                'blocked'   => $blocked,
+                'cycle_ids' => array_values( array_filter(
+                    (array) ( $plan['cycle_ids'] ?? [] ),
+                    static fn( $mapping_id ) => in_array( $mapping_id, $order, true )
+                ) ),
+            ];
+        }
+
+        return [
+            'authority'         => 'local_fallback',
+            'authority_reason'  => sanitize_key( $authority_reason ),
+            'cps_unreachable'   => 'cps_mismatch' !== $authority_reason,
+            'policy_version'    => self::WORKFLOW_POLICY_VERSION,
+            'hook_scope'        => $hook_scope,
+            'available_hooks'   => $available_hooks,
+            'nodes'             => $nodes,
+            'edges'             => $edges,
+            'hooks'             => $hook_payloads,
+            'policy_violations' => $this->collect_dependency_policy_violations( $normalized ),
+        ];
+    }
+
+    /**
+     * Build wave groups for topological order previews.
+     *
+     * @param array<int, string>                  $runnable_ids Runnable mapping ids in topological order.
+     * @param array<string, array<string, mixed>> $nodes        Planner nodes keyed by mapping id.
+     *
+     * @return array<int, array{level: int, mapping_ids: array<int, string>}>
+     */
+    private function build_local_workflow_waves( array $runnable_ids, array $nodes ): array
+    {
+        $runnable_lookup = array_fill_keys( $runnable_ids, true );
+        $levels          = [];
+        foreach ( $runnable_ids as $mapping_id )
+        {
+            $dependency_ids = isset( $nodes[ $mapping_id ]['dependency_ids'] ) && is_array( $nodes[ $mapping_id ]['dependency_ids'] )
+                ? $nodes[ $mapping_id ]['dependency_ids']
+                : [];
+            $dependency_levels = [];
+            foreach ( $dependency_ids as $dependency_id )
+            {
+                if ( ! isset( $runnable_lookup[ $dependency_id ] ) )
+                {
+                    continue;
+                }
+
+                $dependency_levels[] = (int) ( $levels[ $dependency_id ] ?? 0 );
+            }
+
+            $levels[ $mapping_id ] = empty( $dependency_levels ) ? 0 : ( max( $dependency_levels ) + 1 );
+        }
+
+        $waves = [];
+        foreach ( $runnable_ids as $mapping_id )
+        {
+            $level = (int) ( $levels[ $mapping_id ] ?? 0 );
+            if ( ! isset( $waves[ $level ] ) )
+            {
+                $waves[ $level ] = [];
+            }
+            $waves[ $level ][] = $mapping_id;
+        }
+
+        ksort( $waves );
+        $result = [];
+        foreach ( $waves as $level => $mapping_ids )
+        {
+            $result[] = [
+                'level'       => (int) $level,
+                'mapping_ids' => array_values( $mapping_ids ),
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Return non-fatal dependency policy diagnostics used by the planner UI.
+     *
+     * @param array<string, array<string, mixed>> $normalized Action mappings keyed by local mapping id.
+     *
+     * @return array<int, array{mapping_id: string, dependency_id: string, code: string, message: string}>
+     */
+    private function collect_dependency_policy_violations( array $normalized ): array
+    {
+        $violations       = [];
+        $violation_lookup = [];
+        $planner          = Sentient_Forms_Plugin::instance()->get_mapping_dependency_planner();
+
+        foreach ( $normalized as $mapping_id => $mapping )
+        {
+            $trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
+            if ( empty( $trigger_hooks ) )
+            {
+                continue;
+            }
+
+            $mapping_is_async = $this->is_mapping_async( $mapping );
+
+            foreach ( $trigger_hooks as $hook )
+            {
+                $dependency_ids = $planner->extract_dependency_ids_for_hook( $mapping, $hook );
+                if ( empty( $dependency_ids ) )
+                {
+                    continue;
+                }
+
+                foreach ( $dependency_ids as $dependency_id )
+                {
+                    if ( ! isset( $normalized[ $dependency_id ] ) )
+                    {
+                        $key = sprintf( 'missing_dependency:%s:%s:%s', $mapping_id, $dependency_id, $hook );
+                        if ( isset( $violation_lookup[ $key ] ) )
+                        {
+                            continue;
+                        }
+
+                        $violations[] = [
+                            'mapping_id'    => $mapping_id,
+                            'dependency_id' => $dependency_id,
+                            'code'          => 'missing_dependency',
+                            'message'       => sprintf(
+                                __( 'Mapping %1$s depends on unknown mapping %2$s in hook %3$s.', 'sentient-forms' ),
+                                sanitize_text_field( $mapping_id ),
+                                sanitize_text_field( $dependency_id ),
+                                sanitize_text_field( $hook )
+                            ),
+                        ];
+                        $violation_lookup[ $key ] = true;
+                        continue;
+                    }
+
+                    $dependency_hooks = $this->sanitize_trigger_hooks( (array) ( $normalized[ $dependency_id ]['trigger_hooks'] ?? [] ) );
+                    if ( ! $this->dependency_satisfies_hook( $hook, $dependency_hooks ) )
+                    {
+                        $key = sprintf( 'hook_mismatch:%s:%s:%s', $mapping_id, $dependency_id, $hook );
+                        if ( isset( $violation_lookup[ $key ] ) )
+                        {
+                            continue;
+                        }
+
+                        $violations[] = [
+                            'mapping_id'    => $mapping_id,
+                            'dependency_id' => $dependency_id,
+                            'code'          => 'hook_mismatch',
+                            'message'       => sprintf(
+                                __( 'Mapping %1$s depends on %2$s in hook %3$s, but %2$s does not run on that hook.', 'sentient-forms' ),
+                                sanitize_text_field( $mapping_id ),
+                                sanitize_text_field( $dependency_id ),
+                                sanitize_text_field( $hook )
+                            ),
+                        ];
+                        $violation_lookup[ $key ] = true;
+                        continue;
+                    }
+
+                    if ( 'gform_after_submission' !== $hook )
+                    {
+                        continue;
+                    }
+
+                    $dependency_is_async = $this->is_mapping_async( $normalized[ $dependency_id ] );
+                    if ( $dependency_is_async && ! $mapping_is_async )
+                    {
+                        $key = sprintf( 'execution_mode_mismatch:%s:%s:%s', $mapping_id, $dependency_id, $hook );
+                        if ( isset( $violation_lookup[ $key ] ) )
+                        {
+                            continue;
+                        }
+
+                        $violations[] = [
+                            'mapping_id'    => $mapping_id,
+                            'dependency_id' => $dependency_id,
+                            'code'          => 'execution_mode_mismatch',
+                            'message'       => sprintf(
+                                __( 'Mapping %1$s depends on async mapping %2$s during after-submission, so %1$s must also run async.', 'sentient-forms' ),
+                                sanitize_text_field( $mapping_id ),
+                                sanitize_text_field( $dependency_id )
+                            ),
+                        ];
+                        $violation_lookup[ $key ] = true;
+                    }
+                }
+            }
+        }
+
+        return array_values( $violations );
+    }
+
+    /**
      * Sanitize settings array recursively.
      */
     private function sanitize_settings( $settings ): array
@@ -1206,6 +2009,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             if ( 'dependency_ids' === $key && is_array( $value ) )
             {
                 $sanitized[ $key ] = $this->sanitize_dependency_ids( $value );
+                continue;
+            }
+
+            if ( 'trigger_sources' === $key && is_array( $value ) )
+            {
+                $sanitized[ $key ] = $this->sanitize_trigger_sources( $value );
                 continue;
             }
 
@@ -1272,6 +2081,466 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     }
 
     /**
+     * Sanitize per-hook trigger source definitions.
+     *
+     * @param array $trigger_sources Raw trigger sources keyed by hook id.
+     *
+     * @return array<string, array{type: string, mapping_id?: string}>
+     */
+    private function sanitize_trigger_sources( array $trigger_sources ): array
+    {
+        $sanitized = [];
+        foreach ( $trigger_sources as $hook => $source )
+        {
+            if ( ! is_scalar( $hook ) || ! is_array( $source ) )
+            {
+                continue;
+            }
+
+            $hook_key = sanitize_key( (string) $hook );
+            if ( '' === $hook_key || ! in_array( $hook_key, self::ALLOWED_TRIGGER_HOOKS, true ) )
+            {
+                continue;
+            }
+
+            $type = isset( $source['type'] ) && is_scalar( $source['type'] )
+                ? sanitize_key( (string) $source['type'] )
+                : '';
+            if ( 'mapping' !== $type && 'hook_root' !== $type )
+            {
+                continue;
+            }
+
+            if ( 'hook_root' === $type )
+            {
+                $sanitized[ $hook_key ] = [
+                    'type' => 'hook_root',
+                ];
+                continue;
+            }
+
+            $mapping_id = '';
+            if ( isset( $source['mapping_id'] ) && is_scalar( $source['mapping_id'] ) )
+            {
+                $mapping_id = sanitize_text_field( (string) $source['mapping_id'] );
+            }
+            elseif ( isset( $source['source_mapping_id'] ) && is_scalar( $source['source_mapping_id'] ) )
+            {
+                $mapping_id = sanitize_text_field( (string) $source['source_mapping_id'] );
+            }
+
+            if ( '' === $mapping_id )
+            {
+                continue;
+            }
+
+            $sanitized[ $hook_key ] = [
+                'type'       => 'mapping',
+                'mapping_id' => $mapping_id,
+            ];
+        }
+
+        return $sanitized;
+    }
+
+    /**
+     * Sanitize duplicate-parent request payload.
+     *
+     * @param mixed $parent Raw parent payload.
+     *
+     * @return array{type: string, hook: string, mapping_id?: string}|WP_Error
+     */
+    private function sanitize_duplicate_parent_request( $parent ): array | WP_Error
+    {
+        if ( ! is_array( $parent ) )
+        {
+            return new WP_Error(
+                'rest_invalid_duplicate_parent',
+                __( 'Duplicate parent payload must be an object.', 'sentient-forms' )
+            );
+        }
+
+        $type = isset( $parent['type'] ) && is_scalar( $parent['type'] )
+            ? sanitize_key( (string) $parent['type'] )
+            : '';
+        if ( 'mapping' !== $type && 'hook_root' !== $type )
+        {
+            return new WP_Error(
+                'rest_invalid_duplicate_parent',
+                __( 'Parent type must be "mapping" or "hook_root".', 'sentient-forms' )
+            );
+        }
+
+        $hook = isset( $parent['hook'] ) && is_scalar( $parent['hook'] )
+            ? sanitize_key( (string) $parent['hook'] )
+            : '';
+        if ( '' === $hook || ! in_array( $hook, self::ALLOWED_TRIGGER_HOOKS, true ) )
+        {
+            return new WP_Error(
+                'rest_invalid_duplicate_parent_hook',
+                __( 'Parent hook is missing or not supported.', 'sentient-forms' )
+            );
+        }
+
+        $normalized = [
+            'type' => $type,
+            'hook' => $hook,
+        ];
+
+        if ( 'mapping' === $type )
+        {
+            $mapping_id = isset( $parent['mapping_id'] ) && is_scalar( $parent['mapping_id'] )
+                ? sanitize_text_field( (string) $parent['mapping_id'] )
+                : '';
+            if ( '' === $mapping_id )
+            {
+                return new WP_Error(
+                    'rest_invalid_duplicate_parent_mapping',
+                    __( 'Parent mapping_id is required when parent type is mapping.', 'sentient-forms' )
+                );
+            }
+            $normalized['mapping_id'] = $mapping_id;
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Normalize trigger source graph for all hooks on a mapping.
+     *
+     * Uses explicit trigger_sources when present, otherwise derives a deterministic
+     * fallback from legacy dependency_ids.
+     *
+     * @param array<string, mixed>                       $mapping       Mapping payload.
+     * @param array<int, string>                         $trigger_hooks Mapping trigger hooks.
+     * @param Sentient_Forms_Mapping_Dependency_Planner  $planner       Planner service.
+     *
+     * @return array<string, array{type: string, mapping_id?: string}>
+     */
+    private function build_mapping_trigger_sources_for_hooks(
+        array $mapping,
+        array $trigger_hooks,
+        Sentient_Forms_Mapping_Dependency_Planner $planner
+    ): array
+    {
+        $trigger_hooks = $this->sanitize_trigger_hooks( $trigger_hooks );
+        if ( empty( $trigger_hooks ) )
+        {
+            return [];
+        }
+
+        $explicit = $planner->extract_trigger_sources( $mapping, $trigger_hooks );
+        $has_explicit = ! empty( $explicit );
+        $normalized = [];
+
+        if ( $has_explicit )
+        {
+            foreach ( $trigger_hooks as $hook )
+            {
+                $source = $explicit[ $hook ] ?? [ 'type' => 'hook_root' ];
+                $type = isset( $source['type'] ) && is_scalar( $source['type'] )
+                    ? sanitize_key( (string) $source['type'] )
+                    : 'hook_root';
+                if ( 'mapping' !== $type )
+                {
+                    $normalized[ $hook ] = [ 'type' => 'hook_root' ];
+                    continue;
+                }
+
+                $mapping_id = isset( $source['mapping_id'] ) && is_scalar( $source['mapping_id'] )
+                    ? sanitize_text_field( (string) $source['mapping_id'] )
+                    : '';
+                if ( '' === $mapping_id )
+                {
+                    $normalized[ $hook ] = [ 'type' => 'hook_root' ];
+                    continue;
+                }
+
+                $normalized[ $hook ] = [
+                    'type'       => 'mapping',
+                    'mapping_id' => $mapping_id,
+                ];
+            }
+
+            return $normalized;
+        }
+
+        $legacy_dependency_ids = $this->sanitize_dependency_ids( $planner->extract_dependency_ids( $mapping ) );
+        if ( 1 === count( $legacy_dependency_ids ) )
+        {
+            foreach ( $trigger_hooks as $hook )
+            {
+                $normalized[ $hook ] = [
+                    'type'       => 'mapping',
+                    'mapping_id' => $legacy_dependency_ids[0],
+                ];
+            }
+            return $normalized;
+        }
+
+        foreach ( $trigger_hooks as $hook )
+        {
+            $normalized[ $hook ] = [ 'type' => 'hook_root' ];
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Apply hook-scoped trigger source to a mapping and recompute dependency_ids.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     * @param string               $hook    Target hook.
+     * @param array<string, mixed> $source  Source payload with type/mapping_id.
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function set_mapping_trigger_source_for_hook( array $mapping, string $hook, array $source ): array | WP_Error
+    {
+        $hook = sanitize_key( $hook );
+        if ( '' === $hook || ! in_array( $hook, self::ALLOWED_TRIGGER_HOOKS, true ) )
+        {
+            return new WP_Error(
+                'rest_invalid_duplicate_parent_hook',
+                __( 'Cannot apply trigger source to an unsupported hook.', 'sentient-forms' )
+            );
+        }
+
+        $trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
+        if ( ! in_array( $hook, $trigger_hooks, true ) )
+        {
+            return new WP_Error(
+                'rest_invalid_duplicate_parent_hook',
+                __( 'Cannot apply trigger source to a hook that the mapping does not use.', 'sentient-forms' )
+            );
+        }
+
+        $source_type = isset( $source['type'] ) && is_scalar( $source['type'] )
+            ? sanitize_key( (string) $source['type'] )
+            : '';
+        if ( 'mapping' !== $source_type && 'hook_root' !== $source_type )
+        {
+            return new WP_Error(
+                'rest_invalid_duplicate_parent',
+                __( 'Invalid trigger source type.', 'sentient-forms' )
+            );
+        }
+
+        $planner = Sentient_Forms_Plugin::instance()->get_mapping_dependency_planner();
+        $trigger_sources = $this->build_mapping_trigger_sources_for_hooks( $mapping, $trigger_hooks, $planner );
+
+        if ( 'hook_root' === $source_type )
+        {
+            $trigger_sources[ $hook ] = [ 'type' => 'hook_root' ];
+        }
+        else
+        {
+            $mapping_id = isset( $source['mapping_id'] ) && is_scalar( $source['mapping_id'] )
+                ? sanitize_text_field( (string) $source['mapping_id'] )
+                : '';
+            if ( '' === $mapping_id )
+            {
+                return new WP_Error(
+                    'rest_invalid_duplicate_parent_mapping',
+                    __( 'Mapping trigger source requires a mapping_id.', 'sentient-forms' )
+                );
+            }
+
+            $trigger_sources[ $hook ] = [
+                'type'       => 'mapping',
+                'mapping_id' => $mapping_id,
+            ];
+        }
+
+        $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+            ? $mapping['settings']
+            : [];
+        $settings['trigger_sources'] = $this->serialize_trigger_sources_for_storage( $trigger_sources );
+
+        $dependency_ids = $this->derive_dependency_ids_from_trigger_sources( $trigger_sources );
+        if ( empty( $dependency_ids ) )
+        {
+            unset( $settings['dependency_ids'] );
+        }
+        else
+        {
+            $settings['dependency_ids'] = $dependency_ids;
+        }
+
+        $mapping['trigger_hooks'] = $trigger_hooks;
+        $mapping['settings'] = $settings;
+
+        return $mapping;
+    }
+
+    /**
+     * Derive unique dependency_ids from trigger source graph.
+     *
+     * @param array<string, array{type: string, mapping_id?: string}> $trigger_sources Trigger source graph.
+     *
+     * @return array<int, string>
+     */
+    private function derive_dependency_ids_from_trigger_sources( array $trigger_sources ): array
+    {
+        $dependencies = [];
+        foreach ( $trigger_sources as $source )
+        {
+            if ( ! is_array( $source ) )
+            {
+                continue;
+            }
+
+            $type = isset( $source['type'] ) && is_scalar( $source['type'] )
+                ? sanitize_key( (string) $source['type'] )
+                : '';
+            if ( 'mapping' !== $type )
+            {
+                continue;
+            }
+
+            $mapping_id = isset( $source['mapping_id'] ) && is_scalar( $source['mapping_id'] )
+                ? sanitize_text_field( (string) $source['mapping_id'] )
+                : '';
+            if ( '' === $mapping_id )
+            {
+                continue;
+            }
+
+            $dependencies[] = $mapping_id;
+        }
+
+        return array_values( array_unique( $dependencies ) );
+    }
+
+    /**
+     * Serialize trigger source graph for storage in settings.trigger_sources.
+     *
+     * @param array<string, array{type: string, mapping_id?: string}> $trigger_sources Trigger source graph.
+     *
+     * @return array<string, array{type: string, mapping_id?: string}>
+     */
+    private function serialize_trigger_sources_for_storage( array $trigger_sources ): array
+    {
+        $serialized = [];
+        foreach ( $trigger_sources as $hook => $source )
+        {
+            $hook_key = sanitize_key( (string) $hook );
+            if ( '' === $hook_key || ! in_array( $hook_key, self::ALLOWED_TRIGGER_HOOKS, true ) )
+            {
+                continue;
+            }
+
+            if ( ! is_array( $source ) )
+            {
+                continue;
+            }
+
+            $type = isset( $source['type'] ) && is_scalar( $source['type'] )
+                ? sanitize_key( (string) $source['type'] )
+                : '';
+            if ( 'mapping' !== $type )
+            {
+                $serialized[ $hook_key ] = [ 'type' => 'hook_root' ];
+                continue;
+            }
+
+            $mapping_id = isset( $source['mapping_id'] ) && is_scalar( $source['mapping_id'] )
+                ? sanitize_text_field( (string) $source['mapping_id'] )
+                : '';
+            if ( '' === $mapping_id )
+            {
+                $serialized[ $hook_key ] = [ 'type' => 'hook_root' ];
+                continue;
+            }
+
+            $serialized[ $hook_key ] = [
+                'type'       => 'mapping',
+                'mapping_id' => $mapping_id,
+            ];
+        }
+
+        return $serialized;
+    }
+
+    /**
+     * Find parent children (before duplicate insertion) that are eligible to rewire for hook.
+     *
+     * @param array<string, mixed>                      $actions Raw action map.
+     * @param array{type: string, hook: string, mapping_id?: string} $parent Parent selection payload.
+     * @param string                                    $hook Hook scope.
+     * @param Sentient_Forms_Mapping_Dependency_Planner $planner Planner service.
+     *
+     * @return array<int, string>
+     */
+    private function find_parent_children_for_hook(
+        array $actions,
+        array $parent,
+        string $hook,
+        Sentient_Forms_Mapping_Dependency_Planner $planner
+    ): array
+    {
+        $hook = sanitize_key( $hook );
+        if ( '' === $hook )
+        {
+            return [];
+        }
+
+        $children = [];
+        $normalized = $this->normalize_local_action_mappings( $actions );
+        foreach ( $normalized as $mapping_id => $mapping )
+        {
+            $trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
+            if ( ! in_array( $hook, $trigger_hooks, true ) )
+            {
+                continue;
+            }
+
+            $sources = $this->build_mapping_trigger_sources_for_hooks( $mapping, $trigger_hooks, $planner );
+            $hook_source = $sources[ $hook ] ?? [ 'type' => 'hook_root' ];
+            $hook_source_type = isset( $hook_source['type'] ) && is_scalar( $hook_source['type'] )
+                ? sanitize_key( (string) $hook_source['type'] )
+                : 'hook_root';
+            $hook_source_mapping = isset( $hook_source['mapping_id'] ) && is_scalar( $hook_source['mapping_id'] )
+                ? sanitize_text_field( (string) $hook_source['mapping_id'] )
+                : '';
+
+            if ( 'mapping' === $parent['type'] )
+            {
+                $parent_mapping_id = sanitize_text_field( (string) ( $parent['mapping_id'] ?? '' ) );
+                if ( 'mapping' === $hook_source_type && $hook_source_mapping === $parent_mapping_id )
+                {
+                    $children[] = $mapping_id;
+                }
+                continue;
+            }
+
+            if ( 'hook_root' === $hook_source_type )
+            {
+                $children[] = $mapping_id;
+            }
+        }
+
+        sort( $children );
+        return $children;
+    }
+
+    /**
+     * Map dependency-validation WP_Error codes into duplicate rewire skip codes.
+     */
+    private function map_dependency_validation_error_to_skip_code( string $wp_error_code ): string
+    {
+        $normalized = sanitize_key( $wp_error_code );
+        return match ( $normalized )
+        {
+            'rest_invalid_dependency_execution_mode' => 'execution_mode_mismatch',
+            'rest_invalid_dependency_hooks' => 'hook_mismatch',
+            'rest_invalid_dependency_cycle' => 'cycle',
+            'rest_invalid_dependency_missing' => 'missing_dependency',
+            default => 'policy_violation',
+        };
+    }
+
+    /**
      * Validate dependency graph integrity for current form mappings.
      *
      * @param array $actions Raw stored action map keyed by local mapping id.
@@ -1287,80 +2556,95 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         $planner = Sentient_Forms_Plugin::instance()->get_mapping_dependency_planner();
-        $plan    = $planner->build_execution_plan( $normalized, 'gform_validation' );
 
-        if ( ! empty( $plan['cycle_ids'] ) )
+        $cycle_ids = [];
+        foreach ( self::ALLOWED_TRIGGER_HOOKS as $hook )
+        {
+            $plan = $planner->build_execution_plan( $normalized, $hook );
+            foreach ( (array) ( $plan['cycle_ids'] ?? [] ) as $cycle_id )
+            {
+                $cycle_ids[] = $cycle_id;
+            }
+        }
+        $cycle_ids = array_values( array_unique( array_map( 'sanitize_text_field', $cycle_ids ) ) );
+        if ( ! empty( $cycle_ids ) )
         {
             return new WP_Error(
                 'rest_invalid_dependency_cycle',
                 sprintf(
                     /* translators: %s: comma-separated mapping ids */
                     __( 'Dependency graph contains a cycle: %s', 'sentient-forms' ),
-                    implode( ', ', array_map( 'sanitize_text_field', (array) $plan['cycle_ids'] ) )
+                    implode( ', ', $cycle_ids )
                 )
             );
         }
 
         foreach ( $normalized as $mapping_id => $mapping )
         {
-            $dependency_ids = $planner->extract_dependency_ids( $mapping );
-            if ( empty( $dependency_ids ) )
+            $trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
+            if ( empty( $trigger_hooks ) )
             {
                 continue;
             }
 
-            $trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
+            $mapping_is_async = $this->is_mapping_async( $mapping );
 
-            foreach ( $dependency_ids as $dependency_id )
+            foreach ( $trigger_hooks as $hook )
             {
-                if ( $dependency_id === $mapping_id )
+                $dependency_ids = $planner->extract_dependency_ids_for_hook( $mapping, $hook );
+                if ( empty( $dependency_ids ) )
                 {
-                    return new WP_Error(
-                        'rest_invalid_dependency_self',
-                        sprintf(
-                            /* translators: %s: mapping id */
-                            __( 'Mapping %s cannot depend on itself.', 'sentient-forms' ),
-                            sanitize_text_field( $mapping_id )
-                        )
-                    );
+                    continue;
                 }
 
-                if ( ! isset( $normalized[ $dependency_id ] ) )
+                foreach ( $dependency_ids as $dependency_id )
                 {
-                    return new WP_Error(
-                        'rest_invalid_dependency_missing',
-                        sprintf(
-                            /* translators: 1: mapping id, 2: dependency id */
-                            __( 'Mapping %1$s depends on unknown mapping %2$s.', 'sentient-forms' ),
-                            sanitize_text_field( $mapping_id ),
-                            sanitize_text_field( $dependency_id )
-                        )
-                    );
-                }
+                    if ( $dependency_id === $mapping_id )
+                    {
+                        return new WP_Error(
+                            'rest_invalid_dependency_self',
+                            sprintf(
+                                /* translators: %s: mapping id */
+                                __( 'Mapping %s cannot depend on itself.', 'sentient-forms' ),
+                                sanitize_text_field( $mapping_id )
+                            )
+                        );
+                    }
 
-                $dependency_hooks = $this->sanitize_trigger_hooks( (array) ( $normalized[ $dependency_id ]['trigger_hooks'] ?? [] ) );
-                $missing_hooks    = array_values( array_diff( $trigger_hooks, $dependency_hooks ) );
-                if ( ! empty( $missing_hooks ) )
-                {
-                    return new WP_Error(
-                        'rest_invalid_dependency_hooks',
-                        sprintf(
-                            /* translators: 1: mapping id, 2: dependency id, 3: hook list */
-                            __( 'Mapping %1$s depends on %2$s, but %2$s is missing required hooks: %3$s.', 'sentient-forms' ),
-                            sanitize_text_field( $mapping_id ),
-                            sanitize_text_field( $dependency_id ),
-                            implode( ', ', array_map( 'sanitize_text_field', $missing_hooks ) )
-                        )
-                    );
-                }
+                    if ( ! isset( $normalized[ $dependency_id ] ) )
+                    {
+                        return new WP_Error(
+                            'rest_invalid_dependency_missing',
+                            sprintf(
+                                /* translators: 1: mapping id, 2: dependency id */
+                                __( 'Mapping %1$s depends on unknown mapping %2$s.', 'sentient-forms' ),
+                                sanitize_text_field( $mapping_id ),
+                                sanitize_text_field( $dependency_id )
+                            )
+                        );
+                    }
 
-                $runs_after_submission = in_array( 'gform_after_submission', $trigger_hooks, true );
-                $dependency_runs_after_submission = in_array( 'gform_after_submission', $dependency_hooks, true );
-                if ( $runs_after_submission && $dependency_runs_after_submission )
-                {
-                    $mapping_is_async = $this->is_mapping_async( $mapping );
+                    $dependency_hooks = $this->sanitize_trigger_hooks( (array) ( $normalized[ $dependency_id ]['trigger_hooks'] ?? [] ) );
+                    if ( ! $this->dependency_satisfies_hook( $hook, $dependency_hooks ) )
+                    {
+                        return new WP_Error(
+                            'rest_invalid_dependency_hooks',
+                            sprintf(
+                                /* translators: 1: mapping id, 2: dependency id, 3: hook name */
+                                __( 'Mapping %1$s depends on %2$s in hook %3$s, but %2$s does not run on that hook.', 'sentient-forms' ),
+                                sanitize_text_field( $mapping_id ),
+                                sanitize_text_field( $dependency_id ),
+                                sanitize_text_field( $hook )
+                            )
+                        );
+                    }
+
+                    if ( 'gform_after_submission' !== $hook )
+                    {
+                        continue;
+                    }
+
                     $dependency_is_async = $this->is_mapping_async( $normalized[ $dependency_id ] );
-
                     if ( $dependency_is_async && ! $mapping_is_async )
                     {
                         return new WP_Error(
@@ -1389,13 +2673,13 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
      */
     private function is_mapping_async( array $mapping ): bool
     {
-        $indicator = isset( $mapping['action_type_indicator'] ) && is_scalar( $mapping['action_type_indicator'] )
-            ? sanitize_key( (string) $mapping['action_type_indicator'] )
-            : '';
+        $trigger_hooks        = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
+        $has_validation_hook  = in_array( 'gform_validation', $trigger_hooks, true );
+        $has_after_hook       = in_array( 'gform_after_submission', $trigger_hooks, true );
 
-        if ( 'master' === $indicator )
+        if ( $has_validation_hook && ! $has_after_hook )
         {
-            return true;
+            return false;
         }
 
         if ( isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) && array_key_exists( 'async', $mapping['settings'] ) )
@@ -1408,7 +2692,73 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             return 'after_submission' === sanitize_key( (string) $mapping['settings']['execution_mode'] );
         }
 
+        if ( isset( $mapping['execution_mode'] ) && is_scalar( $mapping['execution_mode'] ) )
+        {
+            return 'after_submission' === sanitize_key( (string) $mapping['execution_mode'] );
+        }
+
+        if ( $has_after_hook )
+        {
+            return true;
+        }
+
+        $indicator = isset( $mapping['action_type_indicator'] ) && is_scalar( $mapping['action_type_indicator'] )
+            ? sanitize_key( (string) $mapping['action_type_indicator'] )
+            : '';
+
+        if ( 'master' === $indicator )
+        {
+            return true;
+        }
+
         return false;
+    }
+
+    /**
+     * Determine whether dependency hooks satisfy a required runtime hook.
+     *
+     * Validation dependencies can satisfy after-submission dependants because sync
+     * validation execution completes before async after-submission actions begin.
+     *
+     * @param string            $required_hook    Runtime hook being evaluated.
+     * @param array<int, mixed> $dependency_hooks Dependency trigger hooks.
+     *
+     * @return bool
+     */
+    private function dependency_satisfies_hook( string $required_hook, array $dependency_hooks ): bool
+    {
+        $required_hook = sanitize_key( $required_hook );
+        $normalized_dependency_hooks = $this->sanitize_trigger_hooks( $dependency_hooks );
+
+        if ( in_array( $required_hook, $normalized_dependency_hooks, true ) )
+        {
+            return true;
+        }
+
+        return 'gform_after_submission' === $required_hook
+            && in_array( 'gform_validation', $normalized_dependency_hooks, true );
+    }
+
+    /**
+     * List required hooks a dependency does not satisfy for a dependant mapping.
+     *
+     * @param array<int, string> $trigger_hooks    Dependant mapping hooks.
+     * @param array<int, string> $dependency_hooks Dependency mapping hooks.
+     *
+     * @return array<int, string>
+     */
+    private function collect_missing_required_hooks( array $trigger_hooks, array $dependency_hooks ): array
+    {
+        $missing = [];
+        foreach ( $trigger_hooks as $required_hook )
+        {
+            if ( ! $this->dependency_satisfies_hook( $required_hook, $dependency_hooks ) )
+            {
+                $missing[] = $required_hook;
+            }
+        }
+
+        return array_values( array_unique( $missing ) );
     }
 
     /**

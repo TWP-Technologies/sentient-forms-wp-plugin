@@ -9,11 +9,14 @@ import type {
 	CustomActionFilters,
 	CustomActionQuota,
 	CustomActionUpdatePayload,
+	DuplicateFormActionRequest,
+	DuplicateFormActionResponse,
 	ExecutionStatus,
 	FormDisableStateResponse,
 	FormActionLinkage,
 	FormActionMutationPayload,
 	FormExecutionStatus,
+	WorkflowPlanResponse,
 	FormSummary,
 	LicenseActivationRequest,
 	LicenseActivationResult,
@@ -174,6 +177,44 @@ export class MockSentientFormsApiClient {
 		return this.formActions;
 	}
 
+	async getWorkflowPlan(
+		_formSourceSlug: string,
+		_formId: number,
+		hookScope: 'all' | string = 'all'
+	): Promise<WorkflowPlanResponse> {
+		return {
+			authority: 'local_fallback',
+			authority_reason: 'mock',
+			cps_unreachable: true,
+			policy_version: '2026-02-mixed-sync-async-v1',
+			hook_scope: hookScope,
+			available_hooks: Array.from(
+				new Set(this.formActions.flatMap((action) => action.trigger_hooks ?? []))
+			).sort(),
+			nodes: this.formActions.map((action) => ({
+				mapping_id: action.local_mapping_id,
+				label: action.action_name_label ?? action.central_action_id,
+				central_action_id: action.central_action_id,
+				trigger_hooks: action.trigger_hooks ?? [],
+				dependency_ids: Array.isArray(action.settings?.dependency_ids)
+					? action.settings?.dependency_ids.filter((value): value is string => typeof value === 'string')
+					: [],
+				trigger_sources:
+					action.settings?.trigger_sources && typeof action.settings.trigger_sources === 'object'
+						? (action.settings.trigger_sources as Record<
+								string,
+								{ type: 'hook_root' | 'mapping'; mapping_id?: string }
+							>)
+						: undefined,
+				is_enabled: action.is_action_enabled_for_form !== false,
+				is_async: action.settings?.execution_mode === 'after_submission'
+			})),
+			edges: [],
+			hooks: [],
+			policy_violations: []
+		};
+	}
+
 	async getFormDisabled(formSourceSlug: string, formId: number): Promise<FormDisableStateResponse> {
 		const key = `${formSourceSlug}:${formId}`;
 		const sfDisabled = Boolean(this.formDisabled[key]);
@@ -231,7 +272,8 @@ export class MockSentientFormsApiClient {
 			trigger_hooks: payload.trigger_hooks ?? [],
 			is_action_enabled_for_form: payload.is_action_enabled_for_form ?? true,
 			execution_priority: payload.execution_priority ?? 10,
-			action_name_label: payload.action_name_label ?? payload.central_action_id ?? 'Action'
+			action_name_label: payload.action_name_label ?? payload.central_action_id ?? 'Action',
+			settings: payload.settings
 		};
 
 		this.formActions = [...this.formActions, linkage];
@@ -242,6 +284,135 @@ export class MockSentientFormsApiClient {
 			ledger_delta: (this.creditBalance.ledger_delta ?? 0) + 1
 		};
 		return linkage;
+	}
+
+	async duplicateFormAction(
+		_formSourceSlug: string,
+		_formId: number,
+		localMappingId: string,
+		payload: DuplicateFormActionRequest
+	): Promise<DuplicateFormActionResponse> {
+		const source = this.formActions.find((item) => item.local_mapping_id === localMappingId);
+		if (!source) {
+			throw new Error('Source mapping not found');
+		}
+
+		const now = Date.now();
+		const duplicateId = `${source.local_mapping_id}_dup_${now}`;
+		const duplicate: FormActionLinkage = {
+			...structuredClone(source),
+			local_mapping_id: duplicateId
+		};
+
+		const selectedHook = payload.parent.hook;
+		const triggerHooks = Array.from(new Set(duplicate.trigger_hooks ?? []));
+		if (!triggerHooks.includes(selectedHook)) {
+			throw new Error('Selected parent hook is not configured on the source mapping');
+		}
+
+		const ensureHookSources = (
+			linkage: FormActionLinkage
+		): Record<string, { type: 'hook_root' | 'mapping'; mapping_id?: string }> => {
+			const hooks = Array.from(new Set(linkage.trigger_hooks ?? []));
+			const explicit =
+				linkage.settings?.trigger_sources && typeof linkage.settings.trigger_sources === 'object'
+					? (structuredClone(linkage.settings.trigger_sources) as Record<
+							string,
+							{ type: 'hook_root' | 'mapping'; mapping_id?: string }
+						>)
+					: {};
+			if (Object.keys(explicit).length > 0) {
+				for (const hook of hooks) {
+					if (!explicit[hook]) explicit[hook] = { type: 'hook_root' };
+				}
+				return explicit;
+			}
+
+			const dependencyIds = Array.isArray(linkage.settings?.dependency_ids)
+				? linkage.settings?.dependency_ids.filter((id): id is string => typeof id === 'string')
+				: [];
+			if (dependencyIds.length === 1) {
+				return Object.fromEntries(
+					hooks.map((hook) => [hook, { type: 'mapping' as const, mapping_id: dependencyIds[0] }])
+				);
+			}
+			return Object.fromEntries(hooks.map((hook) => [hook, { type: 'hook_root' as const }]));
+		};
+
+		const dependencyIdsFromSources = (
+			sources: Record<string, { type: 'hook_root' | 'mapping'; mapping_id?: string }>
+		): string[] => {
+			return Array.from(
+				new Set(
+					Object.values(sources)
+						.filter((source) => source.type === 'mapping' && Boolean(source.mapping_id))
+						.map((source) => source.mapping_id as string)
+				)
+			);
+		};
+
+		const duplicateSources = ensureHookSources(duplicate);
+		duplicateSources[selectedHook] =
+			payload.parent.type === 'mapping'
+				? { type: 'mapping', mapping_id: payload.parent.mapping_id }
+				: { type: 'hook_root' };
+		const duplicateDependencyIds = dependencyIdsFromSources(duplicateSources);
+		duplicate.settings = {
+			...(duplicate.settings ?? {}),
+			trigger_sources: duplicateSources
+		};
+		if (duplicateDependencyIds.length > 0) {
+			duplicate.settings.dependency_ids = duplicateDependencyIds;
+		} else {
+			delete duplicate.settings.dependency_ids;
+		}
+
+		const preChildren = this.formActions.filter((candidate) => {
+			if (!candidate.trigger_hooks?.includes(selectedHook)) return false;
+			const sources = ensureHookSources(candidate);
+			const hookSource = sources[selectedHook] ?? { type: 'hook_root' as const };
+			if (payload.parent.type === 'mapping') {
+				return (
+					hookSource.type === 'mapping' &&
+					hookSource.mapping_id === (payload.parent.mapping_id ?? '')
+				);
+			}
+			return hookSource.type === 'hook_root';
+		});
+
+		const movedChildren: string[] = [];
+		for (const child of preChildren) {
+			const index = this.formActions.findIndex((item) => item.local_mapping_id === child.local_mapping_id);
+			if (index === -1) continue;
+			const current = this.formActions[index]!;
+			const sources = ensureHookSources(current);
+			sources[selectedHook] = { type: 'mapping', mapping_id: duplicateId };
+			const dependencyIds = dependencyIdsFromSources(sources);
+			this.formActions[index] = {
+				...current,
+				settings: {
+					...(current.settings ?? {}),
+					trigger_sources: sources,
+					...(dependencyIds.length > 0 ? { dependency_ids: dependencyIds } : {})
+				}
+			};
+			if (dependencyIds.length === 0 && this.formActions[index]?.settings) {
+				delete this.formActions[index]!.settings!.dependency_ids;
+			}
+			movedChildren.push(child.local_mapping_id);
+		}
+
+		this.formActions = [...this.formActions, duplicate];
+
+		return {
+			duplicate,
+			insertion: {
+				parent: payload.parent,
+				moved_children: movedChildren,
+				skipped_children: [],
+				warnings: []
+			}
+		};
 	}
 
 	async updateFormAction(

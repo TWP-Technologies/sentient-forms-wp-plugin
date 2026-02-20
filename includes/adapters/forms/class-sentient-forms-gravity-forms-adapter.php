@@ -545,6 +545,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             }
 
             $outcome = $mapping_outcomes[ $dependency_id ] ?? null;
+            if ( null === $outcome )
+            {
+                return $dependency_id;
+            }
+
             if ( 'failed' === $outcome || 'skipped' === $outcome )
             {
                 return $dependency_id;

@@ -71,12 +71,14 @@ class Sentient_Forms_Mapping_Dependency_Planner
         foreach ( $mappings as $mapping_id => $mapping )
         {
             $trigger_hooks = $this->normalize_trigger_hooks( $mapping['trigger_hooks'] ?? [] );
-            $dependencies  = $this->extract_dependency_ids( $mapping );
+            $trigger_sources = $this->extract_trigger_sources( $mapping, $trigger_hooks );
+            $dependencies  = $this->extract_dependency_ids_for_hook( $mapping, $hook );
 
             $nodes[ $mapping_id ] = [
                 'mapping'       => $mapping,
                 'mapping_id'    => $mapping_id,
                 'trigger_hooks' => $trigger_hooks,
+                'trigger_sources' => $trigger_sources,
                 'dependency_ids'=> $dependencies,
                 'enabled'       => ! empty( $mapping['is_action_enabled_for_form'] ),
                 'hook_enabled'  => in_array( $hook, $trigger_hooks, true ),
@@ -101,6 +103,40 @@ class Sentient_Forms_Mapping_Dependency_Planner
      */
     public function extract_dependency_ids( array $mapping ): array
     {
+        $trigger_hooks = $this->normalize_trigger_hooks( $mapping['trigger_hooks'] ?? [] );
+        $sources = $this->extract_trigger_sources( $mapping, $trigger_hooks );
+        if ( ! empty( $sources ) )
+        {
+            $dependencies = [];
+            foreach ( $sources as $source )
+            {
+                if ( ! is_array( $source ) )
+                {
+                    continue;
+                }
+
+                if ( ( $source['type'] ?? 'hook_root' ) !== 'mapping' )
+                {
+                    continue;
+                }
+
+                if ( ! isset( $source['mapping_id'] ) || ! is_scalar( $source['mapping_id'] ) )
+                {
+                    continue;
+                }
+
+                $mapping_id = sanitize_text_field( (string) $source['mapping_id'] );
+                if ( '' === $mapping_id )
+                {
+                    continue;
+                }
+
+                $dependencies[] = $mapping_id;
+            }
+
+            return array_values( array_unique( $dependencies ) );
+        }
+
         if ( ! isset( $mapping['settings'] ) || ! is_array( $mapping['settings'] ) )
         {
             return [];
@@ -130,6 +166,49 @@ class Sentient_Forms_Mapping_Dependency_Planner
         }
 
         return array_values( array_unique( $result ) );
+    }
+
+    /**
+     * Extract dependency ids that apply to a specific runtime hook.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     * @param string               $hook    Runtime hook identifier.
+     *
+     * @return array<int, string>
+     */
+    public function extract_dependency_ids_for_hook( array $mapping, string $hook ): array
+    {
+        $hook = sanitize_key( $hook );
+        if ( '' === $hook )
+        {
+            return [];
+        }
+
+        $trigger_hooks = $this->normalize_trigger_hooks( $mapping['trigger_hooks'] ?? [] );
+        if ( ! in_array( $hook, $trigger_hooks, true ) )
+        {
+            return [];
+        }
+
+        $sources = $this->extract_trigger_sources( $mapping, $trigger_hooks );
+        if ( isset( $sources[ $hook ] ) && is_array( $sources[ $hook ] ) )
+        {
+            $source = $sources[ $hook ];
+            if ( ( $source['type'] ?? 'hook_root' ) !== 'mapping' )
+            {
+                return [];
+            }
+
+            if ( ! isset( $source['mapping_id'] ) || ! is_scalar( $source['mapping_id'] ) )
+            {
+                return [];
+            }
+
+            $mapping_id = sanitize_text_field( (string) $source['mapping_id'] );
+            return '' === $mapping_id ? [] : [ $mapping_id ];
+        }
+
+        return $this->extract_dependency_ids( $mapping );
     }
 
     /**
@@ -164,6 +243,85 @@ class Sentient_Forms_Mapping_Dependency_Planner
         }
 
         return array_values( array_unique( $normalized ) );
+    }
+
+    /**
+     * Extract and normalize per-hook trigger sources.
+     *
+     * @param array<string, mixed> $mapping       Mapping payload.
+     * @param array<int, string>   $trigger_hooks Hooks configured for this mapping.
+     *
+     * @return array<string, array{type: string, mapping_id?: string}>
+     */
+    public function extract_trigger_sources( array $mapping, array $trigger_hooks ): array
+    {
+        if ( ! isset( $mapping['settings'] ) || ! is_array( $mapping['settings'] ) )
+        {
+            return [];
+        }
+
+        $raw = $mapping['settings']['trigger_sources'] ?? null;
+        if ( ! is_array( $raw ) )
+        {
+            return [];
+        }
+
+        $hook_lookup = array_fill_keys( $trigger_hooks, true );
+        $normalized = [];
+        foreach ( $raw as $hook => $source )
+        {
+            if ( ! is_scalar( $hook ) )
+            {
+                continue;
+            }
+            $hook_key = sanitize_key( (string) $hook );
+            if ( '' === $hook_key || ! isset( $hook_lookup[ $hook_key ] ) )
+            {
+                continue;
+            }
+
+            if ( ! is_array( $source ) )
+            {
+                continue;
+            }
+
+            $type = isset( $source['type'] ) && is_scalar( $source['type'] )
+                ? sanitize_key( (string) $source['type'] )
+                : '';
+
+            if ( 'mapping' !== $type && 'hook_root' !== $type )
+            {
+                continue;
+            }
+
+            if ( 'hook_root' === $type )
+            {
+                $normalized[ $hook_key ] = [ 'type' => 'hook_root' ];
+                continue;
+            }
+
+            $mapping_id = '';
+            if ( isset( $source['mapping_id'] ) && is_scalar( $source['mapping_id'] ) )
+            {
+                $mapping_id = sanitize_text_field( (string) $source['mapping_id'] );
+            }
+            elseif ( isset( $source['source_mapping_id'] ) && is_scalar( $source['source_mapping_id'] ) )
+            {
+                $mapping_id = sanitize_text_field( (string) $source['source_mapping_id'] );
+            }
+
+            if ( '' === $mapping_id )
+            {
+                continue;
+            }
+
+            $normalized[ $hook_key ] = [
+                'type'       => 'mapping',
+                'mapping_id' => $mapping_id,
+            ];
+        }
+
+        return $normalized;
     }
 
     /**

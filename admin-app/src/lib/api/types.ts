@@ -208,6 +208,11 @@ export interface MappingConditionsConfig {
 	root: ConditionGroup;
 }
 
+export interface TriggerSourceConfig {
+	type: 'hook_root' | 'mapping';
+	mapping_id?: string;
+}
+
 /**
  * Batch execution settings for after-submission actions (CB-EXEC-003/004)
  */
@@ -228,6 +233,8 @@ export interface FormActionSettings {
 	input_mapping?: InputMapping;
 	/** Upstream mapping prerequisites that must complete successfully first */
 	dependency_ids?: string[];
+	/** Per-hook trigger source authority (hook root or mapping parent) */
+	trigger_sources?: Record<string, TriggerSourceConfig>;
 	/** Conditional run gates for this mapping (CB-FORMS-006) */
 	conditions?: MappingConditionsConfig;
 	/** Prompt overrides for this mapping */
@@ -261,6 +268,100 @@ export interface FormActionMutationPayload {
 	execution_priority?: number;
 	action_name_label?: string;
 	settings?: FormActionSettings;
+}
+
+export interface DuplicateParentSelection {
+	type: 'hook_root' | 'mapping';
+	hook: string;
+	mapping_id?: string;
+}
+
+export interface DuplicateFormActionRequest {
+	parent: DuplicateParentSelection;
+}
+
+export interface DuplicateFormActionSkippedChild {
+	child_id: string;
+	hook: string;
+	code: string;
+	message: string;
+}
+
+export interface DuplicateFormActionInsertion {
+	parent: DuplicateParentSelection;
+	moved_children: string[];
+	skipped_children: DuplicateFormActionSkippedChild[];
+	warnings: string[];
+}
+
+export interface DuplicateFormActionResponse {
+	duplicate: FormActionLinkage;
+	insertion: DuplicateFormActionInsertion;
+}
+
+export type WorkflowBlockReason =
+	| 'disabled'
+	| 'missing_dependency'
+	| 'cycle'
+	| 'upstream_blocked'
+	| 'policy_violation';
+
+export interface WorkflowBlockedMapping {
+	mapping_id: string;
+	reason: WorkflowBlockReason;
+	details?: string;
+}
+
+export interface WorkflowPlanWave {
+	level: number;
+	mapping_ids: string[];
+}
+
+export interface WorkflowPlanHook {
+	hook: string;
+	order: string[];
+	waves: WorkflowPlanWave[];
+	runnable: string[];
+	blocked: WorkflowBlockedMapping[];
+	cycle_ids: string[];
+}
+
+export interface WorkflowPlanNode {
+	mapping_id: string;
+	label: string;
+	central_action_id: string;
+	trigger_hooks: string[];
+	dependency_ids: string[];
+	trigger_sources?: Record<string, TriggerSourceConfig>;
+	is_enabled: boolean;
+	is_async: boolean;
+}
+
+export interface WorkflowPlanEdge {
+	from: string;
+	to: string;
+	kind: 'dependency' | 'hook_root';
+	hook?: string;
+}
+
+export interface WorkflowPolicyViolation {
+	mapping_id: string;
+	dependency_id: string;
+	code: string;
+	message: string;
+}
+
+export interface WorkflowPlanResponse {
+	authority: 'cps' | 'local_fallback';
+	authority_reason?: string | null;
+	cps_unreachable: boolean;
+	policy_version: string;
+	hook_scope: 'all' | string;
+	available_hooks: string[];
+	nodes: WorkflowPlanNode[];
+	edges: WorkflowPlanEdge[];
+	hooks: WorkflowPlanHook[];
+	policy_violations: WorkflowPolicyViolation[];
 }
 
 export interface FormDisableStateResponse {
