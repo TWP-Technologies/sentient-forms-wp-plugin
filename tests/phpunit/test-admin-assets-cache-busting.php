@@ -10,10 +10,19 @@ class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
     private Sentient_Forms_Admin_Assets $assets;
     /** @var callable */
     private $asset_base_url_filter;
+    /** @var callable|null */
+    private $http_request_filter = null;
+    /** @var callable|null */
+    private $dev_host_filter = null;
+    /** @var callable|null */
+    private $implicit_probe_notice_filter = null;
+    /** @var string|false */
+    private $original_admin_dev_host_env = false;
 
     protected function setUp(): void
     {
         parent::setUp();
+        $this->original_admin_dev_host_env = getenv( 'SENTIENT_FORMS_ADMIN_DEV_HOST' );
 
         // Force production-style asset URL resolution so cache-busting assertions are deterministic.
         $this->asset_base_url_filter = static function () {
@@ -28,8 +37,24 @@ class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
 
     protected function tearDown(): void
     {
+        if ( $this->http_request_filter ) {
+            remove_filter( 'pre_http_request', $this->http_request_filter, 10 );
+            $this->http_request_filter = null;
+        }
+
+        if ( $this->dev_host_filter ) {
+            remove_filter( 'sentient_forms_admin_dev_host', $this->dev_host_filter );
+            $this->dev_host_filter = null;
+        }
+
+        if ( $this->implicit_probe_notice_filter ) {
+            remove_filter( 'sentient_forms_admin_show_implicit_dev_probe_failures', $this->implicit_probe_notice_filter );
+            $this->implicit_probe_notice_filter = null;
+        }
+
         remove_filter( 'sentient_forms_admin_asset_base_url', $this->asset_base_url_filter );
         delete_transient( 'sentient_forms_admin_dev_url' );
+        $this->restore_admin_dev_host_env();
         parent::tearDown();
     }
 
@@ -144,5 +169,72 @@ class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
             $urlWithoutSlash,
             'Leading slash should be normalized'
         );
+    }
+
+    /**
+     * Probe failures from the default localhost dev host should not show admin notices.
+     */
+    public function test_default_dev_probe_failure_is_silent(): void
+    {
+        $this->clear_admin_dev_host_env_for_probe_tests();
+        remove_filter( 'sentient_forms_admin_asset_base_url', $this->asset_base_url_filter );
+        delete_transient( 'sentient_forms_admin_dev_url' );
+
+        $this->http_request_filter = static function () {
+            return new WP_Error( 'http_request_failed', 'Synthetic probe failure' );
+        };
+        add_filter( 'pre_http_request', $this->http_request_filter, 10, 3 );
+
+        $assets = new Sentient_Forms_Admin_Assets();
+        $assets->get_entry( '.svelte-kit/generated/client-optimized/app.js' );
+
+        $this->assertNull(
+            $assets->get_dev_notice(),
+            'Implicit localhost probe failures should remain silent in non-dev environments'
+        );
+    }
+
+    /**
+     * Probe failures can be surfaced when the implicit-probe notice filter is enabled.
+     */
+    public function test_implicit_dev_probe_failure_sets_notice_when_filter_enabled(): void
+    {
+        $this->clear_admin_dev_host_env_for_probe_tests();
+        remove_filter( 'sentient_forms_admin_asset_base_url', $this->asset_base_url_filter );
+        delete_transient( 'sentient_forms_admin_dev_url' );
+
+        $this->implicit_probe_notice_filter = static function () {
+            return true;
+        };
+        add_filter( 'sentient_forms_admin_show_implicit_dev_probe_failures', $this->implicit_probe_notice_filter );
+
+        $this->http_request_filter = static function () {
+            return new WP_Error( 'http_request_failed', 'Synthetic probe failure' );
+        };
+        add_filter( 'pre_http_request', $this->http_request_filter, 10, 3 );
+
+        $assets = new Sentient_Forms_Admin_Assets();
+        $assets->get_entry( '.svelte-kit/generated/client-optimized/app.js' );
+
+        $this->assertSame(
+            'Synthetic probe failure',
+            $assets->get_dev_notice(),
+            'Probe failures should show a notice when the implicit-probe notice filter is enabled'
+        );
+    }
+
+    private function clear_admin_dev_host_env_for_probe_tests(): void
+    {
+        putenv( 'SENTIENT_FORMS_ADMIN_DEV_HOST' );
+    }
+
+    private function restore_admin_dev_host_env(): void
+    {
+        if ( false === $this->original_admin_dev_host_env ) {
+            putenv( 'SENTIENT_FORMS_ADMIN_DEV_HOST' );
+            return;
+        }
+
+        putenv( 'SENTIENT_FORMS_ADMIN_DEV_HOST=' . (string) $this->original_admin_dev_host_env );
     }
 }

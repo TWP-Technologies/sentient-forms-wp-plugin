@@ -214,6 +214,7 @@ class Sentient_Forms_Admin_Assets {
         $host = $this->dev_host_candidate();
         $host = trailingslashit( $host );
         $timeout = apply_filters( 'sentient_forms_admin_dev_timeout', 1.5 );
+        $show_probe_notice = (bool) apply_filters( 'sentient_forms_admin_show_implicit_dev_probe_failures', false );
 
         $response = wp_remote_get( $host, [
             'timeout' => $timeout,
@@ -221,7 +222,9 @@ class Sentient_Forms_Admin_Assets {
         ] );
 
         if ( is_wp_error( $response ) ) {
-            $this->dev_notice_message = $response->get_error_message();
+            if ( $show_probe_notice ) {
+                $this->dev_notice_message = $response->get_error_message();
+            }
             return null;
         }
 
@@ -230,7 +233,9 @@ class Sentient_Forms_Admin_Assets {
             return trailingslashit( esc_url_raw( $host ) );
         }
 
-        $this->dev_notice_message = sprintf( 'Dev server responded with HTTP %d.', $code );
+        if ( $show_probe_notice ) {
+            $this->dev_notice_message = sprintf( 'Dev server responded with HTTP %d.', $code );
+        }
         return null;
     }
 
