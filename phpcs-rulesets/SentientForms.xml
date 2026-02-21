@@ -3,7 +3,7 @@
     <description>Sentient Forms PHP coding standard (Allman braces, 4-space indent, snake_case functions, Pascal_Snake classes).</description>
 
     <file>../includes/rest-api/controllers/class-license-controller.php</file>
-    <file>../tests/license-controller-test.php</file>
+    <file>../tests/phpunit/test-license-controller.php</file>
 
     <exclude-pattern>*/vendor/*</exclude-pattern>
     <exclude-pattern>*/node_modules/*</exclude-pattern>
