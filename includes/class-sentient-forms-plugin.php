@@ -123,6 +123,7 @@ final class Sentient_Forms_Plugin
         if ( defined( 'WP_CLI' ) && WP_CLI )
         {
             require_once __DIR__ . '/cli/class-sentient-forms-async-cli-command.php';
+            require_once __DIR__ . '/cli/class-sentient-forms-mappings-migrate-cli-command.php';
         }
 
         // Initialize admin area if in admin context or WP-CLI.

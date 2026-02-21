@@ -62,6 +62,8 @@ return [
 	'Sentient_Forms_Logger' => __DIR__ . '/logging/class-sentient-forms-logger.php',
 	'Sentient_Forms_Mapping_Dependency_Planner' => __DIR__ . '/services/class-sentient-forms-mapping-dependency-planner.php',
 	'Sentient_Forms_Mappings_Controller' => __DIR__ . '/rest-api/controllers/class-mappings-controller.php',
+	'Sentient_Forms_Mappings_Migrate_CLI_Command' => __DIR__ . '/cli/class-sentient-forms-mappings-migrate-cli-command.php',
+	'Sentient_Forms_Mappings_Migration_Service' => __DIR__ . '/services/class-sentient-forms-mappings-migration-service.php',
 	'Sentient_Forms_Mappings_Sync' => __DIR__ . '/services/class-sentient-forms-mappings-sync.php',
 	'Sentient_Forms_Meta_Controller' => __DIR__ . '/rest-api/controllers/class-meta-controller.php',
 	'Sentient_Forms_Models_Controller' => __DIR__ . '/rest-api/controllers/class-models-controller.php',
