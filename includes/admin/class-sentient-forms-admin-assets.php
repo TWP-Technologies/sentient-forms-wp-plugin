@@ -47,8 +47,10 @@ class Sentient_Forms_Admin_Assets {
             }
         }
 
-        // Fallback to plugin version if manifest doesn't exist.
-        $this->cache_version = defined( 'SENTIENT_FORMS_VERSION' ) ? SENTIENT_FORMS_VERSION : '1.0.0';
+        // Fallback to a stable base36 hash of plugin version when manifest doesn't exist.
+        $fallback_version = defined( 'SENTIENT_FORMS_VERSION' ) ? SENTIENT_FORMS_VERSION : '1.0.0';
+        $checksum         = sprintf( '%u', crc32( (string) $fallback_version ) );
+        $this->cache_version = base_convert( $checksum, 10, 36 );
         return $this->cache_version;
     }
 
