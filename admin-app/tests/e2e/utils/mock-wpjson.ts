@@ -11,6 +11,7 @@ type Routes = {
 		creditBalance?: unknown;
 		executionStatus?: Record<number, unknown>;
 		createResponse?: (payload: Record<string, unknown>) => unknown;
+		requestTrace?: unknown | ((payload: Record<string, unknown>) => unknown);
 	};
 	customActions?: {
 		list?: unknown;
@@ -113,6 +114,46 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				status: 200,
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify(routes.actions.formFields)
+			});
+		}
+
+		if (/forms\/\d+\/actions\/request-trace$/.test(url) && method === 'POST') {
+			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+			const manualValues =
+				payload.entry_values && typeof payload.entry_values === 'object'
+					? (payload.entry_values as Record<string, string>)
+					: {};
+			const fallback = {
+				authority: 'wp_rest',
+				policy_version: '2026-02-request-tracer-v1',
+				hook_scope: String(payload.hook_scope ?? 'all'),
+				available_hooks: ['gform_validation', 'gform_after_submission'],
+				input: {
+					source: Object.keys(manualValues).length > 0 ? 'manual' : 'empty',
+					entry_id:
+						typeof payload.entry_id === 'number' && Number.isFinite(payload.entry_id)
+							? payload.entry_id
+							: null,
+					field_scope: 'mapped_and_rule',
+					values: manualValues,
+					manual_field_ids: Object.keys(manualValues),
+					imported_field_ids: [],
+					overridden_field_ids: [],
+					warnings: [],
+					include_drafts: Boolean(payload.include_drafts),
+					draft_applied: Boolean(payload.include_drafts)
+				},
+				hooks: [],
+				policy_violations: []
+			};
+			const responsePayload =
+				typeof routes.actions?.requestTrace === 'function'
+					? routes.actions.requestTrace(payload)
+					: routes.actions?.requestTrace ?? fallback;
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(responsePayload)
 			});
 		}
 

@@ -360,4 +360,102 @@ class Tests_Condition_Evaluator extends WP_UnitTestCase
 
         $this->assertTrue( $this->evaluator->should_execute( $settings, $entry ) );
     }
+
+    public function test_evaluate_with_trace_returns_condition_tree_for_match(): void
+    {
+        $settings = [
+            'settings' => [
+                'conditions' => [
+                    'enabled' => true,
+                    'root'    => [
+                        'type'  => 'group',
+                        'logic' => 'all',
+                        'rules' => [
+                            [
+                                'type'     => 'rule',
+                                'field_id' => '1',
+                                'operator' => 'contains',
+                                'value'    => 'urgent',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $trace = $this->evaluator->evaluate_with_trace(
+            $settings,
+            [
+                '1' => 'Urgent follow-up needed',
+            ]
+        );
+
+        $this->assertTrue( $trace['should_execute'] );
+        $this->assertTrue( $trace['enabled'] );
+        $this->assertTrue( $trace['evaluated'] );
+        $this->assertTrue( $trace['matched'] );
+        $this->assertSame( 'matched', $trace['reason_code'] );
+        $this->assertIsArray( $trace['tree'] );
+        $this->assertSame( 'group', $trace['tree']['type'] ?? null );
+        $this->assertSame( true, $trace['tree']['result'] ?? null );
+    }
+
+    public function test_evaluate_with_trace_reports_condition_false_and_tree_details(): void
+    {
+        $settings = [
+            'settings' => [
+                'conditions' => [
+                    'enabled' => true,
+                    'root'    => [
+                        'type'  => 'group',
+                        'logic' => 'all',
+                        'rules' => [
+                            [
+                                'type'     => 'rule',
+                                'field_id' => '4',
+                                'operator' => 'eq',
+                                'value'    => 'approved',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $trace = $this->evaluator->evaluate_with_trace( $settings, [ '4' => 'pending' ] );
+
+        $this->assertFalse( $trace['should_execute'] );
+        $this->assertTrue( $trace['enabled'] );
+        $this->assertTrue( $trace['evaluated'] );
+        $this->assertFalse( $trace['matched'] );
+        $this->assertSame( 'condition_false', $trace['reason_code'] );
+        $this->assertIsArray( $trace['tree'] );
+        $this->assertSame( false, $trace['tree']['result'] ?? null );
+
+        $child = $trace['tree']['children'][0] ?? null;
+        $this->assertIsArray( $child );
+        $this->assertSame( 'rule', $child['type'] ?? null );
+        $this->assertSame( 'comparison_failed', $child['reason_code'] ?? null );
+    }
+
+    public function test_evaluate_with_trace_fails_closed_when_root_is_invalid(): void
+    {
+        $settings = [
+            'settings' => [
+                'conditions' => [
+                    'enabled' => true,
+                    'root'    => 'invalid',
+                ],
+            ],
+        ];
+
+        $trace = $this->evaluator->evaluate_with_trace( $settings, [ '1' => 'value' ] );
+
+        $this->assertFalse( $trace['should_execute'] );
+        $this->assertTrue( $trace['enabled'] );
+        $this->assertFalse( $trace['evaluated'] );
+        $this->assertFalse( $trace['matched'] );
+        $this->assertSame( 'invalid_root', $trace['reason_code'] );
+        $this->assertNull( $trace['tree'] );
+    }
 }

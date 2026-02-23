@@ -2114,6 +2114,175 @@ test.describe('Actions admin flows', () => {
 		await expect(page.getByTestId('dependency-graph')).toHaveCount(0);
 	});
 
+	test('runs request tracer with manual values and renders step diagnostics', async ({ page }) => {
+		const linkages = [
+			{
+				local_mapping_id: 'map-1',
+				central_action_id: 'spam-check',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam check',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-2',
+				central_action_id: 'summarize',
+				action_type_indicator: 'master',
+				action_name_label: 'Summarize',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {
+					dependency_ids: ['map-1']
+				}
+			}
+		];
+		let tracePayload: Record<string, unknown> | null = null;
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance,
+				requestTrace: (payload) => {
+					tracePayload = payload;
+					return {
+						authority: 'wp_rest',
+						policy_version: '2026-02-request-tracer-v1',
+						hook_scope: payload.hook_scope ?? 'all',
+						available_hooks: ['gform_validation'],
+						input: {
+							source: 'manual',
+							entry_id: null,
+							field_scope: 'mapped_and_rule',
+							values: payload.entry_values ?? {},
+							manual_field_ids: ['2'],
+							imported_field_ids: [],
+							overridden_field_ids: [],
+							warnings: [],
+							include_drafts: true,
+							draft_applied: true
+						},
+						hooks: [
+							{
+								hook: 'gform_validation',
+								order: ['map-1', 'map-2'],
+								waves: [{ level: 0, mapping_ids: ['map-1'] }],
+								runnable: ['map-1'],
+								queued: [],
+								blocked: [
+									{
+										mapping_id: 'map-2',
+										reason: 'condition_false',
+										details: 'Condition rules did not match this request.'
+									}
+								],
+								cycle_ids: [],
+								steps: [
+									{
+										mapping_id: 'map-1',
+										label: 'Spam check',
+										dependency_ids: [],
+										trigger_source: { type: 'hook_root' },
+										execution_mode: 'validation',
+										is_async: false,
+										outcome: 'would_run',
+										block_reason: null,
+										block_details: null,
+										condition: {
+											should_execute: true,
+											enabled: true,
+											evaluated: true,
+											matched: true,
+											reason_code: 'matched',
+											summary: 'Condition rules matched this request.',
+											tree: {
+												type: 'rule',
+												field_id: '2',
+												operator: 'contains',
+												actual: 'hello world',
+												expected: 'hello',
+												result: true,
+												reason_code: 'matched'
+											}
+										}
+									},
+									{
+										mapping_id: 'map-2',
+										label: 'Summarize',
+										dependency_ids: ['map-1'],
+										trigger_source: { type: 'mapping', mapping_id: 'map-1' },
+										execution_mode: 'validation',
+										is_async: false,
+										outcome: 'blocked',
+										block_reason: 'condition_false',
+										block_details: 'Condition rules did not match this request.',
+										condition: {
+											should_execute: false,
+											enabled: true,
+											evaluated: true,
+											matched: false,
+											reason_code: 'condition_false',
+											summary: 'Condition rules did not match this request.',
+											tree: {
+												type: 'group',
+												logic: 'all',
+												result: false,
+												reason_code: 'group_not_matched',
+												children: [
+													{
+														type: 'rule',
+														field_id: '2',
+														operator: 'contains',
+														actual: 'hello world',
+														expected: 'urgent',
+														result: false,
+														reason_code: 'comparison_failed'
+													}
+												]
+											}
+										}
+									}
+								]
+							}
+						],
+						policy_violations: []
+					};
+				}
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await ensureDependencyGraphVisible(page);
+
+		await page.getByTestId('request-trace-field-id').selectOption('2');
+		await page.getByTestId('request-trace-field-value').fill('hello world');
+		await page.getByTestId('request-trace-add-manual-value').click();
+		await expect(page.getByTestId('request-trace-manual-2')).toBeVisible();
+		await expect(page.getByTestId('request-trace-manual-2')).toContainText('Message');
+		await expect(page.getByTestId('request-trace-manual-2')).toContainText('ID: 2');
+
+		await page.getByTestId('request-trace-run').click();
+		await expect(page.getByTestId('request-trace-results')).toBeVisible();
+
+		expect(tracePayload).not.toBeNull();
+		expect((tracePayload?.entry_values as Record<string, string> | undefined)?.['2']).toBe(
+			'hello world'
+		);
+		expect(tracePayload?.include_drafts).toBe(true);
+		expect(Array.isArray(tracePayload?.draft_mappings)).toBe(true);
+
+		await expect(page.getByTestId('request-trace-hook-gform_validation')).toContainText('Run: 1');
+		await expect(page.getByTestId('request-trace-step-map-1')).toContainText('Would run');
+		await expect(page.getByTestId('request-trace-step-map-2')).toContainText(
+			'Condition did not match'
+		);
+	});
+
 	test('prevents saving a cycle in dependency graph', async ({ page }) => {
 		const linkages = [
 			{

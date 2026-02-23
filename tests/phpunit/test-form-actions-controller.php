@@ -729,6 +729,115 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( $option_key );
     }
 
+    public function test_sanitize_trace_entry_values_filters_invalid_values_and_clamps_length(): void
+    {
+        $raw_values = [
+            '1' => ' alpha ',
+            2   => 123,
+            '3' => [ 'invalid' ],
+            '4' => null,
+            ''  => 'skip',
+            '5' => str_repeat( 'z', 5005 ),
+        ];
+
+        $sanitized = $this->invoke_private( 'sanitize_trace_entry_values', [ $raw_values ] );
+
+        $this->assertSame( 'alpha', $sanitized['1'] ?? null );
+        $this->assertSame( '123', $sanitized['2'] ?? null );
+        $this->assertArrayNotHasKey( '3', $sanitized );
+        $this->assertArrayNotHasKey( '4', $sanitized );
+        $this->assertArrayNotHasKey( '', $sanitized );
+        $this->assertSame( 4096, strlen( $sanitized['5'] ?? '' ) );
+    }
+
+    public function test_sanitize_trace_trigger_sources_supports_unbound_and_mapping_aliases(): void
+    {
+        $raw_sources = [
+            'gform_validation'       => [ 'type' => 'unbound' ],
+            'gform_after_submission' => [
+                'type'              => 'mapping',
+                'source_mapping_id' => ' map_upstream ',
+            ],
+            'gform_unknown'          => [ 'type' => 'hook_root' ],
+        ];
+
+        $sanitized = $this->invoke_private( 'sanitize_trace_trigger_sources', [ $raw_sources ] );
+
+        $this->assertSame( 'unbound', $sanitized['gform_validation']['type'] ?? null );
+        $this->assertSame( 'mapping', $sanitized['gform_after_submission']['type'] ?? null );
+        $this->assertSame( 'map_upstream', $sanitized['gform_after_submission']['mapping_id'] ?? null );
+        $this->assertArrayNotHasKey( 'gform_unknown', $sanitized );
+    }
+
+    public function test_collect_trace_referenced_field_ids_reads_input_mapping_and_conditions(): void
+    {
+        $actions = [
+            'map_alpha' => [
+                'local_mapping_id' => 'map_alpha',
+                'settings'         => [
+                    'input_mapping' => [
+                        'mode'      => 'selected',
+                        'field_ids' => [ '1', '2' ],
+                    ],
+                    'conditions'   => [
+                        'enabled' => true,
+                        'root'    => [
+                            'type'  => 'group',
+                            'logic' => 'all',
+                            'rules' => [
+                                [
+                                    'type'     => 'rule',
+                                    'field_id' => '5',
+                                    'operator' => 'eq',
+                                    'value'    => 'yes',
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $field_ids = $this->invoke_private(
+            'collect_trace_referenced_field_ids',
+            [
+                $actions,
+                [ '1' => 'a', '2' => 'b', '3' => 'c', '5' => 'yes' ],
+            ]
+        );
+
+        sort( $field_ids );
+        $this->assertSame( [ '1', '2', '5' ], $field_ids );
+    }
+
+    public function test_build_trace_input_payload_sets_manual_override_source_and_metadata(): void
+    {
+        $payload = $this->invoke_private(
+            'build_trace_input_payload',
+            [
+                42,
+                'mapped_and_rule',
+                [ '2' => 'manual-value' ],
+                [ '1' => 'imported', '2' => 'manual-value' ],
+                [
+                    'imported_field_ids'   => [ '1', '2' ],
+                    'overridden_field_ids' => [ '2' ],
+                    'warnings'             => [ 'example warning' ],
+                ],
+                true,
+                true,
+            ]
+        );
+
+        $this->assertSame( 'entry_import_with_manual_overrides', $payload['source'] ?? null );
+        $this->assertSame( 42, $payload['entry_id'] ?? null );
+        $this->assertSame( [ '2' ], $payload['manual_field_ids'] ?? [] );
+        $this->assertSame( [ '1', '2' ], $payload['imported_field_ids'] ?? [] );
+        $this->assertSame( [ '2' ], $payload['overridden_field_ids'] ?? [] );
+        $this->assertSame( true, $payload['include_drafts'] ?? null );
+        $this->assertSame( true, $payload['draft_applied'] ?? null );
+    }
+
     // =========================================================================
     // CB-FORMS-001: Per-Form Master Disable Tests
     // =========================================================================
