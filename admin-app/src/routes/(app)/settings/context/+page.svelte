@@ -4,6 +4,10 @@
 	import { wpFetch } from '$lib/wp';
 	import { notifications } from '$lib/stores/notifications';
 	import type { CreditBalanceResponse } from '$lib/api/types';
+	import {
+		canConfirmSiteContextRegeneration,
+		resolveSiteContextRegenerationMode
+	} from '$lib/utils/site-context-refresh';
 
 	/**
 	 * Site Context Management Page (CB-SA-001)
@@ -25,6 +29,8 @@
 		source: string;
 		auto_include: boolean;
 		pii_ack: boolean;
+		free_refresh_available: boolean;
+		next_free_refresh_at: string | null;
 		created_at: string;
 		updated_at: string;
 	}
@@ -57,12 +63,15 @@
 		loading = true;
 		error = null;
 		try {
-			const response = await wpFetch<SiteContext>('site-context');
+			const response = await wpFetch<SiteContext | null>('site-context');
+			context = response;
 			if (response) {
-				context = response;
-				editedText = context.summary_text;
-				autoInclude = context.auto_include;
-				piiAck = context.pii_ack;
+				editedText = response.summary_text;
+				autoInclude = response.auto_include;
+				piiAck = response.pii_ack;
+			} else {
+				editedText = '';
+				autoInclude = true;
 			}
 		} catch (e) {
 			console.error('Failed to load site context', e);
@@ -79,8 +88,10 @@
 			return;
 		}
 		showRegenConfirm = true;
-		// Refresh credit balance for the dialog
-		loadCredits();
+		// Refresh credit balance for paid refreshes only.
+		if (regenerationIsPaid) {
+			loadCredits();
+		}
 	}
 
 	async function generateContext() {
@@ -92,6 +103,7 @@
 		showRegenConfirm = false;
 		generating = true;
 		error = null;
+		const wasPaidRegeneration = regenerationIsPaid;
 		try {
 			const response = await wpFetch<SiteContext>('site-context', {
 				method: 'POST',
@@ -102,8 +114,10 @@
 				editedText = context.summary_text;
 				autoInclude = context.auto_include;
 				notifications.success('Site context generated');
-				// Refresh credit balance after debit
-				loadCredits();
+				if (wasPaidRegeneration) {
+					// Refresh credit balance only when credits were debited.
+					loadCredits();
+				}
 			}
 		} catch (e) {
 			console.error('Failed to generate site context', e);
@@ -192,6 +206,15 @@
 	const hasInsufficientCredits = $derived(
 		creditBalance !== null && creditBalance.current_balance < SITE_CONTEXT_CREDIT_COST
 	);
+	const freeRefreshAvailable = $derived(context?.free_refresh_available ?? false);
+	const regenerationMode = $derived(resolveSiteContextRegenerationMode(context));
+	const regenerationIsPaid = $derived(regenerationMode === 'paid_refresh');
+	const canConfirmRegeneration = $derived(
+		canConfirmSiteContextRegeneration(regenerationMode, hasInsufficientCredits)
+	);
+	const nextFreeRefreshLabel = $derived(
+		context?.next_free_refresh_at ? formatDate(context.next_free_refresh_at) : null
+	);
 
 	onMount(() => {
 		loadContext();
@@ -273,6 +296,9 @@
 					<Button onclick={generateContext} disabled={generating}>
 						{generating ? 'Generating...' : 'Generate Site Context'}
 					</Button>
+					<p class="sf:text-xs sf:text-green-700">
+						Initial generation is free and does not consume your yearly free refresh.
+					</p>
 				</div>
 			</Card>
 		{:else}
@@ -283,6 +309,11 @@
 							<p class="sf:font-medium sf:text-slate-800">Site Context Summary</p>
 							<p class="sf:text-xs sf:text-slate-500">
 								Source: {context.source} · Last updated: {formatDate(context.updated_at)}
+								{#if context.free_refresh_available}
+									· Yearly free refresh available
+								{:else if nextFreeRefreshLabel}
+									· Next free refresh: {nextFreeRefreshLabel}
+								{/if}
 							</p>
 						</div>
 						<Button size="sm" variant="secondary" onclick={promptRegenerate} disabled={generating}>
@@ -294,32 +325,52 @@
 						<Alert variant="warning">
 							<div class="sf:space-y-3">
 								<p class="sf:font-medium">⚡ Confirm Regeneration</p>
-								<p class="sf:text-sm">
-									Regenerating will use <strong>{SITE_CONTEXT_CREDIT_COST} credits</strong>.
-								</p>
-								<p class="sf:text-sm">
-									{#if creditsLoading}
-										Checking your balance…
-									{:else if creditBalance}
-										Current balance: <strong>{creditBalance.current_balance} credits</strong>
-										{#if hasInsufficientCredits}
-											<span class="sf:text-red-600 sf:font-medium sf:block sf:mt-1">
-												⚠ Insufficient credits. You need at least {SITE_CONTEXT_CREDIT_COST} credits.
-											</span>
+								{#if freeRefreshAvailable}
+									<p class="sf:text-sm">
+										This regeneration will use your <strong>yearly free refresh</strong>.
+									</p>
+									<p class="sf:text-sm sf:text-slate-600">
+										After this run, your next free refresh will be available in 365 days.
+									</p>
+								{:else}
+									<p class="sf:text-sm">
+										Regenerating will use <strong>{SITE_CONTEXT_CREDIT_COST} credits</strong>.
+									</p>
+									<p class="sf:text-sm">
+										{#if creditsLoading}
+											Checking your balance…
+										{:else if creditBalance}
+											Current balance: <strong>{creditBalance.current_balance} credits</strong>
+											{#if hasInsufficientCredits}
+												<span class="sf:text-red-600 sf:font-medium sf:block sf:mt-1">
+													⚠ Insufficient credits. You need at least {SITE_CONTEXT_CREDIT_COST} credits.
+												</span>
+											{/if}
+										{:else}
+											<span class="sf:text-slate-500">Unable to check credit balance.</span>
 										{/if}
+									</p>
+									{#if nextFreeRefreshLabel}
+										<p class="sf:text-xs sf:text-slate-500">
+											Next free refresh: {nextFreeRefreshLabel}
+										</p>
 									{:else}
-										<span class="sf:text-slate-500">Unable to check credit balance.</span>
+										<p class="sf:text-xs sf:text-slate-500">Free refresh status unavailable.</p>
 									{/if}
-								</p>
+								{/if}
 								<div class="sf:flex sf:gap-2">
 									<Button
 										size="sm"
 										onclick={generateContext}
-										disabled={generating || hasInsufficientCredits}
+										disabled={generating || !canConfirmRegeneration}
 									>
-										{generating
-											? 'Regenerating…'
-											: `Confirm — Use ${SITE_CONTEXT_CREDIT_COST} Credits`}
+										{#if generating}
+											Regenerating…
+										{:else if freeRefreshAvailable}
+											Confirm — Use Free Refresh
+										{:else}
+											{`Confirm — Use ${SITE_CONTEXT_CREDIT_COST} Credits`}
+										{/if}
 									</Button>
 									<Button size="sm" variant="secondary" onclick={() => (showRegenConfirm = false)}>
 										Cancel

@@ -120,7 +120,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             return $this->prepare_error_response(
                 'cps_error',
                 $response->get_error_message(),
-                500,
+                $this->resolve_cps_error_status( $response ),
             );
         }
 
@@ -159,7 +159,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             return $this->prepare_error_response(
                 'cps_error',
                 $response->get_error_message(),
-                500,
+                $this->resolve_cps_error_status( $response ),
             );
         }
 
@@ -221,7 +221,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             return $this->prepare_error_response(
                 'cps_error',
                 $response->get_error_message(),
-                500,
+                $this->resolve_cps_error_status( $response ),
             );
         }
 
@@ -272,9 +272,32 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
                     'type'        => 'boolean',
                     'context'     => [ 'view', 'edit' ],
                 ],
+                'free_refresh_available' => [
+                    'description' => __( 'Whether a free yearly context refresh is currently available.', 'sentient-forms' ),
+                    'type'        => 'boolean',
+                    'context'     => [ 'view' ],
+                    'readonly'    => true,
+                ],
+                'next_free_refresh_at' => [
+                    'description' => __( 'When the next free refresh becomes available; null when currently available.', 'sentient-forms' ),
+                    'type'        => [ 'string', 'null' ],
+                    'context'     => [ 'view' ],
+                    'readonly'    => true,
+                ],
             ],
         ];
 
         return $this->schema;
+    }
+
+    private function resolve_cps_error_status( WP_Error $error ): int
+    {
+        $error_data = $error->get_error_data();
+        if ( is_array( $error_data ) && isset( $error_data['status'] ) )
+        {
+            return (int) $error_data['status'];
+        }
+
+        return 500;
     }
 }

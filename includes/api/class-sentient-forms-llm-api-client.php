@@ -431,9 +431,9 @@ class Sentient_Forms_Llm_Api_Client
     /**
      * Get site context from CPS
      *
-     * @return array|WP_Error The response or error.
+     * @return array|null|WP_Error The response or error.
      */
-    public function get_site_context(): WP_Error | array
+    public function get_site_context(): WP_Error | array | null
     {
         if ( empty( $this->api_key ) )
         {
@@ -481,7 +481,7 @@ class Sentient_Forms_Llm_Api_Client
         }
 
         // Extract data from CPS envelope
-        if ( isset( $data['success'] ) && $data['success'] && isset( $data['data'] ) )
+        if ( isset( $data['success'] ) && $data['success'] && array_key_exists( 'data', $data ) )
         {
             return $data['data'];
         }
