@@ -1,5 +1,6 @@
 import type { FormActionLinkage } from '$lib/api/types';
 import type { DuplicateParentSelection, WorkflowPlanResponse } from '$lib/api/types';
+import type { FormFieldInfo } from '$lib/api/types';
 import type { MappingTriggerSourceRecord } from '$lib/utils/mapping-dependencies';
 
 export type MappingDependencyDuplicateParentOption = {
@@ -18,6 +19,9 @@ export type MappingDependencyGraphProps = {
 	workflowPlan?: WorkflowPlanResponse | null;
 	workflowPlanLoading?: boolean;
 	workflowPlanError?: string | null;
+	formSourceSlug?: string;
+	formId?: number;
+	formFields?: FormFieldInfo[];
 	onSetEditingMapping?: (mappingId: string | null) => void;
 	onToggleDependency?: (mappingId: string) => void;
 	onConnectDependency?: (

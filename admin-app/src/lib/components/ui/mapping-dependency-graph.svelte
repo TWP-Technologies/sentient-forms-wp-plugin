@@ -5,16 +5,17 @@
 		ConnectionMode,
 		Controls,
 		MiniMap,
-			SvelteFlow,
-			type Connection,
-			type Edge,
-			type Node,
-			type OnConnectStartParams,
-			type Viewport
-		} from '@xyflow/svelte';
+		SvelteFlow,
+		type Connection,
+		type Edge,
+		type Node,
+		type OnConnectStartParams,
+		type Viewport
+	} from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
 	import Badge from './badge.svelte';
 	import Button from './button.svelte';
+	import { createClientFromConfig } from '$lib/api/client';
 	import MappingDependencyGraphNode from './mapping-dependency-graph-node.svelte';
 	import MappingDependencyHookRootNode from './mapping-dependency-hook-root-node.svelte';
 	import MappingDependencyHookRootEdge from './mapping-dependency-hook-root-edge.svelte';
@@ -24,7 +25,16 @@
 		MappingDependencyGraphNodeData,
 		MappingDependencyGraphProps
 	} from './mapping-dependency-graph.types';
-	import type { WorkflowPlanHook } from '$lib/api/types';
+	import type {
+		ConditionTraceNode,
+		FormActionLinkage,
+		FormFieldInfo,
+		RequestTraceRequest,
+		RequestTraceResponse,
+		RequestTraceStep,
+		TraceBlockReason,
+		WorkflowPlanHook
+	} from '$lib/api/types';
 	import {
 		buildXyflowDependencyGraph,
 		extractHookFromRootId,
@@ -47,7 +57,6 @@
 		type DependencyValidationIssue,
 		type HookExecutionPreview
 	} from '$lib/utils/mapping-dependencies';
-	import type { FormActionLinkage } from '$lib/api/types';
 
 	let {
 		linkages = [],
@@ -58,6 +67,9 @@
 		workflowPlan = null,
 		workflowPlanLoading = false,
 		workflowPlanError = null,
+		formSourceSlug = '',
+		formId = 0,
+		formFields = [],
 		onSetEditingMapping = () => {},
 		onToggleDependency = () => {},
 		onConnectDependency = () => {},
@@ -131,6 +143,12 @@
 		cycleIds: string[];
 	};
 
+	type TraceFieldDisplay = {
+		primaryName: string;
+		helperText: string;
+		optionLabel: string;
+	};
+
 	type ConnectionDecisionCode =
 		| 'missing_target'
 		| 'self_dependency'
@@ -179,6 +197,14 @@
 	let shouldAutoFitView = $state(false);
 	let flowViewport = $state<Viewport>({ x: 0, y: 0, zoom: 1 });
 	let graphCanvasElement = $state<HTMLDivElement | null>(null);
+	let traceLoading = $state(false);
+	let traceError = $state<string | null>(null);
+	let traceResult = $state<RequestTraceResponse | null>(null);
+	let traceEntryId = $state('');
+	let traceManualValues = $state<Record<string, string>>({});
+	let traceIncludeDrafts = $state(true);
+	let traceCustomFieldId = $state('');
+	let traceCustomFieldValue = $state('');
 
 	const resolvedHookLabels = $derived({
 		...FALLBACK_HOOK_LABELS,
@@ -200,6 +226,18 @@
 		if (availableHookScopes.length > 0) return availableHookScopes;
 		return Object.keys(FALLBACK_HOOK_LABELS);
 	});
+	const traceFieldOptions = $derived.by<FormFieldInfo[]>(() => {
+		if (formFields.length > 0) return formFields;
+		if (!traceResult?.input?.values) return [];
+		return Object.keys(traceResult.input.values).map((fieldId) => ({
+			id: fieldId,
+			label: `Field ${fieldId}`,
+			type: 'text'
+		}));
+	});
+	const traceManualEntries = $derived.by(() =>
+		Object.entries(traceManualValues).sort(([left], [right]) => left.localeCompare(right))
+	);
 
 	const scopedLinkages = $derived.by(() => {
 		if (selectedHookScope === 'all') return linkages;
@@ -214,6 +252,15 @@
 		if (selectedHookScope === 'all') return;
 		if (!availableHookScopes.includes(selectedHookScope)) {
 			selectedHookScope = 'all';
+		}
+	});
+
+	$effect(() => {
+		traceFieldOptions;
+		if (traceCustomFieldId.trim().length > 0) return;
+		const firstFieldId = traceFieldOptions[0]?.id;
+		if (firstFieldId) {
+			traceCustomFieldId = String(firstFieldId);
 		}
 	});
 
@@ -1290,6 +1337,218 @@
 		return resolvedHookLabels[hook] ?? hook;
 	}
 
+	function parseTraceEntryId(rawEntryId: string): number | null | undefined {
+		const trimmed = rawEntryId.trim();
+		if (!trimmed) return undefined;
+		if (!/^\d+$/.test(trimmed)) return null;
+		const parsed = Number.parseInt(trimmed, 10);
+		if (!Number.isFinite(parsed) || parsed <= 0) return null;
+		return parsed;
+	}
+
+	function getTraceFieldDisplay(fieldId: string): TraceFieldDisplay {
+		const match = traceFieldOptions.find((field) => String(field.id) === fieldId);
+		if (!match) {
+			const fallbackName = `Field ${fieldId}`;
+			return {
+				primaryName: fallbackName,
+				helperText: `ID: ${fieldId}`,
+				optionLabel: `${fallbackName} - ID: ${fieldId}`
+			};
+		}
+
+		const fieldLabel = String(match.label ?? '').trim();
+		const adminLabel = String(match.adminLabel ?? '').trim();
+		const primaryName = fieldLabel || adminLabel || `Field ${fieldId}`;
+		const helperParts: string[] = [];
+		if (adminLabel && adminLabel !== primaryName) {
+			helperParts.push(`Admin label: ${adminLabel}`);
+		}
+		helperParts.push(`ID: ${fieldId}`);
+
+		return {
+			primaryName,
+			helperText: helperParts.join(' · '),
+			optionLabel: `${primaryName} - ID: ${fieldId}`
+		};
+	}
+
+	function addOrUpdateTraceManualValue(): void {
+		const fieldId = traceCustomFieldId.trim();
+		if (!fieldId) {
+			traceError = 'Provide a field ID before adding a manual trace value.';
+			return;
+		}
+
+		traceError = null;
+		traceManualValues = {
+			...traceManualValues,
+			[fieldId]: traceCustomFieldValue
+		};
+		traceCustomFieldValue = '';
+	}
+
+	function updateTraceManualValue(fieldId: string, value: string): void {
+		traceManualValues = {
+			...traceManualValues,
+			[fieldId]: value
+		};
+	}
+
+	function removeTraceManualValue(fieldId: string): void {
+		if (!(fieldId in traceManualValues)) return;
+		const nextValues = { ...traceManualValues };
+		delete nextValues[fieldId];
+		traceManualValues = nextValues;
+	}
+
+	function clearTraceInputs(): void {
+		traceManualValues = {};
+		traceEntryId = '';
+		traceCustomFieldValue = '';
+		traceError = null;
+	}
+
+	function clearTraceResult(): void {
+		traceResult = null;
+		traceError = null;
+	}
+
+	async function runRequestTrace(): Promise<void> {
+		if (!formSourceSlug || !formId || Number.isNaN(formId)) {
+			traceError = 'Form context is unavailable, so trace simulation cannot run.';
+			return;
+		}
+
+		const parsedEntryId = parseTraceEntryId(traceEntryId);
+		if (parsedEntryId === null) {
+			traceError = 'Entry ID must be a positive integer.';
+			return;
+		}
+
+		traceLoading = true;
+		traceError = null;
+
+		const payload: RequestTraceRequest = {
+			hook_scope: selectedHookScope,
+			field_scope: 'mapped_and_rule',
+			include_drafts: traceIncludeDrafts
+		};
+		if (Object.keys(traceManualValues).length > 0) {
+			payload.entry_values = traceManualValues;
+		}
+		if (parsedEntryId !== undefined) {
+			payload.entry_id = parsedEntryId;
+		}
+		if (traceIncludeDrafts) {
+			payload.draft_mappings = linkages;
+		}
+
+		try {
+			const client = createClientFromConfig({ notifyErrors: false });
+			traceResult = await client.runRequestTrace(formSourceSlug, formId, payload, {
+				showNotifications: false
+			});
+		} catch (error) {
+			traceResult = null;
+			traceError = error instanceof Error ? error.message : 'Request trace failed.';
+		} finally {
+			traceLoading = false;
+		}
+	}
+
+	function traceOutcomeLabel(outcome: RequestTraceStep['outcome']): string {
+		switch (outcome) {
+			case 'would_run':
+				return 'Would run';
+			case 'would_queue':
+				return 'Would queue';
+			default:
+				return 'Blocked';
+		}
+	}
+
+	function traceOutcomeVariant(outcome: RequestTraceStep['outcome']): 'success' | 'info' | 'danger' {
+		switch (outcome) {
+			case 'would_run':
+				return 'success';
+			case 'would_queue':
+				return 'info';
+			default:
+				return 'danger';
+		}
+	}
+
+	function describeTraceBlockReason(reason: TraceBlockReason | null | undefined, details?: string | null): string {
+		if (!reason) return details?.trim() ?? 'Unknown block reason';
+		switch (reason) {
+			case 'disabled':
+				return 'Mapping is disabled.';
+			case 'missing_dependency':
+				return details ? `Missing dependency: ${details}` : 'Missing dependency.';
+			case 'cycle':
+				return 'Dependency cycle detected.';
+			case 'upstream_blocked':
+				return details ? `Blocked by upstream mapping: ${details}` : 'Blocked by upstream mapping.';
+			case 'policy_violation':
+				return details ? `Policy violation: ${details}` : 'Policy violation.';
+			case 'invalid_trigger':
+				return details ? `Missing trigger source: ${displayHookLabel(details)}` : 'Missing trigger source.';
+			case 'condition_false':
+				return details ? `Condition did not match: ${details}` : 'Condition did not match.';
+			default:
+				return reason;
+		}
+	}
+
+	function formatTraceTriggerSource(step: RequestTraceStep): string {
+		const source = step.trigger_source;
+		if (!source || source.type === 'hook_root') return 'Hook root';
+		if (source.type === 'unbound') return 'Unbound trigger source';
+		if (source.mapping_id) return `Mapping: ${displayMappingLabel(source.mapping_id)}`;
+		return 'Mapping source';
+	}
+
+	function formatTraceValue(value: unknown): string {
+		if (value === null) return 'null';
+		if (value === undefined) return 'undefined';
+		if (typeof value === 'string') return `"${value}"`;
+		if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+
+		try {
+			const serialized = JSON.stringify(value);
+			if (!serialized) return String(value);
+			return serialized.length > 120 ? `${serialized.slice(0, 117)}...` : serialized;
+		} catch {
+			return String(value);
+		}
+	}
+
+	function formatConditionTrace(node: ConditionTraceNode | null | undefined, depth = 0): string[] {
+		if (!node) return [];
+
+		const indent = '  '.repeat(depth);
+		if (node.type === 'group') {
+			const lines = [
+				`${indent}${node.logic.toUpperCase()} group -> ${node.result ? 'match' : 'no match'}${node.reason_code ? ` (${node.reason_code})` : ''}`
+			];
+			for (const child of node.children ?? []) {
+				lines.push(...formatConditionTrace(child, depth + 1));
+			}
+			return lines;
+		}
+
+		if (node.type === 'rule') {
+			return [
+				`${indent}rule field ${node.field_id ?? '?'} ${node.operator ?? '?'} expected ${formatTraceValue(node.expected)} actual ${formatTraceValue(node.actual)} -> ${node.result ? 'match' : 'no match'}${node.reason_code ? ` (${node.reason_code})` : ''}`
+			];
+		}
+
+		return [
+			`${indent}invalid node -> ${node.result ? 'match' : 'no match'}${node.reason_code ? ` (${node.reason_code})` : ''}`
+		];
+	}
+
 	function describeBlockReason(item: DisplayBlocked): string {
 		switch (item.reason) {
 			case 'disabled':
@@ -1653,12 +1912,277 @@
 									{displayMappingLabel(issue.dependency_id)}: {issue.message}
 								</li>
 							{/each}
-						</ul>
-					{/if}
+							</ul>
+						{/if}
+					</div>
+
+					<div
+						class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-2 sf:space-y-3"
+						data-testid="request-trace-panel"
+					>
+						<div>
+							<p class="sf:text-xs sf:font-semibold sf:text-slate-700">Request tracer</p>
+							<p class="sf:text-[11px] sf:text-slate-500">
+								Simulate request outcomes for the current graph scope using optional entry values.
+							</p>
+						</div>
+
+						<div class="sf:grid sf:grid-cols-1 sf:gap-2">
+							<label class="sf:text-[11px] sf:text-slate-600">
+								Entry ID (optional)
+								<input
+									type="text"
+									inputmode="numeric"
+									bind:value={traceEntryId}
+									placeholder="e.g. 1234"
+									class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700"
+									data-testid="request-trace-entry-id"
+								/>
+							</label>
+
+							<label class="sf:flex sf:items-center sf:gap-2 sf:text-[11px] sf:text-slate-600">
+								<input
+									type="checkbox"
+									checked={traceIncludeDrafts}
+									onchange={(event) => {
+										traceIncludeDrafts = (event.currentTarget as HTMLInputElement).checked;
+									}}
+									data-testid="request-trace-include-drafts"
+								/>
+								Include unsaved draft mappings
+							</label>
+						</div>
+
+						<div class="sf:space-y-2">
+							<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">Manual field values</p>
+							<div class="sf:grid sf:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sf:gap-2">
+								{#if traceFieldOptions.length > 0}
+									<select
+										bind:value={traceCustomFieldId}
+										class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700"
+										data-testid="request-trace-field-id"
+									>
+										{#each traceFieldOptions as field (`${field.id}`)}
+											<option value={String(field.id)}>
+												{getTraceFieldDisplay(String(field.id)).optionLabel}
+											</option>
+										{/each}
+									</select>
+								{:else}
+									<input
+										type="text"
+										bind:value={traceCustomFieldId}
+										placeholder="Field ID"
+										class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700"
+										data-testid="request-trace-field-id"
+									/>
+								{/if}
+								<input
+									type="text"
+									bind:value={traceCustomFieldValue}
+									placeholder="Field value"
+									class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700"
+									data-testid="request-trace-field-value"
+								/>
+								<Button
+									size="sm"
+									variant="secondary"
+									onclick={addOrUpdateTraceManualValue}
+									data-testid="request-trace-add-manual-value"
+								>
+									Add
+								</Button>
+							</div>
+
+							{#if traceManualEntries.length === 0}
+								<p class="sf:text-[11px] sf:text-slate-500">No manual values added.</p>
+							{:else}
+								<div class="sf:space-y-1">
+									{#each traceManualEntries as [fieldId, value] (fieldId)}
+										<div
+											class="sf:grid sf:grid-cols-[minmax(0,1fr)_auto] sf:items-center sf:gap-2"
+											data-testid={`request-trace-manual-${fieldId}`}
+										>
+											<label class="sf:text-[11px] sf:text-slate-600">
+												<span class="sf:block sf:text-xs sf:font-medium sf:text-slate-700">
+													{getTraceFieldDisplay(fieldId).primaryName}
+												</span>
+												<span class="sf:block sf:text-[11px] sf:text-slate-500">
+													{getTraceFieldDisplay(fieldId).helperText}
+												</span>
+												<input
+													type="text"
+													value={value}
+													oninput={(event) => {
+														updateTraceManualValue(
+															fieldId,
+															(event.currentTarget as HTMLInputElement).value
+														);
+													}}
+													class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-xs sf:text-slate-700"
+												/>
+											</label>
+											<Button
+												size="sm"
+												variant="ghost"
+												onclick={() => removeTraceManualValue(fieldId)}
+											>
+												Remove
+											</Button>
+										</div>
+									{/each}
+								</div>
+							{/if}
+						</div>
+
+						<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+							<Button
+								size="sm"
+								variant="primary"
+								disabled={traceLoading}
+								onclick={() => {
+									void runRequestTrace();
+								}}
+								data-testid="request-trace-run"
+							>
+								{traceLoading ? 'Tracing…' : 'Run trace'}
+							</Button>
+							<Button size="sm" variant="secondary" onclick={clearTraceResult}>
+								Clear result
+							</Button>
+							<Button size="sm" variant="ghost" onclick={clearTraceInputs}>
+								Clear inputs
+							</Button>
+						</div>
+
+						{#if traceError}
+							<p
+								class="sf:text-xs sf:rounded-md sf:border sf:border-rose-300 sf:bg-rose-50 sf:px-2 sf:py-1 sf:text-rose-800"
+								data-testid="request-trace-error"
+							>
+								{traceError}
+							</p>
+						{/if}
+
+						{#if traceResult}
+							<div class="sf:space-y-2" data-testid="request-trace-results">
+								<div class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2">
+									<p class="sf:text-[11px] sf:text-slate-700">
+										<strong>Input source:</strong>
+										{traceResult.input.source}
+									</p>
+									<p class="sf:text-[11px] sf:text-slate-600">
+										<strong>Effective values:</strong>
+										{Object.keys(traceResult.input.values ?? {}).length}
+										·
+										<strong>Manual:</strong>
+										{traceResult.input.manual_field_ids.length}
+										·
+										<strong>Imported:</strong>
+										{traceResult.input.imported_field_ids.length}
+									</p>
+									{#if traceResult.input.warnings.length > 0}
+										<ul class="sf:mt-1 sf:space-y-1">
+											{#each traceResult.input.warnings as warning, index (`warning-${index}`)}
+												<li class="sf:text-[11px] sf:text-amber-700">{warning}</li>
+											{/each}
+										</ul>
+									{/if}
+								</div>
+
+								{#if traceResult.hooks.length === 0}
+									<p class="sf:text-[11px] sf:text-slate-500">
+										No trace hooks are available for this graph.
+									</p>
+								{:else}
+									{#each traceResult.hooks as hookTrace (hookTrace.hook)}
+										<div
+											class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2 sf:space-y-2"
+											data-testid={`request-trace-hook-${hookTrace.hook}`}
+										>
+											<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
+												<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">
+													{displayHookLabel(hookTrace.hook)}
+												</p>
+												<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-1">
+													<Badge variant="success">Run: {hookTrace.runnable.length}</Badge>
+													<Badge variant="info">Queue: {hookTrace.queued.length}</Badge>
+													<Badge variant="danger">Blocked: {hookTrace.blocked.length}</Badge>
+												</div>
+											</div>
+
+											{#if hookTrace.steps.length === 0}
+												<p class="sf:text-[11px] sf:text-slate-500">
+													No step details returned for this hook.
+												</p>
+											{:else}
+												<div class="sf:space-y-2">
+													{#each hookTrace.steps as step (`${hookTrace.hook}:${step.mapping_id}`)}
+														<div
+															class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-2 sf:space-y-1"
+															data-testid={`request-trace-step-${step.mapping_id}`}
+														>
+															<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
+																<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">
+																	{step.label}
+																</p>
+																<Badge variant={traceOutcomeVariant(step.outcome)}>
+																	{traceOutcomeLabel(step.outcome)}
+																</Badge>
+															</div>
+
+															<p class="sf:text-[11px] sf:text-slate-600">
+																<strong>Trigger:</strong>
+																{formatTraceTriggerSource(step)}
+																·
+																<strong>Deps:</strong>
+																{step.dependency_ids.length > 0
+																	? step.dependency_ids.map((id) => displayMappingLabel(id)).join(', ')
+																	: 'none'}
+															</p>
+
+															{#if step.outcome === 'blocked'}
+																<p class="sf:text-[11px] sf:text-rose-700">
+																	{describeTraceBlockReason(step.block_reason, step.block_details)}
+																</p>
+															{/if}
+
+															<div class="sf:text-[11px] sf:text-slate-600">
+																<p>
+																	<strong>Condition:</strong>
+																	{step.condition.summary}
+																</p>
+																<p>
+																	<strong>Reason code:</strong>
+																	{step.condition.reason_code}
+																</p>
+															</div>
+
+															{#if step.condition.tree}
+																<details class="sf:rounded-sm sf:bg-white sf:p-1">
+																	<summary class="sf:cursor-pointer sf:text-[11px] sf:text-slate-600">
+																		Condition decision tree
+																	</summary>
+																	<ul class="sf:mt-1 sf:space-y-0.5">
+																		{#each formatConditionTrace(step.condition.tree) as line, index (`${step.mapping_id}:${index}`)}
+																			<li class="sf:text-[11px] sf:font-mono sf:text-slate-600">{line}</li>
+																		{/each}
+																	</ul>
+																</details>
+															{/if}
+														</div>
+													{/each}
+												</div>
+											{/if}
+										</div>
+									{/each}
+								{/if}
+							</div>
+						{/if}
+					</div>
 				</div>
 			</div>
-		</div>
-	{/if}
+		{/if}
 
 	<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3 sf:text-[11px] sf:text-slate-500">
 		<span>Slate edge: explicit dependency (upstream prerequisite -> dependent)</span>

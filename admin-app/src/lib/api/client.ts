@@ -24,6 +24,8 @@ import type {
 	FormAllActionConfigsResponse,
 	FormExecutionStatus,
 	FormFieldInfo,
+	RequestTraceRequest,
+	RequestTraceResponse,
 	WorkflowPlanResponse,
 	FormMapping,
 	FormSummary,
@@ -305,6 +307,51 @@ export class SentientFormsApiClient {
 		const response = await this.request<RestEnvelope<WorkflowPlanResponse>>(
 			`${slug}/forms/${formId}/actions/workflow-plan?hook_scope=${scope}`,
 			options
+		);
+		return this.unwrap(response);
+	}
+
+	async runRequestTrace(
+		formSourceSlug: string,
+		formId: number,
+		payload: RequestTraceRequest,
+		options: RequestOptions = {}
+	): Promise<RequestTraceResponse> {
+		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+			console.warn('[ApiClient] runRequestTrace called with invalid params:', {
+				formSourceSlug,
+				formId
+			});
+			return {
+				authority: 'wp_rest',
+				policy_version: '2026-02-request-tracer-v1',
+				hook_scope: payload.hook_scope ?? 'all',
+				available_hooks: [],
+				input: {
+					source: 'empty',
+					entry_id: null,
+					field_scope: 'mapped_and_rule',
+					values: {},
+					manual_field_ids: [],
+					imported_field_ids: [],
+					overridden_field_ids: [],
+					warnings: ['Invalid form context for request trace.'],
+					include_drafts: Boolean(payload.include_drafts),
+					draft_applied: false
+				},
+				hooks: [],
+				policy_violations: []
+			};
+		}
+
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<RequestTraceResponse>>(
+			`${slug}/forms/${formId}/actions/request-trace`,
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
 		);
 		return this.unwrap(response);
 	}

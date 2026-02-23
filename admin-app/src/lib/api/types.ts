@@ -364,6 +364,114 @@ export interface WorkflowPlanResponse {
 	policy_violations: WorkflowPolicyViolation[];
 }
 
+export type TraceBlockReason =
+	| 'disabled'
+	| 'missing_dependency'
+	| 'cycle'
+	| 'upstream_blocked'
+	| 'policy_violation'
+	| 'invalid_trigger'
+	| 'condition_false';
+
+export interface ConditionTraceGroupNode {
+	type: 'group';
+	logic: 'all' | 'any';
+	result: boolean;
+	reason_code?: string;
+	children: ConditionTraceNode[];
+}
+
+export interface ConditionTraceRuleNode {
+	type: 'rule';
+	field_id?: string;
+	operator?: string;
+	actual?: string | number | boolean | null;
+	expected?: unknown;
+	result: boolean;
+	reason_code?: string;
+}
+
+export interface ConditionTraceInvalidNode {
+	type: 'invalid';
+	result: boolean;
+	reason_code?: string;
+}
+
+export type ConditionTraceNode =
+	| ConditionTraceGroupNode
+	| ConditionTraceRuleNode
+	| ConditionTraceInvalidNode;
+
+export interface ConditionTraceResult {
+	should_execute: boolean | null;
+	enabled: boolean;
+	evaluated: boolean;
+	matched: boolean | null;
+	reason_code: string;
+	summary: string;
+	tree?: ConditionTraceNode | null;
+}
+
+export interface RequestTraceStep {
+	mapping_id: string;
+	label: string;
+	dependency_ids: string[];
+	trigger_source?: { type: 'hook_root' | 'mapping' | 'unbound'; mapping_id?: string };
+	execution_mode: 'validation' | 'after_submission';
+	is_async: boolean;
+	outcome: 'would_run' | 'would_queue' | 'blocked';
+	block_reason?: TraceBlockReason | null;
+	block_details?: string | null;
+	condition: ConditionTraceResult;
+}
+
+export interface RequestTraceHook {
+	hook: string;
+	order: string[];
+	waves: WorkflowPlanWave[];
+	runnable: string[];
+	queued: string[];
+	blocked: Array<{
+		mapping_id: string;
+		reason: TraceBlockReason;
+		details?: string;
+	}>;
+	cycle_ids: string[];
+	steps: RequestTraceStep[];
+}
+
+export interface RequestTraceInput {
+	source: 'empty' | 'manual' | 'entry_import' | 'entry_import_with_manual_overrides';
+	entry_id?: number | null;
+	field_scope: 'mapped_and_rule';
+	values: Record<string, string>;
+	manual_field_ids: string[];
+	imported_field_ids: string[];
+	overridden_field_ids: string[];
+	warnings: string[];
+	include_drafts: boolean;
+	draft_applied: boolean;
+}
+
+export interface RequestTraceRequest {
+	hook_scope?: 'all' | string;
+	entry_values?: Record<string, string | number | boolean | null>;
+	entry_id?: number;
+	field_scope?: 'mapped_and_rule';
+	include_drafts?: boolean;
+	draft_mappings?: FormActionLinkage[];
+}
+
+export interface RequestTraceResponse {
+	authority: 'wp_rest';
+	policy_version: string;
+	hook_scope: 'all' | string;
+	available_hooks: string[];
+	input: RequestTraceInput;
+	hooks: RequestTraceHook[];
+	policy_violations: WorkflowPolicyViolation[];
+}
+
 export interface FormDisableStateResponse {
 	sf_disabled: boolean;
 	global_disabled?: boolean;

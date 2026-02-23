@@ -2252,6 +2252,9 @@
 				{workflowPlan}
 				{workflowPlanLoading}
 				{workflowPlanError}
+				formSourceSlug={data.formSourceSlug}
+				formId={data.formId}
+				{formFields}
 				{pendingRemovalId}
 				onSetEditingMapping={setGraphEditingMapping}
 				onToggleDependency={toggleDraftDependency}
