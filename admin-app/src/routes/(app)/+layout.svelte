@@ -1,17 +1,22 @@
 <script lang="ts">
-	import { page } from '$app/stores';
-	import { derived } from 'svelte/store';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { appHref, deriveActivePath, routerType } from '$lib/navigation';
+	import {
+		appHref,
+		deriveActivePath,
+		navigateToAppPath,
+		readHashPathFromLocation,
+		resolveActiveNavPath,
+		routerType,
+		type NavigationLinkPath
+	} from '$lib/navigation';
 	interface Props {
 		children?: import('svelte').Snippet;
 	}
 
 	let { children }: Props = $props();
 
-	const activePath = derived(page, ($page) => deriveActivePath($page.url));
-
-	const links = [
+	const links: Array<{ path: NavigationLinkPath; label: string }> = [
 		{ path: '/dashboard', label: 'Dashboard' },
 		{ path: '/licensing', label: 'Licensing' },
 		{ path: '/actions', label: 'Actions' },
@@ -20,9 +25,52 @@
 		{ path: '/settings', label: 'Settings' }
 	];
 
+	let renderedPath = $derived(deriveActivePath(page.url));
+	let activePath = $derived(resolveActiveNavPath(renderedPath));
+	let mismatchKey = $state<string | null>(null);
+	let softRepairAttempted = $state(false);
+	let hardRepairAttempted = $state(false);
+
+	function handleNavClick(event: MouseEvent, path: NavigationLinkPath): void {
+		if (event.defaultPrevented || event.button !== 0) return;
+		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+		event.preventDefault();
+		void navigateToAppPath(path);
+	}
+
+	$effect(() => {
+		if (routerType !== 'hash' || typeof window === 'undefined') return;
+
+		const hashPath = readHashPathFromLocation();
+		if (hashPath === renderedPath) {
+			mismatchKey = null;
+			softRepairAttempted = false;
+			hardRepairAttempted = false;
+			return;
+		}
+
+		const nextKey = `${hashPath}=>${renderedPath}`;
+		if (mismatchKey !== nextKey) {
+			mismatchKey = nextKey;
+			softRepairAttempted = false;
+			hardRepairAttempted = false;
+		}
+
+		if (!softRepairAttempted) {
+			softRepairAttempted = true;
+			void navigateToAppPath(hashPath, { replaceState: true, noScroll: true, keepFocus: true });
+			return;
+		}
+
+		if (!hardRepairAttempted) {
+			hardRepairAttempted = true;
+			window.location.replace(appHref(hashPath));
+		}
+	});
+
 	onMount(() => {
 		if (routerType === 'hash' && typeof window !== 'undefined' && window.location.hash === '') {
-			window.location.replace(appHref('/dashboard'));
+			void navigateToAppPath('/dashboard', { replaceState: true, noScroll: true, keepFocus: true });
 		}
 	});
 </script>
@@ -35,20 +83,41 @@
 				<p class="sf:text-sm sf:text-slate-500">LLM-powered form automation</p>
 			</div>
 			<nav class="sf:p-4 sf:flex sf:flex-col sf:gap-2">
-				{#each links as link}
-					<a
-						class="sf:rounded sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:transition-all sf:hover:bg-slate-100"
-						class:sf-bg-slate-200={$activePath === link.path}
-						class:sf-text-slate-900={$activePath === link.path}
-						href={appHref(link.path)}
-					>
-						{link.label}
-					</a>
-				{/each}
+					{#each links as link}
+						<a
+							class="sf:rounded sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:transition-all sf:hover:bg-slate-100"
+							class:sf-bg-slate-200={activePath === link.path}
+							class:sf-text-slate-900={activePath === link.path}
+							href={appHref(link.path)}
+							data-nav-path={link.path}
+							onclick={(event) => handleNavClick(event, link.path)}
+						>
+							{link.label}
+						</a>
+					{/each}
 			</nav>
 		</aside>
-		<main class="sf:flex-1 sf:p-6 sf:bg-white sf:shadow-inner">
-			{@render children?.()}
-		</main>
+			<main class="sf:flex-1 sf:p-6 sf:bg-white sf:shadow-inner">
+				<svelte:boundary>
+					{@render children?.()}
+
+					{#snippet failed(error, reset)}
+						<section
+							class="sf:rounded sf:border sf:border-rose-300 sf:bg-rose-50 sf:p-4 sf:space-y-2"
+							data-testid="route-boundary-error"
+						>
+							<h2 class="sf:text-base sf:font-semibold sf:text-rose-900">This view hit an error</h2>
+							<p class="sf:text-sm sf:text-rose-800">{String(error)}</p>
+							<button
+								type="button"
+								class="sf:inline-flex sf:items-center sf:rounded sf:border sf:border-rose-400 sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:text-rose-900 sf:hover:bg-rose-100"
+								onclick={reset}
+							>
+								Retry view
+							</button>
+						</section>
+					{/snippet}
+				</svelte:boundary>
+			</main>
+		</div>
 	</div>
-</div>

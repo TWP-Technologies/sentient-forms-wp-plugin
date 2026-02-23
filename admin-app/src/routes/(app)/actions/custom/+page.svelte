@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { Section, Card, Button, Badge, Alert } from '$lib/components/ui';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
-	import { goto } from '$app/navigation';
+	import { navigateToAppPath } from '$lib/navigation';
 	import type { CustomAction } from '$lib/api/types';
 
 	const customState = customActionsState;
@@ -39,11 +39,11 @@
 	}
 
 	function editAction(action: CustomAction) {
-		goto(`#/actions/custom/${action.id}`);
+		void navigateToAppPath(`/actions/custom/${action.id}`);
 	}
 
 	function createAction() {
-		goto('#/actions/custom/new');
+		void navigateToAppPath('/actions/custom/new');
 	}
 
 	const statusFilters = [

@@ -3,6 +3,13 @@ import { base } from '$app/paths';
 import { browser } from '$app/environment';
 
 export type RouterType = 'hash' | 'pathname';
+export type NavigationLinkPath =
+	| '/dashboard'
+	| '/licensing'
+	| '/actions'
+	| '/actions/log'
+	| '/actions/custom'
+	| '/settings';
 
 export const resolveRouterType = (envValue?: string): RouterType => {
 	return envValue === 'pathname' ? 'pathname' : 'hash';
@@ -22,6 +29,59 @@ const normalizePath = (path: string): string => {
 	if (!trimmed) return '/';
 	const ensured = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
 	return ensured.replace(/\/+/g, '/');
+};
+
+export const normalizeRoutePath = (path: string): string => {
+	if (!path) return '/';
+	const trimmed = path.trim();
+	if (!trimmed) return '/';
+	const withoutHash = trimmed.replace(/^#/, '');
+	const [withoutQuery] = withoutHash.split('?');
+	const normalized = normalizePath(withoutQuery ?? withoutHash);
+	if (normalized.length > 1 && normalized.endsWith('/')) {
+		return normalized.slice(0, -1);
+	}
+	return normalized;
+};
+
+const NAV_MATCHERS: Array<{ path: NavigationLinkPath; matches: (value: string) => boolean }> = [
+	{
+		path: '/actions/custom',
+		matches: (value) => value === '/actions/custom' || value.startsWith('/actions/custom/')
+	},
+	{
+		path: '/actions/log',
+		matches: (value) => value === '/actions/log' || value.startsWith('/actions/log/')
+	},
+	{
+		path: '/actions',
+		matches: (value) => value === '/actions' || value.startsWith('/actions/')
+	},
+	{
+		path: '/settings',
+		matches: (value) => value === '/settings' || value.startsWith('/settings/')
+	},
+	{
+		path: '/dashboard',
+		matches: (value) => value === '/dashboard'
+	},
+	{
+		path: '/licensing',
+		matches: (value) => value === '/licensing'
+	}
+];
+
+export const resolveActiveNavPath = (path: string): NavigationLinkPath | null => {
+	const normalized = normalizeRoutePath(path);
+	const matcher = NAV_MATCHERS.find((candidate) => candidate.matches(normalized));
+	return matcher?.path ?? null;
+};
+
+export const readHashPathFromLocation = (): string => {
+	if (typeof window === 'undefined' || typeof window.location === 'undefined') {
+		return '/';
+	}
+	return normalizeRoutePath(window.location.hash.replace(/^#/, ''));
 };
 
 export const appPath = (path: string, options?: PathOptions): string => {
@@ -44,16 +104,15 @@ export const deriveActivePath = (url: URL, options?: PathOptions): string => {
 
 	if (effectiveRouter === 'hash') {
 		const hash = url.hash?.replace(/^#/, '') ?? '';
-		if (!hash) return '/';
-		return hash.startsWith('/') ? hash : `/${hash}`;
+		return normalizeRoutePath(hash);
 	}
 	const pathname = url.pathname || '/';
-	if (!effectiveBase || effectiveBase === '/') return pathname || '/';
+	if (!effectiveBase || effectiveBase === '/') return normalizeRoutePath(pathname || '/');
 	if (pathname.startsWith(effectiveBase)) {
 		const trimmed = pathname.slice(effectiveBase.length) || '/';
-		return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+		return normalizeRoutePath(trimmed.startsWith('/') ? trimmed : `/${trimmed}`);
 	}
-	return pathname;
+	return normalizeRoutePath(pathname);
 };
 
 export const navigateToAppPath = async (

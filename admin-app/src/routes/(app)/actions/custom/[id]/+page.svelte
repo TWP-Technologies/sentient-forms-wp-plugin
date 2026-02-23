@@ -4,7 +4,7 @@
 	import { Section, Button, Alert, Skeleton } from '$lib/components/ui';
 	import CustomActionForm from '$lib/components/custom-action-form.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
-	import { goto } from '$app/navigation';
+	import { navigateToAppPath } from '$lib/navigation';
 	import type { CustomActionUpdateInput } from '$lib/schemas/custom-action';
 	import type { CustomAction } from '$lib/api/types';
 
@@ -32,7 +32,7 @@
 		error = null;
 		try {
 			await customActionsStore.update(actionId, data);
-			goto('#/actions/custom');
+			await navigateToAppPath('/actions/custom');
 		} catch (e) {
 			if (e instanceof Error) {
 				error = e.message;
@@ -44,7 +44,7 @@
 	}
 
 	function handleCancel() {
-		goto('#/actions/custom');
+		void navigateToAppPath('/actions/custom');
 	}
 </script>
 
