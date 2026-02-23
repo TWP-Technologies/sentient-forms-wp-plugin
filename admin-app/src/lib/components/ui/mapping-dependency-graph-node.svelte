@@ -20,11 +20,13 @@
 	}
 
 	function nodeClass(): string {
-		const stateClass = data.isDisabled
-			? 'sf:border-slate-300 sf:bg-slate-50 sf:opacity-80 sf:grayscale-[0.22]'
-			: data.isBlockedByDisabledUpstream
-				? 'sf:border-slate-200 sf:bg-slate-50 sf:opacity-70 sf:grayscale-[0.32]'
-				: 'sf:border-slate-200';
+		const stateClass = data.isInvalid
+			? 'sf:border-rose-300 sf:bg-rose-50/40'
+			: data.isDisabled
+				? 'sf:border-slate-300 sf:bg-slate-50 sf:opacity-80 sf:grayscale-[0.22]'
+				: data.isBlockedByDisabledUpstream
+					? 'sf:border-slate-200 sf:bg-slate-50 sf:opacity-70 sf:grayscale-[0.32]'
+					: 'sf:border-slate-200';
 
 		if (data.isEditingTarget) {
 			return `${stateClass} sf:border-blue-500 sf:ring-2 sf:ring-blue-200`;
@@ -44,6 +46,9 @@
 	}
 
 	function statusBadgeClass(): string {
+		if (data.isInvalid) {
+			return 'sf:inline-flex sf:items-center sf:rounded-full sf:border sf:border-rose-200 sf:bg-rose-50 sf:px-2.5 sf:py-0.5 sf:text-xs sf:font-medium sf:text-rose-700';
+		}
 		if (isNodeEnabled()) {
 			return 'sf:inline-flex sf:items-center sf:cursor-pointer sf:rounded-full sf:border sf:border-success-200 sf:bg-success-50 sf:px-2.5 sf:py-0.5 sf:text-xs sf:font-medium sf:text-success-600 sf:shadow-sm sf:hover:bg-success-100';
 		}
@@ -77,12 +82,19 @@
 		return `top:${topPercent}%; width:16px; height:16px; background:#93c5fd; border:2px solid #ffffff; box-shadow:0 0 0 1px #3b82f6; z-index:5; pointer-events:all; cursor:copy;`;
 	}
 
+	function invalidHooksTitle(): string {
+		if (data.invalidHooks.length === 0) return 'No valid trigger source configured.';
+		return `Missing trigger source: ${data.invalidHooks.join(', ')}`;
+	}
+
 	let selectedDuplicateParentId = $state<string>('');
 
 	const duplicateParentOptions = $derived.by(() => data.duplicateParentOptions ?? []);
 	const selectedDuplicateParent = $derived.by(() => {
 		if (duplicateParentOptions.length === 0) return null;
-		const selected = duplicateParentOptions.find((option) => option.id === selectedDuplicateParentId);
+		const selected = duplicateParentOptions.find(
+			(option) => option.id === selectedDuplicateParentId
+		);
 		return selected ?? duplicateParentOptions[0] ?? null;
 	});
 
@@ -203,18 +215,28 @@
 			</div>
 			<p class="sf:text-[11px] sf:text-slate-500">{data.nodeId}</p>
 		</div>
-		<button
-			type="button"
-			class={statusBadgeClass()}
-			aria-label={`Toggle ${data.label} ${isNodeEnabled() ? 'disabled' : 'enabled'} state`}
-			data-testid={`dependency-node-toggle-enabled-${data.nodeId}`}
-			onclick={(event) => {
-				event.stopPropagation();
-				void data.onToggleMappingEnabled(data.linkage);
-			}}
-		>
-			{isNodeEnabled() ? 'Enabled' : 'Disabled'}
-		</button>
+		{#if data.isInvalid}
+			<span
+				class={statusBadgeClass()}
+				title={invalidHooksTitle()}
+				data-testid={`dependency-node-invalid-${data.nodeId}`}
+			>
+				Invalid
+			</span>
+		{:else}
+			<button
+				type="button"
+				class={statusBadgeClass()}
+				aria-label={`Toggle ${data.label} ${isNodeEnabled() ? 'disabled' : 'enabled'} state`}
+				data-testid={`dependency-node-toggle-enabled-${data.nodeId}`}
+				onclick={(event) => {
+					event.stopPropagation();
+					void data.onToggleMappingEnabled(data.linkage);
+				}}
+			>
+				{isNodeEnabled() ? 'Enabled' : 'Disabled'}
+			</button>
+		{/if}
 	</div>
 
 	<div class="sf:flex sf:flex-wrap sf:gap-1">
@@ -230,6 +252,12 @@
 			<p class="sf:text-[11px] sf:text-slate-500">No autonomous triggers configured</p>
 		{/if}
 	</div>
+
+	{#if data.isInvalid}
+		<p class="sf:text-[11px] sf:text-rose-700">
+			Missing upstream source for: {data.invalidHooks.join(', ')}
+		</p>
+	{/if}
 
 	{#if data.isBlockedByDisabledUpstream}
 		<p class="sf:text-[11px] sf:text-amber-700">

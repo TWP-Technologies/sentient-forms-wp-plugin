@@ -76,7 +76,7 @@
 	let draftHooks = $state<Set<string>>(new Set());
 	let draftSettings = $state<Record<string, any>>({});
 	let editBaselineSignature = $state<string | null>(null);
-	type DraftTriggerSource = { type: 'hook_root' | 'mapping'; mapping_id?: string };
+	type DraftTriggerSource = { type: 'hook_root' | 'mapping' | 'unbound'; mapping_id?: string };
 	type DraftTriggerSourceRecord = Record<string, DraftTriggerSource>;
 	let graphDraftByMappingId = $state<
 		Record<
@@ -686,6 +686,10 @@
 				normalized[hook] = { type: 'hook_root' };
 				continue;
 			}
+			if (type === 'unbound' || type === 'detached') {
+				normalized[hook] = { type: 'unbound' };
+				continue;
+			}
 			if (type !== 'mapping') continue;
 			const mappingId =
 				typeof source.mapping_id === 'string'
@@ -714,6 +718,10 @@
 			}
 			if (source?.type === 'hook_root') {
 				next[hook] = { type: 'hook_root' };
+				continue;
+			}
+			if (source?.type === 'unbound') {
+				next[hook] = { type: 'unbound' };
 				continue;
 			}
 			if (primaryDependency) {
@@ -859,6 +867,12 @@
 		selectedCreateDependencyIds = new Set([mappingId]);
 	}
 
+	function openAddActionPanel() {
+		selectedCreateDependencyIds = new Set();
+		createError = null;
+		showAddPanel = true;
+	}
+
 	function normalizeDraftHooks(hooks: Iterable<string>): string[] {
 		return Array.from(
 			new Set(
@@ -963,7 +977,7 @@
 		dependencyIds: string[],
 		triggerHooks: string[],
 		triggerSources: DraftTriggerSourceRecord,
-		options: { syncModal?: boolean; showErrors?: boolean } = {}
+		options: { syncModal?: boolean; showErrors?: boolean; allowUnboundIssues?: boolean } = {}
 	): boolean {
 		const linkage = getLinkageById(mappingId);
 		if (!linkage) return false;
@@ -992,9 +1006,13 @@
 			validateMappingDependencies(baselineItems),
 			validateMappingDependencies(candidateItems)
 		);
-		if (introducedIssues.length > 0) {
+		const blockingIssues =
+			options.allowUnboundIssues === true
+				? introducedIssues.filter((issue) => issue.code !== 'unbound_trigger')
+				: introducedIssues;
+		if (blockingIssues.length > 0) {
 			if (options.showErrors ?? true) {
-				notifications.error(formatDependencyIssues(introducedIssues)[0]);
+				notifications.error(formatDependencyIssues(blockingIssues)[0]);
 			}
 			return false;
 		}
@@ -1277,11 +1295,16 @@
 	) {
 		if (!sourceMappingId || !targetMappingId || sourceMappingId === targetMappingId) return;
 		const current = readEffectiveDraftForMapping(targetMappingId);
+		const sourceHookRoot = sourceMappingId.startsWith('__hook_root__:')
+			? sourceMappingId.slice('__hook_root__:'.length)
+			: null;
 		const targetHooks = hook
 			? [hook]
-			: current.triggerHooks.filter(
-					(hookKey) => current.triggerSources[hookKey]?.mapping_id === sourceMappingId
-				);
+			: sourceHookRoot
+				? current.triggerHooks.filter((hookKey) => hookKey === sourceHookRoot)
+				: current.triggerHooks.filter(
+						(hookKey) => current.triggerSources[hookKey]?.mapping_id === sourceMappingId
+					);
 		if (targetHooks.length === 0) {
 			editingLinkageId = targetMappingId;
 			return;
@@ -1291,7 +1314,7 @@
 			...current.triggerSources
 		};
 		for (const hookKey of targetHooks) {
-			nextSources[hookKey] = { type: 'hook_root' };
+			nextSources[hookKey] = { type: 'unbound' };
 		}
 		const applied = applyGraphDraftMutation(
 			targetMappingId,
@@ -1299,7 +1322,8 @@
 			current.triggerHooks,
 			nextSources,
 			{
-				syncModal: true
+				syncModal: true,
+				allowUnboundIssues: true
 			}
 		);
 		if (applied) {
@@ -1401,9 +1425,19 @@
 			return;
 		}
 		const candidateItems = buildLinkagesFromDraftMap(pendingDraftMap);
+		const candidateIssues = validateMappingDependencies(candidateItems);
+		const unboundIssues = candidateIssues.filter((issue) => issue.code === 'unbound_trigger');
+		if (unboundIssues.length > 0) {
+			notifications.error(
+				unboundIssues.length === 1
+					? formatDependencyIssues(unboundIssues)[0]
+					: `${unboundIssues.length} mappings are missing a trigger source. Connect each invalid node before saving.`
+			);
+			return;
+		}
 		const introducedIssues = findIntroducedDependencyIssues(
 			validateMappingDependencies(actionsState.items),
-			validateMappingDependencies(candidateItems)
+			candidateIssues
 		);
 		if (introducedIssues.length > 0) {
 			notifications.error(formatDependencyIssues(introducedIssues)[0]);
@@ -1509,11 +1543,31 @@
 			normalizeDependencyIds(draftSettings.dependency_ids),
 			normalizeDraftTriggerSources(draftSettings.trigger_sources, normalizedHooks)
 		);
+		const unboundHooks = normalizedHooks.filter(
+			(hook) => normalizedTriggerSources[hook]?.type === 'unbound'
+		);
+		if (unboundHooks.length > 0) {
+			notifications.error(
+				`Missing trigger source for ${unboundHooks.join(', ')}. Connect an upstream mapping or hook root before saving.`
+			);
+			return;
+		}
 		const normalizedDependencyIds = deriveDependencyIdsForDraft(normalizedTriggerSources);
+		const persistableTriggerSources: Record<
+			string,
+			{ type: 'hook_root' | 'mapping'; mapping_id?: string }
+		> = Object.fromEntries(
+			Object.entries(normalizedTriggerSources).map(([hook, source]) => [
+				hook,
+				source.type === 'mapping'
+					? { type: 'mapping' as const, mapping_id: source.mapping_id }
+					: { type: 'hook_root' as const }
+			])
+		);
 		const nextSettings = {
 			...draftSettings,
 			dependency_ids: normalizedDependencyIds,
-			trigger_sources: normalizedTriggerSources
+			trigger_sources: persistableTriggerSources
 		};
 		if (normalizedDependencyIds.length === 0) {
 			delete nextSettings.dependency_ids;
@@ -1522,7 +1576,7 @@
 		const updatedLinkage: FormActionLinkage = {
 			...linkage,
 			trigger_hooks: normalizedHooks,
-			settings: nextSettings
+			settings: nextSettings as FormActionLinkage['settings']
 		};
 		const candidateItems = actionsState.items.map((item) =>
 			item.local_mapping_id === linkage.local_mapping_id ? updatedLinkage : item
@@ -1538,7 +1592,7 @@
 
 		await formActionsStore.updateAction(data.formSourceSlug, data.formId, linkage, {
 			trigger_hooks: normalizedHooks,
-			settings: nextSettings
+			settings: nextSettings as FormActionMutationPayload['settings']
 		});
 		if (graphDraftByMappingId[linkage.local_mapping_id]) {
 			const nextDraftMap = { ...graphDraftByMappingId };
@@ -1622,14 +1676,15 @@
 				createKind === 'template'
 					? (chosenDefinition?.label ?? centralActionId)
 					: (chosenCustom?.display_name ?? chosenCustom?.code ?? centralActionId);
-			const triggerSources: DraftTriggerSourceRecord = Object.fromEntries(
-				hooks.map((hook) => [
-					hook,
-					primaryDependencyId
-						? { type: 'mapping' as const, mapping_id: primaryDependencyId }
-						: { type: 'hook_root' as const }
-				])
-			);
+			const triggerSources: Record<string, { type: 'hook_root' | 'mapping'; mapping_id?: string }> =
+				Object.fromEntries(
+					hooks.map((hook) => [
+						hook,
+						primaryDependencyId
+							? { type: 'mapping' as const, mapping_id: primaryDependencyId }
+							: { type: 'hook_root' as const }
+					])
+				);
 			await formActionsStore.create(data.formSourceSlug, data.formId, {
 				central_action_id: centralActionId,
 				action_type_indicator: createKind === 'template' ? 'master' : 'custom',
@@ -1894,15 +1949,7 @@
 			</div>
 			<Button variant="secondary" onclick={() => navigateToAppPath('/actions')}>All forms</Button>
 			<Button variant="secondary" onclick={refresh}>Refresh</Button>
-			<Button
-				onclick={() => {
-					selectedCreateDependencyIds = new Set();
-					createError = null;
-					showAddPanel = true;
-				}}
-			>
-				Add action
-			</Button>
+			<Button onclick={openAddActionPanel}>Add action</Button>
 			<Button variant="secondary" onclick={() => (showTemplateLibrary = true)}
 				>Import from Library</Button
 			>
@@ -2050,16 +2097,7 @@
 						Choose a CPS template or custom action, then select hooks.
 					</p>
 				</div>
-				<Button
-					size="sm"
-					onclick={() => {
-						selectedCreateDependencyIds = new Set();
-						createError = null;
-						showAddPanel = true;
-					}}
-				>
-					Add action
-				</Button>
+				<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
 			</div>
 		</Card>
 
@@ -2226,6 +2264,7 @@
 				onDuplicateMapping={duplicateGraphMapping}
 				{duplicatingMappingId}
 				onSaveDependencies={saveDependenciesFromGraph}
+				onOpenAddAction={openAddActionPanel}
 				onCancelDependencyEdit={cancelEditingAction}
 				{savingDependencies}
 				onConfigureMapping={(linkage) => {

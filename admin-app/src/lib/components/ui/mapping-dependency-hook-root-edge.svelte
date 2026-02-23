@@ -4,6 +4,7 @@
 	let {
 		id,
 		data,
+		class: className,
 		markerEnd,
 		markerStart,
 		interactionWidth,
@@ -35,11 +36,12 @@
 	});
 </script>
 
-<BaseEdge
-	{id}
-	path={edgePath}
-	{style}
-	{markerStart}
-	{markerEnd}
-	interactionWidth={interactionWidth ?? 10}
-/>
+	<BaseEdge
+		{id}
+		path={edgePath}
+		class={className}
+		{style}
+		{markerStart}
+		{markerEnd}
+		interactionWidth={interactionWidth ?? 10}
+	/>

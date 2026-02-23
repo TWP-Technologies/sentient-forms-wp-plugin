@@ -46,6 +46,7 @@ export type MappingDependencyGraphProps = {
 	) => void | Promise<void>;
 	duplicatingMappingId?: string | null;
 	onSaveDependencies?: () => void | Promise<void>;
+	onOpenAddAction?: () => void;
 	onCancelDependencyEdit?: () => void;
 	savingDependencies?: boolean;
 };
@@ -60,6 +61,8 @@ export type MappingDependencyGraphActionNodeData = {
 	isEditingTarget: boolean;
 	isSelectedDependency: boolean;
 	isDisabled: boolean;
+	isInvalid: boolean;
+	invalidHooks: string[];
 	isBlockedByDisabledUpstream: boolean;
 	disabledUpstreamIds: string[];
 	pendingRemovalId: string | null;

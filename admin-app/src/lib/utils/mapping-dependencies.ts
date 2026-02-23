@@ -1,6 +1,6 @@
 import type { FormActionLinkage } from '$lib/api/types';
 
-export type MappingTriggerSourceKind = 'hook_root' | 'mapping';
+export type MappingTriggerSourceKind = 'hook_root' | 'mapping' | 'unbound';
 
 export interface MappingTriggerSource {
 	type: MappingTriggerSourceKind;
@@ -14,6 +14,7 @@ export type DependencyValidationIssue =
 	| { code: 'missing'; mappingId: string; dependencyId: string }
 	| { code: 'hook_mismatch'; mappingId: string; dependencyId: string; missingHooks: string[] }
 	| { code: 'execution_mode_mismatch'; mappingId: string; dependencyId: string }
+	| { code: 'unbound_trigger'; mappingId: string; hook: string }
 	| { code: 'cycle'; mappingId: string };
 
 export interface DependencyGraphMappingNode {
@@ -59,6 +60,7 @@ export type ExecutionPreviewBlockReason =
 	| 'missing_dependency'
 	| 'cycle'
 	| 'upstream_blocked'
+	| 'invalid_trigger'
 	| 'policy_violation';
 
 export interface ExecutionPreviewBlockedNode {
@@ -113,6 +115,9 @@ function normalizeTriggerSourceKind(value: unknown): MappingTriggerSourceKind | 
 	if (normalized === 'hook_root' || normalized === 'root' || normalized === 'hook') {
 		return 'hook_root';
 	}
+	if (normalized === 'unbound' || normalized === 'detached') {
+		return 'unbound';
+	}
 	return null;
 }
 
@@ -157,6 +162,10 @@ export function normalizeTriggerSources(
 		if (!kind) continue;
 		if (kind === 'hook_root') {
 			normalized[hook] = { type: 'hook_root' };
+			continue;
+		}
+		if (kind === 'unbound') {
+			normalized[hook] = { type: 'unbound' };
 			continue;
 		}
 
@@ -261,6 +270,10 @@ export function serializeTriggerSources(
 			serialized[hook] = { type: 'hook_root' };
 			continue;
 		}
+		if (source.type === 'unbound') {
+			serialized[hook] = { type: 'unbound' };
+			continue;
+		}
 		if (!source.mappingId) continue;
 		serialized[hook] = { type: 'mapping', mapping_id: source.mappingId };
 	}
@@ -342,8 +355,15 @@ export function validateMappingDependencies(
 		const mappingId = linkage.local_mapping_id;
 		const triggerHooks = getMappingTriggerHooks(linkage);
 		const mappingIsAsync = isMappingAsync(linkage);
+		const triggerSources = getMappingTriggerSources(linkage);
 
 		for (const hook of triggerHooks) {
+			const triggerSource = triggerSources[hook];
+			if (triggerSource?.type === 'unbound') {
+				issues.push({ code: 'unbound_trigger', mappingId, hook });
+				continue;
+			}
+
 			const dependencyIds = dependenciesForValidationHook(linkage, hook);
 			for (const dependencyId of dependencyIds) {
 				if (dependencyId === mappingId) {
@@ -396,6 +416,8 @@ export function formatDependencyIssues(issues: DependencyValidationIssue[]): str
 				return `${issue.mappingId} depends on ${issue.dependencyId}, but ${issue.dependencyId} is missing hooks: ${issue.missingHooks.join(', ')}.`;
 			case 'execution_mode_mismatch':
 				return `${issue.mappingId} depends on async mapping ${issue.dependencyId} during after-submission, so ${issue.mappingId} must also run async.`;
+			case 'unbound_trigger':
+				return `${issue.mappingId} has no trigger source bound for hook ${issue.hook}.`;
 			case 'cycle':
 				return `Dependency cycle includes ${issue.mappingId}.`;
 		}
@@ -406,6 +428,8 @@ export function dependencyIssueIdentity(issue: DependencyValidationIssue): strin
 	switch (issue.code) {
 		case 'cycle':
 			return `${issue.code}:${issue.mappingId}`;
+		case 'unbound_trigger':
+			return `${issue.code}:${issue.mappingId}:${issue.hook}`;
 		case 'hook_mismatch':
 			return `${issue.code}:${issue.mappingId}:${issue.dependencyId}:${issue.missingHooks.join('|')}`;
 		default:
@@ -466,6 +490,9 @@ export function buildDependencyGraph(items: FormActionLinkage[]): DependencyGrap
 					kind: 'dependency',
 					hook
 				});
+				continue;
+			}
+			if (source.type === 'unbound') {
 				continue;
 			}
 
@@ -609,6 +636,18 @@ function buildHookExecutionPreview(items: FormActionLinkage[], hook: string): Ho
 			const record: ExecutionPreviewBlockedNode = {
 				mappingId,
 				reason: 'cycle'
+			};
+			blocked.push(record);
+			blockedById.set(mappingId, record);
+			continue;
+		}
+
+		const triggerSource = getMappingTriggerSources(node)[hook];
+		if (triggerSource?.type === 'unbound') {
+			const record: ExecutionPreviewBlockedNode = {
+				mappingId,
+				reason: 'invalid_trigger',
+				details: hook
 			};
 			blocked.push(record);
 			blockedById.set(mappingId, record);

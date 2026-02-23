@@ -172,8 +172,8 @@ export function buildXyflowDependencyGraph(items: FormActionLinkage[]): XyflowDe
 			const strokeWidth = isDependency ? 2 : 1.8;
 			const dashArray = edge.missing ? '6 4' : '';
 			const style = [
-				`stroke:${strokeColor}`,
-				`stroke-width:${strokeWidth}`,
+				`--xy-edge-stroke:${strokeColor}`,
+				`--xy-edge-stroke-width:${strokeWidth}px`,
 				dashArray ? `stroke-dasharray:${dashArray}` : ''
 			]
 				.filter(Boolean)
@@ -183,6 +183,9 @@ export function buildXyflowDependencyGraph(items: FormActionLinkage[]): XyflowDe
 				id: `${edge.kind}:${edge.from}->${edge.to}:${edge.hook ?? 'any'}`,
 				source: edge.from,
 				target: edge.to,
+				class: isDependency
+					? 'sf-removable-edge sf-dependency-edge'
+					: 'sf-removable-edge sf-hook-root-edge',
 				sourceHandle: isDependency
 					? DEPENDENCY_SOURCE_HANDLE_ID
 					: hookRootSourceHandleId(rootSourceSlot),
@@ -193,9 +196,9 @@ export function buildXyflowDependencyGraph(items: FormActionLinkage[]): XyflowDe
 					type: MarkerType.ArrowClosed,
 					color: strokeColor
 				},
-				selectable: isDependency,
-				focusable: isDependency,
-				deletable: isDependency,
+				selectable: true,
+				focusable: true,
+				deletable: true,
 				data: {
 					kind: edge.kind,
 					missing: edge.missing,

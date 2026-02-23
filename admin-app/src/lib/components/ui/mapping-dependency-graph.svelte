@@ -5,12 +5,13 @@
 		ConnectionMode,
 		Controls,
 		MiniMap,
-		SvelteFlow,
-		type Connection,
-		type Edge,
-		type Node,
-		type OnConnectStartParams
-	} from '@xyflow/svelte';
+			SvelteFlow,
+			type Connection,
+			type Edge,
+			type Node,
+			type OnConnectStartParams,
+			type Viewport
+		} from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
 	import Badge from './badge.svelte';
 	import Button from './button.svelte';
@@ -74,6 +75,7 @@
 		onDuplicateMapping = () => {},
 		duplicatingMappingId = null,
 		onSaveDependencies = () => {},
+		onOpenAddAction = () => {},
 		onCancelDependencyEdit = () => {},
 		savingDependencies = false
 	}: MappingDependencyGraphProps = $props();
@@ -173,6 +175,10 @@
 	let connectionFeedback = $state<ConnectionFeedback | null>(null);
 	let connectionFeedbackTimeout = $state<number | null>(null);
 	let activeDuplicatePopoverNodeId = $state<string | null>(null);
+	let hoveredRemovableEdgeId = $state<string | null>(null);
+	let shouldAutoFitView = $state(false);
+	let flowViewport = $state<Viewport>({ x: 0, y: 0, zoom: 1 });
+	let graphCanvasElement = $state<HTMLDivElement | null>(null);
 
 	const resolvedHookLabels = $derived({
 		...FALLBACK_HOOK_LABELS,
@@ -231,6 +237,48 @@
 	});
 	const mappingIdsInScope = $derived.by(() => {
 		return new Set(scopedLinkages.map((linkage) => linkage.local_mapping_id));
+	});
+	const invalidHooksByMappingId = $derived.by(() => {
+		const invalidById = new Map<string, string[]>();
+		for (const linkage of linkages) {
+			const triggerHooks = getMappingTriggerHooks(linkage);
+			const triggerSources = getMappingTriggerSources(linkage);
+			const invalidHooks = triggerHooks.filter((hook) => triggerSources[hook]?.type === 'unbound');
+			if (invalidHooks.length > 0) {
+				invalidById.set(linkage.local_mapping_id, invalidHooks);
+			}
+		}
+		return invalidById;
+	});
+	const invalidMappingsAll = $derived.by(() => {
+		return linkages
+			.filter((linkage) => (invalidHooksByMappingId.get(linkage.local_mapping_id)?.length ?? 0) > 0)
+			.map((linkage) => linkage.local_mapping_id);
+	});
+	const invalidMappingsInScope = $derived.by(() => {
+		if (selectedHookScope === 'all') {
+			return scopedLinkages
+				.filter(
+					(linkage) => (invalidHooksByMappingId.get(linkage.local_mapping_id)?.length ?? 0) > 0
+				)
+				.map((linkage) => linkage.local_mapping_id);
+		}
+		return scopedLinkages
+			.filter((linkage) =>
+				(invalidHooksByMappingId.get(linkage.local_mapping_id) ?? []).includes(selectedHookScope)
+			)
+			.map((linkage) => linkage.local_mapping_id);
+	});
+	const hasInvalidMappings = $derived.by(() => invalidMappingsAll.length > 0);
+	const saveDisabledReason = $derived.by(() => {
+		if (!hasInvalidMappings) return null;
+		if (invalidMappingsInScope.length === 1) {
+			return `${displayMappingLabel(invalidMappingsInScope[0] ?? '')} is missing an upstream trigger source.`;
+		}
+		if (invalidMappingsInScope.length > 1) {
+			return `${invalidMappingsInScope.length} mappings are missing upstream trigger sources in this graph scope.`;
+		}
+		return `${invalidMappingsAll.length} mappings are invalid in other hook scopes. Switch tabs and reconnect upstream sources before saving.`;
 	});
 	const rootHookByNodeId = $derived.by(() => {
 		const entries = graph.nodes
@@ -308,46 +356,55 @@
 		return Array.isArray(workflowPlan.hooks) && workflowPlan.hooks.length > 0;
 	});
 
+	function toDisplayPolicyViolation(issue: DependencyValidationIssue): DisplayPolicyViolation {
+		switch (issue.code) {
+			case 'self':
+				return {
+					mapping_id: issue.mappingId,
+					dependency_id: issue.dependencyId,
+					code: issue.code,
+					message: `${issue.mappingId} cannot depend on itself.`
+				};
+			case 'missing':
+				return {
+					mapping_id: issue.mappingId,
+					dependency_id: issue.dependencyId,
+					code: issue.code,
+					message: `${issue.mappingId} depends on unknown mapping ${issue.dependencyId}.`
+				};
+			case 'hook_mismatch':
+				return {
+					mapping_id: issue.mappingId,
+					dependency_id: issue.dependencyId,
+					code: issue.code,
+					message: `${issue.mappingId} depends on ${issue.dependencyId}, but ${issue.dependencyId} is missing hooks: ${issue.missingHooks.join(', ')}.`
+				};
+			case 'execution_mode_mismatch':
+				return {
+					mapping_id: issue.mappingId,
+					dependency_id: issue.dependencyId,
+					code: issue.code,
+					message: `${issue.mappingId} depends on async mapping ${issue.dependencyId} during after-submission, so ${issue.mappingId} must also run async.`
+				};
+			case 'unbound_trigger':
+				return {
+					mapping_id: issue.mappingId,
+					dependency_id: `__hook_root__:${issue.hook}`,
+					code: issue.code,
+					message: `${displayMappingLabel(issue.mappingId)} has no trigger source bound for ${displayHookLabel(issue.hook)}.`
+				};
+			case 'cycle':
+				return {
+					mapping_id: issue.mappingId,
+					dependency_id: issue.mappingId,
+					code: issue.code,
+					message: `Dependency cycle includes ${issue.mappingId}.`
+				};
+		}
+	}
+
 	const localPolicyViolations = $derived.by<DisplayPolicyViolation[]>(() => {
-		return baselineDependencyIssues.map((issue) => {
-			switch (issue.code) {
-				case 'self':
-					return {
-						mapping_id: issue.mappingId,
-						dependency_id: issue.dependencyId,
-						code: issue.code,
-						message: `${issue.mappingId} cannot depend on itself.`
-					};
-				case 'missing':
-					return {
-						mapping_id: issue.mappingId,
-						dependency_id: issue.dependencyId,
-						code: issue.code,
-						message: `${issue.mappingId} depends on unknown mapping ${issue.dependencyId}.`
-					};
-				case 'hook_mismatch':
-					return {
-						mapping_id: issue.mappingId,
-						dependency_id: issue.dependencyId,
-						code: issue.code,
-						message: `${issue.mappingId} depends on ${issue.dependencyId}, but ${issue.dependencyId} is missing hooks: ${issue.missingHooks.join(', ')}.`
-					};
-				case 'execution_mode_mismatch':
-					return {
-						mapping_id: issue.mappingId,
-						dependency_id: issue.dependencyId,
-						code: issue.code,
-						message: `${issue.mappingId} depends on async mapping ${issue.dependencyId} during after-submission, so ${issue.mappingId} must also run async.`
-					};
-				case 'cycle':
-					return {
-						mapping_id: issue.mappingId,
-						dependency_id: issue.mappingId,
-						code: issue.code,
-						message: `Dependency cycle includes ${issue.mappingId}.`
-					};
-			}
-		});
+		return baselineDependencyIssues.map(toDisplayPolicyViolation);
 	});
 
 	const policyViolations = $derived.by(() => {
@@ -422,10 +479,42 @@
 
 	const viewOnlyPositions = new Map<string, { x: number; y: number }>();
 
+	function hookRootNodeId(hook: string): string {
+		return `__hook_root__:${hook}`;
+	}
+
+	function pruneStaleCachedPositions(): void {
+		const validMappingIds = new Set(linkages.map((linkage) => linkage.local_mapping_id));
+		const validRootIds = new Set(rootHooksForNodes.map((hook) => hookRootNodeId(hook)));
+
+		for (const nodeId of Array.from(viewOnlyPositions.keys())) {
+			const rootHook = extractHookFromRootId(nodeId);
+			if (rootHook) {
+				if (!validRootIds.has(nodeId)) {
+					viewOnlyPositions.delete(nodeId);
+				}
+				continue;
+			}
+			if (!validMappingIds.has(nodeId)) {
+				viewOnlyPositions.delete(nodeId);
+			}
+		}
+	}
+
+	function ensureCachedPositionsForGraphNodes(): void {
+		pruneStaleCachedPositions();
+		for (const node of graph.nodes) {
+			if (!viewOnlyPositions.has(node.id)) {
+				viewOnlyPositions.set(node.id, { ...node.position });
+			}
+		}
+	}
+
 	$effect(() => {
 		graph.layoutSignature;
-		viewOnlyPositions.clear();
-		rebuildFlow();
+		ensureCachedPositionsForGraphNodes();
+		rebuildFlowNodes();
+		rebuildFlowEdges();
 	});
 
 	$effect(() => {
@@ -435,7 +524,23 @@
 		linkages;
 		disabledGraphState;
 		activeDuplicatePopoverNodeId;
-		rebuildFlow();
+		ensureCachedPositionsForGraphNodes();
+		rebuildFlowNodes();
+		rebuildFlowEdges();
+	});
+
+	$effect(() => {
+		hoveredRemovableEdgeId;
+		graph.edges;
+		disabledGraphState;
+		rebuildFlowEdges();
+	});
+
+	$effect(() => {
+		flowNodes;
+		for (const node of flowNodes) {
+			viewOnlyPositions.set(node.id, { ...node.position });
+		}
 	});
 
 	$effect(() => {
@@ -448,6 +553,15 @@
 	});
 
 	$effect(() => {
+		flowEdges;
+		hoveredRemovableEdgeId;
+		if (!hoveredRemovableEdgeId) return;
+		if (!flowEdges.some((edge) => edge.id === hoveredRemovableEdgeId)) {
+			hoveredRemovableEdgeId = null;
+		}
+	});
+
+	$effect(() => {
 		return () => {
 			if (connectionFeedbackTimeout !== null) {
 				window.clearTimeout(connectionFeedbackTimeout);
@@ -455,22 +569,48 @@
 		};
 	});
 
-	function rebuildFlow(): void {
+	function rebuildFlowEdges(): void {
 		flowEdges = graph.edges.map((edge) => {
 			const isMuted = shouldMuteEdge(edge);
-			if (!isMuted) return edge;
+			const isHovered = hoveredRemovableEdgeId === edge.id;
+			const baseStrokeColor = edge.data?.missing
+				? '#dc2626'
+				: edge.data?.kind === 'dependency'
+					? '#94a3b8'
+					: '#3b82f6';
+			const strokeColor = isHovered ? '#dc2626' : baseStrokeColor;
+			const strokeWidth = isHovered ? 2.6 : edge.data?.kind === 'dependency' ? 2 : 1.8;
 			const baseStyle = typeof edge.style === 'string' ? edge.style : '';
+			const styleParts = [baseStyle, 'cursor:pointer'];
+			styleParts.push(
+				`--xy-edge-stroke:${strokeColor}`,
+				`--xy-edge-stroke-width:${strokeWidth}px`
+			);
+			if (isMuted) {
+				styleParts.push('opacity:0.45', 'stroke-dasharray:4 3');
+			}
+			const markerEnd =
+				edge.markerEnd && typeof edge.markerEnd === 'object'
+					? { ...edge.markerEnd, color: strokeColor }
+					: edge.markerEnd;
+			if (styleParts.length === 0) return edge;
 			return {
 				...edge,
-				style: [baseStyle, 'opacity:0.45', 'stroke-dasharray:4 3'].filter(Boolean).join(';')
+				style: styleParts.filter(Boolean).join(';'),
+				markerEnd
 			};
 		});
+	}
+
+	function rebuildFlowNodes(): void {
 		flowNodes = graph.nodes.map((node) => {
-			const savedPosition = viewOnlyPositions.get(node.id);
+			const cachedPosition = viewOnlyPositions.get(node.id);
+			const nextPosition = cachedPosition ? { ...cachedPosition } : { ...node.position };
+			viewOnlyPositions.set(node.id, { ...nextPosition });
 			if (node.data.kind === 'hook_root') {
 				return {
 					...node,
-					position: savedPosition ?? node.position,
+					position: { ...nextPosition },
 					zIndex: 5,
 					data: buildHookRootNodeData(
 						node.id,
@@ -484,14 +624,14 @@
 			const linkage = linkageById.get(node.id) ?? node.data.linkage;
 			const isEditingTarget = editingMappingId === node.id;
 			const isDuplicatePopoverOpen = activeDuplicatePopoverNodeId === node.id;
-			return {
-				...node,
-				position: savedPosition ?? node.position,
-				zIndex: isDuplicatePopoverOpen ? 120 : isEditingTarget ? 80 : 10,
-				data: buildMappingNodeData(node.id, linkage, node.data.label)
-			};
-		});
-	}
+				return {
+					...node,
+					position: { ...nextPosition },
+					zIndex: isDuplicatePopoverOpen ? 120 : isEditingTarget ? 80 : 10,
+					data: buildMappingNodeData(node.id, linkage, node.data.label)
+				};
+			});
+		}
 
 	function buildMappingNodeData(
 		nodeId: string,
@@ -504,6 +644,8 @@
 		const disabledUpstreamIds = Array.from(
 			disabledGraphState.disabledUpstreamByNode.get(nodeId) ?? []
 		);
+		const invalidHooks = invalidHooksByMappingId.get(nodeId) ?? [];
+		const isInvalid = invalidHooks.length > 0;
 		const triggerHooks = getMappingTriggerHooks(linkage);
 		const triggerSources = getMappingTriggerSources(linkage);
 		const autonomousHooks = triggerHooks.filter((hook) => {
@@ -522,6 +664,8 @@
 			isEditingTarget,
 			isSelectedDependency: dependencySet.has(nodeId),
 			isDisabled,
+			isInvalid,
+			invalidHooks,
 			isBlockedByDisabledUpstream,
 			disabledUpstreamIds,
 			pendingRemovalId,
@@ -979,11 +1123,57 @@
 
 	function handleEdgeClick({ edge, event }: { edge: Edge; event: MouseEvent }): void {
 		if (!isDependencyEdgeData(edge.data)) return;
-		if (edge.data.kind !== 'dependency') return;
-		if (!mappingIdsInScope.has(edge.source) || !mappingIdsInScope.has(edge.target)) return;
+		if (edge.data.kind === 'dependency') {
+			if (!mappingIdsInScope.has(edge.source) || !mappingIdsInScope.has(edge.target)) return;
+		} else if (edge.data.kind === 'hook_root') {
+			if (!rootHookByNodeId.has(edge.source) || !mappingIdsInScope.has(edge.target)) return;
+		} else {
+			return;
+		}
 		event.preventDefault();
+		event.stopPropagation();
+		snapshotVisibleNodePositions();
+		const canvasTopBeforeDisconnect = getCanvasTop();
+		const viewportSnapshot = { ...flowViewport };
+		if (hoveredRemovableEdgeId === edge.id) {
+			hoveredRemovableEdgeId = null;
+		}
 		onDisconnectDependency?.(edge.source, edge.target, edge.data.hook ?? null);
 		onSetEditingMapping?.(edge.target);
+		requestAnimationFrame(() => {
+			flowViewport = viewportSnapshot;
+			requestAnimationFrame(() => {
+				flowViewport = viewportSnapshot;
+				restoreCanvasTop(canvasTopBeforeDisconnect);
+			});
+		});
+		setConnectionFeedback(
+			'policy_violation',
+			'Removed dependency link. This mapping is invalid until a trigger source is connected again.'
+		);
+	}
+
+	function handleEdgePointerEnter({ edge }: { edge: Edge; event: PointerEvent }): void {
+		if (!isDependencyEdgeData(edge.data)) return;
+		hoveredRemovableEdgeId = edge.id;
+	}
+
+	function handleEdgePointerLeave({ edge }: { edge: Edge; event: PointerEvent }): void {
+		if (!isDependencyEdgeData(edge.data)) return;
+		if (hoveredRemovableEdgeId === edge.id) {
+			hoveredRemovableEdgeId = null;
+		}
+	}
+
+	function handleSaveDependenciesClick(): void {
+		if (hasInvalidMappings) {
+			setConnectionFeedback(
+				'policy_violation',
+				saveDisabledReason ?? 'Resolve invalid mappings before saving.'
+			);
+			return;
+		}
+		void onSaveDependencies();
 	}
 
 	function handleNodeDragStop({
@@ -992,7 +1182,45 @@
 		targetNode: Node<XyflowDependencyNodeData> | null;
 	}): void {
 		if (!targetNode) return;
+		shouldAutoFitView = false;
 		viewOnlyPositions.set(targetNode.id, { ...targetNode.position });
+	}
+
+	function handleNodeDrag({
+		targetNode,
+		nodes
+	}: {
+		targetNode: Node<XyflowDependencyNodeData> | null;
+		nodes: Node<XyflowDependencyNodeData>[];
+		event: MouseEvent | TouchEvent;
+	}): void {
+		shouldAutoFitView = false;
+		if (targetNode) {
+			viewOnlyPositions.set(targetNode.id, { ...targetNode.position });
+		}
+		for (const node of nodes) {
+			viewOnlyPositions.set(node.id, { ...node.position });
+		}
+	}
+
+	function snapshotVisibleNodePositions(): void {
+		for (const node of flowNodes) {
+			viewOnlyPositions.set(node.id, { ...node.position });
+		}
+	}
+
+	function getCanvasTop(): number | null {
+		if (!graphCanvasElement) return null;
+		return graphCanvasElement.getBoundingClientRect().top;
+	}
+
+	function restoreCanvasTop(anchorTop: number | null): void {
+		if (anchorTop === null) return;
+		const currentTop = getCanvasTop();
+		if (currentTop === null) return;
+		const delta = currentTop - anchorTop;
+		if (Math.abs(delta) <= 1) return;
+		window.scrollBy({ top: delta, left: 0 });
 	}
 
 	function isRemoteHook(value: HookExecutionPreview | WorkflowPlanHook): value is WorkflowPlanHook {
@@ -1072,6 +1300,8 @@
 				return 'Cycle detected';
 			case 'upstream_blocked':
 				return `Blocked by upstream${item.details ? `: ${item.details}` : ''}`;
+			case 'invalid_trigger':
+				return `Missing trigger source${item.details ? `: ${displayHookLabel(item.details)}` : ''}`;
 			case 'policy_violation':
 				return `Policy violation${item.details ? `: ${item.details}` : ''}`;
 			default:
@@ -1084,15 +1314,22 @@
 	<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
 		<div>
 			<p class="sf:text-sm sf:font-medium sf:text-slate-700">Dependency graph</p>
-			<div class="sf:mt-1 sf:flex sf:flex-wrap sf:items-center sf:gap-2 sf:text-[11px] sf:text-slate-600">
+			<div
+				class="sf:mt-1 sf:flex sf:flex-wrap sf:items-center sf:gap-2 sf:text-[11px] sf:text-slate-600"
+			>
 				<span class="sf:rounded-full sf:border sf:border-slate-200 sf:bg-white sf:px-2 sf:py-0.5">
 					Pan, zoom, and drag enabled
 				</span>
 				<span class="sf:rounded-full sf:border sf:border-blue-200 sf:bg-blue-50 sf:px-2 sf:py-0.5">
 					Blue right handle -> left gray or hook-blue handle: dependency
 				</span>
-				<span class="sf:rounded-full sf:border sf:border-indigo-200 sf:bg-indigo-50 sf:px-2 sf:py-0.5">
+				<span
+					class="sf:rounded-full sf:border sf:border-indigo-200 sf:bg-indigo-50 sf:px-2 sf:py-0.5"
+				>
 					Hook root handle -> action: retarget trigger and make autonomous
+				</span>
+				<span class="sf:rounded-full sf:border sf:border-rose-200 sf:bg-rose-50 sf:px-2 sf:py-0.5">
+					Hover edge turns red; click to remove that dependency
 				</span>
 			</div>
 		</div>
@@ -1129,6 +1366,14 @@
 				{displayHookLabel(hookScope)}
 			</Button>
 		{/each}
+		<Button
+			size="sm"
+			variant="secondary"
+			onclick={() => onOpenAddAction?.()}
+			data-testid="dependency-graph-open-add-action"
+		>
+			Add action
+		</Button>
 	</div>
 
 	{#if hasUnsavedChanges}
@@ -1145,12 +1390,22 @@
 			<Button
 				size="sm"
 				variant="secondary"
-				onclick={() => onSaveDependencies()}
-				disabled={savingDependencies}
+				onclick={handleSaveDependenciesClick}
+				disabled={savingDependencies || hasInvalidMappings}
 			>
 				{savingDependencies ? 'Saving…' : 'Save dependencies'}
 			</Button>
 		</div>
+	{/if}
+
+	{#if hasInvalidMappings}
+		<p
+			class="sf:text-xs sf:rounded-md sf:border sf:border-rose-300 sf:bg-rose-50 sf:px-3 sf:py-2 sf:text-rose-800"
+			data-testid="dependency-graph-invalid-bar"
+		>
+			<strong>Cannot save yet:</strong>
+			{saveDisabledReason}
+		</p>
 	{/if}
 
 	{#if editingLabel}
@@ -1182,8 +1437,8 @@
 				<Button
 					size="sm"
 					variant={hasUnsavedChanges ? 'secondary' : 'primary'}
-					onclick={() => onSaveDependencies()}
-					disabled={savingDependencies}
+					onclick={handleSaveDependenciesClick}
+					disabled={savingDependencies || hasInvalidMappings}
 					data-testid="dependency-graph-save"
 				>
 					{savingDependencies ? 'Saving…' : 'Save dependencies'}
@@ -1252,29 +1507,38 @@
 			<div
 				class="sf:relative sf:h-[520px] sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50"
 				data-testid="dependency-graph-canvas"
+				data-viewport={`${flowViewport.x.toFixed(2)},${flowViewport.y.toFixed(2)},${flowViewport.zoom.toFixed(3)}`}
+				bind:this={graphCanvasElement}
 			>
-				<SvelteFlow
-					bind:nodes={flowNodes}
-					bind:edges={flowEdges}
-					fitView
+					<SvelteFlow
+						bind:nodes={flowNodes}
+						bind:edges={flowEdges}
+						bind:viewport={flowViewport}
+						fitView={shouldAutoFitView}
 					nodesDraggable
 					nodesConnectable
 					elementsSelectable
 					panOnDrag
 					zoomOnScroll
-					onconnect={handleConnect}
-					onconnectstart={handleConnectStart}
-					onconnectend={handleConnectEnd}
-					onedgeclick={handleEdgeClick}
+						onconnect={handleConnect}
+						onconnectstart={handleConnectStart}
+						onconnectend={handleConnectEnd}
+						onclickconnectstart={handleConnectStart}
+						onclickconnectend={handleConnectEnd}
+						onedgeclick={handleEdgeClick}
+					onedgepointerenter={handleEdgePointerEnter}
+					onedgepointerleave={handleEdgePointerLeave}
+					onnodedrag={handleNodeDrag}
 					onnodedragstop={handleNodeDragStop}
 					{isValidConnection}
 					connectionMode={ConnectionMode.Strict}
 					connectionLineType={ConnectionLineType.SmoothStep}
-					{nodeTypes}
-					{edgeTypes}
-					class="sf:rounded-md"
-					noDragClass="nodrag"
-					noPanClass="nopan"
+						{nodeTypes}
+						{edgeTypes}
+						clickConnect
+						class="sf:rounded-md"
+						noDragClass="nodrag"
+						noPanClass="nopan"
 					noWheelClass="nowheel"
 					connectionRadius={56}
 					minZoom={0.3}
@@ -1425,3 +1689,15 @@
 		</p>
 	{/if}
 </div>
+
+	<style>
+		:global(.sf-removable-edge path),
+		:global(path.sf-removable-edge) {
+			cursor: pointer;
+			transition:
+				stroke 120ms ease,
+				stroke-width 120ms ease,
+				opacity 120ms ease;
+		}
+
+	</style>
