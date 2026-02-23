@@ -71,6 +71,15 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         'lte',
     ];
 
+    /** Maximum number of draft mappings accepted by the request tracer. */
+    private const MAX_TRACE_DRAFT_MAPPINGS = 200;
+
+    /** Maximum number of entry values accepted by the request tracer. */
+    private const MAX_TRACE_ENTRY_VALUES = 200;
+
+    /** Maximum string length per trace entry value. */
+    private const MAX_TRACE_VALUE_LENGTH = 4096;
+
     public function __construct()
     {
         parent::__construct();
@@ -209,6 +218,60 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                                 'required'          => false,
                                 'default'           => 'all',
                                 'sanitize_callback' => 'sanitize_text_field',
+                            ],
+                        ],
+                    ),
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/request-trace',
+            [
+                [
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => [ $this, 'get_request_trace' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
+                    'args'                => array_merge(
+                        $this->get_collection_args(),
+                        [
+                            'hook_scope'    => [
+                                'description'       => __( 'Hook scope for the request trace (all or specific hook).', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => false,
+                                'default'           => 'all',
+                                'sanitize_callback' => 'sanitize_text_field',
+                            ],
+                            'entry_values'  => [
+                                'description'       => __( 'Manual scalar field values keyed by field id.', 'sentient-forms' ),
+                                'type'              => 'object',
+                                'required'          => false,
+                            ],
+                            'entry_id'      => [
+                                'description'       => __( 'Optional Gravity Forms entry id used for trace input import.', 'sentient-forms' ),
+                                'type'              => 'integer',
+                                'required'          => false,
+                                'validate_callback' => [ $this, 'validate_entry_id_param' ],
+                            ],
+                            'field_scope'   => [
+                                'description'       => __( 'Entry import scope for trace input filtering.', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => false,
+                                'default'           => 'mapped_and_rule',
+                                'sanitize_callback' => 'sanitize_text_field',
+                            ],
+                            'include_drafts' => [
+                                'description'       => __( 'Whether unsaved draft mappings should be used during tracing.', 'sentient-forms' ),
+                                'type'              => 'boolean',
+                                'required'          => false,
+                                'default'           => true,
+                                'sanitize_callback' => 'rest_sanitize_boolean',
+                            ],
+                            'draft_mappings' => [
+                                'description'       => __( 'Optional draft mapping payload used for non-persistent simulation.', 'sentient-forms' ),
+                                'type'              => 'array',
+                                'required'          => false,
                             ],
                         ],
                     ),
@@ -549,6 +612,632 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return $this->prepare_item_for_response( $fallback );
+    }
+
+    /**
+     * Return request-trace simulation details for the current mapping graph.
+     *
+     * @param WP_REST_Request $request Request object.
+     *
+     * @return WP_Error|WP_REST_Response
+     */
+    public function get_request_trace( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $form_source_slug = $request->get_param( 'form_source_slug' );
+        $form_id          = (int) $request->get_param( 'form_id' );
+        $hook_scope       = sanitize_text_field( (string) ( $request->get_param( 'hook_scope' ) ?? 'all' ) );
+        $hook_scope       = 'all' === $hook_scope || in_array( $hook_scope, self::ALLOWED_TRIGGER_HOOKS, true )
+            ? $hook_scope
+            : 'all';
+        $field_scope      = $this->sanitize_trace_field_scope( (string) ( $request->get_param( 'field_scope' ) ?? 'mapped_and_rule' ) );
+        $manual_values    = $this->sanitize_trace_entry_values( $request->get_param( 'entry_values' ) );
+        $entry_id         = (int) ( $request->get_param( 'entry_id' ) ?? 0 );
+        $include_drafts   = rest_sanitize_boolean( $request->get_param( 'include_drafts' ) );
+        $draft_mappings   = $include_drafts
+            ? $this->sanitize_trace_draft_mappings( $request->get_param( 'draft_mappings' ) )
+            : [];
+
+        $actions = $this->normalize_trace_actions_for_form( $form_source_slug, $form_id );
+        if ( $include_drafts && ! empty( $draft_mappings ) )
+        {
+            foreach ( $draft_mappings as $draft_mapping )
+            {
+                if ( ! is_array( $draft_mapping ) )
+                {
+                    continue;
+                }
+
+                $mapping_id = isset( $draft_mapping['local_mapping_id'] ) && is_scalar( $draft_mapping['local_mapping_id'] )
+                    ? sanitize_text_field( (string) $draft_mapping['local_mapping_id'] )
+                    : '';
+                if ( '' === $mapping_id )
+                {
+                    continue;
+                }
+
+                $actions[ $mapping_id ] = $draft_mapping;
+            }
+        }
+
+        [ $entry_values, $input_meta ] = $this->resolve_trace_entry_values(
+            $actions,
+            $manual_values,
+            $entry_id,
+            $field_scope,
+        );
+        if ( is_wp_error( $entry_values ) )
+        {
+            return $entry_values;
+        }
+
+        $plugin = Sentient_Forms_Plugin::instance();
+        $tracer = new Sentient_Forms_Request_Tracer(
+            $plugin->get_mapping_dependency_planner(),
+            $plugin->get_condition_evaluator(),
+        );
+
+        $trace           = $tracer->trace( $actions, $entry_values, $hook_scope );
+        $trace['input']  = $this->build_trace_input_payload(
+            $entry_id,
+            $field_scope,
+            $manual_values,
+            $entry_values,
+            $input_meta,
+            $include_drafts,
+            ! empty( $draft_mappings ),
+        );
+
+        return $this->prepare_item_for_response( $trace );
+    }
+
+    /**
+     * @param mixed $field_scope Raw field scope value.
+     */
+    private function sanitize_trace_field_scope( string $field_scope ): string
+    {
+        $normalized = sanitize_key( $field_scope );
+        return 'mapped_and_rule' === $normalized ? 'mapped_and_rule' : 'mapped_and_rule';
+    }
+
+    /**
+     * @param mixed $raw_values Manual entry values payload.
+     *
+     * @return array<string, string>
+     */
+    private function sanitize_trace_entry_values( $raw_values ): array
+    {
+        if ( ! is_array( $raw_values ) )
+        {
+            return [];
+        }
+
+        $sanitized = [];
+        foreach ( $raw_values as $field_id => $value )
+        {
+            if ( count( $sanitized ) >= self::MAX_TRACE_ENTRY_VALUES )
+            {
+                break;
+            }
+
+            if ( ! is_scalar( $field_id ) || '' === trim( (string) $field_id ) )
+            {
+                continue;
+            }
+            if ( ! is_scalar( $value ) && null !== $value )
+            {
+                continue;
+            }
+
+            $normalized_field_id = sanitize_text_field( (string) $field_id );
+            if ( '' === $normalized_field_id )
+            {
+                continue;
+            }
+
+            if ( null === $value )
+            {
+                continue;
+            }
+
+            $normalized_value = sanitize_text_field( (string) $value );
+            if ( strlen( $normalized_value ) > self::MAX_TRACE_VALUE_LENGTH )
+            {
+                $normalized_value = substr( $normalized_value, 0, self::MAX_TRACE_VALUE_LENGTH );
+            }
+
+            $sanitized[ $normalized_field_id ] = $normalized_value;
+        }
+
+        return $sanitized;
+    }
+
+    /**
+     * @param mixed $raw_mappings Draft mappings payload.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function sanitize_trace_draft_mappings( $raw_mappings ): array
+    {
+        if ( ! is_array( $raw_mappings ) )
+        {
+            return [];
+        }
+
+        $sanitized = [];
+        foreach ( $raw_mappings as $candidate )
+        {
+            if ( count( $sanitized ) >= self::MAX_TRACE_DRAFT_MAPPINGS )
+            {
+                break;
+            }
+            if ( ! is_array( $candidate ) )
+            {
+                continue;
+            }
+
+            $mapping = $this->sanitize_trace_draft_mapping( $candidate );
+            if ( empty( $mapping ) )
+            {
+                continue;
+            }
+
+            $sanitized[] = $mapping;
+        }
+
+        return $sanitized;
+    }
+
+    /**
+     * @param array<string, mixed> $mapping Raw mapping payload.
+     *
+     * @return array<string, mixed>
+     */
+    private function sanitize_trace_draft_mapping( array $mapping ): array
+    {
+        $local_mapping_id = isset( $mapping['local_mapping_id'] ) && is_scalar( $mapping['local_mapping_id'] )
+            ? sanitize_text_field( (string) $mapping['local_mapping_id'] )
+            : '';
+        $central_action_id = isset( $mapping['central_action_id'] ) && is_scalar( $mapping['central_action_id'] )
+            ? sanitize_text_field( (string) $mapping['central_action_id'] )
+            : '';
+        if ( '' === $local_mapping_id || '' === $central_action_id )
+        {
+            return [];
+        }
+
+        $action_type_indicator = isset( $mapping['action_type_indicator'] ) && is_scalar( $mapping['action_type_indicator'] )
+            ? sanitize_key( (string) $mapping['action_type_indicator'] )
+            : 'master';
+        if ( ! in_array( $action_type_indicator, self::ACTION_TYPE_INDICATORS, true ) )
+        {
+            $action_type_indicator = 'master';
+        }
+
+        $trigger_hooks = isset( $mapping['trigger_hooks'] ) && is_array( $mapping['trigger_hooks'] )
+            ? $this->sanitize_trigger_hooks( $mapping['trigger_hooks'] )
+            : [];
+
+        $settings = [];
+        if ( isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) )
+        {
+            $settings = $this->sanitize_settings( $mapping['settings'] );
+            if ( isset( $mapping['settings']['trigger_sources'] ) && is_array( $mapping['settings']['trigger_sources'] ) )
+            {
+                $settings['trigger_sources'] = $this->sanitize_trace_trigger_sources( $mapping['settings']['trigger_sources'] );
+            }
+        }
+
+        $result = [
+            'local_mapping_id'           => $local_mapping_id,
+            'central_action_id'          => $central_action_id,
+            'action_type_indicator'      => $action_type_indicator,
+            'trigger_hooks'              => $trigger_hooks,
+            'is_action_enabled_for_form' => isset( $mapping['is_action_enabled_for_form'] )
+                ? rest_sanitize_boolean( $mapping['is_action_enabled_for_form'] )
+                : true,
+            'settings'                   => $settings,
+        ];
+
+        if ( isset( $mapping['action_name_label'] ) && is_scalar( $mapping['action_name_label'] ) )
+        {
+            $result['action_name_label'] = sanitize_text_field( (string) $mapping['action_name_label'] );
+        }
+
+        if ( isset( $mapping['execution_mode'] ) && is_scalar( $mapping['execution_mode'] ) )
+        {
+            $execution_mode = sanitize_key( (string) $mapping['execution_mode'] );
+            if ( in_array( $execution_mode, [ 'validation', 'after_submission', 'real_time' ], true ) )
+            {
+                $result['execution_mode'] = $execution_mode;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * Sanitize per-hook trigger source definitions for tracing (supports unbound).
+     *
+     * @param array<string, mixed> $trigger_sources Raw trigger sources keyed by hook id.
+     *
+     * @return array<string, array{type: string, mapping_id?: string}>
+     */
+    private function sanitize_trace_trigger_sources( array $trigger_sources ): array
+    {
+        $sanitized = [];
+        foreach ( $trigger_sources as $hook => $source )
+        {
+            if ( ! is_scalar( $hook ) || ! is_array( $source ) )
+            {
+                continue;
+            }
+
+            $hook_key = sanitize_key( (string) $hook );
+            if ( '' === $hook_key || ! in_array( $hook_key, self::ALLOWED_TRIGGER_HOOKS, true ) )
+            {
+                continue;
+            }
+
+            $type = isset( $source['type'] ) && is_scalar( $source['type'] )
+                ? sanitize_key( (string) $source['type'] )
+                : '';
+            if ( 'hook_root' === $type || 'unbound' === $type )
+            {
+                $sanitized[ $hook_key ] = [ 'type' => $type ];
+                continue;
+            }
+
+            if ( 'mapping' !== $type )
+            {
+                continue;
+            }
+
+            $mapping_id = '';
+            if ( isset( $source['mapping_id'] ) && is_scalar( $source['mapping_id'] ) )
+            {
+                $mapping_id = sanitize_text_field( (string) $source['mapping_id'] );
+            }
+            elseif ( isset( $source['source_mapping_id'] ) && is_scalar( $source['source_mapping_id'] ) )
+            {
+                $mapping_id = sanitize_text_field( (string) $source['source_mapping_id'] );
+            }
+
+            if ( '' === $mapping_id )
+            {
+                continue;
+            }
+
+            $sanitized[ $hook_key ] = [
+                'type'       => 'mapping',
+                'mapping_id' => $mapping_id,
+            ];
+        }
+
+        return $sanitized;
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function normalize_trace_actions_for_form( string $form_source_slug, int $form_id ): array
+    {
+        $option_key    = $this->get_actions_option_key( $form_source_slug, $form_id );
+        $local_actions = get_option( $option_key, [] );
+        if ( ! is_array( $local_actions ) )
+        {
+            $local_actions = [];
+        }
+        unset( $local_actions['sf_disabled'] );
+
+        $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
+        $merged      = $this->merge_local_and_cps_actions( array_values( $local_actions ), $cps_actions );
+
+        return $this->normalize_local_action_mappings( $merged );
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $actions
+     * @param array<string, string>               $manual_values
+     *
+     * @return array{0: array<string, string>|WP_Error, 1: array<string, mixed>}
+     */
+    private function resolve_trace_entry_values(
+        array $actions,
+        array $manual_values,
+        int $entry_id,
+        string $field_scope
+    ): array
+    {
+        $meta = [
+            'entry_id'           => $entry_id > 0 ? $entry_id : null,
+            'imported_field_ids' => [],
+            'overridden_field_ids' => [],
+            'warnings'           => [],
+        ];
+
+        if ( $entry_id <= 0 )
+        {
+            return [ $manual_values, $meta ];
+        }
+
+        if ( ! class_exists( 'GFAPI' ) )
+        {
+            return [
+                $this->prepare_error_response( 'rest_gf_missing', __( 'Gravity Forms is required for this endpoint.', 'sentient-forms' ), 500 ),
+                $meta,
+            ];
+        }
+
+        $entry = GFAPI::get_entry( $entry_id );
+        if ( is_wp_error( $entry ) )
+        {
+            return [
+                $this->prepare_error_response( 'rest_entry_not_found', __( 'Entry not found.', 'sentient-forms' ), 404 ),
+                $meta,
+            ];
+        }
+
+        $imported_values = $this->extract_scalar_entry_values( $entry );
+        if ( 'mapped_and_rule' === $field_scope )
+        {
+            $allowed_field_ids = $this->collect_trace_referenced_field_ids( $actions, $imported_values );
+            if ( ! empty( $allowed_field_ids ) )
+            {
+                $imported_values = array_intersect_key( $imported_values, array_flip( $allowed_field_ids ) );
+            }
+            else
+            {
+                $imported_values = [];
+            }
+        }
+
+        $meta['imported_field_ids']  = array_values( array_map( 'strval', array_keys( $imported_values ) ) );
+        $meta['overridden_field_ids'] = array_values(
+            array_map(
+                'strval',
+                array_intersect(
+                    array_keys( $manual_values ),
+                    array_keys( $imported_values )
+                )
+            )
+        );
+
+        if ( empty( $imported_values ) )
+        {
+            $meta['warnings'][] = __( 'No entry fields matched the selected trace field scope.', 'sentient-forms' );
+        }
+
+        $combined = array_merge( $imported_values, $manual_values );
+
+        return [ $combined, $meta ];
+    }
+
+    /**
+     * @param array<string, string> $import_values
+     * @param array<string, string> $effective_values
+     * @param array<string, mixed>  $input_meta
+     *
+     * @return array<string, mixed>
+     */
+    private function build_trace_input_payload(
+        int $entry_id,
+        string $field_scope,
+        array $manual_values,
+        array $effective_values,
+        array $input_meta,
+        bool $include_drafts,
+        bool $draft_applied
+    ): array
+    {
+        $source = 'empty';
+        if ( $entry_id > 0 && ! empty( $manual_values ) )
+        {
+            $source = 'entry_import_with_manual_overrides';
+        }
+        elseif ( $entry_id > 0 )
+        {
+            $source = 'entry_import';
+        }
+        elseif ( ! empty( $manual_values ) )
+        {
+            $source = 'manual';
+        }
+
+        return [
+            'source'               => $source,
+            'entry_id'             => $entry_id > 0 ? $entry_id : null,
+            'field_scope'          => $field_scope,
+            'values'               => $effective_values,
+            'manual_field_ids'     => array_values( array_map( 'strval', array_keys( $manual_values ) ) ),
+            'imported_field_ids'   => is_array( $input_meta['imported_field_ids'] ?? null )
+                ? array_values( $input_meta['imported_field_ids'] )
+                : [],
+            'overridden_field_ids' => is_array( $input_meta['overridden_field_ids'] ?? null )
+                ? array_values( $input_meta['overridden_field_ids'] )
+                : [],
+            'warnings'             => is_array( $input_meta['warnings'] ?? null )
+                ? array_values( array_filter( $input_meta['warnings'], 'is_string' ) )
+                : [],
+            'include_drafts'       => $include_drafts,
+            'draft_applied'        => $draft_applied,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed>  $entry
+     *
+     * @return array<string, string>
+     */
+    private function extract_scalar_entry_values( array $entry ): array
+    {
+        $values = [];
+        foreach ( $entry as $key => $value )
+        {
+            if ( ! is_scalar( $key ) || ! is_scalar( $value ) )
+            {
+                continue;
+            }
+
+            $field_id = sanitize_text_field( (string) $key );
+            if ( '' === $field_id )
+            {
+                continue;
+            }
+
+            $field_value = sanitize_text_field( (string) $value );
+            if ( strlen( $field_value ) > self::MAX_TRACE_VALUE_LENGTH )
+            {
+                $field_value = substr( $field_value, 0, self::MAX_TRACE_VALUE_LENGTH );
+            }
+
+            $values[ $field_id ] = $field_value;
+        }
+
+        return $values;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $actions
+     * @param array<string, string>               $entry_values
+     *
+     * @return array<int, string>
+     */
+    private function collect_trace_referenced_field_ids( array $actions, array $entry_values ): array
+    {
+        $field_ids = [];
+        foreach ( $actions as $mapping )
+        {
+            if ( ! is_array( $mapping ) )
+            {
+                continue;
+            }
+
+            $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+                ? $mapping['settings']
+                : [];
+
+            $input_mapping = $this->normalize_trace_input_mapping( $settings['input_mapping'] ?? null );
+            if ( is_array( $input_mapping ) )
+            {
+                $mode      = $input_mapping['mode'] ?? 'selected';
+                $field_ids_list = isset( $input_mapping['field_ids'] ) && is_array( $input_mapping['field_ids'] )
+                    ? array_values( array_map( 'strval', $input_mapping['field_ids'] ) )
+                    : [];
+
+                if ( 'all' === $mode )
+                {
+                    $field_ids = array_merge( $field_ids, array_keys( $entry_values ) );
+                }
+                elseif ( 'exclude' === $mode )
+                {
+                    $remaining = array_diff( array_keys( $entry_values ), $field_ids_list );
+                    $field_ids = array_merge( $field_ids, $remaining );
+                }
+                else
+                {
+                    $field_ids = array_merge( $field_ids, $field_ids_list );
+                }
+            }
+
+            if (
+                isset( $settings['conditions'] )
+                && is_array( $settings['conditions'] )
+                && ! empty( $settings['conditions']['enabled'] )
+                && isset( $settings['conditions']['root'] )
+                && is_array( $settings['conditions']['root'] )
+            )
+            {
+                $this->collect_trace_condition_field_ids_from_node( $settings['conditions']['root'], $field_ids );
+            }
+        }
+
+        $field_ids = array_filter(
+            array_map(
+                static fn( $field_id ): string => sanitize_text_field( (string) $field_id ),
+                $field_ids
+            ),
+            static fn( string $field_id ): bool => '' !== $field_id
+        );
+
+        return array_values( array_unique( $field_ids ) );
+    }
+
+    /**
+     * @param mixed               $input_mapping Raw input mapping.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function normalize_trace_input_mapping( $input_mapping ): ?array
+    {
+        if ( ! is_array( $input_mapping ) )
+        {
+            return null;
+        }
+
+        $mode = isset( $input_mapping['mode'] ) && is_scalar( $input_mapping['mode'] )
+            ? sanitize_key( (string) $input_mapping['mode'] )
+            : 'selected';
+        if ( ! in_array( $mode, [ 'all', 'selected', 'exclude' ], true ) )
+        {
+            $mode = 'selected';
+        }
+
+        $field_ids = [];
+        if ( isset( $input_mapping['field_ids'] ) && is_array( $input_mapping['field_ids'] ) )
+        {
+            foreach ( $input_mapping['field_ids'] as $field_id )
+            {
+                if ( ! is_scalar( $field_id ) )
+                {
+                    continue;
+                }
+
+                $normalized = sanitize_text_field( (string) $field_id );
+                if ( '' === $normalized )
+                {
+                    continue;
+                }
+                $field_ids[] = $normalized;
+            }
+        }
+
+        return [
+            'mode'      => $mode,
+            'field_ids' => array_values( array_unique( $field_ids ) ),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $node
+     * @param array<int, string>   $field_ids
+     */
+    private function collect_trace_condition_field_ids_from_node( array $node, array &$field_ids ): void
+    {
+        $type = isset( $node['type'] ) && is_scalar( $node['type'] )
+            ? sanitize_key( (string) $node['type'] )
+            : '';
+        if ( 'rule' === $type )
+        {
+            $field_id = isset( $node['field_id'] ) && is_scalar( $node['field_id'] )
+                ? sanitize_text_field( (string) $node['field_id'] )
+                : '';
+            if ( '' !== $field_id )
+            {
+                $field_ids[] = $field_id;
+            }
+            return;
+        }
+
+        $rules = isset( $node['rules'] ) && is_array( $node['rules'] ) ? $node['rules'] : [];
+        foreach ( $rules as $child )
+        {
+            if ( ! is_array( $child ) )
+            {
+                continue;
+            }
+
+            $this->collect_trace_condition_field_ids_from_node( $child, $field_ids );
+        }
     }
 
     /**

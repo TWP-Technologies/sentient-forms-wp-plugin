@@ -70,6 +70,7 @@ return [
 	'Sentient_Forms_Plugin' => __DIR__ . '/class-sentient-forms-plugin.php',
 	'Sentient_Forms_REST_API' => __DIR__ . '/rest-api/class-rest-api.php',
 	'Sentient_Forms_REST_Argument_Utils' => __DIR__ . '/rest-api/utilities.php',
+	'Sentient_Forms_Request_Tracer' => __DIR__ . '/services/class-sentient-forms-request-tracer.php',
 	'Sentient_Forms_Settings_Controller' => __DIR__ . '/rest-api/controllers/class-settings-controller.php',
 	'Sentient_Forms_Settings_Validator' => __DIR__ . '/rest-api/validators/class-settings-validator.php',
 	'Sentient_Forms_Site_Context_Controller' => __DIR__ . '/rest-api/controllers/class-site-context-controller.php',
