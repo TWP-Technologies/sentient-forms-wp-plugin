@@ -460,6 +460,30 @@ test.describe('Actions admin flows', () => {
 		await expect(definitionsCard.getByText('Spam check', { exact: true })).toBeVisible();
 	});
 
+	test('keeps sidebar active state aligned for nested action routes', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
+		await expect(page.locator('nav a[href="#/actions"]')).toHaveClass(/sf-bg-slate-200/);
+		await expect(page.locator('nav a[href="#/actions"]')).toHaveClass(/sf-text-slate-900/);
+		await expect(page.locator('nav a[href="#/actions/custom"]')).not.toHaveClass(/sf-bg-slate-200/);
+
+		await page.goto('/#/actions/custom/new', { waitUntil: 'networkidle' });
+		await expect(page.locator('main > section > header h2', { hasText: 'Create Custom Action' })).toBeVisible();
+		await expect(page.locator('nav a[href="#/actions/custom"]')).toHaveClass(/sf-bg-slate-200/);
+		await expect(page.locator('nav a[href="#/actions/custom"]')).toHaveClass(/sf-text-slate-900/);
+	});
+
 	test('creates a CPS template mapping from the drawer', async ({ page }) => {
 		await page.addInitScript(() => {
 			try {

@@ -11,7 +11,10 @@ import {
 	appHref,
 	deriveActivePath,
 	navigateToAppPath,
+	normalizeRoutePath,
+	readHashPathFromLocation,
 	resolveRouterType,
+	resolveActiveNavPath,
 	routerType
 } from '../../src/lib/navigation';
 
@@ -36,6 +39,19 @@ describe('navigation helpers', () => {
 		expect(deriveActivePath(url)).toBe('/actions/demo/42');
 	});
 
+	it('normalizes route paths for matching and recovery', () => {
+		expect(normalizeRoutePath('#/actions/demo/42/?tab=raw')).toBe('/actions/demo/42');
+		expect(normalizeRoutePath('/settings/context/?section=telemetry')).toBe('/settings/context');
+		expect(normalizeRoutePath('')).toBe('/');
+	});
+
+	it('maps nested routes to the correct sidebar parent link', () => {
+		expect(resolveActiveNavPath('/actions/gravity_forms/123')).toBe('/actions');
+		expect(resolveActiveNavPath('/actions/custom/new')).toBe('/actions/custom');
+		expect(resolveActiveNavPath('/actions/log/details/1')).toBe('/actions/log');
+		expect(resolveActiveNavPath('/settings/context')).toBe('/settings');
+	});
+
 	it('builds pathname hrefs when requested', () => {
 		expect(appHref('/licensing', { routerType: 'pathname', basePath: '/sentient-forms' })).toBe(
 			'/sentient-forms/licensing'
@@ -46,5 +62,10 @@ describe('navigation helpers', () => {
 		await navigateToAppPath('/actions/demo/42');
 		expect(vi.mocked(goto)).toHaveBeenCalled();
 		expect(window.location.hash).toBe('#/actions/demo/42');
+	});
+
+	it('reads and normalizes the hash path from browser location', () => {
+		window.location.hash = '#/actions/custom/new/?step=1';
+		expect(readHashPathFromLocation()).toBe('/actions/custom/new');
 	});
 });

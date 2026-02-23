@@ -70,4 +70,34 @@ test.describe('Sentient Forms admin actions', () => {
 		expect(Array.isArray(data)).toBeTruthy();
 		expect(JSON.stringify(data)).toContain('Playwright Spam Detection');
 	});
-});
+
+	test('keeps hash, rendered view, and active sidebar state aligned under rapid nav clicks', async ({
+		page
+	}) => {
+		await openSentientForms(page, '/dashboard');
+
+		const customActionsLink = page.locator('nav a[href="#/actions/custom"]');
+		const dashboardLink = page.locator('nav a[href="#/dashboard"]');
+
+		await customActionsLink.click();
+		await page.waitForTimeout(120);
+		await dashboardLink.click();
+		await page.waitForTimeout(1000);
+
+		const state = await page.evaluate(() => {
+			const heading = document.querySelector('main h2')?.textContent?.trim() ?? null;
+			const activeLinks = Array.from(document.querySelectorAll('nav a'))
+				.filter((link) => link.className.includes('sf-bg-slate-200'))
+				.map((link) => link.textContent?.trim() ?? '');
+			return {
+				hash: window.location.hash,
+				heading,
+				activeLinks
+			};
+		});
+
+		expect(state.hash).toBe('#/dashboard');
+		expect(state.heading).toBe('Dashboard');
+		expect(state.activeLinks).toEqual(['Dashboard']);
+	});
+	});
