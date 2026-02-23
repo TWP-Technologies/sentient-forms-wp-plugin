@@ -61,6 +61,36 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 		expect(messages.some((message) => message.includes('missing hooks'))).toBe(true);
 	});
 
+	it('flags mappings with unbound trigger sources as invalid', () => {
+		const items: FormActionLinkage[] = [
+			{
+				local_mapping_id: 'map_unbound',
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				trigger_hooks: ['gform_validation'],
+				action_name_label: 'map_unbound',
+				settings: {
+					trigger_sources: {
+						gform_validation: { type: 'unbound' }
+					}
+				}
+			}
+		];
+
+		const issues = validateMappingDependencies(items);
+		expect(
+			issues.some(
+				(issue) =>
+					issue.code === 'unbound_trigger' &&
+					issue.mappingId === 'map_unbound' &&
+					issue.hook === 'gform_validation'
+			)
+		).toBe(true);
+		expect(
+			formatDependencyIssues(issues).some((message) => message.includes('no trigger source'))
+		).toBe(true);
+	});
+
 	it('keeps stable issue identities for hook mismatch issues', () => {
 		const items: FormActionLinkage[] = [
 			linkage('map_a', ['gform_validation'], ['map_b']),
@@ -70,6 +100,29 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 		const hookMismatch = issues.find((issue) => issue.code === 'hook_mismatch');
 		expect(hookMismatch).toBeTruthy();
 		expect(dependencyIssueIdentity(hookMismatch!)).toContain('hook_mismatch:map_a:map_b');
+	});
+
+	it('keeps stable issue identities for unbound trigger issues', () => {
+		const items: FormActionLinkage[] = [
+			{
+				local_mapping_id: 'map_unbound',
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				trigger_hooks: ['gform_after_submission'],
+				action_name_label: 'map_unbound',
+				settings: {
+					trigger_sources: {
+						gform_after_submission: { type: 'unbound' }
+					}
+				}
+			}
+		];
+		const issues = validateMappingDependencies(items);
+		const unboundIssue = issues.find((issue) => issue.code === 'unbound_trigger');
+		expect(unboundIssue).toBeTruthy();
+		expect(dependencyIssueIdentity(unboundIssue!)).toBe(
+			'unbound_trigger:map_unbound:gform_after_submission'
+		);
 	});
 
 	it('finds only newly introduced dependency issues', () => {
@@ -301,6 +354,53 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 		expect(byId.get('map_a')?.depth).toBe(0);
 		expect(byId.get('map_b')?.depth).toBe(1);
 		expect(byId.get('map_c')?.depth).toBe(2);
+	});
+
+	it('omits root edges when a hook is explicitly unbound', () => {
+		const items: FormActionLinkage[] = [
+			{
+				local_mapping_id: 'map_unbound',
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				trigger_hooks: ['gform_after_submission'],
+				action_name_label: 'map_unbound',
+				settings: {
+					trigger_sources: {
+						gform_after_submission: { type: 'unbound' }
+					}
+				}
+			}
+		];
+
+		const graph = buildDependencyGraph(items);
+		const rootEdges = graph.edges.filter((edge) => edge.kind === 'hook_root');
+		expect(rootEdges).toEqual([]);
+	});
+
+	it('marks unbound trigger mappings as blocked in execution preview', () => {
+		const items: FormActionLinkage[] = [
+			{
+				local_mapping_id: 'map_unbound',
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				trigger_hooks: ['gform_after_submission'],
+				action_name_label: 'map_unbound',
+				settings: {
+					trigger_sources: {
+						gform_after_submission: { type: 'unbound' }
+					}
+				}
+			}
+		];
+
+		const preview = buildExecutionPreview(items, 'gform_after_submission');
+		const hookPreview = preview.hooks[0];
+		expect(hookPreview?.runnable).toEqual([]);
+		expect(
+			hookPreview?.blocked.some(
+				(item) => item.mappingId === 'map_unbound' && item.reason === 'invalid_trigger'
+			)
+		).toBe(true);
 	});
 
 	it('omits hook-root edges for non-autonomous mappings', () => {

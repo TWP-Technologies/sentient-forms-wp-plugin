@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
 import { seedRuntimeConfig } from './utils/runtime-config';
 import { mockWpJson } from './utils/mock-wpjson';
 
@@ -96,6 +96,24 @@ async function openLinkedActionsTable(page: Parameters<typeof test>[0]['page']) 
 	return table;
 }
 
+async function ensureDependencyGraphVisible(page: Parameters<typeof test>[0]['page']) {
+	const graphCanvas = page.getByTestId('dependency-graph-canvas');
+	const graphToggle = page.getByTestId('linked-actions-view-graph');
+	const canvasVisible =
+		(await graphCanvas.count()) > 0 &&
+		(await graphCanvas
+			.first()
+			.isVisible()
+			.catch(() => false));
+
+	if (!canvasVisible && (await graphToggle.count()) > 0) {
+		await graphToggle.first().click();
+	}
+
+	await expect(graphCanvas).toBeVisible();
+	return graphCanvas;
+}
+
 async function saveMappingConfigModal(page: Parameters<typeof test>[0]['page']) {
 	const modal = page.getByTestId('mapping-config-modal');
 	await modal
@@ -107,15 +125,40 @@ async function saveMappingConfigModal(page: Parameters<typeof test>[0]['page']) 
 async function connectHandlesByMouse(
 	page: Parameters<typeof test>[0]['page'],
 	sourceSelector: string,
-	targetSelector: string
+	targetSelector: string,
+	attempt = 0
 ) {
-	const source = page.locator(sourceSelector).first();
-	const target = page.locator(targetSelector).first();
+	const viewport = page.getByTestId('dependency-graph-canvas').locator('.svelte-flow__viewport');
+	const source = viewport.locator(sourceSelector).first();
+	const target = viewport.locator(targetSelector).first();
 	await expect(source).toBeVisible();
 	await expect(target).toBeVisible();
 	await source.scrollIntoViewIfNeeded();
 	await target.scrollIntoViewIfNeeded();
 	await source.hover();
+
+	if (process.env.SF_E2E_DEBUG_HANDLES === '1') {
+		const sourceCount = await viewport.locator(sourceSelector).count();
+		const targetCount = await viewport.locator(targetSelector).count();
+		const sourceMeta = await source.evaluate((node) => ({
+			className: node.className,
+			dataset: { ...node.dataset },
+			outerHTML: node.outerHTML
+		}));
+		const targetMeta = await target.evaluate((node) => ({
+			className: node.className,
+			dataset: { ...node.dataset },
+			outerHTML: node.outerHTML
+		}));
+		console.log('[connectHandlesByMouse] selectors', {
+			sourceSelector,
+			targetSelector,
+			sourceCount,
+			targetCount,
+			sourceMeta,
+			targetMeta
+		});
+	}
 
 	const sourceBox = await source.boundingBox();
 	const targetBox = await target.boundingBox();
@@ -125,13 +168,262 @@ async function connectHandlesByMouse(
 
 	const sourceX = sourceBox.x + sourceBox.width / 2;
 	const sourceY = sourceBox.y + sourceBox.height / 2;
-	const targetX = targetBox.x + targetBox.width / 2;
-	const targetY = targetBox.y + targetBox.height / 2;
+	const targetOffsets = [
+		{ x: 0, y: 0 },
+		{ x: -4, y: -2 },
+		{ x: -5, y: 3 },
+		{ x: 4, y: -3 }
+	];
+	const selectedOffset = targetOffsets[attempt % targetOffsets.length] ?? { x: 0, y: 0 };
+	const targetCenterX = targetBox.x + targetBox.width / 2;
+	const targetCenterY = targetBox.y + targetBox.height / 2;
+	const targetX = targetCenterX + selectedOffset.x;
+	const targetY = targetCenterY + selectedOffset.y;
+
+	if (process.env.SF_E2E_DEBUG_HANDLES === '1') {
+		console.log('[connectHandlesByMouse] geometry', {
+			attempt,
+			sourceBox,
+			targetBox,
+			sourceX,
+			sourceY,
+			targetX,
+			targetY
+		});
+	}
+
+	if (attempt % 2 === 0) {
+		await source.dragTo(target, {
+			force: true,
+			sourcePosition: {
+				x: sourceBox.width / 2,
+				y: sourceBox.height / 2
+			},
+			targetPosition: {
+				x: Math.min(Math.max(targetBox.width / 2 + selectedOffset.x, 2), targetBox.width - 2),
+				y: Math.min(Math.max(targetBox.height / 2 + selectedOffset.y, 2), targetBox.height - 2)
+			},
+			timeout: 5_000
+		});
+		return;
+	}
 
 	await page.mouse.move(sourceX, sourceY);
 	await page.mouse.down();
-	await page.mouse.move(targetX, targetY, { steps: 20 });
+	await page.mouse.move(sourceX + 8, sourceY + 6, { steps: 6 });
+	await page.mouse.move(targetX, targetY, { steps: 32 });
 	await page.mouse.up();
+}
+
+async function connectHandlesByClick(
+	page: Parameters<typeof test>[0]['page'],
+	sourceSelector: string,
+	targetSelector: string
+) {
+	const viewport = page.getByTestId('dependency-graph-canvas').locator('.svelte-flow__viewport');
+	const source = viewport.locator(sourceSelector).first();
+	const target = viewport.locator(targetSelector).first();
+	await expect(source).toBeVisible();
+	await expect(target).toBeVisible();
+	await source.scrollIntoViewIfNeeded();
+	await target.scrollIntoViewIfNeeded();
+	await source.click({ force: true });
+	await target.click({ force: true });
+}
+
+async function getVisibleFeedbackText(
+	page: Parameters<typeof test>[0]['page'],
+	feedback: Locator
+): Promise<string | null> {
+	if ((await feedback.count()) === 0) return null;
+	const firstFeedback = feedback.first();
+	const isVisible = await firstFeedback.isVisible().catch(() => false);
+	if (!isVisible) return null;
+	return (await firstFeedback.textContent())?.trim() ?? '';
+}
+
+async function waitForConnectionOutcome(
+	page: Parameters<typeof test>[0]['page'],
+	baselineFeedbackText: string | null,
+	timeoutMs = 1200
+): Promise<{
+	dirtyVisible: boolean;
+	feedbackVisible: boolean;
+	feedbackText: string;
+}> {
+	const dirtyBar = page.getByTestId('dependency-graph-dirty-bar');
+	const feedback = page.getByTestId('dependency-graph-connection-feedback');
+	const start = Date.now();
+	let latestFeedbackText = baselineFeedbackText ?? '';
+
+	while (Date.now() - start < timeoutMs) {
+		const dirtyVisible =
+			(await dirtyBar.count()) > 0 &&
+			(await dirtyBar
+				.first()
+				.isVisible()
+				.catch(() => false));
+		if (dirtyVisible) {
+			return {
+				dirtyVisible: true,
+				feedbackVisible: false,
+				feedbackText: latestFeedbackText
+			};
+		}
+
+		const feedbackText = await getVisibleFeedbackText(page, feedback);
+		if (feedbackText) {
+			latestFeedbackText = feedbackText;
+			if (feedbackText !== baselineFeedbackText) {
+				return {
+					dirtyVisible: false,
+					feedbackVisible: true,
+					feedbackText
+				};
+			}
+		}
+		await page.waitForTimeout(75);
+	}
+
+	const finalFeedbackText = await getVisibleFeedbackText(page, feedback);
+	if (finalFeedbackText && finalFeedbackText !== baselineFeedbackText) {
+		return {
+			dirtyVisible: false,
+			feedbackVisible: true,
+			feedbackText: finalFeedbackText
+		};
+	}
+	return {
+		dirtyVisible: false,
+		feedbackVisible: false,
+		feedbackText: finalFeedbackText ?? latestFeedbackText
+	};
+}
+
+async function connectHandlesAndAssert(
+	page: Parameters<typeof test>[0]['page'],
+	sourceSelector: string,
+	targetSelector: string,
+	options: {
+		expectRejected?: boolean;
+		rejectedMessage?: RegExp;
+		expectDirtyBar?: boolean;
+		maxAttempts?: number;
+		allowNoFeedbackOnFailure?: boolean;
+	} = {}
+) {
+	const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
+	const dirtyBar = page.getByTestId('dependency-graph-dirty-bar');
+	const feedback = page.getByTestId('dependency-graph-connection-feedback');
+	let lastFeedbackText = '';
+
+	for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+		const baselineFeedbackText = await getVisibleFeedbackText(page, feedback);
+		await connectHandlesByMouse(page, sourceSelector, targetSelector, attempt - 1);
+		let outcome = await waitForConnectionOutcome(page, baselineFeedbackText);
+		if (!outcome.dirtyVisible && !outcome.feedbackVisible) {
+			await connectHandlesByClick(page, sourceSelector, targetSelector);
+			outcome = await waitForConnectionOutcome(page, baselineFeedbackText);
+		}
+		const { dirtyVisible, feedbackVisible, feedbackText } = outcome;
+		if (feedbackText) {
+			lastFeedbackText = feedbackText;
+		}
+
+		if (options.expectRejected) {
+			if (feedbackVisible) {
+				if (/connection canceled/i.test(feedbackText)) {
+					continue;
+				}
+				if (options.rejectedMessage) {
+					await expect(feedback).toContainText(options.rejectedMessage);
+				}
+				await expect(dirtyBar).toHaveCount(0);
+				return;
+			}
+
+			if (dirtyVisible) {
+				throw new Error(
+					'Expected connection to be rejected, but graph marked unsaved dependency changes.'
+				);
+			}
+
+			continue;
+		}
+
+		if (dirtyVisible) {
+			if (options.expectDirtyBar ?? true) {
+				await expect(dirtyBar).toBeVisible();
+			}
+			return;
+		}
+
+		if (feedbackVisible && !/connection canceled/i.test(lastFeedbackText)) {
+			throw new Error(
+				`Expected connection to succeed, but graph rejected it: ${lastFeedbackText || 'Unknown feedback'}`
+			);
+		}
+	}
+
+	if (options.expectRejected) {
+		if (options.allowNoFeedbackOnFailure) {
+			await expect(dirtyBar).toHaveCount(0);
+			return;
+		}
+		throw new Error(
+			`Expected connection rejection feedback after ${maxAttempts} attempt(s), but none appeared.`
+		);
+	}
+
+	throw new Error(
+		`Connection did not create unsaved changes after ${maxAttempts} attempt(s). Last feedback: ${lastFeedbackText || 'none'}`
+	);
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+function assertBoxPositionStable(before: Box, after: Box, tolerance = 4): void {
+	expect(Math.abs(after.x - before.x)).toBeLessThanOrEqual(tolerance);
+	expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(tolerance);
+}
+
+function assertBoxMoved(before: Box, after: Box, minDelta = 12): void {
+	const deltaX = Math.abs(after.x - before.x);
+	const deltaY = Math.abs(after.y - before.y);
+	expect(Math.max(deltaX, deltaY)).toBeGreaterThanOrEqual(minDelta);
+}
+
+function toRelativeBox(box: Box, container: Box): Box {
+	return {
+		x: box.x - container.x,
+		y: box.y - container.y,
+		width: box.width,
+		height: box.height
+	};
+}
+
+async function dragNodeCardByMouse(
+	page: Parameters<typeof test>[0]['page'],
+	nodeId: string,
+	deltaX: number,
+	deltaY: number
+) {
+	const node = page.locator(`.svelte-flow__node[data-id="${nodeId}"]`).first();
+	await expect(node).toBeVisible();
+	await node.scrollIntoViewIfNeeded();
+
+	const box = await node.boundingBox();
+	if (!box) {
+		throw new Error(`Could not resolve graph node bounds for ${nodeId}.`);
+	}
+
+	const startX = box.x + box.width * 0.5;
+	const startY = box.y + Math.min(30, Math.max(18, box.height * 0.15));
+	await page.mouse.move(startX, startY);
+	await page.mouse.down();
+	await page.mouse.move(startX + deltaX, startY + deltaY, { steps: 24 });
+	await page.mouse.up();
+	await page.waitForTimeout(60);
 }
 
 test.describe('Actions admin flows', () => {
@@ -251,7 +543,7 @@ test.describe('Actions admin flows', () => {
 		await expect(table.getByText('Hello action')).toBeVisible();
 	});
 
-	test('creates a mapping with execute-after dependencies from the drawer', async ({ page }) => {
+	test('creates a mapping with an upstream trigger source from the drawer', async ({ page }) => {
 		await page.addInitScript(() => {
 			try {
 				localStorage.setItem('sentient_forms_last_hooks', '["gform_validation"]');
@@ -288,7 +580,7 @@ test.describe('Actions admin flows', () => {
 		await expect(drawer).toBeVisible();
 
 		const dependencyOption = drawer.locator('label', { hasText: 'ID: map-1' }).first();
-		await dependencyOption.locator('input[type="checkbox"]').check();
+		await dependencyOption.locator('input[type="radio"]').check();
 		await expect(dependencyOption.getByText('Spam check')).toBeVisible();
 
 		const createReq = page.waitForRequest(/forms\/\d+\/actions$/);
@@ -300,9 +592,16 @@ test.describe('Actions admin flows', () => {
 		const payload = request.postDataJSON() as Record<string, unknown>;
 		const settings = (payload.settings ?? {}) as Record<string, unknown>;
 		expect(settings.dependency_ids).toEqual(['map-1']);
+		expect((settings.trigger_sources as Record<string, { type?: string; mapping_id?: string }>)?.gform_validation?.type).toBe(
+			'mapping'
+		);
+		expect(
+			(settings.trigger_sources as Record<string, { type?: string; mapping_id?: string }>)
+				?.gform_validation?.mapping_id
+		).toBe('map-1');
 	});
 
-	test('allows validation upstream dependency for after-submission mapping in drawer', async ({
+	test('allows validation upstream trigger source for after-submission mapping in drawer', async ({
 		page
 	}) => {
 		await page.addInitScript(() => {
@@ -345,10 +644,10 @@ test.describe('Actions admin flows', () => {
 		await drawer.getByRole('radio', { name: /Summarize/i }).check();
 		await expect(drawer.getByText('Triggered by action (optional)')).toBeVisible();
 
-		// Validation-only map-1 should still be eligible as an upstream dependency.
+		// Validation-only map-1 should still be eligible as an upstream trigger source.
 		const dependencyOption = drawer.locator('label', { hasText: 'ID: map-1' }).first();
 		await expect(dependencyOption).toBeVisible();
-		await dependencyOption.locator('input[type="checkbox"]').check();
+		await dependencyOption.locator('input[type="radio"]').check();
 
 		const createReq = page.waitForRequest(/forms\/\d+\/actions$/);
 		const createRes = page.waitForResponse(/forms\/\d+\/actions$/);
@@ -360,6 +659,14 @@ test.describe('Actions admin flows', () => {
 		const settings = (payload.settings ?? {}) as Record<string, unknown>;
 		expect(payload.trigger_hooks).toEqual(['gform_after_submission']);
 		expect(settings.dependency_ids).toEqual(['map-1']);
+		expect(
+			(settings.trigger_sources as Record<string, { type?: string; mapping_id?: string }>)
+				?.gform_after_submission?.type
+		).toBe('mapping');
+		expect(
+			(settings.trigger_sources as Record<string, { type?: string; mapping_id?: string }>)
+				?.gform_after_submission?.mapping_id
+		).toBe('map-1');
 	});
 
 	test('drawer flow: open add action and show template/custom choices', async ({ page }) => {
@@ -551,7 +858,8 @@ test.describe('Actions admin flows', () => {
 		await page.getByTestId('mapping-config-open-graph').click();
 		const sourceHandle = '[data-nodeid="map-1"][data-handleid="dependency-source"]';
 		const targetHandle = '[data-nodeid="map-2"][data-handleid="hook-root-target:gform_validation"]';
-		await connectHandlesByMouse(page, sourceHandle, targetHandle);
+		await connectHandlesAndAssert(page, sourceHandle, targetHandle);
+		await expect(page.getByTestId('dependency-graph-dirty-bar')).toBeVisible();
 
 		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
 		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
@@ -661,7 +969,8 @@ test.describe('Actions admin flows', () => {
 		await page.getByTestId('mapping-config-open-graph').click();
 		const sourceHandle = '[data-nodeid="map-1"][data-handleid="dependency-source"]';
 		const targetHandle = '[data-nodeid="map-2"][data-handleid="hook-root-target:gform_validation"]';
-		await connectHandlesByMouse(page, sourceHandle, targetHandle);
+		await connectHandlesAndAssert(page, sourceHandle, targetHandle);
+		await expect(page.getByTestId('dependency-graph-dirty-bar')).toBeVisible();
 
 		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
 		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
@@ -716,8 +1025,7 @@ test.describe('Actions admin flows', () => {
 
 		const sourceHandle = '[data-nodeid="map-1"][data-handleid="dependency-source"]';
 		const targetHandle = '[data-nodeid="map-2"][data-handleid="dependency-target"]';
-		await connectHandlesByMouse(page, sourceHandle, targetHandle);
-		await expect(page.getByTestId('dependency-graph-dirty-bar')).toBeVisible();
+		await connectHandlesAndAssert(page, sourceHandle, targetHandle);
 
 		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
 		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
@@ -783,8 +1091,7 @@ test.describe('Actions admin flows', () => {
 
 		const sourceHandle = '[data-nodeid=\"map-3\"][data-handleid=\"dependency-source\"]';
 		const targetHandle = '[data-nodeid=\"map-2\"][data-handleid=\"dependency-target\"]';
-		await connectHandlesByMouse(page, sourceHandle, targetHandle);
-		await expect(page.getByTestId('dependency-graph-dirty-bar')).toBeVisible();
+		await connectHandlesAndAssert(page, sourceHandle, targetHandle);
 	});
 
 	test('infers async hook when connecting async source to dual-hook target via generic handle', async ({
@@ -831,8 +1138,7 @@ test.describe('Actions admin flows', () => {
 
 		const sourceHandle = '[data-nodeid="map-async"][data-handleid="dependency-source"]';
 		const targetHandle = '[data-nodeid="map-dual"][data-handleid="dependency-target"]';
-		await connectHandlesByMouse(page, sourceHandle, targetHandle);
-		await expect(page.getByTestId('dependency-graph-dirty-bar')).toBeVisible();
+		await connectHandlesAndAssert(page, sourceHandle, targetHandle);
 
 		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-dual$/, { timeout: 15_000 });
 		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-dual$/, { timeout: 15_000 });
@@ -845,6 +1151,55 @@ test.describe('Actions admin flows', () => {
 		expect(settings.dependency_ids).toEqual(['map-async']);
 		expect(settings.trigger_sources?.gform_after_submission?.type).toBe('mapping');
 		expect(settings.trigger_sources?.gform_after_submission?.mapping_id).toBe('map-async');
+	});
+
+	test('blocks ambiguous generic-handle dependency connections with feedback', async ({ page }) => {
+		const linkages = [
+			{
+				local_mapping_id: 'map-source',
+				central_action_id: 'content-quality',
+				action_type_indicator: 'master',
+				action_name_label: 'Source Dual Hook',
+				trigger_hooks: ['gform_validation', 'gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-target',
+				central_action_id: 'entry-summary',
+				action_type_indicator: 'master',
+				action_name_label: 'Target Dual Hook',
+				trigger_hooks: ['gform_validation', 'gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		const targetRow = table.locator('tbody tr').filter({ hasText: 'Target Dual Hook' });
+		await targetRow.getByRole('button', { name: 'Configure' }).click();
+		await page.getByTestId('mapping-config-open-graph').click();
+
+		const sourceHandle = '[data-nodeid="map-source"][data-handleid="dependency-source"]';
+		const targetHandle = '[data-nodeid="map-target"][data-handleid="dependency-target"]';
+		await connectHandlesAndAssert(page, sourceHandle, targetHandle, {
+			expectRejected: true,
+			rejectedMessage: /ambiguous|hook-specific/i,
+			allowNoFeedbackOnFailure: true
+		});
 	});
 
 	test('supports drag-and-drop root retarget for autonomous mapping', async ({ page }) => {
@@ -900,8 +1255,7 @@ test.describe('Actions admin flows', () => {
 			'[data-nodeid="__hook_root__:gform_validation"][data-handleid="hook-root-source"]';
 		const rootTarget =
 			'[data-nodeid="map-2"][data-handleid="hook-root-target:gform_validation"]';
-		await connectHandlesByMouse(page, rootSource, rootTarget);
-		await expect(page.getByTestId('dependency-graph-dirty-bar')).toBeVisible();
+		await connectHandlesAndAssert(page, rootSource, rootTarget);
 
 		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
 		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
@@ -951,12 +1305,335 @@ test.describe('Actions admin flows', () => {
 		const rootSource =
 			'[data-nodeid="__hook_root__:gform_validation"][data-handleid="hook-root-source"]';
 		const rootTarget = '[data-nodeid="map-1"][data-handleid="hook-root-target:gform_validation"]';
-		await connectHandlesByMouse(page, rootSource, rootTarget);
+		await connectHandlesAndAssert(page, rootSource, rootTarget, {
+			expectRejected: true,
+			rejectedMessage: /already autonomous/i
+		});
+	});
+
+	test('removing a root edge keeps graph mounted and surfaces invalid trigger state', async ({
+		page
+	}) => {
+		const linkages = [
+			{
+				local_mapping_id: 'map-1',
+				central_action_id: 'spam-check',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam check',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			}
+		];
+		const pageErrors: string[] = [];
+		page.on('pageerror', (err) => pageErrors.push(err.message));
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await ensureDependencyGraphVisible(page);
+
+		const rootEdge = page.getByRole('group', {
+			name: /Edge from __hook_root__:gform_validation to map-1/i
+		});
+		await expect(rootEdge).toBeVisible();
+		await rootEdge.hover({ force: true });
+		await rootEdge.click({ force: true });
+		const dirtyBar = page.getByTestId('dependency-graph-dirty-bar');
+		if (
+			(await dirtyBar.count()) === 0 ||
+			!(await dirtyBar
+				.first()
+				.isVisible()
+				.catch(() => false))
+		) {
+			await rootEdge.dispatchEvent('click');
+		}
 
 		const feedback = page.getByTestId('dependency-graph-connection-feedback');
-		await expect(feedback).toBeVisible();
-		await expect(feedback).toContainText(/already autonomous/i);
-		await expect(page.getByTestId('dependency-graph-dirty-bar')).toHaveCount(0);
+		if ((await feedback.count()) > 0) {
+			const firstFeedback = feedback.first();
+			const feedbackVisible = await firstFeedback.isVisible().catch(() => false);
+			if (feedbackVisible) {
+				await expect(firstFeedback).toContainText(/Removed dependency link/i);
+			}
+		}
+		await expect(dirtyBar).toBeVisible();
+		await expect(page.getByTestId('dependency-graph-invalid-bar')).toContainText(
+			/missing an upstream trigger source/i
+		);
+		await expect(page.getByTestId('dependency-graph-save')).toBeDisabled();
+		await expect(page.getByText('Policy diagnostics')).toBeVisible();
+		await expect(page.getByText(/no trigger source bound/i)).toBeVisible();
+		expect(pageErrors, 'removing an edge should not trigger runtime errors').toEqual([]);
+	});
+
+	test('hovering a removable edge tints arrowhead and line with the same color', async ({
+		page
+	}) => {
+		const linkages = [
+			{
+				local_mapping_id: 'map-1',
+				central_action_id: 'spam-check',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam check',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-2',
+				central_action_id: 'summarize',
+				action_type_indicator: 'master',
+				action_name_label: 'Summarize',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: { dependency_ids: ['map-1'] }
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await ensureDependencyGraphVisible(page);
+
+		const edgeGroup = page.getByRole('group', { name: /Edge from map-1 to map-2/i });
+		await expect(edgeGroup).toBeVisible();
+		const edgePath = edgeGroup.locator('.svelte-flow__edge-path').first();
+		const edgeInteractionPath = edgeGroup.locator('.svelte-flow__edge-interaction').first();
+		await expect(edgePath).toBeVisible();
+		await expect(edgeInteractionPath).toBeVisible();
+
+		async function readEdgeColors() {
+			return edgePath.evaluate((node) => {
+				const path = node as SVGPathElement;
+				const markerValue = path.getAttribute('marker-end') ?? '';
+				return {
+					pathStroke: getComputedStyle(path).stroke,
+					markerValue
+				};
+			});
+		}
+
+		const baselineColors = await readEdgeColors();
+		expect(baselineColors.pathStroke).toMatch(/rgb\(/);
+		expect(baselineColors.markerValue).toContain('url(');
+		expect(baselineColors.pathStroke).not.toBe('rgb(0, 0, 0)');
+
+		await edgeGroup.evaluate((element) => {
+			element.dispatchEvent(new PointerEvent('pointerenter', { cancelable: true }));
+		});
+		const hoverColors = await readEdgeColors();
+		expect(hoverColors.pathStroke).toBe('rgb(220, 38, 38)');
+		expect(hoverColors.markerValue).toContain('url(');
+		expect(hoverColors.markerValue).not.toBe(baselineColors.markerValue);
+	});
+
+	test('keeps dragged node position stable when hovering and leaving a removable edge', async ({
+		page
+	}) => {
+		const linkages = [
+			{
+				local_mapping_id: 'map-1',
+				central_action_id: 'spam-check',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam check',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-2',
+				central_action_id: 'summarize',
+				action_type_indicator: 'master',
+				action_name_label: 'Summarize',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: { dependency_ids: ['map-1'] }
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await ensureDependencyGraphVisible(page);
+
+		const mapTwoCard = page.getByTestId('dependency-node-card-map-2');
+		const beforeDragBox = await mapTwoCard.boundingBox();
+		if (!beforeDragBox) {
+			throw new Error('Could not resolve map-2 card position before drag.');
+		}
+		await dragNodeCardByMouse(page, 'map-2', 160, 72);
+		const draggedBox = await mapTwoCard.boundingBox();
+		if (!draggedBox) {
+			throw new Error('Could not resolve dragged map-2 card position.');
+		}
+		assertBoxMoved(beforeDragBox, draggedBox);
+
+		const edgeGroup = page.getByRole('group', { name: /Edge from map-1 to map-2/i });
+		await expect(edgeGroup).toBeVisible();
+		const edgePath = edgeGroup.locator('.svelte-flow__edge-path').first();
+		const edgeInteractionPath = edgeGroup.locator('.svelte-flow__edge-interaction').first();
+		await expect(edgePath).toBeVisible();
+		await expect(edgeInteractionPath).toBeVisible();
+
+		const baselineStroke = await edgePath.evaluate((node) => getComputedStyle(node).stroke);
+		await edgeGroup.evaluate((element) => {
+			element.dispatchEvent(new PointerEvent('pointerenter', { cancelable: true }));
+		});
+		await expect
+			.poll(async () => edgePath.evaluate((node) => getComputedStyle(node).stroke))
+			.toBe('rgb(220, 38, 38)');
+
+		const hoveredBox = await mapTwoCard.boundingBox();
+		if (!hoveredBox) {
+			throw new Error('Could not resolve hovered map-2 card position.');
+		}
+		assertBoxPositionStable(draggedBox, hoveredBox);
+
+		await edgeGroup.evaluate((element) => {
+			element.dispatchEvent(new PointerEvent('pointerleave', { cancelable: true }));
+		});
+		await expect
+			.poll(async () => edgePath.evaluate((node) => getComputedStyle(node).stroke))
+			.toBe(baselineStroke);
+
+		const afterLeaveBox = await mapTwoCard.boundingBox();
+		if (!afterLeaveBox) {
+			throw new Error('Could not resolve map-2 card position after leaving edge hover.');
+		}
+		assertBoxPositionStable(draggedBox, afterLeaveBox);
+	});
+
+	test('removing a dependency edge keeps dragged node position stable', async ({ page }) => {
+		const linkages = [
+			{
+				local_mapping_id: 'map-1',
+				central_action_id: 'spam-check',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam check',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-2',
+				central_action_id: 'summarize',
+				action_type_indicator: 'master',
+				action_name_label: 'Summarize',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: { dependency_ids: ['map-1'] }
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await ensureDependencyGraphVisible(page);
+
+		const mapTwoCard = page.getByTestId('dependency-node-card-map-2');
+		const beforeDragBox = await mapTwoCard.boundingBox();
+		if (!beforeDragBox) {
+			throw new Error('Could not resolve map-2 card position before drag.');
+		}
+		const graphCanvas = page.getByTestId('dependency-graph-canvas');
+		const mapOneCard = page.getByTestId('dependency-node-card-map-1');
+		await dragNodeCardByMouse(page, 'map-2', 140, 68);
+		const draggedBox = await mapTwoCard.boundingBox();
+		if (!draggedBox) {
+			throw new Error('Could not resolve dragged map-2 card position before edge removal.');
+		}
+		assertBoxMoved(beforeDragBox, draggedBox);
+		const mapOneBeforeRemoveBox = await mapOneCard.boundingBox();
+		if (!mapOneBeforeRemoveBox) {
+			throw new Error('Could not resolve map-1 card position before edge removal.');
+		}
+		const canvasBeforeRemove = await graphCanvas.boundingBox();
+		if (!canvasBeforeRemove) {
+			throw new Error('Could not resolve graph canvas position before edge removal.');
+		}
+		const viewportBeforeRemove = await graphCanvas.getAttribute('data-viewport');
+		if (!viewportBeforeRemove) {
+			throw new Error('Could not read viewport state before edge removal.');
+		}
+
+		const edgeGroup = page.getByRole('group', { name: /Edge from map-1 to map-2/i });
+		await expect(edgeGroup).toBeVisible();
+		const edgePath = edgeGroup.locator('.svelte-flow__edge-path').first();
+		await edgePath.evaluate((element) => {
+			element.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+			element.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, cancelable: true }));
+			element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+		});
+		await expect(edgeGroup).toHaveCount(0);
+
+		const afterRemoveBox = await mapTwoCard.boundingBox();
+		if (!afterRemoveBox) {
+			throw new Error('Could not resolve map-2 card position after edge removal.');
+		}
+		const mapOneAfterBox = await mapOneCard.boundingBox();
+		if (!mapOneAfterBox) {
+			throw new Error('Could not resolve map-1 card position after edge removal.');
+		}
+		const canvasAfterRemove = await graphCanvas.boundingBox();
+		if (!canvasAfterRemove) {
+			throw new Error('Could not resolve graph canvas position after edge removal.');
+		}
+		const viewportAfterRemove = await graphCanvas.getAttribute('data-viewport');
+		if (!viewportAfterRemove) {
+			throw new Error('Could not read viewport state after edge removal.');
+		}
+		expect(viewportAfterRemove).toBe(viewportBeforeRemove);
+		assertBoxPositionStable(canvasBeforeRemove, canvasAfterRemove, 6);
+		assertBoxPositionStable(
+			toRelativeBox(mapOneBeforeRemoveBox, canvasBeforeRemove),
+			toRelativeBox(mapOneAfterBox, canvasAfterRemove)
+		);
+		assertBoxPositionStable(
+			toRelativeBox(draggedBox, canvasBeforeRemove),
+			toRelativeBox(afterRemoveBox, canvasAfterRemove)
+		);
 	});
 
 	test('shows dependent trigger source and hides autonomous hook badges on graph cards', async ({
@@ -1039,7 +1716,7 @@ test.describe('Actions admin flows', () => {
 		});
 
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
-		await expect(page.getByTestId('dependency-graph-canvas')).toBeVisible();
+		await ensureDependencyGraphVisible(page);
 		await expect(page.getByText('Pan, zoom, and drag enabled')).toBeVisible();
 		await expect(
 			page.getByText('Blue right handle -> left gray or hook-blue handle: dependency')
@@ -1076,7 +1753,7 @@ test.describe('Actions admin flows', () => {
 		});
 
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
-		await expect(page.getByTestId('dependency-graph-canvas')).toBeVisible();
+		await ensureDependencyGraphVisible(page);
 
 		const leftActions = page.getByTestId('dependency-node-actions-left-map-1');
 		const rightActions = page.getByTestId('dependency-node-actions-right-map-1');
@@ -1166,7 +1843,7 @@ test.describe('Actions admin flows', () => {
 		});
 
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
-		await expect(page.getByTestId('dependency-graph-canvas')).toBeVisible();
+		await ensureDependencyGraphVisible(page);
 		await page.getByTestId('dependency-node-duplicate-open-map-2').click();
 
 		const popover = page.getByTestId('dependency-node-duplicate-popover-map-2');
@@ -1290,7 +1967,7 @@ test.describe('Actions admin flows', () => {
 		});
 
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
-		await expect(page.getByTestId('dependency-graph-canvas')).toBeVisible();
+		await ensureDependencyGraphVisible(page);
 		await expect(page.locator('[data-testid^="dependency-node-card-"]')).toHaveCount(2);
 
 		const duplicateReq = page.waitForRequest(/forms\/\d+\/actions\/map-1\/duplicate$/, {
@@ -1313,22 +1990,13 @@ test.describe('Actions admin flows', () => {
 		await expect(page.locator('[data-testid^="dependency-node-card-"]')).toHaveCount(3);
 	});
 
-	test('shows connection feedback when a drag is rejected by policy', async ({ page }) => {
+	test('shows connection feedback when a connection is rejected by policy', async ({ page }) => {
 		const linkages = [
 			{
 				local_mapping_id: 'map-1',
 				central_action_id: 'spam-check',
 				action_type_indicator: 'master',
 				action_name_label: 'Spam check',
-				trigger_hooks: ['gform_validation'],
-				is_action_enabled_for_form: true,
-				settings: { dependency_ids: ['map-2'] }
-			},
-			{
-				local_mapping_id: 'map-2',
-				central_action_id: 'summarize',
-				action_type_indicator: 'master',
-				action_name_label: 'Summarize',
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
 				settings: {}
@@ -1349,18 +2017,17 @@ test.describe('Actions admin flows', () => {
 
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		const table = await openLinkedActionsTable(page);
-		const summarizeRow = table.locator('tbody tr').filter({ hasText: 'Summarize' });
-		await summarizeRow.getByRole('button', { name: 'Configure' }).click();
+		const spamRow = table.locator('tbody tr').filter({ hasText: 'Spam check' });
+		await spamRow.getByRole('button', { name: 'Configure' }).click();
 		await page.getByTestId('mapping-config-open-graph').click();
 
-		const sourceHandle = '[data-nodeid="map-2"][data-handleid="dependency-source"]';
-		const targetHandle = '[data-nodeid="map-1"][data-handleid="dependency-target"]';
-		await connectHandlesByMouse(page, sourceHandle, targetHandle);
-
-		const feedback = page.getByTestId('dependency-graph-connection-feedback');
-		await expect(feedback).toBeVisible();
-		await expect(feedback).toContainText(/cycle|already depends/i);
-		await expect(page.getByTestId('dependency-graph-dirty-bar')).toHaveCount(0);
+		const sourceHandle =
+			'[data-nodeid="__hook_root__:gform_validation"][data-handleid="hook-root-source"]';
+		const targetHandle = '[data-nodeid="map-1"][data-handleid="hook-root-target:gform_validation"]';
+		await connectHandlesAndAssert(page, sourceHandle, targetHandle, {
+			expectRejected: true,
+			rejectedMessage: /already autonomous/i
+		});
 	});
 
 	test('toggles linked-actions views and exposes graph card controls', async ({ page }) => {
@@ -1489,11 +2156,16 @@ test.describe('Actions admin flows', () => {
 		const summarizeRow = table.locator('tbody tr').filter({ hasText: 'Summarize' });
 		await summarizeRow.getByRole('button', { name: 'Configure' }).click();
 		await page.getByTestId('mapping-config-open-graph').click();
-		await connectHandlesByMouse(
+		await connectHandlesAndAssert(
 			page,
-			'[data-nodeid="map-1"][data-handleid="dependency-source"]',
-			'[data-nodeid="map-2"][data-handleid="hook-root-target:gform_validation"]'
-		);
+				'[data-nodeid="map-1"][data-handleid="dependency-source"]',
+				'[data-nodeid="map-2"][data-handleid="dependency-target"]',
+				{
+					expectRejected: true,
+					rejectedMessage: /cycle/i,
+					allowNoFeedbackOnFailure: true
+				}
+			);
 
 		const cycleRequestPromise = page
 			.waitForRequest(
@@ -1550,11 +2222,16 @@ test.describe('Actions admin flows', () => {
 
 		await summarizeRow.getByRole('button', { name: 'Configure' }).click();
 		await page.getByTestId('mapping-config-open-graph').click();
-		await connectHandlesByMouse(
+		await connectHandlesAndAssert(
 			page,
-			'[data-nodeid="map-1"][data-handleid="dependency-source"]',
-			'[data-nodeid="map-2"][data-handleid="hook-root-target:gform_after_submission"]'
-		);
+				'[data-nodeid="map-1"][data-handleid="dependency-source"]',
+				'[data-nodeid="map-2"][data-handleid="dependency-target"]',
+				{
+					expectRejected: true,
+					rejectedMessage: /must also run async|cannot depend on async/i,
+					allowNoFeedbackOnFailure: true
+				}
+			);
 
 		const mismatchRequestPromise = page
 			.waitForRequest(

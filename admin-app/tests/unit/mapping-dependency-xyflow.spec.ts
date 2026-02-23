@@ -200,7 +200,7 @@ describe('mapping-dependency-xyflow', () => {
 		).toBe(true);
 	});
 
-	it('keeps root edges non-selectable and dependency edges selectable', () => {
+	it('keeps both root and dependency edges selectable for click-to-remove', () => {
 		const graph = buildXyflowDependencyGraph(baseLinkages);
 		const rootEdges = graph.edges.filter((edge) => edge.data?.kind === 'hook_root');
 		const dependencyEdges = graph.edges.filter((edge) => edge.data?.kind === 'dependency');
@@ -209,10 +209,32 @@ describe('mapping-dependency-xyflow', () => {
 		expect(dependencyEdges.length).toBeGreaterThan(0);
 
 		for (const edge of rootEdges) {
-			expect(edge.selectable).toBe(false);
+			expect(edge.selectable).toBe(true);
+			expect(edge.deletable).toBe(true);
 		}
 		for (const edge of dependencyEdges) {
 			expect(edge.selectable).toBe(true);
+			expect(edge.deletable).toBe(true);
+		}
+	});
+
+	it('uses stable default edge marker colors that match edge semantics', () => {
+		const graph = buildXyflowDependencyGraph(baseLinkages);
+		expect(graph.edges.length).toBeGreaterThan(0);
+
+		for (const edge of graph.edges) {
+			const edgeStyle = String(edge.style ?? '');
+			expect(edgeStyle).toContain('--xy-edge-stroke:');
+			expect(edgeStyle).toContain('--xy-edge-stroke-width:');
+			expect(edgeStyle).not.toMatch(/(?:^|;)stroke:\s*#/);
+
+			const markerEnd = edge.markerEnd as { color?: string } | undefined;
+			const expectedColor = edge.data?.missing
+				? '#dc2626'
+				: edge.data?.kind === 'dependency'
+					? '#94a3b8'
+					: '#3b82f6';
+			expect(markerEnd?.color).toBe(expectedColor);
 		}
 	});
 });
