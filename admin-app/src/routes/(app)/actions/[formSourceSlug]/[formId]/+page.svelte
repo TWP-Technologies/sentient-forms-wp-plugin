@@ -19,6 +19,12 @@
 	import { DEFAULT_BATCH_SETTINGS } from '$lib/utils/batch';
 	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
 	import {
+		createInitialMappingModalSectionExpansion,
+		toggleMappingModalSectionExpansion,
+		type MappingModalSectionExpansion,
+		type MappingModalSectionId
+	} from '$lib/utils/mapping-modal-sections';
+	import {
 		canDependencySatisfyHook,
 		deriveDependencyIdsFromTriggerSources,
 		findIntroducedDependencyIssues,
@@ -75,6 +81,9 @@
 	let showMappingConfigModal = $state(false);
 	let draftHooks = $state<Set<string>>(new Set());
 	let draftSettings = $state<Record<string, any>>({});
+	let mappingSectionExpansion = $state<MappingModalSectionExpansion>(
+		createInitialMappingModalSectionExpansion(false)
+	);
 	let editBaselineSignature = $state<string | null>(null);
 	type DraftTriggerSource = { type: 'hook_root' | 'mapping' | 'unbound'; mapping_id?: string };
 	type DraftTriggerSourceRecord = Record<string, DraftTriggerSource>;
@@ -250,6 +259,93 @@
 	const hasUnsavedMappingChanges = $derived.by(() => {
 		if (!editingLinkageId || !editBaselineSignature || !currentDraftSignature) return false;
 		return editBaselineSignature !== currentDraftSignature;
+	});
+	const isSpamMapping = $derived.by(
+		() => editingLinkage?.central_action_id === 'spam_detection_v1'
+	);
+	const guidanceSummary = $derived.by(() => {
+		if (!isSpamMapping) return '';
+		const localPositive = Array.isArray(draftSettings.spam_positive_examples)
+			? draftSettings.spam_positive_examples.length
+			: 0;
+		const localNegative = Array.isArray(draftSettings.spam_negative_examples)
+			? draftSettings.spam_negative_examples.length
+			: 0;
+		const inheritedPositive = Array.isArray(formLevelConfig.spam_positive_examples)
+			? formLevelConfig.spam_positive_examples.length
+			: 0;
+		const inheritedNegative = Array.isArray(formLevelConfig.spam_negative_examples)
+			? formLevelConfig.spam_negative_examples.length
+			: 0;
+		const localTotal = localPositive + localNegative;
+		const inheritedTotal = inheritedPositive + inheritedNegative;
+		const usingInherited = localTotal === 0 && inheritedTotal > 0;
+		const total = usingInherited ? inheritedTotal : localTotal;
+		if (total === 0) return 'No examples configured';
+		return usingInherited
+			? `${total} inherited example${total === 1 ? '' : 's'}`
+			: `${total} custom example${total === 1 ? '' : 's'}`;
+	});
+	const coreSectionSummary = $derived.by(() => {
+		const hookCount = draftHooks.size;
+		const dependencyCount = draftDependencyIds.length;
+		const hookLabel = `${hookCount} hook${hookCount === 1 ? '' : 's'}`;
+		if (dependencyCount === 0) {
+			return `${hookLabel} · autonomous`;
+		}
+		return `${hookLabel} · ${dependencyCount} dependenc${dependencyCount === 1 ? 'y' : 'ies'}`;
+	});
+	const spamAdvancedSummary = $derived.by(() => {
+		if (!isSpamMapping) return '';
+		const thresholdRaw =
+			typeof draftSettings.spam_confidence_threshold !== 'undefined'
+				? draftSettings.spam_confidence_threshold
+				: 0.8;
+		const parsedThreshold = Number.parseFloat(String(thresholdRaw));
+		const threshold = Number.isFinite(parsedThreshold) ? parsedThreshold.toFixed(2) : '0.80';
+		const displayMode =
+			typeof draftSettings.spam_indicators_display === 'string'
+				? draftSettings.spam_indicators_display
+				: 'simple';
+		return `Threshold ${threshold} · ${displayMode}`;
+	});
+	const inputMappingSummary = $derived.by(() => {
+		const mapping = (draftSettings.input_mapping ?? {
+			mode: 'selected',
+			include_metadata: false
+		}) as InputMapping;
+		if (mapping.mode === 'all') {
+			return mapping.include_metadata ? 'All fields + metadata' : 'All fields';
+		}
+		if (mapping.mode === 'exclude') {
+			const excludedCount = Array.isArray(mapping.field_ids) ? mapping.field_ids.length : 0;
+			return excludedCount > 0
+				? `All except ${excludedCount} field${excludedCount === 1 ? '' : 's'}`
+				: 'Exclude mode';
+		}
+		const selectedCount = Array.isArray(mapping.field_ids) ? mapping.field_ids.length : 0;
+		return selectedCount > 0
+			? `${selectedCount} selected field${selectedCount === 1 ? '' : 's'}`
+			: 'Selected fields mode';
+	});
+	const conditionsSummary = $derived.by(() => {
+		const conditions = (draftSettings.conditions ??
+			createDefaultConditionConfig()) as Record<string, unknown>;
+		const enabled = conditions.enabled === true;
+		if (!enabled) return 'Disabled';
+		const root = conditions.root as Record<string, unknown> | undefined;
+		const ruleCount = countConditionRules(root);
+		return `${ruleCount} rule${ruleCount === 1 ? '' : 's'} active`;
+	});
+	const modelExecutionSummary = $derived.by(() => {
+		const selection = (draftSettings.model_selection ?? {
+			primary: 'sf_default',
+			is_preset: true
+		}) as { primary?: string };
+		const executionMode =
+			draftSettings.execution_mode === 'after_submission' ? 'Async' : 'Sync';
+		const model = selection.primary?.toString().trim() || 'sf_default';
+		return `${executionMode} · ${model}`;
 	});
 	const graphHasDraftChanges = $derived.by(() => Object.keys(graphDraftByMappingId).length > 0);
 	const hasGraphUnsavedChanges = $derived(hasUnsavedMappingChanges || graphHasDraftChanges);
@@ -642,6 +738,47 @@
 		const linked = actionsState.items.find((item) => item.local_mapping_id === mappingId);
 		if (!linked) return mappingId;
 		return friendlyActionLabel(linked);
+	}
+
+	function countConditionRules(group: Record<string, unknown> | undefined): number {
+		if (!group) return 0;
+		const rules = Array.isArray(group.rules) ? group.rules : [];
+		let count = 0;
+		for (const rule of rules) {
+			if (!rule || typeof rule !== 'object') continue;
+			const candidate = rule as Record<string, unknown>;
+			if (candidate.type === 'group') {
+				count += countConditionRules(candidate);
+				continue;
+			}
+			count += 1;
+		}
+		return count;
+	}
+
+	function isSpamMappingLinkage(linkage: FormActionLinkage | null | undefined): boolean {
+		return linkage?.central_action_id === 'spam_detection_v1';
+	}
+
+	function resetMappingSectionExpansion(linkage: FormActionLinkage | null | undefined) {
+		mappingSectionExpansion = createInitialMappingModalSectionExpansion(
+			isSpamMappingLinkage(linkage)
+		);
+	}
+
+	function toggleMappingSection(sectionId: MappingModalSectionId) {
+		mappingSectionExpansion = toggleMappingModalSectionExpansion(mappingSectionExpansion, sectionId);
+	}
+
+	function closeMappingConfigModal() {
+		showMappingConfigModal = false;
+	}
+
+	function handleWindowKeydown(event: KeyboardEvent) {
+		if (!showMappingConfigModal) return;
+		if (event.key !== 'Escape') return;
+		event.preventDefault();
+		closeMappingConfigModal();
 	}
 
 	function normalizeHookIds(hooks: Iterable<string>): string[] {
@@ -1100,6 +1237,7 @@
 		};
 		draftSettings = nextDraftSettings;
 		editingLinkageId = linkage.local_mapping_id;
+		resetMappingSectionExpansion(linkage);
 		showMappingConfigModal = openModal;
 		editBaselineSignature = createDraftSignature(initialHooks, nextDraftSettings);
 		clearRootAttachUndoState();
@@ -1112,6 +1250,7 @@
 		showMappingConfigModal = false;
 		draftHooks = new Set();
 		draftSettings = {};
+		resetMappingSectionExpansion(null);
 		editBaselineSignature = null;
 		clearRootAttachUndoState();
 	}
@@ -1604,6 +1743,7 @@
 		showMappingConfigModal = false;
 		draftHooks = new Set();
 		draftSettings = {};
+		resetMappingSectionExpansion(null);
 		editBaselineSignature = null;
 	}
 
@@ -1827,6 +1967,8 @@
 		}
 	}
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <Section heading="Actions" description="Link CPS templates or custom actions to this form.">
 	<!-- Form-Level Action Config Modal - Inside Section slot for Svelte 5 reactivity -->
@@ -2364,30 +2506,34 @@
 		{/if}
 	</Card>
 
-	{#if showMappingConfigModal && editingLinkage}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div
-			class="sf:fixed sf:inset-0 sf:z-40 sf:bg-black/45 sf:flex sf:items-center sf:justify-center sf:p-4"
-			onclick={() => {
-				showMappingConfigModal = false;
-			}}
-			data-testid="mapping-config-modal"
-		>
-			<!-- svelte-ignore a11y_click_events_have_key_events -->
+		{#if showMappingConfigModal && editingLinkage}
+			<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
 			<div
-				class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-4xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
-				onclick={(event) => event.stopPropagation()}
+				class="sf:fixed sf:inset-0 sf:z-40 sf:bg-black/45 sf:flex sf:items-center sf:justify-center sf:p-4"
+				onclick={closeMappingConfigModal}
+				data-testid="mapping-config-modal"
 			>
-				<header
-					class="sf:flex sf:items-center sf:justify-between sf:gap-4 sf:px-6 sf:py-4 sf:border-b sf:border-slate-200"
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div
+					class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-4xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
+					role="dialog"
+					aria-modal="true"
+					aria-labelledby="mapping-config-title"
+					tabindex="-1"
+					onclick={(event) => event.stopPropagation()}
 				>
-					<div>
-						<p class="sf:text-base sf:font-semibold sf:text-slate-800">Configure Action Mapping</p>
-						<p class="sf:text-sm sf:text-slate-500">
-							{friendlyActionLabel(editingLinkage)} ({editingLinkage.local_mapping_id})
-						</p>
-					</div>
-					<div class="sf:flex sf:items-center sf:gap-2">
+					<header
+						class="sf:flex sf:items-center sf:justify-between sf:gap-4 sf:px-6 sf:py-4 sf:border-b sf:border-slate-200"
+					>
+						<div>
+							<p id="mapping-config-title" class="sf:text-base sf:font-semibold sf:text-slate-800">
+								Configure Action Mapping
+							</p>
+							<p class="sf:text-sm sf:text-slate-500">
+								{friendlyActionLabel(editingLinkage)} ({editingLinkage.local_mapping_id})
+							</p>
+						</div>
+						<div class="sf:flex sf:items-center sf:gap-2">
 						<Button
 							size="sm"
 							variant="secondary"
@@ -2396,561 +2542,729 @@
 						>
 							Open graph editor
 						</Button>
-						<Button
-							size="sm"
-							variant="ghost"
-							onclick={() => {
-								showMappingConfigModal = false;
-							}}
-						>
-							Close
-						</Button>
-					</div>
-				</header>
-				{#if hasUnsavedMappingChanges}
-					<div
-						class="sf:sticky sf:top-0 sf:z-10 sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2 sf:border-b sf:border-amber-300 sf:bg-amber-50 sf:px-6 sf:py-2"
-						data-testid="mapping-dirty-bar-modal"
-					>
-						<div class="sf:flex sf:items-center sf:gap-2">
-							<Badge variant="warning">Unsaved changes</Badge>
-							<p class="sf:text-xs sf:text-amber-800">
-								Edits in this mapping are local until you save.
-							</p>
-						</div>
-						<Button size="sm" variant="secondary" onclick={() => saveActionChanges(editingLinkage)}>
-							Save changes
-						</Button>
-					</div>
-				{/if}
-
-				<div class="sf:p-6 sf:space-y-5">
-					<div>
-						<p
-							class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
-						>
-							Triggers
-						</p>
-						<div class="sf:grid sf:gap-2 sf:sm:grid-cols-2">
-							{#each hookEntries as [hookKey, hookLabel] (hookKey)}
-								<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm">
-									<input
-										type="checkbox"
-										class="sf:form-checkbox"
-										checked={draftHooks.has(hookKey)}
-										onchange={() => toggleDraftHook(hookKey)}
-									/>
-									<span>{hookLabel}</span>
-								</label>
-							{/each}
-						</div>
-						<div class="sf:mt-2 sf:text-xs sf:text-slate-500 sf:space-y-1">
-							<p>
-								Triggers can come from hook roots (autonomous) or mapped actions (dependency). Use
-								the graph editor for per-hook trigger source wiring.
-							</p>
-							<p><strong>Sync:</strong> AI runs while user waits. Can block spam before saving.</p>
-							<p><strong>Async:</strong> User gets instant confirmation. AI runs in background.</p>
-						</div>
-					</div>
-
-					<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-						<p
-							class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
-						>
-							Upstream Dependencies
-						</p>
-						<div
-							class="sf:flex sf:flex-col sf:md:flex-row sf:md:items-center sf:md:justify-between sf:gap-2"
-						>
-							<p class="sf:text-xs sf:text-slate-500">
-								This mapping runs after all selected dependencies succeed.
-							</p>
-							<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-								<Button size="sm" variant="ghost" onclick={openGraphDependencyEditor}>
-									Edit on graph
-								</Button>
-								<Button
-									size="sm"
-									variant="secondary"
-									onclick={clearDraftDependencies}
-									disabled={draftDependencyIds.length === 0}
-									data-testid="mapping-config-make-autonomous"
-								>
-									Make autonomous
-								</Button>
-							</div>
-						</div>
-						{#if draftDependencyIds.length > 0}
-							<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
-								{#each draftDependencyIds as dependencyId (dependencyId)}
-									<Badge variant="info">{dependencyBadgeLabel(dependencyId)}</Badge>
-								{/each}
-							</div>
-						{:else}
-							<p class="sf:mt-2 sf:text-xs sf:text-slate-500">
-								No dependencies configured. This action is autonomous.
-							</p>
-						{/if}
-					</div>
-
-					{#if editingLinkage.central_action_id === 'spam_detection_v1'}
-						<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-							<p
-								class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-3"
+							<Button
+								size="sm"
+								variant="ghost"
+								onclick={closeMappingConfigModal}
+								data-testid="mapping-config-close-header"
 							>
-								Spam Settings
-							</p>
-							<div class="sf:grid sf:gap-4">
-								<InputField
-									id="spam-threshold"
-									label="Confidence Threshold (0.0 - 1.0)"
-									type="number"
-									step="0.05"
-									min="0"
-									max="1"
-									bind:value={draftSettings.spam_confidence_threshold}
-									placeholder="0.80"
-								/>
-								<SelectField
-									id="spam-display"
-									label="Indicators Display"
-									bind:value={draftSettings.spam_indicators_display}
-									options={[
-										{ value: 'simple', label: 'Simple (Summary only)' },
-										{ value: 'detailed', label: 'Detailed (List signals)' }
-									]}
-								/>
-								<SelectField
-									id="spam-context"
-									label="Include Site Context"
-									bind:value={draftSettings.include_site_context}
-									options={[
-										{ value: 'global', label: 'Use global setting' },
-										{ value: 'always', label: 'Always include' },
-										{ value: 'never', label: 'Never include' }
-									]}
-								/>
-							</div>
-
-							<SpamCriteriaEditor
-								positiveExamples={draftSettings.spam_positive_examples ?? []}
-								negativeExamples={draftSettings.spam_negative_examples ?? []}
-								inheritedPositive={formLevelConfig.spam_positive_examples ?? []}
-								inheritedNegative={formLevelConfig.spam_negative_examples ?? []}
-								inheritanceSource={formLevelConfig.spam_positive_examples?.length > 0 ||
-								formLevelConfig.spam_negative_examples?.length > 0
-									? 'form'
-									: null}
-								onchange={(details) => {
-									draftSettings = {
-										...draftSettings,
-										spam_positive_examples: details.positive,
-										spam_negative_examples: details.negative
-									};
-								}}
-							/>
-
-							<p class="sf:text-xs sf:text-slate-500 sf:pt-3 sf:flex sf:items-center sf:gap-1">
-								<span class="sf:text-amber-500">⚠</span>
-								Submission data is processed by AI.
-								<a href="#/settings/context" class="sf:underline hover:sf:text-slate-700">
-									Review Site Context settings
-								</a>
-								for PII handling options.
-							</p>
-
-							<div class="sf:pt-3 sf:border-t sf:border-slate-100 sf:mt-3">
-								<Button
-									size="sm"
-									variant="secondary"
-									onclick={() => loadFormLevelConfig(editingLinkage.central_action_id)}
-								>
-									📋 Edit Form Defaults
-								</Button>
-								<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
-									Set default classification examples for all spam actions on this form.
-								</p>
-							</div>
+								Close
+							</Button>
 						</div>
-					{/if}
-
-					<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-						<FieldSelector
-							fields={formFields}
-							value={draftSettings.input_mapping ?? {
-								mode: 'selected',
-								include_metadata: false
-							}}
-							onchange={(mapping) => {
-								draftSettings = { ...draftSettings, input_mapping: mapping };
-							}}
-						/>
-					</div>
-
-					<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-						{#if fieldsLoading}
-							<p class="sf:text-sm sf:text-slate-500">
-								Loading form fields for conditional run options...
-							</p>
-						{/if}
-						<ConditionBuilder
-							fields={formFields}
-							value={draftSettings.conditions ?? createDefaultConditionConfig()}
-							disabled={fieldsLoading}
-							onchange={(conditions) => {
-								draftSettings = { ...draftSettings, conditions };
-							}}
-						/>
-					</div>
-
-					<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-						<p
-							class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-3"
+					</header>
+					{#if hasUnsavedMappingChanges}
+						<div
+							class="sf:sticky sf:top-0 sf:z-10 sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2 sf:border-b sf:border-amber-300 sf:bg-amber-50 sf:px-6 sf:py-2"
+							data-testid="mapping-dirty-bar-modal"
 						>
-							AI Model
-						</p>
-						<ModelSelector
-							value={draftSettings.model_selection ?? {
-								primary: 'sf_default',
-								is_preset: true
-							}}
-							onchange={(selection) => {
-								draftSettings = { ...draftSettings, model_selection: selection };
-							}}
-						/>
-					</div>
-
-					{#if draftSettings.execution_mode === 'after_submission'}
-						<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-							<div class="sf:flex sf:items-center sf:justify-between sf:mb-2">
-								<p
-									class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500"
-								>
-									Batch Execution
+							<div class="sf:flex sf:items-center sf:gap-2">
+								<Badge variant="warning">Unsaved changes</Badge>
+								<p class="sf:text-xs sf:text-amber-800">
+									Edits stay in local browser memory until you save.
 								</p>
-								<Toggle
-									checked={draftSettings.batch_settings?.enabled ?? false}
-									onchange={() => {
-										const current = draftSettings.batch_settings ?? { ...DEFAULT_BATCH_SETTINGS };
-										draftSettings = {
-											...draftSettings,
-											batch_settings: { ...current, enabled: !current.enabled }
-										};
-									}}
-								/>
 							</div>
-							<p class="sf:text-xs sf:text-slate-500 sf:mb-3">
-								Delay execution to reduce peak load. Credit pricing is calculated by CPS at
-								execution time.
+							<p class="sf:text-xs sf:text-amber-800">
+								Use <strong>Save mapping</strong> to persist or <strong>Discard draft</strong> to
+								reset.
 							</p>
-
-							{#if draftSettings.batch_settings?.enabled}
-								<div class="sf:grid sf:gap-3">
-									<InputField
-										id="batch-delay"
-										label="Delay (seconds)"
-										type="number"
-										min="10"
-										max="3600"
-										placeholder="60"
-										bind:value={draftSettings.batch_settings.delay_seconds}
-									/>
-									<InputField
-										id="batch-max-wait"
-										label="Max wait before fallback (seconds)"
-										type="number"
-										min="43200"
-										max="604800"
-										placeholder="86400"
-										bind:value={draftSettings.batch_settings.max_wait_seconds}
-									/>
-									<p class="sf:text-xs sf:text-slate-500">
-										If CPS batching cannot be queued immediately, Sentient Forms will fall back to
-										local scheduling by this deadline.
-									</p>
-								</div>
-							{/if}
 						</div>
 					{/if}
-				</div>
 
-				<footer
-					class="sf:flex sf:flex-wrap sf:items-center sf:justify-end sf:gap-2 sf:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
-				>
-					<Button
-						variant="secondary"
-						onclick={() => {
-							showMappingConfigModal = false;
-						}}
-					>
-						Close
-					</Button>
-					<Button variant="secondary" onclick={cancelEditingAction}>Cancel editing</Button>
-					<Button
-						variant={hasUnsavedMappingChanges ? 'secondary' : 'primary'}
-						onclick={() => saveActionChanges(editingLinkage)}
-					>
-						{hasUnsavedMappingChanges ? 'Save changes' : 'Save'}
-					</Button>
-				</footer>
-			</div>
-		</div>
-	{/if}
-
-	{#if showAddPanel}
-		<div class="sf:fixed sf:inset-0 sf:z-30 sf:bg-black/40 sf:flex sf:justify-end">
-			<div class="sf:h-full sf:w-full sf:max-w-xl sf:bg-white sf:shadow-2xl sf:flex sf:flex-col">
-				<div
-					class="sf:flex sf:items-center sf:justify-between sf:border-b sf:border-slate-200 sf:px-4 sf:py-3"
-				>
-					<div>
-						<p class="sf:text-sm sf:font-semibold sf:text-slate-800">Add action</p>
-						<p class="sf:text-xs sf:text-slate-500">Link a CPS template or custom action.</p>
-					</div>
-					<Button
-						variant="ghost"
-						size="sm"
-						onclick={() => {
-							selectedCreateDependencyIds = new Set();
-							createError = null;
-							showAddPanel = false;
-						}}
-					>
-						Close
-					</Button>
-				</div>
-
-				<div class="sf:flex sf:flex-wrap sf:items-end sf:gap-2 sf:px-4 sf:py-3">
-					<Button
-						size="sm"
-						variant={createKind === 'template' ? 'primary' : 'secondary'}
-						onclick={() => (createKind = 'template')}
-						disabled={!hasDefinitions}
-					>
-						CPS templates
-					</Button>
-					<Button
-						size="sm"
-						variant={createKind === 'custom' ? 'primary' : 'secondary'}
-						onclick={() => (createKind = 'custom')}
-						disabled={customActions.length === 0}
-					>
-						Custom actions
-					</Button>
-					<div class="sf:flex-1 sf:min-w-[200px]">
-						<InputField
-							id="action-search"
-							label="Search"
-							placeholder="Search by name or id"
-							bind:value={searchTerm}
-						/>
-					</div>
-				</div>
-
-				<form
-					class="sf:flex sf:flex-col sf:gap-4 sf:px-4 sf:pb-4 sf:overflow-y-auto"
-					data-testid="link-action-form"
-				>
-					{#if createKind === 'template'}
-						{#if !hasDefinitions}
-							<Alert variant="warning">No CPS templates available right now.</Alert>
-						{:else}
-							<div class="sf:space-y-2">
-								{#each definitions.filter((definition) => {
-									const term = searchTerm.toLowerCase();
-									if (!term) return true;
-									const label = (definition.label ?? '').toLowerCase();
-									return definition.id.toLowerCase().includes(term) || label.includes(term);
-								}) as definition (definition.id)}
-									<label
-										class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300"
-									>
-										<input
-											type="radio"
-											name="template-choice"
-											class="sf:mt-1"
-											checked={selectedTemplateId === definition.id}
-											onchange={() => (selectedTemplateId = definition.id)}
-										/>
-										<div class="sf:flex sf:flex-col sf:gap-1">
-											<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
-												{definition.label ?? definition.id}
+					<div class="sf:p-6 sf:space-y-4">
+						<section class="sf:border sf:border-slate-200 sf:rounded-md">
+							<button
+								type="button"
+								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+								aria-expanded={mappingSectionExpansion.core}
+								aria-controls="mapping-section-content-core"
+								data-testid="mapping-section-toggle-core"
+								onclick={() => toggleMappingSection('core')}
+							>
+								<span class="sf:flex sf:flex-col">
+									<span class="sf:text-sm sf:font-semibold sf:text-slate-800">Core mapping</span>
+									<span class="sf:text-xs sf:text-slate-500">{coreSectionSummary}</span>
+								</span>
+								<span class="sf:text-xs sf:text-slate-500">
+									{mappingSectionExpansion.core ? 'Hide' : 'Show'}
+								</span>
+							</button>
+							<div
+								id="mapping-section-content-core"
+								class="sf:border-t sf:border-slate-200 sf:px-4 sf:py-4 sf:space-y-4"
+								hidden={!mappingSectionExpansion.core}
+							>
+								{#if mappingSectionExpansion.core}
+									<div>
+										<p
+											class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
+										>
+											Triggers
+										</p>
+										<div class="sf:grid sf:gap-2 sf:sm:grid-cols-2">
+											{#each hookEntries as [hookKey, hookLabel] (hookKey)}
+												<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm">
+													<input
+														type="checkbox"
+														class="sf:form-checkbox"
+														checked={draftHooks.has(hookKey)}
+														onchange={() => toggleDraftHook(hookKey)}
+														data-testid={`mapping-trigger-hook-${hookKey}`}
+													/>
+													<span>{hookLabel}</span>
+												</label>
+											{/each}
+										</div>
+										<div class="sf:mt-2 sf:text-xs sf:text-slate-500 sf:space-y-1">
+											<p>
+												Triggers can come from hook roots (autonomous) or mapped actions
+												(dependency). Use the graph editor for per-hook trigger source wiring.
 											</p>
-											<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
-											<p class="sf:text-xs sf:text-slate-500">
-												CPS base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
-													definition
-												)}
+											<p>
+												<strong>Sync:</strong> AI runs while user waits. Can block spam before
+												saving.
 											</p>
-											<p class="sf:text-xs sf:text-slate-500">
-												Hooks: {summarizeDefinitionHooks(definition.hooks)}
+											<p>
+												<strong>Async:</strong> User gets instant confirmation. AI runs in
+												background.
 											</p>
 										</div>
-									</label>
-								{/each}
-							</div>
-						{/if}
-					{:else if customActions.length === 0}
-						<Alert variant="info">No active custom actions. Create one first.</Alert>
-					{:else}
-						<div class="sf:space-y-2">
-							{#each customActions.filter((action) => {
-								const term = searchTerm.toLowerCase();
-								if (!term) return true;
-								return action.display_name.toLowerCase().includes(term) || action.code
-										.toLowerCase()
-										.includes(term) || action.id.toLowerCase().includes(term);
-							}) as action (action.id)}
-								<label
-									class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300"
-								>
-									<input
-										type="radio"
-										name="custom-choice"
-										class="sf:mt-1"
-										checked={selectedCustomId === action.id}
-										onchange={() => (selectedCustomId = action.id)}
-									/>
-									<div class="sf:flex sf:flex-col sf:gap-1">
-										<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
-											{action.display_name}
+									</div>
+
+									<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+										<p
+											class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
+										>
+											Upstream Dependencies
 										</p>
-										<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
-										{#if action.base_credit_cost !== null}
+										<div
+											class="sf:flex sf:flex-col sf:md:flex-row sf:md:items-center sf:md:justify-between sf:gap-2"
+										>
 											<p class="sf:text-xs sf:text-slate-500">
-												CPS base cost: {action.base_credit_cost} credits
+												This mapping runs after all selected dependencies succeed.
+											</p>
+											<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+												<Button size="sm" variant="ghost" onclick={openGraphDependencyEditor}>
+													Edit on graph
+												</Button>
+												<Button
+													size="sm"
+													variant="secondary"
+													onclick={clearDraftDependencies}
+													disabled={draftDependencyIds.length === 0}
+													data-testid="mapping-config-make-autonomous"
+												>
+													Make autonomous
+												</Button>
+											</div>
+										</div>
+										{#if draftDependencyIds.length > 0}
+											<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
+												{#each draftDependencyIds as dependencyId (dependencyId)}
+													<Badge variant="info">{dependencyBadgeLabel(dependencyId)}</Badge>
+												{/each}
+											</div>
+										{:else}
+											<p class="sf:mt-2 sf:text-xs sf:text-slate-500">
+												No dependencies configured. This action is autonomous.
 											</p>
 										{/if}
 									</div>
-								</label>
-							{/each}
-						</div>
-					{/if}
-
-					<div>
-						<div class="sf:flex sf:items-center sf:gap-2 sf:mb-2">
-							<p class="sf:text-sm sf:font-medium sf:text-slate-700">Triggers</p>
-							{#if selectedHooks.size === 0}
-								<span class="sf:text-xs sf:text-amber-600">Select at least one</span>
-							{/if}
-						</div>
-						<div class="sf:flex sf:flex-wrap sf:gap-3">
-							{#if hookEntries.length === 0}
-								{#each Object.entries(FALLBACK_HOOK_LABELS) as [hookKey, hookLabel]}
-									<label
-										class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2"
-									>
-										<input
-											type="checkbox"
-											class="sf:form-checkbox"
-											checked={selectedHooks.has(hookKey)}
-											onchange={() => toggleHookSelection(hookKey)}
-										/>
-										<span>{hookLabel}</span>
-									</label>
-								{/each}
-							{:else}
-								{#each hookEntries as [hookKey, hookLabel] (hookKey)}
-									<label
-										class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2"
-									>
-										<input
-											type="checkbox"
-											class="sf:form-checkbox"
-											checked={selectedHooks.has(hookKey)}
-											onchange={() => toggleHookSelection(hookKey)}
-										/>
-										<span>{hookLabel}</span>
-									</label>
-								{/each}
-							{/if}
-						</div>
-					</div>
-
-					<div class="sf:border-t sf:border-slate-200 sf:pt-3 sf:space-y-2">
-						<div class="sf:flex sf:items-center sf:justify-between sf:gap-2">
-							<p class="sf:text-sm sf:font-medium sf:text-slate-700">
-								Triggered by action (optional)
-							</p>
-							{#if selectedCreateDependencyIds.size > 0}
-								<Badge variant="info">1 selected</Badge>
-							{/if}
-						</div>
-						<p class="sf:text-xs sf:text-slate-500">
-							Choose one mapped action as upstream trigger source, or leave empty for autonomous
-							hook roots.
-						</p>
-						{#if selectedHooks.size === 0}
-							<p class="sf:text-xs sf:text-amber-700">
-								Choose trigger hooks first to see compatible upstream actions.
-							</p>
-						{:else if editableDependenciesForCreate.length === 0}
-							<p class="sf:text-xs sf:text-slate-500">
-								No compatible existing actions match the selected hooks.
-							</p>
-						{:else}
-							<div class="sf:grid sf:gap-2">
-								{#each editableDependenciesForCreate as linkage (linkage.local_mapping_id)}
-									<label
-										class="sf:flex sf:items-start sf:gap-2 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2 sf:cursor-pointer sf:hover:border-primary-300"
-									>
-										<input
-											type="radio"
-											name="create-dependency-trigger"
-											class="sf:mt-1"
-											checked={selectedCreateDependencyIds.has(linkage.local_mapping_id)}
-											onchange={() => toggleCreateDependencySelection(linkage.local_mapping_id)}
-										/>
-										<div class="sf:min-w-0 sf:flex-1">
-											<p class="sf:text-sm sf:font-medium sf:text-slate-800">
-												{friendlyActionLabel(linkage)}
-											</p>
-											<p class="sf:text-xs sf:text-slate-500">
-												ID: {linkage.local_mapping_id}
-											</p>
-											<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1">
-												{#each getMappingTriggerHooks(linkage) as hook (hook)}
-													<Badge variant="info">{hookOptions[hook] ?? hook}</Badge>
-												{/each}
-											</div>
-										</div>
-									</label>
-								{/each}
+								{/if}
 							</div>
+						</section>
+
+						{#if isSpamMapping}
+							<section class="sf:border sf:border-slate-200 sf:rounded-md">
+								<button
+									type="button"
+									class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+									aria-expanded={mappingSectionExpansion.guidance}
+									aria-controls="mapping-section-content-guidance"
+									data-testid="mapping-section-toggle-guidance"
+									onclick={() => toggleMappingSection('guidance')}
+								>
+									<span class="sf:flex sf:flex-col">
+										<span class="sf:text-sm sf:font-semibold sf:text-slate-800">
+											Classification guidance
+										</span>
+										<span class="sf:text-xs sf:text-slate-500">{guidanceSummary}</span>
+									</span>
+									<span class="sf:text-xs sf:text-slate-500">
+										{mappingSectionExpansion.guidance ? 'Hide' : 'Show'}
+									</span>
+								</button>
+								<div
+									id="mapping-section-content-guidance"
+									class="sf:border-t sf:border-slate-200 sf:px-4 sf:py-4 sf:space-y-3"
+									hidden={!mappingSectionExpansion.guidance}
+								>
+									{#if mappingSectionExpansion.guidance}
+										<Alert variant="info">
+											<p class="sf:text-sm">
+												Use examples to teach the classifier what counts as legitimate or spam for
+												this form.
+											</p>
+										</Alert>
+										<SpamCriteriaEditor
+											positiveExamples={draftSettings.spam_positive_examples ?? []}
+											negativeExamples={draftSettings.spam_negative_examples ?? []}
+											inheritedPositive={formLevelConfig.spam_positive_examples ?? []}
+											inheritedNegative={formLevelConfig.spam_negative_examples ?? []}
+											inheritanceSource={formLevelConfig.spam_positive_examples?.length > 0 ||
+											formLevelConfig.spam_negative_examples?.length > 0
+												? 'form'
+												: null}
+											onchange={(details) => {
+												draftSettings = {
+													...draftSettings,
+													spam_positive_examples: details.positive,
+													spam_negative_examples: details.negative
+												};
+											}}
+										/>
+										<p class="sf:text-xs sf:text-slate-500 sf:flex sf:items-center sf:gap-1">
+											<span class="sf:text-amber-500">⚠</span>
+											Submission data is processed by AI.
+											<a href="#/settings/context" class="sf:underline hover:sf:text-slate-700">
+												Review Site Context settings
+											</a>
+											for PII handling options.
+										</p>
+										<div class="sf:pt-2 sf:border-t sf:border-slate-100">
+											<Button
+												size="sm"
+												variant="secondary"
+												onclick={() => loadFormLevelConfig(editingLinkage.central_action_id)}
+											>
+												📋 Edit Form Defaults
+											</Button>
+											<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
+												Set default classification examples for all spam actions on this form.
+											</p>
+										</div>
+									{/if}
+								</div>
+							</section>
+
+							<section class="sf:border sf:border-slate-200 sf:rounded-md">
+								<button
+									type="button"
+									class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+									aria-expanded={mappingSectionExpansion.spam_advanced}
+									aria-controls="mapping-section-content-spam-advanced"
+									data-testid="mapping-section-toggle-spam_advanced"
+									onclick={() => toggleMappingSection('spam_advanced')}
+								>
+									<span class="sf:flex sf:flex-col">
+										<span class="sf:text-sm sf:font-semibold sf:text-slate-800">
+											Spam advanced settings
+										</span>
+										<span class="sf:text-xs sf:text-slate-500">{spamAdvancedSummary}</span>
+									</span>
+									<span class="sf:text-xs sf:text-slate-500">
+										{mappingSectionExpansion.spam_advanced ? 'Hide' : 'Show'}
+									</span>
+								</button>
+								<div
+									id="mapping-section-content-spam-advanced"
+									class="sf:border-t sf:border-slate-200 sf:px-4 sf:py-4"
+									hidden={!mappingSectionExpansion.spam_advanced}
+								>
+									{#if mappingSectionExpansion.spam_advanced}
+										<div class="sf:grid sf:gap-4">
+											<InputField
+												id="spam-threshold"
+												label="Confidence Threshold (0.0 - 1.0)"
+												type="number"
+												step="0.05"
+												min="0"
+												max="1"
+												bind:value={draftSettings.spam_confidence_threshold}
+												placeholder="0.80"
+											/>
+											<SelectField
+												id="spam-display"
+												label="Indicators Display"
+												bind:value={draftSettings.spam_indicators_display}
+												options={[
+													{ value: 'simple', label: 'Simple (Summary only)' },
+													{ value: 'detailed', label: 'Detailed (List signals)' }
+												]}
+											/>
+											<SelectField
+												id="spam-context"
+												label="Include Site Context"
+												bind:value={draftSettings.include_site_context}
+												options={[
+													{ value: 'global', label: 'Use global setting' },
+													{ value: 'always', label: 'Always include' },
+													{ value: 'never', label: 'Never include' }
+												]}
+											/>
+										</div>
+									{/if}
+								</div>
+							</section>
 						{/if}
+
+						<section class="sf:border sf:border-slate-200 sf:rounded-md">
+							<button
+								type="button"
+								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+								aria-expanded={mappingSectionExpansion.input_mapping}
+								aria-controls="mapping-section-content-input-mapping"
+								data-testid="mapping-section-toggle-input_mapping"
+								onclick={() => toggleMappingSection('input_mapping')}
+							>
+								<span class="sf:flex sf:flex-col">
+									<span class="sf:text-sm sf:font-semibold sf:text-slate-800">Input mapping</span>
+									<span class="sf:text-xs sf:text-slate-500">{inputMappingSummary}</span>
+								</span>
+								<span class="sf:text-xs sf:text-slate-500">
+									{mappingSectionExpansion.input_mapping ? 'Hide' : 'Show'}
+								</span>
+							</button>
+							<div
+								id="mapping-section-content-input-mapping"
+								class="sf:border-t sf:border-slate-200 sf:px-4 sf:py-4"
+								hidden={!mappingSectionExpansion.input_mapping}
+							>
+								{#if mappingSectionExpansion.input_mapping}
+									<FieldSelector
+										fields={formFields}
+										value={draftSettings.input_mapping ?? {
+											mode: 'selected',
+											include_metadata: false
+										}}
+										onchange={(mapping) => {
+											draftSettings = { ...draftSettings, input_mapping: mapping };
+										}}
+									/>
+								{/if}
+							</div>
+						</section>
+
+						<section class="sf:border sf:border-slate-200 sf:rounded-md">
+							<button
+								type="button"
+								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+								aria-expanded={mappingSectionExpansion.conditions}
+								aria-controls="mapping-section-content-conditions"
+								data-testid="mapping-section-toggle-conditions"
+								onclick={() => toggleMappingSection('conditions')}
+							>
+								<span class="sf:flex sf:flex-col">
+									<span class="sf:text-sm sf:font-semibold sf:text-slate-800">Conditional run</span>
+									<span class="sf:text-xs sf:text-slate-500">{conditionsSummary}</span>
+								</span>
+								<span class="sf:text-xs sf:text-slate-500">
+									{mappingSectionExpansion.conditions ? 'Hide' : 'Show'}
+								</span>
+							</button>
+							<div
+								id="mapping-section-content-conditions"
+								class="sf:border-t sf:border-slate-200 sf:px-4 sf:py-4"
+								hidden={!mappingSectionExpansion.conditions}
+							>
+								{#if mappingSectionExpansion.conditions}
+									{#if fieldsLoading}
+										<p class="sf:text-sm sf:text-slate-500">
+											Loading form fields for conditional run options...
+										</p>
+									{/if}
+									<ConditionBuilder
+										fields={formFields}
+										value={draftSettings.conditions ?? createDefaultConditionConfig()}
+										disabled={fieldsLoading}
+										onchange={(conditions) => {
+											draftSettings = { ...draftSettings, conditions };
+										}}
+									/>
+								{/if}
+							</div>
+						</section>
+
+						<section class="sf:border sf:border-slate-200 sf:rounded-md">
+							<button
+								type="button"
+								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+								aria-expanded={mappingSectionExpansion.model_execution}
+								aria-controls="mapping-section-content-model-execution"
+								data-testid="mapping-section-toggle-model_execution"
+								onclick={() => toggleMappingSection('model_execution')}
+							>
+								<span class="sf:flex sf:flex-col">
+									<span class="sf:text-sm sf:font-semibold sf:text-slate-800">
+										Model and execution
+									</span>
+									<span class="sf:text-xs sf:text-slate-500">{modelExecutionSummary}</span>
+								</span>
+								<span class="sf:text-xs sf:text-slate-500">
+									{mappingSectionExpansion.model_execution ? 'Hide' : 'Show'}
+								</span>
+							</button>
+							<div
+								id="mapping-section-content-model-execution"
+								class="sf:border-t sf:border-slate-200 sf:px-4 sf:py-4 sf:space-y-4"
+								hidden={!mappingSectionExpansion.model_execution}
+							>
+								{#if mappingSectionExpansion.model_execution}
+									<ModelSelector
+										value={draftSettings.model_selection ?? {
+											primary: 'sf_default',
+											is_preset: true
+										}}
+										onchange={(selection) => {
+											draftSettings = { ...draftSettings, model_selection: selection };
+										}}
+									/>
+
+									{#if draftSettings.execution_mode === 'after_submission'}
+										<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+											<div class="sf:flex sf:items-center sf:justify-between sf:mb-2">
+												<p
+													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500"
+												>
+													Batch Execution
+												</p>
+												<Toggle
+													checked={draftSettings.batch_settings?.enabled ?? false}
+													onchange={() => {
+														const current = draftSettings.batch_settings ?? {
+															...DEFAULT_BATCH_SETTINGS
+														};
+														draftSettings = {
+															...draftSettings,
+															batch_settings: { ...current, enabled: !current.enabled }
+														};
+													}}
+												/>
+											</div>
+											<p class="sf:text-xs sf:text-slate-500 sf:mb-3">
+												Delay execution to reduce peak load. Credit pricing is calculated by CPS at
+												execution time.
+											</p>
+
+											{#if draftSettings.batch_settings?.enabled}
+												<div class="sf:grid sf:gap-3">
+													<InputField
+														id="batch-delay"
+														label="Delay (seconds)"
+														type="number"
+														min="10"
+														max="3600"
+														placeholder="60"
+														bind:value={draftSettings.batch_settings.delay_seconds}
+													/>
+													<InputField
+														id="batch-max-wait"
+														label="Max wait before fallback (seconds)"
+														type="number"
+														min="43200"
+														max="604800"
+														placeholder="86400"
+														bind:value={draftSettings.batch_settings.max_wait_seconds}
+													/>
+													<p class="sf:text-xs sf:text-slate-500">
+														If CPS batching cannot be queued immediately, Sentient Forms will fall
+														back to local scheduling by this deadline.
+													</p>
+												</div>
+											{/if}
+										</div>
+									{/if}
+								{/if}
+							</div>
+						</section>
 					</div>
 
-					{#if createError}
-						<Alert variant="danger">{createError}</Alert>
-					{/if}
+					<footer
+						class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-3 sf:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
+					>
+						<p class="sf:text-xs sf:text-slate-600">
+							Close keeps draft changes in this browser only.
+						</p>
+						<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-end sf:gap-2">
+							<Button
+								variant="ghost"
+								onclick={closeMappingConfigModal}
+								data-testid="mapping-config-close-preserve"
+							>
+								Close
+							</Button>
+							<Button
+								variant="secondary"
+								onclick={cancelEditingAction}
+								data-testid="mapping-config-discard-draft"
+							>
+								Discard draft
+							</Button>
+							<Button
+								variant="primary"
+								onclick={() => saveActionChanges(editingLinkage)}
+								data-testid="mapping-config-save"
+							>
+								Save mapping
+							</Button>
+						</div>
+					</footer>
+				</div>
+			</div>
+		{/if}
 
-					<div class="sf:flex sf:justify-end sf:gap-2 sf:pb-2">
+		{#if showAddPanel}
+			<div class="sf:fixed sf:inset-0 sf:z-30 sf:bg-black/40 sf:flex sf:justify-end">
+				<div class="sf:h-full sf:w-full sf:max-w-xl sf:bg-white sf:shadow-2xl sf:flex sf:flex-col">
+					<div
+						class="sf:flex sf:items-center sf:justify-between sf:border-b sf:border-slate-200 sf:px-4 sf:py-3"
+					>
+						<div>
+							<p class="sf:text-sm sf:font-semibold sf:text-slate-800">Add action</p>
+							<p class="sf:text-xs sf:text-slate-500">Link a CPS template or custom action.</p>
+						</div>
 						<Button
-							type="button"
-							variant="secondary"
+							variant="ghost"
+							size="sm"
 							onclick={() => {
 								selectedCreateDependencyIds = new Set();
 								createError = null;
 								showAddPanel = false;
 							}}
 						>
-							Cancel
-						</Button>
-						<Button
-							type="button"
-							onclick={() => handleCreate(new Event('submit', { cancelable: true }))}
-							disabled={creating ||
-								selectedHooks.size === 0 ||
-								(!hasDefinitions && createKind === 'template')}
-						>
-							{creating ? 'Linking…' : 'Link action'}
+							Close
 						</Button>
 					</div>
-				</form>
+ 
+					<div class="sf:flex sf:flex-wrap sf:items-end sf:gap-2 sf:px-4 sf:py-3">
+						<Button
+							size="sm"
+							variant={createKind === 'template' ? 'primary' : 'secondary'}
+							onclick={() => (createKind = 'template')}
+							disabled={!hasDefinitions}
+						>
+							CPS templates
+						</Button>
+						<Button
+							size="sm"
+							variant={createKind === 'custom' ? 'primary' : 'secondary'}
+							onclick={() => (createKind = 'custom')}
+							disabled={customActions.length === 0}
+						>
+							Custom actions
+						</Button>
+						<div class="sf:flex-1 sf:min-w-[200px]">
+							<InputField
+								id="action-search"
+								label="Search"
+								placeholder="Search by name or id"
+								bind:value={searchTerm}
+							/>
+						</div>
+					</div>
+
+					<form
+						class="sf:flex sf:flex-col sf:gap-4 sf:px-4 sf:pb-4 sf:overflow-y-auto"
+						data-testid="link-action-form"
+					>
+						{#if createKind === 'template'}
+							{#if !hasDefinitions}
+								<Alert variant="warning">No CPS templates available right now.</Alert>
+							{:else}
+								<div class="sf:space-y-2">
+									{#each definitions.filter((definition) => {
+										const term = searchTerm.toLowerCase();
+										if (!term) return true;
+										const label = (definition.label ?? '').toLowerCase();
+										return definition.id.toLowerCase().includes(term) || label.includes(term);
+									}) as definition (definition.id)}
+										<label
+											class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300"
+										>
+											<input
+												type="radio"
+												name="template-choice"
+												class="sf:mt-1"
+												checked={selectedTemplateId === definition.id}
+												onchange={() => (selectedTemplateId = definition.id)}
+											/>
+											<div class="sf:flex sf:flex-col sf:gap-1">
+												<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+													{definition.label ?? definition.id}
+												</p>
+												<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
+												<p class="sf:text-xs sf:text-slate-500">
+													CPS base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+														definition
+													)}
+												</p>
+												<p class="sf:text-xs sf:text-slate-500">
+													Hooks: {summarizeDefinitionHooks(definition.hooks)}
+												</p>
+											</div>
+										</label>
+									{/each}
+								</div>
+							{/if}
+						{:else if customActions.length === 0}
+							<Alert variant="info">No active custom actions. Create one first.</Alert>
+						{:else}
+							<div class="sf:space-y-2">
+								{#each customActions.filter((action) => {
+									const term = searchTerm.toLowerCase();
+									if (!term) return true;
+									return action.display_name.toLowerCase().includes(term) || action.code
+											.toLowerCase()
+											.includes(term) || action.id.toLowerCase().includes(term);
+								}) as action (action.id)}
+									<label
+										class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300"
+									>
+										<input
+											type="radio"
+											name="custom-choice"
+											class="sf:mt-1"
+											checked={selectedCustomId === action.id}
+											onchange={() => (selectedCustomId = action.id)}
+										/>
+										<div class="sf:flex sf:flex-col sf:gap-1">
+											<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+												{action.display_name}
+											</p>
+											<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
+											{#if action.base_credit_cost !== null}
+												<p class="sf:text-xs sf:text-slate-500">
+													CPS base cost: {action.base_credit_cost} credits
+												</p>
+											{/if}
+										</div>
+									</label>
+								{/each}
+							</div>
+						{/if}
+
+						<div>
+							<div class="sf:flex sf:items-center sf:gap-2 sf:mb-2">
+								<p class="sf:text-sm sf:font-medium sf:text-slate-700">Triggers</p>
+								{#if selectedHooks.size === 0}
+									<span class="sf:text-xs sf:text-amber-600">Select at least one</span>
+								{/if}
+							</div>
+							<div class="sf:flex sf:flex-wrap sf:gap-3">
+								{#if hookEntries.length === 0}
+									{#each Object.entries(FALLBACK_HOOK_LABELS) as [hookKey, hookLabel]}
+										<label
+											class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2"
+										>
+											<input
+												type="checkbox"
+												class="sf:form-checkbox"
+												checked={selectedHooks.has(hookKey)}
+												onchange={() => toggleHookSelection(hookKey)}
+											/>
+											<span>{hookLabel}</span>
+										</label>
+									{/each}
+								{:else}
+									{#each hookEntries as [hookKey, hookLabel] (hookKey)}
+										<label
+											class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2"
+										>
+											<input
+												type="checkbox"
+												class="sf:form-checkbox"
+												checked={selectedHooks.has(hookKey)}
+												onchange={() => toggleHookSelection(hookKey)}
+											/>
+											<span>{hookLabel}</span>
+										</label>
+									{/each}
+								{/if}
+							</div>
+						</div>
+
+						<div class="sf:border-t sf:border-slate-200 sf:pt-3 sf:space-y-2">
+							<div class="sf:flex sf:items-center sf:justify-between sf:gap-2">
+								<p class="sf:text-sm sf:font-medium sf:text-slate-700">
+									Triggered by action (optional)
+								</p>
+								{#if selectedCreateDependencyIds.size > 0}
+									<Badge variant="info">1 selected</Badge>
+								{/if}
+							</div>
+							<p class="sf:text-xs sf:text-slate-500">
+								Choose one mapped action as upstream trigger source, or leave empty for autonomous
+								hook roots.
+							</p>
+							{#if selectedHooks.size === 0}
+								<p class="sf:text-xs sf:text-amber-700">
+									Choose trigger hooks first to see compatible upstream actions.
+								</p>
+							{:else if editableDependenciesForCreate.length === 0}
+								<p class="sf:text-xs sf:text-slate-500">
+									No compatible existing actions match the selected hooks.
+								</p>
+							{:else}
+								<div class="sf:grid sf:gap-2">
+									{#each editableDependenciesForCreate as linkage (linkage.local_mapping_id)}
+										<label
+											class="sf:flex sf:items-start sf:gap-2 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2 sf:cursor-pointer sf:hover:border-primary-300"
+										>
+											<input
+												type="radio"
+												name="create-dependency-trigger"
+												class="sf:mt-1"
+												checked={selectedCreateDependencyIds.has(linkage.local_mapping_id)}
+												onchange={() => toggleCreateDependencySelection(linkage.local_mapping_id)}
+											/>
+											<div class="sf:min-w-0 sf:flex-1">
+												<p class="sf:text-sm sf:font-medium sf:text-slate-800">
+													{friendlyActionLabel(linkage)}
+												</p>
+												<p class="sf:text-xs sf:text-slate-500">
+													ID: {linkage.local_mapping_id}
+												</p>
+												<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1">
+													{#each getMappingTriggerHooks(linkage) as hook (hook)}
+														<Badge variant="info">{hookOptions[hook] ?? hook}</Badge>
+													{/each}
+												</div>
+											</div>
+										</label>
+									{/each}
+								</div>
+							{/if}
+						</div>
+
+						{#if createError}
+							<Alert variant="danger">{createError}</Alert>
+						{/if}
+
+						<div class="sf:flex sf:justify-end sf:gap-2 sf:pb-2">
+							<Button
+								type="button"
+								variant="secondary"
+								onclick={() => {
+									selectedCreateDependencyIds = new Set();
+									createError = null;
+									showAddPanel = false;
+								}}
+							>
+								Cancel
+							</Button>
+							<Button
+								type="button"
+								onclick={() => handleCreate(new Event('submit', { cancelable: true }))}
+								disabled={creating ||
+									selectedHooks.size === 0 ||
+									(!hasDefinitions && createKind === 'template')}
+							>
+								{creating ? 'Linking…' : 'Link action'}
+							</Button>
+						</div>
+					</form>
+				</div>
 			</div>
-		</div>
-	{/if}
+		{/if}
 
 	<!-- Phase 7 CSM: Template Library Modal -->
 	<TemplateLibrary
