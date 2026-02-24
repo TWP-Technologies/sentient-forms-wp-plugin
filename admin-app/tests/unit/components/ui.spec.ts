@@ -20,11 +20,14 @@ describe('UI class generators', () => {
 		expect(secondary).toContain('sf:border-slate-300');
 		expect(secondary).toContain('sf:shadow-sm');
 		expect(secondary).toContain('sf:hover:border-slate-400');
+		expect(secondary).toContain('sf:focus-visible:ring-slate-600');
+		expect(secondary).toContain('sf:focus-visible:ring-offset-white');
 
 		const ghost = buttonStyles({ variant: 'ghost', size: 'md' });
 		expect(ghost).toContain('sf:border-slate-300');
 		expect(ghost).toContain('sf:bg-slate-50/70');
 		expect(ghost).toContain('sf:hover:bg-slate-100');
+		expect(ghost).toContain('sf:focus-visible:ring-slate-600');
 	});
 
 	it('maps control intents to button variants', () => {

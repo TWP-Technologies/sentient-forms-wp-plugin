@@ -201,4 +201,34 @@ const mockLogEntries = [
 	        expect(requestCount).toBeGreaterThanOrEqual(2);
 	    });
 
+	    test('status filter is keyboard-focusable with visible focus classes', async ({ page }) => {
+	        await page.route('**/wp-json/sentient-forms/v1/actions/log**', (route) =>
+	            route.fulfill({
+	                status: 200,
+	                contentType: 'application/json',
+	                body: JSON.stringify({
+	                    entries: mockLogEntries,
+	                    total: mockLogEntries.length,
+	                    total_pages: 1,
+	                    page: 1,
+	                    per_page: 20
+	                })
+	            })
+	        );
+
+	        await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
+
+	        const statusFilter = page.locator('#filter-status');
+	        let reachedFilter = false;
+	        for (let attempt = 0; attempt < 20; attempt += 1) {
+	            await page.keyboard.press('Tab');
+	            reachedFilter = await statusFilter.evaluate((node) => node === document.activeElement);
+	            if (reachedFilter) break;
+	        }
+
+	        expect(reachedFilter).toBe(true);
+	        await expect(statusFilter).toBeFocused();
+	        await expect(statusFilter).toHaveClass(/sf:focus-visible:ring-primary-500/);
+	    });
+
 	});

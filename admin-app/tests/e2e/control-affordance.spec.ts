@@ -147,4 +147,30 @@ test.describe('Control affordance normalization', () => {
 		const saveMapping = mappingModal.getByTestId('mapping-config-save');
 		await expect(saveMapping).toHaveClass(/sf:bg-primary-600/);
 	});
+
+	test('action log controls expose high-contrast focus classes', async ({ page }) => {
+		await page.route('**/wp-json/sentient-forms/v1/actions/log**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					entries: [],
+					total: 0,
+					total_pages: 0,
+					page: 1,
+					per_page: 20
+				})
+			})
+		);
+
+		await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
+
+		const refreshButton = page.getByRole('button', { name: 'Refresh' });
+		await expect(refreshButton).toHaveClass(/sf:focus-visible:ring-slate-600/);
+		await expect(refreshButton).toHaveClass(/sf:focus-visible:ring-offset-white/);
+
+		const statusFilter = page.locator('#filter-status');
+		await expect(statusFilter).toHaveClass(/sf:focus-visible:ring-primary-500/);
+		await expect(statusFilter).toHaveClass(/sf:focus-visible:ring-offset-white/);
+	});
 });
