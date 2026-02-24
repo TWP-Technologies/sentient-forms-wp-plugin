@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
 	import { parsePromptOverridesInput } from '$lib/utils/custom-actions';
+	import Button from './button.svelte';
 	import type {
 		TemplateOverrideSchema,
 		OverrideKeySchema,
@@ -217,13 +218,15 @@
 	<div class="sf:flex sf:items-center sf:justify-between">
 		<label for={id} class="sf:text-sm sf:font-medium sf:text-slate-700"> Prompt Overrides </label>
 		<div class="sf:flex sf:gap-1">
-			<button
+			<Button
 				type="button"
+				variant="ghost"
+				size="sm"
+				class="sf:h-auto sf:border-transparent sf:bg-transparent sf:px-1 sf:py-0 sf:text-xs sf:text-primary-700"
 				onclick={() => (mode === 'form' ? switchToJson() : switchToForm())}
-				class="sf:text-xs sf:text-indigo-600 sf:hover:text-indigo-800"
 			>
 				Switch to {mode === 'form' ? 'JSON' : 'Form'}
-			</button>
+			</Button>
 		</div>
 	</div>
 
@@ -323,14 +326,17 @@
 							/>
 						{/if}
 
-						<button
+						<Button
 							type="button"
+							variant="ghost"
+							size="sm"
+							iconOnly
+							class="sf:h-7 sf:w-7 sf:border-red-300 sf:bg-red-50 sf:text-red-600 hover:sf:border-red-400 hover:sf:bg-red-100 hover:sf:text-red-700"
 							onclick={() => removePair(index)}
-							class="sf:text-red-500 sf:hover:text-red-700 sf:px-2 sf:py-1"
 							aria-label="Remove pair"
 						>
 							×
-						</button>
+						</Button>
 					</div>
 
 					<!-- Show description hint for schema keys -->
@@ -342,21 +348,23 @@
 
 			<div class="sf:flex sf:gap-2">
 				{#if hasSchema && getAvailableSchemaKeys().length > 0}
-					<button
+					<Button
 						type="button"
+						variant="secondary"
+						size="sm"
 						onclick={addSchemaKey}
-						class="sf:self-start sf:text-sm sf:text-indigo-600 sf:hover:text-indigo-800 sf:font-medium"
 					>
 						+ Add template option
-					</button>
+					</Button>
 				{/if}
-				<button
+				<Button
 					type="button"
+					variant="ghost"
+					size="sm"
 					onclick={addPair}
-					class="sf:self-start sf:text-sm sf:text-slate-500 sf:hover:text-slate-700"
 				>
 					+ Custom override
-				</button>
+				</Button>
 			</div>
 		</div>
 	{:else}

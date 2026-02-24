@@ -8,6 +8,7 @@
 	import { loggingStore } from '$lib/stores/logging.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
+	import { Button } from '$lib/components/ui';
 	import type { FormSourceSummary } from '$lib/api/types';
 
 	const telemetry = telemetryStore;
@@ -204,13 +205,15 @@
 		<div class="sf:rounded-xl sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4 sf:space-y-2">
 			<div class="sf:flex sf:items-center sf:justify-between">
 				<p class="sf:font-semibold sf:text-amber-900">Async warnings</p>
-				<button
+				<Button
 					type="button"
-					class="sf:text-xs sf:text-amber-900 sf:underline"
+					variant="ghost"
+					size="sm"
+					class="sf:h-auto sf:px-1 sf:py-0 sf:text-amber-900 sf:underline"
 					onclick={() => asyncHealth.refresh()}
 				>
 					Refresh
-				</button>
+				</Button>
 			</div>
 			<ul class="sf:space-y-1">
 				{#each $asyncHealth.warnings as warning}
@@ -391,13 +394,9 @@
 			</div>
 
 			<div class="sf:flex sf:items-center sf:gap-4">
-				<button
-					type="submit"
-					class="sf:rounded-lg sf:bg-slate-900 sf:text-white sf:px-4 sf:py-2 sf:text-sm sf:font-semibold"
-					disabled={$asyncSettings.saving}
-				>
+				<Button type="submit" disabled={$asyncSettings.saving}>
 					{$asyncSettings.saving ? 'Saving…' : 'Save settings'}
-				</button>
+				</Button>
 				{#if formDirty}
 					<span class="sf:text-xs sf:text-slate-500">You have unsaved changes.</span>
 				{/if}
@@ -450,22 +449,23 @@
 			{/if}
 
 			<div class="sf:flex sf:gap-3">
-				<button
+				<Button
 					type="button"
-					class="sf:rounded-lg sf:bg-amber-600 sf:text-white sf:px-4 sf:py-2 sf:text-sm sf:font-semibold hover:sf:bg-amber-700 disabled:sf:opacity-50"
+					variant="secondary"
+					class="sf:border-amber-500 sf:bg-amber-50 sf:text-amber-900 hover:sf:bg-amber-100"
 					disabled={$asyncHealth.purging || $asyncHealth.queue_depth === 0}
 					onclick={purgeStaleJobs}
 				>
 					{$asyncHealth.purging ? 'Purging…' : 'Purge stale jobs'}
-				</button>
-				<button
+				</Button>
+				<Button
 					type="button"
-					class="sf:rounded-lg sf:border sf:border-red-300 sf:text-red-700 sf:px-4 sf:py-2 sf:text-sm sf:font-semibold hover:sf:bg-red-50 disabled:sf:opacity-50"
+					variant="danger"
 					disabled={$asyncHealth.purging || $asyncHealth.queue_depth === 0}
 					onclick={() => (showClearConfirm = true)}
 				>
 					Clear all
-				</button>
+				</Button>
 			</div>
 
 			<p class="sf:text-xs sf:text-slate-500">
@@ -486,21 +486,17 @@
 					undone.
 				</p>
 				<div class="sf:flex sf:gap-3 sf:justify-end">
-					<button
-						type="button"
-						class="sf:rounded-lg sf:border sf:border-slate-300 sf:px-4 sf:py-2 sf:text-sm sf:font-semibold sf:text-slate-700 hover:sf:bg-slate-50"
-						onclick={() => (showClearConfirm = false)}
-					>
+					<Button type="button" variant="secondary" onclick={() => (showClearConfirm = false)}>
 						Cancel
-					</button>
-					<button
+					</Button>
+					<Button
 						type="button"
-						class="sf:rounded-lg sf:bg-red-600 sf:text-white sf:px-4 sf:py-2 sf:text-sm sf:font-semibold hover:sf:bg-red-700"
+						variant="danger"
 						disabled={$asyncHealth.purging}
 						onclick={clearAllJobs}
 					>
 						{$asyncHealth.purging ? 'Clearing…' : 'Clear all'}
-					</button>
+					</Button>
 				</div>
 			</div>
 		</div>

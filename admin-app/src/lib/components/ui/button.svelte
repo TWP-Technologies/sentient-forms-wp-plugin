@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { buttonStyles } from '$lib/components/ui/buttonStyles';
+	import { buttonStyles, type ButtonVariant } from '$lib/components/ui/buttonStyles';
 	import type { HTMLButtonAttributes } from 'svelte/elements';
 
 type Props = {
-	variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+	variant?: ButtonVariant;
 	size?: 'sm' | 'md' | 'lg';
 	loading?: boolean;
 	iconOnly?: boolean;
@@ -14,6 +14,7 @@ type Props = {
 		size = 'md',
 		loading = false,
 		iconOnly = false,
+		class: className = '',
 		type = 'button',
 		disabled = undefined,
 		onclick: userOnClick,
@@ -38,7 +39,13 @@ type Props = {
 
 <button
 	{type}
-	class={buttonStyles({ variant, size }) + (iconOnly ? ' sf:px-0 sf:justify-center sf:w-10' : '')}
+	class={[
+		buttonStyles({ variant, size }),
+		iconOnly ? 'sf:px-0 sf:justify-center sf:w-10' : '',
+		className
+	]
+		.filter(Boolean)
+		.join(' ')}
 	onclick={handleClick}
 	disabled={isDisabled}
 	aria-busy={loading}

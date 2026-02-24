@@ -13,6 +13,7 @@
 		createDefaultConditionGroup,
 		createDefaultConditionRule
 	} from '$lib/utils/conditions';
+	import Button from './button.svelte';
 
 	interface Props {
 		group: ConditionGroup;
@@ -156,14 +157,16 @@
 			</select>
 		</div>
 		{#if onremove}
-			<button
+			<Button
 				type="button"
-				class="sf:text-xs sf:text-rose-700 hover:sf:text-rose-800 sf:underline disabled:sf:opacity-60"
+				variant="ghost"
+				size="sm"
+				class="sf:h-auto sf:border-transparent sf:bg-transparent sf:px-1 sf:py-0 sf:text-xs sf:text-rose-700 sf:underline hover:sf:bg-rose-50 hover:sf:text-rose-800"
 				onclick={() => onremove?.()}
 				{disabled}
 			>
 				Remove group
-			</button>
+			</Button>
 		{/if}
 	</div>
 
@@ -218,14 +221,16 @@
 						</select>
 					</label>
 
-					<button
+					<Button
 						type="button"
-						class="sf:text-xs sf:text-rose-700 hover:sf:text-rose-800 sf:underline disabled:sf:opacity-60"
+						variant="ghost"
+						size="sm"
+						class="sf:h-auto sf:border-transparent sf:bg-transparent sf:px-1 sf:py-0 sf:text-xs sf:text-rose-700 sf:underline hover:sf:bg-rose-50 hover:sf:text-rose-800"
 						onclick={() => removeNode(index)}
 						{disabled}
 					>
 						Remove rule
-					</button>
+					</Button>
 				</div>
 
 				{#if operatorNeedsValue(node.operator)}
@@ -273,24 +278,26 @@
 	{/each}
 
 	<div class="sf:flex sf:flex-wrap sf:gap-2">
-		<button
+		<Button
 			type="button"
-			class="sf:px-3 sf:py-1.5 sf:text-sm sf:rounded-md sf:border sf:border-slate-300 sf:bg-white hover:sf:bg-slate-100 disabled:sf:opacity-60"
+			variant="secondary"
+			size="sm"
 			onclick={addRule}
 			{disabled}
 		>
 			Add rule
-		</button>
+		</Button>
 
 		{#if depth < MAX_CONDITION_DEPTH}
-			<button
+			<Button
 				type="button"
-				class="sf:px-3 sf:py-1.5 sf:text-sm sf:rounded-md sf:border sf:border-slate-300 sf:bg-white hover:sf:bg-slate-100 disabled:sf:opacity-60"
+				variant="secondary"
+				size="sm"
 				onclick={addGroup}
 				{disabled}
 			>
 				Add group
-			</button>
+			</Button>
 		{/if}
 	</div>
 </div>

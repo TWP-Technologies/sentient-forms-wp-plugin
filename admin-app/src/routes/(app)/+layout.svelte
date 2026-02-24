@@ -10,6 +10,7 @@
 		routerType,
 		type NavigationLinkPath
 	} from '$lib/navigation';
+	import { Button } from '$lib/components/ui';
 	interface Props {
 		children?: import('svelte').Snippet;
 	}
@@ -108,13 +109,7 @@
 						>
 							<h2 class="sf:text-base sf:font-semibold sf:text-rose-900">This view hit an error</h2>
 							<p class="sf:text-sm sf:text-rose-800">{String(error)}</p>
-							<button
-								type="button"
-								class="sf:inline-flex sf:items-center sf:rounded sf:border sf:border-rose-400 sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:text-rose-900 sf:hover:bg-rose-100"
-								onclick={reset}
-							>
-								Retry view
-							</button>
+							<Button type="button" variant="danger" size="sm" onclick={reset}>Retry view</Button>
 						</section>
 					{/snippet}
 				</svelte:boundary>

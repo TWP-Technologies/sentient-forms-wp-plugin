@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
 	import { sanitizeCustomActionCode } from '$lib/utils/custom-actions';
+	import Button from './button.svelte';
 
 	interface Props {
 		/** Display name to generate slug from */
@@ -79,13 +80,15 @@
 				   focus:sf:outline-none focus:sf:ring-2 focus:sf:ring-indigo-500 focus:sf:border-indigo-500"
 		/>
 		{#if isManuallyEdited && !manualOnly}
-			<button
+			<Button
 				type="button"
+				variant="ghost"
+				size="sm"
+				class="sf:h-auto sf:border-transparent sf:bg-transparent sf:px-1 sf:py-0 sf:text-xs sf:text-primary-700"
 				onclick={resetToAuto}
-				class="sf:text-xs sf:text-indigo-600 sf:hover:text-indigo-800 sf:whitespace-nowrap"
 			>
 				Reset to auto
-			</button>
+			</Button>
 		{/if}
 	</div>
 	<p class="sf:text-xs sf:text-slate-500">Lowercase letters, numbers, and dashes only.</p>

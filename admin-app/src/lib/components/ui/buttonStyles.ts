@@ -1,14 +1,38 @@
 import { cva } from 'class-variance-authority';
 
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+export type ControlIntent = 'primary' | 'secondary' | 'tertiary' | 'danger';
+export type ControlVariantPolicy = {
+	control_id: string;
+	intent: ControlIntent;
+	visual_variant: ButtonVariant;
+	min_affordance_score: number;
+};
+
+export const controlIntentToVariant: Record<ControlIntent, ButtonVariant> = {
+	primary: 'primary',
+	secondary: 'secondary',
+	tertiary: 'ghost',
+	danger: 'danger'
+};
+
+export function variantForIntent(intent: ControlIntent): ButtonVariant {
+	return controlIntentToVariant[intent];
+}
+
 export const buttonStyles = cva(
-	'sf:inline-flex sf:cursor-pointer sf:items-center sf:justify-center sf:gap-2 sf:rounded sf:font-medium sf:transition-colors sf:focus:outline-hidden sf:focus-visible:ring-2 sf:focus-visible:ring-offset-2 sf:disabled:opacity-50 sf:disabled:cursor-not-allowed',
+	'sf:inline-flex sf:cursor-pointer sf:items-center sf:justify-center sf:gap-2 sf:rounded sf:border sf:font-medium sf:transition-colors sf:focus:outline-hidden sf:focus-visible:ring-2 sf:focus-visible:ring-offset-2 sf:disabled:opacity-50 sf:disabled:cursor-not-allowed',
 	{
 		variants: {
 			variant: {
-				primary: 'sf:bg-primary-600 sf:text-white sf:hover:bg-primary-700 sf:focus-visible:ring-primary-600',
-				secondary: 'sf:bg-white sf:text-slate-900 sf:border sf:border-slate-200 sf:hover:bg-slate-100 sf:focus-visible:ring-slate-200',
-				ghost: 'sf:bg-transparent sf:text-slate-700 sf:hover:bg-slate-100',
-				danger: 'sf:bg-danger-500 sf:text-white sf:hover:bg-danger-600 sf:focus-visible:ring-danger-500'
+				primary:
+					'sf:border-primary-700 sf:bg-primary-600 sf:text-white sf:shadow-sm sf:hover:bg-primary-700 sf:hover:border-primary-700 sf:focus-visible:ring-primary-500',
+				secondary:
+					'sf:border-slate-300 sf:bg-white sf:text-slate-900 sf:shadow-sm sf:hover:bg-slate-50 sf:hover:border-slate-400 sf:focus-visible:ring-slate-400',
+				ghost:
+					'sf:border-slate-300 sf:bg-slate-50/70 sf:text-slate-700 sf:hover:bg-slate-100 sf:hover:border-slate-400 sf:focus-visible:ring-slate-400',
+				danger:
+					'sf:border-danger-600 sf:bg-danger-600 sf:text-white sf:shadow-sm sf:hover:bg-danger-500 sf:hover:border-danger-500 sf:focus-visible:ring-danger-500'
 			},
 			size: {
 				sm: 'sf:h-8 sf:px-3 sf:text-sm',

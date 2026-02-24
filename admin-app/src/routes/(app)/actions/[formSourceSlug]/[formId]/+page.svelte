@@ -1980,6 +1980,7 @@
 		>
 			<!-- svelte-ignore a11y_click_events_have_key_events -->
 			<div
+				data-testid="form-defaults-modal"
 				class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-2xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
 				onclick={(e) => e.stopPropagation()}
 			>
@@ -1992,11 +1993,17 @@
 							Configure default examples for all spam detection actions on this form.
 						</p>
 					</div>
-					<button
-						class="sf:text-slate-400 hover:sf:text-slate-600 sf:text-2xl sf:leading-none"
+					<Button
+						variant="ghost"
+						size="sm"
+						iconOnly
+						class="sf:text-lg"
 						onclick={cancelFormLevelConfig}
-						aria-label="Close">×</button
+						aria-label="Close"
+						data-testid="form-defaults-close"
 					>
+						×
+					</Button>
 				</header>
 
 				<div class="sf:p-6 sf:space-y-6">
@@ -2574,7 +2581,7 @@
 						<section class="sf:border sf:border-slate-200 sf:rounded-md">
 							<button
 								type="button"
-								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-inset"
 								aria-expanded={mappingSectionExpansion.core}
 								aria-controls="mapping-section-content-core"
 								data-testid="mapping-section-toggle-core"
@@ -2677,7 +2684,7 @@
 							<section class="sf:border sf:border-slate-200 sf:rounded-md">
 								<button
 									type="button"
-									class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+									class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-inset"
 									aria-expanded={mappingSectionExpansion.guidance}
 									aria-controls="mapping-section-content-guidance"
 									data-testid="mapping-section-toggle-guidance"
@@ -2749,7 +2756,7 @@
 							<section class="sf:border sf:border-slate-200 sf:rounded-md">
 								<button
 									type="button"
-									class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+									class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-inset"
 									aria-expanded={mappingSectionExpansion.spam_advanced}
 									aria-controls="mapping-section-content-spam-advanced"
 									data-testid="mapping-section-toggle-spam_advanced"
@@ -2810,7 +2817,7 @@
 						<section class="sf:border sf:border-slate-200 sf:rounded-md">
 							<button
 								type="button"
-								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-inset"
 								aria-expanded={mappingSectionExpansion.input_mapping}
 								aria-controls="mapping-section-content-input-mapping"
 								data-testid="mapping-section-toggle-input_mapping"
@@ -2847,7 +2854,7 @@
 						<section class="sf:border sf:border-slate-200 sf:rounded-md">
 							<button
 								type="button"
-								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-inset"
 								aria-expanded={mappingSectionExpansion.conditions}
 								aria-controls="mapping-section-content-conditions"
 								data-testid="mapping-section-toggle-conditions"
@@ -2887,7 +2894,7 @@
 						<section class="sf:border sf:border-slate-200 sf:rounded-md">
 							<button
 								type="button"
-								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50"
+								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-inset"
 								aria-expanded={mappingSectionExpansion.model_execution}
 								aria-controls="mapping-section-content-model-execution"
 								data-testid="mapping-section-toggle-model_execution"

@@ -747,11 +747,17 @@
 						Configure default examples that apply across ALL forms using this action.
 					</p>
 				</div>
-				<button
-					class="sf:text-slate-400 hover:sf:text-slate-600 sf:text-2xl sf:leading-none"
+				<Button
+					variant="ghost"
+					size="sm"
+					iconOnly
+					class="sf:text-lg"
 					onclick={cancelActionDefaults}
-					aria-label="Close">×</button
+					aria-label="Close"
+					data-testid="action-defaults-close"
 				>
+					×
+				</Button>
 			</header>
 
 			<div class="sf:p-6 sf:space-y-6">

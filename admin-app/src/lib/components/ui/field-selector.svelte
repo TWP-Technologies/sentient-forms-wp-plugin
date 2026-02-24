@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Badge, Card } from '$lib/components/ui';
+	import Button from './button.svelte';
 	import type { InputMapping, FormFieldInfo } from '$lib/api/types';
 
 	interface Props {
@@ -119,14 +120,16 @@
 					<span class="sf:text-xs sf:font-medium sf:text-slate-500 sf:uppercase sf:tracking-wide">
 						{value.mode === 'selected' ? 'Include' : 'Exclude'} Fields
 					</span>
-					<button
+					<Button
 						type="button"
-						class="sf:text-xs sf:text-blue-600 hover:sf:text-blue-800 sf:underline"
+						variant="ghost"
+						size="sm"
+						class="sf:h-auto sf:border-transparent sf:bg-transparent sf:px-1 sf:py-0 sf:text-xs sf:text-primary-700 sf:underline hover:sf:bg-primary-50 hover:sf:text-primary-700"
 						onclick={toggleAll}
 						{disabled}
 					>
 						{allSelected ? 'Deselect all' : 'Select all'}
-					</button>
+					</Button>
 				</div>
 
 				{#if selectableFields.length === 0}

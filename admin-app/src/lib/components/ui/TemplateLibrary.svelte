@@ -8,6 +8,7 @@
 	import { formMappingsStore } from '$lib/stores/form-mappings.svelte';
 	import type { FormMapping, FormFieldInfo, CloneTemplateMappingRequest } from '$lib/api/types';
 	import { onMount } from 'svelte';
+	import Button from './button.svelte';
 
 	// Props
 	let {
@@ -117,7 +118,17 @@
 						Map Fields
 					{/if}
 				</h2>
-				<button class="sf-modal-close" onclick={close} aria-label="Close">×</button>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					iconOnly
+					class="sf:text-lg"
+					onclick={close}
+					aria-label="Close"
+				>
+					×
+				</Button>
 			</header>
 
 			<div class="sf-template-library-content">
@@ -137,10 +148,16 @@
 						<ul class="sf-template-list">
 							{#each formMappingsStore.templates as template (template.id)}
 								<li>
-									<button class="sf-template-item" onclick={() => selectTemplate(template)}>
+									<Button
+										type="button"
+										variant="secondary"
+										size="sm"
+										class="sf-template-item sf:h-auto sf:w-full sf:justify-between sf:px-4 sf:py-3 sf:text-left"
+										onclick={() => selectTemplate(template)}
+									>
 										<span class="sf-template-name">{template.display_name}</span>
 										<span class="sf-template-source">{template.form_source}</span>
-									</button>
+									</Button>
 								</li>
 							{/each}
 						</ul>
@@ -163,17 +180,18 @@
 						{/each}
 					</div>
 					<div class="sf-remap-actions">
-						<button
-							class="sf-btn-secondary"
+						<Button
+							type="button"
+							variant="secondary"
 							onclick={() => {
 								step = 'select';
 							}}
 						>
 							Back
-						</button>
-						<button class="sf-btn-primary" onclick={handleImport} disabled={importing}>
+						</Button>
+						<Button type="button" variant="primary" onclick={handleImport} disabled={importing}>
 							{importing ? 'Importing...' : 'Import'}
-						</button>
+						</Button>
 					</div>
 				{/if}
 			</div>
@@ -215,16 +233,6 @@
 		margin: 0;
 		font-size: 18px;
 		font-weight: 600;
-	}
-
-	.sf-modal-close {
-		background: none;
-		border: none;
-		font-size: 24px;
-		cursor: pointer;
-		color: #666;
-		padding: 0;
-		line-height: 1;
 	}
 
 	.sf-template-library-content {
@@ -329,37 +337,4 @@
 		border-top: 1px solid #e0e0e0;
 	}
 
-	.sf-btn-primary,
-	.sf-btn-secondary {
-		padding: 8px 16px;
-		border-radius: 4px;
-		font-size: 14px;
-		font-weight: 500;
-		cursor: pointer;
-	}
-
-	.sf-btn-primary {
-		background: #2271b1;
-		color: #fff;
-		border: none;
-	}
-
-	.sf-btn-primary:hover {
-		background: #135e96;
-	}
-
-	.sf-btn-primary:disabled {
-		background: #a0c4e8;
-		cursor: not-allowed;
-	}
-
-	.sf-btn-secondary {
-		background: #fff;
-		color: #333;
-		border: 1px solid #ccc;
-	}
-
-	.sf-btn-secondary:hover {
-		background: #f5f5f5;
-	}
 </style>

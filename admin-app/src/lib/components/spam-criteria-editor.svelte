@@ -108,9 +108,11 @@
 </script>
 
 <div class="sf:pt-2">
-	<button
+	<Button
 		type="button"
-		class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:font-medium sf:text-slate-700 hover:sf:text-slate-900 sf:transition-colors"
+		variant="ghost"
+		size="sm"
+		class="sf:h-auto sf:w-full sf:justify-start sf:px-2 sf:py-1 sf:text-sm sf:font-medium"
 		onclick={() => (expanded = !expanded)}
 	>
 		<span class="sf:text-xs sf:text-slate-400">{expanded ? '▼' : '▶'}</span>
@@ -123,7 +125,7 @@
 		{#if isInheriting && !expanded}
 			<span class="sf:text-xs sf:text-blue-600 sf:font-medium">📋 Inherited</span>
 		{/if}
-	</button>
+	</Button>
 
 	{#if expanded}
 		<div class="sf:mt-3 sf:space-y-4 sf:pl-4 sf:border-l-2 sf:border-slate-200">
@@ -187,14 +189,17 @@
 							>
 								<span class="sf:truncate sf:flex-1">{example}</span>
 								{#if !isInheriting}
-									<button
+									<Button
 										type="button"
-										class="sf:ml-2 sf:text-green-600 hover:sf:text-red-600 sf:text-xs"
+										size="sm"
+										variant="ghost"
+										iconOnly
+										class="sf:ml-2 sf:h-6 sf:w-6 sf:border-green-300 sf:bg-green-100 sf:text-green-700 hover:sf:border-red-300 hover:sf:bg-red-100 hover:sf:text-red-700"
 										onclick={() => removePositive(i)}
-										aria-label="Remove example"
+										aria-label="Remove legitimate example"
 									>
 										×
-									</button>
+									</Button>
 								{/if}
 							</li>
 						{/each}
@@ -238,14 +243,17 @@
 							>
 								<span class="sf:truncate sf:flex-1">{example}</span>
 								{#if !isInheriting}
-									<button
+									<Button
 										type="button"
-										class="sf:ml-2 sf:text-red-600 hover:sf:text-red-800 sf:text-xs"
+										size="sm"
+										variant="ghost"
+										iconOnly
+										class="sf:ml-2 sf:h-6 sf:w-6 sf:border-red-300 sf:bg-red-100 sf:text-red-700 hover:sf:border-red-400 hover:sf:bg-red-200 hover:sf:text-red-800"
 										onclick={() => removeNegative(i)}
-										aria-label="Remove example"
+										aria-label="Remove spam example"
 									>
 										×
-									</button>
+									</Button>
 								{/if}
 							</li>
 						{/each}
