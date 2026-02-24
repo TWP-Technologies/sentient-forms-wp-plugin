@@ -1,6 +1,7 @@
 import { toStore } from 'svelte/store';
 import { ApiClientError, createClientFromConfig } from '$lib/api/client';
 import { notifications } from '$lib/stores/notifications';
+import { sortCustomActionsByRecency } from '$lib/utils/date-time';
 import type {
 	ActionDefinition,
 	CustomAction,
@@ -60,6 +61,10 @@ function setState(partial: Partial<CustomActionsState>) {
 	Object.assign(customActionsState, partial);
 }
 
+function setSortedActions(actions: CustomAction[]): void {
+	customActionsState.actions = sortCustomActionsByRecency(actions);
+}
+
 function friendlyMessageFromError(error: unknown, fallback: string): string {
 	if (error instanceof ApiClientError) {
 		if (error.code && friendlyMessages[error.code]) {
@@ -94,17 +99,14 @@ async function load(filters: CustomActionFilters = customActionsState.filters): 
 			// best effort; fall back to 404 detection
 		}
 
-		const [response, definitions] = await Promise.all([
-			client.getCustomActions(filters, { showNotifications: false }),
-			client.getActionDefinitions({ showNotifications: false })
-		]);
-		const sorted = [...response.actions].sort((a, b) =>
-			new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-		);
-		setState({
-			actions: sorted,
-			definitions,
-			quota: response.quota,
+			const [response, definitions] = await Promise.all([
+				client.getCustomActions(filters, { showNotifications: false }),
+				client.getActionDefinitions({ showNotifications: false })
+			]);
+			setState({
+				actions: sortCustomActionsByRecency(response.actions),
+				definitions,
+				quota: response.quota,
 			loading: false,
 			error: null,
 			supportsCustomActions: true,
@@ -135,7 +137,7 @@ async function create(payload: CustomActionCreatePayload): Promise<void> {
 	customActionsState.creating = true;
 	try {
 		const response = await client.createCustomAction(payload, { showNotifications: true });
-		customActionsState.actions = [response.action, ...customActionsState.actions];
+		setSortedActions([response.action, ...customActionsState.actions]);
 		customActionsState.quota = response.quota;
 		customActionsState.error = null;
 		notifications.success('Custom action created');
@@ -151,8 +153,8 @@ async function create(payload: CustomActionCreatePayload): Promise<void> {
 async function update(id: string, payload: CustomActionUpdatePayload): Promise<void> {
 	try {
 		const response = await client.updateCustomAction(id, payload, { showNotifications: true });
-		customActionsState.actions = customActionsState.actions.map((action) =>
-			action.id === id ? response.action : action
+		setSortedActions(
+			customActionsState.actions.map((action) => (action.id === id ? response.action : action))
 		);
 		customActionsState.quota = response.quota;
 		notifications.success('Custom action updated');
@@ -166,8 +168,8 @@ async function update(id: string, payload: CustomActionUpdatePayload): Promise<v
 async function archive(id: string): Promise<void> {
 	try {
 		const response = await client.archiveCustomAction(id, { showNotifications: true });
-		customActionsState.actions = customActionsState.actions.map((action) =>
-			action.id === id ? response.action : action
+		setSortedActions(
+			customActionsState.actions.map((action) => (action.id === id ? response.action : action))
 		);
 		customActionsState.quota = response.quota;
 		notifications.success('Custom action archived');
@@ -181,8 +183,8 @@ async function archive(id: string): Promise<void> {
 async function reactivate(id: string): Promise<void> {
 	try {
 		const response = await client.reactivateCustomAction(id, { showNotifications: true });
-		customActionsState.actions = customActionsState.actions.map((action) =>
-			action.id === id ? response.action : action
+		setSortedActions(
+			customActionsState.actions.map((action) => (action.id === id ? response.action : action))
 		);
 		customActionsState.quota = response.quota;
 		notifications.success('Custom action reactivated');

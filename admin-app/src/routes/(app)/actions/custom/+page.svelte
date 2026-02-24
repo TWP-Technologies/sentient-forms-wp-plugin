@@ -3,6 +3,7 @@
 	import { Section, Card, Button, Badge, Alert } from '$lib/components/ui';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { navigateToAppPath } from '$lib/navigation';
+	import { formatTimeOnly, formatTimestamp } from '$lib/utils/date-time';
 	import type { CustomAction } from '$lib/api/types';
 
 	const customState = customActionsState;
@@ -20,14 +21,6 @@
 		const filters = filter === 'all' ? { include_archived: true } : { status: filter };
 		customActionsStore.setFilters(filters);
 		customActionsStore.load(filters);
-	}
-
-	function formatDate(value: string | null | undefined): string {
-		if (!value) return '—';
-		return new Intl.DateTimeFormat(undefined, {
-			dateStyle: 'medium',
-			timeStyle: 'short'
-		}).format(new Date(value));
 	}
 
 	function archive(action: CustomAction) {
@@ -136,13 +129,11 @@
 					</Button>
 				{/each}
 			</div>
-			<span class="sf:text-xs sf:text-slate-500">
-				Last synced:
-				{customState.lastLoadedAt
-					? new Date(customState.lastLoadedAt).toLocaleTimeString()
-					: 'never'}
-			</span>
-		</div>
+				<span class="sf:text-xs sf:text-slate-500">
+					Last synced:
+					{formatTimeOnly(customState.lastLoadedAt, 'never')}
+				</span>
+			</div>
 
 		{#if customState.loading}
 			<p class="sf:mt-4 sf:text-sm sf:text-slate-600">Loading custom actions…</p>
@@ -192,7 +183,9 @@
 										{action.status}
 									</Badge>
 								</td>
-								<td class="sf:p-2 sf:text-xs sf:text-slate-500">{formatDate(action.updated_at)}</td>
+									<td class="sf:p-2 sf:text-xs sf:text-slate-500">
+										{formatTimestamp(action.updated_at)}
+									</td>
 								<td class="sf:p-2 sf:text-right sf:flex sf:gap-2 sf:justify-end">
 									<Button size="sm" variant="secondary" onclick={() => editAction(action)}>
 										Edit
