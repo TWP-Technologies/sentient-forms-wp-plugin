@@ -118,8 +118,21 @@ async function saveMappingConfigModal(page: Parameters<typeof test>[0]['page']) 
 	const modal = page.getByTestId('mapping-config-modal');
 	await modal
 		.locator('footer')
-		.getByRole('button', { name: /^Save( changes)?$/ })
+		.getByRole('button', { name: 'Save mapping' })
 		.click();
+}
+
+async function ensureMappingSectionExpanded(
+	page: Parameters<typeof test>[0]['page'],
+	sectionId: string
+) {
+	const modal = page.getByTestId('mapping-config-modal');
+	const toggle = modal.getByTestId(`mapping-section-toggle-${sectionId}`);
+	await expect(toggle).toBeVisible();
+	const isExpanded = (await toggle.getAttribute('aria-expanded')) === 'true';
+	if (!isExpanded) {
+		await toggle.click();
+	}
 }
 
 async function connectHandlesByMouse(
@@ -743,6 +756,7 @@ test.describe('Actions admin flows', () => {
 		const table = await openLinkedActionsTable(page);
 		const firstRow = table.locator('tbody tr').first();
 		await firstRow.getByRole('button', { name: 'Configure' }).click();
+		await ensureMappingSectionExpanded(page, 'conditions');
 
 		const enableConditionalRun = page.getByRole('checkbox', { name: 'Enable conditional run' });
 		await expect(enableConditionalRun).toBeVisible();
@@ -796,6 +810,7 @@ test.describe('Actions admin flows', () => {
 		const table = await openLinkedActionsTable(page);
 		const firstRow = table.locator('tbody tr').first();
 		await firstRow.getByRole('button', { name: 'Configure' }).click();
+		await ensureMappingSectionExpanded(page, 'conditions');
 
 		const enableConditionalRun = page.getByRole('checkbox', { name: 'Enable conditional run' });
 		await expect(enableConditionalRun).toBeVisible();
@@ -2104,7 +2119,7 @@ test.describe('Actions admin flows', () => {
 		const configModal = page.getByTestId('mapping-config-modal');
 		await expect(configModal).toBeVisible();
 		await expect(configModal.getByText('Configure Action Mapping')).toBeVisible();
-		await configModal.getByRole('button', { name: 'Close' }).first().click();
+		await configModal.getByTestId('mapping-config-close-header').click();
 		await expect(configModal).toBeHidden();
 
 		const disableReq = page.waitForRequest(
@@ -2136,6 +2151,126 @@ test.describe('Actions admin flows', () => {
 		await page.getByTestId('linked-actions-view-table').click();
 		await expect(page.getByTestId('form-actions-table')).toBeVisible();
 		await expect(page.getByTestId('dependency-graph')).toHaveCount(0);
+	});
+
+	test('uses progressive disclosure defaults and visible guidance summary for spam mappings', async ({
+		page
+	}) => {
+		const definitions = [
+			...baseDefinitions,
+			{
+				id: 'spam_detection_v1',
+				label: 'Spam detection',
+				source: 'cps',
+				hooks: ['gform_validation']
+			}
+		];
+		const linkages = [
+			{
+				local_mapping_id: 'map-1',
+				central_action_id: 'spam_detection_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam detection',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {
+					spam_positive_examples: ['Known customer request']
+				}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+
+		const modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByTestId('mapping-section-toggle-core')).toHaveAttribute(
+			'aria-expanded',
+			'true'
+		);
+		await expect(modal.getByTestId('mapping-section-toggle-guidance')).toHaveAttribute(
+			'aria-expanded',
+			'true'
+		);
+		await expect(modal.getByTestId('mapping-section-toggle-spam_advanced')).toHaveAttribute(
+			'aria-expanded',
+			'false'
+		);
+		await expect(modal.getByTestId('mapping-section-toggle-input_mapping')).toHaveAttribute(
+			'aria-expanded',
+			'false'
+		);
+		await expect(modal.getByTestId('mapping-section-toggle-conditions')).toHaveAttribute(
+			'aria-expanded',
+			'false'
+		);
+		await expect(modal.getByTestId('mapping-section-toggle-model_execution')).toHaveAttribute(
+			'aria-expanded',
+			'false'
+		);
+		await expect(modal.getByText('1 custom example')).toBeVisible();
+	});
+
+	test('preserves local draft on close and clears it on discard', async ({ page }) => {
+		const linkages = [
+			{
+				...baseLinkages[0],
+				settings: {}
+			}
+		];
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		const firstRow = table.locator('tbody tr').first();
+		await firstRow.getByRole('button', { name: 'Configure' }).click();
+
+		let modal = page.getByTestId('mapping-config-modal');
+		const syncHook = modal.getByTestId('mapping-trigger-hook-gform_validation');
+		const asyncHook = modal.getByTestId('mapping-trigger-hook-gform_after_submission');
+
+		await expect(syncHook).toBeChecked();
+		await expect(asyncHook).not.toBeChecked();
+		await asyncHook.check();
+		await syncHook.uncheck();
+
+		await modal.getByTestId('mapping-config-close-header').click();
+		await expect(modal).toBeHidden();
+
+		await firstRow.getByRole('button', { name: 'Configure' }).click();
+		modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByTestId('mapping-trigger-hook-gform_after_submission')).toBeChecked();
+		await expect(modal.getByTestId('mapping-trigger-hook-gform_validation')).not.toBeChecked();
+
+		await modal.getByTestId('mapping-config-discard-draft').click();
+		await expect(modal).toBeHidden();
+
+		await firstRow.getByRole('button', { name: 'Configure' }).click();
+		modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByTestId('mapping-trigger-hook-gform_validation')).toBeChecked();
+		await expect(modal.getByTestId('mapping-trigger-hook-gform_after_submission')).not.toBeChecked();
 	});
 
 	test('runs request tracer with manual values and renders step diagnostics', async ({ page }) => {
