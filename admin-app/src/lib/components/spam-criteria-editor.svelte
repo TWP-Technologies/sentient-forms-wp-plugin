@@ -4,6 +4,7 @@
 	interface Props {
 		positiveExamples?: string[];
 		negativeExamples?: string[];
+		initiallyExpanded?: boolean;
 		/** Inherited positive examples from form-level config */
 		inheritedPositive?: string[];
 		/** Inherited negative examples from form-level config */
@@ -16,6 +17,7 @@
 	let {
 		positiveExamples = [],
 		negativeExamples = [],
+		initiallyExpanded = false,
 		inheritedPositive = [],
 		inheritedNegative = [],
 		inheritanceSource = null,
@@ -24,7 +26,7 @@
 
 	let newPositive = $state('');
 	let newNegative = $state('');
-	let expanded = $state(false);
+	let expanded = $state(initiallyExpanded);
 	/** Whether user has chosen to override inherited examples */
 	let overriding = $state(false);
 

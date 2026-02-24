@@ -460,34 +460,35 @@
 									{meta.label}
 								</p>
 								<ul class="sf:space-y-1">
-									{#each items.slice(0, 3) as definition (definition.id)}
-										{@const formCount = formsPerAction.get(definition.id) ?? 0}
-										<li class="sf:flex sf:items-start sf:justify-between sf:gap-2">
-											<div>
-												<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
-													{definition.label ?? definition.id}
-												</p>
-											</div>
-											<div class="sf:flex sf:items-center sf:gap-2">
-												{#if definition.id === 'spam_detection_v1' || definition.id === 'spam_analysis'}
-													<Button
-														size="sm"
-														variant="ghost"
-														onclick={() => loadActionDefaults(definition.id)}
-														disabled={actionDefaultsLoading}
-													>
-														Defaults
-													</Button>
-												{/if}
-												<Badge variant={formCount > 0 ? 'info' : 'neutral'}>
-													{formCount} form{formCount !== 1 ? 's' : ''}
-												</Badge>
-												<Badge variant={definition.source === 'cps' ? 'success' : 'warning'}>
-													{definition.source === 'cps' ? 'CPS' : 'Local'}
-												</Badge>
-											</div>
-										</li>
-									{/each}
+										{#each items.slice(0, 3) as definition (definition.id)}
+											{@const formCount = formsPerAction.get(definition.id) ?? 0}
+											<li class="sf:flex sf:items-start sf:justify-between sf:gap-2">
+												<div>
+													<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+														{definition.label ?? definition.id}
+													</p>
+												</div>
+												<div class="sf:flex sf:items-center sf:gap-2">
+													{#if definition.id === 'spam_detection_v1' || definition.id === 'spam_analysis'}
+														<Button
+															size="sm"
+															variant="ghost"
+															onclick={() => loadActionDefaults(definition.id)}
+															disabled={actionDefaultsLoading}
+															data-testid={`action-defaults-button-${definition.id}`}
+														>
+															Defaults
+														</Button>
+													{/if}
+													<Badge variant={formCount > 0 ? 'info' : 'neutral'}>
+														{formCount} form{formCount !== 1 ? 's' : ''}
+													</Badge>
+													<Badge variant={definition.source === 'cps' ? 'success' : 'warning'}>
+														{definition.source === 'cps' ? 'CPS' : 'Local'}
+													</Badge>
+												</div>
+											</li>
+										{/each}
 								</ul>
 							</div>
 						{/if}
@@ -733,6 +734,7 @@
 	>
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<div
+			data-testid="action-defaults-modal"
 			class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-2xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
 			onclick={(e) => e.stopPropagation()}
 		>
@@ -764,6 +766,7 @@
 					</Alert>
 
 					<SpamCriteriaEditor
+						initiallyExpanded={true}
 						positiveExamples={actionDefaults.spam_positive_examples ?? []}
 						negativeExamples={actionDefaults.spam_negative_examples ?? []}
 						onchange={(data) => {
