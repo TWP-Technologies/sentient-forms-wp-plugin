@@ -118,6 +118,39 @@ describe('customActionsStore', () => {
 		expect(state.error).toBeNull();
 	});
 
+	it('keeps valid timestamps first when some updated_at values are invalid', async () => {
+		stubClient.getCustomActions.mockResolvedValue({
+			actions: [
+				{
+					...sampleActions[0],
+					id: 'invalid-a',
+					code: 'legacy_1770000000001',
+					updated_at: 'Array',
+					created_at: '2025-11-14T05:00:00Z'
+				},
+				{
+					...sampleActions[1],
+					id: 'valid-b',
+					code: 'beta',
+					updated_at: '2025-11-15T07:00:00Z'
+				},
+				{
+					...sampleActions[1],
+					id: 'invalid-c',
+					code: 'legacy_1770000000000',
+					updated_at: 'not-a-date',
+					created_at: '2025-11-13T00:00:00Z'
+				}
+			],
+			quota: { quota_max: 5, quota_used: 3, quota_remaining: 2 }
+		});
+
+		await customActionsStore.load();
+		const state = snapshotState();
+
+		expect(state.actions.map((action) => action.id)).toEqual(['valid-b', 'invalid-a', 'invalid-c']);
+	});
+
 	it('surfaces friendly error message when CPS rejects request', async () => {
 		const apiError = new ApiClientError('Request failed', 422, {
 			error_code: 'quota_exceeded',

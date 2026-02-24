@@ -196,4 +196,104 @@ test.describe('Custom actions admin view', () => {
 		await firstRow.getByRole('button', { name: 'Reactivate' }).click();
 		await expect(firstRow.getByText('active')).toBeVisible();
 	});
+
+	test('renders without crashing when custom-action timestamps are invalid', async ({ page }) => {
+		const actions = [
+			{
+				id: 'valid-new',
+				template_id: 'tmpl-valid',
+				code: 'valid-new',
+				display_name: 'Valid New',
+				description: null,
+				prompt_overrides: {},
+				model_hint: null,
+				base_credit_cost: 10,
+				status: 'active',
+				archived_at: null,
+				created_at: '2026-02-23T12:00:00Z',
+				updated_at: '2026-02-23T12:00:00Z',
+				action_kind: 'template_override',
+				definition: null,
+				definition_version: 1,
+				output_contract: null,
+				supported_execution_modes: ['after_submission']
+			},
+			{
+				id: 'invalid-time',
+				template_id: 'tmpl-invalid',
+				code: 'invalid-time',
+				display_name: 'Invalid Time',
+				description: null,
+				prompt_overrides: {},
+				model_hint: null,
+				base_credit_cost: 10,
+				status: 'active',
+				archived_at: null,
+				created_at: '2026-02-23T11:00:00Z',
+				updated_at: 'Array',
+				action_kind: 'template_override',
+				definition: null,
+				definition_version: 1,
+				output_contract: null,
+				supported_execution_modes: ['after_submission']
+			}
+		];
+
+		const pageErrors: string[] = [];
+		page.on('pageerror', (error) => pageErrors.push(error.message));
+
+		await page.context().route('**/wp-json/sentient-forms/v1/**', async (route) => {
+			const url = route.request().url();
+			const method = route.request().method();
+
+			if (method === 'GET' && url.includes('/meta/capabilities')) {
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						success: true,
+						data: {
+							supports_custom_actions: true,
+							cps_version: '1.2.0'
+						}
+					})
+				});
+			}
+
+			if (method === 'GET' && url.includes('/actions/definitions')) {
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify([])
+				});
+			}
+
+			if (method === 'GET' && url.includes('/custom-actions')) {
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						actions,
+						quota: { quota_max: 5, quota_used: 2, quota_remaining: 3 }
+					})
+				});
+			}
+
+			return route.continue();
+		});
+
+		await page.goto('/#/actions/custom', { waitUntil: 'networkidle' });
+		await page.waitForFunction(() => document.body.textContent?.includes('Custom Actions'));
+
+		await expect(page.getByRole('heading', { name: 'Custom Actions' })).toBeVisible();
+		await expect(page.getByText('This view hit an error')).toHaveCount(0);
+		expect(pageErrors).toEqual([]);
+
+		const rows = page.getByTestId('custom-actions-table').locator('tbody tr');
+		await expect(rows).toHaveCount(2);
+		await expect(rows.nth(0)).toContainText('valid-new');
+
+		const invalidRow = rows.filter({ hasText: 'invalid-time' });
+		await expect(invalidRow.locator('td').nth(5)).toContainText('—');
+	});
 });
