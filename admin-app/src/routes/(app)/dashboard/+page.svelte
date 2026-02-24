@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { CreditBalanceResponse, LicenseInfoResponse } from '$lib/api/types';
-	import { Badge, Button, Card, Section } from '$lib/components/ui';
+	import { Badge, Button, Card, Section, StateTemplate } from '$lib/components/ui';
 	import { onMount } from 'svelte';
 	import {
 		buildCreditPresentation,
@@ -93,9 +93,14 @@
 	{/snippet}
 
 	{#if error}
-		<Card data-testid="dashboard-error-banner">
-			<p class="sf:text-center sf:text-amber-700 sf:text-sm">{error}</p>
-		</Card>
+		<StateTemplate
+			variant="error"
+			title="Dashboard data is partially unavailable"
+			message={error}
+			actionLabel="Retry"
+			onAction={fetchDashboardData}
+			testId="dashboard-error-state"
+		/>
 	{/if}
 
 	<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="dashboard-overview-card">

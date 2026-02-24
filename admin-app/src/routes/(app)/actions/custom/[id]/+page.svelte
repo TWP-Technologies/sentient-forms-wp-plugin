@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { Section, Button, Alert, Skeleton } from '$lib/components/ui';
+	import { Section, Button, StateTemplate } from '$lib/components/ui';
 	import CustomActionForm from '$lib/components/custom-action-form.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { navigateToAppPath } from '$lib/navigation';
@@ -57,17 +57,31 @@
 	{/snippet}
 
 	{#if loading || customState.loading}
-		<Skeleton className="sf:h-64" />
+		<StateTemplate
+			variant="loading"
+			title="Loading custom action"
+			message="Retrieving action details for editing."
+			testId="custom-action-edit-loading-state"
+		/>
 	{:else if !action}
-		<Alert variant="warning">
-			Action not found. It may have been deleted or you don't have access.
-		</Alert>
-		<div class="sf:mt-4">
-			<Button variant="secondary" onclick={handleCancel}>Back to List</Button>
-		</div>
+		<StateTemplate
+			variant="empty"
+			title="Custom action not found"
+			message="This action may have been removed or you may no longer have access."
+			actionLabel="Back to list"
+			onAction={handleCancel}
+			testId="custom-action-edit-empty-state"
+		/>
 	{:else}
 		{#if error}
-			<Alert variant="danger" class="sf:mb-4">{error}</Alert>
+			<StateTemplate
+				variant="error"
+				title="Unable to update custom action"
+				message={error}
+				actionLabel="Back to list"
+				onAction={handleCancel}
+				testId="custom-action-edit-error-state"
+			/>
 		{/if}
 
 		<CustomActionForm

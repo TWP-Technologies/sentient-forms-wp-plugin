@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Section, Card, Button, Badge, Alert } from '$lib/components/ui';
+	import { Section, Card, Button, Badge, Alert, StateTemplate } from '$lib/components/ui';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { formatTimeOnly, formatTimestamp } from '$lib/utils/date-time';
@@ -71,12 +71,17 @@
 		</div>
 	{/snippet}
 
-	{#if customState.error}
-		<Alert variant="danger" class="sf:mb-4">{customState.error}</Alert>
-	{/if}
-
 	{#if customState.error && customState.actions.length === 0}
-		<Alert variant="warning" class="sf:mb-4" data-testid="custom-actions-api-warning">
+		<StateTemplate
+			variant="error"
+			title="Unable to load custom actions"
+			message={customState.error}
+			actionLabel="Retry"
+			onAction={() => customActionsStore.reload()}
+			testId="custom-actions-error-state"
+		/>
+	{:else if customState.error}
+		<Alert variant="warning" class="sf:mb-4" data-testid="custom-actions-partial-warning">
 			{customState.error}
 		</Alert>
 	{:else if customState.supportsCustomActions === false}
@@ -135,18 +140,35 @@
 				</span>
 			</div>
 
-		{#if customState.loading}
-			<p class="sf:mt-4 sf:text-sm sf:text-slate-600">Loading custom actions…</p>
-		{:else if customState.actions.length === 0}
-			<div class="sf:mt-4 sf:text-center sf:py-8">
-				<p class="sf:text-sm sf:text-slate-600 sf:mb-4">
-					No {statusFilter === 'archived' ? 'archived' : 'active'} custom actions yet.
-				</p>
-				{#if statusFilter !== 'archived' && canCreateAction}
-					<Button variant="primary" onclick={createAction}>Create Your First Action</Button>
-				{/if}
-			</div>
-		{:else}
+			{#if customState.loading}
+				<StateTemplate
+					variant="loading"
+					title="Loading custom actions"
+					message="Pulling your tenant-specific action definitions."
+					inline
+					testId="custom-actions-loading-state"
+				/>
+			{:else if customState.actions.length === 0}
+				<StateTemplate
+					variant="empty"
+					title={`No ${statusFilter === 'archived' ? 'archived' : 'active'} custom actions yet`}
+					message={statusFilter === 'archived'
+						? 'Switch to Active to manage available custom actions.'
+						: 'Create a custom action to tailor automation responses for this site.'}
+					actionLabel={statusFilter === 'archived'
+						? 'Show active actions'
+						: canCreateAction
+							? 'Create your first action'
+							: null}
+					onAction={statusFilter === 'archived'
+						? () => applyStatusFilter('active')
+						: canCreateAction
+							? createAction
+							: null}
+					inline
+					testId="custom-actions-empty-state"
+				/>
+			{:else}
 			<div class="sf:mt-4 sf:overflow-auto">
 				<table class="sf:min-w-full sf:text-sm" data-testid="custom-actions-table">
 					<thead>

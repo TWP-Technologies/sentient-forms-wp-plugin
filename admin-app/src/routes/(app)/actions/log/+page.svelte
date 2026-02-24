@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Section, Card, Button, Badge, Input } from '$lib/components/ui';
+	import { Section, Card, Button, Badge, Input, StateTemplate } from '$lib/components/ui';
 	import { wpFetch } from '$lib/wp';
 
 	interface ActionLogEntry {
@@ -41,6 +41,9 @@
 	let filterFormId = $state('');
 	let filterStatus = $state('');
 	let filterActionCode = $state('');
+	let hasActiveFilters = $derived(
+		Boolean(filterFormId) || Boolean(filterStatus) || Boolean(filterActionCode)
+	);
 
 	async function fetchLogs() {
 		loading = true;
@@ -167,19 +170,32 @@
 
 	<!-- Loading/Error States -->
 	{#if loading}
-		<Card>
-			<p class="sf:text-center sf:text-slate-500">Loading action logs...</p>
-		</Card>
+		<StateTemplate
+			variant="loading"
+			title="Loading action logs"
+			message="Fetching the latest Sentient Forms execution history."
+			testId="action-log-loading-state"
+		/>
 	{:else if error}
-		<Card>
-			<p class="sf:text-center sf:text-red-600">{error}</p>
-		</Card>
+		<StateTemplate
+			variant="error"
+			title="Unable to load action logs"
+			message={error}
+			actionLabel="Retry"
+			onAction={fetchLogs}
+			testId="action-log-error-state"
+		/>
 	{:else if entries.length === 0}
-		<Card>
-			<p class="sf:text-center sf:text-slate-500">
-				No action logs found. Actions will appear here as they execute.
-			</p>
-		</Card>
+		<StateTemplate
+			variant="empty"
+			title={hasActiveFilters ? 'No action logs match the current filters' : 'No action logs yet'}
+			message={hasActiveFilters
+				? 'Try different filters or clear them to see more entries.'
+				: 'Actions will appear here as they execute.'}
+			actionLabel={hasActiveFilters ? 'Clear filters' : null}
+			onAction={hasActiveFilters ? clearFilters : null}
+			testId="action-log-empty-state"
+		/>
 	{:else}
 		<!-- Log Table -->
 		<Card>

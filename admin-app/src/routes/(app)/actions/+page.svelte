@@ -1,6 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Section, Card, Button, Badge, Alert, Skeleton, SelectField, Toggle } from '$lib/components/ui';
+	import {
+		Section,
+		Card,
+		Button,
+		Badge,
+		Alert,
+		SelectField,
+		Toggle,
+		StateTemplate
+	} from '$lib/components/ui';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { notifications } from '$lib/stores/notifications';
 	import { navigateToAppPath } from '$lib/navigation';
@@ -433,20 +442,33 @@
 				</div>
 				<Badge variant={definitionsBadgeVariant}>{definitionsBadgeLabel}</Badge>
 			</div>
-			{#if definitionsLoading}
-				<div class="sf:mt-3 sf:space-y-2">
-					{#each Array(3) as _, idx}
-						<div class="sf:flex sf:items-center sf:gap-2" aria-label={`template-skeleton-${idx}`}>
-							<Skeleton className="sf:h-3 sf:w-32" />
-							<Skeleton className="sf:h-3 sf:w-12" />
-						</div>
-					{/each}
-				</div>
-			{:else if definitions.length === 0}
-				<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
-					No templates loaded yet. Refresh or check CPS connectivity.
-				</p>
-			{:else}
+				{#if definitionsLoading}
+					<div class="sf:mt-3">
+						<StateTemplate
+							variant="loading"
+							title="Loading built-in actions"
+							message="Fetching available CPS templates."
+							inline
+							dense
+							testId="actions-definitions-loading-state"
+						/>
+					</div>
+				{:else if definitions.length === 0}
+					<div class="sf:mt-3">
+						<StateTemplate
+							variant="empty"
+							title="No templates loaded yet"
+							message="Refresh or verify CPS connectivity, then try again."
+							actionLabel="Refresh templates"
+							onAction={() => {
+								void loadDefinitions();
+							}}
+							inline
+							dense
+							testId="actions-definitions-empty-state"
+						/>
+					</div>
+				{:else}
 				<div class="sf:mt-3 sf:space-y-3">
 					{#each categoryOrder as category}
 						{@const items = groupedDefinitions.get(category) ?? []}
@@ -505,11 +527,22 @@
 				</div>
 				<Badge variant="info">{customActions.length} active</Badge>
 			</div>
-			{#if customActions.length === 0}
-				<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
-					No custom actions yet. Create one to tailor responses to this site.
-				</p>
-			{:else}
+				{#if customActions.length === 0}
+					<div class="sf:mt-3">
+						<StateTemplate
+							variant="empty"
+							title="No custom actions yet"
+							message="Create a custom action to tailor responses for this site."
+							actionLabel="Manage custom actions"
+							onAction={() => {
+								void navigateToAppPath('/actions/custom');
+							}}
+							inline
+							dense
+							testId="actions-custom-actions-empty-state"
+						/>
+					</div>
+				{:else}
 				<ul class="sf:mt-3 sf:space-y-2">
 					{#each customActions.slice(0, 4) as action (action.id)}
 						{@const customFormCount = formsPerAction.get(action.code) ?? 0}
@@ -598,19 +631,27 @@
 	</div>
 
 	{#if error}
-		<Alert variant="danger" class="sf:mt-4">
-			<div class="sf:flex sf:flex-col sf:sm:flex-row sf:items-start sf:sm:items-center sf:gap-3">
-				<span>{error}</span>
-				<Button size="sm" variant="secondary" onclick={refreshAll}>Retry</Button>
-			</div>
-		</Alert>
+		<div class="sf:mt-4">
+			<StateTemplate
+				variant="error"
+				title="Unable to load actions data"
+				message={error}
+				actionLabel="Retry"
+				onAction={refreshAll}
+				testId="actions-error-state"
+			/>
+		</div>
 	{/if}
 
 	{#if activeSources.length === 0}
-		<Alert variant="warning" class="sf:mt-4">
-			Install and activate a supported form builder (like Gravity Forms) to start mapping Sentient
-			Forms actions.
-		</Alert>
+		<div class="sf:mt-4">
+			<StateTemplate
+				variant="empty"
+				title="No active form providers"
+				message="Install and activate a supported form builder (like Gravity Forms) to start mapping Sentient Forms actions."
+				testId="actions-no-provider-state"
+			/>
+		</div>
 	{:else}
 		<Card class="sf:mt-4">
 			<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
@@ -642,23 +683,31 @@
 				</span>
 			</div>
 
-			{#if formsLoading}
-				<div class="sf:mt-4 sf:grid sf:gap-4 sf:md:grid-cols-2 sf:xl:grid-cols-3">
-					{#each Array(6) as _, idx}
-						<Card aria-label={`form-skeleton-${idx}`}>
-							<Skeleton className="sf:h-4 sf:w-3/4" />
-							<Skeleton className="sf:mt-2 sf:h-3 sf:w-1/2" />
-							<Skeleton className="sf:mt-4 sf:h-3 sf:w-2/3" />
-							<Skeleton className="sf:mt-4 sf:h-8 sf:w-full" />
-						</Card>
-					{/each}
-				</div>
-			{:else if displayedForms.length === 0}
-				<p class="sf:mt-4 sf:text-sm sf:text-slate-600">
-					No forms detected for {selectedSource?.label ?? 'this provider'}. Create a form first,
-					then refresh this page.
-				</p>
-			{:else}
+				{#if formsLoading}
+					<div class="sf:mt-4">
+						<StateTemplate
+							variant="loading"
+							title="Loading forms"
+							message="Retrieving forms for the selected provider."
+							inline
+							testId="actions-forms-loading-state"
+						/>
+					</div>
+				{:else if displayedForms.length === 0}
+					<div class="sf:mt-4">
+						<StateTemplate
+							variant="empty"
+							title="No forms detected"
+							message={`No forms were detected for ${selectedSource?.label ?? 'this provider'}. Create a form first, then refresh this page.`}
+							actionLabel="Refresh forms"
+							onAction={() => {
+								void loadForms();
+							}}
+							inline
+							testId="actions-forms-empty-state"
+						/>
+					</div>
+				{:else}
 				<div class="sf:mt-4 sf:grid sf:gap-4 sf:md:grid-cols-2 sf:xl:grid-cols-3">
 					{#each displayedForms as form (form.id)}
 						{@const actionCount = configuredActionCount(form)}

@@ -3,12 +3,13 @@
 	import {
 		Alert,
 		Badge,
-		Button,
-		Card,
-		InputField,
-		Section,
-		ValidationSummary
-	} from '$lib/components/ui';
+			Button,
+			Card,
+			InputField,
+			Section,
+			StateTemplate,
+			ValidationSummary
+		} from '$lib/components/ui';
 	import type { ValidationIssue } from '$lib/components/ui/types';
 	import { licenseStore } from '$lib/stores/license';
 	import { getNextCreditReset } from '$lib/utils/credits';
@@ -155,11 +156,21 @@
 				</div>
 			</div>
 
-			{#if creditsError}
-				<Alert variant="warning" class="sf:mt-4">{creditsError}</Alert>
-			{:else if !creditsLoading && creditPresentation.severity === 'warning'}
-				<Alert variant="warning" class="sf:mt-4">
-					Low credits remaining. Upgrade or add credits soon to avoid action interruptions.
+				{#if creditsError}
+					<StateTemplate
+						variant="error"
+						title="Unable to load credit balance"
+						message={creditsError}
+						actionLabel="Retry credits"
+						onAction={() => {
+							void fetchCredits();
+						}}
+						inline
+						testId="licensing-credit-error-state"
+					/>
+				{:else if !creditsLoading && creditPresentation.severity === 'warning'}
+					<Alert variant="warning" class="sf:mt-4">
+						Low credits remaining. Upgrade or add credits soon to avoid action interruptions.
 				</Alert>
 			{:else if !creditsLoading && creditPresentation.severity === 'critical'}
 				<Alert variant="danger" class="sf:mt-4">
@@ -203,9 +214,15 @@
 			</div>
 		</div>
 
-		{#if $licenseStore.loading}
-			<Alert variant="info" class="sf:mt-4">Updating license details… this may take a few seconds.</Alert>
-		{/if}
+			{#if $licenseStore.loading}
+				<StateTemplate
+					variant="loading"
+					title="Updating license details"
+					message="This may take a few seconds."
+					inline
+					testId="licensing-loading-state"
+				/>
+			{/if}
 
 		{#if $licenseStore.status === 'active'}
 			<Button

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Section, Card, Button, Alert, Toggle } from '$lib/components/ui';
+	import { Section, Card, Button, Alert, Toggle, StateTemplate } from '$lib/components/ui';
 	import { wpFetch } from '$lib/wp';
 	import { notifications } from '$lib/stores/notifications';
 	import type { CreditBalanceResponse } from '$lib/api/types';
@@ -233,9 +233,16 @@
 	{/snippet}
 
 	{#if error}
-		<Alert variant="danger" class="sf:mb-4">
-			{error}
-		</Alert>
+		<StateTemplate
+			variant="error"
+			title="Site context request failed"
+			message={error}
+			actionLabel="Retry"
+			onAction={() => {
+				void loadContext();
+			}}
+			testId="site-context-error-state"
+		/>
 	{/if}
 
 	{#if showPiiWarning}
@@ -262,21 +269,23 @@
 
 	<div class="sf:grid sf:gap-6">
 		{#if loading}
-			<Card>
-				<p class="sf:text-slate-600">Loading site context...</p>
-			</Card>
+			<StateTemplate
+				variant="loading"
+				title="Loading site context"
+				message="Fetching your current context summary and refresh settings."
+				testId="site-context-loading-state"
+			/>
 		{:else if !context}
 			<Card>
 				<div class="sf:space-y-4">
-					<div class="sf:flex sf:items-start sf:justify-between">
-						<div>
-							<p class="sf:font-medium sf:text-slate-800">No site context configured</p>
-							<p class="sf:text-sm sf:text-slate-600 sf:mt-1">
-								Generate a context summary to help the AI better understand your site's purpose and
-								improve spam detection accuracy.
-							</p>
-						</div>
-					</div>
+					<StateTemplate
+						variant="empty"
+						title="No site context configured"
+						message="Generate a context summary to help the AI understand your site and improve spam detection accuracy."
+						inline
+						dense
+						testId="site-context-empty-state"
+					/>
 
 					<Alert variant="info">
 						<p>

@@ -20,3 +20,4 @@ export { default as TemplateLibrary } from './TemplateLibrary.svelte';
 export { default as ExecutionStatusBadge } from './execution-status-badge.svelte';
 export { default as ModelSelector } from './model-selector.svelte';
 export { default as MappingDependencyGraph } from './mapping-dependency-graph.svelte';
+export { default as StateTemplate } from './state-template.svelte';

@@ -11,10 +11,11 @@
 		FieldSelector,
 		ConditionBuilder,
 		TemplateLibrary,
-		ModelSelector,
-		Toggle,
-		MappingDependencyGraph
-	} from '$lib/components/ui';
+			ModelSelector,
+			Toggle,
+			MappingDependencyGraph,
+			StateTemplate
+		} from '$lib/components/ui';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { DEFAULT_BATCH_SETTINGS } from '$lib/utils/batch';
 	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
@@ -2342,12 +2343,16 @@
 	</div>
 
 	{#if actionsState.error}
-		<Alert variant="danger" class="sf:mt-4">
-			<div class="sf:flex sf:flex-col sf:md:flex-row sf:items-start sf:md:items-center sf:gap-3">
-				<span>{actionsState.error}</span>
-				<Button size="sm" variant="secondary" onclick={refresh}>Retry</Button>
-			</div>
-		</Alert>
+		<div class="sf:mt-4">
+			<StateTemplate
+				variant="error"
+				title="Unable to load linked actions"
+				message={actionsState.error}
+				actionLabel="Retry"
+				onAction={refresh}
+				testId="form-actions-error-state"
+			/>
+		</div>
 	{/if}
 
 	<Card class="sf:mt-4">
@@ -2387,11 +2392,25 @@
 			</div>
 		</div>
 
-		{#if actionsState.loading}
-			<p class="sf:text-sm sf:text-slate-600">Loading action mappings…</p>
-		{:else if actionsState.items.length === 0}
-			<p class="sf:text-sm sf:text-slate-600">No CPS actions linked to this form yet.</p>
-		{:else if linkedActionsView === 'graph'}
+			{#if actionsState.loading}
+				<StateTemplate
+					variant="loading"
+					title="Loading action mappings"
+					message="Fetching mappings linked to this form."
+					inline
+					testId="form-actions-loading-state"
+				/>
+			{:else if actionsState.items.length === 0}
+				<StateTemplate
+					variant="empty"
+					title="No linked actions yet"
+					message="Add an action mapping to run Sentient Forms logic for this form."
+					actionLabel="Add action"
+					onAction={openAddActionPanel}
+					inline
+					testId="form-actions-empty-state"
+				/>
+			{:else if linkedActionsView === 'graph'}
 			<MappingDependencyGraph
 				linkages={graphRenderLinkages}
 				editingMappingId={editingLinkageId}

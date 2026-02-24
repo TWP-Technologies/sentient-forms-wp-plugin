@@ -8,7 +8,7 @@
 	import { loggingStore } from '$lib/stores/logging.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Button } from '$lib/components/ui';
+	import { Button, StateTemplate } from '$lib/components/ui';
 	import type { FormSourceSummary } from '$lib/api/types';
 
 	const telemetry = telemetryStore;
@@ -191,6 +191,16 @@
 		}
 		showClearConfirm = false;
 	}
+
+	function describeAsyncSettingsError(code: string | null): string {
+		if (code === 'load_failed') {
+			return 'Async retry settings could not be loaded from the API.';
+		}
+		if (code === 'update_failed') {
+			return 'Async retry settings could not be saved.';
+		}
+		return 'Async retry settings are temporarily unavailable.';
+	}
 </script>
 
 <section class="sf:space-y-6 sf:max-w-3xl">
@@ -246,18 +256,42 @@
 			</label>
 		</div>
 
-		<div class="sf:mt-4 sf:text-xs sf:text-slate-500 sf:space-y-1">
-			{#if $telemetry.syncedAt}
-				<p>Synced {$telemetry.syncedAt}</p>
-			{/if}
-			{#if $telemetry.remoteUpdatedAt}
-				<p>Recorded by CPS {$telemetry.remoteUpdatedAt}</p>
-			{/if}
-			{#if $telemetry.lastError}
-				<p class="sf:text-red-600">Last sync error: {$telemetry.lastError}</p>
+			<div class="sf:mt-4 sf:text-xs sf:text-slate-500 sf:space-y-1">
+				{#if $telemetry.syncedAt}
+					<p>Synced {$telemetry.syncedAt}</p>
+				{/if}
+				{#if $telemetry.remoteUpdatedAt}
+					<p>Recorded by CPS {$telemetry.remoteUpdatedAt}</p>
+				{/if}
+			</div>
+			{#if $telemetry.loading}
+				<div class="sf:mt-3">
+					<StateTemplate
+						variant="loading"
+						title="Loading telemetry settings"
+						message="Syncing the latest telemetry consent state."
+						inline
+						dense
+						testId="settings-telemetry-loading-state"
+					/>
+				</div>
+			{:else if $telemetry.lastError}
+				<div class="sf:mt-3">
+					<StateTemplate
+						variant="error"
+						title="Telemetry sync issue"
+						message={$telemetry.lastError}
+						actionLabel="Retry"
+						onAction={() => {
+							void telemetry.load();
+						}}
+						inline
+						dense
+						testId="settings-telemetry-error-state"
+					/>
+				</div>
 			{/if}
 		</div>
-	</div>
 
 	<div
 		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-3"
@@ -280,8 +314,28 @@
 				/>
 			</label>
 		</div>
-		{#if $logging.lastError}
-			<p class="sf:text-xs sf:text-red-600">{$logging.lastError}</p>
+		{#if $logging.loading}
+			<StateTemplate
+				variant="loading"
+				title="Loading logging settings"
+				message="Retrieving on-site logging preferences."
+				inline
+				dense
+				testId="settings-logging-loading-state"
+			/>
+		{:else if $logging.lastError}
+			<StateTemplate
+				variant="error"
+				title="Logging settings issue"
+				message={$logging.lastError}
+				actionLabel="Retry"
+				onAction={() => {
+					void logging.load();
+				}}
+				inline
+				dense
+				testId="settings-logging-error-state"
+			/>
 		{/if}
 	</div>
 
@@ -292,6 +346,16 @@
 				Pause Sentient Forms execution globally or by form provider while keeping mappings editable.
 			</p>
 		</div>
+		{#if executionLoading}
+			<StateTemplate
+				variant="loading"
+				title="Loading execution controls"
+				message="Fetching global and provider-level execution settings."
+				inline
+				dense
+				testId="settings-execution-loading-state"
+			/>
+		{/if}
 
 		<div class="sf:flex sf:items-center sf:justify-between sf:p-3 sf:bg-slate-50 sf:rounded-lg">
 			<div>
@@ -403,18 +467,38 @@
 			</div>
 		</form>
 
-		<div class="sf:text-xs sf:text-slate-500 sf:space-y-1">
-			{#if $asyncSettings.updatedAt}
-				<p>Last updated {$asyncSettings.updatedAt}</p>
-			{/if}
-			{#if $asyncSettings.updatedBy}
-				<p>Updated by {$asyncSettings.updatedBy}</p>
-			{/if}
-			{#if $asyncSettings.lastError}
-				<p class="sf:text-red-600">{$asyncSettings.lastError}</p>
+			<div class="sf:text-xs sf:text-slate-500 sf:space-y-1">
+				{#if $asyncSettings.updatedAt}
+					<p>Last updated {$asyncSettings.updatedAt}</p>
+				{/if}
+				{#if $asyncSettings.updatedBy}
+					<p>Updated by {$asyncSettings.updatedBy}</p>
+				{/if}
+			</div>
+			{#if $asyncSettings.loading}
+				<StateTemplate
+					variant="loading"
+					title="Loading async retry settings"
+					message="Retrieving the current retry policy from the API."
+					inline
+					dense
+					testId="settings-async-settings-loading-state"
+				/>
+			{:else if $asyncSettings.lastError}
+				<StateTemplate
+					variant="error"
+					title="Async retry settings issue"
+					message={describeAsyncSettingsError($asyncSettings.lastError)}
+					actionLabel="Retry"
+					onAction={() => {
+						void asyncSettings.load();
+					}}
+					inline
+					dense
+					testId="settings-async-settings-error-state"
+				/>
 			{/if}
 		</div>
-	</div>
 
 	<div
 		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"

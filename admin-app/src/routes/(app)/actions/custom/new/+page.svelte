@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Section, Button, Alert } from '$lib/components/ui';
+	import { Section, Button, StateTemplate } from '$lib/components/ui';
 	import CustomActionForm from '$lib/components/custom-action-form.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { navigateToAppPath } from '$lib/navigation';
@@ -47,11 +47,23 @@
 	{/snippet}
 
 	{#if error}
-		<Alert variant="danger" class="sf:mb-4">{error}</Alert>
+		<StateTemplate
+			variant="error"
+			title="Unable to create custom action"
+			message={error}
+			actionLabel="Back to list"
+			onAction={handleCancel}
+			testId="custom-action-create-error-state"
+		/>
 	{/if}
 
 	{#if customActionsState.loading}
-		<p class="sf:text-slate-500 sf:italic">Loading templates…</p>
+		<StateTemplate
+			variant="loading"
+			title="Loading templates"
+			message="Fetching template definitions before creating your custom action."
+			testId="custom-action-create-loading-state"
+		/>
 	{:else}
 		<CustomActionForm
 			definitions={customActionsState.definitions}
