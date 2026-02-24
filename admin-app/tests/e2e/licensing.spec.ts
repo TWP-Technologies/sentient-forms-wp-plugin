@@ -97,7 +97,7 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	await page.getByLabel('License key').fill('LIC-123456789012345678901234');
 	await page.getByRole('button', { name: 'Activate', exact: true }).click();
 
-	await expect(page.getByText('starter')).toBeVisible();
+	await expect(page.getByText('Tier: starter')).toBeVisible();
 	const deactivateButton = page.getByRole('button', { name: 'Deactivate license' });
 	await expect(deactivateButton).toBeVisible();
 
