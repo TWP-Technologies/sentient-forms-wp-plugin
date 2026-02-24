@@ -1,64 +1,78 @@
 <script lang="ts">
-	import { licenseSummary, sessionStore, type LicenseStatus } from '$lib/stores/session';
-	import { Button, Card, Section, Badge } from '$lib/components/ui';
+	import type { CreditBalanceResponse, LicenseInfoResponse } from '$lib/api/types';
+	import { Badge, Button, Card, Section } from '$lib/components/ui';
 	import { onMount } from 'svelte';
-	import { wpFetch } from '$lib/wp';
+	import {
+		buildCreditPresentation,
+		creditSeverityToBadgeVariant,
+		formatCreditSeverityLabel,
+		licenseStatusToBadgeVariant,
+		resolveTierDisplayName
+	} from '$lib/utils/license-health-presentation';
 	import { getNextCreditReset } from '$lib/utils/credits';
+	import { formatTimestamp } from '$lib/utils/date-time';
+	import { sessionStore, type LicenseStatus } from '$lib/stores/session';
+	import { wpFetch } from '$lib/wp';
 
 	let loading = $state(true);
 	let error = $state<string | null>(null);
-	let creditData = $state<CreditResponse | null>(null);
+	let licenseData = $state<LicenseInfoResponse | null>(null);
+	let creditData = $state<CreditBalanceResponse | null>(null);
 
-	interface LicenseResponse {
-		status: string;
-		license_key_masked: string;
-		proxy_key_present: boolean;
-		tier: string | null;
-		expires_at: string | null;
-		last_synced: string | null;
-		license_id: string | null;
-		site_id: string | null;
-		site_url: string;
-	}
-
-	interface CreditResponse {
-		current_balance: number;
-		ledger_delta?: number;
-		tier?: { code: string; display_name: string; monthly_credit_quota: number };
-		stale?: boolean;
-		dev_mode?: boolean;
-	}
+	let resetInfo = $derived(getNextCreditReset());
+	let creditPresentation = $derived(buildCreditPresentation(creditData, resetInfo.summary));
+	let creditSeverityLabel = $derived(formatCreditSeverityLabel(creditPresentation.severity));
+	let creditSeverityVariant = $derived(creditSeverityToBadgeVariant(creditPresentation.severity));
+	let licenseStatusVariant = $derived(licenseStatusToBadgeVariant($sessionStore.licenseStatus));
+	let tierLabel = $derived(resolveTierDisplayName(creditData?.tier ?? licenseData?.tier ?? null) ?? '—');
+	let licenseSummaryText = $derived(
+		$sessionStore.licenseStatus === 'active'
+			? $sessionStore.proxyKeyPresent
+				? 'License active'
+				: 'License active — proxy key missing'
+			: $sessionStore.licenseStatus === 'activating'
+				? 'Activating license…'
+				: $sessionStore.licenseStatus === 'error'
+					? 'Activation error'
+					: 'No active license'
+	);
 
 	async function fetchDashboardData() {
 		loading = true;
 		error = null;
 
 		try {
-			// FR-009: Fetch real credit balance from license/credits endpoint
-			// FR-010: Fetch real license status
-			const [licenseRes, creditRes] = await Promise.allSettled([
-				wpFetch<LicenseResponse>('license'),
-				wpFetch<CreditResponse>('credits/balance')
+			const [licenseResponse, creditResponse] = await Promise.allSettled([
+				wpFetch<LicenseInfoResponse>('license'),
+				wpFetch<CreditBalanceResponse>('credits/balance')
 			]);
 
-			const licenseData = licenseRes.status === 'fulfilled' ? licenseRes.value : null;
-			creditData = creditRes.status === 'fulfilled' ? creditRes.value : null;
+			licenseData = licenseResponse.status === 'fulfilled' ? licenseResponse.value : null;
+			creditData = creditResponse.status === 'fulfilled' ? creditResponse.value : null;
+
+			if (licenseResponse.status === 'rejected' && creditResponse.status === 'rejected') {
+				error = 'Unable to refresh license and credit details right now.';
+			} else if (licenseResponse.status === 'rejected') {
+				error = 'License details are temporarily unavailable.';
+			} else if (creditResponse.status === 'rejected') {
+				error = 'Credit details are temporarily unavailable.';
+			}
 
 			sessionStore.hydrate({
 				siteUrl: licenseData?.site_url ?? window.location.origin,
 				licenseStatus: (licenseData?.status as LicenseStatus) ?? 'inactive',
 				proxyKeyPresent: licenseData?.proxy_key_present ?? false,
-				creditsRemaining: creditData?.current_balance ?? 0,
+				creditsRemaining: creditData?.current_balance ?? null,
 				lastSync: licenseData?.last_synced ?? null
 			});
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to fetch dashboard data';
-			// Fallback to showing cached/default state
+		} catch (requestError) {
+			error = requestError instanceof Error ? requestError.message : 'Failed to fetch dashboard data';
+
 			sessionStore.hydrate({
 				siteUrl: window.location.origin,
 				licenseStatus: 'error',
 				proxyKeyPresent: false,
-				creditsRemaining: 0,
+				creditsRemaining: null,
 				lastSync: null
 			});
 		} finally {
@@ -67,11 +81,11 @@
 	}
 
 	onMount(() => {
-		fetchDashboardData();
+		void fetchDashboardData();
 	});
 </script>
 
-<Section heading="Dashboard" description="High-level health of Sentient Forms automation.">
+<Section heading="Dashboard" description="At-a-glance health for license status and credit availability.">
 	{#snippet actions()}
 		<Button variant="secondary" onclick={fetchDashboardData} disabled={loading}>
 			{loading ? 'Refreshing...' : 'Refresh'}
@@ -79,47 +93,72 @@
 	{/snippet}
 
 	{#if error}
-		<Card>
-			<p class="sf:text-center sf:text-amber-600 sf:text-sm">{error}</p>
+		<Card data-testid="dashboard-error-banner">
+			<p class="sf:text-center sf:text-amber-700 sf:text-sm">{error}</p>
 		</Card>
 	{/if}
 
-	<div class="sf:grid sf:gap-4 sf:md:grid-cols-3">
-		<Card>
-			<div class="sf:space-y-1">
-				<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">License status</h3>
-				{#if loading}
-					<p class="sf:text-lg sf:font-semibold sf:text-slate-300">Loading...</p>
-				{:else}
-					<p class="sf:text-lg sf:font-semibold">{$licenseSummary}</p>
-					<Badge variant={$sessionStore.licenseStatus === 'active' ? 'success' : 'warning'}>
-						{$sessionStore.licenseStatus ?? 'unknown'}
-					</Badge>
-				{/if}
+	<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="dashboard-overview-card">
+		<div class="sf:grid sf:gap-6 sf:lg:grid-cols-2">
+			<div class="sf:space-y-3">
+				<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
+					License health
+				</p>
+				<p class="sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-license-summary">
+					{licenseSummaryText}
+				</p>
+				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+					<span data-testid="dashboard-license-status">
+						<Badge variant={licenseStatusVariant}>
+							{$sessionStore.licenseStatus ?? 'unknown'}
+						</Badge>
+					</span>
+					<span class="sf:text-xs sf:text-slate-500">
+						Proxy key {$sessionStore.proxyKeyPresent ? 'present' : 'missing'}
+					</span>
+				</div>
 			</div>
-		</Card>
-		<Card>
-			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Credits remaining</h3>
-			{#if loading}
-				<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-300">Loading...</p>
-			{:else}
-				{@const quota = creditData?.tier?.monthly_credit_quota}
-				{@const resetInfo = getNextCreditReset()}
-				<p class="sf:mt-2 sf:text-lg sf:font-semibold">
-					{$sessionStore.creditsRemaining ?? '—'}{quota ? ` / ${quota}` : ''}
+
+			<div class="sf:space-y-3">
+				<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">Credits</p>
+				<p class="sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-credits-headline">
+					{loading ? 'Loading credit balance…' : creditPresentation.headline}
 				</p>
-				<p class="sf:text-xs sf:text-slate-400 sf:mt-1">{resetInfo.summary}</p>
-			{/if}
+				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+					<span data-testid="dashboard-credits-severity">
+						<Badge variant={creditSeverityVariant}>
+							{creditSeverityLabel}
+						</Badge>
+					</span>
+					<span class="sf:text-xs sf:text-slate-500" data-testid="dashboard-reset-summary">
+						{resetInfo.summary}
+					</span>
+				</div>
+				<p class="sf:text-sm sf:text-slate-600" data-testid="dashboard-credits-detail">
+					{loading ? 'Refreshing credit details…' : creditPresentation.detail}
+				</p>
+			</div>
+		</div>
+	</Card>
+
+	<div class="sf:grid sf:gap-4 sf:md:grid-cols-3">
+		<Card data-testid="dashboard-tier-card">
+			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Tier</h3>
+			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">{loading ? 'Loading…' : tierLabel}</p>
 		</Card>
-		<Card>
+
+		<Card data-testid="dashboard-last-sync-card">
 			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Last sync</h3>
-			{#if loading}
-				<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-300">Loading...</p>
-			{:else}
-				<p class="sf:mt-2 sf:text-lg sf:font-semibold">
-					{$sessionStore.lastSync ? new Date($sessionStore.lastSync).toLocaleString() : '—'}
-				</p>
-			{/if}
+			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">
+				{loading ? 'Loading…' : formatTimestamp($sessionStore.lastSync)}
+			</p>
+		</Card>
+
+		<Card data-testid="dashboard-site-card">
+			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Site</h3>
+			<p class="sf:mt-2 sf:text-sm sf:font-medium sf:text-slate-700 sf:break-all">
+				{$sessionStore.siteUrl || '—'}
+			</p>
 		</Card>
 	</div>
 </Section>

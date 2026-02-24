@@ -1,36 +1,56 @@
 <script lang="ts">
-	import { getNextCreditReset } from '$lib/utils/credits';
-	import { onMount } from 'svelte';
+	import type { CreditBalanceResponse } from '$lib/api/types';
 	import {
-		Section,
-		Card,
-		Button,
 		Alert,
 		Badge,
+		Button,
+		Card,
 		InputField,
+		Section,
 		ValidationSummary
 	} from '$lib/components/ui';
 	import type { ValidationIssue } from '$lib/components/ui/types';
 	import { licenseStore } from '$lib/stores/license';
+	import { getNextCreditReset } from '$lib/utils/credits';
+	import { formatTimestamp } from '$lib/utils/date-time';
+	import {
+		buildCreditPresentation,
+		creditSeverityToBadgeVariant,
+		formatCreditSeverityLabel,
+		licenseStatusToBadgeVariant,
+		resolveTierDisplayName
+	} from '$lib/utils/license-health-presentation';
 	import { wpFetch } from '$lib/wp';
-	import type { CreditBalanceResponse } from '$lib/api/types';
+	import { onMount } from 'svelte';
 
 	let licenseKey = $state('');
 	let issues: ValidationIssue[] = $state([]);
 	let credits = $state<CreditBalanceResponse | null>(null);
 	let creditsLoading = $state(false);
+	let creditsError = $state<string | null>(null);
+
+	let resetInfo = $derived(getNextCreditReset());
+	let creditPresentation = $derived(buildCreditPresentation(credits, resetInfo.summary));
+	let creditSeverityLabel = $derived(formatCreditSeverityLabel(creditPresentation.severity));
+	let creditSeverityVariant = $derived(creditSeverityToBadgeVariant(creditPresentation.severity));
+	let licenseStatusVariant = $derived(licenseStatusToBadgeVariant($licenseStore.status));
+	let tierLabel = $derived(resolveTierDisplayName(credits?.tier ?? $licenseStore.tier ?? null) ?? '—');
 
 	onMount(() => {
-		licenseStore.load();
-		fetchCredits();
+		void licenseStore.load();
+		void fetchCredits();
 	});
 
 	async function fetchCredits() {
 		creditsLoading = true;
+		creditsError = null;
+
 		try {
 			credits = await wpFetch<CreditBalanceResponse>('credits/balance');
-		} catch (e) {
-			console.error('Failed to fetch credits', e);
+		} catch (error) {
+			console.error('Failed to fetch credits', error);
+			credits = null;
+			creditsError = 'Unable to load credit balance.';
 		} finally {
 			creditsLoading = false;
 		}
@@ -53,7 +73,7 @@
 <Section
 	heading={$licenseStore.status === 'active' ? 'License management' : 'License activation'}
 	description={$licenseStore.status === 'active'
-		? 'Your Sentient Forms license is active. Manage your subscription below.'
+		? 'Review license status, tier, credits, and reset timing before making changes.'
 		: 'Provide your Sentient Forms license key to enable CPS-backed automations.'}
 >
 	<ValidationSummary {issues} />
@@ -84,71 +104,80 @@
 		</Card>
 	{/if}
 
-	<!-- Credits Card (CB-LIC-002) -->
 	{#if $licenseStore.status === 'active'}
-		<Card title="Credits">
-			<div class="sf:space-y-3">
-				{#if creditsLoading}
-					<p class="sf:text-slate-400">Loading credits...</p>
-				{:else if credits}
-					{@const quota = credits.tier?.monthly_credit_quota ?? 100}
-					{@const balance = credits.current_balance}
-					{@const percentage = Math.min(100, Math.round((balance / quota) * 100))}
-					{@const resetInfo = getNextCreditReset()}
+		<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="licensing-overview-card">
+			<div class="sf:grid sf:gap-6 sf:lg:grid-cols-2 sf:items-start">
+				<div class="sf:space-y-3">
+					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">License</p>
+					<p class="sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="licensing-status-headline">
+						Active and connected
+					</p>
+					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+						<span data-testid="licensing-status-badge">
+							<Badge variant={licenseStatusVariant}>{$licenseStore.status}</Badge>
+						</span>
+						<span class="sf:text-xs sf:text-slate-500">Tier: {tierLabel}</span>
+					</div>
+					<p class="sf:text-sm sf:text-slate-600" data-testid="licensing-last-synced-summary">
+						Last synced: {formatTimestamp($licenseStore.lastSynced)}
+					</p>
+				</div>
 
-					<div class="sf:flex sf:items-center sf:justify-between sf:text-sm">
-						<span class="sf:font-medium sf:text-slate-600">Credits remaining</span>
-						<span class="sf:font-semibold sf:text-slate-900">
-							{balance} / {quota}
+				<div class="sf:space-y-3">
+					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">Credits</p>
+					<p class="sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="licensing-credits-headline">
+						{creditsLoading ? 'Loading credit balance…' : creditPresentation.headline}
+					</p>
+					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+						<span data-testid="licensing-credit-severity">
+							<Badge variant={creditSeverityVariant}>{creditSeverityLabel}</Badge>
+						</span>
+						<span class="sf:text-xs sf:text-slate-500" data-testid="licensing-reset-summary">
+							{resetInfo.summary}
 						</span>
 					</div>
-
-					<!-- Progress bar -->
-					<div class="sf:w-full sf:bg-slate-200 sf:rounded-full sf:h-2.5">
-						<div
-							class="sf:h-2.5 sf:rounded-full {percentage > 20
-								? 'sf:bg-emerald-500'
-								: 'sf:bg-amber-500'}"
-							style="width: {percentage}%"
-						></div>
-					</div>
-
-					<p class="sf:text-xs sf:text-slate-500">
-						{resetInfo.summary}
-						{credits.tier?.display_name ? ` · Tier: ${credits.tier.display_name}` : ''}
+					<p class="sf:text-sm sf:text-slate-600" data-testid="licensing-credits-detail">
+						{creditsLoading ? 'Refreshing credit details…' : creditPresentation.detail}
 					</p>
 
-					{#if percentage <= 10 && percentage > 0}
-						<Alert variant="warning">
-							Low credits remaining. Consider upgrading your plan to avoid interruptions.
-						</Alert>
-					{:else if percentage === 0}
-						<Alert variant="danger">
-							No credits remaining. Actions will resume when credits reset on
-							<strong>{resetInfo.nextResetLabel}</strong>
-							({resetInfo.daysUntilReset} day{resetInfo.daysUntilReset !== 1 ? 's' : ''}).
-						</Alert>
+					{#if creditPresentation.percentage !== null}
+						<div class="sf:w-full sf:bg-slate-200 sf:rounded-full sf:h-2.5" data-testid="licensing-credit-progress">
+							<div
+								class="sf:h-2.5 sf:rounded-full {creditPresentation.severity === 'critical'
+									? 'sf:bg-danger-500'
+									: creditPresentation.severity === 'warning'
+										? 'sf:bg-warning-500'
+										: 'sf:bg-success-500'}"
+								style="width: {creditPresentation.percentage}%"
+							></div>
+						</div>
 					{/if}
-				{:else}
-					<p class="sf:text-slate-500">Unable to load credit balance.</p>
-				{/if}
+				</div>
 			</div>
+
+			{#if creditsError}
+				<Alert variant="warning" class="sf:mt-4">{creditsError}</Alert>
+			{:else if !creditsLoading && creditPresentation.severity === 'warning'}
+				<Alert variant="warning" class="sf:mt-4">
+					Low credits remaining. Upgrade or add credits soon to avoid action interruptions.
+				</Alert>
+			{:else if !creditsLoading && creditPresentation.severity === 'critical'}
+				<Alert variant="danger" class="sf:mt-4">
+					No credits remaining. Actions resume when credits reset on
+					<strong>{resetInfo.nextResetLabel}</strong>
+					({resetInfo.daysUntilReset} day{resetInfo.daysUntilReset !== 1 ? 's' : ''}).
+				</Alert>
+			{/if}
 		</Card>
 	{/if}
 
-	<Card title="Status">
+	<Card title="License details">
 		<div class="sf:text-sm sf:space-y-2">
 			<div class="sf:flex sf:items-center sf:justify-between">
-				<span class="sf:font-medium sf:text-slate-600">License</span>
-				<Badge
-					variant={$licenseStore.status === 'active'
-						? 'success'
-						: $licenseStore.status === 'error'
-							? 'danger'
-							: 'warning'}
-				>
-					{$licenseStore.status}
-				</Badge>
+				<span class="sf:font-medium sf:text-slate-600">License status</span>
+				<span data-testid="licensing-details-status">
+					<Badge variant={licenseStatusVariant}>{$licenseStore.status}</Badge>
+				</span>
 			</div>
 			<div class="sf:flex sf:items-center sf:justify-between">
 				<span class="sf:font-medium sf:text-slate-600">Proxy key stored</span>
@@ -158,20 +187,24 @@
 			</div>
 			<div class="sf:flex sf:items-center sf:justify-between">
 				<span class="sf:font-medium sf:text-slate-600">Tier</span>
-				<span class="sf:text-slate-900">{$licenseStore.tier ?? '—'}</span>
+				<span class="sf:text-slate-900">{tierLabel}</span>
+			</div>
+			<div class="sf:flex sf:items-center sf:justify-between">
+				<span class="sf:font-medium sf:text-slate-600">Credits reset</span>
+				<span class="sf:text-slate-900">{resetInfo.nextResetLabel}</span>
 			</div>
 			<div class="sf:flex sf:items-center sf:justify-between">
 				<span class="sf:font-medium sf:text-slate-600">Expires</span>
-				<span class="sf:text-slate-900">{$licenseStore.expiresAt ?? '—'}</span>
+				<span class="sf:text-slate-900">{formatTimestamp($licenseStore.expiresAt)}</span>
 			</div>
 			<div class="sf:flex sf:items-center sf:justify-between">
 				<span class="sf:font-medium sf:text-slate-600">Last synced</span>
-				<span class="sf:text-slate-900">{$licenseStore.lastSynced ?? '—'}</span>
+				<span class="sf:text-slate-900">{formatTimestamp($licenseStore.lastSynced)}</span>
 			</div>
 		</div>
 
 		{#if $licenseStore.loading}
-			<Alert variant="info" class="sf:mt-4">Activating license… this may take a few seconds.</Alert>
+			<Alert variant="info" class="sf:mt-4">Updating license details… this may take a few seconds.</Alert>
 		{/if}
 
 		{#if $licenseStore.status === 'active'}
