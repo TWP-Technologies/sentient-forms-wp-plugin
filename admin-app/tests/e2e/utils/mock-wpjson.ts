@@ -6,6 +6,7 @@ type Routes = {
 		definitions?: unknown;
 		status?: unknown;
 		settings?: Record<string, unknown>;
+		actionDefaultsById?: Record<string, Record<string, unknown>>;
 		formsActions?: unknown[];
 		formFields?: unknown[];
 		creditBalance?: unknown;
@@ -27,6 +28,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 		execution_global_disabled: false,
 		execution_provider_disabled: {},
 		...(routes.actions?.settings ?? {})
+	};
+	const actionDefaultsState: Record<string, Record<string, unknown>> = {
+		...(routes.actions?.actionDefaultsById ?? {})
 	};
 
 	await page.context().route('**/wp-json/sentient-forms/v1/**', (route) => {
@@ -60,15 +64,56 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (url.endsWith('/settings') && method === 'PUT') {
-			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
-			Object.assign(settingsState, body);
-			return route.fulfill({
-				status: 200,
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(settingsState)
-			});
-		}
+			if (url.endsWith('/settings') && method === 'PUT') {
+				const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+				Object.assign(settingsState, body);
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(settingsState)
+				});
+			}
+
+			const actionDefaultsMatch = url.match(/\/actions\/([^/]+)\/defaults$/);
+			if (actionDefaultsMatch && method === 'GET') {
+				const actionId = decodeURIComponent(actionDefaultsMatch[1]);
+				const config = actionDefaultsState[actionId] ?? {};
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						success: true,
+						data: {
+							form_source: 'global',
+							form_id: 0,
+							action_id: actionId,
+							config
+						}
+					})
+				});
+			}
+
+			if (actionDefaultsMatch && method === 'POST') {
+				const actionId = decodeURIComponent(actionDefaultsMatch[1]);
+				const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+				actionDefaultsState[actionId] = {
+					...(actionDefaultsState[actionId] ?? {}),
+					...body
+				};
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						success: true,
+						data: {
+							form_source: 'global',
+							form_id: 0,
+							action_id: actionId,
+							config: actionDefaultsState[actionId]
+						}
+					})
+				});
+			}
 
 		if (url.endsWith('/meta/capabilities')) {
 			return route.fulfill({

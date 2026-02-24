@@ -497,6 +497,47 @@ test.describe('Actions admin flows', () => {
 		await expect(page.locator('nav a[href="#/actions/custom"]')).toHaveClass(/sf-text-slate-900/);
 	});
 
+	test('opens spam defaults modal with guidance expanded by default from actions page', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam detection',
+						source: 'cps',
+						hooks: ['gform_validation'],
+						base_credit_cost: 2,
+						model_hint: 'gemini-1.5-flash'
+					}
+				],
+				status: statusUnknown,
+				creditBalance,
+				actionDefaultsById: {
+					spam_detection_v1: {
+						include_site_context: 'always',
+						spam_positive_examples: ['Known customer request'],
+						spam_negative_examples: ['Bulk SEO outreach']
+					}
+				}
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+		await page.getByTestId('action-defaults-button-spam_detection_v1').click();
+
+		const modal = page.getByTestId('action-defaults-modal');
+		await expect(modal).toBeVisible();
+		await expect(modal.getByRole('button', { name: /Classification Guidance/i })).toBeVisible();
+		await expect(modal.locator('#new-positive')).toBeVisible();
+		await expect(modal.getByText('Known customer request')).toBeVisible();
+		await expect(modal.getByText('Bulk SEO outreach')).toBeVisible();
+		await expect(modal.locator('#action-level-context')).toHaveValue('always');
+	});
+
 	test('creates a CPS template mapping from the drawer', async ({ page }) => {
 		await page.addInitScript(() => {
 			try {
