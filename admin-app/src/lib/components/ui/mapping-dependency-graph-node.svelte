@@ -50,9 +50,9 @@
 			return 'sf:inline-flex sf:items-center sf:rounded-full sf:border sf:border-rose-200 sf:bg-rose-50 sf:px-2.5 sf:py-0.5 sf:text-xs sf:font-medium sf:text-rose-700';
 		}
 		if (isNodeEnabled()) {
-			return 'sf:inline-flex sf:items-center sf:cursor-pointer sf:rounded-full sf:border sf:border-success-200 sf:bg-success-50 sf:px-2.5 sf:py-0.5 sf:text-xs sf:font-medium sf:text-success-600 sf:shadow-sm sf:hover:bg-success-100';
+			return 'sf:inline-flex sf:items-center sf:cursor-pointer sf:rounded-full sf:border sf:border-success-200 sf:bg-success-50 sf:px-2.5 sf:py-0.5 sf:text-xs sf:font-medium sf:text-success-600 sf:shadow-sm sf:hover:bg-success-100 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-success-600 sf:focus-visible:ring-offset-1';
 		}
-		return 'sf:inline-flex sf:items-center sf:cursor-pointer sf:rounded-full sf:border sf:border-warning-200 sf:bg-warning-50 sf:px-2.5 sf:py-0.5 sf:text-xs sf:font-medium sf:text-warning-700 sf:shadow-sm sf:hover:bg-warning-100';
+		return 'sf:inline-flex sf:items-center sf:cursor-pointer sf:rounded-full sf:border sf:border-warning-200 sf:bg-warning-50 sf:px-2.5 sf:py-0.5 sf:text-xs sf:font-medium sf:text-warning-700 sf:shadow-sm sf:hover:bg-warning-100 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-warning-600 sf:focus-visible:ring-offset-1';
 	}
 
 	function sourceHandleStyle(): string {
@@ -87,49 +87,32 @@
 		return `Missing trigger source: ${data.invalidHooks.join(', ')}`;
 	}
 
-	let selectedDuplicateParentId = $state<string>('');
+	function serializeAnchorRect(anchor: DOMRect | null | undefined) {
+		if (!anchor) return null;
+		return {
+			left: anchor.left,
+			top: anchor.top,
+			right: anchor.right,
+			bottom: anchor.bottom,
+			width: anchor.width,
+			height: anchor.height
+		};
+	}
 
-	const duplicateParentOptions = $derived.by(() => data.duplicateParentOptions ?? []);
-	const selectedDuplicateParent = $derived.by(() => {
-		if (duplicateParentOptions.length === 0) return null;
-		const selected = duplicateParentOptions.find(
-			(option) => option.id === selectedDuplicateParentId
-		);
-		return selected ?? duplicateParentOptions[0] ?? null;
-	});
-
-	$effect(() => {
-		if (duplicateParentOptions.length === 0) {
-			selectedDuplicateParentId = '';
-			return;
-		}
-		if (!duplicateParentOptions.some((option) => option.id === selectedDuplicateParentId)) {
-			selectedDuplicateParentId = duplicateParentOptions[0]!.id;
-		}
-	});
-
-	function setDuplicatePopoverOpen(open: boolean): void {
+	function setDuplicatePopoverOpen(open: boolean, anchor?: DOMRect | null): void {
 		if (data.isDuplicatePopoverOpen === open) return;
-		data.onDuplicatePopoverOpenChange?.(data.nodeId, open);
+		data.onDuplicatePopoverOpenChange?.({
+			mappingId: data.nodeId,
+			open,
+			anchorRect: open ? serializeAnchorRect(anchor) : null
+		});
 	}
 
 	function toggleDuplicatePopover(event: MouseEvent): void {
 		event.stopPropagation();
 		if (data.isDuplicating) return;
-		setDuplicatePopoverOpen(!data.isDuplicatePopoverOpen);
-	}
-
-	function closeDuplicatePopover(event?: MouseEvent): void {
-		event?.stopPropagation();
-		setDuplicatePopoverOpen(false);
-	}
-
-	async function confirmDuplicate(event: MouseEvent): Promise<void> {
-		event.stopPropagation();
-		const selected = selectedDuplicateParent;
-		if (!selected || !data.onDuplicateMapping || data.isDuplicating) return;
-		await data.onDuplicateMapping(data.linkage, selected.parent);
-		setDuplicatePopoverOpen(false);
+		const button = event.currentTarget as HTMLElement | null;
+		setDuplicatePopoverOpen(!data.isDuplicatePopoverOpen, button?.getBoundingClientRect() ?? null);
 	}
 
 	$effect(() => {
@@ -292,16 +275,16 @@
 		>
 			{#if data.pendingRemovalId !== data.nodeId}
 				<div class="sf:relative">
-					<Button
-						size="sm"
-						variant="ghost"
-						iconOnly
-						aria-label={`Duplicate ${data.label}`}
-						onclick={toggleDuplicatePopover}
-						class="nodrag"
-						data-testid={`dependency-node-duplicate-open-${data.nodeId}`}
-						disabled={data.isDuplicating}
-					>
+						<Button
+							size="sm"
+							variant="ghost"
+							iconOnly
+							aria-label={`Duplicate ${data.label}`}
+							onclick={toggleDuplicatePopover}
+							class="nodrag"
+							data-testid={`dependency-node-duplicate-open-${data.nodeId}`}
+							disabled={data.isDuplicating || data.duplicateParentOptions.length === 0}
+						>
 						<svg
 							class="sf:h-4 sf:w-4"
 							viewBox="0 0 24 24"
@@ -316,55 +299,8 @@
 							<rect x="4" y="4" width="11" height="11" rx="2"></rect>
 						</svg>
 					</Button>
-					{#if data.isDuplicatePopoverOpen}
-						<div
-							class="sf:absolute sf:right-0 sf:top-[calc(100%+6px)] sf:z-[120] sf:w-[280px] sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2 sf:shadow-lg sf:space-y-2 nodrag nopan"
-							onpointerdown={(event) => event.stopPropagation()}
-							data-testid={`dependency-node-duplicate-popover-${data.nodeId}`}
-						>
-							<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">
-								Duplicate and insert under
-							</p>
-							<select
-								class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-xs"
-								bind:value={selectedDuplicateParentId}
-								data-testid={`dependency-node-duplicate-select-${data.nodeId}`}
-							>
-								{#each duplicateParentOptions as option (option.id)}
-									<option value={option.id}>{option.label}</option>
-								{/each}
-							</select>
-							{#if selectedDuplicateParent?.description}
-								<p class="sf:text-[11px] sf:text-slate-500">
-									{selectedDuplicateParent.description}
-								</p>
-							{/if}
-							<div class="sf:flex sf:justify-end sf:gap-1">
-								<Button
-									size="sm"
-									variant="secondary"
-									class="nodrag"
-									onclick={closeDuplicatePopover}
-									data-testid={`dependency-node-duplicate-cancel-${data.nodeId}`}
-									disabled={data.isDuplicating}
-								>
-									Cancel
-								</Button>
-								<Button
-									size="sm"
-									variant="primary"
-									class="nodrag"
-									onclick={confirmDuplicate}
-									data-testid={`dependency-node-duplicate-confirm-${data.nodeId}`}
-									disabled={!selectedDuplicateParent || data.isDuplicating}
-								>
-									{data.isDuplicating ? 'Duplicating…' : 'Duplicate'}
-								</Button>
-							</div>
-						</div>
-					{/if}
-				</div>
-			{/if}
+					</div>
+				{/if}
 			{#if data.pendingRemovalId === data.nodeId}
 				<Button
 					size="sm"

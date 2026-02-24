@@ -1938,6 +1938,11 @@ test.describe('Actions admin flows', () => {
 					maxOtherWrapperZ: 0,
 					overlapChecked: false,
 					overlapHitPopover: false,
+					overlapHitTag: null as string | null,
+					overlapHitTestId: null as string | null,
+					overlapHitCardTestId: null as string | null,
+					sampleX: null as number | null,
+					sampleY: null as number | null,
 					popoverVisible: false
 				};
 			}
@@ -1951,6 +1956,11 @@ test.describe('Actions admin flows', () => {
 					maxOtherWrapperZ: 0,
 					overlapChecked: false,
 					overlapHitPopover: false,
+					overlapHitTag: null as string | null,
+					overlapHitTestId: null as string | null,
+					overlapHitCardTestId: null as string | null,
+					sampleX: null as number | null,
+					sampleY: null as number | null,
 					popoverVisible: false
 				};
 			}
@@ -1977,6 +1987,11 @@ test.describe('Actions admin flows', () => {
 			const popRect = popoverElement.getBoundingClientRect();
 			let overlapChecked = false;
 			let overlapHitPopover = false;
+			let overlapHitTag: string | null = null;
+			let overlapHitTestId: string | null = null;
+			let overlapHitCardTestId: string | null = null;
+			let sampleX: number | null = null;
+			let sampleY: number | null = null;
 			for (const wrapper of otherWrappers) {
 				const card = wrapper.querySelector('[data-testid^="dependency-node-card-"]');
 				if (!card) continue;
@@ -1987,8 +2002,16 @@ test.describe('Actions admin flows', () => {
 				const bottom = Math.min(popRect.bottom, rect.bottom);
 				if (right - left <= 8 || bottom - top <= 8) continue;
 				overlapChecked = true;
-				const hit = document.elementFromPoint(left + (right - left) / 2, top + (bottom - top) / 2);
+				sampleX = left + (right - left) / 2;
+				sampleY = top + (bottom - top) / 2;
+				const hit = document.elementFromPoint(sampleX, sampleY);
 				overlapHitPopover = Boolean(hit && popoverElement.contains(hit));
+				if (hit instanceof Element) {
+					overlapHitTag = hit.tagName.toLowerCase();
+					overlapHitTestId = hit.getAttribute('data-testid');
+					overlapHitCardTestId =
+						hit.closest('[data-testid^="dependency-node-card-"]')?.getAttribute('data-testid') ?? null;
+				}
 				break;
 			}
 
@@ -1998,6 +2021,11 @@ test.describe('Actions admin flows', () => {
 				maxOtherWrapperZ,
 				overlapChecked,
 				overlapHitPopover,
+				overlapHitTag,
+				overlapHitTestId,
+				overlapHitCardTestId,
+				sampleX,
+				sampleY,
 				popoverVisible: getComputedStyle(popoverElement).display !== 'none'
 			};
 		});
@@ -2006,7 +2034,10 @@ test.describe('Actions admin flows', () => {
 		expect(layering.popoverVisible).toBe(true);
 		expect(layering.activeWrapperZ).toBeGreaterThan(layering.maxOtherWrapperZ);
 		if (layering.overlapChecked) {
-			expect(layering.overlapHitPopover).toBe(true);
+			expect(
+				layering.overlapHitPopover,
+				`Expected overlap sample to hit popover; sample=(${layering.sampleX}, ${layering.sampleY}), hitTag=${layering.overlapHitTag}, hitTestId=${layering.overlapHitTestId}, hitCard=${layering.overlapHitCardTestId}`
+			).toBe(true);
 		}
 	});
 

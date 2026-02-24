@@ -10,6 +10,21 @@ export type MappingDependencyDuplicateParentOption = {
 	parent: DuplicateParentSelection;
 };
 
+export type DuplicatePopoverAnchorRect = {
+	left: number;
+	top: number;
+	right: number;
+	bottom: number;
+	width: number;
+	height: number;
+};
+
+export type DuplicatePopoverOpenChange = {
+	mappingId: string;
+	open: boolean;
+	anchorRect?: DuplicatePopoverAnchorRect | null;
+};
+
 export type MappingDependencyGraphProps = {
 	linkages?: FormActionLinkage[];
 	editingMappingId?: string | null;
@@ -89,7 +104,7 @@ export type MappingDependencyGraphActionNodeData = {
 		linkage: FormActionLinkage,
 		parent: DuplicateParentSelection
 	) => void | Promise<void>;
-	onDuplicatePopoverOpenChange?: (mappingId: string, open: boolean) => void;
+	onDuplicatePopoverOpenChange?: (request: DuplicatePopoverOpenChange) => void;
 	duplicateParentOptions: MappingDependencyDuplicateParentOption[];
 	isDuplicating: boolean;
 	isDuplicatePopoverOpen: boolean;

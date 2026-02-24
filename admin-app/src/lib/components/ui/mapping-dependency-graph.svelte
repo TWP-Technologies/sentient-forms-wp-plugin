@@ -20,6 +20,8 @@
 	import MappingDependencyHookRootNode from './mapping-dependency-hook-root-node.svelte';
 	import MappingDependencyHookRootEdge from './mapping-dependency-hook-root-edge.svelte';
 	import type {
+		DuplicatePopoverAnchorRect,
+		DuplicatePopoverOpenChange,
 		MappingDependencyGraphActionNodeData,
 		MappingDependencyDuplicateParentOption,
 		MappingDependencyGraphNodeData,
@@ -108,6 +110,10 @@
 		gform_validation: 10,
 		gform_after_submission: 20
 	};
+	const DUPLICATE_POPOVER_WIDTH = 280;
+	const DUPLICATE_POPOVER_ESTIMATED_HEIGHT = 182;
+	const DUPLICATE_POPOVER_GAP = 6;
+	const DUPLICATE_POPOVER_PADDING = 8;
 
 	function compareHookScopes(left: string, right: string): number {
 		const leftRank = HOOK_SCOPE_ORDER[left] ?? 1000;
@@ -193,10 +199,13 @@
 	let connectionFeedback = $state<ConnectionFeedback | null>(null);
 	let connectionFeedbackTimeout = $state<number | null>(null);
 	let activeDuplicatePopoverNodeId = $state<string | null>(null);
+	let activeDuplicatePopoverPosition = $state<{ left: number; top: number } | null>(null);
+	let activeDuplicateParentId = $state<string>('');
 	let hoveredRemovableEdgeId = $state<string | null>(null);
 	let shouldAutoFitView = $state(false);
 	let flowViewport = $state<Viewport>({ x: 0, y: 0, zoom: 1 });
 	let graphCanvasElement = $state<HTMLDivElement | null>(null);
+	let duplicatePopoverElement = $state<HTMLDivElement | null>(null);
 	let traceLoading = $state(false);
 	let traceError = $state<string | null>(null);
 	let traceResult = $state<RequestTraceResponse | null>(null);
@@ -284,6 +293,23 @@
 	});
 	const mappingIdsInScope = $derived.by(() => {
 		return new Set(scopedLinkages.map((linkage) => linkage.local_mapping_id));
+	});
+	const activeDuplicatePopoverLinkage = $derived.by(() => {
+		if (!activeDuplicatePopoverNodeId) return null;
+		return linkageById.get(activeDuplicatePopoverNodeId) ?? null;
+	});
+	const activeDuplicateParentOptions = $derived.by<MappingDependencyDuplicateParentOption[]>(() => {
+		if (!activeDuplicatePopoverLinkage) return [];
+		return buildDuplicateParentOptions(activeDuplicatePopoverLinkage);
+	});
+	const activeDuplicateParentOption = $derived.by(() => {
+		if (activeDuplicateParentOptions.length === 0) return null;
+		const selected = activeDuplicateParentOptions.find((option) => option.id === activeDuplicateParentId);
+		return selected ?? activeDuplicateParentOptions[0] ?? null;
+	});
+	const activeDuplicateIsLoading = $derived.by(() => {
+		if (!activeDuplicatePopoverNodeId) return false;
+		return duplicatingMappingId === activeDuplicatePopoverNodeId;
 	});
 	const invalidHooksByMappingId = $derived.by(() => {
 		const invalidById = new Map<string, string[]>();
@@ -526,6 +552,88 @@
 
 	const viewOnlyPositions = new Map<string, { x: number; y: number }>();
 
+	function clamp(value: number, min: number, max: number): number {
+		return Math.min(Math.max(value, min), max);
+	}
+
+	function computeDuplicatePopoverPosition(anchor: DuplicatePopoverAnchorRect): { left: number; top: number } {
+		if (typeof window === 'undefined') {
+			return {
+				left: anchor.left,
+				top: anchor.bottom + DUPLICATE_POPOVER_GAP
+			};
+		}
+
+		const viewportWidth = window.innerWidth;
+		const viewportHeight = window.innerHeight;
+		const maxLeft = Math.max(
+			DUPLICATE_POPOVER_PADDING,
+			viewportWidth - DUPLICATE_POPOVER_WIDTH - DUPLICATE_POPOVER_PADDING
+		);
+		const left = clamp(
+			anchor.right - DUPLICATE_POPOVER_WIDTH,
+			DUPLICATE_POPOVER_PADDING,
+			maxLeft
+		);
+		const spaceBelow = viewportHeight - anchor.bottom - DUPLICATE_POPOVER_PADDING;
+		const spaceAbove = anchor.top - DUPLICATE_POPOVER_PADDING;
+		const renderAbove =
+			spaceBelow < DUPLICATE_POPOVER_ESTIMATED_HEIGHT + DUPLICATE_POPOVER_GAP &&
+			spaceAbove > spaceBelow;
+		const naturalTop = renderAbove
+			? anchor.top - DUPLICATE_POPOVER_ESTIMATED_HEIGHT - DUPLICATE_POPOVER_GAP
+			: anchor.bottom + DUPLICATE_POPOVER_GAP;
+		const maxTop = Math.max(
+			DUPLICATE_POPOVER_PADDING,
+			viewportHeight - DUPLICATE_POPOVER_ESTIMATED_HEIGHT - DUPLICATE_POPOVER_PADDING
+		);
+		const top = clamp(naturalTop, DUPLICATE_POPOVER_PADDING, maxTop);
+
+		return { left, top };
+	}
+
+	function setActiveDuplicatePopoverAnchor(anchor: DuplicatePopoverAnchorRect | null): void {
+		activeDuplicatePopoverPosition = anchor ? computeDuplicatePopoverPosition(anchor) : null;
+	}
+
+	function closeActiveDuplicatePopover(): void {
+		activeDuplicatePopoverNodeId = null;
+		activeDuplicateParentId = '';
+		setActiveDuplicatePopoverAnchor(null);
+	}
+
+	function duplicateTriggerSelector(mappingId: string): string {
+		if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+			return `[data-testid="dependency-node-duplicate-open-${CSS.escape(mappingId)}"]`;
+		}
+		return `[data-testid="dependency-node-duplicate-open-${mappingId}"]`;
+	}
+
+	function measureDuplicateTriggerAnchor(mappingId: string): DuplicatePopoverAnchorRect | null {
+		if (typeof document === 'undefined') return null;
+		const trigger = document.querySelector(duplicateTriggerSelector(mappingId));
+		if (!(trigger instanceof HTMLElement)) return null;
+		const rect = trigger.getBoundingClientRect();
+		return {
+			left: rect.left,
+			top: rect.top,
+			right: rect.right,
+			bottom: rect.bottom,
+			width: rect.width,
+			height: rect.height
+		};
+	}
+
+	function refreshActiveDuplicatePopoverAnchor(): void {
+		if (!activeDuplicatePopoverNodeId) return;
+		const measured = measureDuplicateTriggerAnchor(activeDuplicatePopoverNodeId);
+		if (!measured) {
+			closeActiveDuplicatePopover();
+			return;
+		}
+		setActiveDuplicatePopoverAnchor(measured);
+	}
+
 	function hookRootNodeId(hook: string): string {
 		return `__hook_root__:${hook}`;
 	}
@@ -595,8 +703,60 @@
 		activeDuplicatePopoverNodeId;
 		if (!activeDuplicatePopoverNodeId) return;
 		if (!mappingIdsInScope.has(activeDuplicatePopoverNodeId)) {
-			activeDuplicatePopoverNodeId = null;
+			closeActiveDuplicatePopover();
 		}
+	});
+
+	$effect(() => {
+		activeDuplicatePopoverNodeId;
+		activeDuplicateParentOptions;
+		if (!activeDuplicatePopoverNodeId) return;
+		if (activeDuplicateParentOptions.length === 0) {
+			closeActiveDuplicatePopover();
+			return;
+		}
+		if (!activeDuplicateParentOptions.some((option) => option.id === activeDuplicateParentId)) {
+			activeDuplicateParentId = activeDuplicateParentOptions[0]!.id;
+		}
+	});
+
+	$effect(() => {
+		pendingRemovalId;
+		duplicatingMappingId;
+		activeDuplicatePopoverNodeId;
+		if (!activeDuplicatePopoverNodeId) return;
+		if (
+			pendingRemovalId === activeDuplicatePopoverNodeId ||
+			duplicatingMappingId === activeDuplicatePopoverNodeId
+		) {
+			closeActiveDuplicatePopover();
+		}
+	});
+
+	$effect(() => {
+		activeDuplicatePopoverNodeId;
+		flowViewport.x;
+		flowViewport.y;
+		flowViewport.zoom;
+		if (!activeDuplicatePopoverNodeId) return;
+		const frame = requestAnimationFrame(() => {
+			refreshActiveDuplicatePopoverAnchor();
+		});
+		return () => {
+			cancelAnimationFrame(frame);
+		};
+	});
+
+	$effect(() => {
+		graph.layoutSignature;
+		activeDuplicatePopoverNodeId;
+		if (!activeDuplicatePopoverNodeId) return;
+		const frame = requestAnimationFrame(() => {
+			refreshActiveDuplicatePopoverAnchor();
+		});
+		return () => {
+			cancelAnimationFrame(frame);
+		};
 	});
 
 	$effect(() => {
@@ -739,14 +899,61 @@
 		};
 	}
 
-	function onDuplicatePopoverOpenChange(mappingId: string, open: boolean): void {
-		if (open) {
-			activeDuplicatePopoverNodeId = mappingId;
+	function onDuplicatePopoverOpenChange(request: DuplicatePopoverOpenChange): void {
+		if (!request.open) {
+			if (activeDuplicatePopoverNodeId === request.mappingId) {
+				closeActiveDuplicatePopover();
+			}
 			return;
 		}
-		if (activeDuplicatePopoverNodeId === mappingId) {
-			activeDuplicatePopoverNodeId = null;
+
+		const anchor = request.anchorRect ?? measureDuplicateTriggerAnchor(request.mappingId);
+		if (!anchor) {
+			closeActiveDuplicatePopover();
+			return;
 		}
+		activeDuplicatePopoverNodeId = request.mappingId;
+		setActiveDuplicatePopoverAnchor(anchor);
+	}
+
+	function closeDuplicatePopoverFromUI(event?: MouseEvent | PointerEvent): void {
+		event?.stopPropagation();
+		closeActiveDuplicatePopover();
+	}
+
+	async function confirmDuplicateFromUI(event: MouseEvent): Promise<void> {
+		event.stopPropagation();
+		const linkage = activeDuplicatePopoverLinkage;
+		const selected = activeDuplicateParentOption;
+		if (!linkage || !selected || !onDuplicateMapping || activeDuplicateIsLoading) {
+			return;
+		}
+		await onDuplicateMapping(linkage, selected.parent);
+		closeActiveDuplicatePopover();
+	}
+
+	function handleDuplicatePopoverEscape(event: KeyboardEvent): void {
+		if (event.key !== 'Escape') return;
+		if (!activeDuplicatePopoverNodeId) return;
+		closeActiveDuplicatePopover();
+	}
+
+	function handleDuplicatePopoverPointerDown(event: PointerEvent): void {
+		if (!activeDuplicatePopoverNodeId) return;
+		const target = event.target;
+		if (!(target instanceof Node)) return;
+		if (duplicatePopoverElement?.contains(target)) return;
+
+		const trigger = document.querySelector(
+			duplicateTriggerSelector(activeDuplicatePopoverNodeId)
+		);
+		if (trigger instanceof Node && trigger.contains(target)) return;
+		closeActiveDuplicatePopover();
+	}
+
+	function handleDuplicatePopoverViewportChange(): void {
+		if (!activeDuplicatePopoverNodeId) return;
+		refreshActiveDuplicatePopoverAnchor();
 	}
 
 	function buildDuplicateParentOptions(
@@ -1231,6 +1438,7 @@
 		if (!targetNode) return;
 		shouldAutoFitView = false;
 		viewOnlyPositions.set(targetNode.id, { ...targetNode.position });
+		refreshActiveDuplicatePopoverAnchor();
 	}
 
 	function handleNodeDrag({
@@ -1248,6 +1456,7 @@
 		for (const node of nodes) {
 			viewOnlyPositions.set(node.id, { ...node.position });
 		}
+		refreshActiveDuplicatePopoverAnchor();
 	}
 
 	function snapshotVisibleNodePositions(): void {
@@ -1569,6 +1778,12 @@
 	}
 </script>
 
+<svelte:document onpointerdown={handleDuplicatePopoverPointerDown} />
+<svelte:window
+	onkeydown={handleDuplicatePopoverEscape}
+	onresize={handleDuplicatePopoverViewportChange}
+	onscroll={handleDuplicatePopoverViewportChange}
+/>
 <div class="sf:space-y-3" data-testid="dependency-graph">
 	<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
 		<div>
@@ -1802,12 +2017,61 @@
 					connectionRadius={56}
 					minZoom={0.3}
 					maxZoom={1.8}
-				>
-					<Background />
-					<MiniMap class="sf:pointer-events-none" />
-					<Controls />
-				</SvelteFlow>
-			</div>
+					>
+						<Background />
+						<MiniMap class="sf:pointer-events-none" />
+						<Controls />
+					</SvelteFlow>
+					{#if activeDuplicatePopoverNodeId && activeDuplicatePopoverPosition}
+						<div
+							class="sf:fixed sf:z-[260] sf:w-[280px] sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2 sf:shadow-xl sf:space-y-2 nodrag nopan nowheel"
+							style={`left:${activeDuplicatePopoverPosition.left}px;top:${activeDuplicatePopoverPosition.top}px;`}
+							onpointerdown={(event) => event.stopPropagation()}
+							bind:this={duplicatePopoverElement}
+							data-testid={`dependency-node-duplicate-popover-${activeDuplicatePopoverNodeId}`}
+						>
+							<p class="sf:text-[11px] sf:font-semibold sf:text-slate-700">
+								Duplicate and insert under
+							</p>
+							<select
+								class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-xs"
+								bind:value={activeDuplicateParentId}
+								data-testid={`dependency-node-duplicate-select-${activeDuplicatePopoverNodeId}`}
+							>
+								{#each activeDuplicateParentOptions as option (option.id)}
+									<option value={option.id}>{option.label}</option>
+								{/each}
+							</select>
+							{#if activeDuplicateParentOption?.description}
+								<p class="sf:text-[11px] sf:text-slate-500">
+									{activeDuplicateParentOption.description}
+								</p>
+							{/if}
+							<div class="sf:flex sf:justify-end sf:gap-1">
+								<Button
+									size="sm"
+									variant="secondary"
+									class="nodrag"
+									onclick={closeDuplicatePopoverFromUI}
+									data-testid={`dependency-node-duplicate-cancel-${activeDuplicatePopoverNodeId}`}
+									disabled={activeDuplicateIsLoading}
+								>
+									Cancel
+								</Button>
+								<Button
+									size="sm"
+									variant="primary"
+									class="nodrag"
+									onclick={confirmDuplicateFromUI}
+									data-testid={`dependency-node-duplicate-confirm-${activeDuplicatePopoverNodeId}`}
+									disabled={!activeDuplicateParentOption || activeDuplicateIsLoading}
+								>
+									{activeDuplicateIsLoading ? 'Duplicating…' : 'Duplicate'}
+								</Button>
+							</div>
+						</div>
+					{/if}
+				</div>
 
 			<div
 				class="sf:h-[520px] sf:overflow-y-auto sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:space-y-3"
