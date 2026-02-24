@@ -96,6 +96,31 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('dashboard-credits-detail')).toContainText('Actions may pause');
 	});
 
+	test('dashboard shows shared error state when both dashboard requests fail', async ({ page }) => {
+		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
+			route.fulfill({
+				status: 500,
+				contentType: 'application/json',
+				body: JSON.stringify({ success: false, message: 'license unavailable' })
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
+			route.fulfill({
+				status: 500,
+				contentType: 'application/json',
+				body: JSON.stringify({ success: false, message: 'credits unavailable' })
+			})
+		);
+
+		await page.goto('/#/dashboard', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('dashboard-error-state')).toBeVisible();
+		await expect(page.getByTestId('dashboard-error-state')).toContainText(
+			'Unable to refresh license and credit details right now.'
+		);
+	});
+
 	test('licensing active screen leads with status, tier, credits, and reset timing', async ({ page }) => {
 		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
 			route.fulfill({

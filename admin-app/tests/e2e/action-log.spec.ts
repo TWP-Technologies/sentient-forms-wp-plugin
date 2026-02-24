@@ -53,7 +53,7 @@ const mockLogEntries = [
     }
 ];
 
-test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
+	test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
     test.beforeEach(async ({ page }) => {
         const previewHost = 'http://127.0.0.1:4175';
         await seedRuntimeConfig(page, {
@@ -65,7 +65,7 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
     /**
      * T-E2E-001: Action log page displays entries in a table.
      */
-    test('action log page displays entries in table', async ({ page }) => {
+	    test('action log page displays entries in table', async ({ page }) => {
         await page.route('**/wp-json/sentient-forms/v1/actions/log**', (route) =>
             route.fulfill({
                 status: 200,
@@ -80,11 +80,12 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
             })
         );
 
-        await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
+	        await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
 
-        await expect(page.getByRole('heading', { name: 'Action Log' })).toBeVisible();
-        await expect(page.getByText('Spam Detection')).toHaveCount(2);
-        await expect(page.getByText('Entry Summary')).toBeVisible();
+	        await expect(page.getByRole('heading', { name: 'Action Log' })).toBeVisible();
+	        await expect(page.getByTestId('action-log-loading-state')).toHaveCount(0);
+	        await expect(page.getByText('Spam Detection')).toHaveCount(2);
+	        await expect(page.getByText('Entry Summary')).toBeVisible();
 
         // Check status badges
         const tableBody = page.locator('tbody');
@@ -140,7 +141,7 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
     /**
      * T-E2E-003: Action log shows empty state when no entries.
      */
-    test('action log shows empty state when no entries', async ({ page }) => {
+	    test('action log shows empty state when no entries', async ({ page }) => {
         await page.route('**/wp-json/sentient-forms/v1/actions/log**', (route) =>
             route.fulfill({
                 status: 200,
@@ -155,10 +156,49 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
             })
         );
 
-        await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
+	        await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
 
-        await expect(page.getByRole('heading', { name: 'Action Log' })).toBeVisible();
-        await expect(page.getByText(/No action logs found/i)).toBeVisible();
-    });
+	        await expect(page.getByRole('heading', { name: 'Action Log' })).toBeVisible();
+	        await expect(page.getByTestId('action-log-empty-state')).toBeVisible();
+	        await expect(page.getByText(/No action logs yet/i)).toBeVisible();
+	    });
 
-});
+	    test('action log shows error template and recovers on retry', async ({ page }) => {
+	        let requestCount = 0;
+
+	        await page.route('**/wp-json/sentient-forms/v1/actions/log**', (route) => {
+	            requestCount += 1;
+	            if (requestCount === 1) {
+	                return route.fulfill({
+	                    status: 500,
+	                    contentType: 'application/json',
+	                    body: JSON.stringify({
+	                        success: false,
+	                        message: 'Server exploded'
+	                    })
+	                });
+	            }
+
+	            return route.fulfill({
+	                status: 200,
+	                contentType: 'application/json',
+	                body: JSON.stringify({
+	                    entries: [mockLogEntries[0]],
+	                    total: 1,
+	                    total_pages: 1,
+	                    page: 1,
+	                    per_page: 20
+	                })
+	            });
+	        });
+
+	        await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
+	        await expect(page.getByTestId('action-log-error-state')).toBeVisible();
+	        await page.getByTestId('action-log-error-state').getByRole('button', { name: 'Retry' }).click();
+
+	        await expect(page.getByTestId('action-log-error-state')).toHaveCount(0);
+	        await expect(page.getByText('Spam Detection')).toBeVisible();
+	        expect(requestCount).toBeGreaterThanOrEqual(2);
+	    });
+
+	});

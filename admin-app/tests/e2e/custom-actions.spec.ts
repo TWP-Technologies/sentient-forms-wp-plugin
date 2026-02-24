@@ -296,4 +296,51 @@ test.describe('Custom actions admin view', () => {
 		const invalidRow = rows.filter({ hasText: 'invalid-time' });
 		await expect(invalidRow.locator('td').nth(5)).toContainText('—');
 	});
+
+	test('shows shared empty state template when no custom actions exist', async ({ page }) => {
+		await page.context().route('**/wp-json/sentient-forms/v1/**', async (route) => {
+			const url = route.request().url();
+			const method = route.request().method();
+
+			if (method === 'GET' && url.includes('/meta/capabilities')) {
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						success: true,
+						data: {
+							supports_custom_actions: true,
+							cps_version: '1.2.0'
+						}
+					})
+				});
+			}
+
+			if (method === 'GET' && url.includes('/actions/definitions')) {
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify([])
+				});
+			}
+
+			if (method === 'GET' && url.includes('/custom-actions')) {
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						actions: [],
+						quota: { quota_max: 5, quota_used: 0, quota_remaining: 5 }
+					})
+				});
+			}
+
+			return route.continue();
+		});
+
+		await page.goto('/#/actions/custom', { waitUntil: 'networkidle' });
+		await expect(page.getByRole('heading', { name: 'Custom Actions' })).toBeVisible();
+		await expect(page.getByTestId('custom-actions-empty-state')).toBeVisible();
+		await expect(page.getByRole('button', { name: /create your first action/i })).toBeVisible();
+	});
 });
