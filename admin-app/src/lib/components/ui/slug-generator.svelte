@@ -77,7 +77,7 @@
 			oninput={handleInput}
 			placeholder="e.g., follow-up-reply"
 			class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:font-mono
-				   focus:sf:outline-none focus:sf:ring-2 focus:sf:ring-indigo-500 focus:sf:border-indigo-500"
+				   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
 		/>
 		{#if isManuallyEdited && !manualOnly}
 			<Button

@@ -2034,7 +2034,7 @@
 								Duplicate and insert under
 							</p>
 							<select
-								class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-xs"
+								class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-xs sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 								bind:value={activeDuplicateParentId}
 								data-testid={`dependency-node-duplicate-select-${activeDuplicatePopoverNodeId}`}
 							>
@@ -2199,7 +2199,7 @@
 									inputmode="numeric"
 									bind:value={traceEntryId}
 									placeholder="e.g. 1234"
-									class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700"
+									class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 									data-testid="request-trace-entry-id"
 								/>
 							</label>
@@ -2208,6 +2208,7 @@
 								<input
 									type="checkbox"
 									checked={traceIncludeDrafts}
+									class="sf:h-4 sf:w-4 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 									onchange={(event) => {
 										traceIncludeDrafts = (event.currentTarget as HTMLInputElement).checked;
 									}}
@@ -2223,7 +2224,7 @@
 								{#if traceFieldOptions.length > 0}
 									<select
 										bind:value={traceCustomFieldId}
-										class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700"
+										class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 										data-testid="request-trace-field-id"
 									>
 										{#each traceFieldOptions as field (`${field.id}`)}
@@ -2237,7 +2238,7 @@
 										type="text"
 										bind:value={traceCustomFieldId}
 										placeholder="Field ID"
-										class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700"
+										class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 										data-testid="request-trace-field-id"
 									/>
 								{/if}
@@ -2245,7 +2246,7 @@
 									type="text"
 									bind:value={traceCustomFieldValue}
 									placeholder="Field value"
-									class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700"
+									class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1.5 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 									data-testid="request-trace-field-value"
 								/>
 								<Button
@@ -2283,7 +2284,7 @@
 															(event.currentTarget as HTMLInputElement).value
 														);
 													}}
-													class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-xs sf:text-slate-700"
+													class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-xs sf:text-slate-700 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 												/>
 											</label>
 											<Button

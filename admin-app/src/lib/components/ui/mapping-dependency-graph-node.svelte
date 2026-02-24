@@ -158,7 +158,7 @@
 />
 
 <div
-	class={`sf:w-[320px] sf:rounded-md sf:border sf:bg-white sf:p-3 sf:shadow-sm sf:text-left sf:space-y-2 sf:cursor-pointer ${nodeClass()}`}
+	class={`sf:w-[320px] sf:rounded-md sf:border sf:bg-white sf:p-3 sf:shadow-sm sf:text-left sf:space-y-2 sf:cursor-pointer sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white ${nodeClass()}`}
 	data-testid={`dependency-node-card-${data.nodeId}`}
 	onclick={setEditingTarget}
 	role="button"

@@ -94,21 +94,26 @@
 	function close() {
 		open = false;
 	}
+
+	function handleOverlayClick(event: MouseEvent) {
+		if (event.target !== event.currentTarget) return;
+		close();
+	}
 </script>
 
 {#if open}
 	<div
 		class="sf-template-library-overlay"
-		onclick={close}
+		onclick={handleOverlayClick}
 		onkeydown={(e) => e.key === 'Escape' && close()}
 		role="button"
 		tabindex="-1"
 	>
 		<div
 			class="sf-template-library-modal"
-			onclick={(e) => e.stopPropagation()}
 			role="dialog"
 			aria-modal="true"
+			tabindex="-1"
 		>
 			<header class="sf-template-library-header">
 				<h2>
@@ -169,7 +174,10 @@
 							<div class="sf-field-mapping-row">
 								<label>
 									<span class="sf-portable-field">{pf.label} ({pf.type})</span>
-									<select bind:value={fieldMappings[pf.label]}>
+									<select
+										bind:value={fieldMappings[pf.label]}
+										class="sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-2 sf:py-1 sf:text-sm sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+									>
 										<option value="">— Skip —</option>
 										{#each formFields as field}
 											<option value={field.id}>{field.label} ({field.type})</option>
@@ -263,27 +271,6 @@
 		list-style: none;
 		margin: 0;
 		padding: 0;
-	}
-
-	.sf-template-item {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		width: 100%;
-		padding: 12px 16px;
-		border: 1px solid #e0e0e0;
-		border-radius: 6px;
-		background: #fafafa;
-		cursor: pointer;
-		margin-bottom: 8px;
-		transition:
-			background 0.15s,
-			border-color 0.15s;
-	}
-
-	.sf-template-item:hover {
-		background: #f0f0f0;
-		border-color: #2271b1;
 	}
 
 	.sf-template-name {

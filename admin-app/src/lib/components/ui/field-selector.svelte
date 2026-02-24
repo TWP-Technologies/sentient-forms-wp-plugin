@@ -95,7 +95,7 @@
 				</p>
 			</div>
 			<select
-				class="sf:px-3 sf:py-1.5 sf:text-sm sf:border sf:border-slate-200 sf:rounded sf:bg-white"
+				class="sf:px-3 sf:py-1.5 sf:text-sm sf:border sf:border-slate-300 sf:rounded sf:bg-white sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 				value={value.mode}
 				onchange={handleModeChange}
 				{disabled}
@@ -144,7 +144,7 @@
 							>
 								<input
 									type="checkbox"
-									class="sf:w-4 sf:h-4 sf:text-blue-600 sf:rounded"
+									class="sf:w-4 sf:h-4 sf:text-primary-600 sf:rounded sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 									checked={selectedIds.has(field.id)}
 									onchange={() => toggleField(field.id)}
 									{disabled}
@@ -167,7 +167,7 @@
 			<label class="sf:flex sf:items-center sf:gap-2 sf:cursor-pointer">
 				<input
 					type="checkbox"
-					class="sf:w-4 sf:h-4 sf:text-blue-600 sf:rounded"
+					class="sf:w-4 sf:h-4 sf:text-primary-600 sf:rounded sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 					checked={value.include_metadata ?? true}
 					onchange={toggleMetadata}
 					{disabled}

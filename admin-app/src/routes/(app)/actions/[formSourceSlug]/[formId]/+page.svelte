@@ -190,6 +190,11 @@
 		formLevelConfig = {};
 	}
 
+	function handleFormLevelDefaultsBackdropClick(event: MouseEvent) {
+		if (event.target !== event.currentTarget) return;
+		cancelFormLevelConfig();
+	}
+
 	async function loadFormFields() {
 		if (fieldsLoading) return;
 		fieldsLoading = true;
@@ -773,6 +778,11 @@
 
 	function closeMappingConfigModal() {
 		showMappingConfigModal = false;
+	}
+
+	function handleMappingConfigBackdropClick(event: MouseEvent) {
+		if (event.target !== event.currentTarget) return;
+		closeMappingConfigModal();
 	}
 
 	function handleWindowKeydown(event: KeyboardEvent) {
@@ -1974,22 +1984,31 @@
 <Section heading="Actions" description="Link CPS templates or custom actions to this form.">
 	<!-- Form-Level Action Config Modal - Inside Section slot for Svelte 5 reactivity -->
 	{#if configuringActionId}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="sf:fixed sf:inset-0 sf:z-50 sf:bg-black/40 sf:flex sf:items-center sf:justify-center sf:p-4"
-			onclick={cancelFormLevelConfig}
+			onclick={handleFormLevelDefaultsBackdropClick}
+			onkeydown={(event) => {
+				if (event.key === 'Escape') cancelFormLevelConfig();
+			}}
+			tabindex="-1"
+			role="button"
+			aria-label="Close form defaults modal"
 		>
-			<!-- svelte-ignore a11y_click_events_have_key_events -->
 			<div
 				data-testid="form-defaults-modal"
 				class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-2xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
-				onclick={(e) => e.stopPropagation()}
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="form-defaults-title"
+				tabindex="-1"
 			>
 				<header
 					class="sf:flex sf:items-center sf:justify-between sf:px-6 sf:py-4 sf:border-b sf:border-slate-200"
 				>
 					<div>
-						<h2 class="sf:text-lg sf:font-semibold sf:text-slate-800">Form-Level Defaults</h2>
+						<h2 id="form-defaults-title" class="sf:text-lg sf:font-semibold sf:text-slate-800">
+							Form-Level Defaults
+						</h2>
 						<p class="sf:text-sm sf:text-slate-500">
 							Configure default examples for all spam detection actions on this form.
 						</p>
@@ -2533,20 +2552,23 @@
 	</Card>
 
 		{#if showMappingConfigModal && editingLinkage}
-			<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
 			<div
 				class="sf:fixed sf:inset-0 sf:z-40 sf:bg-black/45 sf:flex sf:items-center sf:justify-center sf:p-4"
-				onclick={closeMappingConfigModal}
+				onclick={handleMappingConfigBackdropClick}
+				onkeydown={(event) => {
+					if (event.key === 'Escape') closeMappingConfigModal();
+				}}
 				data-testid="mapping-config-modal"
+				tabindex="-1"
+				role="button"
+				aria-label="Close mapping configuration modal"
 			>
-				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<div
 					class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-4xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
 					role="dialog"
 					aria-modal="true"
 					aria-labelledby="mapping-config-title"
 					tabindex="-1"
-					onclick={(event) => event.stopPropagation()}
 				>
 					<header
 						class="sf:flex sf:items-center sf:justify-between sf:gap-4 sf:px-6 sf:py-4 sf:border-b sf:border-slate-200"
@@ -2631,7 +2653,7 @@
 												<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm">
 													<input
 														type="checkbox"
-														class="sf:form-checkbox"
+														class="sf:form-checkbox sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 														checked={draftHooks.has(hookKey)}
 														onchange={() => toggleDraftHook(hookKey)}
 														data-testid={`mapping-trigger-hook-${hookKey}`}
@@ -3109,7 +3131,7 @@
 											<input
 												type="radio"
 												name="template-choice"
-												class="sf:mt-1"
+												class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 												checked={selectedTemplateId === definition.id}
 												onchange={() => (selectedTemplateId = definition.id)}
 											/>
@@ -3148,7 +3170,7 @@
 										<input
 											type="radio"
 											name="custom-choice"
-											class="sf:mt-1"
+											class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 											checked={selectedCustomId === action.id}
 											onchange={() => (selectedCustomId = action.id)}
 										/>
@@ -3183,7 +3205,7 @@
 										>
 											<input
 												type="checkbox"
-												class="sf:form-checkbox"
+												class="sf:form-checkbox sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 												checked={selectedHooks.has(hookKey)}
 												onchange={() => toggleHookSelection(hookKey)}
 											/>
@@ -3197,7 +3219,7 @@
 										>
 											<input
 												type="checkbox"
-												class="sf:form-checkbox"
+												class="sf:form-checkbox sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 												checked={selectedHooks.has(hookKey)}
 												onchange={() => toggleHookSelection(hookKey)}
 											/>
@@ -3238,7 +3260,7 @@
 											<input
 												type="radio"
 												name="create-dependency-trigger"
-												class="sf:mt-1"
+												class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 												checked={selectedCreateDependencyIds.has(linkage.local_mapping_id)}
 												onchange={() => toggleCreateDependencySelection(linkage.local_mapping_id)}
 											/>

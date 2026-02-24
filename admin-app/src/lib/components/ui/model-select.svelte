@@ -76,7 +76,7 @@
 		value={selectValue}
 		onchange={handleSelectChange}
 		class="sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm
-			   sf:bg-white focus:sf:outline-none focus:sf:ring-2 focus:sf:ring-indigo-500"
+			   sf:bg-white sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 	>
 		{#each modelOptions as option}
 			<option value={option.value}>{option.label}</option>
@@ -90,7 +90,7 @@
 			oninput={handleCustomInput}
 			placeholder="e.g., models/gemini-pro"
 			class="sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:font-mono
-				   focus:sf:outline-none focus:sf:ring-2 focus:sf:ring-indigo-500"
+				   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 		/>
 	{/if}
 	<p class="sf:text-xs sf:text-slate-500">Optional: override the default model for this action.</p>

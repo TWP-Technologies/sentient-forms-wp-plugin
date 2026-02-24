@@ -248,7 +248,7 @@
 				<span class="sf:text-sm sf:font-semibold">{$telemetry.optIn ? 'On' : 'Off'}</span>
 				<input
 					type="checkbox"
-					class="sf:h-5 sf:w-5"
+					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 					checked={$telemetry.optIn}
 					disabled={$telemetry.saving}
 					onchange={toggle}
@@ -307,7 +307,7 @@
 				<span class="sf:text-sm sf:font-semibold">{$logging.enabled ? 'On' : 'Off'}</span>
 				<input
 					type="checkbox"
-					class="sf:h-5 sf:w-5"
+					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 					checked={$logging.enabled}
 					disabled={$logging.saving}
 					onchange={toggleLogging}
@@ -366,7 +366,7 @@
 				<span class="sf:text-sm sf:font-semibold">{executionGlobalDisabled ? 'Paused' : 'Active'}</span>
 				<input
 					type="checkbox"
-					class="sf:h-5 sf:w-5"
+					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 					checked={!executionGlobalDisabled}
 					disabled={executionSaving || executionLoading}
 					onchange={(event) =>
@@ -391,7 +391,7 @@
 							</span>
 							<input
 								type="checkbox"
-								class="sf:h-5 sf:w-5"
+								class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 								checked={!executionProviderDisabled[source.slug]}
 								disabled={executionSaving || executionLoading || !source.isActive}
 								onchange={(event) =>
@@ -426,7 +426,7 @@
 						name="maxAttempts"
 						type="number"
 						min="1"
-						class="sf:rounded-lg sf:border sf:border-slate-300 sf:px-3 sf:py-2"
+						class="sf:rounded-lg sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
 						value={formState.maxAttempts}
 						oninput={handleInput}
 					/>
@@ -438,7 +438,7 @@
 						name="baseDelaySeconds"
 						type="number"
 						min="5"
-						class="sf:rounded-lg sf:border sf:border-slate-300 sf:px-3 sf:py-2"
+						class="sf:rounded-lg sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
 						value={formState.baseDelaySeconds}
 						oninput={handleInput}
 					/>
@@ -450,7 +450,7 @@
 						name="maxDelaySeconds"
 						type="number"
 						min={formState.baseDelaySeconds}
-						class="sf:rounded-lg sf:border sf:border-slate-300 sf:px-3 sf:py-2"
+						class="sf:rounded-lg sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
 						value={formState.maxDelaySeconds}
 						oninput={handleInput}
 					/>

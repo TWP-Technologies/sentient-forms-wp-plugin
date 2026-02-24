@@ -24,5 +24,5 @@
 	bind:value
 	{placeholder}
 	{disabled}
-	class="sf:w-full sf:px-3 sf:py-2 sf:border sf:border-slate-300 sf:rounded-md sf:text-sm sf:focus:ring-2 sf:focus:ring-blue-500 sf:focus:border-blue-500 {className}"
+	class="sf:w-full sf:px-3 sf:py-2 sf:border sf:border-slate-300 sf:rounded-md sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white {className}"
 />

@@ -147,7 +147,7 @@
 				Logic
 			</span>
 			<select
-				class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm"
+				class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 				value={group.logic}
 				onchange={(event) => updateLogic((event.target as HTMLSelectElement).value as ConditionGroup['logic'])}
 				{disabled}
@@ -190,7 +190,7 @@
 					<label class="sf:flex sf:flex-col sf:gap-1">
 						<span class="sf:text-xs sf:text-slate-500">Field</span>
 						<select
-							class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm"
+							class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							value={node.field_id}
 							onchange={(event) =>
 								updateRule(index, { field_id: (event.target as HTMLSelectElement).value })}
@@ -206,7 +206,7 @@
 					<label class="sf:flex sf:flex-col sf:gap-1">
 						<span class="sf:text-xs sf:text-slate-500">Operator</span>
 						<select
-							class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm"
+							class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							value={node.operator}
 							onchange={(event) =>
 								updateRuleOperator(
@@ -239,7 +239,7 @@
 							<span class="sf:text-xs sf:text-slate-500">Values (comma-separated)</span>
 							<input
 								type="text"
-								class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm"
+								class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 								value={listText(node.value)}
 								oninput={(event) => setListValue(index, (event.target as HTMLInputElement).value)}
 								placeholder="sales, billing, support"
@@ -252,7 +252,7 @@
 							<input
 								type="number"
 								step="any"
-								class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm"
+								class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 								value={typeof node.value === 'number' ? node.value : Number(node.value ?? 0)}
 								oninput={(event) =>
 									updateRule(index, { value: Number((event.target as HTMLInputElement).value) })}
@@ -264,7 +264,7 @@
 							<span class="sf:text-xs sf:text-slate-500">Value</span>
 							<input
 								type="text"
-								class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm"
+								class="sf:border sf:border-slate-300 sf:rounded-md sf:px-2 sf:py-1 sf:text-sm sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 								value={typeof node.value === 'string' ? node.value : ''}
 								oninput={(event) =>
 									updateRule(index, { value: (event.target as HTMLInputElement).value })}

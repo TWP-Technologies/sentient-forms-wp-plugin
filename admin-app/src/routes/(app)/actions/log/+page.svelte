@@ -143,7 +143,7 @@
 				<select
 					id="filter-status"
 					bind:value={filterStatus}
-					class="sf:w-full sf:px-3 sf:py-2 sf:border sf:rounded-md"
+					class="sf:w-full sf:px-3 sf:py-2 sf:border sf:border-slate-300 sf:bg-white sf:rounded-md sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 				>
 					<option value="">All</option>
 					<option value="success">Success</option>

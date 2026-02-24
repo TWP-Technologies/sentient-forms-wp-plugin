@@ -86,7 +86,7 @@
 			<nav class="sf:p-4 sf:flex sf:flex-col sf:gap-2">
 					{#each links as link}
 						<a
-							class="sf:rounded sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:transition-all sf:hover:bg-slate-100"
+							class="sf:rounded sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:transition-all sf:hover:bg-slate-100 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-slate-600 sf:focus-visible:ring-offset-2 sf:focus-visible:ring-offset-white"
 							class:sf-bg-slate-200={activePath === link.path}
 							class:sf-text-slate-900={activePath === link.path}
 							href={appHref(link.path)}

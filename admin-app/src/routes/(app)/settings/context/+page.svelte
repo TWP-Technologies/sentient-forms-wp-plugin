@@ -297,7 +297,11 @@
 
 					<div class="sf:flex sf:items-center sf:gap-3 sf:pt-2">
 						<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm">
-							<input type="checkbox" bind:checked={piiAck} class="sf:form-checkbox" />
+							<input
+								type="checkbox"
+								bind:checked={piiAck}
+								class="sf:form-checkbox sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+							/>
 							<span>I acknowledge this data will be processed by external AI providers</span>
 						</label>
 					</div>
@@ -401,7 +405,7 @@
 							bind:value={editedText}
 							rows={8}
 							maxlength={CONTEXT_HARD_LIMIT}
-							class="sf:w-full sf:rounded-md sf:border sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 focus:sf:outline-none focus:sf:ring-1 {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:border-red-400 focus:sf:border-red-500 focus:sf:ring-red-500' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:border-amber-400 focus:sf:border-amber-500 focus:sf:ring-amber-500' : 'sf:border-slate-300 focus:sf:border-indigo-500 focus:sf:ring-indigo-500'}"
+							class="sf:w-full sf:rounded-md sf:border sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:border-danger-500 sf:focus-visible:border-danger-500 sf:focus-visible:ring-danger-500' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:border-warning-600 sf:focus-visible:border-warning-600 sf:focus-visible:ring-warning-600' : 'sf:border-slate-300 sf:focus-visible:border-primary-600 sf:focus-visible:ring-primary-500'}"
 							placeholder="Describe your business, services, and typical customer inquiries..."
 						></textarea>
 						<!-- CB-SA-006: Progress bar -->

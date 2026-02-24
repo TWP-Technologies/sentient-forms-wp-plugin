@@ -418,6 +418,11 @@
 			spam_negative_examples: []
 		};
 	}
+
+	function handleActionDefaultsBackdropClick(event: MouseEvent) {
+		if (event.target !== event.currentTarget) return;
+		cancelActionDefaults();
+	}
 </script>
 
 <Section
@@ -676,7 +681,7 @@
 					type="text"
 					bind:value={searchTerm}
 					placeholder="Search forms..."
-					class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 focus:sf:border-indigo-500 focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+					class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 				/>
 				<span class="sf:text-sm sf:text-slate-600">
 					{filteredForms.length} form{filteredForms.length !== 1 ? 's' : ''}
@@ -776,22 +781,31 @@
 
 <!-- Action-Level Defaults Modal (global configuration) -->
 {#if configuringActionId}
-	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
 	<div
 		class="sf:fixed sf:inset-0 sf:bg-black/50 sf:flex sf:items-center sf:justify-center sf:z-50"
-		onclick={cancelActionDefaults}
+		onclick={handleActionDefaultsBackdropClick}
+		onkeydown={(event) => {
+			if (event.key === 'Escape') cancelActionDefaults();
+		}}
+		tabindex="-1"
+		role="button"
+		aria-label="Close action defaults modal"
 	>
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<div
 			data-testid="action-defaults-modal"
 			class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-2xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
-			onclick={(e) => e.stopPropagation()}
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="action-defaults-title"
+			tabindex="-1"
 		>
 			<header
 				class="sf:flex sf:items-center sf:justify-between sf:px-6 sf:py-4 sf:border-b sf:border-slate-200"
 			>
 				<div>
-					<h2 class="sf:text-lg sf:font-semibold sf:text-slate-800">Global Action Defaults</h2>
+					<h2 id="action-defaults-title" class="sf:text-lg sf:font-semibold sf:text-slate-800">
+						Global Action Defaults
+					</h2>
 					<p class="sf:text-sm sf:text-slate-500">
 						Configure default examples that apply across ALL forms using this action.
 					</p>

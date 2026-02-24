@@ -252,7 +252,7 @@
 								value={pair.key}
 								onchange={(e) => updatePair(index, 'key', (e.target as HTMLSelectElement).value)}
 								class="sf:w-1/3 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
-									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+									   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							>
 								{#if pair.key && schemaKeys.includes(pair.key)}
 									<option value={pair.key}>{pair.key}</option>
@@ -277,7 +277,7 @@
 								oninput={(e) => updatePair(index, 'key', (e.target as HTMLInputElement).value)}
 								placeholder="Key"
 								class="sf:w-1/3 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
-									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+									   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							/>
 						{/if}
 
@@ -287,7 +287,7 @@
 								value={pair.value}
 								onchange={(e) => updatePair(index, 'value', (e.target as HTMLSelectElement).value)}
 								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
-									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+									   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							>
 								<option value="">Select...</option>
 								{#each keySchema.options as opt}
@@ -299,7 +299,7 @@
 								value={pair.value}
 								onchange={(e) => updatePair(index, 'value', (e.target as HTMLSelectElement).value)}
 								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
-									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+									   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							>
 								<option value="true">true</option>
 								<option value="false">false</option>
@@ -313,7 +313,7 @@
 								oninput={(e) => updatePair(index, 'value', (e.target as HTMLInputElement).value)}
 								placeholder={keySchema.description ?? 'Number'}
 								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
-									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+									   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							/>
 						{:else}
 							<input
@@ -322,7 +322,7 @@
 								oninput={(e) => updatePair(index, 'value', (e.target as HTMLInputElement).value)}
 								placeholder={keySchema?.description ?? 'Value'}
 								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
-									   focus:sf:outline-none focus:sf:ring-1 focus:sf:ring-indigo-500"
+									   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							/>
 						{/if}
 
@@ -376,7 +376,7 @@
 			placeholder={'{"summaryTone": "friendly"}'}
 			class={[
 				'sf:w-full sf:rounded-md sf:border sf:font-mono sf:text-sm sf:px-3 sf:py-2',
-				'focus:sf:outline-none focus:sf:ring-2 focus:sf:ring-indigo-500',
+				'sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white',
 				jsonError ? 'sf:border-red-500' : 'sf:border-slate-300'
 			].join(' ')}
 		></textarea>

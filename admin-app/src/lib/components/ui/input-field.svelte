@@ -51,7 +51,7 @@
 		aria-describedby={describedBy}
 		aria-invalid={error ? true : undefined}
 		autocomplete={autocomplete}
-		class={`sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus:border-primary-500 sf:focus:ring-2 sf:focus:ring-primary-100 sf:disabled:bg-muted-100 sf:disabled:text-muted-400 ${inputClass}`}
+		class={`sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:disabled:bg-muted-100 sf:disabled:text-muted-400 ${inputClass}`}
 		{disabled}
 		id={id}
 		name={name}

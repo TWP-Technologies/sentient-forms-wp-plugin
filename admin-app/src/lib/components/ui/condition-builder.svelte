@@ -43,7 +43,13 @@
 			</p>
 		</div>
 		<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700">
-			<input type="checkbox" checked={config.enabled} onchange={toggleEnabled} {disabled} />
+			<input
+				type="checkbox"
+				class="sf:h-4 sf:w-4 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+				checked={config.enabled}
+				onchange={toggleEnabled}
+				{disabled}
+			/>
 			<span>Enable conditional run</span>
 		</label>
 	</div>
