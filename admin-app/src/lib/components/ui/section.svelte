@@ -14,15 +14,21 @@
 	}: Props = $props();
 </script>
 
-<section class="sf:space-y-4">
-	<header class="sf:flex sf:items-center sf:justify-between sf:gap-2">
-		<div>
-			<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-900">{heading}</h2>
+<section class="sf:min-w-0 sf:space-y-4">
+	<header
+		class="sf:flex sf:min-w-0 sf:flex-col sf:gap-3 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
+	>
+		<div class="sf:min-w-0 sf:flex-1">
+			<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-900 sf:break-words">{heading}</h2>
 			{#if description}
 				<p class="sf:text-sm sf:text-slate-500 sf:mt-1">{description}</p>
 			{/if}
 		</div>
-		{@render actions?.()}
+		{#if actions}
+			<div class="sf:flex sf:w-full sf:flex-wrap sf:gap-2 sf:sm:w-auto sf:sm:justify-end">
+				{@render actions?.()}
+			</div>
+		{/if}
 	</header>
 	{@render children?.()}
 </section>

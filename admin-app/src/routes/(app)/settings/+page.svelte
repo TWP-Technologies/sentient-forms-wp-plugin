@@ -203,7 +203,7 @@
 	}
 </script>
 
-<section class="sf:space-y-6 sf:max-w-3xl">
+<section class="sf:min-w-0 sf:space-y-6 sf:max-w-3xl">
 	<header class="sf:space-y-2">
 		<h1 class="sf:text-2xl sf:font-semibold sf:text-slate-900">Telemetry &amp; Async Processing</h1>
 		<p class="sf:text-slate-600 sf:text-sm">
@@ -213,7 +213,7 @@
 
 	{#if $asyncHealth.warnings.length}
 		<div class="sf:rounded-xl sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4 sf:space-y-2">
-			<div class="sf:flex sf:items-center sf:justify-between">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 				<p class="sf:font-semibold sf:text-amber-900">Async warnings</p>
 				<Button
 					type="button"
@@ -236,7 +236,7 @@
 	{/if}
 
 	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm">
-		<div class="sf:flex sf:items-center sf:justify-between">
+		<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 			<div>
 				<p class="sf:font-medium sf:text-slate-900">Enable telemetry sharing</p>
 				<p class="sf:text-sm sf:text-slate-600">
@@ -296,7 +296,7 @@
 	<div
 		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-3"
 	>
-		<div class="sf:flex sf:items-center sf:justify-between">
+		<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 			<div>
 				<p class="sf:font-medium sf:text-slate-900">Enable on-site logging</p>
 				<p class="sf:text-sm sf:text-slate-600">
@@ -357,7 +357,7 @@
 			/>
 		{/if}
 
-		<div class="sf:flex sf:items-center sf:justify-between sf:p-3 sf:bg-slate-50 sf:rounded-lg">
+		<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:p-3 sf:bg-slate-50 sf:rounded-lg">
 			<div>
 				<p class="sf:text-sm sf:font-medium sf:text-slate-700">Global execution</p>
 				<p class="sf:text-xs sf:text-slate-500">Stops all providers when enabled.</p>
@@ -378,7 +378,7 @@
 		{#if formSources.length > 0}
 			<div class="sf:space-y-2">
 				{#each formSources as source}
-					<div class="sf:flex sf:items-center sf:justify-between sf:p-3 sf:border sf:border-slate-200 sf:rounded-lg">
+					<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:p-3 sf:border sf:border-slate-200 sf:rounded-lg">
 						<div class="sf:flex sf:items-center sf:gap-2">
 							<p class="sf:text-sm sf:text-slate-800">{source.label}</p>
 							<span class="sf:text-xs sf:text-slate-500">
@@ -457,7 +457,7 @@
 				</label>
 			</div>
 
-			<div class="sf:flex sf:items-center sf:gap-4">
+			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
 				<Button type="submit" disabled={$asyncSettings.saving}>
 					{$asyncSettings.saving ? 'Saving…' : 'Save settings'}
 				</Button>
@@ -511,7 +511,7 @@
 		</div>
 
 		<div class="sf:flex sf:flex-col sf:gap-3">
-			<div class="sf:flex sf:items-center sf:justify-between sf:p-3 sf:bg-slate-50 sf:rounded-lg">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:p-3 sf:bg-slate-50 sf:rounded-lg">
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Queue depth</p>
 					<p class="sf:text-xl sf:font-semibold sf:text-slate-900">{$asyncHealth.queue_depth}</p>
@@ -532,7 +532,7 @@
 				</div>
 			{/if}
 
-			<div class="sf:flex sf:gap-3">
+			<div class="sf:flex sf:flex-wrap sf:gap-3">
 				<Button
 					type="button"
 					variant="secondary"
@@ -569,7 +569,7 @@
 					This will remove all tracked async jobs, including successful ones. This action cannot be
 					undone.
 				</p>
-				<div class="sf:flex sf:gap-3 sf:justify-end">
+				<div class="sf:flex sf:flex-wrap sf:gap-3 sf:justify-end">
 					<Button type="button" variant="secondary" onclick={() => (showClearConfirm = false)}>
 						Cancel
 					</Button>

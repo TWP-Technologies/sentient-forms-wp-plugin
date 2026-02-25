@@ -56,11 +56,11 @@
 }
 
 @utility sf-card {
-	@apply sf:bg-white sf:rounded-lg sf:shadow-card sf:border sf:border-slate-200;
+	@apply sf:min-w-0 sf:bg-white sf:rounded-lg sf:shadow-card sf:border sf:border-slate-200;
 }
 
 @utility sf-card-header {
-	@apply sf:flex sf:items-center sf:justify-between sf:gap-2;
+	@apply sf:flex sf:flex-col sf:items-start sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between;
 }
 
 @utility sf-card-body {

@@ -1985,7 +1985,7 @@
 	<!-- Form-Level Action Config Modal - Inside Section slot for Svelte 5 reactivity -->
 	{#if configuringActionId}
 		<div
-			class="sf:fixed sf:inset-0 sf:z-50 sf:bg-black/40 sf:flex sf:items-center sf:justify-center sf:p-4"
+			class="sf:fixed sf:inset-0 sf:z-50 sf:bg-black/40 sf:flex sf:items-center sf:justify-center sf:p-2 sf:sm:p-4"
 			onclick={handleFormLevelDefaultsBackdropClick}
 			onkeydown={(event) => {
 				if (event.key === 'Escape') cancelFormLevelConfig();
@@ -1996,14 +1996,14 @@
 		>
 			<div
 				data-testid="form-defaults-modal"
-				class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-2xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
+				class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-2xl sf:w-[calc(100%-0.5rem)] sf:sm:w-full sf:max-h-[90vh] sf:overflow-y-auto"
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="form-defaults-title"
 				tabindex="-1"
 			>
 				<header
-					class="sf:flex sf:items-center sf:justify-between sf:px-6 sf:py-4 sf:border-b sf:border-slate-200"
+					class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:px-4 sf:sm:px-6 sf:py-4 sf:border-b sf:border-slate-200"
 				>
 					<div>
 						<h2 id="form-defaults-title" class="sf:text-lg sf:font-semibold sf:text-slate-800">
@@ -2026,7 +2026,7 @@
 					</Button>
 				</header>
 
-				<div class="sf:p-6 sf:space-y-6">
+				<div class="sf:p-4 sf:sm:p-6 sf:space-y-6">
 					{#if formLevelConfigLoading}
 						<p class="sf:text-sm sf:text-slate-500">Loading configuration...</p>
 					{:else}
@@ -2060,7 +2060,7 @@
 							]}
 						/>
 
-						<p class="sf:text-xs sf:text-slate-500 sf:pt-2 sf:flex sf:items-center sf:gap-1">
+						<p class="sf:text-xs sf:text-slate-500 sf:pt-2 sf:flex sf:flex-wrap sf:items-start sf:gap-1">
 							<span class="sf:text-amber-500">⚠</span>
 							Submission data is processed by AI.
 							<a href="#/settings/context" class="sf:underline hover:sf:text-slate-700">
@@ -2072,7 +2072,7 @@
 				</div>
 
 				<footer
-					class="sf:flex sf:justify-end sf:gap-2 sf:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
+					class="sf:flex sf:flex-wrap sf:justify-end sf:gap-2 sf:px-4 sf:sm:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
 				>
 					<Button variant="secondary" onclick={cancelFormLevelConfig}>Cancel</Button>
 					<Button
@@ -2129,7 +2129,7 @@
 	<!-- CB-FORMS-001: Warning banner when form is disabled -->
 	{#if actionsState.effectiveDisabled}
 		<Alert variant="warning">
-			<div class="sf:flex sf:items-center sf:justify-between">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 				<div>
 					<p class="sf:font-medium">⚠ Sentient Forms execution is paused for this form</p>
 					<p class="sf:text-sm sf:mt-1">
@@ -2259,7 +2259,7 @@
 				</Card>
 			</div>
 
-			<div class="sf:mt-6 sf:flex sf:items-center sf:justify-between">
+			<div class="sf:mt-6 sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Link actions to this form</p>
 					<p class="sf:text-xs sf:text-slate-500">
@@ -2271,7 +2271,7 @@
 		</Card>
 
 		<Card class="sf:space-y-3">
-			<div class="sf:flex sf:items-center sf:justify-between">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 				<p class="sf:text-sm sf:font-medium sf:text-slate-700">Execution status</p>
 				{#if actionsState.status}
 					<Badge variant={statusBadgeVariant(actionsState.status)}
@@ -2375,7 +2375,7 @@
 	{/if}
 
 	<Card class="sf:mt-4">
-		<div class="sf:flex sf:items-center sf:justify-between sf:gap-3 sf:mb-3">
+		<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:mb-3">
 			{#if linkedActionsView !== 'graph'}
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Linked actions</p>
@@ -2384,7 +2384,7 @@
 					</p>
 				</div>
 			{/if}
-			<div class="sf:flex sf:items-center sf:gap-2">
+			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 				{#if actionsState.items.length > 0}
 					<Button
 						variant={linkedActionsView === 'graph' ? 'primary' : 'secondary'}
@@ -2466,7 +2466,7 @@
 				onCancelRemoveMapping={cancelRemove}
 			/>
 		{:else}
-			<div class="sf:overflow-x-auto">
+			<div class="sf:overflow-x-auto" data-testid="form-actions-table-scroll">
 				<table
 					class="sf:min-w-full sf:divide-y sf:divide-slate-200"
 					data-testid="form-actions-table"
@@ -2553,7 +2553,7 @@
 
 		{#if showMappingConfigModal && editingLinkage}
 			<div
-				class="sf:fixed sf:inset-0 sf:z-40 sf:bg-black/45 sf:flex sf:items-center sf:justify-center sf:p-4"
+				class="sf:fixed sf:inset-0 sf:z-40 sf:bg-black/45 sf:flex sf:items-center sf:justify-center sf:p-2 sf:sm:p-4"
 				onclick={handleMappingConfigBackdropClick}
 				onkeydown={(event) => {
 					if (event.key === 'Escape') closeMappingConfigModal();
@@ -2564,14 +2564,14 @@
 				aria-label="Close mapping configuration modal"
 			>
 				<div
-					class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-4xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
+					class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-4xl sf:w-[calc(100%-0.5rem)] sf:sm:w-full sf:max-h-[90vh] sf:overflow-y-auto"
 					role="dialog"
 					aria-modal="true"
 					aria-labelledby="mapping-config-title"
 					tabindex="-1"
 				>
 					<header
-						class="sf:flex sf:items-center sf:justify-between sf:gap-4 sf:px-6 sf:py-4 sf:border-b sf:border-slate-200"
+						class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-4 sf:sm:flex-row sf:sm:items-center sf:px-4 sf:sm:px-6 sf:py-4 sf:border-b sf:border-slate-200"
 					>
 						<div>
 							<p id="mapping-config-title" class="sf:text-base sf:font-semibold sf:text-slate-800">
@@ -2581,7 +2581,7 @@
 								{friendlyActionLabel(editingLinkage)} ({editingLinkage.local_mapping_id})
 							</p>
 						</div>
-						<div class="sf:flex sf:items-center sf:gap-2">
+						<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 						<Button
 							size="sm"
 							variant="secondary"
@@ -2602,7 +2602,7 @@
 					</header>
 					{#if hasUnsavedMappingChanges}
 						<div
-							class="sf:sticky sf:top-0 sf:z-10 sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2 sf:border-b sf:border-amber-300 sf:bg-amber-50 sf:px-6 sf:py-2"
+							class="sf:sticky sf:top-0 sf:z-10 sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2 sf:border-b sf:border-amber-300 sf:bg-amber-50 sf:px-4 sf:sm:px-6 sf:py-2"
 							data-testid="mapping-dirty-bar-modal"
 						>
 							<div class="sf:flex sf:items-center sf:gap-2">
@@ -2618,7 +2618,7 @@
 						</div>
 					{/if}
 
-					<div class="sf:p-6 sf:space-y-4">
+					<div class="sf:p-4 sf:sm:p-6 sf:space-y-4">
 						<section class="sf:border sf:border-slate-200 sf:rounded-md">
 							<button
 								type="button"
@@ -2969,7 +2969,7 @@
 
 									{#if draftSettings.execution_mode === 'after_submission'}
 										<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-											<div class="sf:flex sf:items-center sf:justify-between sf:mb-2">
+											<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:mb-2">
 												<p
 													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500"
 												>
@@ -3027,7 +3027,7 @@
 					</div>
 
 					<footer
-						class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-3 sf:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
+						class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-3 sf:px-4 sf:sm:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
 					>
 						<p class="sf:text-xs sf:text-slate-600">
 							Close keeps draft changes in this browser only.
@@ -3064,7 +3064,7 @@
 			<div class="sf:fixed sf:inset-0 sf:z-30 sf:bg-black/40 sf:flex sf:justify-end">
 				<div class="sf:h-full sf:w-full sf:max-w-xl sf:bg-white sf:shadow-2xl sf:flex sf:flex-col">
 					<div
-						class="sf:flex sf:items-center sf:justify-between sf:border-b sf:border-slate-200 sf:px-4 sf:py-3"
+						class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:border-b sf:border-slate-200 sf:px-4 sf:py-3"
 					>
 						<div>
 							<p class="sf:text-sm sf:font-semibold sf:text-slate-800">Add action</p>
@@ -3231,7 +3231,7 @@
 						</div>
 
 						<div class="sf:border-t sf:border-slate-200 sf:pt-3 sf:space-y-2">
-							<div class="sf:flex sf:items-center sf:justify-between sf:gap-2">
+							<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center">
 								<p class="sf:text-sm sf:font-medium sf:text-slate-700">
 									Triggered by action (optional)
 								</p>

@@ -169,7 +169,7 @@
 					testId="custom-actions-empty-state"
 				/>
 			{:else}
-			<div class="sf:mt-4 sf:overflow-auto">
+			<div class="sf:mt-4 sf:overflow-auto" data-testid="custom-actions-table-scroll">
 				<table class="sf:min-w-full sf:text-sm" data-testid="custom-actions-table">
 					<thead>
 						<tr class="sf:text-left sf:text-slate-500">

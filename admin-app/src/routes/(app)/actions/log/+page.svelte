@@ -209,7 +209,7 @@
 					placeholder="e.g. spam_detection_v1"
 				/>
 			</div>
-			<div class="sf:flex sf:gap-2">
+			<div class="sf:flex sf:flex-wrap sf:gap-2">
 				<Button variant="primary" onclick={applyFilters} data-testid="action-log-apply-filters">
 					Apply
 				</Button>
@@ -292,7 +292,7 @@
 		/>
 	{:else}
 		<Card>
-			<div class="sf:overflow-x-auto">
+			<div class="sf:overflow-x-auto" data-testid="action-log-table-scroll">
 				<table class="sf:w-full sf:text-sm" data-testid="action-log-table">
 					<thead>
 						<tr class="sf:border-b sf:text-left sf:text-slate-500">

@@ -440,7 +440,7 @@
 
 	<div class="sf:grid sf:gap-4 sf:lg:grid-cols-3">
 		<Card>
-			<div class="sf:flex sf:items-center sf:justify-between sf:gap-3">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Built-in actions</p>
 					<p class="sf:text-xs sf:text-slate-500">CPS templates available to map.</p>
@@ -525,7 +525,7 @@
 		</Card>
 
 		<Card>
-			<div class="sf:flex sf:items-center sf:justify-between sf:gap-3">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Custom actions</p>
 					<p class="sf:text-xs sf:text-slate-500">Tenant-specific automations.</p>
@@ -577,7 +577,7 @@
 				</p>
 			{:else}
 				<div class="sf:mt-3 sf:space-y-3">
-					<div class="sf:flex sf:items-center sf:justify-between sf:gap-3">
+					<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 						<div>
 							<p class="sf:text-sm sf:font-medium sf:text-slate-700">Global execution</p>
 							<p class="sf:text-xs sf:text-slate-500">
@@ -597,7 +597,7 @@
 					</div>
 
 					{#each formSources as source}
-						<div class="sf:flex sf:items-center sf:justify-between sf:gap-3">
+						<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 							<div class="sf:flex sf:items-center sf:gap-2">
 								<span class="sf:text-sm sf:text-slate-800">{source.label}</span>
 								<Badge variant={source.isActive ? 'success' : 'warning'}>
@@ -676,12 +676,12 @@
 				</Button>
 			</div>
 
-			<div class="sf:mt-4 sf:flex sf:items-center sf:gap-4">
+			<div class="sf:mt-4 sf:flex sf:flex-wrap sf:items-center sf:gap-3">
 				<input
 					type="text"
 					bind:value={searchTerm}
 					placeholder="Search forms..."
-					class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+					class="sf:min-w-0 sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 				/>
 				<span class="sf:text-sm sf:text-slate-600">
 					{filteredForms.length} form{filteredForms.length !== 1 ? 's' : ''}
@@ -782,7 +782,7 @@
 <!-- Action-Level Defaults Modal (global configuration) -->
 {#if configuringActionId}
 	<div
-		class="sf:fixed sf:inset-0 sf:bg-black/50 sf:flex sf:items-center sf:justify-center sf:z-50"
+		class="sf:fixed sf:inset-0 sf:bg-black/50 sf:flex sf:items-center sf:justify-center sf:z-50 sf:p-2 sf:sm:p-4"
 		onclick={handleActionDefaultsBackdropClick}
 		onkeydown={(event) => {
 			if (event.key === 'Escape') cancelActionDefaults();
@@ -793,14 +793,14 @@
 	>
 		<div
 			data-testid="action-defaults-modal"
-			class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-2xl sf:w-full sf:max-h-[90vh] sf:overflow-y-auto"
+			class="sf:bg-white sf:rounded-lg sf:shadow-xl sf:max-w-2xl sf:w-[calc(100%-0.5rem)] sf:sm:w-full sf:max-h-[90vh] sf:overflow-y-auto"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="action-defaults-title"
 			tabindex="-1"
 		>
 			<header
-				class="sf:flex sf:items-center sf:justify-between sf:px-6 sf:py-4 sf:border-b sf:border-slate-200"
+				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:px-4 sf:sm:px-6 sf:py-4 sf:border-b sf:border-slate-200 sf:sm:flex-row sf:sm:items-center"
 			>
 				<div>
 					<h2 id="action-defaults-title" class="sf:text-lg sf:font-semibold sf:text-slate-800">
@@ -823,7 +823,7 @@
 				</Button>
 			</header>
 
-			<div class="sf:p-6 sf:space-y-6">
+			<div class="sf:p-4 sf:sm:p-6 sf:space-y-6">
 				{#if actionDefaultsLoading}
 					<p class="sf:text-sm sf:text-slate-500">Loading configuration...</p>
 				{:else}
@@ -866,7 +866,7 @@
 			</div>
 
 			<footer
-				class="sf:flex sf:justify-end sf:gap-2 sf:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
+				class="sf:flex sf:flex-wrap sf:justify-end sf:gap-2 sf:px-4 sf:sm:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
 			>
 				<Button variant="secondary" onclick={cancelActionDefaults}>Cancel</Button>
 				<Button

@@ -199,31 +199,31 @@
 
 	<Card title="License details">
 		<div class="sf:text-sm sf:space-y-2">
-			<div class="sf:flex sf:items-center sf:justify-between">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center">
 				<span class="sf:font-medium sf:text-slate-600">License status</span>
 				<span data-testid="licensing-details-status">
 					<Badge variant={licenseStatusVariant}>{$licenseStore.status}</Badge>
 				</span>
 			</div>
-			<div class="sf:flex sf:items-center sf:justify-between">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center">
 				<span class="sf:font-medium sf:text-slate-600">Proxy key stored</span>
 				<span class="sf:text-slate-900 sf:font-semibold">
 					{$licenseStore.proxyKeyPresent ? 'Yes' : 'No'}
 				</span>
 			</div>
-			<div class="sf:flex sf:items-center sf:justify-between">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center">
 				<span class="sf:font-medium sf:text-slate-600">Tier</span>
 				<span class="sf:text-slate-900">{tierLabel}</span>
 			</div>
-			<div class="sf:flex sf:items-center sf:justify-between">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center">
 				<span class="sf:font-medium sf:text-slate-600">Credits reset</span>
 				<span class="sf:text-slate-900">{resetInfo.nextResetLabel}</span>
 			</div>
-			<div class="sf:flex sf:items-center sf:justify-between">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center">
 				<span class="sf:font-medium sf:text-slate-600">Expires</span>
 				<span class="sf:text-slate-900">{formatTimestamp($licenseStore.expiresAt)}</span>
 			</div>
-			<div class="sf:flex sf:items-center sf:justify-between">
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center">
 				<span class="sf:font-medium sf:text-slate-600">Last synced</span>
 				<span class="sf:text-slate-900">{formatTimestamp($licenseStore.lastSynced)}</span>
 			</div>

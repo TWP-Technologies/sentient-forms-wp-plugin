@@ -215,7 +215,7 @@
 </script>
 
 <div class="sf:flex sf:flex-col sf:gap-2">
-	<div class="sf:flex sf:items-center sf:justify-between">
+	<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center">
 		<label for={id} class="sf:text-sm sf:font-medium sf:text-slate-700"> Prompt Overrides </label>
 		<div class="sf:flex sf:gap-1">
 			<Button
@@ -245,13 +245,13 @@
 			{:else}
 				{#each formPairs as pair, index (index)}
 					{@const keySchema = getKeySchema(pair.key)}
-					<div class="sf:flex sf:gap-2 sf:items-start">
+					<div class="sf:flex sf:flex-wrap sf:gap-2 sf:items-start">
 						<!-- Key input: dropdown if schema available, text otherwise -->
 						{#if hasSchema && (pair.fromSchema || getAvailableSchemaKeys().length > 0)}
 							<select
 								value={pair.key}
 								onchange={(e) => updatePair(index, 'key', (e.target as HTMLSelectElement).value)}
-								class="sf:w-1/3 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
+								class="sf:w-full sf:sm:w-1/3 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
 									   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							>
 								{#if pair.key && schemaKeys.includes(pair.key)}
@@ -276,7 +276,7 @@
 								value={pair.key}
 								oninput={(e) => updatePair(index, 'key', (e.target as HTMLInputElement).value)}
 								placeholder="Key"
-								class="sf:w-1/3 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
+								class="sf:w-full sf:sm:w-1/3 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
 									   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							/>
 						{/if}
@@ -286,7 +286,7 @@
 							<select
 								value={pair.value}
 								onchange={(e) => updatePair(index, 'value', (e.target as HTMLSelectElement).value)}
-								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
+								class="sf:min-w-0 sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
 									   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							>
 								<option value="">Select...</option>
@@ -298,7 +298,7 @@
 							<select
 								value={pair.value}
 								onchange={(e) => updatePair(index, 'value', (e.target as HTMLSelectElement).value)}
-								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
+								class="sf:min-w-0 sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
 									   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							>
 								<option value="true">true</option>
@@ -312,7 +312,7 @@
 								max={keySchema.max}
 								oninput={(e) => updatePair(index, 'value', (e.target as HTMLInputElement).value)}
 								placeholder={keySchema.description ?? 'Number'}
-								class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
+								class="sf:min-w-0 sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-2 sf:py-1 sf:text-sm
 									   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							/>
 						{:else}
@@ -346,7 +346,7 @@
 				{/each}
 			{/if}
 
-			<div class="sf:flex sf:gap-2">
+			<div class="sf:flex sf:flex-wrap sf:gap-2">
 				{#if hasSchema && getAvailableSchemaKeys().length > 0}
 					<Button
 						type="button"

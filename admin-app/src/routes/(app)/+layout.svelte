@@ -76,10 +76,10 @@
 	});
 </script>
 
-<div class="sf:min-h-screen sf:bg-slate-100 sf:text-slate-900 sf:font-sans">
-	<div class="sf:flex sf:min-h-screen sf:flex-col sf:md:flex-row">
-		<aside class="sf:w-full sf:bg-white sf:md:w-64 sf:shadow-sm">
-			<div class="sf:p-6 sf:border-b sf:border-slate-200">
+<div class="sf:min-h-screen sf:min-w-0 sf:bg-slate-100 sf:text-slate-900 sf:font-sans">
+	<div class="sf:flex sf:min-h-screen sf:min-w-0 sf:flex-col sf:md:flex-row">
+		<aside class="sf:w-full sf:shrink-0 sf:bg-white sf:md:w-64 sf:shadow-sm">
+			<div class="sf:p-4 sf:sm:p-6 sf:border-b sf:border-slate-200">
 				<h1 class="sf:text-lg sf:font-semibold">Sentient Forms</h1>
 				<p class="sf:text-sm sf:text-slate-500">LLM-powered form automation</p>
 			</div>
@@ -98,13 +98,13 @@
 					{/each}
 			</nav>
 		</aside>
-			<main class="sf:flex-1 sf:p-6 sf:bg-white sf:shadow-inner">
+			<main class="sf:flex-1 sf:min-w-0 sf:p-4 sf:sm:p-6 sf:bg-white sf:shadow-inner">
 				<svelte:boundary>
 					{@render children?.()}
 
 					{#snippet failed(error, reset)}
 						<section
-							class="sf:rounded sf:border sf:border-rose-300 sf:bg-rose-50 sf:p-4 sf:space-y-2"
+							class="sf:rounded sf:border sf:border-rose-300 sf:bg-rose-50 sf:p-4 sf:space-y-2 sf:break-words"
 							data-testid="route-boundary-error"
 						>
 							<h2 class="sf:text-base sf:font-semibold sf:text-rose-900">This view hit an error</h2>

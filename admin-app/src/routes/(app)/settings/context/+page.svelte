@@ -257,7 +257,7 @@
 				<p class="sf:text-sm">
 					No personal customer data or form submissions are included in context generation.
 				</p>
-				<div class="sf:flex sf:gap-2 sf:mt-3">
+				<div class="sf:flex sf:flex-wrap sf:gap-2 sf:mt-3">
 					<Button size="sm" onclick={confirmPii}>I Understand, Continue</Button>
 					<Button size="sm" variant="secondary" onclick={() => (showPiiWarning = false)}>
 						Cancel
@@ -295,8 +295,8 @@
 						</p>
 					</Alert>
 
-					<div class="sf:flex sf:items-center sf:gap-3 sf:pt-2">
-						<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm">
+					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3 sf:pt-2">
+						<label class="sf:flex sf:items-start sf:gap-2 sf:text-sm">
 							<input
 								type="checkbox"
 								bind:checked={piiAck}
@@ -317,7 +317,7 @@
 		{:else}
 			<Card>
 				<div class="sf:space-y-4">
-					<div class="sf:flex sf:items-center sf:justify-between">
+					<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 						<div>
 							<p class="sf:font-medium sf:text-slate-800">Site Context Summary</p>
 							<p class="sf:text-xs sf:text-slate-500">
@@ -371,7 +371,7 @@
 										<p class="sf:text-xs sf:text-slate-500">Free refresh status unavailable.</p>
 									{/if}
 								{/if}
-								<div class="sf:flex sf:gap-2">
+								<div class="sf:flex sf:flex-wrap sf:gap-2">
 									<Button
 										size="sm"
 										onclick={generateContext}
@@ -436,8 +436,8 @@
 						/>
 					</div>
 
-					<div class="sf:flex sf:items-center sf:justify-between sf:pt-2">
-						<div class="sf:flex sf:items-center sf:gap-2">
+					<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:pt-2">
+						<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 							{#if context.pii_ack}
 								<span class="sf:text-xs sf:text-green-600">✓ PII acknowledgment on file</span>
 							{/if}
