@@ -1,6 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Section, Card, Button, Badge, Input, StateTemplate } from '$lib/components/ui';
+	import { formatTimestamp } from '$lib/utils/date-time';
+	import {
+		buildActionLogRowPresentation,
+		buildActiveFilterChips,
+		buildPaginationPresentation,
+		normalizeActionLogFilters,
+		type ActiveFilterChip,
+		type ActionLogFilters,
+		type ActionLogStatus,
+		type ActionLogResultVariant
+	} from '$lib/utils/action-log-presentation';
 	import { wpFetch } from '$lib/wp';
 
 	interface ActionLogEntry {
@@ -10,7 +21,7 @@
 		entry_id: number | null;
 		action_code: string;
 		action_label: string;
-		status: 'pending' | 'success' | 'error';
+		status: ActionLogStatus;
 		result_summary: string | null;
 		classification: string | null;
 		credits_used: number;
@@ -29,6 +40,12 @@
 		per_page: number;
 	}
 
+	const EMPTY_FILTERS: ActionLogFilters = {
+		formId: '',
+		status: '',
+		actionCode: ''
+	};
+
 	let entries = $state<ActionLogEntry[]>([]);
 	let total = $state(0);
 	let page = $state(1);
@@ -37,15 +54,26 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	// Filters
-	let filterFormId = $state('');
-	let filterStatus = $state('');
-	let filterActionCode = $state('');
-	let hasActiveFilters = $derived(
-		Boolean(filterFormId) || Boolean(filterStatus) || Boolean(filterActionCode)
+	let draftFilters = $state<ActionLogFilters>({ ...EMPTY_FILTERS });
+	let appliedFilters = $state<ActionLogFilters>({ ...EMPTY_FILTERS });
+
+	let activeFilterChips = $derived(buildActiveFilterChips(appliedFilters));
+	let hasActiveFilters = $derived(activeFilterChips.length > 0);
+	let hasPendingFilterEdits = $derived(
+		draftFilters.formId !== appliedFilters.formId ||
+			draftFilters.status !== appliedFilters.status ||
+			draftFilters.actionCode !== appliedFilters.actionCode
+	);
+	let pagination = $derived(
+		buildPaginationPresentation({
+			page,
+			perPage,
+			total,
+			totalPages
+		})
 	);
 
-	async function fetchLogs() {
+	async function fetchLogs(): Promise<void> {
 		loading = true;
 		error = null;
 		try {
@@ -53,96 +81,117 @@
 				page: String(page),
 				per_page: String(perPage)
 			});
-			if (filterFormId) params.set('form_id', filterFormId);
-			if (filterStatus) params.set('status', filterStatus);
-			if (filterActionCode) params.set('action_code', filterActionCode);
+			if (appliedFilters.formId) {
+				params.set('form_id', appliedFilters.formId);
+			}
+			if (appliedFilters.status) {
+				params.set('status', appliedFilters.status);
+			}
+			if (appliedFilters.actionCode) {
+				params.set('action_code', appliedFilters.actionCode);
+			}
 
 			const response = await wpFetch<LogResponse>(`actions/log?${params}`);
 			entries = response.entries;
 			total = response.total;
-			totalPages = response.total_pages;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to fetch action logs';
+			perPage = response.per_page;
+			totalPages = Math.max(1, response.total_pages);
+		} catch (requestError) {
+			error =
+				requestError instanceof Error ? requestError.message : 'Failed to fetch action logs';
 		} finally {
 			loading = false;
 		}
 	}
 
-	function applyFilters() {
+	function applyFilters(): void {
+		const normalizedFilters = normalizeActionLogFilters(draftFilters);
+		draftFilters = { ...normalizedFilters };
+		appliedFilters = { ...normalizedFilters };
 		page = 1;
-		fetchLogs();
+		void fetchLogs();
 	}
 
-	function clearFilters() {
-		filterFormId = '';
-		filterStatus = '';
-		filterActionCode = '';
+	function clearFilters(): void {
+		draftFilters = { ...EMPTY_FILTERS };
+		appliedFilters = { ...EMPTY_FILTERS };
 		page = 1;
-		fetchLogs();
+		void fetchLogs();
 	}
 
-	function nextPage() {
+	function clearFilterChip(key: ActiveFilterChip['key']): void {
+		switch (key) {
+			case 'form_id':
+				draftFilters.formId = '';
+				appliedFilters.formId = '';
+				break;
+			case 'status':
+				draftFilters.status = '';
+				appliedFilters.status = '';
+				break;
+			case 'action_code':
+				draftFilters.actionCode = '';
+				appliedFilters.actionCode = '';
+				break;
+		}
+
+		page = 1;
+		void fetchLogs();
+	}
+
+	function nextPage(): void {
 		if (page < totalPages) {
-			page++;
-			fetchLogs();
+			page += 1;
+			void fetchLogs();
 		}
 	}
 
-	function prevPage() {
+	function prevPage(): void {
 		if (page > 1) {
-			page--;
-			fetchLogs();
+			page -= 1;
+			void fetchLogs();
 		}
 	}
 
-	function getStatusVariant(status: string): 'success' | 'warning' | 'danger' {
-		switch (status) {
+	function resultTextClass(variant: ActionLogResultVariant): string {
+		switch (variant) {
+			case 'danger':
+				return 'sf:text-danger-700 sf:font-medium';
 			case 'success':
-				return 'success';
-			case 'pending':
-				return 'warning';
-			case 'error':
-				return 'danger';
+				return 'sf:text-success-700 sf:font-medium';
 			default:
-				return 'warning';
+				return 'sf:text-slate-700';
 		}
-	}
-
-	function formatDate(isoString: string | null): string {
-		if (!isoString) return '—';
-		return new Date(isoString).toLocaleString();
 	}
 
 	onMount(() => {
-		fetchLogs();
+		void fetchLogs();
 	});
 </script>
 
 <Section heading="Action Log" description="View history of AI action executions.">
 	{#snippet actions()}
-		<Button variant="secondary" onclick={fetchLogs}>Refresh</Button>
+		<Button variant="secondary" onclick={fetchLogs} disabled={loading}>
+			{loading ? 'Refreshing...' : 'Refresh'}
+		</Button>
 	{/snippet}
 
-	<!-- Filters -->
-	<Card>
+	<Card data-testid="action-log-filter-card">
 		<div class="sf:flex sf:flex-wrap sf:gap-4 sf:items-end">
 			<div class="sf:flex-1 sf:min-w-[120px]">
-				<label for="filter-form-id" class="sf:text-sm sf:font-medium sf:text-slate-600"
-					>Form ID</label
-				>
+				<label for="filter-form-id" class="sf:text-sm sf:font-medium sf:text-slate-600">Form ID</label>
 				<Input
 					id="filter-form-id"
 					type="number"
-					bind:value={filterFormId}
+					bind:value={draftFilters.formId}
 					placeholder="All forms"
 				/>
 			</div>
 			<div class="sf:flex-1 sf:min-w-[120px]">
-				<label for="filter-status" class="sf:text-sm sf:font-medium sf:text-slate-600">Status</label
-				>
+				<label for="filter-status" class="sf:text-sm sf:font-medium sf:text-slate-600">Status</label>
 				<select
 					id="filter-status"
-					bind:value={filterStatus}
+					bind:value={draftFilters.status}
 					class="sf:w-full sf:px-3 sf:py-2 sf:border sf:border-slate-300 sf:bg-white sf:rounded-md sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 				>
 					<option value="">All</option>
@@ -152,23 +201,68 @@
 				</select>
 			</div>
 			<div class="sf:flex-1 sf:min-w-[120px]">
-				<label for="filter-action" class="sf:text-sm sf:font-medium sf:text-slate-600">Action</label
-				>
+				<label for="filter-action" class="sf:text-sm sf:font-medium sf:text-slate-600">Action</label>
 				<Input
 					id="filter-action"
 					type="text"
-					bind:value={filterActionCode}
+					bind:value={draftFilters.actionCode}
 					placeholder="e.g. spam_detection_v1"
 				/>
 			</div>
 			<div class="sf:flex sf:gap-2">
-				<Button variant="primary" onclick={applyFilters}>Apply</Button>
-				<Button variant="ghost" onclick={clearFilters}>Clear</Button>
+				<Button variant="primary" onclick={applyFilters} data-testid="action-log-apply-filters">
+					Apply
+				</Button>
+				<Button
+					variant="secondary"
+					onclick={clearFilters}
+					data-testid="action-log-clear-filters"
+					disabled={!hasActiveFilters && !hasPendingFilterEdits}
+				>
+					Clear
+				</Button>
 			</div>
 		</div>
+		{#if hasPendingFilterEdits}
+			<p class="sf:mt-3 sf:text-xs sf:text-slate-500" data-testid="action-log-filter-pending">
+				Filter changes are pending. Click Apply to refresh results.
+			</p>
+		{/if}
 	</Card>
 
-	<!-- Loading/Error States -->
+	{#if hasActiveFilters}
+		<Card data-testid="action-log-active-filters">
+			<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-3">
+				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Active filters</p>
+					<div class="sf:flex sf:flex-wrap sf:gap-2">
+						{#each activeFilterChips as chip}
+							<Button
+								variant="secondary"
+								size="sm"
+								onclick={() => clearFilterChip(chip.key)}
+								data-testid={`action-log-filter-chip-${chip.key}`}
+								aria-label={`Remove filter ${chip.label}: ${chip.value}`}
+							>
+								<span class="sf:font-medium">{chip.label}:</span>
+								<span>{chip.value}</span>
+								<span aria-hidden="true">x</span>
+							</Button>
+						{/each}
+					</div>
+				</div>
+				<Button
+					variant="ghost"
+					size="sm"
+					onclick={clearFilters}
+					data-testid="action-log-clear-active-filters"
+				>
+					Clear all
+				</Button>
+			</div>
+		</Card>
+	{/if}
+
 	{#if loading}
 		<StateTemplate
 			variant="loading"
@@ -197,10 +291,9 @@
 			testId="action-log-empty-state"
 		/>
 	{:else}
-		<!-- Log Table -->
 		<Card>
 			<div class="sf:overflow-x-auto">
-				<table class="sf:w-full sf:text-sm">
+				<table class="sf:w-full sf:text-sm" data-testid="action-log-table">
 					<thead>
 						<tr class="sf:border-b sf:text-left sf:text-slate-500">
 							<th class="sf:pb-2 sf:pr-4">Form</th>
@@ -214,49 +307,50 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each entries as entry}
-							<tr class="sf:border-b sf:last:border-0 sf:hover:bg-slate-50">
-								<td class="sf:py-3 sf:pr-4">{entry.form_id}</td>
-								<td class="sf:py-3 sf:pr-4">{entry.entry_id ?? '—'}</td>
+						{#each entries as entry (entry.id)}
+							{@const rowPresentation = buildActionLogRowPresentation({
+								status: entry.status,
+								structuredOutputValid: entry.structured_output_valid,
+								classification: entry.classification,
+								resultSummary: entry.result_summary,
+								errorCode: entry.error_code,
+								errorMessage: entry.error_message
+							})}
+							<tr class="sf:border-b sf:last:border-0 sf:hover:bg-slate-50" data-testid={`action-log-row-${entry.id}`}>
+								<td class="sf:py-3 sf:pr-4 sf:font-medium sf:text-slate-700">{entry.form_id}</td>
+								<td class="sf:py-3 sf:pr-4 sf:text-slate-700">{entry.entry_id ?? '—'}</td>
 								<td class="sf:py-3 sf:pr-4">
-									<span class="sf:font-medium">{entry.action_label}</span>
+									<span class="sf:font-medium sf:text-slate-900">{entry.action_label}</span>
 									<br />
-									<span class="sf:text-xs sf:text-slate-400">{entry.action_code}</span>
+									<span class="sf:text-xs sf:font-mono sf:text-slate-500">{entry.action_code}</span>
 								</td>
 								<td class="sf:py-3 sf:pr-4">
-									<Badge variant={getStatusVariant(entry.status)}>
-										{entry.status}
+									<Badge variant={rowPresentation.statusVariant}>
+										{rowPresentation.statusLabel}
 									</Badge>
 								</td>
 								<td class="sf:py-3 sf:pr-4">
-									{#if entry.status === 'success'}
-										<Badge variant={entry.structured_output_valid ? 'success' : 'warning'}>
-											{entry.structured_output_valid ? '✓ Structured' : 'Raw'}
+									<Badge variant={rowPresentation.outputVariant}>
+										{rowPresentation.outputLabel}
+									</Badge>
+								</td>
+								<td class="sf:py-3 sf:pr-4 sf:max-w-[220px] sf:align-top">
+									{#if rowPresentation.resultKind === 'badge'}
+										<Badge variant={rowPresentation.resultVariant}>
+											{rowPresentation.resultLabel}
 										</Badge>
 									{:else}
-										—
-									{/if}
-								</td>
-								<td class="sf:py-3 sf:pr-4 sf:max-w-[200px] sf:truncate">
-									{#if entry.classification}
-										<Badge variant={entry.classification === 'spam' ? 'danger' : 'success'}>
-											{entry.classification}
-										</Badge>
-									{:else if entry.result_summary}
-										<span title={entry.result_summary}>{entry.result_summary}</span>
-									{:else if entry.error_message}
-										<span class="sf:text-red-600" title={entry.error_message}>
-											{entry.error_code ?? 'Error'}: {entry.error_message.length > 30
-												? entry.error_message.slice(0, 30) + '...'
-												: entry.error_message}
+										<span
+											class={resultTextClass(rowPresentation.resultVariant)}
+											title={rowPresentation.resultTitle ?? rowPresentation.resultLabel}
+										>
+											{rowPresentation.resultLabel}
 										</span>
-									{:else}
-										—
 									{/if}
 								</td>
-								<td class="sf:py-3 sf:pr-4">{entry.credits_used}</td>
+								<td class="sf:py-3 sf:pr-4 sf:text-slate-700">{entry.credits_used}</td>
 								<td class="sf:py-3 sf:text-slate-500 sf:text-xs">
-									{formatDate(entry.created_at)}
+									{formatTimestamp(entry.created_at)}
 								</td>
 							</tr>
 						{/each}
@@ -264,14 +358,14 @@
 				</table>
 			</div>
 
-			<!-- Pagination -->
-			<div class="sf:flex sf:justify-between sf:items-center sf:mt-4 sf:pt-4 sf:border-t">
-				<span class="sf:text-sm sf:text-slate-500">
-					Showing {(page - 1) * perPage + 1}–{Math.min(page * perPage, total)} of {total}
-				</span>
+			<div class="sf:flex sf:flex-wrap sf:justify-between sf:items-center sf:gap-3 sf:mt-4 sf:pt-4 sf:border-t" data-testid="action-log-pagination">
+				<div class="sf:flex sf:flex-col sf:gap-1 sf:text-sm sf:text-slate-500">
+					<span data-testid="action-log-pagination-range">{pagination.rangeLabel}</span>
+					<span data-testid="action-log-pagination-page">{pagination.pageLabel}</span>
+				</div>
 				<div class="sf:flex sf:gap-2">
-					<Button variant="ghost" disabled={page <= 1} onclick={prevPage}>Previous</Button>
-					<Button variant="ghost" disabled={page >= totalPages} onclick={nextPage}>Next</Button>
+					<Button variant="secondary" disabled={page <= 1} onclick={prevPage}>Previous</Button>
+					<Button variant="secondary" disabled={page >= totalPages} onclick={nextPage}>Next</Button>
 				</div>
 			</div>
 		</Card>
