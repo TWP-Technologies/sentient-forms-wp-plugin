@@ -1,21 +1,22 @@
 <script lang="ts">
 	import type { CreditBalanceResponse } from '$lib/api/types';
 	import {
-		Alert,
 		Badge,
-			Button,
-			Card,
-			InputField,
-			Section,
-			StateTemplate,
-			ValidationSummary
-		} from '$lib/components/ui';
+		Button,
+		Card,
+		InputField,
+		QuotaCtaCallout,
+		Section,
+		StateTemplate,
+		ValidationSummary
+	} from '$lib/components/ui';
 	import type { ValidationIssue } from '$lib/components/ui/types';
 	import { licenseStore } from '$lib/stores/license';
 	import { getNextCreditReset } from '$lib/utils/credits';
 	import { formatTimestamp } from '$lib/utils/date-time';
 	import {
 		buildCreditPresentation,
+		type CreditSeverity,
 		creditSeverityToBadgeVariant,
 		formatCreditSeverityLabel,
 		licenseStatusToBadgeVariant,
@@ -31,7 +32,7 @@
 	let creditsError = $state<string | null>(null);
 
 	let resetInfo = $derived(getNextCreditReset());
-	let creditPresentation = $derived(buildCreditPresentation(credits, resetInfo.summary));
+	let creditPresentation = $derived(buildCreditPresentation(credits, resetInfo.summary, 'licensing'));
 	let creditSeverityLabel = $derived(formatCreditSeverityLabel(creditPresentation.severity));
 	let creditSeverityVariant = $derived(creditSeverityToBadgeVariant(creditPresentation.severity));
 	let licenseStatusVariant = $derived(licenseStatusToBadgeVariant($licenseStore.status));
@@ -68,6 +69,20 @@
 
 		await licenseStore.activate(licenseKey.trim());
 		licenseKey = '';
+	}
+
+	function mapQuotaCalloutSeverity(severity: CreditSeverity): Exclude<CreditSeverity, 'normal'> {
+		return severity === 'normal' ? 'unknown' : severity;
+	}
+
+	function resolveQuotaCalloutTitle(severity: CreditSeverity): string {
+		if (severity === 'critical') {
+			return 'No credits remaining';
+		}
+		if (severity === 'warning') {
+			return 'Low credits remaining';
+		}
+		return 'Credit balance unavailable';
 	}
 </script>
 
@@ -156,28 +171,28 @@
 				</div>
 			</div>
 
-				{#if creditsError}
-					<StateTemplate
-						variant="error"
-						title="Unable to load credit balance"
-						message={creditsError}
-						actionLabel="Retry credits"
-						onAction={() => {
-							void fetchCredits();
-						}}
-						inline
-						testId="licensing-credit-error-state"
-					/>
-				{:else if !creditsLoading && creditPresentation.severity === 'warning'}
-					<Alert variant="warning" class="sf:mt-4">
-						Low credits remaining. Upgrade or add credits soon to avoid action interruptions.
-				</Alert>
-			{:else if !creditsLoading && creditPresentation.severity === 'critical'}
-				<Alert variant="danger" class="sf:mt-4">
-					No credits remaining. Actions resume when credits reset on
-					<strong>{resetInfo.nextResetLabel}</strong>
-					({resetInfo.daysUntilReset} day{resetInfo.daysUntilReset !== 1 ? 's' : ''}).
-				</Alert>
+			{#if creditsError}
+				<StateTemplate
+					variant="error"
+					title="Unable to load credit balance"
+					message={creditsError}
+					actionLabel="Retry credits"
+					onAction={() => {
+						void fetchCredits();
+					}}
+					inline
+					testId="licensing-credit-error-state"
+				/>
+			{:else if !creditsLoading && creditPresentation.quotaCta}
+				<QuotaCtaCallout
+					severity={mapQuotaCalloutSeverity(creditPresentation.severity)}
+					title={resolveQuotaCalloutTitle(creditPresentation.severity)}
+					message={creditPresentation.detail}
+					cta={creditPresentation.quotaCta}
+					testId="licensing-quota-cta-callout"
+					ctaTestId="licensing-quota-cta-button"
+					reasonTestId="licensing-quota-cta-reason"
+				/>
 			{/if}
 		</Card>
 	{/if}
@@ -214,15 +229,15 @@
 			</div>
 		</div>
 
-			{#if $licenseStore.loading}
-				<StateTemplate
-					variant="loading"
-					title="Updating license details"
-					message="This may take a few seconds."
-					inline
-					testId="licensing-loading-state"
-				/>
-			{/if}
+		{#if $licenseStore.loading}
+			<StateTemplate
+				variant="loading"
+				title="Updating license details"
+				message="This may take a few seconds."
+				inline
+				testId="licensing-loading-state"
+			/>
+		{/if}
 
 		{#if $licenseStore.status === 'active'}
 			<Button

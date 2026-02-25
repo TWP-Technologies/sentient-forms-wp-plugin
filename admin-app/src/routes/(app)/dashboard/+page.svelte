@@ -1,16 +1,19 @@
 <script lang="ts">
 	import type { CreditBalanceResponse, LicenseInfoResponse } from '$lib/api/types';
-	import { Badge, Button, Card, Section, StateTemplate } from '$lib/components/ui';
+	import { Badge, Button, Card, QuotaCtaCallout, Section, StateTemplate } from '$lib/components/ui';
 	import { onMount } from 'svelte';
 	import {
 		buildCreditPresentation,
+		type CreditSeverity,
 		creditSeverityToBadgeVariant,
 		formatCreditSeverityLabel,
 		licenseStatusToBadgeVariant,
+		type QuotaCtaAction,
 		resolveTierDisplayName
 	} from '$lib/utils/license-health-presentation';
 	import { getNextCreditReset } from '$lib/utils/credits';
 	import { formatTimestamp } from '$lib/utils/date-time';
+	import { navigateToAppPath } from '$lib/navigation';
 	import { sessionStore, type LicenseStatus } from '$lib/stores/session';
 	import { wpFetch } from '$lib/wp';
 
@@ -20,7 +23,7 @@
 	let creditData = $state<CreditBalanceResponse | null>(null);
 
 	let resetInfo = $derived(getNextCreditReset());
-	let creditPresentation = $derived(buildCreditPresentation(creditData, resetInfo.summary));
+	let creditPresentation = $derived(buildCreditPresentation(creditData, resetInfo.summary, 'dashboard'));
 	let creditSeverityLabel = $derived(formatCreditSeverityLabel(creditPresentation.severity));
 	let creditSeverityVariant = $derived(creditSeverityToBadgeVariant(creditPresentation.severity));
 	let licenseStatusVariant = $derived(licenseStatusToBadgeVariant($sessionStore.licenseStatus));
@@ -77,6 +80,26 @@
 			});
 		} finally {
 			loading = false;
+		}
+	}
+
+	function mapQuotaCalloutSeverity(severity: CreditSeverity): Exclude<CreditSeverity, 'normal'> {
+		return severity === 'normal' ? 'unknown' : severity;
+	}
+
+	function resolveQuotaCalloutTitle(severity: CreditSeverity): string {
+		if (severity === 'critical') {
+			return 'No credits remaining';
+		}
+		if (severity === 'warning') {
+			return 'Low credits remaining';
+		}
+		return 'Credit balance unavailable';
+	}
+
+	function handleQuotaCtaAction(action: QuotaCtaAction) {
+		if (action === 'navigate_licensing') {
+			void navigateToAppPath('/licensing');
 		}
 	}
 
@@ -142,6 +165,18 @@
 				<p class="sf:text-sm sf:text-slate-600" data-testid="dashboard-credits-detail">
 					{loading ? 'Refreshing credit details…' : creditPresentation.detail}
 				</p>
+				{#if !loading && creditPresentation.quotaCta}
+					<QuotaCtaCallout
+						severity={mapQuotaCalloutSeverity(creditPresentation.severity)}
+						title={resolveQuotaCalloutTitle(creditPresentation.severity)}
+						message={creditPresentation.detail}
+						cta={creditPresentation.quotaCta}
+						onAction={handleQuotaCtaAction}
+						testId="dashboard-quota-cta-callout"
+						ctaTestId="dashboard-quota-cta-button"
+						reasonTestId="dashboard-quota-cta-reason"
+					/>
+				{/if}
 			</div>
 		</div>
 	</Card>

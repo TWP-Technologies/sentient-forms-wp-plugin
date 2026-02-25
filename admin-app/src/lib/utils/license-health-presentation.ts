@@ -1,6 +1,15 @@
 import type { CreditBalanceResponse, TierSummary } from '$lib/api/types';
 
 export type CreditSeverity = 'normal' | 'warning' | 'critical' | 'unknown';
+export type QuotaCtaAction = 'navigate_licensing' | 'none';
+export type QuotaUiContext = 'dashboard' | 'licensing';
+
+export interface QuotaCtaState {
+	label: string;
+	enabled: boolean;
+	reason: string;
+	action: QuotaCtaAction;
+}
 
 export interface CreditPresentationState {
 	balance: number | null;
@@ -9,6 +18,7 @@ export interface CreditPresentationState {
 	severity: CreditSeverity;
 	headline: string;
 	detail: string;
+	quotaCta: QuotaCtaState | null;
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -105,9 +115,45 @@ export function licenseStatusToBadgeVariant(
 	return 'warning';
 }
 
+function buildQuotaCtaState(
+	severity: CreditSeverity,
+	context: QuotaUiContext
+): QuotaCtaState | null {
+	if (severity === 'normal') {
+		return null;
+	}
+
+	if (context === 'dashboard' && (severity === 'warning' || severity === 'critical')) {
+		return {
+			label: 'Review licensing',
+			enabled: true,
+			reason: 'Open Licensing to review current credit status and next steps.',
+			action: 'navigate_licensing'
+		};
+	}
+
+	if (context === 'dashboard' && severity === 'unknown') {
+		return {
+			label: 'Review licensing',
+			enabled: false,
+			reason: 'Credit quota details are unavailable right now. Refresh and try again.',
+			action: 'none'
+		};
+	}
+
+	return {
+		label: 'Billing controls coming soon',
+		enabled: false,
+		reason:
+			'In-app billing, plan details, and auto top-up controls are not available in this build yet.',
+		action: 'none'
+	};
+}
+
 export function buildCreditPresentation(
 	credits: CreditBalanceResponse | null | undefined,
-	resetSummary: string
+	resetSummary: string,
+	context: QuotaUiContext = 'dashboard'
 ): CreditPresentationState {
 	const balance = normalizeBalance(credits);
 	const quota = normalizeQuota(credits);
@@ -146,6 +192,7 @@ export function buildCreditPresentation(
 		percentage,
 		severity,
 		headline,
-		detail
+		detail,
+		quotaCta: buildQuotaCtaState(severity, context)
 	};
 }
