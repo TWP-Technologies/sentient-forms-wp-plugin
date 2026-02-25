@@ -53,6 +53,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('dashboard-credits-headline')).toContainText('875 / 1000 credits remaining');
 		await expect(page.getByTestId('dashboard-credits-severity')).toContainText('Healthy');
 		await expect(page.getByTestId('dashboard-reset-summary')).toContainText('Resets');
+		await expect(page.getByTestId('dashboard-quota-cta-callout')).toHaveCount(0);
 	});
 
 	test('dashboard surfaces exhausted credits urgency in overview copy', async ({ page }) => {
@@ -94,6 +95,17 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('dashboard-credits-headline')).toContainText('No credits remaining');
 		await expect(page.getByTestId('dashboard-credits-severity')).toContainText('Exhausted');
 		await expect(page.getByTestId('dashboard-credits-detail')).toContainText('Actions may pause');
+		await expect(page.getByTestId('dashboard-quota-cta-callout')).toBeVisible();
+		await expect(page.getByTestId('dashboard-quota-cta-reason')).toContainText(
+			'Open Licensing to review current credit status and next steps.'
+		);
+		await expect(page.getByTestId('dashboard-quota-cta-button')).toBeEnabled();
+
+		await page.getByTestId('dashboard-quota-cta-button').click();
+		await expect(page).toHaveURL(/#\/licensing$/);
+		await expect(page.getByRole('heading', { name: 'License management' })).toBeVisible();
+		await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
+		await expect(page.getByTestId('licensing-quota-cta-button')).toBeDisabled();
 	});
 
 	test('dashboard shows shared error state when both dashboard requests fail', async ({ page }) => {
@@ -165,6 +177,11 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('licensing-reset-summary')).toContainText('Resets');
 		await expect(page.getByTestId('licensing-details-status')).toContainText('active');
 		await expect(page.getByText('Tier: Starter')).toBeVisible();
+		await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
+		await expect(page.getByTestId('licensing-quota-cta-button')).toBeDisabled();
+		await expect(page.getByTestId('licensing-quota-cta-reason')).toContainText(
+			'not available in this build yet'
+		);
 	});
 
 	test('licensing inactive flow still presents activation form', async ({ page }) => {

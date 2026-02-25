@@ -30,6 +30,7 @@ describe('license-health-presentation', () => {
 		expect(presentation.headline).toBe('75 / 100 credits remaining');
 		expect(presentation.detail).toContain('Usage is healthy.');
 		expect(presentation.percentage).toBe(75);
+		expect(presentation.quotaCta).toBeNull();
 	});
 
 	it('marks credits as warning when usage is at or below 10%', () => {
@@ -38,6 +39,12 @@ describe('license-health-presentation', () => {
 		const presentation = buildCreditPresentation(withCredits(10, 100), 'Resets Mar 1 (5 days)');
 		expect(presentation.headline).toBe('Low credits: 10 / 100');
 		expect(presentation.detail).toContain('Low balance');
+		expect(presentation.quotaCta).toEqual({
+			label: 'Review licensing',
+			enabled: true,
+			reason: 'Open Licensing to review current credit status and next steps.',
+			action: 'navigate_licensing'
+		});
 	});
 
 	it('marks credits as critical when balance is zero', () => {
@@ -46,6 +53,8 @@ describe('license-health-presentation', () => {
 		expect(presentation.headline).toBe('No credits remaining');
 		expect(presentation.detail).toContain('Actions may pause');
 		expect(presentation.percentage).toBe(0);
+		expect(presentation.quotaCta?.enabled).toBe(true);
+		expect(presentation.quotaCta?.action).toBe('navigate_licensing');
 	});
 
 	it('returns unknown severity when quota metadata is missing', () => {
@@ -54,6 +63,12 @@ describe('license-health-presentation', () => {
 		expect(presentation.headline).toBe('42 credits remaining');
 		expect(presentation.detail).toContain('currently unavailable');
 		expect(presentation.percentage).toBeNull();
+		expect(presentation.quotaCta).toEqual({
+			label: 'Review licensing',
+			enabled: false,
+			reason: 'Credit quota details are unavailable right now. Refresh and try again.',
+			action: 'none'
+		});
 	});
 
 	it('returns unknown values when credits payload is absent', () => {
@@ -62,6 +77,36 @@ describe('license-health-presentation', () => {
 		expect(presentation.balance).toBeNull();
 		expect(presentation.quota).toBeNull();
 		expect(presentation.headline).toBe('Credit balance unavailable');
+		expect(presentation.quotaCta?.enabled).toBe(false);
+		expect(presentation.quotaCta?.action).toBe('none');
+	});
+
+	it('uses disabled placeholder CTA in licensing context for warning and critical states', () => {
+		const warningPresentation = buildCreditPresentation(
+			withCredits(5, 100),
+			'Resets Mar 1 (5 days)',
+			'licensing'
+		);
+		const criticalPresentation = buildCreditPresentation(
+			withCredits(0, 100),
+			'Resets Mar 1 (5 days)',
+			'licensing'
+		);
+
+		expect(warningPresentation.quotaCta).toEqual({
+			label: 'Billing controls coming soon',
+			enabled: false,
+			reason:
+				'In-app billing, plan details, and auto top-up controls are not available in this build yet.',
+			action: 'none'
+		});
+		expect(criticalPresentation.quotaCta).toEqual({
+			label: 'Billing controls coming soon',
+			enabled: false,
+			reason:
+				'In-app billing, plan details, and auto top-up controls are not available in this build yet.',
+			action: 'none'
+		});
 	});
 
 	it('maps severity and status to badge variants', () => {
