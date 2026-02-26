@@ -1,6 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
+import { getPreviewHost, getPreviewOrigin, getPreviewPort } from './tests/e2e/utils/preview-origin';
 
-const PREVIEW_PORT = 4175;
+const PREVIEW_HOST = getPreviewHost();
+const PREVIEW_PORT = getPreviewPort();
+const PREVIEW_ORIGIN = getPreviewOrigin();
 
 const isWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
 
@@ -16,7 +19,7 @@ export default defineConfig({
 	fullyParallel: !isWpE2E,
 	reporter: [['list'], ['html', { open: 'never' }]],
 	use: {
-		baseURL: `http://127.0.0.1:${PREVIEW_PORT}`,
+		baseURL: PREVIEW_ORIGIN,
 		trace: 'on-first-retry'
 	},
 	projects: [
@@ -27,7 +30,12 @@ export default defineConfig({
 	],
 	webServer: {
 		command: 'bun run preview:e2e',
-		url: `http://127.0.0.1:${PREVIEW_PORT}`,
+		url: PREVIEW_ORIGIN,
+		env: {
+			...process.env,
+			PREVIEW_HOST,
+			PREVIEW_PORT: String(PREVIEW_PORT)
+		},
 		reuseExistingServer: !process.env.CI,
 		timeout: 900_000
 	}
