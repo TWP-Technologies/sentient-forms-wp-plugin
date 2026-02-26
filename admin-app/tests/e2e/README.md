@@ -22,6 +22,13 @@ SENTIENT_RUN_WP_E2E=1 bunx playwright test --grep "@spam-e2e|@summary-e2e" --rep
 
 3. **Environment variable**: `SENTIENT_RUN_WP_E2E=1` gates all WordPress/CPS tests. Without it, WP tests are skipped.
 
+## Preview Host/Port for Non-WP E2E
+
+- `bun run e2e` now resolves a local preview origin automatically.
+- If `PREVIEW_PORT` is unset, the runner first tries `4175`; if unavailable, it auto-selects a free fallback port.
+- Set `PREVIEW_PORT=<port>` to pin a specific port. The runner fails fast when the port is invalid or cannot bind.
+- Optional override: `PREVIEW_HOST=<host>` (default: `127.0.0.1`).
+
 ## How CPS Seeding Works
 
 WP E2E tests require a CPS license, an activated site, and WordPress configured with the proxy API key. The `ensureCpsSeeded()` helper handles all of this **automatically and idempotently**:
