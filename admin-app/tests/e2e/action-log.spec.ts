@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
 
 const mockLogEntries = [
@@ -57,7 +58,7 @@ const mockLogEntries = [
 
 test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 	test.beforeEach(async ({ page }) => {
-		const previewHost = 'http://127.0.0.1:4175';
+		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
 			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
 			siteUrl: previewHost

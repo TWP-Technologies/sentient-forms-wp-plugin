@@ -71,7 +71,7 @@ async function fulfillWithCors(route: Route, origin: string | undefined): Promis
 
 /**
  * Inject CORS headers for Sentient Forms REST routes to allow the Playwright preview
- * origin (127.0.0.1:4175) to call WP REST (localhost:8080) during E2E.
+ * origin (resolved via PREVIEW_HOST/PREVIEW_PORT) to call WP REST (localhost:8080) during E2E.
  */
 export async function installSentientCorsProxy(page: Page): Promise<void> {
 	await page.route('**/wp-json/sentient-forms/v1/**', (route) =>

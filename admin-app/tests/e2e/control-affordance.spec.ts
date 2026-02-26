@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
 import { mockWpJson } from './utils/mock-wpjson';
 
@@ -57,7 +58,7 @@ const creditBalance = { credits_remaining: 25, credits_used: 5, credits_max: 30 
 
 test.describe('Control affordance normalization', () => {
 	test.beforeEach(async ({ page }) => {
-		const previewHost = 'http://127.0.0.1:4175';
+		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
 			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
 			siteUrl: previewHost

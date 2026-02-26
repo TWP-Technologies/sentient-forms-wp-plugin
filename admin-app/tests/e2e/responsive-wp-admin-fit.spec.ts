@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
 import { mockResponsiveApi } from './utils/mock-responsive-api';
 
@@ -13,7 +14,7 @@ type RouteCheck = {
 	ready: (page: Page) => Locator;
 };
 
-const previewHost = 'http://127.0.0.1:4175';
+const previewHost = getPreviewOrigin();
 
 const viewports: ViewportProfile[] = [
 	{ name: 'mobile-360', width: 360, height: 800 },
