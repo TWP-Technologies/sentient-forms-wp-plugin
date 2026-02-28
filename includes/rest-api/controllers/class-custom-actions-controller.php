@@ -232,6 +232,33 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                 'required'          => false,
                 'sanitize_callback' => 'sanitize_text_field',
             ],
+            'action_kind'      => [
+                'type'              => 'string',
+                'required'          => false,
+                'sanitize_callback' => [ $this, 'sanitize_action_kind' ],
+                'description'       => __( 'Action kind: template_override or custom_definition.', 'sentient-forms' ),
+            ],
+            'definition'       => [
+                'required'          => false,
+                'sanitize_callback' => [ $this, 'sanitize_json_object_or_null' ],
+                'description'       => __( 'Optional custom action definition object.', 'sentient-forms' ),
+            ],
+            'definition_version' => [
+                'type'              => 'integer',
+                'required'          => false,
+                'sanitize_callback' => [ $this, 'sanitize_definition_version' ],
+                'description'       => __( 'Definition schema version (>= 1).', 'sentient-forms' ),
+            ],
+            'output_contract'  => [
+                'required'          => false,
+                'sanitize_callback' => [ $this, 'sanitize_json_object_or_null' ],
+                'description'       => __( 'Optional structured output contract object.', 'sentient-forms' ),
+            ],
+            'supported_execution_modes' => [
+                'required'          => false,
+                'sanitize_callback' => [ $this, 'sanitize_supported_execution_modes' ],
+                'description'       => __( 'Allowed execution modes for this action.', 'sentient-forms' ),
+            ],
         ];
     }
 
@@ -257,6 +284,44 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             return $prompt_overrides;
         }
 
+        $action_kind = $this->sanitize_action_kind( $request->get_param( 'action_kind' ) ?? 'template_override' );
+        if ( is_wp_error( $action_kind ) )
+        {
+            return $action_kind;
+        }
+
+        $definition = $this->sanitize_json_object_or_null( $request->get_param( 'definition' ) );
+        if ( is_wp_error( $definition ) )
+        {
+            return $definition;
+        }
+
+        $definition_version = $this->sanitize_definition_version( $request->get_param( 'definition_version' ) ?? 1 );
+        if ( is_wp_error( $definition_version ) )
+        {
+            return $definition_version;
+        }
+
+        $output_contract = $this->sanitize_json_object_or_null( $request->get_param( 'output_contract' ) );
+        if ( is_wp_error( $output_contract ) )
+        {
+            return $output_contract;
+        }
+
+        $supported_execution_modes = $this->sanitize_supported_execution_modes(
+            $request->get_param( 'supported_execution_modes' ) ?? [ 'after_submission' ]
+        );
+        if ( is_wp_error( $supported_execution_modes ) )
+        {
+            return $supported_execution_modes;
+        }
+
+        $definition_validation = $this->validate_definition_for_action_kind( $action_kind, $definition );
+        if ( is_wp_error( $definition_validation ) )
+        {
+            return $definition_validation;
+        }
+
         $code = $this->sanitize_code( $request->get_param( 'code' ) );
         if ( empty( $code ) )
         {
@@ -273,6 +338,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             'description'      => $request->get_param( 'description' ) ? sanitize_textarea_field( (string) $request->get_param( 'description' ) ) : null,
             'prompt_overrides' => $prompt_overrides,
             'model_hint'       => $request->get_param( 'model_hint' ) ? sanitize_text_field( (string) $request->get_param( 'model_hint' ) ) : null,
+            'action_kind'      => $action_kind,
+            'definition'       => $definition,
+            'definition_version' => $definition_version,
+            'output_contract'  => $output_contract,
+            'supported_execution_modes' => $supported_execution_modes,
         ];
     }
 
@@ -287,11 +357,54 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             return $prompt_overrides;
         }
 
+        $action_kind = $this->sanitize_action_kind( $request->get_param( 'action_kind' ) ?? 'template_override' );
+        if ( is_wp_error( $action_kind ) )
+        {
+            return $action_kind;
+        }
+
+        $definition = $this->sanitize_json_object_or_null( $request->get_param( 'definition' ) );
+        if ( is_wp_error( $definition ) )
+        {
+            return $definition;
+        }
+
+        $definition_version = $this->sanitize_definition_version( $request->get_param( 'definition_version' ) ?? 1 );
+        if ( is_wp_error( $definition_version ) )
+        {
+            return $definition_version;
+        }
+
+        $output_contract = $this->sanitize_json_object_or_null( $request->get_param( 'output_contract' ) );
+        if ( is_wp_error( $output_contract ) )
+        {
+            return $output_contract;
+        }
+
+        $supported_execution_modes = $this->sanitize_supported_execution_modes(
+            $request->get_param( 'supported_execution_modes' ) ?? [ 'after_submission' ]
+        );
+        if ( is_wp_error( $supported_execution_modes ) )
+        {
+            return $supported_execution_modes;
+        }
+
+        $definition_validation = $this->validate_definition_for_action_kind( $action_kind, $definition );
+        if ( is_wp_error( $definition_validation ) )
+        {
+            return $definition_validation;
+        }
+
         return [
             'display_name'     => sanitize_text_field( (string) $request->get_param( 'display_name' ) ),
             'description'      => $request->get_param( 'description' ) ? sanitize_textarea_field( (string) $request->get_param( 'description' ) ) : null,
             'prompt_overrides' => $prompt_overrides,
             'model_hint'       => $request->get_param( 'model_hint' ) ? sanitize_text_field( (string) $request->get_param( 'model_hint' ) ) : null,
+            'action_kind'      => $action_kind,
+            'definition'       => $definition,
+            'definition_version' => $definition_version,
+            'output_contract'  => $output_contract,
+            'supported_execution_modes' => $supported_execution_modes,
         ];
     }
 
@@ -334,6 +447,438 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
         }
 
         return $value;
+    }
+
+    /**
+     * @param mixed $value
+     */
+    public function sanitize_action_kind( $value ): string | WP_Error
+    {
+        $kind = sanitize_text_field( (string) $value );
+        if ( '' === $kind )
+        {
+            return 'template_override';
+        }
+
+        if ( in_array( $kind, [ 'template_override', 'custom_definition' ], true ) )
+        {
+            return $kind;
+        }
+
+        return $this->prepare_error_response(
+            'rest_invalid_param',
+            __( 'action_kind must be template_override or custom_definition.', 'sentient-forms' ),
+            400,
+        );
+    }
+
+    /**
+     * @param mixed $value
+     */
+    public function sanitize_definition_version( $value ): int | WP_Error
+    {
+        $version = (int) $value;
+        if ( $version < 1 )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_param',
+                __( 'definition_version must be >= 1.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        return $version;
+    }
+
+    /**
+     * @param mixed $value
+     */
+    public function sanitize_supported_execution_modes( $value ): array | WP_Error
+    {
+        if ( null === $value || '' === $value )
+        {
+            return [ 'after_submission' ];
+        }
+
+        if ( is_string( $value ) )
+        {
+            $decoded = json_decode( $value, true );
+            if ( JSON_ERROR_NONE === json_last_error() )
+            {
+                $value = $decoded;
+            }
+            else
+            {
+                $value = [ $value ];
+            }
+        }
+
+        if ( is_object( $value ) )
+        {
+            $value = json_decode( wp_json_encode( $value ), true );
+        }
+
+        if ( ! is_array( $value ) )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_param',
+                __( 'supported_execution_modes must be an array of strings.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        $allowed   = [ 'validation', 'after_submission', 'real_time' ];
+        $sanitized = [];
+
+        foreach ( $value as $mode )
+        {
+            $mode = sanitize_text_field( (string) $mode );
+            if ( '' === $mode )
+            {
+                continue;
+            }
+
+            if ( ! in_array( $mode, $allowed, true ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_param',
+                    __( 'supported_execution_modes contains an unsupported mode.', 'sentient-forms' ),
+                    400,
+                );
+            }
+
+            if ( ! in_array( $mode, $sanitized, true ) )
+            {
+                $sanitized[] = $mode;
+            }
+        }
+
+        if ( empty( $sanitized ) )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_param',
+                __( 'supported_execution_modes must include at least one mode.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        return $sanitized;
+    }
+
+    /**
+     * @param mixed $value
+     */
+    public function sanitize_json_object_or_null( $value ): array | null | WP_Error
+    {
+        if ( null === $value || '' === $value )
+        {
+            return null;
+        }
+
+        if ( is_string( $value ) )
+        {
+            $decoded = json_decode( $value, true );
+            if ( JSON_ERROR_NONE !== json_last_error() )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_param',
+                    __( 'JSON object value must be valid JSON.', 'sentient-forms' ),
+                    400,
+                );
+            }
+
+            $value = $decoded;
+        }
+
+        if ( is_object( $value ) )
+        {
+            $value = json_decode( wp_json_encode( $value ), true );
+        }
+
+        if ( ! is_array( $value ) )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_param',
+                __( 'Value must be a JSON object.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param array<string, mixed>|null $definition
+     */
+    private function validate_definition_for_action_kind( string $action_kind, ?array $definition ): true | WP_Error
+    {
+        if ( 'custom_definition' !== $action_kind )
+        {
+            return true;
+        }
+
+        if ( null === $definition )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_param',
+                __( 'definition is required when action_kind is custom_definition.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        if ( ! array_key_exists( 'workflow', $definition ) )
+        {
+            return true;
+        }
+
+        if ( ! is_array( $definition['workflow'] ) )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_param',
+                __( 'definition.workflow must be an object when provided.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        return $this->validate_workflow_definition( $definition['workflow'] );
+    }
+
+    /**
+     * @param array<string, mixed> $workflow
+     */
+    private function validate_workflow_definition( array $workflow ): true | WP_Error
+    {
+        if ( array_key_exists( 'version', $workflow ) )
+        {
+            $version = (int) $workflow['version'];
+            if ( $version < 1 )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_param',
+                    __( 'definition.workflow.version must be >= 1.', 'sentient-forms' ),
+                    400,
+                );
+            }
+        }
+
+        if ( ! array_key_exists( 'nodes', $workflow ) || ! is_array( $workflow['nodes'] ) || empty( $workflow['nodes'] ) )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_param',
+                __( 'definition.workflow.nodes must be a non-empty array.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        $allowed_kinds = [ 'llm_step', 'transform_step', 'decision_step' ];
+        $node_ids      = [];
+
+        foreach ( $workflow['nodes'] as $index => $node )
+        {
+            if ( ! is_array( $node ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_param',
+                    sprintf( __( 'definition.workflow.nodes[%d] must be an object.', 'sentient-forms' ), $index ),
+                    400,
+                );
+            }
+
+            $node_id = sanitize_text_field( (string) ( $node['node_id'] ?? '' ) );
+            if ( '' === trim( $node_id ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_param',
+                    sprintf( __( 'definition.workflow.nodes[%d].node_id must be a non-empty string.', 'sentient-forms' ), $index ),
+                    400,
+                );
+            }
+
+            if ( in_array( $node_id, $node_ids, true ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_param',
+                    sprintf( __( "Duplicate workflow node_id '%s'.", 'sentient-forms' ), $node_id ),
+                    400,
+                );
+            }
+            $node_ids[] = $node_id;
+
+            $kind = sanitize_text_field( (string) ( $node['kind'] ?? '' ) );
+            if ( ! in_array( $kind, $allowed_kinds, true ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_param',
+                    sprintf( __( 'definition.workflow.nodes[%d].kind must be llm_step, transform_step, or decision_step.', 'sentient-forms' ), $index ),
+                    400,
+                );
+            }
+
+            $output_key = sanitize_text_field( (string) ( $node['output_key'] ?? '' ) );
+            if ( '' === trim( $output_key ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_param',
+                    sprintf( __( 'definition.workflow.nodes[%d].output_key must be a non-empty string.', 'sentient-forms' ), $index ),
+                    400,
+                );
+            }
+
+            if ( 'llm_step' === $kind )
+            {
+                $prompt_template = trim( (string) ( $node['prompt_template'] ?? '' ) );
+                if ( '' === $prompt_template )
+                {
+                    return $this->prepare_error_response(
+                        'rest_invalid_param',
+                        sprintf( __( "definition.workflow.nodes[%d].prompt_template is required for kind='llm_step'.", 'sentient-forms' ), $index ),
+                        400,
+                    );
+                }
+            }
+
+            if ( array_key_exists( 'timeout_ms', $node ) )
+            {
+                $timeout_ms = (int) $node['timeout_ms'];
+                if ( $timeout_ms < 1 )
+                {
+                    return $this->prepare_error_response(
+                        'rest_invalid_param',
+                        sprintf( __( 'definition.workflow.nodes[%d].timeout_ms must be >= 1.', 'sentient-forms' ), $index ),
+                        400,
+                    );
+                }
+            }
+        }
+
+        if ( array_key_exists( 'edges', $workflow ) )
+        {
+            if ( ! is_array( $workflow['edges'] ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_param',
+                    __( 'definition.workflow.edges must be an array when provided.', 'sentient-forms' ),
+                    400,
+                );
+            }
+
+            foreach ( $workflow['edges'] as $index => $edge )
+            {
+                if ( ! is_array( $edge ) )
+                {
+                    return $this->prepare_error_response(
+                        'rest_invalid_param',
+                        sprintf( __( 'definition.workflow.edges[%d] must be an object.', 'sentient-forms' ), $index ),
+                        400,
+                    );
+                }
+
+                $from = sanitize_text_field( (string) ( $edge['from'] ?? '' ) );
+                $to   = sanitize_text_field( (string) ( $edge['to'] ?? '' ) );
+
+                if ( '' === trim( $from ) || '' === trim( $to ) )
+                {
+                    return $this->prepare_error_response(
+                        'rest_invalid_param',
+                        sprintf( __( 'definition.workflow.edges[%d].from and .to must be non-empty strings.', 'sentient-forms' ), $index ),
+                        400,
+                    );
+                }
+
+                if ( $from === $to )
+                {
+                    return $this->prepare_error_response(
+                        'rest_invalid_param',
+                        sprintf( __( "definition.workflow.edges[%d] cannot be self-referential ('%s').", 'sentient-forms' ), $index, $from ),
+                        400,
+                    );
+                }
+
+                if ( ! in_array( $from, $node_ids, true ) )
+                {
+                    return $this->prepare_error_response(
+                        'rest_invalid_param',
+                        sprintf( __( "definition.workflow.edges[%d].from references unknown node_id '%s'.", 'sentient-forms' ), $index, $from ),
+                        400,
+                    );
+                }
+
+                if ( ! in_array( $to, $node_ids, true ) )
+                {
+                    return $this->prepare_error_response(
+                        'rest_invalid_param',
+                        sprintf( __( "definition.workflow.edges[%d].to references unknown node_id '%s'.", 'sentient-forms' ), $index, $to ),
+                        400,
+                    );
+                }
+            }
+        }
+
+        if ( array_key_exists( 'max_parallelism', $workflow ) )
+        {
+            $max_parallelism = (int) $workflow['max_parallelism'];
+            if ( $max_parallelism < 1 || $max_parallelism > 16 )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_param',
+                    __( 'definition.workflow.max_parallelism must be between 1 and 16.', 'sentient-forms' ),
+                    400,
+                );
+            }
+        }
+
+        if ( array_key_exists( 'retry_policy', $workflow ) )
+        {
+            if ( ! is_array( $workflow['retry_policy'] ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_param',
+                    __( 'definition.workflow.retry_policy must be an object when provided.', 'sentient-forms' ),
+                    400,
+                );
+            }
+
+            $retry_policy = $workflow['retry_policy'];
+            if ( array_key_exists( 'max_attempts', $retry_policy ) )
+            {
+                $max_attempts = (int) $retry_policy['max_attempts'];
+                if ( $max_attempts < 1 )
+                {
+                    return $this->prepare_error_response(
+                        'rest_invalid_param',
+                        __( 'definition.workflow.retry_policy.max_attempts must be >= 1.', 'sentient-forms' ),
+                        400,
+                    );
+                }
+            }
+
+            if ( array_key_exists( 'backoff_ms', $retry_policy ) )
+            {
+                if ( ! is_array( $retry_policy['backoff_ms'] ) )
+                {
+                    return $this->prepare_error_response(
+                        'rest_invalid_param',
+                        __( 'definition.workflow.retry_policy.backoff_ms must be an array.', 'sentient-forms' ),
+                        400,
+                    );
+                }
+
+                foreach ( $retry_policy['backoff_ms'] as $index => $value )
+                {
+                    $backoff = (int) $value;
+                    if ( $backoff < 0 )
+                    {
+                        return $this->prepare_error_response(
+                            'rest_invalid_param',
+                            sprintf( __( 'definition.workflow.retry_policy.backoff_ms[%d] must be >= 0.', 'sentient-forms' ), $index ),
+                            400,
+                        );
+                    }
+                }
+            }
+        }
+
+        return true;
     }
 
     /**

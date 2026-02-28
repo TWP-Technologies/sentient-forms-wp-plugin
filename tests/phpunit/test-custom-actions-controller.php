@@ -43,6 +43,11 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'base_credit_cost', $payload );
         $this->assertSame( 'pricing-locked-action', $payload['code'] ?? null );
         $this->assertSame( 'Pricing Locked Action', $payload['display_name'] ?? null );
+        $this->assertSame( 'template_override', $payload['action_kind'] ?? null );
+        $this->assertSame( 1, $payload['definition_version'] ?? null );
+        $this->assertSame( [ 'after_submission' ], $payload['supported_execution_modes'] ?? [] );
+        $this->assertNull( $payload['definition'] ?? null );
+        $this->assertNull( $payload['output_contract'] ?? null );
     }
 
     public function test_build_update_payload_ignores_base_credit_cost_input(): void
@@ -60,6 +65,107 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'base_credit_cost', $payload );
         $this->assertSame( 'Renamed Action', $payload['display_name'] ?? null );
         $this->assertSame( 'gemini-2.5-flash', $payload['model_hint'] ?? null );
+        $this->assertSame( 'template_override', $payload['action_kind'] ?? null );
+        $this->assertSame( 1, $payload['definition_version'] ?? null );
+        $this->assertSame( [ 'after_submission' ], $payload['supported_execution_modes'] ?? [] );
+        $this->assertNull( $payload['definition'] ?? null );
+        $this->assertNull( $payload['output_contract'] ?? null );
+    }
+
+    public function test_build_create_payload_requires_definition_for_custom_definition(): void
+    {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/custom-actions' );
+        $request->set_param( 'template_id', wp_generate_uuid4() );
+        $request->set_param( 'code', 'dag-missing-definition' );
+        $request->set_param( 'display_name', 'Missing Definition' );
+        $request->set_param( 'action_kind', 'custom_definition' );
+        $request->set_param( 'definition_version', 1 );
+        $request->set_param( 'supported_execution_modes', [ 'after_submission' ] );
+
+        $payload = $this->invoke_private( 'build_create_payload', [ $request ] );
+
+        $this->assertInstanceOf( WP_Error::class, $payload );
+    }
+
+    public function test_build_create_payload_accepts_valid_workflow_definition(): void
+    {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/custom-actions' );
+        $request->set_param( 'template_id', wp_generate_uuid4() );
+        $request->set_param( 'code', 'dag-valid-definition' );
+        $request->set_param( 'display_name', 'Valid Definition' );
+        $request->set_param( 'action_kind', 'custom_definition' );
+        $request->set_param( 'definition_version', 2 );
+        $request->set_param( 'supported_execution_modes', [ 'validation', 'after_submission' ] );
+        $request->set_param(
+            'definition',
+            [
+                'workflow' => [
+                    'version' => 1,
+                    'nodes' => [
+                        [
+                            'node_id' => 'extract',
+                            'kind' => 'llm_step',
+                            'prompt_template' => 'Extract entities',
+                            'output_key' => 'entities',
+                        ],
+                        [
+                            'node_id' => 'summarize',
+                            'kind' => 'transform_step',
+                            'output_key' => 'summary',
+                        ],
+                    ],
+                    'edges' => [
+                        [
+                            'from' => 'extract',
+                            'to' => 'summarize',
+                        ],
+                    ],
+                    'max_parallelism' => 4,
+                ],
+            ]
+        );
+
+        $payload = $this->invoke_private( 'build_create_payload', [ $request ] );
+
+        $this->assertIsArray( $payload );
+        $this->assertSame( 'custom_definition', $payload['action_kind'] ?? null );
+        $this->assertSame( 2, $payload['definition_version'] ?? null );
+        $this->assertSame( [ 'validation', 'after_submission' ], $payload['supported_execution_modes'] ?? [] );
+        $this->assertIsArray( $payload['definition']['workflow']['nodes'] ?? null );
+    }
+
+    public function test_build_update_payload_rejects_workflow_edge_with_unknown_node(): void
+    {
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/custom-actions/test-id' );
+        $request->set_param( 'display_name', 'Invalid DAG Update' );
+        $request->set_param( 'action_kind', 'custom_definition' );
+        $request->set_param( 'definition_version', 1 );
+        $request->set_param( 'supported_execution_modes', [ 'after_submission' ] );
+        $request->set_param(
+            'definition',
+            [
+                'workflow' => [
+                    'nodes' => [
+                        [
+                            'node_id' => 'extract',
+                            'kind' => 'llm_step',
+                            'prompt_template' => 'Extract entities',
+                            'output_key' => 'entities',
+                        ],
+                    ],
+                    'edges' => [
+                        [
+                            'from' => 'extract',
+                            'to' => 'missing',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $payload = $this->invoke_private( 'build_update_payload', [ $request ] );
+
+        $this->assertInstanceOf( WP_Error::class, $payload );
     }
 
     /**

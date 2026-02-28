@@ -182,7 +182,10 @@ describe('customActionsStore', () => {
 		await customActionsStore.create({
 			template_id: 'tmpl-a',
 			code: 'alpha',
-			display_name: 'Alpha'
+			display_name: 'Alpha',
+			action_kind: 'template_override',
+			definition_version: 1,
+			supported_execution_modes: ['after_submission']
 		});
 
 		const state = snapshotState();

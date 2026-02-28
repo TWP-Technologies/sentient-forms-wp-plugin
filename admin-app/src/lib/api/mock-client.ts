@@ -513,12 +513,11 @@ export class MockSentientFormsApiClient {
 			archived_at: null,
 			created_at: now,
 			updated_at: now,
-			// New definition fields with defaults (CA-DEF-001)
-			action_kind: 'template_override',
-			definition: null,
-			definition_version: 1,
-			output_contract: null,
-			supported_execution_modes: ['after_submission']
+			action_kind: payload.action_kind,
+			definition: payload.definition ?? null,
+			definition_version: payload.definition_version,
+			output_contract: payload.output_contract ?? null,
+			supported_execution_modes: payload.supported_execution_modes
 		};
 		this.customActions = [action, ...this.customActions];
 		return {

@@ -21,7 +21,12 @@ test.describe('Custom actions admin view', () => {
 				status: 'active',
 				archived_at: null,
 				created_at: '2025-11-10T00:00:00Z',
-				updated_at: '2025-11-14T12:00:00Z'
+				updated_at: '2025-11-14T12:00:00Z',
+				action_kind: 'template_override',
+				definition: null,
+				definition_version: 1,
+				output_contract: null,
+				supported_execution_modes: ['after_submission']
 			}
 		];
 
@@ -100,7 +105,13 @@ test.describe('Custom actions admin view', () => {
 						status: 'active',
 						archived_at: null,
 						created_at: now,
-						updated_at: now
+						updated_at: now,
+						action_kind: String(payload.action_kind ?? 'template_override'),
+						definition: (payload.definition as Record<string, unknown> | null | undefined) ?? null,
+						definition_version: Number(payload.definition_version ?? 1),
+						output_contract: (payload.output_contract as Record<string, unknown> | null | undefined) ?? null,
+						supported_execution_modes:
+							(payload.supported_execution_modes as string[] | undefined) ?? ['after_submission']
 					};
 					actions = [newAction, ...actions];
 

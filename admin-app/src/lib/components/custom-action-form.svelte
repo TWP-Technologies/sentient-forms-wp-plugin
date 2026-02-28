@@ -69,7 +69,12 @@
 			display_name: displayName.trim(),
 			description: description.trim() || null,
 			prompt_overrides: Object.keys(promptOverrides).length > 0 ? promptOverrides : undefined,
-			model_hint: modelHint?.trim() || null
+			model_hint: modelHint?.trim() || null,
+			action_kind: initialData?.action_kind ?? 'template_override',
+			definition: initialData?.definition ?? null,
+			definition_version: initialData?.definition_version ?? 1,
+			output_contract: initialData?.output_contract ?? null,
+			supported_execution_modes: initialData?.supported_execution_modes ?? ['after_submission']
 		};
 
 		if (isEditMode) {

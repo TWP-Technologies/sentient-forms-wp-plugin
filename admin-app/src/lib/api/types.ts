@@ -170,6 +170,20 @@ export interface InputMapping {
 	include_metadata?: boolean;
 }
 
+/**
+ * Attachment mapping configuration for execution file references.
+ */
+export interface AttachmentMapping {
+	/** Attachment source mode */
+	mode: 'none' | 'gf_upload' | 'media_library' | 'mixed';
+	/** GF upload/post image field IDs */
+	gf_upload_field_ids?: string[];
+	/** WordPress media attachment IDs */
+	media_ids?: number[];
+	/** Maximum files to include per execution */
+	max_files?: number;
+}
+
 export type ConditionLogic = 'all' | 'any';
 
 export type ConditionOperator =
@@ -231,6 +245,8 @@ export interface BatchSettings {
 export interface FormActionSettings {
 	/** Field selection configuration */
 	input_mapping?: InputMapping;
+	/** Attachment selection configuration */
+	attachment_mapping?: AttachmentMapping;
 	/** Upstream mapping prerequisites that must complete successfully first */
 	dependency_ids?: string[];
 	/** Per-hook trigger source authority (hook root or mapping parent) */
@@ -605,6 +621,11 @@ export interface CustomActionCreatePayload {
 	description?: string | null;
 	prompt_overrides?: Record<string, unknown>;
 	model_hint?: string | null;
+	action_kind: ActionKind;
+	definition?: ActionDefinitionPayload | null;
+	definition_version: number;
+	output_contract?: OutputContract | null;
+	supported_execution_modes: ExecutionMode[];
 }
 
 export type CustomActionUpdatePayload = Partial<Omit<CustomActionCreatePayload, 'template_id' | 'code'>> & {
@@ -641,6 +662,22 @@ export interface ExecutionStatus {
 	last_error: string | null;
 	processed_at: string | null;
 	status: 'unknown' | 'success' | 'error';
+	metering_summary?: MeteringSummary | null;
+}
+
+export interface WorkflowMeteringSummary {
+	status: string;
+	credits_total: number;
+	credits_by_node: Record<string, number>;
+	failed_nodes: string[];
+}
+
+export interface MeteringSummary {
+	correlation_id?: string | null;
+	execution_request_id?: string | null;
+	credits_debited?: number | null;
+	pricing_policy_version?: string | null;
+	workflow?: WorkflowMeteringSummary | null;
 }
 
 export interface TelemetrySettingsResponse {
@@ -695,6 +732,7 @@ export interface MappingSettings {
 		field_ids?: string[];
 		include_metadata?: boolean;
 	};
+	attachment_mapping?: AttachmentMapping;
 	conditions?: MappingConditionsConfig;
 	effect_mapping?: Record<string, {
 		mark_spam?: boolean;
