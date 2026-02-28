@@ -79,6 +79,94 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance() );
     }
 
+    public function test_build_realtime_runtime_config_returns_null_without_realtime_mappings(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'build_realtime_runtime_config' );
+        $method->setAccessible( true );
+
+        $form = [
+            'id' => 13,
+            'title' => 'No realtime',
+            'fields' => [],
+        ];
+        $settings = [
+            'actions' => [
+                [
+                    'id' => 'map_1',
+                    'central_action_id' => 'central_1',
+                    'is_action_enabled_for_form' => true,
+                    'settings' => [
+                        'execution_mode' => 'after_submission',
+                    ],
+                ],
+            ],
+        ];
+
+        $runtime = $method->invoke( $this->adapter, $form, $settings );
+        $this->assertNull( $runtime );
+    }
+
+    public function test_build_realtime_runtime_config_includes_mapping_manifest_and_nonce(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'build_realtime_runtime_config' );
+        $method->setAccessible( true );
+
+        $form = [
+            'id' => 14,
+            'title' => 'Realtime',
+            'fields' => [
+                (object) [
+                    'id' => 1,
+                    'label' => 'Name',
+                    'type' => 'text',
+                    'pageNumber' => 1,
+                ],
+                (object) [
+                    'id' => 4,
+                    'label' => 'Details',
+                    'type' => 'textarea',
+                    'pageNumber' => 2,
+                ],
+            ],
+        ];
+        $settings = [
+            'actions' => [
+                [
+                    'id' => 'map_rt',
+                    'central_action_id' => 'central_rt',
+                    'action_name_label' => 'Realtime Action',
+                    'is_action_enabled_for_form' => true,
+                    'settings' => [
+                        'execution_mode' => 'real_time',
+                        'realtime_settings' => [
+                            'checkpoint_field_ids' => [ '1' ],
+                            'debounce_ms' => 700,
+                            'cooldown_ms' => 9000,
+                            'manual_refresh_enabled' => true,
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $runtime = $method->invoke( $this->adapter, $form, $settings );
+
+        $this->assertIsArray( $runtime );
+        $this->assertSame( 14, $runtime['form_id'] ?? null );
+        $this->assertSame( 'gravity_forms', $runtime['source'] ?? null );
+        $this->assertSame( 2, $runtime['total_pages'] ?? null );
+        $this->assertNotEmpty( $runtime['nonce'] ?? '' );
+        $this->assertStringContainsString(
+            '/sentient-forms/v1/gravity_forms/forms/14/actions/suggest',
+            (string) ( $runtime['suggest_endpoint_url'] ?? '' )
+        );
+        $this->assertCount( 1, $runtime['mappings'] ?? [] );
+        $this->assertSame( 700, $runtime['mappings'][0]['debounce_ms'] ?? null );
+        $this->assertSame( 9000, $runtime['mappings'][0]['cooldown_ms'] ?? null );
+        $this->assertSame( [ '1' ], $runtime['mappings'][0]['checkpoint_field_ids'] ?? [] );
+        $this->assertCount( 2, $runtime['field_manifest'] ?? [] );
+    }
+
     public function test_maps_insufficient_credits_error_to_friendly_message(): void
     {
         $method = new ReflectionMethod( $this->adapter, 'map_error_to_message' );

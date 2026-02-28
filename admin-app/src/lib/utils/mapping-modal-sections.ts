@@ -3,6 +3,7 @@ export const MAPPING_MODAL_SECTION_IDS = [
 	'guidance',
 	'spam_advanced',
 	'input_mapping',
+	'attachment_mapping',
 	'conditions',
 	'model_execution'
 ] as const;
@@ -19,6 +20,7 @@ export function createInitialMappingModalSectionExpansion(
 		guidance: isSpamAction,
 		spam_advanced: false,
 		input_mapping: false,
+		attachment_mapping: false,
 		conditions: false,
 		model_execution: false
 	};
@@ -59,4 +61,3 @@ export function toggleMappingModalSectionExpansion(
 		[sectionId]: !expansion[sectionId]
 	};
 }
-

@@ -1,11 +1,148 @@
 <?php
 
+if ( ! class_exists( 'GFAPI' ) ) {
+	class GFAPI {
+		/** @var array<int,array<string,mixed>> */
+		public static array $entries = [];
+
+		public static function get_entry( $entry_id ) {
+			$entry_id = (int) $entry_id;
+			if ( isset( self::$entries[ $entry_id ] ) ) {
+				return self::$entries[ $entry_id ];
+			}
+
+			return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+		}
+	}
+}
+
+if ( ! class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) ) {
+	class Sentient_Forms_Test_Gf_Meta_Store {
+		/** @var array<int,array<string,mixed>> */
+		private static array $meta = [];
+
+		public static function reset(): void {
+			self::$meta = [];
+		}
+
+		public static function set_meta( int $entry_id, string $key, mixed $value ): void {
+			if ( ! isset( self::$meta[ $entry_id ] ) ) {
+				self::$meta[ $entry_id ] = [];
+			}
+			self::$meta[ $entry_id ][ $key ] = $value;
+		}
+
+		public static function get_meta( int $entry_id, string $key ): mixed {
+			return self::$meta[ $entry_id ][ $key ] ?? null;
+		}
+
+		public static function update_meta( int $entry_id, string $key, mixed $value ): void {
+			self::set_meta( $entry_id, $key, $value );
+		}
+	}
+}
+
+if ( ! function_exists( 'gform_get_meta' ) ) {
+	function gform_get_meta( $entry_id, $meta_key ) {
+		return Sentient_Forms_Test_Gf_Meta_Store::get_meta( (int) $entry_id, (string) $meta_key );
+	}
+}
+
+if ( ! function_exists( 'gform_update_meta' ) ) {
+	function gform_update_meta( $entry_id, $meta_key, $value ) {
+		Sentient_Forms_Test_Gf_Meta_Store::update_meta( (int) $entry_id, (string) $meta_key, $value );
+	}
+}
+
 class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     private Sentient_Forms_Form_Actions_Controller $controller;
 
     protected function setUp(): void {
         parent::setUp();
         $this->controller = new Sentient_Forms_Form_Actions_Controller();
+        GFAPI::$entries = [];
+        $this->reset_entry_meta_store();
+    }
+
+    public function test_get_entry_execution_status_includes_metering_summary_for_workflow_meta(): void
+    {
+        GFAPI::$entries[123] = [
+            'id' => 123,
+            'form_id' => 42,
+        ];
+
+        $this->set_entry_meta(
+            123,
+            'sentient_forms_last_response',
+            wp_json_encode(
+                [
+                    'meta' => [
+                        'execution_request_id' => 'req-abc-123',
+                        'correlation_id' => 'req-abc-123',
+                        'credits_debited' => 9,
+                        'pricing' => [
+                            'pricing_policy_version' => '2026-02-cps-batch-v1',
+                        ],
+                        'workflow_execution' => [
+                            'status' => 'partial',
+                            'credits_total' => 9,
+                            'credits_by_node' => [
+                                'extract' => 6,
+                                'decide' => 3,
+                            ],
+                            'nodes' => [
+                                [
+                                    'node_id' => 'extract',
+                                    'status' => 'succeeded',
+                                ],
+                                [
+                                    'node_id' => 'finalize',
+                                    'status' => 'failed',
+                                ],
+                            ],
+                        ],
+                    ],
+                ]
+            )
+        );
+        $this->set_entry_meta( 123, 'sentient_forms_last_error', '' );
+        $this->set_entry_meta( 123, 'sentient_forms_last_processed_at', '2026-02-27T12:00:00Z' );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/42/actions/entries/123/status' );
+        $request->set_param( 'entry_id', 123 );
+
+        $response = $this->controller->get_entry_execution_status( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data = $response->get_data();
+        $this->assertSame( 'success', $data['status'] ?? null );
+        $this->assertSame( 'req-abc-123', $data['metering_summary']['correlation_id'] ?? null );
+        $this->assertSame( 9, $data['metering_summary']['credits_debited'] ?? null );
+        $this->assertSame( 'partial', $data['metering_summary']['workflow']['status'] ?? null );
+        $this->assertSame( 9, $data['metering_summary']['workflow']['credits_total'] ?? null );
+        $this->assertSame( 6, $data['metering_summary']['workflow']['credits_by_node']['extract'] ?? null );
+        $this->assertSame( [ 'finalize' ], $data['metering_summary']['workflow']['failed_nodes'] ?? [] );
+    }
+
+    public function test_get_entry_execution_status_sets_metering_summary_null_without_meta(): void
+    {
+        GFAPI::$entries[456] = [
+            'id' => 456,
+            'form_id' => 17,
+        ];
+
+        $this->set_entry_meta( 456, 'sentient_forms_last_response', null );
+        $this->set_entry_meta( 456, 'sentient_forms_last_error', '' );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/17/actions/entries/456/status' );
+        $request->set_param( 'entry_id', 456 );
+
+        $response = $this->controller->get_entry_execution_status( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data = $response->get_data();
+        $this->assertSame( 'unknown', $data['status'] ?? null );
+        $this->assertNull( $data['metering_summary'] ?? null );
     }
 
     public function test_validate_trigger_hooks_accepts_allowed_values(): void {
@@ -183,6 +320,26 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $rules     = $sanitized['conditions']['root']['rules'] ?? [];
 
         $this->assertSame( [], $rules );
+    }
+
+    public function test_sanitize_settings_attachment_mapping_deduplicates_and_clamps(): void
+    {
+        $settings = [
+            'attachment_mapping' => [
+                'mode' => 'mixed',
+                'gf_upload_field_ids' => [ '3', '3', '', '7' ],
+                'media_ids' => [ 12, '12', -5, '27' ],
+                'max_files' => 999,
+            ],
+        ];
+
+        $sanitized = $this->invoke_private( 'sanitize_settings', [ $settings ] );
+        $mapping   = $sanitized['attachment_mapping'] ?? [];
+
+        $this->assertSame( 'mixed', $mapping['mode'] ?? null );
+        $this->assertSame( [ '3', '7' ], $mapping['gf_upload_field_ids'] ?? [] );
+        $this->assertSame( [ 12, 27 ], $mapping['media_ids'] ?? [] );
+        $this->assertSame( 20, $mapping['max_files'] ?? null );
     }
 
     public function test_sanitize_settings_conditions_preserves_rule_inside_depth_three_group(): void
@@ -967,5 +1124,27 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $reflection->setAccessible( true );
 
         return $reflection->invokeArgs( $this->controller, $args );
+    }
+
+    private function reset_entry_meta_store(): void
+    {
+        if ( class_exists( 'Sentient_Forms_Test_Gravity_Meta_Store' ) && method_exists( 'Sentient_Forms_Test_Gravity_Meta_Store', 'reset' ) ) {
+            Sentient_Forms_Test_Gravity_Meta_Store::reset();
+        }
+
+        Sentient_Forms_Test_Gf_Meta_Store::reset();
+    }
+
+    private function set_entry_meta( int $entry_id, string $meta_key, mixed $value ): void
+    {
+        if ( function_exists( 'gform_update_meta' ) ) {
+            gform_update_meta( $entry_id, $meta_key, $value );
+        }
+
+        if ( class_exists( 'Sentient_Forms_Test_Gravity_Meta_Store' ) && method_exists( 'Sentient_Forms_Test_Gravity_Meta_Store', 'update_meta' ) ) {
+            Sentient_Forms_Test_Gravity_Meta_Store::update_meta( $entry_id, $meta_key, $value );
+        }
+
+        Sentient_Forms_Test_Gf_Meta_Store::set_meta( $entry_id, $meta_key, $value );
     }
 }

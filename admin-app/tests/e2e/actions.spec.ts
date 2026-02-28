@@ -2285,6 +2285,10 @@ test.describe('Actions admin flows', () => {
 			'aria-expanded',
 			'false'
 		);
+		await expect(modal.getByTestId('mapping-section-toggle-attachment_mapping')).toHaveAttribute(
+			'aria-expanded',
+			'false'
+		);
 		await expect(modal.getByTestId('mapping-section-toggle-conditions')).toHaveAttribute(
 			'aria-expanded',
 			'false'

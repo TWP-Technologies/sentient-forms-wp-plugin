@@ -50,11 +50,17 @@ class Sentient_Forms_Action_Executor {
 
 	private Sentient_Forms_Plugin $plugin;
 	private ?Sentient_Forms_Api_Client $client;
+	private ?Sentient_Forms_Attachment_File_Ref_Builder $attachment_file_ref_builder;
 	private array $execution_cache = array();
 
-	public function __construct( Sentient_Forms_Plugin $plugin, ?Sentient_Forms_Api_Client $client = null ) {
+	public function __construct(
+		Sentient_Forms_Plugin $plugin,
+		?Sentient_Forms_Api_Client $client = null,
+		?Sentient_Forms_Attachment_File_Ref_Builder $attachment_file_ref_builder = null
+	) {
 		$this->plugin = $plugin;
 		$this->client = $client;
+		$this->attachment_file_ref_builder = $attachment_file_ref_builder;
 	}
 
 	/**
@@ -86,14 +92,21 @@ class Sentient_Forms_Action_Executor {
 			return $cached_result;
 		}
 
-		$payload_data = $this->build_execution_payload_data( $form, $entry, $context );
+		$payload_data       = $this->build_execution_payload_data( $form, $entry, $context );
+		$attachment_payload = $this->build_attachment_payload( $form, $entry, $context );
 
 		$payload = array(
 			'central_action_id'     => $central_action_id,
 			'execution_request_id'  => $execution_request_id,
 			'form_data_payload'     => $payload_data['form_data_payload'],
-			'input_manifest'        => $payload_data['input_manifest'],
+			'input_manifest'        => array_merge(
+				$payload_data['input_manifest'],
+				array(
+					'attachment_manifest' => $attachment_payload['attachment_manifest'],
+				)
+			),
 			'action_context'        => $this->build_action_context( $form, $entry, $context, $execution_request_id, $submission_token ),
+			'file_refs'             => $attachment_payload['file_refs'],
 		);
 
 		if ( defined( 'SENTIENT_FORMS_DEBUG_CPS_PAYLOAD' ) && SENTIENT_FORMS_DEBUG_CPS_PAYLOAD ) {
@@ -174,15 +187,22 @@ class Sentient_Forms_Action_Executor {
 				$submission_token
 			);
 
-		$payload_data = $this->build_execution_payload_data( $form, $entry, $context );
+		$payload_data       = $this->build_execution_payload_data( $form, $entry, $context );
+		$attachment_payload = $this->build_attachment_payload( $form, $entry, $context );
 
 		$payload = array(
 			'central_action_id'    => $central_action_id,
 			'execution_request_id' => $execution_request_id,
 			'form_data_payload'    => $payload_data['form_data_payload'],
-			'input_manifest'       => $payload_data['input_manifest'],
+			'input_manifest'       => array_merge(
+				$payload_data['input_manifest'],
+				array(
+					'attachment_manifest' => $attachment_payload['attachment_manifest'],
+				)
+			),
 			'action_context'       => $this->build_action_context( $form, $entry, $context, $execution_request_id, $submission_token ),
 			'async_options'        => $this->normalize_async_options( $context, $async_options ),
+			'file_refs'            => $attachment_payload['file_refs'],
 		);
 
 		if ( defined( 'SENTIENT_FORMS_DEBUG_CPS_PAYLOAD' ) && SENTIENT_FORMS_DEBUG_CPS_PAYLOAD ) {
@@ -191,6 +211,76 @@ class Sentient_Forms_Action_Executor {
 
 		return $client->post(
 			'/actions/execute-async',
+			$payload,
+			array(
+				'bearer_token' => $proxy_key,
+			)
+		);
+	}
+
+	/**
+	 * Execute a real-time suggestion run via the CPS suggest endpoint.
+	 *
+	 * @param string $central_action_id CPS central action identifier.
+	 * @param array  $form              Gravity Forms form array.
+	 * @param array  $entry             Known field values keyed by field/input id.
+	 * @param array  $context           Runtime context merged into action_context.
+	 * @param array  $suggestion_context Suggestion context payload.
+	 *
+	 * @return array|WP_Error Suggestion response payload or WP_Error on failure.
+	 */
+	public function suggest(
+		string $central_action_id,
+		array $form,
+		array $entry,
+		array $context,
+		array $suggestion_context
+	) {
+		$proxy_key = $this->plugin->get_proxy_api_key();
+		if ( empty( $proxy_key ) ) {
+			return new WP_Error(
+				'cps_missing_proxy_key',
+				__( 'Sentient Forms proxy API key is missing.', 'sentient-forms' )
+			);
+		}
+
+		$client           = $this->client ?? $this->plugin->get_cps_api_client();
+		$submission_token = self::derive_submission_token( $form, $entry );
+		$execution_request_id = isset( $context['execution_request_id'] )
+			? sanitize_text_field( (string) $context['execution_request_id'] )
+			: 'rt-' . str_replace( '-', '', wp_generate_uuid4() );
+
+		$payload_data = $this->build_execution_payload_data( $form, $entry, $context );
+		$attachment_payload = $this->build_attachment_payload( $form, $entry, $context );
+		$normalized_suggestion_context = $this->normalize_suggestion_context( $suggestion_context, $form, $entry );
+
+		$payload = array(
+			'central_action_id'    => $central_action_id,
+			'execution_request_id' => $execution_request_id,
+			'form_data_payload'    => $payload_data['form_data_payload'],
+			'input_manifest'       => array_merge(
+				$payload_data['input_manifest'],
+				array(
+					'attachment_manifest' => $attachment_payload['attachment_manifest'],
+				)
+			),
+			'action_context'       => $this->build_action_context(
+				$form,
+				$entry,
+				$context,
+				$execution_request_id,
+				$submission_token
+			),
+			'suggestion_context'   => $normalized_suggestion_context,
+			'file_refs'            => $attachment_payload['file_refs'],
+		);
+
+		if ( defined( 'SENTIENT_FORMS_DEBUG_CPS_PAYLOAD' ) && SENTIENT_FORMS_DEBUG_CPS_PAYLOAD ) {
+			error_log( '[sentient-forms] CPS suggest payload: ' . wp_json_encode( $payload ) );
+		}
+
+		return $client->post(
+			'/actions/suggest',
 			$payload,
 			array(
 				'bearer_token' => $proxy_key,
@@ -231,6 +321,114 @@ class Sentient_Forms_Action_Executor {
 
 		$response['evaluation_payload'] = $payload;
 		return $response;
+	}
+
+	/**
+	 * Normalize suggestion_context payload for CPS suggest endpoint.
+	 *
+	 * @param array $suggestion_context Raw context from runtime request.
+	 * @param array $form               Gravity Forms form array.
+	 * @param array $entry              Known field values.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function normalize_suggestion_context( array $suggestion_context, array $form, array $entry ): array {
+		$form_id = isset( $suggestion_context['form_id'] )
+			? sanitize_text_field( (string) $suggestion_context['form_id'] )
+			: ( isset( $form['id'] ) ? (string) $form['id'] : '' );
+		$source = isset( $suggestion_context['source'] )
+			? sanitize_key( (string) $suggestion_context['source'] )
+			: 'gravity_forms';
+		$current_page_index = isset( $suggestion_context['current_page_index'] )
+			? max( 1, (int) $suggestion_context['current_page_index'] )
+			: 1;
+		$total_pages = isset( $suggestion_context['total_pages'] )
+			? max( 1, (int) $suggestion_context['total_pages'] )
+			: 1;
+
+		$visible_field_ids = array();
+		if ( isset( $suggestion_context['visible_field_ids'] ) && is_array( $suggestion_context['visible_field_ids'] ) ) {
+			foreach ( $suggestion_context['visible_field_ids'] as $field_id ) {
+				if ( ! is_scalar( $field_id ) ) {
+					continue;
+				}
+				$normalized = sanitize_text_field( (string) $field_id );
+				if ( '' !== $normalized ) {
+					$visible_field_ids[] = $normalized;
+				}
+			}
+		}
+		$visible_field_ids = array_values( array_unique( $visible_field_ids ) );
+		if ( empty( $visible_field_ids ) ) {
+			$visible_field_ids = array_values(
+				array_filter(
+					array_map(
+						static fn( $key ): string => sanitize_text_field( (string) $key ),
+						array_keys( $entry )
+					),
+					static fn( string $field_id ): bool => '' !== $field_id
+				)
+			);
+		}
+
+		$checkpoint_field_ids = array();
+		if ( isset( $suggestion_context['checkpoint_field_ids'] ) && is_array( $suggestion_context['checkpoint_field_ids'] ) ) {
+			foreach ( $suggestion_context['checkpoint_field_ids'] as $field_id ) {
+				if ( ! is_scalar( $field_id ) ) {
+					continue;
+				}
+				$normalized = sanitize_text_field( (string) $field_id );
+				if ( '' !== $normalized ) {
+					$checkpoint_field_ids[] = $normalized;
+				}
+			}
+		}
+		$checkpoint_field_ids = array_values( array_unique( $checkpoint_field_ids ) );
+
+		$future_field_manifest = array();
+		if ( isset( $suggestion_context['future_field_manifest'] ) && is_array( $suggestion_context['future_field_manifest'] ) ) {
+			foreach ( $suggestion_context['future_field_manifest'] as $future_field ) {
+				if ( ! is_array( $future_field ) ) {
+					continue;
+				}
+				$field_id = isset( $future_field['field_id'] )
+					? sanitize_text_field( (string) $future_field['field_id'] )
+					: '';
+				$field_type = isset( $future_field['type'] )
+					? sanitize_key( (string) $future_field['type'] )
+					: '';
+				$page_index = isset( $future_field['page_index'] )
+					? max( 1, (int) $future_field['page_index'] )
+					: 1;
+				if ( '' === $field_id || '' === $field_type ) {
+					continue;
+				}
+				$manifest_entry = array(
+					'field_id'   => $field_id,
+					'type'       => $field_type,
+					'page_index' => $page_index,
+				);
+				if ( isset( $future_field['label'] ) && is_scalar( $future_field['label'] ) ) {
+					$manifest_entry['label'] = sanitize_text_field( (string) $future_field['label'] );
+				}
+				$future_field_manifest[] = $manifest_entry;
+			}
+		}
+
+		$all_known_field_values = isset( $suggestion_context['all_known_field_values'] ) && is_array( $suggestion_context['all_known_field_values'] )
+			? $suggestion_context['all_known_field_values']
+			: $entry;
+
+		return array(
+			'form_id'               => $form_id,
+			'source'                => $source,
+			'current_page_index'    => $current_page_index,
+			'total_pages'           => $total_pages,
+			'visible_field_ids'     => $visible_field_ids,
+			'checkpoint_field_ids'  => $checkpoint_field_ids,
+			'all_known_field_values'=> $all_known_field_values,
+			'future_field_manifest' => $future_field_manifest,
+		);
 	}
 
 	/**
@@ -694,6 +892,53 @@ class Sentient_Forms_Action_Executor {
 
 	private function execution_transient_key( string $execution_request_id ): string {
 		return self::TRANSIENT_PREFIX . md5( $execution_request_id );
+	}
+
+	/**
+	 * @return array{file_refs:array<int,array<string,mixed>>,attachment_manifest:array<string,mixed>}
+	 */
+	private function build_attachment_payload( array $form, array $entry, array $context ): array {
+		$builder = $this->get_attachment_file_ref_builder();
+		if ( null === $builder ) {
+			return array(
+				'file_refs'           => array(),
+				'attachment_manifest' => array(
+					'mapping_source'          => 'service_unavailable',
+					'attachment_mode'         => 'none',
+					'requested_gf_fields'     => array(),
+					'requested_media_ids'     => array(),
+					'max_files'               => 0,
+					'resolved_file_ref_count' => 0,
+					'drop_reasons'            => array(),
+				),
+			);
+		}
+
+		$payload = $builder->build_for_execution( $form, $entry, $context );
+		$file_refs = isset( $payload['file_refs'] ) && is_array( $payload['file_refs'] )
+			? array_values( $payload['file_refs'] )
+			: array();
+		$manifest = isset( $payload['attachment_manifest'] ) && is_array( $payload['attachment_manifest'] )
+			? $payload['attachment_manifest']
+			: array();
+
+		return array(
+			'file_refs'           => $file_refs,
+			'attachment_manifest' => $manifest,
+		);
+	}
+
+	private function get_attachment_file_ref_builder(): ?Sentient_Forms_Attachment_File_Ref_Builder {
+		if ( null !== $this->attachment_file_ref_builder ) {
+			return $this->attachment_file_ref_builder;
+		}
+
+		if ( ! class_exists( 'Sentient_Forms_Attachment_File_Ref_Builder' ) ) {
+			return null;
+		}
+
+		$this->attachment_file_ref_builder = new Sentient_Forms_Attachment_File_Ref_Builder( $this->plugin );
+		return $this->attachment_file_ref_builder;
 	}
 
 	private function flatten_result_for_storage( $result, string $execution_request_id, array $context ): array {

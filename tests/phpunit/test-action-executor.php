@@ -105,6 +105,8 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$call = $client->calls[0];
 		$this->assertSame( '/actions/execute', $call['path'] );
 		$this->assertSame( 'central-123', $call['payload']['central_action_id'] );
+		$this->assertArrayHasKey( 'file_refs', $call['payload'] );
+		$this->assertSame( [], $call['payload']['file_refs'] );
 		$this->assertArrayHasKey( 'input_manifest', $call['payload'] );
 		$this->assertSame( 'legacy_fallback_field_ids', $call['payload']['input_manifest']['mapping_source'] ?? null );
 		$this->assertSame( 'selected', $call['payload']['input_manifest']['mode'] ?? null );
@@ -120,6 +122,168 @@ class ActionExecutorTest extends WP_UnitTestCase {
 			$call['payload']['action_context']['submission_token']
 		);
 		$this->assertSame( 'proxy-123', $call['options']['bearer_token'] );
+	}
+
+	public function test_execute_includes_attachment_file_refs_when_builder_returns_values(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-attachments',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = [
+					'path'    => $path,
+					'payload' => $payload,
+					'options' => $options,
+				];
+
+				return [
+					'result_data' => [
+						'classification' => 'ham',
+						'llm_output'    => 'with attachment',
+					],
+					'meta'        => [
+						'credits_debited' => 40,
+					],
+				];
+			}
+		};
+
+		$builder = new class( $this->plugin ) extends Sentient_Forms_Attachment_File_Ref_Builder {
+			public function build_for_execution( array $form, array $entry, array $context = array() ): array {
+				return [
+					'file_refs' => [
+						[
+							'file_ref_id'  => '5c6690fa-b084-4a95-a1f8-d2ffea84ad13',
+							'source_type'  => 'media',
+							'media_id'     => 55,
+							'filename'     => 'brochure.pdf',
+							'content_type' => 'application/pdf',
+							'size_bytes'   => 1024,
+							'pull_url'     => 'https://example.test/wp-json/sentient-forms/v1/files/pull/abc',
+							'expires_at'   => '2026-02-26T20:00:00Z',
+						],
+					],
+					'attachment_manifest' => [
+						'attachment_mode' => 'media_library',
+						'resolved_file_ref_count' => 1,
+						'drop_reasons' => [],
+					],
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client, $builder );
+		$result   = $executor->execute(
+			'central-with-attachments',
+			[ 'id' => 31, 'title' => 'Upload Form' ],
+			[ 'id' => 990, 'field_1' => 'hello' ],
+			[ 'hook' => 'gform_after_submission' ]
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertCount( 1, $client->calls );
+
+		$payload = $client->calls[0]['payload'];
+		$this->assertCount( 1, $payload['file_refs'] ?? [] );
+		$this->assertSame( 'media', $payload['file_refs'][0]['source_type'] ?? null );
+		$this->assertSame( 55, $payload['file_refs'][0]['media_id'] ?? null );
+		$this->assertSame(
+			'media_library',
+			$payload['input_manifest']['attachment_manifest']['attachment_mode'] ?? null
+		);
+		$this->assertSame(
+			1,
+			$payload['input_manifest']['attachment_manifest']['resolved_file_ref_count'] ?? null
+		);
+	}
+
+	public function test_suggest_invokes_suggest_endpoint_with_normalized_context(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-suggest',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public array $calls = [];
+
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				$this->calls[] = [
+					'path'    => $path,
+					'payload' => $payload,
+					'options' => $options,
+				];
+
+				return [
+					'status'      => 'success',
+					'suggestions' => [
+						[
+							'suggestion_id' => wp_generate_uuid4(),
+							'field_id' => '1',
+							'severity' => 'warning',
+							'message' => 'Needs more detail.',
+							'jump_target_field_id' => '1',
+							'is_suppressed' => false,
+						],
+					],
+					'meta' => [
+						'execution_request_id' => $payload['execution_request_id'] ?? '',
+						'credits_debited' => 4,
+					],
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+		$form = [ 'id' => 55, 'title' => 'Realtime Form' ];
+		$entry = [ '1' => 'hello', '2' => 'world' ];
+		$context = [
+			'hook' => 'real_time',
+			'action_id' => 'map_rt_1',
+			'settings' => [
+				'execution_mode' => 'real_time',
+			],
+		];
+		$suggestion_context = [
+			'form_id' => '55',
+			'source' => 'gravity_forms',
+			'current_page_index' => 1,
+			'total_pages' => 2,
+			'visible_field_ids' => [ '1', '2' ],
+			'all_known_field_values' => [ '1' => 'hello', '2' => 'world' ],
+			'future_field_manifest' => [
+				[
+					'field_id' => '4',
+					'type' => 'text',
+					'page_index' => 2,
+				],
+			],
+		];
+
+		$response = $executor->suggest( 'central-rt-1', $form, $entry, $context, $suggestion_context );
+
+		$this->assertIsArray( $response );
+		$this->assertCount( 1, $client->calls );
+
+		$call = $client->calls[0];
+		$this->assertSame( '/actions/suggest', $call['path'] );
+		$this->assertSame( 'proxy-suggest', $call['options']['bearer_token'] );
+		$this->assertSame( 'central-rt-1', $call['payload']['central_action_id'] );
+		$this->assertArrayHasKey( 'execution_request_id', $call['payload'] );
+		$this->assertNotSame( '', $call['payload']['execution_request_id'] );
+		$this->assertSame( [ '1', '2' ], $call['payload']['suggestion_context']['visible_field_ids'] ?? [] );
+		$this->assertSame( '55', $call['payload']['suggestion_context']['form_id'] ?? null );
+		$this->assertSame( 'gravity_forms', $call['payload']['suggestion_context']['source'] ?? null );
+		$this->assertArrayHasKey( 'file_refs', $call['payload'] );
 	}
 
 	public function test_execute_reuses_cached_result_without_additional_requests(): void {
@@ -234,6 +398,8 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertSame( '21', $call['payload']['action_context']['form_id'] ?? null );
 		$this->assertSame( 'gravity_forms', $call['payload']['action_context']['source'] ?? null );
 		$this->assertSame( 'Hello async', $call['payload']['form_data_payload']['entry']['field_1'] ?? null );
+		$this->assertArrayHasKey( 'file_refs', $call['payload'] );
+		$this->assertSame( [], $call['payload']['file_refs'] );
 		$this->assertArrayHasKey( 'input_manifest', $call['payload'] );
 		$this->assertSame( 'legacy_fallback_field_ids', $call['payload']['input_manifest']['mapping_source'] ?? null );
 		$this->assertSame( 10, $call['payload']['async_options']['delay_seconds'] );

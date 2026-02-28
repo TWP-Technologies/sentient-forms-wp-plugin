@@ -112,6 +112,7 @@ WordPress connects to CPS via Docker internal URL `http://cps-api:8080/v1`. Test
 | `@summary-e2e` | `wp-summary-e2e.spec.ts` | Spam meta storage + credit debit |
 | `@after-submission` | `wp-summary-e2e.spec.ts` | After-submission hook tests |
 | `@data-minimization-e2e` | `wp-data-minimization-e2e.spec.ts` | Verifies mapped-field payload minimization + input manifest propagation |
+| `@realtime-suggestions` | `wp-realtime-suggestions.spec.ts` | Realtime widget/runtime behavior (checkpoint, visible-only, hotlink, 429 non-blocking) |
 
 ## MU Plugins
 

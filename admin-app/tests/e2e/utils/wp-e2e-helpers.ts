@@ -38,6 +38,15 @@ export type BatchSettings = {
 	maxWaitSeconds?: number;
 };
 
+export type RealtimeSettings = {
+	checkpointFieldIds?: string[];
+	debounceMs?: number;
+	cooldownMs?: number;
+	manualRefreshEnabled?: boolean;
+};
+
+export type ExecutionMode = 'validation' | 'after_submission' | 'real_time';
+
 export type AsyncExecutionJobRecord = {
 	id: string;
 	status: string;
@@ -86,6 +95,8 @@ type ActionMappingArgs = {
 	localMappingId?: string;
 	inputMapping?: InputMapping;
 	batchSettings?: BatchSettings;
+	executionMode?: ExecutionMode;
+	realtimeSettings?: RealtimeSettings;
 };
 
 type GravityField = {
@@ -505,24 +516,42 @@ export function configureGravityActionMapping(args: ActionMappingArgs): void {
 				max_wait_seconds: args.batchSettings.maxWaitSeconds ?? 43200
 			}
 		: undefined;
+	const realtimeSettings = args.realtimeSettings
+		? {
+				checkpoint_field_ids: args.realtimeSettings.checkpointFieldIds ?? [],
+				debounce_ms: args.realtimeSettings.debounceMs ?? 600,
+				cooldown_ms: args.realtimeSettings.cooldownMs ?? 8000,
+				manual_refresh_enabled: args.realtimeSettings.manualRefreshEnabled ?? true
+			}
+		: undefined;
+	const mappingSettings: Record<string, unknown> = {
+		input_mapping: inputMapping,
+		batch_settings: batchSettings,
+		execution_mode: args.executionMode ?? undefined,
+		realtime_settings: realtimeSettings
+	};
+	const mapping = {
+		id: mappingId,
+		enabled: true,
+		is_action_enabled_for_form: true,
+		central_action_id: args.centralActionId,
+		action_name_label: args.actionNameLabel ?? args.centralActionId,
+		trigger_hooks: args.hooks,
+		async: args.async ?? false,
+		reject_submission: args.rejectSubmission ?? false,
+		mark_as_spam: args.markAsSpam ?? false,
+		execution_priority: args.executionPriority ?? 10,
+		action_type_indicator: args.actionTypeIndicator ?? 'master',
+		action_template_id: args.actionTemplateId,
+		local_mapping_id: mappingId,
+		settings: mappingSettings
+	};
 	const settings: Record<string, unknown> = {
 		enabled: true,
-		[mappingId]: {
-			enabled: true,
-			is_action_enabled_for_form: true,
-			central_action_id: args.centralActionId,
-			action_name_label: args.actionNameLabel ?? args.centralActionId,
-			trigger_hooks: args.hooks,
-			async: args.async ?? false,
-			reject_submission: args.rejectSubmission ?? false,
-			mark_as_spam: args.markAsSpam ?? false,
-			execution_priority: args.executionPriority ?? 10,
-			action_type_indicator: args.actionTypeIndicator ?? 'master',
-			action_template_id: args.actionTemplateId,
-			local_mapping_id: mappingId,
-			input_mapping: inputMapping,
-			batch_settings: batchSettings
-		}
+		actions: {
+			[mappingId]: mapping
+		},
+		[mappingId]: mapping
 	};
 
 	const result = runWpCli(

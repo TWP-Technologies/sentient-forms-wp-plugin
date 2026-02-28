@@ -13,6 +13,7 @@ describe('mapping modal section expansion helpers', () => {
 			guidance: true,
 			spam_advanced: false,
 			input_mapping: false,
+			attachment_mapping: false,
 			conditions: false,
 			model_execution: false
 		});
@@ -24,6 +25,7 @@ describe('mapping modal section expansion helpers', () => {
 			guidance: false,
 			spam_advanced: false,
 			input_mapping: false,
+			attachment_mapping: false,
 			conditions: false,
 			model_execution: false
 		});
@@ -55,6 +57,7 @@ describe('mapping modal section expansion helpers', () => {
 			guidance: false,
 			spam_advanced: false,
 			input_mapping: false,
+			attachment_mapping: false,
 			conditions: true,
 			model_execution: false
 		});
@@ -69,4 +72,3 @@ describe('mapping modal section expansion helpers', () => {
 		expect(toggled.guidance).toBe(true);
 	});
 });
-

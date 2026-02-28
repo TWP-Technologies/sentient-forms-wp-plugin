@@ -7,51 +7,11 @@
 
 class ContractSchemaParityTest extends WP_UnitTestCase
 {
-    public function test_custom_action_response_schema_is_in_sync_between_shared_and_cps(): void
+    public function test_action_contract_schemas_are_in_sync_between_shared_and_cps(): void
     {
-        $workspace_root = dirname( __DIR__, 3 );
-        $shared_path    = $workspace_root . '/contracts/v1/actions/custom-action-response.schema.json';
-        $cps_path       = $workspace_root . '/Sentient-Forms-Central-Proxy-Server/contracts/v1/actions/custom-action-response.schema.json';
-
-        if ( ! file_exists( $shared_path ) || ! file_exists( $cps_path ) ) {
-            $this->markTestSkipped(
-                sprintf(
-                    'Contract parity requires shared + CPS schema files. shared=%s exists=%s, cps=%s exists=%s',
-                    $shared_path,
-                    file_exists( $shared_path ) ? 'yes' : 'no',
-                    $cps_path,
-                    file_exists( $cps_path ) ? 'yes' : 'no'
-                )
-            );
+        foreach ( $this->contract_schema_filenames() as $filename ) {
+            $this->assert_single_schema_in_sync( $filename );
         }
-
-        $shared_schema = $this->decode_schema_file( $shared_path );
-        $cps_schema    = $this->decode_schema_file( $cps_path );
-
-        $normalized_shared = $this->normalize_json_value( $shared_schema );
-        $normalized_cps    = $this->normalize_json_value( $cps_schema );
-
-        $shared_required = $this->extract_required_keys( $shared_schema );
-        $cps_required    = $this->extract_required_keys( $cps_schema );
-
-        $shared_properties = $this->extract_top_level_property_keys( $shared_schema );
-        $cps_properties    = $this->extract_top_level_property_keys( $cps_schema );
-
-        $missing_required_in_shared = array_values( array_diff( $cps_required, $shared_required ) );
-        $missing_required_in_cps    = array_values( array_diff( $shared_required, $cps_required ) );
-        $missing_properties_in_shared = array_values( array_diff( $cps_properties, $shared_properties ) );
-        $missing_properties_in_cps    = array_values( array_diff( $shared_properties, $cps_properties ) );
-
-        $failure_message = sprintf(
-            "Custom-action schema drift detected.\nMissing required in shared: %s\nMissing required in cps: %s\nMissing top-level properties in shared: %s\nMissing top-level properties in cps: %s\nFirst diff: %s",
-            $this->format_key_list( $missing_required_in_shared ),
-            $this->format_key_list( $missing_required_in_cps ),
-            $this->format_key_list( $missing_properties_in_shared ),
-            $this->format_key_list( $missing_properties_in_cps ),
-            $this->first_diff_snippet( $normalized_shared, $normalized_cps )
-        );
-
-        $this->assertSame( $normalized_shared, $normalized_cps, $failure_message );
     }
 
     /**
@@ -195,5 +155,71 @@ class ContractSchemaParityTest extends WP_UnitTestCase
         }
 
         return 'Diff detected but no differing line snippet could be determined.';
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function contract_schema_filenames(): array
+    {
+        return [
+            'custom-action-response.schema.json',
+            'custom-action-create-request.schema.json',
+            'custom-action-update-request.schema.json',
+            'execute-request.schema.json',
+            'execute-async-request.schema.json',
+            'execute-success.schema.json',
+            'execute-async-success.schema.json',
+            'suggest-request.schema.json',
+            'suggest-success.schema.json',
+        ];
+    }
+
+    private function assert_single_schema_in_sync( string $filename ): void
+    {
+        $workspace_root = dirname( __DIR__, 3 );
+        $shared_path    = $workspace_root . '/contracts/v1/actions/' . $filename;
+        $cps_path       = $workspace_root . '/Sentient-Forms-Central-Proxy-Server/contracts/v1/actions/' . $filename;
+
+        if ( ! file_exists( $shared_path ) || ! file_exists( $cps_path ) ) {
+            $this->markTestSkipped(
+                sprintf(
+                    'Contract parity requires shared + CPS schema files. shared=%s exists=%s, cps=%s exists=%s',
+                    $shared_path,
+                    file_exists( $shared_path ) ? 'yes' : 'no',
+                    $cps_path,
+                    file_exists( $cps_path ) ? 'yes' : 'no'
+                )
+            );
+        }
+
+        $shared_schema = $this->decode_schema_file( $shared_path );
+        $cps_schema    = $this->decode_schema_file( $cps_path );
+
+        $normalized_shared = $this->normalize_json_value( $shared_schema );
+        $normalized_cps    = $this->normalize_json_value( $cps_schema );
+
+        $shared_required = $this->extract_required_keys( $shared_schema );
+        $cps_required    = $this->extract_required_keys( $cps_schema );
+
+        $shared_properties = $this->extract_top_level_property_keys( $shared_schema );
+        $cps_properties    = $this->extract_top_level_property_keys( $cps_schema );
+
+        $missing_required_in_shared = array_values( array_diff( $cps_required, $shared_required ) );
+        $missing_required_in_cps    = array_values( array_diff( $shared_required, $cps_required ) );
+        $missing_properties_in_shared = array_values( array_diff( $cps_properties, $shared_properties ) );
+        $missing_properties_in_cps    = array_values( array_diff( $shared_properties, $cps_properties ) );
+
+        $failure_message = sprintf(
+            "Schema drift detected for %s.\nMissing required in shared: %s\nMissing required in cps: %s\nMissing top-level properties in shared: %s\nMissing top-level properties in cps: %s\nFirst diff: %s",
+            $filename,
+            $this->format_key_list( $missing_required_in_shared ),
+            $this->format_key_list( $missing_required_in_cps ),
+            $this->format_key_list( $missing_properties_in_shared ),
+            $this->format_key_list( $missing_properties_in_cps ),
+            $this->first_diff_snippet( $normalized_shared, $normalized_cps )
+        );
+
+        $this->assertSame( $normalized_shared, $normalized_cps, $failure_message );
     }
 }

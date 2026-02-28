@@ -45,8 +45,10 @@
 	import { createClientFromConfig } from '$lib/api/client';
 	import type {
 		ActionDefinition,
+		AttachmentMapping,
 		CustomAction,
 		DuplicateParentSelection,
+		ExecutionStatus,
 		FormActionConfig,
 		FormActionLinkage,
 		FormActionMutationPayload,
@@ -117,6 +119,7 @@
 	let linkedActionsView = $state<'graph' | 'table'>('graph');
 	let pendingRemovalId = $state<string | null>(null);
 	let entryLookupId = $state('');
+	let checkedEntryStatus = $state<ExecutionStatus | null>(null);
 	let refreshInterval: number | null = null;
 	let visibilityHandler: (() => void) | null = null;
 
@@ -207,6 +210,88 @@
 		} finally {
 			fieldsLoading = false;
 		}
+	}
+
+	const DEFAULT_ATTACHMENT_MAPPING: AttachmentMapping = {
+		mode: 'none',
+		gf_upload_field_ids: [],
+		media_ids: [],
+		max_files: 5
+	};
+
+	function normalizeAttachmentMapping(raw: unknown): AttachmentMapping {
+		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+			return { ...DEFAULT_ATTACHMENT_MAPPING };
+		}
+
+		const candidate = raw as Record<string, unknown>;
+		const mode =
+			typeof candidate.mode === 'string' &&
+			['none', 'gf_upload', 'media_library', 'mixed'].includes(candidate.mode)
+				? (candidate.mode as AttachmentMapping['mode'])
+				: 'none';
+		const gfUploadFieldIds = Array.isArray(candidate.gf_upload_field_ids)
+			? Array.from(
+					new Set(
+						candidate.gf_upload_field_ids
+							.map((value) => value?.toString().trim())
+							.filter((value): value is string => Boolean(value))
+					)
+				)
+			: [];
+		const mediaIds = Array.isArray(candidate.media_ids)
+			? Array.from(
+					new Set(
+						candidate.media_ids
+							.map((value) => Number.parseInt(String(value), 10))
+							.filter((value) => Number.isFinite(value) && value > 0)
+					)
+				)
+			: [];
+		const parsedMaxFiles = Number.parseInt(String(candidate.max_files ?? 5), 10);
+		const maxFiles = Number.isFinite(parsedMaxFiles)
+			? Math.max(1, Math.min(20, parsedMaxFiles))
+			: 5;
+
+		return {
+			mode,
+			gf_upload_field_ids: gfUploadFieldIds,
+			media_ids: mediaIds,
+			max_files: maxFiles
+		};
+	}
+
+	function parseMediaIdsInput(value: string): number[] {
+		return Array.from(
+			new Set(
+				value
+					.split(/[,\s]+/)
+					.map((part) => Number.parseInt(part.trim(), 10))
+					.filter((part) => Number.isFinite(part) && part > 0)
+			)
+		);
+	}
+
+	function updateAttachmentMapping(next: Partial<AttachmentMapping>) {
+		const current = normalizeAttachmentMapping(draftSettings.attachment_mapping);
+		draftSettings = {
+			...draftSettings,
+			attachment_mapping: {
+				...current,
+				...next
+			}
+		};
+	}
+
+	function toggleAttachmentUploadField(fieldId: string) {
+		const current = normalizeAttachmentMapping(draftSettings.attachment_mapping);
+		const next = new Set(current.gf_upload_field_ids ?? []);
+		if (next.has(fieldId)) {
+			next.delete(fieldId);
+		} else {
+			next.add(fieldId);
+		}
+		updateAttachmentMapping({ gf_upload_field_ids: Array.from(next) });
 	}
 
 	const definitions = $derived(actionsState.definitions ?? []);
@@ -333,6 +418,24 @@
 		return selectedCount > 0
 			? `${selectedCount} selected field${selectedCount === 1 ? '' : 's'}`
 			: 'Selected fields mode';
+	});
+	const attachmentUploadFields = $derived(
+		formFields.filter((field) => ['fileupload', 'post_image'].includes(field.type.toLowerCase()))
+	);
+	const attachmentMappingSummary = $derived.by(() => {
+		const mapping = normalizeAttachmentMapping(draftSettings.attachment_mapping);
+		if (mapping.mode === 'none') return 'Disabled';
+		const uploadCount = Array.isArray(mapping.gf_upload_field_ids)
+			? mapping.gf_upload_field_ids.length
+			: 0;
+		const mediaCount = Array.isArray(mapping.media_ids) ? mapping.media_ids.length : 0;
+		if (mapping.mode === 'gf_upload') {
+			return `${uploadCount} upload field${uploadCount === 1 ? '' : 's'}`;
+		}
+		if (mapping.mode === 'media_library') {
+			return `${mediaCount} media item${mediaCount === 1 ? '' : 's'}`;
+		}
+		return `${uploadCount} upload field${uploadCount === 1 ? '' : 's'} + ${mediaCount} media item${mediaCount === 1 ? '' : 's'}`;
 	});
 	const conditionsSummary = $derived.by(() => {
 		const conditions = (draftSettings.conditions ??
@@ -1945,6 +2048,7 @@
 		const parsed = Number.parseInt(entryLookupId.trim(), 10);
 		if (!entryLookupId.trim() || Number.isNaN(parsed) || parsed <= 0) {
 			createError = 'Entry ID must be a positive number.';
+			checkedEntryStatus = null;
 			return;
 		}
 		createError = null;
@@ -1955,6 +2059,7 @@
 				data.formId,
 				parsed
 			);
+			checkedEntryStatus = status;
 
 			if (status.status === 'error' && status.last_error) {
 				notifications.error(status.last_error);
@@ -1964,6 +2069,7 @@
 				notifications.info('No Sentient Forms execution data found for this entry.');
 			}
 		} catch (error) {
+			checkedEntryStatus = null;
 			console.error(error);
 		}
 	}
@@ -2358,6 +2464,55 @@
 					<Button type="submit" variant="secondary" size="sm">Check</Button>
 				</div>
 			</form>
+
+			{#if checkedEntryStatus}
+				<div class="sf:mt-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3 sf:space-y-1">
+					<p class="sf:text-xs sf:font-semibold sf:text-slate-700">
+						Entry {checkedEntryStatus.entry_id} status: {checkedEntryStatus.status}
+					</p>
+					{#if checkedEntryStatus.metering_summary}
+						<p class="sf:text-xs sf:text-slate-600">
+							Credits debited:
+							<strong>{checkedEntryStatus.metering_summary.credits_debited ?? 'n/a'}</strong>
+							{#if checkedEntryStatus.metering_summary.pricing_policy_version}
+								· Policy: {checkedEntryStatus.metering_summary.pricing_policy_version}
+							{/if}
+						</p>
+						{#if checkedEntryStatus.metering_summary.correlation_id}
+							<p class="sf:text-xs sf:text-slate-600 sf:break-all">
+								Correlation: {checkedEntryStatus.metering_summary.correlation_id}
+							</p>
+						{/if}
+						{#if checkedEntryStatus.metering_summary.workflow}
+							<details class="sf:pt-1">
+								<summary class="sf:cursor-pointer sf:text-xs sf:font-medium sf:text-slate-700">
+									Workflow metering breakdown
+								</summary>
+								<div class="sf:mt-1 sf:space-y-1">
+									<p class="sf:text-xs sf:text-slate-600">
+										Status: {checkedEntryStatus.metering_summary.workflow.status} · Credits total:
+										{checkedEntryStatus.metering_summary.workflow.credits_total}
+									</p>
+									{#if Object.keys(checkedEntryStatus.metering_summary.workflow.credits_by_node).length > 0}
+										<ul class="sf:text-xs sf:text-slate-600 sf:list-disc sf:pl-4">
+											{#each Object.entries(checkedEntryStatus.metering_summary.workflow.credits_by_node) as [nodeId, nodeCredits] (nodeId)}
+												<li>{nodeId}: {nodeCredits}</li>
+											{/each}
+										</ul>
+									{/if}
+									{#if checkedEntryStatus.metering_summary.workflow.failed_nodes.length > 0}
+										<p class="sf:text-xs sf:text-amber-700">
+											Failed nodes: {checkedEntryStatus.metering_summary.workflow.failed_nodes.join(', ')}
+										</p>
+									{/if}
+								</div>
+							</details>
+						{/if}
+					{:else}
+						<p class="sf:text-xs sf:text-slate-500">No metering details were recorded for this entry.</p>
+					{/if}
+				</div>
+			{/if}
 		</Card>
 	</div>
 
@@ -2888,6 +3043,136 @@
 											draftSettings = { ...draftSettings, input_mapping: mapping };
 										}}
 									/>
+								{/if}
+							</div>
+						</section>
+
+						<section class="sf:border sf:border-slate-200 sf:rounded-md">
+							<button
+								type="button"
+								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-inset"
+								aria-expanded={mappingSectionExpansion.attachment_mapping}
+								aria-controls="mapping-section-content-attachment-mapping"
+								data-testid="mapping-section-toggle-attachment_mapping"
+								onclick={() => toggleMappingSection('attachment_mapping')}
+							>
+								<span class="sf:flex sf:flex-col">
+									<span class="sf:text-sm sf:font-semibold sf:text-slate-800"
+										>Attachment mapping</span
+									>
+									<span class="sf:text-xs sf:text-slate-500">{attachmentMappingSummary}</span>
+								</span>
+								<span class="sf:text-xs sf:text-slate-500">
+									{mappingSectionExpansion.attachment_mapping ? 'Hide' : 'Show'}
+								</span>
+							</button>
+							<div
+								id="mapping-section-content-attachment-mapping"
+								class="sf:border-t sf:border-slate-200 sf:px-4 sf:py-4"
+								hidden={!mappingSectionExpansion.attachment_mapping}
+							>
+								{#if mappingSectionExpansion.attachment_mapping}
+									<div class="sf:grid sf:gap-4">
+										<label class="sf:flex sf:flex-col sf:gap-1">
+											<span class="sf:text-xs sf:font-medium sf:text-slate-500 sf:uppercase sf:tracking-wide"
+												>Source mode</span
+											>
+											<select
+												class="sf:px-3 sf:py-2 sf:text-sm sf:border sf:border-slate-300 sf:rounded sf:bg-white sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+												value={normalizeAttachmentMapping(draftSettings.attachment_mapping).mode}
+												onchange={(event) =>
+													updateAttachmentMapping({
+														mode: (event.currentTarget as HTMLSelectElement)
+															.value as AttachmentMapping['mode']
+													})}
+											>
+												<option value="none">Disabled</option>
+												<option value="gf_upload">Gravity Forms uploads</option>
+												<option value="media_library">Media library</option>
+												<option value="mixed">Mixed (uploads + media)</option>
+											</select>
+										</label>
+
+										{#if ['gf_upload', 'mixed'].includes(normalizeAttachmentMapping(draftSettings.attachment_mapping).mode)}
+											<div class="sf:grid sf:gap-2">
+												<span class="sf:text-xs sf:font-medium sf:text-slate-500 sf:uppercase sf:tracking-wide"
+													>Upload fields</span
+												>
+												{#if attachmentUploadFields.length === 0}
+													<p class="sf:text-sm sf:text-slate-500 sf:italic">
+														No upload fields found on this form.
+													</p>
+												{:else}
+													<div class="sf:grid sf:gap-2">
+														{#each attachmentUploadFields as field (field.id)}
+															<label
+																class="sf:flex sf:items-center sf:gap-2 sf:p-2 sf:rounded sf:border sf:border-slate-100 hover:sf:bg-slate-50 sf:cursor-pointer"
+															>
+																<input
+																	type="checkbox"
+																	class="sf:w-4 sf:h-4 sf:text-primary-600 sf:rounded sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+																	checked={normalizeAttachmentMapping(draftSettings.attachment_mapping).gf_upload_field_ids?.includes(field.id)}
+																	onchange={() => toggleAttachmentUploadField(field.id)}
+																/>
+																<span class="sf:text-sm sf:text-slate-700"
+																	>{field.adminLabel || field.label} ({field.id})</span
+																>
+															</label>
+														{/each}
+													</div>
+												{/if}
+											</div>
+										{/if}
+
+										{#if ['media_library', 'mixed'].includes(normalizeAttachmentMapping(draftSettings.attachment_mapping).mode)}
+											<label class="sf:flex sf:flex-col sf:gap-1">
+												<span class="sf:text-xs sf:font-medium sf:text-slate-500 sf:uppercase sf:tracking-wide"
+													>Media IDs</span
+												>
+												<input
+													type="text"
+													class="sf:px-3 sf:py-2 sf:text-sm sf:border sf:border-slate-300 sf:rounded sf:bg-white sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+													placeholder="12, 45, 98"
+													value={(normalizeAttachmentMapping(draftSettings.attachment_mapping).media_ids ?? []).join(', ')}
+													oninput={(event) =>
+														updateAttachmentMapping({
+															media_ids: parseMediaIdsInput(
+																(event.currentTarget as HTMLInputElement).value
+															)
+														})}
+												/>
+												<span class="sf:text-xs sf:text-slate-500">
+													Enter comma-separated WordPress media attachment IDs.
+												</span>
+											</label>
+										{/if}
+
+										<label class="sf:flex sf:flex-col sf:gap-1">
+											<span class="sf:text-xs sf:font-medium sf:text-slate-500 sf:uppercase sf:tracking-wide"
+												>Max files per run</span
+											>
+											<input
+												type="number"
+												min="1"
+												max="20"
+												class="sf:px-3 sf:py-2 sf:text-sm sf:border sf:border-slate-300 sf:rounded sf:bg-white sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+												value={normalizeAttachmentMapping(draftSettings.attachment_mapping).max_files ?? 5}
+												oninput={(event) =>
+													updateAttachmentMapping({
+														max_files: Math.max(
+															1,
+															Math.min(
+																20,
+																Number.parseInt(
+																	(event.currentTarget as HTMLInputElement).value || '5',
+																	10
+																)
+															)
+														)
+													})}
+											/>
+										</label>
+									</div>
 								{/if}
 							</div>
 						</section>

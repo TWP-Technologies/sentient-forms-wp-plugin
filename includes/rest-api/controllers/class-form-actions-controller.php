@@ -1961,13 +1961,16 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $last_error    = function_exists( 'gform_get_meta' ) ? gform_get_meta( $entry_id, 'sentient_forms_last_error' ) : null;
         $processed_at  = function_exists( 'gform_get_meta' ) ? gform_get_meta( $entry_id, 'sentient_forms_last_processed_at' ) : null;
 
+        $decoded_last_response = $this->maybe_decode_json_meta( $last_response );
+
         $payload = [
             'entry_id'       => $entry_id,
             'form_id'        => (int) ( $entry['form_id'] ?? 0 ),
-            'last_response'  => $this->maybe_decode_json_meta( $last_response ),
+            'last_response'  => $decoded_last_response,
             'last_error'     => is_string( $last_error ) && $last_error !== '' ? $last_error : null,
             'processed_at'   => is_string( $processed_at ) && $processed_at !== '' ? $processed_at : null,
             'status'         => is_string( $last_error ) && $last_error !== '' ? 'error' : ( $last_response ? 'success' : 'unknown' ),
+            'metering_summary' => $this->build_metering_summary( $decoded_last_response ),
         ];
 
         return $this->prepare_item_for_response( $payload );
@@ -2196,6 +2199,125 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return $value;
+    }
+
+    /**
+     * Project metering/correlation details from CPS response meta for admin UI rendering.
+     */
+    private function build_metering_summary( mixed $last_response ): ?array
+    {
+        if ( ! is_array( $last_response ) )
+        {
+            return null;
+        }
+
+        $meta = $last_response['meta'] ?? null;
+        if ( ! is_array( $meta ) )
+        {
+            return null;
+        }
+
+        $execution_request_id = isset( $meta['execution_request_id'] ) && is_scalar( $meta['execution_request_id'] )
+            ? sanitize_text_field( (string) $meta['execution_request_id'] )
+            : null;
+        $correlation_id = isset( $meta['correlation_id'] ) && is_scalar( $meta['correlation_id'] )
+            ? sanitize_text_field( (string) $meta['correlation_id'] )
+            : $execution_request_id;
+        $credits_debited = isset( $meta['credits_debited'] ) && is_numeric( $meta['credits_debited'] )
+            ? max( 0, (int) $meta['credits_debited'] )
+            : null;
+        $pricing_policy_version = isset( $meta['pricing']['pricing_policy_version'] ) && is_scalar( $meta['pricing']['pricing_policy_version'] )
+            ? sanitize_text_field( (string) $meta['pricing']['pricing_policy_version'] )
+            : null;
+        $workflow = $this->extract_workflow_metering_summary( $meta['workflow_execution'] ?? null );
+
+        if ( null === $correlation_id && null === $execution_request_id && null === $credits_debited && null === $pricing_policy_version && null === $workflow )
+        {
+            return null;
+        }
+
+        return array_filter(
+            [
+                'correlation_id' => $correlation_id,
+                'execution_request_id' => $execution_request_id,
+                'credits_debited' => $credits_debited,
+                'pricing_policy_version' => $pricing_policy_version,
+                'workflow' => $workflow,
+            ],
+            static function ( $value ): bool {
+                return null !== $value;
+            }
+        );
+    }
+
+    /**
+     * Extract workflow metering breakdown from workflow_execution response metadata.
+     */
+    private function extract_workflow_metering_summary( mixed $workflow ): ?array
+    {
+        if ( ! is_array( $workflow ) )
+        {
+            return null;
+        }
+
+        $status = isset( $workflow['status'] ) && is_scalar( $workflow['status'] )
+            ? sanitize_key( (string) $workflow['status'] )
+            : 'unknown';
+        $credits_total = isset( $workflow['credits_total'] ) && is_numeric( $workflow['credits_total'] )
+            ? max( 0, (int) $workflow['credits_total'] )
+            : 0;
+        $credits_by_node = [];
+        if ( isset( $workflow['credits_by_node'] ) && is_array( $workflow['credits_by_node'] ) )
+        {
+            foreach ( $workflow['credits_by_node'] as $node_id => $credits )
+            {
+                if ( ! is_scalar( $node_id ) || ! is_numeric( $credits ) )
+                {
+                    continue;
+                }
+                $normalized_node_id = sanitize_text_field( (string) $node_id );
+                if ( '' === $normalized_node_id )
+                {
+                    continue;
+                }
+                $credits_by_node[ $normalized_node_id ] = max( 0, (int) $credits );
+            }
+        }
+
+        $failed_nodes = [];
+        if ( isset( $workflow['nodes'] ) && is_array( $workflow['nodes'] ) )
+        {
+            foreach ( $workflow['nodes'] as $node )
+            {
+                if ( ! is_array( $node ) )
+                {
+                    continue;
+                }
+
+                $node_status = isset( $node['status'] ) && is_scalar( $node['status'] )
+                    ? sanitize_key( (string) $node['status'] )
+                    : '';
+                if ( 'failed' !== $node_status )
+                {
+                    continue;
+                }
+
+                $node_id = isset( $node['node_id'] ) && is_scalar( $node['node_id'] )
+                    ? sanitize_text_field( (string) $node['node_id'] )
+                    : '';
+                if ( '' !== $node_id )
+                {
+                    $failed_nodes[] = $node_id;
+                }
+            }
+        }
+
+        return [
+            'status' => $status,
+            'credits_total' => $credits_total,
+            'credits_by_node' => $credits_by_node,
+            'failed_nodes' => array_values( array_unique( $failed_nodes ) ),
+        ];
     }
 
     /**
@@ -2707,6 +2829,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 continue;
             }
 
+            if ( 'attachment_mapping' === $key && is_array( $value ) )
+            {
+                $sanitized[ $key ] = $this->sanitize_attachment_mapping( $value );
+                continue;
+            }
+
             if ( is_array( $value ) )
             {
                 $sanitized[ $key ] = $this->sanitize_settings( $value );
@@ -2737,6 +2865,69 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             'enabled'       => ! empty( $raw['enabled'] ),
             'delay_seconds' => max( 10, min( 3600, (int) ( $raw['delay_seconds'] ?? 60 ) ) ),
             'max_wait_seconds' => max( 43200, min( 604800, (int) ( $raw['max_wait_seconds'] ?? DAY_IN_SECONDS ) ) ),
+        ];
+    }
+
+    /**
+     * Sanitize attachment mapping settings used by file_ref serialization.
+     *
+     * @param array $raw Raw attachment mapping payload.
+     * @return array{mode:string,gf_upload_field_ids:array<int,string>,media_ids:array<int,int>,max_files:int}
+     */
+    private function sanitize_attachment_mapping( array $raw ): array
+    {
+        if ( class_exists( 'Sentient_Forms_Attachment_File_Ref_Builder' ) )
+        {
+            return Sentient_Forms_Attachment_File_Ref_Builder::sanitize_attachment_mapping( $raw );
+        }
+
+        $mode = isset( $raw['mode'] ) && is_scalar( $raw['mode'] )
+            ? sanitize_key( (string) $raw['mode'] )
+            : 'none';
+        if ( ! in_array( $mode, [ 'none', 'gf_upload', 'media_library', 'mixed' ], true ) )
+        {
+            $mode = 'none';
+        }
+
+        $gf_upload_field_ids = [];
+        if ( isset( $raw['gf_upload_field_ids'] ) && is_array( $raw['gf_upload_field_ids'] ) )
+        {
+            foreach ( $raw['gf_upload_field_ids'] as $field_id )
+            {
+                if ( ! is_scalar( $field_id ) )
+                {
+                    continue;
+                }
+
+                $normalized = sanitize_text_field( (string) $field_id );
+                if ( '' !== $normalized )
+                {
+                    $gf_upload_field_ids[] = $normalized;
+                }
+            }
+        }
+
+        $media_ids = [];
+        if ( isset( $raw['media_ids'] ) && is_array( $raw['media_ids'] ) )
+        {
+            foreach ( $raw['media_ids'] as $media_id )
+            {
+                $normalized = (int) $media_id;
+                if ( $normalized > 0 )
+                {
+                    $media_ids[] = $normalized;
+                }
+            }
+        }
+
+        $max_files = isset( $raw['max_files'] ) ? (int) $raw['max_files'] : 5;
+        $max_files = max( 1, min( 20, $max_files ) );
+
+        return [
+            'mode'                => $mode,
+            'gf_upload_field_ids' => array_values( array_unique( $gf_upload_field_ids ) ),
+            'media_ids'           => array_values( array_unique( $media_ids ) ),
+            'max_files'           => $max_files,
         ];
     }
 

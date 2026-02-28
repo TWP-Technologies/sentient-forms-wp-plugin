@@ -229,6 +229,9 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
      */
     public function execute( array $form_data, array $settings, int | string $entry_id, int | string $form_id ): WP_Error | array | bool
     {
+        $raw_mapping_settings = isset( $settings['settings'] ) && is_array( $settings['settings'] )
+            ? $settings['settings']
+            : [];
         $settings = $this->validate_settings( array_merge( $this->get_default_settings_values(), $settings ) );
 
         if ( !( $settings[ 'enabled' ] ?? true ) )
@@ -258,6 +261,7 @@ class Sentient_Forms_Spam_Analysis_Action extends Sentient_Forms_Abstract_Action
                 'action_name_label' => $settings[ 'action_name_label' ] ?? $central_action_id,
                 'action_type_indicator' => $settings['action_type_indicator'] ?? null,
                 'local_mapping_id'       => $settings['local_mapping_id'] ?? null,
+                'settings'               => $raw_mapping_settings,
             ],
             static fn ( $value ) => null !== $value && '' !== $value,
         );

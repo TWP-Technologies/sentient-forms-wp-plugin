@@ -324,6 +324,9 @@ class Sentient_Forms_Entry_Evaluation_Action extends Sentient_Forms_Abstract_Act
     public function execute( array $form_data, array $settings, $entry_id, $form_id ): WP_Error | array | bool
 
     {
+        $raw_mapping_settings = isset( $settings['settings'] ) && is_array( $settings['settings'] )
+            ? $settings['settings']
+            : [];
 
         $settings = $this->validate_settings( array_merge( $this->get_default_settings_values(), $settings ) );
 
@@ -369,6 +372,7 @@ class Sentient_Forms_Entry_Evaluation_Action extends Sentient_Forms_Abstract_Act
                 'action_name_label' => $settings['action_name_label'] ?? $central_action_id,
                 'action_type_indicator' => $settings['action_type_indicator'] ?? null,
                 'local_mapping_id'       => $settings['local_mapping_id'] ?? null,
+                'settings'               => $raw_mapping_settings,
             ],
             static fn( $value ) => null !== $value && '' !== $value,
         );

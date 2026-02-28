@@ -1,0 +1,294 @@
+<?php
+
+if ( ! class_exists( 'GFForms' ) ) {
+	class GFForms {}
+}
+
+if ( ! class_exists( 'GFAPI' ) ) {
+	class GFAPI {
+		/** @var array<int,array<string,mixed>> */
+		public static array $forms = [];
+
+		public static function get_form( $form_id ) {
+			$form_id = (int) $form_id;
+			return self::$forms[ $form_id ] ?? false;
+		}
+
+		public static function get_entry( $entry_id ) {
+			return false;
+		}
+
+		public static function get_forms(): array {
+			return array_values( self::$forms );
+		}
+	}
+}
+
+final class Sentient_Forms_Test_Suggest_Executor extends Sentient_Forms_Action_Executor {
+	public array $calls = [];
+
+	public function __construct() {}
+
+	public function suggest(
+		string $central_action_id,
+		array $form,
+		array $entry,
+		array $context,
+		array $suggestion_context
+	) {
+		$this->calls[] = [
+			'central_action_id' => $central_action_id,
+			'form' => $form,
+			'entry' => $entry,
+			'context' => $context,
+			'suggestion_context' => $suggestion_context,
+		];
+
+		return [
+			'status' => 'success',
+			'suggestions' => [
+				[
+					'suggestion_id' => wp_generate_uuid4(),
+					'field_id' => '1',
+					'severity' => 'warning',
+					'message' => 'Add detail',
+					'jump_target_field_id' => '1',
+					'is_suppressed' => false,
+				],
+			],
+			'meta' => [
+				'execution_request_id' => $context['execution_request_id'] ?? 'generated',
+				'credits_debited' => 3,
+			],
+		];
+	}
+}
+
+class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
+	private Sentient_Forms_Form_Suggestions_Controller $controller;
+	private ReflectionProperty $executor_property;
+	private Sentient_Forms_Plugin $plugin;
+
+	protected function setUp(): void {
+		parent::setUp();
+		$this->controller = new Sentient_Forms_Form_Suggestions_Controller();
+		$this->plugin = Sentient_Forms_Plugin::instance();
+		$this->executor_property = new ReflectionProperty( $this->plugin, 'action_executor' );
+		$this->executor_property->setAccessible( true );
+
+		GFAPI::$forms = [
+			42 => [
+				'id' => 42,
+				'title' => 'Realtime Test Form',
+				'fields' => [
+					(object) [
+						'id' => 1,
+						'label' => 'Name',
+						'type' => 'text',
+						'pageNumber' => 1,
+					],
+					(object) [
+						'id' => 4,
+						'label' => 'Notes',
+						'type' => 'textarea',
+						'pageNumber' => 2,
+					],
+				],
+			],
+		];
+
+		update_option(
+			'sentient_forms_actions_gravity_forms_42',
+			[
+				'actions' => [
+					[
+						'id' => 'map_rt_1',
+						'central_action_id' => 'central_rt_1',
+						'action_name_label' => 'Realtime Summary',
+						'action_type_indicator' => 'master',
+						'is_action_enabled_for_form' => true,
+						'settings' => [
+							'execution_mode' => 'real_time',
+							'realtime_settings' => [
+								'checkpoint_field_ids' => [ '1' ],
+								'debounce_ms' => 700,
+								'cooldown_ms' => 9000,
+							],
+						],
+					],
+				],
+			]
+		);
+	}
+
+	protected function tearDown(): void {
+		$this->executor_property->setValue( $this->plugin, null );
+		delete_option( 'sentient_forms_actions_gravity_forms_42' );
+		delete_transient( 'sentient_forms_rt_suggest_rl_' . md5( '42|203.0.113.10' ) );
+		unset( $_SERVER['REMOTE_ADDR'] );
+		GFAPI::$forms = [];
+		parent::tearDown();
+	}
+
+	public function test_permission_callback_public_nonce_validates_form_scoped_nonce(): void {
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_header( 'X-Sentient-Forms-Suggest-Nonce', wp_create_nonce( 'sentient_forms_realtime_suggest_42' ) );
+
+		$this->assertTrue( $this->controller->permission_callback_public_nonce( $request ) );
+	}
+
+	public function test_permission_callback_public_nonce_rejects_missing_nonce(): void {
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_id', 42 );
+
+		$this->assertFalse( $this->controller->permission_callback_public_nonce( $request ) );
+	}
+
+	public function test_rest_dispatch_prefers_suggest_route_over_local_mapping_item_route(): void {
+		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
+		$this->executor_property->setValue( $this->plugin, $stub_executor );
+
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_header( 'X-Sentient-Forms-Suggest-Nonce', wp_create_nonce( 'sentient_forms_realtime_suggest_42' ) );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_param( 'mapping_id', 'map_rt_1' );
+		$request->set_param( 'execution_request_id', 'rt-route-dispatch-42' );
+		$request->set_param( 'all_known_field_values', [ '1' => 'hello' ] );
+		$request->set_param( 'visible_field_ids', [ '1' ] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 2 );
+		$request->set_param(
+			'future_field_manifest',
+			[
+				[
+					'field_id' => '4',
+					'type' => 'textarea',
+					'page_index' => 2,
+				],
+			]
+		);
+
+		$response = rest_do_request( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$this->assertSame( 200, $response->get_status() );
+		$data = $response->get_data();
+		$this->assertSame( 'success', $data['status'] ?? null );
+		$this->assertCount( 1, $stub_executor->calls );
+	}
+
+	public function test_suggest_endpoint_executes_realtime_mapping_via_action_executor(): void {
+		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
+		$this->executor_property->setValue( $this->plugin, $stub_executor );
+
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_param( 'mapping_id', 'map_rt_1' );
+		$request->set_param( 'execution_request_id', 'rt-request-42' );
+		$request->set_param( 'all_known_field_values', [ '1' => 'hello' ] );
+		$request->set_param( 'visible_field_ids', [ '1' ] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 2 );
+		$request->set_param(
+			'future_field_manifest',
+			[
+				[
+					'field_id' => '4',
+					'type' => 'textarea',
+					'page_index' => 2,
+				],
+			]
+		);
+
+		$response = $this->controller->suggest( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$data = $response->get_data();
+		$this->assertSame( 'success', $data['status'] ?? null );
+		$this->assertCount( 1, $data['suggestions'] ?? [] );
+		$this->assertCount( 1, $stub_executor->calls );
+		$this->assertSame( 'central_rt_1', $stub_executor->calls[0]['central_action_id'] );
+		$this->assertSame( 'rt-request-42', $stub_executor->calls[0]['context']['execution_request_id'] ?? null );
+		$this->assertSame( [ '1' ], $stub_executor->calls[0]['suggestion_context']['visible_field_ids'] ?? [] );
+	}
+
+	public function test_suggest_endpoint_falls_back_to_known_values_for_visible_fields_and_builds_future_manifest(): void {
+		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
+		$this->executor_property->setValue( $this->plugin, $stub_executor );
+
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_param( 'mapping_id', 'map_rt_1' );
+		$request->set_param( 'all_known_field_values', [ '1' => 'hello', '2' => 'world' ] );
+		$request->set_param( 'visible_field_ids', [] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 2 );
+
+		$response = $this->controller->suggest( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$this->assertCount( 1, $stub_executor->calls );
+		$context = $stub_executor->calls[0]['suggestion_context'];
+		$this->assertSame( [ '1', '2' ], $context['visible_field_ids'] ?? [] );
+		$this->assertNotEmpty( $context['future_field_manifest'] ?? [] );
+		$this->assertSame( '4', $context['future_field_manifest'][0]['field_id'] ?? null );
+		$this->assertSame( 2, $context['future_field_manifest'][0]['page_index'] ?? null );
+	}
+
+	public function test_suggest_endpoint_returns_not_found_for_non_realtime_mapping(): void {
+		update_option(
+			'sentient_forms_actions_gravity_forms_42',
+			[
+				'actions' => [
+					[
+						'id' => 'map_rt_1',
+						'central_action_id' => 'central_rt_1',
+						'is_action_enabled_for_form' => true,
+						'settings' => [
+							'execution_mode' => 'after_submission',
+						],
+					],
+				],
+			]
+		);
+
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_param( 'mapping_id', 'map_rt_1' );
+		$request->set_param( 'all_known_field_values', [ '1' => 'hello' ] );
+		$request->set_param( 'visible_field_ids', [ '1' ] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 1 );
+
+		$response = $this->controller->suggest( $request );
+
+		$this->assertInstanceOf( WP_Error::class, $response );
+		$this->assertSame( 'rest_invalid_mapping', $response->get_error_code() );
+		$this->assertSame( 404, (int) ( $response->get_error_data()['status'] ?? 0 ) );
+	}
+
+	public function test_suggest_endpoint_enforces_rate_limit_per_form_and_ip(): void {
+		$_SERVER['REMOTE_ADDR'] = '203.0.113.10';
+		set_transient( 'sentient_forms_rt_suggest_rl_' . md5( '42|203.0.113.10' ), 120, MINUTE_IN_SECONDS );
+
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_param( 'mapping_id', 'map_rt_1' );
+		$request->set_param( 'all_known_field_values', [ '1' => 'hello' ] );
+		$request->set_param( 'visible_field_ids', [ '1' ] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 1 );
+
+		$response = $this->controller->suggest( $request );
+
+		$this->assertInstanceOf( WP_Error::class, $response );
+		$this->assertSame( 'rest_too_many_requests', $response->get_error_code() );
+		$this->assertSame( 429, (int) ( $response->get_error_data()['status'] ?? 0 ) );
+	}
+}

@@ -17,6 +17,12 @@ if ( !defined( 'ABSPATH' ) )
  */
 class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Interface, Sentient_Forms_Async_Capable_Adapter_Interface
 {
+    private const REALTIME_DEFAULT_DEBOUNCE_MS = 600;
+    private const REALTIME_DEFAULT_COOLDOWN_MS = 8000;
+    private const REALTIME_MIN_DEBOUNCE_MS = 300;
+    private const REALTIME_MAX_DEBOUNCE_MS = 3000;
+    private const REALTIME_MIN_COOLDOWN_MS = 1000;
+    private const REALTIME_MAX_COOLDOWN_MS = 60000;
 
     /**
      * Plugin instance
@@ -86,6 +92,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         add_action( 'gform_editor_js', [ $this, 'editor_js' ] );
         add_filter( 'gform_tooltips', [ $this, 'add_tooltips' ] );
         add_action( 'gform_field_standard_settings', [ $this, 'field_settings' ], 10, 2 );
+        add_action( 'gform_enqueue_scripts', [ $this, 'enqueue_realtime_suggestions_runtime' ], 20, 2 );
 
         add_filter( 'sentient_forms_async_evaluation_jobs', [ $this, 'filter_async_evaluation_jobs' ], 10, 3 );
     }
@@ -669,6 +676,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             'action_name_label' => $action_settings['action_name_label'] ?? $central_action_id,
             'action_type_indicator' => $action_type_indicator,
             'local_mapping_id'      => $local_mapping_id,
+            'settings'              => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                ? $action_settings['settings']
+                : [],
         ];
 
         $response = $this->plugin->get_action_executor()->execute(
@@ -969,6 +979,249 @@ HTML;
     {
         $form = $this->get_form_data( $form_id );
         return $form ? $form[ 'fields' ] : [];
+    }
+
+    /**
+     * Enqueue frontend real-time suggestion runtime for eligible mappings.
+     *
+     * @param array     $form    Gravity Forms form object/array.
+     * @param bool|int  $is_ajax Whether form is rendered via AJAX.
+     *
+     * @return void
+     */
+    public function enqueue_realtime_suggestions_runtime( array $form, bool | int $is_ajax = false ): void
+    {
+        $form_id = isset( $form['id'] ) ? absint( $form['id'] ) : 0;
+        if ( $form_id <= 0 )
+        {
+            return;
+        }
+
+        $settings = $this->get_form_settings( $form_id );
+        $runtime_config = $this->build_realtime_runtime_config( $form, $settings );
+        if ( null === $runtime_config )
+        {
+            return;
+        }
+
+        $script_handle = 'sentient-forms-realtime-suggestions';
+        $style_handle  = 'sentient-forms-realtime-suggestions';
+        wp_register_script(
+            $script_handle,
+            SENTIENT_FORMS_PLUGIN_URL . 'assets/js/realtime-suggestions.js',
+            [],
+            SENTIENT_FORMS_VERSION,
+            true
+        );
+        wp_register_style(
+            $style_handle,
+            SENTIENT_FORMS_PLUGIN_URL . 'assets/css/realtime-suggestions.css',
+            [],
+            SENTIENT_FORMS_VERSION
+        );
+
+        wp_enqueue_script( $script_handle );
+        wp_enqueue_style( $style_handle );
+
+        $json_config = wp_json_encode( $runtime_config );
+        if ( false === $json_config )
+        {
+            return;
+        }
+
+        $inline = sprintf(
+            'window.sentientFormsRealtimeSuggestions = window.sentientFormsRealtimeSuggestions || { forms: {} }; window.sentientFormsRealtimeSuggestions.forms[%1$d] = %2$s;',
+            $form_id,
+            $json_config
+        );
+        wp_add_inline_script( $script_handle, $inline, 'before' );
+    }
+
+    /**
+     * Build runtime config payload injected into the GF frontend page.
+     *
+     * @param array $form          Gravity Forms form array.
+     * @param array $form_settings Stored Sentient Forms settings for this form.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function build_realtime_runtime_config( array $form, array $form_settings ): ?array
+    {
+        $form_id = isset( $form['id'] ) ? absint( $form['id'] ) : 0;
+        if ( $form_id <= 0 )
+        {
+            return null;
+        }
+
+        $actions = isset( $form_settings['actions'] ) && is_array( $form_settings['actions'] )
+            ? $form_settings['actions']
+            : [];
+        $mappings = $this->collect_realtime_mappings( $actions );
+        if ( empty( $mappings ) )
+        {
+            return null;
+        }
+
+        $field_manifest = $this->build_form_field_manifest( $form );
+        $total_pages    = 1;
+        foreach ( $field_manifest as $field_meta )
+        {
+            $page_index = isset( $field_meta['page_index'] ) ? (int) $field_meta['page_index'] : 1;
+            if ( $page_index > $total_pages )
+            {
+                $total_pages = $page_index;
+            }
+        }
+
+        return [
+            'form_id'              => $form_id,
+            'source'               => $this->get_id(),
+            'total_pages'          => $total_pages,
+            'suggest_endpoint_url' => rest_url( sprintf( 'sentient-forms/v1/gravity_forms/forms/%d/actions/suggest', $form_id ) ),
+            'nonce'                => wp_create_nonce( 'sentient_forms_realtime_suggest_' . $form_id ),
+            'mappings'             => $mappings,
+            'field_manifest'       => $field_manifest,
+        ];
+    }
+
+    /**
+     * @param array<int,mixed> $actions
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function collect_realtime_mappings( array $actions ): array
+    {
+        $eligible = [];
+
+        foreach ( $actions as $action )
+        {
+            if ( ! is_array( $action ) )
+            {
+                continue;
+            }
+
+            $enabled = array_key_exists( 'is_action_enabled_for_form', $action )
+                ? rest_sanitize_boolean( $action['is_action_enabled_for_form'] )
+                : true;
+            if ( ! $enabled )
+            {
+                continue;
+            }
+
+            $settings = isset( $action['settings'] ) && is_array( $action['settings'] )
+                ? $action['settings']
+                : [];
+            $execution_mode = isset( $settings['execution_mode'] ) && is_scalar( $settings['execution_mode'] )
+                ? sanitize_key( (string) $settings['execution_mode'] )
+                : 'after_submission';
+            if ( 'real_time' !== $execution_mode )
+            {
+                continue;
+            }
+
+            $central_action_id = isset( $action['central_action_id'] ) && is_scalar( $action['central_action_id'] )
+                ? sanitize_text_field( (string) $action['central_action_id'] )
+                : '';
+            if ( '' === $central_action_id )
+            {
+                continue;
+            }
+
+            $mapping_id = isset( $action['id'] ) && is_scalar( $action['id'] )
+                ? sanitize_text_field( (string) $action['id'] )
+                : '';
+            if ( '' === $mapping_id )
+            {
+                $mapping_id = substr( hash( 'sha256', wp_json_encode( $action ) ), 0, 16 );
+            }
+
+            $realtime_settings = isset( $settings['realtime_settings'] ) && is_array( $settings['realtime_settings'] )
+                ? $settings['realtime_settings']
+                : [];
+            $checkpoint_field_ids = [];
+            if ( isset( $realtime_settings['checkpoint_field_ids'] ) && is_array( $realtime_settings['checkpoint_field_ids'] ) )
+            {
+                foreach ( $realtime_settings['checkpoint_field_ids'] as $field_id )
+                {
+                    if ( ! is_scalar( $field_id ) )
+                    {
+                        continue;
+                    }
+
+                    $normalized = sanitize_text_field( (string) $field_id );
+                    if ( '' !== $normalized )
+                    {
+                        $checkpoint_field_ids[] = $normalized;
+                    }
+                }
+            }
+            $checkpoint_field_ids = array_values( array_unique( $checkpoint_field_ids ) );
+
+            $eligible[] = [
+                'mapping_id'            => $mapping_id,
+                'central_action_id'     => $central_action_id,
+                'action_name_label'     => isset( $action['action_name_label'] ) && is_scalar( $action['action_name_label'] )
+                    ? sanitize_text_field( (string) $action['action_name_label'] )
+                    : $central_action_id,
+                'debounce_ms'           => $this->normalize_realtime_millis(
+                    $realtime_settings['debounce_ms'] ?? self::REALTIME_DEFAULT_DEBOUNCE_MS,
+                    self::REALTIME_MIN_DEBOUNCE_MS,
+                    self::REALTIME_MAX_DEBOUNCE_MS
+                ),
+                'cooldown_ms'           => $this->normalize_realtime_millis(
+                    $realtime_settings['cooldown_ms'] ?? self::REALTIME_DEFAULT_COOLDOWN_MS,
+                    self::REALTIME_MIN_COOLDOWN_MS,
+                    self::REALTIME_MAX_COOLDOWN_MS
+                ),
+                'manual_refresh_enabled'=> array_key_exists( 'manual_refresh_enabled', $realtime_settings )
+                    ? rest_sanitize_boolean( $realtime_settings['manual_refresh_enabled'] )
+                    : true,
+                'checkpoint_field_ids'  => $checkpoint_field_ids,
+            ];
+        }
+
+        return $eligible;
+    }
+
+    /**
+     * @param array<string,mixed> $form
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function build_form_field_manifest( array $form ): array
+    {
+        $manifest = [];
+        $fields = isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
+
+        foreach ( $fields as $field )
+        {
+            if ( ! is_object( $field ) )
+            {
+                continue;
+            }
+
+            $field_id = isset( $field->id ) ? sanitize_text_field( (string) $field->id ) : '';
+            $field_type = isset( $field->type ) ? sanitize_key( (string) $field->type ) : '';
+            if ( '' === $field_id || '' === $field_type || 'page' === $field_type )
+            {
+                continue;
+            }
+
+            $manifest[] = [
+                'field_id'   => $field_id,
+                'label'      => isset( $field->label ) ? sanitize_text_field( (string) $field->label ) : '',
+                'type'       => $field_type,
+                'page_index' => isset( $field->pageNumber ) ? max( 1, (int) $field->pageNumber ) : 1,
+            ];
+        }
+
+        return $manifest;
+    }
+
+    private function normalize_realtime_millis( mixed $raw_value, int $min, int $max ): int
+    {
+        $value = is_numeric( $raw_value ) ? (int) $raw_value : $min;
+        return max( $min, min( $max, $value ) );
     }
 
     private function get_form_option_name( int $form_id ): string
