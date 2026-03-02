@@ -56,6 +56,10 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertArrayHasKey( '/sentient-forms/v1/license', $routes, 'License route should be registered' );
         $this->assertArrayHasKey( '/sentient-forms/v1/license/activate', $routes, 'Activate route should be registered' );
         $this->assertArrayHasKey( '/sentient-forms/v1/license/deactivate', $routes, 'Deactivate route should be registered' );
+        $this->assertArrayHasKey( '/sentient-forms/v1/license/bootstrap', $routes, 'Bootstrap route should be registered' );
+        $this->assertArrayHasKey( '/sentient-forms/v1/license/billing-state', $routes, 'Billing-state route should be registered' );
+        $this->assertArrayHasKey( '/sentient-forms/v1/license/billing/checkout-session', $routes, 'Checkout-session route should be registered' );
+        $this->assertArrayHasKey( '/sentient-forms/v1/license/billing/portal-session', $routes, 'Portal-session route should be registered' );
     }
 
     public function test_get_license_info_returns_masked_key(): void
@@ -140,6 +144,192 @@ class LicenseControllerTest extends WP_UnitTestCase
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 400, $response->get_status() );
+    }
+
+    public function test_bootstrap_license_success(): void
+    {
+        $this->mock_http_response(
+            '/license/bootstrap',
+            [
+                'success' => true,
+                'data'    => [
+                    'license_id'    => 'lic-free-123',
+                    'site_id'       => 'site-free-456',
+                    'proxy_api_key' => 'bootstrap-proxy-key',
+                    'status'        => 'active',
+                    'tier'          => 'free',
+                    'expiry_date'   => null,
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/bootstrap' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+
+        $this->assertSame( 'active', $data['status'] );
+        $this->assertTrue( $data['proxy_key_present'] );
+        $this->assertSame( 'free', $data['tier'] );
+    }
+
+    public function test_get_billing_state_success(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => 'site-uuid-456',
+        ] );
+
+        $this->mock_http_response(
+            '/billing/state',
+            [
+                'success' => true,
+                'data'    => [
+                    'provider' => 'stripe',
+                    'credits'  => [
+                        'current_balance' => 100,
+                        'tier_quota'      => 100,
+                        'ledger_delta'    => 0,
+                    ],
+                    'allocation' => [
+                        'seat_quantity'            => 1,
+                        'tier_site_limit'          => 1,
+                        'allowed_sites'            => 1,
+                        'active_sites'             => 1,
+                        'over_limit'               => false,
+                        'blocked_new_activations'  => false,
+                        'grace_expires_at'         => null,
+                        'capacity_policy'          => 'tier_x_quantity_v1',
+                    ],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/license/billing-state' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'stripe', $data['provider'] );
+        $this->assertSame( 100, $data['credits']['current_balance'] );
+        $this->assertSame( 1, $data['allocation']['allowed_sites'] );
+        $this->assertFalse( $data['allocation']['blocked_new_activations'] );
+    }
+
+    public function test_create_checkout_session_with_plan_code(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => 'site-uuid-456',
+        ] );
+
+        $this->mock_http_response(
+            '/billing/checkout/session',
+            [
+                'success' => true,
+                'data'    => [
+                    'session_id'   => 'cs_test_123',
+                    'checkout_url' => 'https://checkout.stripe.com/c/pay/cs_test_123',
+                    'customer_id'  => 'cus_test_123',
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/checkout-session' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'plan_code'   => 'starter',
+            'success_url' => 'https://example.test/success',
+            'cancel_url'  => 'https://example.test/cancel',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'cs_test_123', $data['session_id'] );
+    }
+
+    public function test_create_checkout_session_requires_price_or_plan(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => 'site-uuid-456',
+        ] );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/checkout-session' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'success_url' => 'https://example.test/success',
+            'cancel_url'  => 'https://example.test/cancel',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 400, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'invalid_request', $data['code'] ?? null );
+    }
+
+    public function test_create_portal_session_success(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => 'site-uuid-456',
+        ] );
+
+        $this->mock_http_response(
+            '/billing/portal/session',
+            [
+                'success' => true,
+                'data'    => [
+                    'session_id' => 'bps_test_123',
+                    'portal_url' => 'https://billing.stripe.com/p/session/bps_test_123',
+                    'customer_id' => 'cus_test_123',
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/portal-session' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'return_url' => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'bps_test_123', $data['session_id'] );
+        $this->assertStringContainsString( 'billing.stripe.com', $data['portal_url'] );
+    }
+
+    public function test_get_billing_state_requires_active_proxy_key(): void
+    {
+        Sentient_Forms_Plugin::instance()->clear_license_data();
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/license/billing-state' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 400, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'no_active_license', $data['code'] ?? null );
     }
 
     public function test_deactivate_license_clears_data(): void

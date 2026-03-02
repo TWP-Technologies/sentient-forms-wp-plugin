@@ -2,8 +2,8 @@ import { expect, type Page } from '@playwright/test';
 import { installSentientCorsProxy } from './cors-proxy';
 
 export const wpBaseUrl = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
-const wpAdminUser = process.env.SENTIENT_WP_ADMIN_USER ?? 'sentient_admin';
-const wpAdminPass = process.env.SENTIENT_WP_ADMIN_PASS ?? 'sentient_admin';
+const wpAdminUser = process.env.SENTIENT_WP_ADMIN_USER ?? 'admin';
+const wpAdminPass = process.env.SENTIENT_WP_ADMIN_PASS ?? 'password';
 
 type SentientWindow = Window & { sentientFormsConfig?: unknown };
 

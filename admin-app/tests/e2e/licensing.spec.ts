@@ -65,6 +65,18 @@ test('licensing screen handles activation flow', async ({ page }) => {
 		});
 	});
 
+	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) => {
+		if (process.env.PLAYWRIGHT_DEBUG) {
+			console.log('route', route.request().method(), route.request().url());
+		}
+
+		return route.fulfill({
+			status: 200,
+			body: JSON.stringify({ success: true, data: status }),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+
 	await page.route('**/wp-json/sentient-forms/v1/license/deactivate', (route) => {
 		if (process.env.PLAYWRIGHT_DEBUG) {
 			console.log('route', route.request().method(), route.request().url());
@@ -88,6 +100,31 @@ test('licensing screen handles activation flow', async ({ page }) => {
 			headers: { 'content-type': 'application/json' }
 		});
 	});
+
+	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				provider: 'stripe',
+				credits: {
+					current_balance: 100,
+					tier_quota: 100,
+					ledger_delta: 0
+				},
+				allocation: {
+					seat_quantity: 1,
+					tier_site_limit: 1,
+					allowed_sites: 1,
+					active_sites: 1,
+					over_limit: false,
+					blocked_new_activations: false,
+					grace_expires_at: null,
+					capacity_policy: 'tier_x_quantity_v1'
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
 
 	await page.goto('/#/licensing');
 

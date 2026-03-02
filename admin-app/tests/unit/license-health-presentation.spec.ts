@@ -81,7 +81,7 @@ describe('license-health-presentation', () => {
 		expect(presentation.quotaCta?.action).toBe('none');
 	});
 
-	it('uses disabled placeholder CTA in licensing context for warning and critical states', () => {
+	it('uses billing CTA in licensing context for warning and critical states', () => {
 		const warningPresentation = buildCreditPresentation(
 			withCredits(5, 100),
 			'Resets Mar 1 (5 days)',
@@ -94,18 +94,18 @@ describe('license-health-presentation', () => {
 		);
 
 		expect(warningPresentation.quotaCta).toEqual({
-			label: 'Billing controls coming soon',
-			enabled: false,
+			label: 'Manage billing',
+			enabled: true,
 			reason:
-				'In-app billing, plan details, and auto top-up controls are not available in this build yet.',
-			action: 'none'
+				'Open billing management to upgrade plans, adjust seats, or update payment details.',
+			action: 'open_billing'
 		});
 		expect(criticalPresentation.quotaCta).toEqual({
-			label: 'Billing controls coming soon',
-			enabled: false,
+			label: 'Manage billing',
+			enabled: true,
 			reason:
-				'In-app billing, plan details, and auto top-up controls are not available in this build yet.',
-			action: 'none'
+				'Open billing management to upgrade plans, adjust seats, or update payment details.',
+			action: 'open_billing'
 		});
 	});
 

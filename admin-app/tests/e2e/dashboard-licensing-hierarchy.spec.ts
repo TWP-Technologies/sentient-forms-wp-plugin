@@ -9,6 +9,42 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
 			siteUrl: previewHost
 		});
+
+		await page.route('**/wp-json/sentient-forms/v1/license/billing-state**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					provider: 'stripe',
+					customer_id: 'cus_test_123',
+					subscription: {
+						provider_subscription_id: 'sub_test_123',
+						status: 'active',
+						quantity: 1,
+						cancel_at_period_end: false,
+						current_period_start: '2030-01-01T00:00:00Z',
+						current_period_end: '2030-02-01T00:00:00Z',
+						trial_end: null,
+						provider_price_id: 'price_test_starter'
+					},
+					credits: {
+						current_balance: 100,
+						tier_quota: 100,
+						ledger_delta: 0
+					},
+					allocation: {
+						seat_quantity: 1,
+						tier_site_limit: 1,
+						allowed_sites: 1,
+						active_sites: 1,
+						over_limit: false,
+						blocked_new_activations: false,
+						grace_expires_at: null,
+						capacity_policy: 'tier_x_quantity_v1'
+					}
+				})
+			})
+		);
 	});
 
 	test('dashboard emphasizes health and credits in the overview card', async ({ page }) => {
@@ -106,7 +142,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page).toHaveURL(/#\/licensing$/);
 		await expect(page.getByRole('heading', { name: 'License management' })).toBeVisible();
 		await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
-		await expect(page.getByTestId('licensing-quota-cta-button')).toBeDisabled();
+		await expect(page.getByTestId('licensing-quota-cta-button')).toBeEnabled();
 	});
 
 	test('dashboard shows shared error state when both dashboard requests fail', async ({ page }) => {
@@ -179,9 +215,9 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('licensing-details-status')).toContainText('active');
 		await expect(page.getByText('Tier: Starter')).toBeVisible();
 		await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
-		await expect(page.getByTestId('licensing-quota-cta-button')).toBeDisabled();
+		await expect(page.getByTestId('licensing-quota-cta-button')).toBeEnabled();
 		await expect(page.getByTestId('licensing-quota-cta-reason')).toContainText(
-			'not available in this build yet'
+			'Open billing management to upgrade plans, adjust seats, or update payment details.'
 		);
 	});
 

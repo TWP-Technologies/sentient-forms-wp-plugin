@@ -32,6 +32,36 @@ const defaultCredits = {
 	}
 };
 
+const defaultBillingState = {
+	provider: 'stripe',
+	customer_id: 'cus_mock_123',
+	subscription: {
+		provider_subscription_id: 'sub_mock_123',
+		status: 'active',
+		quantity: 1,
+		cancel_at_period_end: false,
+		current_period_start: '2030-01-01T00:00:00Z',
+		current_period_end: '2030-02-01T00:00:00Z',
+		trial_end: null,
+		provider_price_id: 'price_mock_pro'
+	},
+	credits: {
+		current_balance: 875,
+		tier_quota: 1000,
+		ledger_delta: 0
+	},
+	allocation: {
+		seat_quantity: 1,
+		tier_site_limit: 1,
+		allowed_sites: 1,
+		active_sites: 1,
+		over_limit: false,
+		blocked_new_activations: false,
+		grace_expires_at: null,
+		capacity_policy: 'tier_x_quantity_v1'
+	}
+};
+
 const actionDefinitions = [
 	{
 		id: 'spam_detection_v1',
@@ -271,8 +301,41 @@ export async function mockResponsiveApi(
 			});
 		}
 
+		if (method === 'POST' && endpoint === 'license/bootstrap') {
+			return respondJson(route, {
+				...defaultLicense,
+				status: 'active',
+				proxy_key_present: true
+			});
+		}
+
 		if (method === 'POST' && endpoint === 'license/deactivate') {
 			return respondJson(route, { success: true });
+		}
+
+		if (method === 'GET' && endpoint === 'license/billing-state') {
+			return respondJson(route, defaultBillingState);
+		}
+
+		if (method === 'POST' && endpoint === 'license/billing/checkout-session') {
+			const planCode =
+				typeof payload.plan_code === 'string' && payload.plan_code.length > 0
+					? payload.plan_code
+					: 'starter';
+			return respondJson(route, {
+				session_id: `cs_mock_${planCode}`,
+				checkout_url: `https://checkout.stripe.com/c/pay/${planCode}`,
+				customer_id: 'cus_mock_123',
+				subscription_id: 'sub_mock_123'
+			});
+		}
+
+		if (method === 'POST' && endpoint === 'license/billing/portal-session') {
+			return respondJson(route, {
+				session_id: 'bps_mock_123',
+				portal_url: 'https://billing.stripe.com/p/session/mock',
+				customer_id: 'cus_mock_123'
+			});
 		}
 
 		if (method === 'GET' && endpoint === 'credits/balance') {
