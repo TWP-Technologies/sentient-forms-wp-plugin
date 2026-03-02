@@ -1,7 +1,7 @@
 import type { CreditBalanceResponse, TierSummary } from '$lib/api/types';
 
 export type CreditSeverity = 'normal' | 'warning' | 'critical' | 'unknown';
-export type QuotaCtaAction = 'navigate_licensing' | 'none';
+export type QuotaCtaAction = 'navigate_licensing' | 'open_billing' | 'none';
 export type QuotaUiContext = 'dashboard' | 'licensing';
 
 export interface QuotaCtaState {
@@ -141,11 +141,28 @@ function buildQuotaCtaState(
 		};
 	}
 
+	if (context === 'licensing' && (severity === 'warning' || severity === 'critical')) {
+		return {
+			label: 'Manage billing',
+			enabled: true,
+			reason: 'Open billing management to upgrade plans, adjust seats, or update payment details.',
+			action: 'open_billing'
+		};
+	}
+
+	if (context === 'licensing' && severity === 'unknown') {
+		return {
+			label: 'Refresh billing state',
+			enabled: false,
+			reason: 'Billing details are temporarily unavailable. Retry after the current refresh finishes.',
+			action: 'none'
+		};
+	}
+
 	return {
-		label: 'Billing controls coming soon',
+		label: 'Review licensing',
 		enabled: false,
-		reason:
-			'In-app billing, plan details, and auto top-up controls are not available in this build yet.',
+		reason: 'Review licensing details to confirm credit status and next actions.',
 		action: 'none'
 	};
 }
