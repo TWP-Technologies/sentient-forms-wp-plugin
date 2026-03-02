@@ -42,6 +42,21 @@ class Sentient_Forms_Licensing_Api_Client
         return $this->parse_response( $response );
     }
 
+    public function bootstrap_license( string $site_url, string $local_site_identifier ): WP_Error | array
+    {
+        $payload = [
+            'site_url'              => $site_url,
+            'local_site_identifier' => $local_site_identifier,
+        ];
+
+        $response = wp_remote_post(
+            $this->api_url . '/license/bootstrap',
+            $this->build_request_args( $payload )
+        );
+
+        return $this->parse_response( $response );
+    }
+
     public function deactivate_license( string $proxy_api_key, string $license_id, string $site_id ): WP_Error | array
     {
         $payload = [
@@ -57,7 +72,41 @@ class Sentient_Forms_Licensing_Api_Client
         return $this->parse_response( $response );
     }
 
-    private function build_request_args( array $payload, string $proxy_api_key = '' ): array
+    public function create_checkout_session( string $proxy_api_key, array $payload ): WP_Error | array
+    {
+        $response = wp_remote_post(
+            $this->api_url . '/billing/checkout/session',
+            $this->build_request_args( $payload, $proxy_api_key )
+        );
+
+        return $this->parse_response( $response );
+    }
+
+    public function create_portal_session( string $proxy_api_key, string $return_url ): WP_Error | array
+    {
+        $payload = [
+            'return_url' => $return_url,
+        ];
+
+        $response = wp_remote_post(
+            $this->api_url . '/billing/portal/session',
+            $this->build_request_args( $payload, $proxy_api_key )
+        );
+
+        return $this->parse_response( $response );
+    }
+
+    public function get_billing_state( string $proxy_api_key ): WP_Error | array
+    {
+        $response = wp_remote_get(
+            $this->api_url . '/billing/state',
+            $this->build_request_args( [], $proxy_api_key, 'GET' )
+        );
+
+        return $this->parse_response( $response );
+    }
+
+    private function build_request_args( array $payload, string $proxy_api_key = '', string $method = 'POST' ): array
     {
         $headers = [
             'Content-Type' => 'application/json',
@@ -70,11 +119,11 @@ class Sentient_Forms_Licensing_Api_Client
         }
 
         return [
-            'method'      => 'POST',
+            'method'      => $method,
             'timeout'     => $this->timeout,
             'redirection' => 3,
             'headers'     => $headers,
-            'body'        => wp_json_encode( $payload ),
+            'body'        => 'GET' === strtoupper( $method ) ? null : wp_json_encode( $payload ),
         ];
     }
 
@@ -100,8 +149,12 @@ class Sentient_Forms_Licensing_Api_Client
             return $decoded;
         }
 
-        $error_code    = $decoded['error_code'] ?? 'license_activation_failed';
-        $error_message = $decoded['message'] ?? __( 'Unable to complete licensing request.', 'sentient-forms' );
+        $error_code = $decoded['error_code']
+            ?? ( isset( $decoded['error'] ) && is_array( $decoded['error'] ) ? ( $decoded['error']['code'] ?? null ) : null )
+            ?? 'license_activation_failed';
+        $error_message = $decoded['message']
+            ?? ( isset( $decoded['error'] ) && is_array( $decoded['error'] ) ? ( $decoded['error']['message'] ?? null ) : null )
+            ?? __( 'Unable to complete licensing request.', 'sentient-forms' );
 
         return new WP_Error( $error_code, $error_message, [ 'status' => $status_code, 'payload' => $decoded ] );
     }

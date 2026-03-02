@@ -2,6 +2,10 @@ import type {
 	ActionDefinition,
 	AsyncHealthResponse,
 	AsyncSettingsResponse,
+	BillingCheckoutSessionRequest,
+	BillingCheckoutSessionResponse,
+	BillingPortalSessionResponse,
+	BillingStateResponse,
 	CapabilitiesResponse,
 	CreditBalanceResponse,
 	CustomAction,
@@ -122,6 +126,67 @@ export class MockSentientFormsApiClient {
 		};
 	}
 
+	async bootstrapLicense(): Promise<LicenseInfoResponse> {
+		return this.getLicenseInfo();
+	}
+
+	async deactivateLicense(): Promise<void> {
+		return;
+	}
+
+	async getBillingState(): Promise<BillingStateResponse> {
+		return {
+			provider: 'stripe',
+			customer_id: 'cus_mock_123',
+			subscription: {
+				provider_subscription_id: 'sub_mock_123',
+				status: 'active',
+				quantity: 1,
+				cancel_at_period_end: false,
+				current_period_start: new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString(),
+				current_period_end: new Date(Date.now() + 23 * 24 * 3600 * 1000).toISOString(),
+				trial_end: null,
+				provider_price_id: 'price_mock_starter'
+			},
+			credits: {
+				current_balance: this.creditBalance.current_balance,
+				tier_quota: this.creditBalance.tier?.monthly_credit_quota ?? 100,
+				ledger_delta: this.creditBalance.ledger_delta ?? 0
+			},
+			allocation: {
+				seat_quantity: 1,
+				tier_site_limit: 1,
+				allowed_sites: 1,
+				active_sites: 1,
+				over_limit: false,
+				blocked_new_activations: false,
+				grace_expires_at: null,
+				capacity_policy: 'tier_x_quantity_v1'
+			}
+		};
+	}
+
+	async createCheckoutSession(
+		payload: BillingCheckoutSessionRequest
+	): Promise<BillingCheckoutSessionResponse> {
+		const planCode = payload.plan_code ?? 'starter';
+		return {
+			session_id: `cs_mock_${Date.now()}`,
+			checkout_url: `https://checkout.stripe.com/c/pay/mock-${planCode}`,
+			customer_id: 'cus_mock_123',
+			subscription_id: 'sub_mock_123'
+		};
+	}
+
+	async createPortalSession(returnUrl: string): Promise<BillingPortalSessionResponse> {
+		const target = encodeURIComponent(returnUrl);
+		return {
+			session_id: `bps_mock_${Date.now()}`,
+			portal_url: `https://billing.stripe.com/p/session/mock?return_url=${target}`,
+			customer_id: 'cus_mock_123'
+		};
+	}
+
 	async getTelemetrySettings(): Promise<TelemetrySettingsResponse> {
 		const timestamp = new Date().toISOString();
 		return {
@@ -197,7 +262,9 @@ export class MockSentientFormsApiClient {
 				central_action_id: action.central_action_id,
 				trigger_hooks: action.trigger_hooks ?? [],
 				dependency_ids: Array.isArray(action.settings?.dependency_ids)
-					? action.settings?.dependency_ids.filter((value): value is string => typeof value === 'string')
+					? action.settings?.dependency_ids.filter(
+							(value): value is string => typeof value === 'string'
+						)
 					: [],
 				trigger_sources:
 					action.settings?.trigger_sources && typeof action.settings.trigger_sources === 'object'
@@ -241,7 +308,9 @@ export class MockSentientFormsApiClient {
 		const state = await this.getFormDisabled(formSourceSlug, formId);
 		return {
 			...state,
-			message: disabled ? 'Sentient Forms disabled for this form.' : 'Sentient Forms enabled for this form.'
+			message: disabled
+				? 'Sentient Forms disabled for this form.'
+				: 'Sentient Forms enabled for this form.'
 		};
 	}
 
@@ -382,7 +451,9 @@ export class MockSentientFormsApiClient {
 
 		const movedChildren: string[] = [];
 		for (const child of preChildren) {
-			const index = this.formActions.findIndex((item) => item.local_mapping_id === child.local_mapping_id);
+			const index = this.formActions.findIndex(
+				(item) => item.local_mapping_id === child.local_mapping_id
+			);
 			if (index === -1) continue;
 			const current = this.formActions[index]!;
 			const sources = ensureHookSources(current);
@@ -491,7 +562,11 @@ export class MockSentientFormsApiClient {
 	}> {
 		return {
 			actions: this.customActions,
-			quota: { quota_max: 5, quota_used: this.customActions.length, quota_remaining: Math.max(0, 5 - this.customActions.length) }
+			quota: {
+				quota_max: 5,
+				quota_used: this.customActions.length,
+				quota_remaining: Math.max(0, 5 - this.customActions.length)
+			}
 		};
 	}
 
@@ -530,7 +605,10 @@ export class MockSentientFormsApiClient {
 		};
 	}
 
-	async updateCustomAction(id: string, patch: CustomActionUpdatePayload): Promise<{
+	async updateCustomAction(
+		id: string,
+		patch: CustomActionUpdatePayload
+	): Promise<{
 		action: CustomAction;
 		quota: CustomActionQuota;
 	}> {
@@ -552,7 +630,10 @@ export class MockSentientFormsApiClient {
 		action: CustomAction;
 		quota: CustomActionQuota;
 	}> {
-		return this.updateCustomAction(id, { status: 'archived', archived_at: new Date().toISOString() });
+		return this.updateCustomAction(id, {
+			status: 'archived',
+			archived_at: new Date().toISOString()
+		});
 	}
 
 	async reactivateCustomAction(id: string): Promise<{

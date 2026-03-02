@@ -73,7 +73,15 @@ async function load() {
 
 	try {
 		const response = await client.getLicenseInfo({ showNotifications: false });
-		assignLicenseState(mapResponse(response));
+		const mapped = mapResponse(response);
+
+		if (!mapped.proxyKeyPresent) {
+			const bootstrap = await client.bootstrapLicense({ showNotifications: false });
+			assignLicenseState(mapResponse(bootstrap));
+			return;
+		}
+
+		assignLicenseState(mapped);
 	} catch (error) {
 		console.error('Failed to load license info', error);
 		assignLicenseState({ loading: false, error: 'load' });

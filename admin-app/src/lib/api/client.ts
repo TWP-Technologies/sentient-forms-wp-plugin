@@ -4,6 +4,10 @@ import type {
 	ActionDefinition,
 	ApiErrorPayload,
 	AsyncSettingsResponse,
+	BillingCheckoutSessionRequest,
+	BillingCheckoutSessionResponse,
+	BillingPortalSessionResponse,
+	BillingStateResponse,
 	AsyncHealthResponse,
 	CloneTemplateMappingRequest,
 	CreateFormMappingRequest,
@@ -128,6 +132,52 @@ export class SentientFormsApiClient {
 
 	async deactivateLicense(options: RequestOptions = {}): Promise<void> {
 		await this.request('license/deactivate', { method: 'POST', ...options });
+	}
+
+	async bootstrapLicense(options: RequestOptions = {}): Promise<LicenseInfoResponse> {
+		const response = await this.request<RestEnvelope<LicenseInfoResponse>>('license/bootstrap', {
+			method: 'POST',
+			...options
+		});
+		return this.unwrap(response);
+	}
+
+	async getBillingState(options: RequestOptions = {}): Promise<BillingStateResponse> {
+		const response = await this.request<RestEnvelope<BillingStateResponse>>(
+			'license/billing-state',
+			options
+		);
+		return this.unwrap(response);
+	}
+
+	async createCheckoutSession(
+		payload: BillingCheckoutSessionRequest,
+		options: RequestOptions = {}
+	): Promise<BillingCheckoutSessionResponse> {
+		const response = await this.request<RestEnvelope<BillingCheckoutSessionResponse>>(
+			'license/billing/checkout-session',
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+		return this.unwrap(response);
+	}
+
+	async createPortalSession(
+		returnUrl: string,
+		options: RequestOptions = {}
+	): Promise<BillingPortalSessionResponse> {
+		const response = await this.request<RestEnvelope<BillingPortalSessionResponse>>(
+			'license/billing/portal-session',
+			{
+				method: 'POST',
+				body: { return_url: returnUrl },
+				...options
+			}
+		);
+		return this.unwrap(response);
 	}
 
 	async getTelemetrySettings(options: RequestOptions = {}): Promise<TelemetrySettingsResponse> {

@@ -97,6 +97,100 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
                 ],
             ],
         );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/bootstrap',
+            [
+                [
+                    'methods'             => WP_REST_Server::EDITABLE,
+                    'callback'            => [ $this, 'bootstrap_license' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'site_url' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'description'       => __( 'Optional site URL override.', 'sentient-forms' ),
+                            'sanitize_callback' => 'esc_url_raw',
+                        ],
+                    ],
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/billing-state',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_billing_state' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/billing/checkout-session',
+            [
+                [
+                    'methods'             => WP_REST_Server::EDITABLE,
+                    'callback'            => [ $this, 'create_checkout_session' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'price_id' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                        ],
+                        'plan_code' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_key',
+                        ],
+                        'success_url' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'esc_url_raw',
+                        ],
+                        'cancel_url' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'esc_url_raw',
+                        ],
+                        'quantity' => [
+                            'required' => false,
+                            'type'     => 'integer',
+                            'default'  => 1,
+                        ],
+                        'trial_period_days' => [
+                            'required' => false,
+                            'type'     => 'integer',
+                        ],
+                    ],
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/billing/portal-session',
+            [
+                [
+                    'methods'             => WP_REST_Server::EDITABLE,
+                    'callback'            => [ $this, 'create_portal_session' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'return_url' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'esc_url_raw',
+                        ],
+                    ],
+                ],
+            ],
+        );
     }
 
     public function get_license_info( WP_REST_Request $request ): WP_Error | WP_REST_Response
@@ -180,6 +274,151 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
                 'message' => __( 'License deactivated successfully.', 'sentient-forms' ),
                 'status'  => 'inactive',
             ]
+        );
+    }
+
+    public function bootstrap_license( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $plugin       = Sentient_Forms_Plugin::instance();
+        $license_data = $plugin->get_license_data();
+
+        if ( ! empty( $license_data['proxy_api_key'] ) && 'active' === ( $license_data['license_status'] ?? 'inactive' ) )
+        {
+            return $this->prepare_item_for_response(
+                $this->format_license_response( $license_data ),
+                200
+            );
+        }
+
+        $site_url = $request->get_param( 'site_url' );
+        $site_url = ! empty( $site_url ) ? esc_url_raw( $site_url ) : home_url();
+
+        $client   = $this->get_licensing_client();
+        $response = $client->bootstrap_license(
+            $site_url,
+            $plugin->get_local_site_identifier(),
+        );
+
+        if ( is_wp_error( $response ) )
+        {
+            return $this->prepare_cps_error( $response );
+        }
+
+        $payload = $this->normalize_activation_payload( $response );
+
+        $plugin->set_license_data(
+            [
+                'license_key'    => $license_data['license_key'] ?? '',
+                'license_status' => $payload['status'] ?? 'active',
+                'license_id'     => $payload['license_id'] ?? '',
+                'site_id'        => $payload['site_id'] ?? '',
+                'proxy_api_key'  => $payload['proxy_api_key'] ?? '',
+                'tier'           => $payload['tier'] ?? '',
+                'expiry_date'    => $payload['expiry_date'] ?? null,
+                'last_synced'    => current_time( 'mysql' ),
+            ]
+        );
+
+        return $this->prepare_item_for_response(
+            $this->format_license_response( $plugin->get_license_data() ),
+            200
+        );
+    }
+
+    public function get_billing_state( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $proxy_key = $this->require_proxy_key();
+        if ( is_wp_error( $proxy_key ) )
+        {
+            return $proxy_key;
+        }
+
+        $client   = $this->get_licensing_client();
+        $response = $client->get_billing_state( $proxy_key );
+
+        if ( is_wp_error( $response ) )
+        {
+            return $this->prepare_cps_error( $response );
+        }
+
+        return $this->prepare_item_for_response(
+            $this->normalize_activation_payload( $response ),
+            200
+        );
+    }
+
+    public function create_checkout_session( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $proxy_key = $this->require_proxy_key();
+        if ( is_wp_error( $proxy_key ) )
+        {
+            return $proxy_key;
+        }
+
+        $payload = [
+            'success_url'       => (string) $request->get_param( 'success_url' ),
+            'cancel_url'        => (string) $request->get_param( 'cancel_url' ),
+            'quantity'          => max( 1, (int) $request->get_param( 'quantity' ) ),
+        ];
+        $price_id = trim( (string) $request->get_param( 'price_id' ) );
+        if ( '' !== $price_id )
+        {
+            $payload['price_id'] = $price_id;
+        }
+
+        $plan_code = sanitize_key( (string) $request->get_param( 'plan_code' ) );
+        if ( '' !== $plan_code )
+        {
+            $payload['plan_code'] = $plan_code;
+        }
+
+        if ( empty( $payload['price_id'] ) && empty( $payload['plan_code'] ) )
+        {
+            return $this->prepare_error_response(
+                'invalid_request',
+                __( 'price_id or plan_code is required.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        $trial_days = $request->get_param( 'trial_period_days' );
+        if ( null !== $trial_days && '' !== $trial_days )
+        {
+            $payload['trial_period_days'] = max( 0, (int) $trial_days );
+        }
+
+        $client   = $this->get_licensing_client();
+        $response = $client->create_checkout_session( $proxy_key, $payload );
+        if ( is_wp_error( $response ) )
+        {
+            return $this->prepare_cps_error( $response );
+        }
+
+        return $this->prepare_item_for_response(
+            $this->normalize_activation_payload( $response ),
+            200
+        );
+    }
+
+    public function create_portal_session( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $proxy_key = $this->require_proxy_key();
+        if ( is_wp_error( $proxy_key ) )
+        {
+            return $proxy_key;
+        }
+
+        $return_url = (string) $request->get_param( 'return_url' );
+        $client     = $this->get_licensing_client();
+        $response   = $client->create_portal_session( $proxy_key, $return_url );
+        if ( is_wp_error( $response ) )
+        {
+            return $this->prepare_cps_error( $response );
+        }
+
+        return $this->prepare_item_for_response(
+            $this->normalize_activation_payload( $response ),
+            200
         );
     }
 
@@ -305,6 +544,23 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         }
 
         return $payload;
+    }
+
+    private function require_proxy_key(): WP_Error | string
+    {
+        $license_data = Sentient_Forms_Plugin::instance()->get_license_data();
+        $proxy_key    = isset( $license_data['proxy_api_key'] ) ? trim( (string) $license_data['proxy_api_key'] ) : '';
+
+        if ( '' === $proxy_key )
+        {
+            return $this->prepare_error_response(
+                'no_active_license',
+                __( 'No active license to manage billing for.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        return $proxy_key;
     }
 
     private function prepare_cps_error( WP_Error $error ): WP_Error

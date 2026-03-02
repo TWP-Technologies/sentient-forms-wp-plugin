@@ -38,6 +38,58 @@ export interface LicenseInfoResponse {
 	site_url: string;
 }
 
+export interface BillingCheckoutSessionRequest {
+	price_id?: string;
+	plan_code?: string;
+	success_url: string;
+	cancel_url: string;
+	quantity?: number;
+	trial_period_days?: number;
+}
+
+export interface BillingCheckoutSessionResponse {
+	session_id: string;
+	checkout_url: string;
+	customer_id: string;
+	subscription_id?: string | null;
+}
+
+export interface BillingPortalSessionResponse {
+	session_id: string;
+	portal_url: string;
+	customer_id: string;
+}
+
+export interface BillingStateResponse {
+	provider: string;
+	customer_id?: string | null;
+	subscription?: {
+		provider_subscription_id: string;
+		status: string;
+		quantity: number;
+		cancel_at_period_end: boolean;
+		current_period_start?: string | null;
+		current_period_end?: string | null;
+		trial_end?: string | null;
+		provider_price_id?: string | null;
+	} | null;
+	credits: {
+		current_balance: number;
+		tier_quota: number;
+		ledger_delta: number;
+	};
+	allocation?: {
+		seat_quantity: number;
+		tier_site_limit: number;
+		allowed_sites: number;
+		active_sites: number;
+		over_limit: boolean;
+		blocked_new_activations: boolean;
+		grace_expires_at?: string | null;
+		capacity_policy: string;
+	} | null;
+}
+
 export interface ApiErrorPayload {
 	error_code?: string;
 	error?: {
@@ -82,15 +134,10 @@ export interface FormFieldInfo {
 	adminLabel?: string;
 }
 
-
 /**
  * Action category for taxonomy grouping
  */
-export type ActionCategory =
-	| 'content_quality'
-	| 'data_processing'
-	| 'automation'
-	| 'custom';
+export type ActionCategory = 'content_quality' | 'data_processing' | 'automation' | 'custom';
 
 export interface ActionDefinition {
 	id: string;
@@ -109,11 +156,11 @@ export interface ActionDefinition {
  * Category for override keys (CA-UI-001 Key Taxonomy)
  */
 export type OverrideKeyCategory =
-	| 'behavior'     // Controls action behavior (strictness, style)
-	| 'output'       // Output format/presentation
-	| 'model'        // Model selection and parameters
-	| 'context'      // Context and input handling
-	| 'advanced';    // Advanced/experimental options
+	| 'behavior' // Controls action behavior (strictness, style)
+	| 'output' // Output format/presentation
+	| 'model' // Model selection and parameters
+	| 'context' // Context and input handling
+	| 'advanced'; // Advanced/experimental options
 
 /**
  * Schema definition for a single override key
@@ -628,7 +675,9 @@ export interface CustomActionCreatePayload {
 	supported_execution_modes: ExecutionMode[];
 }
 
-export type CustomActionUpdatePayload = Partial<Omit<CustomActionCreatePayload, 'template_id' | 'code'>> & {
+export type CustomActionUpdatePayload = Partial<
+	Omit<CustomActionCreatePayload, 'template_id' | 'code'>
+> & {
 	status?: CustomActionStatus;
 	archived_at?: string | null;
 };
@@ -734,11 +783,14 @@ export interface MappingSettings {
 	};
 	attachment_mapping?: AttachmentMapping;
 	conditions?: MappingConditionsConfig;
-	effect_mapping?: Record<string, {
-		mark_spam?: boolean;
-		notify_admin?: boolean;
-		reject_submission?: boolean;
-	}>;
+	effect_mapping?: Record<
+		string,
+		{
+			mark_spam?: boolean;
+			notify_admin?: boolean;
+			reject_submission?: boolean;
+		}
+	>;
 	portable_fields?: Array<{ label: string; type: string }>;
 	field_mapping?: Record<string, string>;
 }
