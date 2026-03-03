@@ -629,16 +629,39 @@ export type ExecutionMode = 'validation' | 'after_submission' | 'real_time';
 /**
  * Output contract defining expected structured output
  */
-export interface OutputContract {
-	response_type: 'text' | 'boolean' | 'classification' | 'structured';
+export interface OutputContract extends Record<string, unknown> {
+	response_type?: 'text' | 'boolean' | 'classification' | 'structured';
 	json_schema?: Record<string, unknown>;
 	confidence_score_required?: boolean;
+}
+
+export interface WorkflowNodePayload extends Record<string, unknown> {
+	node_id: string;
+	kind: 'llm_step' | 'transform_step' | 'decision_step';
+	output_key: string;
+	prompt_template?: string;
+	input_bindings?: Record<string, unknown>;
+	timeout_ms?: number;
+}
+
+export interface WorkflowEdgePayload {
+	from: string;
+	to: string;
+}
+
+export interface WorkflowDefinitionPayload extends Record<string, unknown> {
+	version?: number;
+	nodes: WorkflowNodePayload[];
+	edges?: WorkflowEdgePayload[];
+	max_parallelism?: number;
+	retry_policy?: Record<string, unknown>;
 }
 
 /**
  * Full action definition for custom_definition kind
  */
-export interface ActionDefinitionPayload {
+export interface ActionDefinitionPayload extends Record<string, unknown> {
+	workflow?: WorkflowDefinitionPayload;
 	meta_prompt?: string;
 	goal?: string;
 	success_criteria?: string[];
