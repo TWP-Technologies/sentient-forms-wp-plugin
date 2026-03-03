@@ -109,7 +109,8 @@ test('licensing screen handles activation flow', async ({ page }) => {
 				credits: {
 					current_balance: 100,
 					tier_quota: 100,
-					ledger_delta: 0
+					ledger_delta: 0,
+					top_up_available: 0
 				},
 				allocation: {
 					seat_quantity: 1,

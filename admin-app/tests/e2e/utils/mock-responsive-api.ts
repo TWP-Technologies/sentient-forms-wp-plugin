@@ -48,7 +48,8 @@ const defaultBillingState = {
 	credits: {
 		current_balance: 875,
 		tier_quota: 1000,
-		ledger_delta: 0
+		ledger_delta: 0,
+		top_up_available: 0
 	},
 	allocation: {
 		seat_quantity: 1,
@@ -327,6 +328,49 @@ export async function mockResponsiveApi(
 				checkout_url: `https://checkout.stripe.com/c/pay/${planCode}`,
 				customer_id: 'cus_mock_123',
 				subscription_id: 'sub_mock_123'
+			});
+		}
+
+		if (method === 'POST' && endpoint === 'license/billing/subscription-change') {
+			const planCode =
+				typeof payload.plan_code === 'string' && payload.plan_code.length > 0
+					? payload.plan_code
+					: 'starter';
+			const changeTiming =
+				typeof payload.change_timing === 'string' && payload.change_timing.length > 0
+					? payload.change_timing
+					: 'start_next_cycle';
+			return respondJson(route, {
+				provider_subscription_id: 'sub_mock_123',
+				provider_price_id: `price_mock_${planCode}`,
+				plan_code: planCode,
+				change_timing: changeTiming,
+				effective_at:
+					changeTiming === 'start_next_cycle' ? '2030-02-01T00:00:00Z' : null,
+				renewal_grant_applied: changeTiming === 'start_now',
+				carryover_grant_applied: changeTiming === 'start_now',
+				carryover_credits_granted: changeTiming === 'start_now' ? 200 : 0
+			});
+		}
+
+		if (method === 'POST' && endpoint === 'license/billing/top-up-session') {
+			const packCode =
+				typeof payload.pack_code === 'string' && payload.pack_code.length > 0
+					? payload.pack_code
+					: 'top_up_small';
+			const quantity =
+				typeof payload.quantity === 'number' && payload.quantity > 0 ? payload.quantity : 1;
+			const creditsByPack: Record<string, number> = {
+				top_up_small: 5000,
+				top_up_medium: 10000,
+				top_up_large: 25000
+			};
+			return respondJson(route, {
+				session_id: `cs_mock_topup_${packCode}`,
+				checkout_url: `https://checkout.stripe.com/c/pay/${packCode}`,
+				customer_id: 'cus_mock_123',
+				top_up_credits: (creditsByPack[packCode] ?? 5000) * quantity,
+				pack_code: packCode
 			});
 		}
 

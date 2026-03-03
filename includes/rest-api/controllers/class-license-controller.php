@@ -175,6 +175,70 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
 
         register_rest_route(
             $this->namespace,
+            '/' . $this->rest_base . '/billing/subscription-change',
+            [
+                [
+                    'methods'             => WP_REST_Server::EDITABLE,
+                    'callback'            => [ $this, 'change_subscription' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'plan_code' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_key',
+                        ],
+                        'change_timing' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_key',
+                            'default'           => 'start_next_cycle',
+                        ],
+                        'quantity' => [
+                            'required' => false,
+                            'type'     => 'integer',
+                            'default'  => 1,
+                        ],
+                    ],
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/billing/top-up-session',
+            [
+                [
+                    'methods'             => WP_REST_Server::EDITABLE,
+                    'callback'            => [ $this, 'create_top_up_checkout_session' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'pack_code' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_key',
+                        ],
+                        'success_url' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'esc_url_raw',
+                        ],
+                        'cancel_url' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'esc_url_raw',
+                        ],
+                        'quantity' => [
+                            'required' => false,
+                            'type'     => 'integer',
+                            'default'  => 1,
+                        ],
+                    ],
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
             '/' . $this->rest_base . '/billing/portal-session',
             [
                 [
@@ -389,6 +453,87 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
 
         $client   = $this->get_licensing_client();
         $response = $client->create_checkout_session( $proxy_key, $payload );
+        if ( is_wp_error( $response ) )
+        {
+            return $this->prepare_cps_error( $response );
+        }
+
+        return $this->prepare_item_for_response(
+            $this->normalize_activation_payload( $response ),
+            200
+        );
+    }
+
+    public function create_top_up_checkout_session( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $proxy_key = $this->require_proxy_key();
+        if ( is_wp_error( $proxy_key ) )
+        {
+            return $proxy_key;
+        }
+
+        $pack_code = sanitize_key( (string) $request->get_param( 'pack_code' ) );
+        if ( '' === $pack_code )
+        {
+            return $this->prepare_error_response(
+                'invalid_request',
+                __( 'pack_code is required.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        $payload = [
+            'pack_code'   => $pack_code,
+            'success_url' => (string) $request->get_param( 'success_url' ),
+            'cancel_url'  => (string) $request->get_param( 'cancel_url' ),
+            'quantity'    => max( 1, (int) $request->get_param( 'quantity' ) ),
+        ];
+
+        $client   = $this->get_licensing_client();
+        $response = $client->create_top_up_checkout_session( $proxy_key, $payload );
+        if ( is_wp_error( $response ) )
+        {
+            return $this->prepare_cps_error( $response );
+        }
+
+        return $this->prepare_item_for_response(
+            $this->normalize_activation_payload( $response ),
+            200
+        );
+    }
+
+    public function change_subscription( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $proxy_key = $this->require_proxy_key();
+        if ( is_wp_error( $proxy_key ) )
+        {
+            return $proxy_key;
+        }
+
+        $plan_code = sanitize_key( (string) $request->get_param( 'plan_code' ) );
+        if ( '' === $plan_code )
+        {
+            return $this->prepare_error_response(
+                'invalid_request',
+                __( 'plan_code is required.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        $change_timing = sanitize_key( (string) $request->get_param( 'change_timing' ) );
+        if ( '' === $change_timing )
+        {
+            $change_timing = 'start_next_cycle';
+        }
+
+        $payload = [
+            'plan_code'     => $plan_code,
+            'change_timing' => $change_timing,
+            'quantity'      => max( 1, (int) $request->get_param( 'quantity' ) ),
+        ];
+
+        $client   = $this->get_licensing_client();
+        $response = $client->change_subscription( $proxy_key, $payload );
         if ( is_wp_error( $response ) )
         {
             return $this->prepare_cps_error( $response );

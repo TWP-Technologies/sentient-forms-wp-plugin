@@ -54,6 +54,38 @@ export interface BillingCheckoutSessionResponse {
 	subscription_id?: string | null;
 }
 
+export interface BillingTopUpSessionRequest {
+	pack_code: string;
+	success_url: string;
+	cancel_url: string;
+	quantity?: number;
+}
+
+export interface BillingTopUpSessionResponse {
+	session_id: string;
+	checkout_url: string;
+	customer_id: string;
+	top_up_credits: number;
+	pack_code: string;
+}
+
+export interface BillingSubscriptionChangeRequest {
+	plan_code: string;
+	change_timing?: 'start_next_cycle' | 'start_now';
+	quantity?: number;
+}
+
+export interface BillingSubscriptionChangeResponse {
+	provider_subscription_id: string;
+	provider_price_id: string;
+	plan_code: string;
+	change_timing: string;
+	effective_at?: string | null;
+	renewal_grant_applied: boolean;
+	carryover_grant_applied: boolean;
+	carryover_credits_granted: number;
+}
+
 export interface BillingPortalSessionResponse {
 	session_id: string;
 	portal_url: string;
@@ -62,6 +94,8 @@ export interface BillingPortalSessionResponse {
 
 export interface BillingStateResponse {
 	provider: string;
+	provider_mode?: 'test' | 'live' | 'auto' | string;
+	provider_livemode?: boolean;
 	customer_id?: string | null;
 	subscription?: {
 		provider_subscription_id: string;
@@ -77,6 +111,7 @@ export interface BillingStateResponse {
 		current_balance: number;
 		tier_quota: number;
 		ledger_delta: number;
+		top_up_available?: number;
 	};
 	allocation?: {
 		seat_quantity: number;

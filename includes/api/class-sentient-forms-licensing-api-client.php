@@ -82,6 +82,16 @@ class Sentient_Forms_Licensing_Api_Client
         return $this->parse_response( $response );
     }
 
+    public function change_subscription( string $proxy_api_key, array $payload ): WP_Error | array
+    {
+        $response = wp_remote_post(
+            $this->api_url . '/billing/subscription/change',
+            $this->build_request_args( $payload, $proxy_api_key )
+        );
+
+        return $this->parse_response( $response );
+    }
+
     public function create_portal_session( string $proxy_api_key, string $return_url ): WP_Error | array
     {
         $payload = [
@@ -90,6 +100,16 @@ class Sentient_Forms_Licensing_Api_Client
 
         $response = wp_remote_post(
             $this->api_url . '/billing/portal/session',
+            $this->build_request_args( $payload, $proxy_api_key )
+        );
+
+        return $this->parse_response( $response );
+    }
+
+    public function create_top_up_checkout_session( string $proxy_api_key, array $payload ): WP_Error | array
+    {
+        $response = wp_remote_post(
+            $this->api_url . '/billing/checkout/top-up-session',
             $this->build_request_args( $payload, $proxy_api_key )
         );
 

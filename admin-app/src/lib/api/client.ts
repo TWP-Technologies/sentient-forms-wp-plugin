@@ -7,7 +7,11 @@ import type {
 	BillingCheckoutSessionRequest,
 	BillingCheckoutSessionResponse,
 	BillingPortalSessionResponse,
+	BillingSubscriptionChangeRequest,
+	BillingSubscriptionChangeResponse,
 	BillingStateResponse,
+	BillingTopUpSessionRequest,
+	BillingTopUpSessionResponse,
 	AsyncHealthResponse,
 	CloneTemplateMappingRequest,
 	CreateFormMappingRequest,
@@ -165,6 +169,21 @@ export class SentientFormsApiClient {
 		return this.unwrap(response);
 	}
 
+	async changeSubscription(
+		payload: BillingSubscriptionChangeRequest,
+		options: RequestOptions = {}
+	): Promise<BillingSubscriptionChangeResponse> {
+		const response = await this.request<RestEnvelope<BillingSubscriptionChangeResponse>>(
+			'license/billing/subscription-change',
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+		return this.unwrap(response);
+	}
+
 	async createPortalSession(
 		returnUrl: string,
 		options: RequestOptions = {}
@@ -174,6 +193,21 @@ export class SentientFormsApiClient {
 			{
 				method: 'POST',
 				body: { return_url: returnUrl },
+				...options
+			}
+		);
+		return this.unwrap(response);
+	}
+
+	async createTopUpCheckoutSession(
+		payload: BillingTopUpSessionRequest,
+		options: RequestOptions = {}
+	): Promise<BillingTopUpSessionResponse> {
+		const response = await this.request<RestEnvelope<BillingTopUpSessionResponse>>(
+			'license/billing/top-up-session',
+			{
+				method: 'POST',
+				body: payload,
 				...options
 			}
 		);

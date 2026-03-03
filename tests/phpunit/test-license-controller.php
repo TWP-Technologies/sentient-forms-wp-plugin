@@ -59,6 +59,8 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertArrayHasKey( '/sentient-forms/v1/license/bootstrap', $routes, 'Bootstrap route should be registered' );
         $this->assertArrayHasKey( '/sentient-forms/v1/license/billing-state', $routes, 'Billing-state route should be registered' );
         $this->assertArrayHasKey( '/sentient-forms/v1/license/billing/checkout-session', $routes, 'Checkout-session route should be registered' );
+        $this->assertArrayHasKey( '/sentient-forms/v1/license/billing/subscription-change', $routes, 'Subscription-change route should be registered' );
+        $this->assertArrayHasKey( '/sentient-forms/v1/license/billing/top-up-session', $routes, 'Top-up-session route should be registered' );
         $this->assertArrayHasKey( '/sentient-forms/v1/license/billing/portal-session', $routes, 'Portal-session route should be registered' );
     }
 
@@ -283,6 +285,49 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'invalid_request', $data['code'] ?? null );
     }
 
+    public function test_change_subscription_success(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => 'site-uuid-456',
+        ] );
+
+        $this->mock_http_response(
+            '/billing/subscription/change',
+            [
+                'success' => true,
+                'data'    => [
+                    'provider_subscription_id'  => 'sub_test_123',
+                    'provider_price_id'         => 'price_business_monthly',
+                    'plan_code'                 => 'business',
+                    'change_timing'             => 'start_next_cycle',
+                    'effective_at'              => '2030-02-01T00:00:00Z',
+                    'renewal_grant_applied'     => false,
+                    'carryover_grant_applied'   => false,
+                    'carryover_credits_granted' => 0,
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/subscription-change' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'plan_code'     => 'business',
+            'change_timing' => 'start_next_cycle',
+            'quantity'      => 1,
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'business', $data['plan_code'] );
+        $this->assertSame( 'start_next_cycle', $data['change_timing'] );
+    }
+
     public function test_create_portal_session_success(): void
     {
         $plugin = Sentient_Forms_Plugin::instance();
@@ -317,6 +362,47 @@ class LicenseControllerTest extends WP_UnitTestCase
         $data = $response->get_data();
         $this->assertSame( 'bps_test_123', $data['session_id'] );
         $this->assertStringContainsString( 'billing.stripe.com', $data['portal_url'] );
+    }
+
+    public function test_create_top_up_checkout_session_success(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => 'site-uuid-456',
+        ] );
+
+        $this->mock_http_response(
+            '/billing/checkout/top-up-session',
+            [
+                'success' => true,
+                'data'    => [
+                    'session_id'      => 'cs_test_topup_123',
+                    'checkout_url'    => 'https://checkout.stripe.com/c/pay/cs_test_topup_123',
+                    'customer_id'     => 'cus_test_123',
+                    'top_up_credits'  => 5000,
+                    'pack_code'       => 'top_up_small',
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/top-up-session' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'pack_code'   => 'top_up_small',
+            'success_url' => 'https://example.test/success',
+            'cancel_url'  => 'https://example.test/cancel',
+            'quantity'    => 1,
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'cs_test_topup_123', $data['session_id'] );
+        $this->assertSame( 5000, $data['top_up_credits'] );
     }
 
     public function test_get_billing_state_requires_active_proxy_key(): void
