@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createClientFromConfig } from '$lib/api/client';
+	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
 	import type { BillingStateResponse, CreditBalanceResponse } from '$lib/api/types';
 	import {
 		Badge,
@@ -45,24 +45,45 @@
 		credits: number;
 	}
 
+	type BillingActionContext =
+		| 'billing_state'
+		| 'checkout'
+		| 'subscription_change'
+		| 'top_up'
+		| 'portal';
+
+	interface BillingUiError {
+		title: string;
+		message: string;
+		actionLabel: string;
+		retry: () => Promise<void>;
+	}
+
+	const PAID_PLAN_TRIAL_DAYS = 30;
+	const FREE_PLAN_MONTHLY_CREDITS = 50;
+	const BUSINESS_PLAN_SITE_CAP = 200;
+
 	const checkoutPlans: CheckoutPlanOption[] = [
 		{
 			code: 'starter',
 			label: 'Starter',
-			description: '$15/month, 1 site, 1,500 monthly credits.',
-			ctaLabel: 'Choose Starter'
+			description: `$15/month, 1 site, 1,500 monthly credits. Includes a one-time ${PAID_PLAN_TRIAL_DAYS}-day paid-plan trial when eligible.`,
+			ctaLabel: 'Choose Starter',
+			trialPeriodDays: PAID_PLAN_TRIAL_DAYS
 		},
 		{
 			code: 'pro',
 			label: 'Pro',
-			description: '$39/month, up to 5 sites, 4,000 monthly credits.',
-			ctaLabel: 'Choose Pro'
+			description: `$39/month, up to 5 sites, 4,000 monthly credits. Includes a one-time ${PAID_PLAN_TRIAL_DAYS}-day paid-plan trial when eligible.`,
+			ctaLabel: 'Choose Pro',
+			trialPeriodDays: PAID_PLAN_TRIAL_DAYS
 		},
 		{
 			code: 'business',
 			label: 'Business',
-			description: '$99/month, up to 200 sites, 12,000 monthly credits.',
-			ctaLabel: 'Choose Business'
+			description: `$99/month, up to ${BUSINESS_PLAN_SITE_CAP} sites during launch, 12,000 monthly credits.`,
+			ctaLabel: 'Choose Business',
+			trialPeriodDays: PAID_PLAN_TRIAL_DAYS
 		}
 	];
 
@@ -99,7 +120,7 @@
 	let creditsError = $state<string | null>(null);
 	let billing = $state<BillingStateResponse | null>(null);
 	let billingLoading = $state(false);
-	let billingError = $state<string | null>(null);
+	let billingError = $state<BillingUiError | null>(null);
 	let checkoutPlanPending = $state<string | null>(null);
 	let topUpPackPending = $state<string | null>(null);
 	let subscriptionChangePending = $state<string | null>(null);
@@ -137,6 +158,105 @@
 		})();
 	});
 
+	function defaultBillingErrorMessage(context: BillingActionContext): string {
+		switch (context) {
+			case 'billing_state':
+				return 'Unable to load billing state.';
+			case 'checkout':
+				return 'Unable to start checkout right now.';
+			case 'subscription_change':
+				return 'Unable to change subscription right now.';
+			case 'top_up':
+				return 'Unable to start top-up checkout right now.';
+			case 'portal':
+				return 'Unable to open billing portal right now.';
+		}
+	}
+
+	function billingErrorTitle(context: BillingActionContext): string {
+		switch (context) {
+			case 'portal':
+				return 'Billing portal unavailable';
+			case 'checkout':
+			case 'subscription_change':
+			case 'top_up':
+				return 'Billing action unavailable';
+			case 'billing_state':
+			default:
+				return 'Unable to load billing state';
+		}
+	}
+
+	function billingErrorActionLabel(context: BillingActionContext): string {
+		switch (context) {
+			case 'portal':
+				return 'Retry opening billing portal';
+			case 'checkout':
+				return 'Retry checkout';
+			case 'subscription_change':
+				return 'Retry plan change';
+			case 'top_up':
+				return 'Retry top-up checkout';
+			case 'billing_state':
+			default:
+				return 'Retry billing state';
+		}
+	}
+
+	function billingErrorMessage(error: unknown, context: BillingActionContext): string {
+		if (error instanceof ApiClientError) {
+			switch (error.code) {
+				case 'billing_payment_blocked':
+					return 'Billing is blocked due to repeated chargeback activity. Contact support to review account restrictions before retrying checkout.';
+				case 'billing_not_configured':
+					return 'Billing is not configured for this environment yet. Ask an administrator to verify Stripe keys and webhook secrets.';
+				case 'trial_unavailable':
+					return `This license already consumed its one-time ${PAID_PLAN_TRIAL_DAYS}-day paid-plan trial. Continue with a paid plan to switch tiers.`;
+				case 'billing_provider_unreachable':
+				case 'billing_provider_error':
+					return 'Stripe is temporarily unavailable. Retry in a moment or use Manage billing once connectivity recovers.';
+			}
+
+			const payload = error.payload as
+				| {
+						message?: string;
+						error?: { message?: string };
+				  }
+				| undefined;
+			const providerMessage =
+				payload?.message?.trim() ||
+				payload?.error?.message?.trim() ||
+				error.message.trim();
+			if (providerMessage.length > 0 && providerMessage !== 'Request failed') {
+				return providerMessage;
+			}
+		}
+
+		if (error instanceof Error && error.message.trim().length > 0) {
+			return error.message.trim();
+		}
+
+		return defaultBillingErrorMessage(context);
+	}
+
+	function setBillingError(
+		error: unknown,
+		context: BillingActionContext,
+		retry: () => Promise<void>,
+		notify = true
+	): void {
+		const message = billingErrorMessage(error, context);
+		billingError = {
+			title: billingErrorTitle(context),
+			message,
+			actionLabel: billingErrorActionLabel(context),
+			retry
+		};
+		if (notify) {
+			notifications.error(message);
+		}
+	}
+
 	async function fetchCredits() {
 		creditsLoading = true;
 		creditsError = null;
@@ -168,7 +288,7 @@
 		} catch (error) {
 			console.error('Failed to fetch billing state', error);
 			billing = null;
-			billingError = 'Unable to load billing state.';
+			setBillingError(error, 'billing_state', fetchBillingState, false);
 		} finally {
 			billingLoading = false;
 		}
@@ -208,8 +328,7 @@
 			}
 		} catch (error) {
 			console.error('Failed to create billing portal session', error);
-			notifications.error('Unable to open billing portal right now.');
-			billingError = 'Unable to open billing portal right now.';
+			setBillingError(error, 'portal', handleOpenBillingPortal);
 		} finally {
 			portalLoading = false;
 		}
@@ -240,8 +359,9 @@
 			}
 		} catch (error) {
 			console.error('Failed to create checkout session', error);
-			notifications.error('Unable to start checkout right now.');
-			billingError = 'Unable to start checkout right now.';
+			setBillingError(error, 'checkout', async () => {
+				await handleCheckout(plan);
+			});
 		} finally {
 			checkoutPlanPending = null;
 		}
@@ -266,8 +386,9 @@
 			await Promise.all([fetchCredits(), fetchBillingState()]);
 		} catch (error) {
 			console.error('Failed to change subscription plan', error);
-			notifications.error('Unable to change subscription right now.');
-			billingError = 'Unable to change subscription right now.';
+			setBillingError(error, 'subscription_change', async () => {
+				await handleSubscriptionChange(plan);
+			});
 		} finally {
 			subscriptionChangePending = null;
 		}
@@ -292,8 +413,9 @@
 			}
 		} catch (error) {
 			console.error('Failed to create top-up checkout session', error);
-			notifications.error('Unable to start top-up checkout right now.');
-			billingError = 'Unable to start top-up checkout right now.';
+			setBillingError(error, 'top_up', async () => {
+				await handleTopUpCheckout(pack);
+			});
 		} finally {
 			topUpPackPending = null;
 		}
@@ -469,6 +591,16 @@
 								Current period ends {formatTimestamp(billing.subscription.current_period_end)}
 							</p>
 						{/if}
+						{#if billing?.subscription?.status === 'trialing'}
+							<p class="sf:text-xs sf:font-semibold sf:text-success-700" data-testid="licensing-trial-status-note">
+								{#if billing.subscription.trial_end}
+									Trial active until {formatTimestamp(billing.subscription.trial_end)}.
+								{:else}
+									Trial active for this subscription.
+								{/if}
+								One-time {PAID_PLAN_TRIAL_DAYS}-day paid-plan trial.
+							</p>
+						{/if}
 						<p class="sf:text-xs sf:text-slate-500">Site capacity: {billingAllocationUsage}</p>
 						{#if typeof billing?.credits?.top_up_available === 'number'}
 							<p class="sf:text-xs sf:text-slate-500">
@@ -501,6 +633,14 @@
 				</div>
 
 				<div class="sf:grid sf:gap-3 sf:md:grid-cols-3">
+					{#if !hasExistingSubscription}
+						<p
+							class="sf:md:col-span-3 sf:text-xs sf:text-slate-500"
+							data-testid="licensing-trial-policy-note"
+						>
+							New paid subscriptions include a one-time {PAID_PLAN_TRIAL_DAYS}-day trial when eligible. Private beta sites can remain on Free with {FREE_PLAN_MONTHLY_CREDITS} credits each month until you upgrade.
+						</p>
+					{/if}
 					{#if hasExistingSubscription}
 						<div class="sf:md:col-span-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3 sf:space-y-2">
 							<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
@@ -531,6 +671,12 @@
 							</p>
 						</div>
 					{/if}
+					<p
+						class="sf:md:col-span-3 sf:text-xs sf:text-slate-500"
+						data-testid="licensing-business-cap-note"
+					>
+						Business currently supports up to {BUSINESS_PLAN_SITE_CAP} sites during launch. Contact support for larger agency or multi-brand allocations.
+					</p>
 					{#each checkoutPlans as plan}
 						<div
 							class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:space-y-2"
@@ -588,11 +734,11 @@
 				{#if billingError}
 					<StateTemplate
 						variant="error"
-						title="Billing action unavailable"
-						message={billingError}
-						actionLabel="Retry billing state"
+						title={billingError.title}
+						message={billingError.message}
+						actionLabel={billingError.actionLabel}
 						onAction={() => {
-							void fetchBillingState();
+							void billingError.retry();
 						}}
 						inline
 						testId="licensing-billing-error-state"

@@ -2,18 +2,6 @@ import { expect, test } from '@playwright/test';
 import { seedRuntimeConfig } from './utils/runtime-config';
 
 test('licensing screen handles activation flow', async ({ page }) => {
-	page.on('console', (msg) => {
-		if (process.env.PLAYWRIGHT_DEBUG) {
-			console.log('console', msg.type(), msg.text());
-		}
-	});
-
-	page.on('requestfailed', (request) => {
-		if (process.env.PLAYWRIGHT_DEBUG) {
-			console.log('request failed', request.method(), request.url(), request.failure());
-		}
-	});
-
 	let status = {
 		status: 'inactive',
 		license_key_masked: '',
@@ -29,34 +17,26 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
-	await page.route('**/wp-json/sentient-forms/v1/license', (route) => {
-		if (process.env.PLAYWRIGHT_DEBUG) {
-			console.log('route', route.request().method(), route.request().url());
-		}
-
-		return route.fulfill({
+	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
+		route.fulfill({
 			status: 200,
 			body: JSON.stringify({ success: true, data: status }),
 			headers: { 'content-type': 'application/json' }
-		});
-	});
+		})
+	);
 
 	await page.route('**/wp-json/sentient-forms/v1/license/activate', (route) => {
-		if (process.env.PLAYWRIGHT_DEBUG) {
-			console.log('route', route.request().method(), route.request().url());
-		}
-
-			status = {
-				status: 'active',
-				license_key_masked: 'LIC-****-****-****',
-				proxy_key_present: true,
-				tier: 'starter',
-				expires_at: '2030-01-01T00:00:00Z',
-				last_synced: '2030-01-01T00:00:00Z',
-				license_id: 'lic-1',
-				site_id: 'site-1',
-				site_url: 'https://example.test'
-			};
+		status = {
+			status: 'active',
+			license_key_masked: 'LIC-****-****-****',
+			proxy_key_present: true,
+			tier: 'starter',
+			expires_at: '2030-01-01T00:00:00Z',
+			last_synced: '2030-01-01T00:00:00Z',
+			license_id: 'lic-1',
+			site_id: 'site-1',
+			site_url: 'https://example.test'
+		};
 
 		return route.fulfill({
 			status: 200,
@@ -65,34 +45,26 @@ test('licensing screen handles activation flow', async ({ page }) => {
 		});
 	});
 
-	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) => {
-		if (process.env.PLAYWRIGHT_DEBUG) {
-			console.log('route', route.request().method(), route.request().url());
-		}
-
-		return route.fulfill({
+	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) =>
+		route.fulfill({
 			status: 200,
 			body: JSON.stringify({ success: true, data: status }),
 			headers: { 'content-type': 'application/json' }
-		});
-	});
+		})
+	);
 
 	await page.route('**/wp-json/sentient-forms/v1/license/deactivate', (route) => {
-		if (process.env.PLAYWRIGHT_DEBUG) {
-			console.log('route', route.request().method(), route.request().url());
-		}
-
-			status = {
-				status: 'inactive',
-				license_key_masked: '',
-				proxy_key_present: false,
-				tier: null,
-				expires_at: null,
-				last_synced: '2030-01-02T00:00:00Z',
-				license_id: null,
-				site_id: null,
-				site_url: 'https://example.test'
-			};
+		status = {
+			status: 'inactive',
+			license_key_masked: '',
+			proxy_key_present: false,
+			tier: null,
+			expires_at: null,
+			last_synced: '2030-01-02T00:00:00Z',
+			license_id: null,
+			site_id: null,
+			site_url: 'https://example.test'
+		};
 
 		return route.fulfill({
 			status: 200,
@@ -100,27 +72,49 @@ test('licensing screen handles activation flow', async ({ page }) => {
 			headers: { 'content-type': 'application/json' }
 		});
 	});
+
+	await page.route('**/wp-json/sentient-forms/v1/credits/balance', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					current_balance: 50,
+					ledger_delta: 0,
+					tier: {
+						code: 'free',
+						display_name: 'Free',
+						monthly_credit_quota: 50
+					}
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
 
 	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
-				provider: 'stripe',
-				credits: {
-					current_balance: 100,
-					tier_quota: 100,
-					ledger_delta: 0,
-					top_up_available: 0
-				},
-				allocation: {
-					seat_quantity: 1,
-					tier_site_limit: 1,
-					allowed_sites: 1,
-					active_sites: 1,
-					over_limit: false,
-					blocked_new_activations: false,
-					grace_expires_at: null,
-					capacity_policy: 'tier_x_quantity_v1'
+				success: true,
+				data: {
+					provider: 'stripe',
+					credits: {
+						current_balance: 100,
+						tier_quota: 100,
+						ledger_delta: 0,
+						top_up_available: 0
+					},
+					allocation: {
+						seat_quantity: 1,
+						tier_site_limit: 1,
+						allowed_sites: 1,
+						active_sites: 1,
+						over_limit: false,
+						blocked_new_activations: false,
+						grace_expires_at: null,
+						capacity_policy: 'tier_x_quantity_v1'
+					}
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -136,9 +130,129 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	await page.getByRole('button', { name: 'Activate', exact: true }).click();
 
 	await expect(page.getByText('Tier: starter')).toBeVisible();
+	await expect(page.getByTestId('licensing-trial-policy-note')).toContainText('one-time 30-day trial');
+	await expect(page.getByTestId('licensing-trial-policy-note')).toContainText(
+		'Free with 50 credits each month'
+	);
+	await expect(page.getByTestId('licensing-business-cap-note')).toContainText(
+		'up to 200 sites during launch'
+	);
+
 	const deactivateButton = page.getByRole('button', { name: 'Deactivate license' });
 	await expect(deactivateButton).toBeVisible();
 
 	await deactivateButton.click();
 	await expect(deactivateButton).not.toBeVisible();
+});
+
+test('licensing billing error state maps portal failures to actionable copy', async ({ page }) => {
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+
+	let portalAttempts = 0;
+
+	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					status: 'active',
+					license_key_masked: 'LIC-****-****-****',
+					proxy_key_present: true,
+					tier: 'starter',
+					expires_at: '2030-01-01T00:00:00Z',
+					last_synced: '2030-01-01T00:00:00Z',
+					license_id: 'lic-portal',
+					site_id: 'site-portal',
+					site_url: 'https://example.test'
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.route('**/wp-json/sentient-forms/v1/credits/balance', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					current_balance: 1500,
+					ledger_delta: 0,
+					tier: {
+						code: 'starter',
+						display_name: 'Starter',
+						monthly_credit_quota: 1500
+					}
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					provider: 'stripe',
+					customer_id: 'cus_test_123',
+					subscription: {
+						provider_subscription_id: 'sub_test_123',
+						status: 'active',
+						quantity: 1,
+						cancel_at_period_end: false,
+						current_period_start: '2030-01-01T00:00:00Z',
+						current_period_end: '2030-02-01T00:00:00Z',
+						trial_end: null,
+						provider_price_id: 'price_test_starter'
+					},
+					credits: {
+						current_balance: 1500,
+						tier_quota: 1500,
+						ledger_delta: 0,
+						top_up_available: 0
+					},
+					allocation: {
+						seat_quantity: 1,
+						tier_site_limit: 1,
+						allowed_sites: 1,
+						active_sites: 1,
+						over_limit: false,
+						blocked_new_activations: false,
+						grace_expires_at: null,
+						capacity_policy: 'tier_x_quantity_v1'
+					}
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.route('**/wp-json/sentient-forms/v1/license/billing/portal-session', (route) => {
+		portalAttempts += 1;
+		return route.fulfill({
+			status: 403,
+			body: JSON.stringify({
+				error_code: 'billing_payment_blocked',
+				message: 'Billing is blocked for this customer due to prior chargeback activity.'
+			}),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+
+	await page.goto('/#/licensing', { waitUntil: 'networkidle' });
+
+	await page.getByRole('button', { name: 'Manage billing' }).click();
+	const errorState = page.getByTestId('licensing-billing-error-state');
+	await expect(errorState).toBeVisible();
+	await expect(errorState).toContainText('Billing portal unavailable');
+	await expect(errorState).toContainText('repeated chargeback activity');
+
+	const retryButton = page.getByRole('button', { name: 'Retry opening billing portal' });
+	await expect(retryButton).toBeVisible();
+	await retryButton.click();
+	await expect.poll(() => portalAttempts).toBe(2);
 });
