@@ -4,6 +4,7 @@ import type {
 	AsyncSettingsResponse,
 	BillingCheckoutSessionRequest,
 	BillingCheckoutSessionResponse,
+	BillingPortalSessionRequest,
 	BillingPortalSessionResponse,
 	BillingSubscriptionChangeRequest,
 	BillingSubscriptionChangeResponse,
@@ -202,8 +203,10 @@ export class MockSentientFormsApiClient {
 		};
 	}
 
-	async createPortalSession(returnUrl: string): Promise<BillingPortalSessionResponse> {
-		const target = encodeURIComponent(returnUrl);
+	async createPortalSession(
+		payload: BillingPortalSessionRequest
+	): Promise<BillingPortalSessionResponse> {
+		const target = encodeURIComponent(payload.return_url);
 		return {
 			session_id: `bps_mock_${Date.now()}`,
 			portal_url: `https://billing.stripe.com/p/session/mock?return_url=${target}`,

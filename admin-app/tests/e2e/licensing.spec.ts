@@ -130,7 +130,9 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	await page.getByRole('button', { name: 'Activate', exact: true }).click();
 
 	await expect(page.getByText('Tier: starter')).toBeVisible();
-	await expect(page.getByTestId('licensing-trial-policy-note')).toContainText('one-time 30-day trial');
+	await expect(page.getByTestId('licensing-trial-policy-note')).toContainText(
+		'one-time 30-day trial'
+	);
 	await expect(page.getByTestId('licensing-trial-policy-note')).toContainText(
 		'Free with 50 credits each month'
 	);
@@ -233,6 +235,11 @@ test('licensing billing error state maps portal failures to actionable copy', as
 
 	await page.route('**/wp-json/sentient-forms/v1/license/billing/portal-session', (route) => {
 		portalAttempts += 1;
+		const body = route.request().postDataJSON() as
+			| { flow_type?: string; subscription_id?: string; return_url?: string }
+			| undefined;
+		expect(body?.flow_type).toBe('subscription_update');
+		expect(body?.subscription_id).toBe('sub_test_123');
 		return route.fulfill({
 			status: 403,
 			body: JSON.stringify({
@@ -255,4 +262,137 @@ test('licensing billing error state maps portal failures to actionable copy', as
 	await expect(retryButton).toBeVisible();
 	await retryButton.click();
 	await expect.poll(() => portalAttempts).toBe(2);
+});
+
+test('start-now plan changes redirect to Stripe recovery portal when authentication is required', async ({
+	page
+}) => {
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+
+	let subscriptionChangeAttempts = 0;
+	let capturedRecoveryReturnUrl: string | null = null;
+
+	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					status: 'active',
+					license_key_masked: 'LIC-****-****-****',
+					proxy_key_present: true,
+					tier: 'starter',
+					expires_at: '2030-01-01T00:00:00Z',
+					last_synced: '2030-01-01T00:00:00Z',
+					license_id: 'lic-sca',
+					site_id: 'site-sca',
+					site_url: 'https://example.test'
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.route('**/wp-json/sentient-forms/v1/credits/balance', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					current_balance: 1200,
+					ledger_delta: 0,
+					tier: {
+						code: 'starter',
+						display_name: 'Starter',
+						monthly_credit_quota: 1500
+					}
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					provider: 'stripe',
+					customer_id: 'cus_test_123',
+					subscription: {
+						provider_subscription_id: 'sub_test_123',
+						status: 'active',
+						quantity: 1,
+						cancel_at_period_end: false,
+						current_period_start: '2030-01-01T00:00:00Z',
+						current_period_end: '2030-02-01T00:00:00Z',
+						trial_end: null,
+						provider_price_id: 'price_test_starter'
+					},
+					credits: {
+						current_balance: 1200,
+						tier_quota: 1500,
+						ledger_delta: 0,
+						top_up_available: 0
+					},
+					allocation: {
+						seat_quantity: 1,
+						tier_site_limit: 1,
+						allowed_sites: 1,
+						active_sites: 1,
+						over_limit: false,
+						blocked_new_activations: false,
+						grace_expires_at: null,
+						capacity_policy: 'tier_x_quantity_v1'
+					}
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.route('**/wp-json/sentient-forms/v1/license/billing/subscription-change', (route) => {
+		subscriptionChangeAttempts += 1;
+		const body = route.request().postDataJSON() as
+			| {
+					plan_code?: string;
+					change_timing?: string;
+					recovery_return_url?: string;
+			  }
+			| undefined;
+		expect(body?.plan_code).toBe('business');
+		expect(body?.change_timing).toBe('start_now');
+		expect(typeof body?.recovery_return_url).toBe('string');
+		capturedRecoveryReturnUrl = body?.recovery_return_url ?? null;
+
+		return route.fulfill({
+			status: 409,
+			body: JSON.stringify({
+				success: false,
+				error: {
+					code: 'subscription_payment_action_required',
+					message:
+						'Immediate plan change requires payment authentication. Open billing to complete authentication and retry.',
+					meta: {
+						portal_recovery: {
+							session_id: 'bps_recovery_123',
+							portal_url: 'about:blank#stripe-recovery',
+							customer_id: 'cus_test_123'
+						}
+					}
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+
+	await page.goto('/#/licensing', { waitUntil: 'networkidle' });
+	await page.getByRole('button', { name: 'Start now' }).click();
+	await page.getByRole('button', { name: 'Switch to Business' }).click();
+
+	await expect.poll(() => subscriptionChangeAttempts).toBe(1);
+	await expect.poll(() => capturedRecoveryReturnUrl !== null).toBe(true);
+	await expect(page).toHaveURL(/about:blank#stripe-recovery/);
 });

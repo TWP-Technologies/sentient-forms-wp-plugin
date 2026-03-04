@@ -73,6 +73,7 @@ export interface BillingSubscriptionChangeRequest {
 	plan_code: string;
 	change_timing?: 'start_next_cycle' | 'start_now';
 	quantity?: number;
+	recovery_return_url?: string;
 }
 
 export interface BillingSubscriptionChangeResponse {
@@ -90,6 +91,14 @@ export interface BillingPortalSessionResponse {
 	session_id: string;
 	portal_url: string;
 	customer_id: string;
+}
+
+export type BillingPortalFlowType = 'home' | 'subscription_update' | 'subscription_cancel';
+
+export interface BillingPortalSessionRequest {
+	return_url: string;
+	flow_type?: BillingPortalFlowType;
+	subscription_id?: string;
 }
 
 export interface BillingStateResponse {
@@ -130,6 +139,24 @@ export interface ApiErrorPayload {
 	error?: {
 		code?: string;
 		message?: string;
+		meta?: {
+			provider_subscription_id?: string;
+			stripe_error?: {
+				status?: number;
+				code?: string;
+				decline_code?: string;
+				message?: string;
+			};
+			portal_recovery?: {
+				session_id?: string;
+				portal_url?: string;
+				customer_id?: string;
+			};
+			portal_recovery_error?: {
+				status?: number;
+				message?: string;
+			};
+		};
 	};
 	message?: string;
 	[key: string]: unknown;

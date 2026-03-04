@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
-	import type { BillingStateResponse, CreditBalanceResponse } from '$lib/api/types';
+	import type {
+		ApiErrorPayload,
+		BillingPortalSessionRequest,
+		BillingStateResponse,
+		CreditBalanceResponse
+	} from '$lib/api/types';
 	import {
 		Badge,
 		Button,
@@ -215,18 +220,13 @@
 				case 'billing_provider_unreachable':
 				case 'billing_provider_error':
 					return 'Stripe is temporarily unavailable. Retry in a moment or use Manage billing once connectivity recovers.';
+				case 'subscription_payment_action_required':
+					return 'Stripe requires payment authentication to start this plan now. Open Manage billing to complete authentication, then retry.';
 			}
 
-			const payload = error.payload as
-				| {
-						message?: string;
-						error?: { message?: string };
-				  }
-				| undefined;
+			const payload = error.payload as ApiErrorPayload | undefined;
 			const providerMessage =
-				payload?.message?.trim() ||
-				payload?.error?.message?.trim() ||
-				error.message.trim();
+				payload?.message?.trim() || payload?.error?.message?.trim() || error.message.trim();
 			if (providerMessage.length > 0 && providerMessage !== 'Request failed') {
 				return providerMessage;
 			}
@@ -237,6 +237,32 @@
 		}
 
 		return defaultBillingErrorMessage(context);
+	}
+
+	function resolvePortalRecoveryUrl(error: ApiClientError): string | null {
+		const payload = error.payload as ApiErrorPayload | undefined;
+		const portalUrl = payload?.error?.meta?.portal_recovery?.portal_url;
+		if (typeof portalUrl !== 'string') {
+			return null;
+		}
+		const normalized = portalUrl.trim();
+		return normalized.length > 0 ? normalized : null;
+	}
+
+	function buildPortalSessionRequest(): BillingPortalSessionRequest {
+		const subscriptionId = billing?.subscription?.provider_subscription_id ?? null;
+		if (subscriptionId) {
+			return {
+				return_url: currentRouteUrl(),
+				flow_type: 'subscription_update',
+				subscription_id: subscriptionId
+			};
+		}
+
+		return {
+			return_url: currentRouteUrl(),
+			flow_type: 'home'
+		};
 	}
 
 	function setBillingError(
@@ -320,7 +346,7 @@
 		billingError = null;
 
 		try {
-			const session = await client.createPortalSession(currentRouteUrl(), {
+			const session = await client.createPortalSession(buildPortalSessionRequest(), {
 				showNotifications: false
 			});
 			if (typeof window !== 'undefined') {
@@ -376,7 +402,8 @@
 				{
 					plan_code: plan.code,
 					change_timing: subscriptionChangeTiming,
-					quantity: plan.quantity ?? 1
+					quantity: plan.quantity ?? 1,
+					recovery_return_url: currentRouteUrl()
 				},
 				{ showNotifications: false }
 			);
@@ -386,6 +413,19 @@
 			await Promise.all([fetchCredits(), fetchBillingState()]);
 		} catch (error) {
 			console.error('Failed to change subscription plan', error);
+			if (
+				error instanceof ApiClientError &&
+				error.code === 'subscription_payment_action_required'
+			) {
+				const recoveryUrl = resolvePortalRecoveryUrl(error);
+				if (recoveryUrl && typeof window !== 'undefined') {
+					notifications.warning(
+						'Additional card authentication is required. Redirecting to Stripe billing portal…'
+					);
+					window.location.assign(recoveryUrl);
+					return;
+				}
+			}
 			setBillingError(error, 'subscription_change', async () => {
 				await handleSubscriptionChange(plan);
 			});
@@ -592,7 +632,10 @@
 							</p>
 						{/if}
 						{#if billing?.subscription?.status === 'trialing'}
-							<p class="sf:text-xs sf:font-semibold sf:text-success-700" data-testid="licensing-trial-status-note">
+							<p
+								class="sf:text-xs sf:font-semibold sf:text-success-700"
+								data-testid="licensing-trial-status-note"
+							>
 								{#if billing.subscription.trial_end}
 									Trial active until {formatTimestamp(billing.subscription.trial_end)}.
 								{:else}
@@ -638,17 +681,25 @@
 							class="sf:md:col-span-3 sf:text-xs sf:text-slate-500"
 							data-testid="licensing-trial-policy-note"
 						>
-							New paid subscriptions include a one-time {PAID_PLAN_TRIAL_DAYS}-day trial when eligible. Private beta sites can remain on Free with {FREE_PLAN_MONTHLY_CREDITS} credits each month until you upgrade.
+							New paid subscriptions include a one-time {PAID_PLAN_TRIAL_DAYS}-day trial when
+							eligible. Private beta sites can remain on Free with {FREE_PLAN_MONTHLY_CREDITS} credits
+							each month until you upgrade.
 						</p>
 					{/if}
 					{#if hasExistingSubscription}
-						<div class="sf:md:col-span-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3 sf:space-y-2">
-							<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
+						<div
+							class="sf:md:col-span-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3 sf:space-y-2"
+						>
+							<p
+								class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500"
+							>
 								Plan change timing
 							</p>
 							<div class="sf:flex sf:flex-wrap sf:gap-2">
 								<Button
-									variant={subscriptionChangeTiming === 'start_next_cycle' ? 'primary' : 'secondary'}
+									variant={subscriptionChangeTiming === 'start_next_cycle'
+										? 'primary'
+										: 'secondary'}
 									onclick={() => {
 										subscriptionChangeTiming = 'start_next_cycle';
 									}}
@@ -667,7 +718,8 @@
 								</Button>
 							</div>
 							<p class="sf:text-xs sf:text-slate-500">
-								Start next cycle keeps your current plan until renewal. Start now attempts an immediate charge and resets your billing anchor.
+								Start next cycle keeps your current plan until renewal. Start now attempts an
+								immediate charge and resets your billing anchor.
 							</p>
 						</div>
 					{/if}
@@ -675,7 +727,8 @@
 						class="sf:md:col-span-3 sf:text-xs sf:text-slate-500"
 						data-testid="licensing-business-cap-note"
 					>
-						Business currently supports up to {BUSINESS_PLAN_SITE_CAP} sites during launch. Contact support for larger agency or multi-brand allocations.
+						Business currently supports up to {BUSINESS_PLAN_SITE_CAP} sites during launch. Contact support
+						for larger agency or multi-brand allocations.
 					</p>
 					{#each checkoutPlans as plan}
 						<div

@@ -6,6 +6,7 @@ import type {
 	AsyncSettingsResponse,
 	BillingCheckoutSessionRequest,
 	BillingCheckoutSessionResponse,
+	BillingPortalSessionRequest,
 	BillingPortalSessionResponse,
 	BillingSubscriptionChangeRequest,
 	BillingSubscriptionChangeResponse,
@@ -80,8 +81,14 @@ export class ApiClientError extends Error {
 		super(message);
 		this.status = status;
 		this.payload = payload;
-		if (isApiErrorPayload(payload) && payload.error_code) {
-			this.code = payload.error_code;
+		if (isApiErrorPayload(payload)) {
+			const topLevelCode = typeof payload.error_code === 'string' ? payload.error_code.trim() : '';
+			const nestedCode = typeof payload.error?.code === 'string' ? payload.error.code.trim() : '';
+			if (topLevelCode.length > 0) {
+				this.code = topLevelCode;
+			} else if (nestedCode.length > 0) {
+				this.code = nestedCode;
+			}
 		}
 	}
 }
@@ -185,14 +192,14 @@ export class SentientFormsApiClient {
 	}
 
 	async createPortalSession(
-		returnUrl: string,
+		payload: BillingPortalSessionRequest,
 		options: RequestOptions = {}
 	): Promise<BillingPortalSessionResponse> {
 		const response = await this.request<RestEnvelope<BillingPortalSessionResponse>>(
 			'license/billing/portal-session',
 			{
 				method: 'POST',
-				body: { return_url: returnUrl },
+				body: payload,
 				...options
 			}
 		);
@@ -215,11 +222,17 @@ export class SentientFormsApiClient {
 	}
 
 	async getTelemetrySettings(options: RequestOptions = {}): Promise<TelemetrySettingsResponse> {
-		const response = await this.request<RestEnvelope<TelemetrySettingsResponse>>('telemetry', options);
+		const response = await this.request<RestEnvelope<TelemetrySettingsResponse>>(
+			'telemetry',
+			options
+		);
 		return this.unwrap(response);
 	}
 
-	async updateTelemetrySettings(optIn: boolean, options: RequestOptions = {}): Promise<TelemetrySettingsResponse> {
+	async updateTelemetrySettings(
+		optIn: boolean,
+		options: RequestOptions = {}
+	): Promise<TelemetrySettingsResponse> {
 		const response = await this.request<RestEnvelope<TelemetrySettingsResponse>>('telemetry', {
 			method: 'PUT',
 			body: { telemetry_opt_in: optIn },
@@ -229,7 +242,10 @@ export class SentientFormsApiClient {
 	}
 
 	async getAsyncSettings(options: RequestOptions = {}): Promise<AsyncSettingsResponse> {
-		const response = await this.request<RestEnvelope<AsyncSettingsResponse>>('async-settings', options);
+		const response = await this.request<RestEnvelope<AsyncSettingsResponse>>(
+			'async-settings',
+			options
+		);
 		return this.unwrap(response);
 	}
 
@@ -249,7 +265,9 @@ export class SentientFormsApiClient {
 			body: payload,
 			...options
 		});
-		const data = this.unwrap<PluginSettingsResponse | { settings: PluginSettingsResponse }>(response);
+		const data = this.unwrap<PluginSettingsResponse | { settings: PluginSettingsResponse }>(
+			response
+		);
 		if (
 			data &&
 			typeof data === 'object' &&
@@ -319,20 +337,26 @@ export class SentientFormsApiClient {
 
 		const query = params.toString();
 		const path = query ? `async-health?${query}` : 'async-health';
-		const response = await this.request<RestEnvelope<{ removed: number; message: string }>>(
-			path,
-			{ method: 'DELETE', ...requestOptions }
-		);
+		const response = await this.request<RestEnvelope<{ removed: number; message: string }>>(path, {
+			method: 'DELETE',
+			...requestOptions
+		});
 		return this.unwrap(response);
 	}
 
 	async getCreditBalance(options: RequestOptions = {}): Promise<CreditBalanceResponse> {
-		const response = await this.request<RestEnvelope<CreditBalanceResponse>>('credits/balance', options);
+		const response = await this.request<RestEnvelope<CreditBalanceResponse>>(
+			'credits/balance',
+			options
+		);
 		return this.unwrap(response);
 	}
 
 	async getActionDefinitions(options: RequestOptions = {}): Promise<ActionDefinition[]> {
-		const response = await this.request<RestEnvelope<ActionDefinition[]>>('actions/definitions', options);
+		const response = await this.request<RestEnvelope<ActionDefinition[]>>(
+			'actions/definitions',
+			options
+		);
 		return this.unwrap(response);
 	}
 
@@ -349,7 +373,10 @@ export class SentientFormsApiClient {
 	): Promise<FormActionLinkage[]> {
 		// Guard against undefined parameters during hydration race conditions
 		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
-			console.warn('[ApiClient] getFormActions called with invalid params:', { formSourceSlug, formId });
+			console.warn('[ApiClient] getFormActions called with invalid params:', {
+				formSourceSlug,
+				formId
+			});
 			return [];
 		}
 		const slug = encodeURIComponent(formSourceSlug);
@@ -495,7 +522,10 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<FormFieldInfo[]> {
 		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
-			console.warn('[ApiClient] getFormFields called with invalid params:', { formSourceSlug, formId });
+			console.warn('[ApiClient] getFormFields called with invalid params:', {
+				formSourceSlug,
+				formId
+			});
 			return [];
 		}
 		const slug = encodeURIComponent(formSourceSlug);
@@ -513,7 +543,10 @@ export class SentientFormsApiClient {
 	): Promise<FormExecutionStatus> {
 		// Guard against undefined parameters during hydration race conditions
 		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
-			console.warn('[ApiClient] getFormExecutionStatus called with invalid params:', { formSourceSlug, formId });
+			console.warn('[ApiClient] getFormExecutionStatus called with invalid params:', {
+				formSourceSlug,
+				formId
+			});
 			return {
 				status: 'unknown',
 				message: 'Page loading...',
@@ -596,10 +629,10 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<void> {
 		const slug = encodeURIComponent(formSourceSlug);
-		await this.request(
-			`${slug}/forms/${formId}/actions/${encodeURIComponent(localMappingId)}`,
-			{ method: 'DELETE', ...options }
-		);
+		await this.request(`${slug}/forms/${formId}/actions/${encodeURIComponent(localMappingId)}`, {
+			method: 'DELETE',
+			...options
+		});
 	}
 
 	// ==========================================================================
@@ -616,7 +649,10 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<Record<string, FormActionConfig>> {
 		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
-			console.warn('[ApiClient] getFormActionConfigs called with invalid params:', { formSourceSlug, formId });
+			console.warn('[ApiClient] getFormActionConfigs called with invalid params:', {
+				formSourceSlug,
+				formId
+			});
 			return {};
 		}
 		const slug = encodeURIComponent(formSourceSlug);
@@ -637,7 +673,11 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<FormActionConfig> {
 		if (!formSourceSlug || !formId || !actionId) {
-			console.warn('[ApiClient] getFormActionConfig called with invalid params:', { formSourceSlug, formId, actionId });
+			console.warn('[ApiClient] getFormActionConfig called with invalid params:', {
+				formSourceSlug,
+				formId,
+				actionId
+			});
 			return {};
 		}
 		const slug = encodeURIComponent(formSourceSlug);
@@ -677,10 +717,10 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<void> {
 		const slug = encodeURIComponent(formSourceSlug);
-		await this.request(
-			`forms/${slug}/${formId}/action-config/${encodeURIComponent(actionId)}`,
-			{ method: 'DELETE', ...options }
-		);
+		await this.request(`forms/${slug}/${formId}/action-config/${encodeURIComponent(actionId)}`, {
+			method: 'DELETE',
+			...options
+		});
 	}
 
 	// ============================================================
@@ -690,7 +730,10 @@ export class SentientFormsApiClient {
 	/**
 	 * Get global defaults for a specific action (applies across all forms).
 	 */
-	async getActionDefaults(actionId: string, options: RequestOptions = {}): Promise<FormActionConfig> {
+	async getActionDefaults(
+		actionId: string,
+		options: RequestOptions = {}
+	): Promise<FormActionConfig> {
 		if (!actionId) {
 			console.warn('[ApiClient] getActionDefaults called without actionId');
 			return {};
@@ -719,7 +762,6 @@ export class SentientFormsApiClient {
 	}
 
 	async getCustomActions(
-
 		filters: CustomActionFilters = {},
 		options: RequestOptions = {}
 	): Promise<{ actions: CustomAction[]; quota: CustomActionQuota }> {
@@ -762,14 +804,20 @@ export class SentientFormsApiClient {
 		});
 	}
 
-	async archiveCustomAction(id: string, options: RequestOptions = {}): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
+	async archiveCustomAction(
+		id: string,
+		options: RequestOptions = {}
+	): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
 		return this.request(`custom-actions/${encodeURIComponent(id)}`, {
 			method: 'DELETE',
 			...options
 		});
 	}
 
-	async reactivateCustomAction(id: string, options: RequestOptions = {}): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
+	async reactivateCustomAction(
+		id: string,
+		options: RequestOptions = {}
+	): Promise<{ action: CustomAction; quota: CustomActionQuota }> {
 		return this.request(`custom-actions/${encodeURIComponent(id)}/reactivate`, {
 			method: 'POST',
 			...options
@@ -785,10 +833,10 @@ export class SentientFormsApiClient {
 	 * CSM-001: CPS mapping storage
 	 */
 	async getFormMappings(options: RequestOptions = {}): Promise<FormMapping[]> {
-		const response = await this.request<{ success: boolean; data: FormMapping[] }>(
-			'mappings',
-			{ showNotifications: false, ...options }
-		);
+		const response = await this.request<{ success: boolean; data: FormMapping[] }>('mappings', {
+			showNotifications: false,
+			...options
+		});
 		return response.data;
 	}
 
@@ -823,10 +871,11 @@ export class SentientFormsApiClient {
 		payload: CreateFormMappingRequest,
 		options: RequestOptions = {}
 	): Promise<FormMapping> {
-		const response = await this.request<{ success: boolean; data: FormMapping }>(
-			'mappings',
-			{ method: 'POST', body: payload, ...options }
-		);
+		const response = await this.request<{ success: boolean; data: FormMapping }>('mappings', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
 		return response.data;
 	}
 
@@ -894,7 +943,10 @@ export class SentientFormsApiClient {
 			const [rawPath, rawQuery] = path.split('?');
 			const normalizedRoute = restRoute.replace(/\/+$/, '');
 			const normalizedPath = rawPath.replace(/^\/+/, '');
-			base.searchParams.set('rest_route', `${normalizedRoute}/${normalizedPath}`.replace(/\/{2,}/g, '/'));
+			base.searchParams.set(
+				'rest_route',
+				`${normalizedRoute}/${normalizedPath}`.replace(/\/{2,}/g, '/')
+			);
 
 			if (rawQuery) {
 				const extra = new URLSearchParams(rawQuery);
@@ -936,9 +988,11 @@ export class SentientFormsApiClient {
 
 			return parsed as T;
 		} catch (error) {
-			const clientError = error instanceof ApiClientError ? error : coerceToApiClientError(error, parsed);
+			const clientError =
+				error instanceof ApiClientError ? error : coerceToApiClientError(error, parsed);
 			if ((showNotifications ?? this.notifyErrors) && isApiErrorPayload(clientError.payload)) {
-				const message = clientError.payload.message ?? clientError.message;
+				const message =
+					clientError.payload.message ?? clientError.payload.error?.message ?? clientError.message;
 				notifications.error(message ?? 'Request failed');
 			}
 			throw clientError;
@@ -974,10 +1028,7 @@ export class SentientFormsApiClient {
 
 function isRestEnvelope<T>(payload: unknown): payload is RestEnvelope<T> {
 	return Boolean(
-		payload &&
-		typeof payload === 'object' &&
-		'success' in payload &&
-		'data' in payload
+		payload && typeof payload === 'object' && 'success' in payload && 'data' in payload
 	);
 }
 
@@ -1001,7 +1052,9 @@ export const mockClient = new SentientFormsApiClient({
 	baseUrl: 'https://example.test/wp-json/sentient-forms/v1/'
 });
 
-export function createClientFromConfig(overrides: Partial<ClientConfig> = {}): SentientFormsApiClient {
+export function createClientFromConfig(
+	overrides: Partial<ClientConfig> = {}
+): SentientFormsApiClient {
 	const config = resolveRuntimeConfig();
 
 	if (

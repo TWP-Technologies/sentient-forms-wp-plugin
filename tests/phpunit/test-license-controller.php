@@ -328,6 +328,54 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'start_next_cycle', $data['change_timing'] );
     }
 
+    public function test_change_subscription_passes_recovery_return_url(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => 'site-uuid-456',
+        ] );
+
+        $this->mock_http_response(
+            '/billing/subscription/change',
+            [
+                'success' => true,
+                'data'    => [
+                    'provider_subscription_id'  => 'sub_test_123',
+                    'provider_price_id'         => 'price_business_monthly',
+                    'plan_code'                 => 'business',
+                    'change_timing'             => 'start_now',
+                    'effective_at'              => null,
+                    'renewal_grant_applied'     => true,
+                    'carryover_grant_applied'   => true,
+                    'carryover_credits_granted' => 12000,
+                ],
+            ],
+            function ( array $args ): void {
+                $body = json_decode( (string) ( $args['body'] ?? '' ), true );
+                $this->assertIsArray( $body );
+                $this->assertSame( 'business', $body['plan_code'] ?? null );
+                $this->assertSame( 'start_now', $body['change_timing'] ?? null );
+                $this->assertSame( 'https://example.test/recovery', $body['recovery_return_url'] ?? null );
+            }
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/subscription-change' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'plan_code'           => 'business',
+            'change_timing'       => 'start_now',
+            'quantity'            => 1,
+            'recovery_return_url' => 'https://example.test/recovery',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+    }
+
     public function test_create_portal_session_success(): void
     {
         $plugin = Sentient_Forms_Plugin::instance();
@@ -362,6 +410,50 @@ class LicenseControllerTest extends WP_UnitTestCase
         $data = $response->get_data();
         $this->assertSame( 'bps_test_123', $data['session_id'] );
         $this->assertStringContainsString( 'billing.stripe.com', $data['portal_url'] );
+    }
+
+    public function test_create_portal_session_passes_flow_type_and_subscription_id(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => 'site-uuid-456',
+        ] );
+
+        $this->mock_http_response(
+            '/billing/portal/session',
+            [
+                'success' => true,
+                'data'    => [
+                    'session_id'  => 'bps_test_456',
+                    'portal_url'  => 'https://billing.stripe.com/p/session/bps_test_456',
+                    'customer_id' => 'cus_test_123',
+                ],
+            ],
+            function ( array $args ): void {
+                $body = json_decode( (string) ( $args['body'] ?? '' ), true );
+                $this->assertIsArray( $body );
+                $this->assertSame( 'https://example.test/licensing', $body['return_url'] ?? null );
+                $this->assertSame( 'subscription_update', $body['flow_type'] ?? null );
+                $this->assertSame( 'sub_test_123', $body['subscription_id'] ?? null );
+            }
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/portal-session' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'return_url'      => 'https://example.test/licensing',
+            'flow_type'       => 'subscription_update',
+            'subscription_id' => 'sub_test_123',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'bps_test_456', $data['session_id'] );
     }
 
     public function test_create_top_up_checkout_session_success(): void
@@ -458,12 +550,15 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 400, $response->get_status() );
     }
 
-    private function mock_http_response( string $path_suffix, array $body ): void
+    private function mock_http_response( string $path_suffix, array $body, ?callable $assert_request = null ): void
     {
         add_filter(
             'pre_http_request',
-            function ( $preempt, $args, $url ) use ( $path_suffix, $body ) {
+            function ( $preempt, $args, $url ) use ( $path_suffix, $body, $assert_request ) {
                 if ( str_ends_with( $url, $path_suffix ) ) {
+                    if ( is_callable( $assert_request ) ) {
+                        $assert_request( is_array( $args ) ? $args : [] );
+                    }
                     return [
                         'headers'  => [],
                         'body'     => wp_json_encode( $body ),

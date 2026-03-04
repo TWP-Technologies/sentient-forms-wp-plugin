@@ -198,6 +198,11 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
                             'type'     => 'integer',
                             'default'  => 1,
                         ],
+                        'recovery_return_url' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'esc_url_raw',
+                        ],
                     ],
                 ],
             ],
@@ -250,6 +255,16 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
                             'required'          => true,
                             'type'              => 'string',
                             'sanitize_callback' => 'esc_url_raw',
+                        ],
+                        'flow_type' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_key',
+                        ],
+                        'subscription_id' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
                         ],
                     ],
                 ],
@@ -531,6 +546,11 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             'change_timing' => $change_timing,
             'quantity'      => max( 1, (int) $request->get_param( 'quantity' ) ),
         ];
+        $recovery_return_url = trim( (string) $request->get_param( 'recovery_return_url' ) );
+        if ( '' !== $recovery_return_url )
+        {
+            $payload['recovery_return_url'] = $recovery_return_url;
+        }
 
         $client   = $this->get_licensing_client();
         $response = $client->change_subscription( $proxy_key, $payload );
@@ -554,8 +574,15 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         }
 
         $return_url = (string) $request->get_param( 'return_url' );
+        $flow_type  = trim( (string) $request->get_param( 'flow_type' ) );
+        $subscription_id = trim( (string) $request->get_param( 'subscription_id' ) );
         $client     = $this->get_licensing_client();
-        $response   = $client->create_portal_session( $proxy_key, $return_url );
+        $response   = $client->create_portal_session(
+            $proxy_key,
+            $return_url,
+            '' !== $flow_type ? $flow_type : null,
+            '' !== $subscription_id ? $subscription_id : null,
+        );
         if ( is_wp_error( $response ) )
         {
             return $this->prepare_cps_error( $response );

@@ -92,11 +92,24 @@ class Sentient_Forms_Licensing_Api_Client
         return $this->parse_response( $response );
     }
 
-    public function create_portal_session( string $proxy_api_key, string $return_url ): WP_Error | array
+    public function create_portal_session(
+        string $proxy_api_key,
+        string $return_url,
+        ?string $flow_type = null,
+        ?string $subscription_id = null
+    ): WP_Error | array
     {
         $payload = [
             'return_url' => $return_url,
         ];
+        if ( is_string( $flow_type ) && '' !== trim( $flow_type ) )
+        {
+            $payload['flow_type'] = trim( $flow_type );
+        }
+        if ( is_string( $subscription_id ) && '' !== trim( $subscription_id ) )
+        {
+            $payload['subscription_id'] = trim( $subscription_id );
+        }
 
         $response = wp_remote_post(
             $this->api_url . '/billing/portal/session',
