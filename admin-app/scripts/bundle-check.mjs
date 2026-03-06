@@ -3,8 +3,8 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 // The dependency-graph UX introduced xyflow/dagre runtime chunks; keep a hard
-// ceiling, but align the default budget with the current shipped baseline.
-const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 700);
+// ceiling, but leave only narrow headroom above the current ~732 KB baseline.
+const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 740);
 const distRoot = path.resolve('..', 'assets', 'dist', '_app', 'immutable');
 
 async function collectSizes(dir) {

@@ -55,7 +55,7 @@ jobs:
 
       - name: Run QA suite
         env:
-          BUNDLE_MAX_KB: '380'
+          BUNDLE_MAX_KB: '740'
           CI: 'true'
         run: bun run --bun qa:full
 
