@@ -59,6 +59,35 @@ export type AsyncExecutionJobRecord = {
 	created_at: string;
 };
 
+export type ActionExecutionDebitRecord = {
+	execution_request_id: string;
+	credits_delta: number;
+	central_action_id: string | null;
+	hook: string | null;
+};
+
+export type CapturedMailRecord = {
+	captured_at_gmt: string;
+	preexisting_return: string | null;
+	to: string[];
+	subject: string;
+	message: string;
+	headers: string[];
+	attachments: string[];
+};
+
+export type GravityEntryNoteRecord = {
+	entry_id: number;
+	id: number;
+	user_id: number | null;
+	user_name: string | null;
+	user_email: string | null;
+	date_created: string;
+	value: string;
+	note_type: string | null;
+	sub_type: string | null;
+};
+
 export async function requireWpRestHealthy(page: Page): Promise<void> {
 	const res = await page.request.get('http://localhost:8080/index.php?rest_route=/', {
 		timeout: 5000
@@ -97,6 +126,7 @@ type ActionMappingArgs = {
 	batchSettings?: BatchSettings;
 	executionMode?: ExecutionMode;
 	realtimeSettings?: RealtimeSettings;
+	additionalSettings?: Record<string, unknown>;
 };
 
 type GravityField = {
@@ -104,6 +134,25 @@ type GravityField = {
 	id: number;
 	label: string;
 	isRequired?: boolean;
+};
+
+export type GravityFormNotificationConfig = {
+	id?: string;
+	name: string;
+	to: string;
+	subject: string;
+	message: string;
+	event?: string;
+	from?: string;
+	fromName?: string;
+	messageFormat?: 'html' | 'text' | 'multipart';
+	service?: string;
+	toType?: 'email' | 'field' | 'routing';
+	toField?: string;
+};
+
+type GravityFormOptions = {
+	notifications?: GravityFormNotificationConfig[];
 };
 
 type CreditAdjustmentArgs = {
@@ -433,7 +482,11 @@ RETURNING code;
 	return raw.trim();
 }
 
-export function ensureGravityForm(title: string, fields?: GravityField[]): number {
+export function ensureGravityForm(
+	title: string,
+	fields?: GravityField[],
+	options?: GravityFormOptions
+): number {
 	const payload = {
 		title,
 		fields:
@@ -441,7 +494,8 @@ export function ensureGravityForm(title: string, fields?: GravityField[]): numbe
 			([
 				{ type: 'text', id: 1, label: 'Name', isRequired: true },
 				{ type: 'email', id: 2, label: 'Email', isRequired: true }
-			] as GravityField[])
+			] as GravityField[]),
+		notifications: options?.notifications
 	};
 
 	const result = runWpCli(
@@ -453,34 +507,79 @@ if ( ! is_array( $payload ) || empty( $payload['title'] ) ) {
     echo "0";
     return;
 }
-$title  = $payload['title'];
-$fields = $payload['fields'] ?? [];
-$forms  = GFAPI::get_forms();
-foreach ( $forms as $form ) {
-    if ( isset( $form['title'] ) && $form['title'] === $title ) {
-        echo (int) $form['id'];
+$title         = $payload['title'];
+$fields        = $payload['fields'] ?? [];
+$notifications = array_key_exists( 'notifications', $payload ) ? ( $payload['notifications'] ?? [] ) : null;
+$forms         = GFAPI::get_forms();
+$form          = null;
+foreach ( $forms as $candidate_form ) {
+    if ( isset( $candidate_form['title'] ) && $candidate_form['title'] === $title ) {
+        $form = GFAPI::get_form( (int) $candidate_form['id'] );
+        break;
+    }
+}
+
+if ( ! is_array( $form ) ) {
+    $form = [
+        'title'  => $title,
+        'fields' => [],
+        'button' => [ 'type' => 'text', 'text' => 'Submit' ],
+    ];
+    foreach ( $fields as $field ) {
+        $form['fields'][] = [
+            'type'       => $field['type'] ?? 'text',
+            'id'         => (int) ( $field['id'] ?? 0 ),
+            'label'      => $field['label'] ?? '',
+            'isRequired' => ! empty( $field['isRequired'] ),
+        ];
+    }
+
+    $form_id = GFAPI::add_form( $form );
+    if ( is_wp_error( $form_id ) ) {
+        echo "0";
+        return;
+    }
+
+    $form = GFAPI::get_form( (int) $form_id );
+    if ( ! is_array( $form ) ) {
+        echo "0";
         return;
     }
 }
-$form = [
-    'title'  => $title,
-    'fields' => [],
-    'button' => [ 'type' => 'text', 'text' => 'Submit' ],
-];
-foreach ( $fields as $field ) {
-    $form['fields'][] = [
-        'type'       => $field['type'] ?? 'text',
-        'id'         => (int) ( $field['id'] ?? 0 ),
-        'label'      => $field['label'] ?? '',
-        'isRequired' => ! empty( $field['isRequired'] ),
-    ];
+
+if ( is_array( $notifications ) ) {
+    $form['notifications'] = [];
+    foreach ( $notifications as $index => $notification ) {
+        if ( ! is_array( $notification ) ) {
+            continue;
+        }
+
+        $notification_id = (string) ( $notification['id'] ?? ( 'playwright_notification_' . ( $index + 1 ) ) );
+        $form['notifications'][ $notification_id ] = [
+            'id'             => $notification_id,
+            'name'           => (string) ( $notification['name'] ?? ( 'Playwright Notification ' . ( $index + 1 ) ) ),
+            'event'          => (string) ( $notification['event'] ?? 'form_submission' ),
+            'to'             => (string) ( $notification['to'] ?? '' ),
+            'toType'         => (string) ( $notification['toType'] ?? 'email' ),
+            'toField'        => isset( $notification['toField'] ) ? (string) $notification['toField'] : '',
+            'subject'        => (string) ( $notification['subject'] ?? '' ),
+            'message'        => (string) ( $notification['message'] ?? '' ),
+            'from'           => (string) ( $notification['from'] ?? 'no-reply@example.test' ),
+            'fromName'       => (string) ( $notification['fromName'] ?? 'Playwright Mail Capture' ),
+            'message_format' => (string) ( $notification['messageFormat'] ?? 'html' ),
+            'service'        => (string) ( $notification['service'] ?? 'wordpress' ),
+            'isActive'       => true,
+        ];
+    }
+
+    $updated = GFAPI::update_form( $form );
+    if ( is_wp_error( $updated ) ) {
+        echo "0";
+        return;
+    }
 }
-$form_id = GFAPI::add_form( $form );
-if ( is_wp_error( $form_id ) ) {
-    echo "0";
-    return;
-}
-echo (int) $form_id;
+
+echo (int) ( $form['id'] ?? 0 );
 `
 		],
 		{
@@ -528,7 +627,8 @@ export function configureGravityActionMapping(args: ActionMappingArgs): void {
 		input_mapping: inputMapping,
 		batch_settings: batchSettings,
 		execution_mode: args.executionMode ?? undefined,
-		realtime_settings: realtimeSettings
+		realtime_settings: realtimeSettings,
+		...(args.additionalSettings ?? {})
 	};
 	const mapping = {
 		id: mappingId,
@@ -544,6 +644,7 @@ export function configureGravityActionMapping(args: ActionMappingArgs): void {
 		action_type_indicator: args.actionTypeIndicator ?? 'master',
 		action_template_id: args.actionTemplateId,
 		local_mapping_id: mappingId,
+		batch_settings: batchSettings,
 		settings: mappingSettings
 	};
 	const settings: Record<string, unknown> = {
@@ -785,6 +886,107 @@ echo '';
 	}
 }
 
+export function clearCapturedMail(): void {
+	const output = runWpEval(
+		`
+if ( function_exists( 'sentient_forms_dev_mail_capture_clear_records' ) ) {
+    sentient_forms_dev_mail_capture_clear_records();
+} else {
+    update_option( 'sentient_forms_dev_mail_capture', [], false );
+}
+echo 'ok';
+`
+	);
+
+	if (!output.includes('ok')) {
+		throw new Error(`Failed to clear captured mail records: ${output}`);
+	}
+}
+
+export function getCapturedMailRecords(): CapturedMailRecord[] {
+	const payload = runWpEval(
+		`
+$records = function_exists( 'sentient_forms_dev_mail_capture_get_records' )
+    ? sentient_forms_dev_mail_capture_get_records()
+    : get_option( 'sentient_forms_dev_mail_capture', [] );
+echo wp_json_encode(
+    [
+        'records' => is_array( $records ) ? array_values( $records ) : [],
+    ]
+);
+`
+	);
+
+	if (!payload) {
+		return [];
+	}
+
+	try {
+		const decoded = JSON.parse(payload) as { records?: CapturedMailRecord[] };
+		return Array.isArray(decoded.records) ? decoded.records : [];
+	} catch (_error) {
+		throw new Error(`Failed to parse captured mail payload: ${payload}`);
+	}
+}
+
+export function getGravityEntryNotes(entryId: number): GravityEntryNoteRecord[] {
+	const payload = runWpEval(
+		`
+$entry_id = (int) getenv( 'ENTRY_ID' );
+$notes = class_exists( 'GFAPI' )
+    ? GFAPI::get_notes(
+        [ 'entry_id' => $entry_id ],
+        [ 'key' => 'id', 'direction' => 'ASC' ]
+    )
+    : [];
+
+if ( ! is_array( $notes ) ) {
+    echo '[]';
+    return;
+}
+
+$normalized = array_map(
+    static function ( $note ) {
+        $item = is_object( $note ) ? get_object_vars( $note ) : ( is_array( $note ) ? $note : [] );
+
+        return [
+            'entry_id'     => (int) ( $item['entry_id'] ?? 0 ),
+            'id'           => (int) ( $item['id'] ?? 0 ),
+            'user_id'      => isset( $item['user_id'] ) ? (int) $item['user_id'] : null,
+            'user_name'    => isset( $item['user_name'] ) ? (string) $item['user_name'] : null,
+            'user_email'   => isset( $item['user_email'] ) ? (string) $item['user_email'] : null,
+            'date_created' => isset( $item['date_created'] ) ? (string) $item['date_created'] : '',
+            'value'        => isset( $item['value'] ) ? (string) $item['value'] : '',
+            'note_type'    => isset( $item['note_type'] ) ? (string) $item['note_type'] : null,
+            'sub_type'     => isset( $item['sub_type'] ) ? (string) $item['sub_type'] : null,
+        ];
+    },
+    $notes
+);
+
+echo wp_json_encode(
+    [
+        'notes' => $normalized,
+    ]
+);
+`,
+		{
+			ENTRY_ID: String(entryId)
+		}
+	);
+
+	if (!payload) {
+		return [];
+	}
+
+	try {
+		const decoded = JSON.parse(payload) as { notes?: GravityEntryNoteRecord[] };
+		return Array.isArray(decoded.notes) ? decoded.notes : [];
+	} catch (_error) {
+		throw new Error(`Failed to parse Gravity Forms entry notes payload: ${payload}`);
+	}
+}
+
 export function getLatestAsyncExecutionJobByEntryId(
 	entryId: number,
 	centralActionId?: string
@@ -820,6 +1022,46 @@ LIMIT 1;
 		return JSON.parse(raw) as AsyncExecutionJobRecord;
 	} catch (_error) {
 		throw new Error(`Failed to parse async execution job payload: ${raw}`);
+	}
+}
+
+export function getLatestActionExecutionDebitByEntryId(
+	entryId: number,
+	centralActionId?: string
+): ActionExecutionDebitRecord | null {
+	const centralActionFilter = centralActionId
+		? `AND (
+      metadata->>'action_template_code' = '${sanitizeSqlLiteral(centralActionId)}'
+      OR metadata->'context'->>'central_action_id' = '${sanitizeSqlLiteral(centralActionId)}'
+    )`
+		: '';
+	const sql = `
+SELECT json_build_object(
+    'execution_request_id', execution_request_id,
+    'credits_delta', credits_delta,
+    'central_action_id', COALESCE(metadata->>'action_template_code', metadata->'context'->>'central_action_id'),
+    'hook', metadata->'context'->>'hook'
+)::text
+FROM credit_ledger_entries
+WHERE reason = 'action_execution'
+  AND (
+    metadata->>'entry_id' = '${sanitizeSqlLiteral(String(entryId))}'
+    OR metadata->'context'->>'entry_id' = '${sanitizeSqlLiteral(String(entryId))}'
+  )
+  ${centralActionFilter}
+ORDER BY created_at DESC
+LIMIT 1;
+`.trim();
+
+	const raw = runDbQuery(sql);
+	if (!raw) {
+		return null;
+	}
+
+	try {
+		return JSON.parse(raw) as ActionExecutionDebitRecord;
+	} catch (_error) {
+		throw new Error(`Failed to parse action execution debit payload: ${raw}`);
 	}
 }
 
@@ -906,11 +1148,20 @@ export async function fetchCreditBalance(
 	return body?.data?.current_balance ?? NaN;
 }
 
+function currentPeriodStartUtc(): string {
+	const now = new Date();
+	const year = now.getUTCFullYear();
+	const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+	return `${year}-${month}-01`;
+}
+
 export function getCreditBalanceFromDb(licenseKey = 'LIC-LOCAL-DEV'): number {
+	const periodStart = currentPeriodStartUtc();
 	const sql = `
 SELECT COALESCE(SUM(credits_delta), 0)
 FROM credit_ledger_entries
-WHERE license_id = (SELECT id FROM licenses WHERE license_key = '${sanitizeSqlLiteral(licenseKey)}' LIMIT 1);
+WHERE license_id = (SELECT id FROM licenses WHERE license_key = '${sanitizeSqlLiteral(licenseKey)}' LIMIT 1)
+  AND period_start = DATE '${sanitizeSqlLiteral(periodStart)}';
 `.trim();
 
 	const raw = runDbQuery(sql);
@@ -938,6 +1189,7 @@ export function insertCreditDelta({
 	reason = 'playwright adjustment',
 	requestId = `pw-${Date.now()}`
 }: CreditAdjustmentArgs): number {
+	const periodStart = currentPeriodStartUtc();
 	if (!Number.isFinite(delta) || delta === 0) {
 		return getCreditBalanceFromDb(licenseKey);
 	}
@@ -949,13 +1201,14 @@ WITH target_license AS (
   INSERT INTO credit_ledger_entries (
     license_id, site_id, action_template_id, credits_delta, reason, metadata, period_start, execution_request_id
   )
-  SELECT id, NULL, NULL, ${delta}, '${sanitizeSqlLiteral(reason)}', '{}'::jsonb, current_date, '${sanitizeSqlLiteral(requestId)}'
+  SELECT id, NULL, NULL, ${delta}, '${sanitizeSqlLiteral(reason)}', '{}'::jsonb, DATE '${sanitizeSqlLiteral(periodStart)}', '${sanitizeSqlLiteral(requestId)}'
   FROM target_license
   RETURNING license_id
 )
 SELECT COALESCE(SUM(credits_delta), 0)
 FROM credit_ledger_entries
-WHERE license_id = (SELECT id FROM target_license LIMIT 1);
+WHERE license_id = (SELECT id FROM target_license LIMIT 1)
+  AND period_start = DATE '${sanitizeSqlLiteral(periodStart)}';
 `.trim();
 
 	const raw = runDbQuery(sql);
@@ -996,8 +1249,27 @@ export function setCreditBalance(targetBalance: number, licenseKey = 'LIC-LOCAL-
 	return tierQuota + newLedger;
 }
 
+export function countActionExecutionDebitsByRequestId(
+	executionRequestId: string,
+	licenseKey = 'LIC-LOCAL-DEV'
+): number {
+	const sql = `
+SELECT COUNT(*)
+FROM credit_ledger_entries
+WHERE license_id = (SELECT id FROM licenses WHERE license_key = '${sanitizeSqlLiteral(licenseKey)}' LIMIT 1)
+  AND reason = 'action_execution'
+  AND execution_request_id = '${sanitizeSqlLiteral(executionRequestId)}'
+  AND credits_delta < 0;
+`.trim();
+
+	const raw = runDbQuery(sql);
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 export function resetE2eState(): void {
 	// Standardize credits and clear deterministic overrides between suites.
 	ensureCreditBalanceAtLeast(120);
 	setExecutionRequestIdOverride(null);
+	clearCapturedMail();
 }

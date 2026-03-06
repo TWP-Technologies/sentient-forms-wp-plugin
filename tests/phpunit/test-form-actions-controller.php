@@ -4,6 +4,8 @@ if ( ! class_exists( 'GFAPI' ) ) {
 	class GFAPI {
 		/** @var array<int,array<string,mixed>> */
 		public static array $entries = [];
+		/** @var array<int,array<string,mixed>> */
+		public static array $forms = [];
 
 		public static function get_entry( $entry_id ) {
 			$entry_id = (int) $entry_id;
@@ -12,6 +14,15 @@ if ( ! class_exists( 'GFAPI' ) ) {
 			}
 
 			return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+		}
+
+		public static function get_form( $form_id ) {
+			$form_id = (int) $form_id;
+			return self::$forms[ $form_id ] ?? false;
+		}
+
+		public static function get_forms(): array {
+			return array_values( self::$forms );
 		}
 	}
 }

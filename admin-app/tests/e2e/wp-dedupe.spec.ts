@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+	countActionExecutionDebitsByRequestId,
 	configureGravityActionMapping,
 	ensureCreditBalanceAtLeast,
 	ensureGravityForm,
@@ -44,24 +45,30 @@ test.describe('Duplicate execution guard @dedupe', () => {
 		const fixedExecutionId = `pw-dedupe-${Date.now()}`;
 		setExecutionRequestIdOverride(fixedExecutionId);
 
-		const balanceBefore = await fetchCreditBalance(page, proxyKey);
-		const baselineEntryId = getLatestEntryId(formId);
+		try {
+			const balanceBefore = await fetchCreditBalance(page, proxyKey);
+			const baselineEntryId = getLatestEntryId(formId);
 
-		await submitGravityForm(page, formId, 'Playwright Bot', `dedupe-${Date.now()}@example.test`);
-		runActionScheduler();
-		await page.waitForTimeout(2000);
-		const balanceAfterFirst = await fetchCreditBalance(page, proxyKey);
-		expect(balanceBefore - balanceAfterFirst).toBe(10);
+			await submitGravityForm(page, formId, 'Playwright Bot', `dedupe-${Date.now()}@example.test`);
+			runActionScheduler();
+			await page.waitForTimeout(2000);
+			const balanceAfterFirst = await fetchCreditBalance(page, proxyKey);
+			expect(balanceBefore - balanceAfterFirst).toBe(10);
 
-		await submitGravityForm(page, formId, 'Playwright Bot', `dedupe-${Date.now()}@example.test`);
-		runActionScheduler();
-		await page.waitForTimeout(2000);
-		const balanceAfterSecond = await fetchCreditBalance(page, proxyKey);
-		expect(balanceAfterFirst - balanceAfterSecond).toBe(10);
+			await submitGravityForm(page, formId, 'Playwright Bot', `dedupe-${Date.now()}@example.test`);
+			runActionScheduler();
+			await page.waitForTimeout(2000);
+			const balanceAfterSecond = await fetchCreditBalance(page, proxyKey);
+			expect(balanceAfterFirst - balanceAfterSecond).toBe(0);
 
-		const latestEntryId = getLatestEntryId(formId);
-		expect(latestEntryId).toBeGreaterThan(baselineEntryId);
+			const debitCount = countActionExecutionDebitsByRequestId(fixedExecutionId);
+			expect(debitCount).toBe(1);
 
-		setExecutionRequestIdOverride(null);
+			const latestEntryId = getLatestEntryId(formId);
+			expect(latestEntryId).toBeGreaterThan(baselineEntryId);
+		} finally {
+			setExecutionRequestIdOverride(null);
+		}
+
 	});
 });
