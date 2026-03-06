@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { cpSync, existsSync } from 'node:fs';
+import { copyFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -19,4 +19,4 @@ if (!existsSync(sourceFile)) {
 	process.exit(1);
 }
 
-cpSync(sourceFile, targetFile);
+copyFileSync(sourceFile, targetFile);

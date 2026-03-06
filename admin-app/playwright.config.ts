@@ -7,6 +7,20 @@ const PREVIEW_ORIGIN = getPreviewOrigin();
 
 const isWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
 
+const previewWebServer = isWpE2E
+	? undefined
+	: {
+			command: 'bun run preview:e2e',
+			url: PREVIEW_ORIGIN,
+			env: {
+				...process.env,
+				PREVIEW_HOST,
+				PREVIEW_PORT: String(PREVIEW_PORT)
+			},
+			reuseExistingServer: !process.env.CI,
+			timeout: 900_000
+		};
+
 export default defineConfig({
 	testDir: './tests/e2e',
 	timeout: 300_000,
@@ -28,15 +42,5 @@ export default defineConfig({
 			use: { ...devices['Desktop Chrome'] }
 		}
 	],
-	webServer: {
-		command: 'bun run preview:e2e',
-		url: PREVIEW_ORIGIN,
-		env: {
-			...process.env,
-			PREVIEW_HOST,
-			PREVIEW_PORT: String(PREVIEW_PORT)
-		},
-		reuseExistingServer: !process.env.CI,
-		timeout: 900_000
-	}
+	webServer: previewWebServer
 });

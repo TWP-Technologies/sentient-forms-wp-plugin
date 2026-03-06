@@ -57,7 +57,7 @@ jobs:
         env:
           BUNDLE_MAX_KB: '380'
           CI: 'true'
-        run: bun run qa:full
+        run: bun run --bun qa:full
 
       - name: Upload Playwright report
         if: always()

@@ -84,7 +84,7 @@ run_admin_spa() {
     info "SPA E2E/build (Playwright smoke + build:wp + bundle:check)"
     # Prebuild once; preview:serve will reuse.
     bun run build:wp
-    bun run e2e:smoke
+    bun run --bun e2e:smoke
     bun run bundle:check
   else
     info "Skipping SPA E2E/build (set RUN_SPA_E2E=1 or CI=1 to enable)"

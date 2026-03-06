@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 const DEFAULT_PREVIEW_HOST = '127.0.0.1';
@@ -8,6 +9,19 @@ const MAX_PORT = 65_535;
 
 function getBunCommand() {
 	return process.platform === 'win32' ? 'bun.exe' : 'bun';
+}
+
+function getNodeCommand() {
+	return process.platform === 'win32' ? 'node.exe' : 'node';
+}
+
+function getViteCommand() {
+	return path.resolve(
+		process.cwd(),
+		'node_modules',
+		'.bin',
+		process.platform === 'win32' ? 'vite.cmd' : 'vite'
+	);
 }
 
 function parsePort(rawValue, fieldName) {
@@ -68,20 +82,21 @@ async function main() {
 	const previewPort = resolvePreviewPort();
 	const env = {
 		...process.env,
+		SENTIENT_FORMS_ROUTER: process.env.SENTIENT_FORMS_ROUTER ?? 'pathname',
 		PREVIEW_HOST: previewHost,
 		PREVIEW_PORT: String(previewPort)
 	};
 
 	await ensureExitCodeZero('node', ['scripts/kill-preview-port.mjs'], env);
 	await ensureExitCodeZero(getBunCommand(), ['run', 'build'], env);
-	await ensureExitCodeZero(getBunCommand(), [
-		'run',
+	await ensureExitCodeZero(getNodeCommand(), ['scripts/select-layout.mjs'], env);
+	await ensureExitCodeZero(getViteCommand(), [
 		'preview',
-		'--',
 		'--host',
 		previewHost,
 		'--port',
 		String(previewPort),
+		'--strictPort',
 		'--outDir',
 		'build'
 	], env);
