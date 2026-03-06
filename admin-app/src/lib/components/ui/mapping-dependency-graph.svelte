@@ -2013,7 +2013,7 @@
 						class="sf:rounded-md"
 						noDragClass="nodrag"
 						noPanClass="nopan"
-					noWheelClass="nowheel"
+					noWheelClass="sf-nowheel"
 					connectionRadius={56}
 					minZoom={0.3}
 					maxZoom={1.8}
@@ -2024,7 +2024,7 @@
 					</SvelteFlow>
 					{#if activeDuplicatePopoverNodeId && activeDuplicatePopoverPosition}
 						<div
-							class="sf:fixed sf:z-[260] sf:w-[280px] sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2 sf:shadow-xl sf:space-y-2 nodrag nopan nowheel"
+							class="sf:fixed sf:z-[260] sf:w-[280px] sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-2 sf:shadow-xl sf:space-y-2 nodrag nopan sf-nowheel"
 							style={`left:${activeDuplicatePopoverPosition.left}px;top:${activeDuplicatePopoverPosition.top}px;`}
 							onpointerdown={(event) => event.stopPropagation()}
 							bind:this={duplicatePopoverElement}

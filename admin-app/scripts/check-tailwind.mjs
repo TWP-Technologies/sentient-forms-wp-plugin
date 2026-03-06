@@ -22,6 +22,7 @@ const HEX_ALLOW_LIST = new Set([
 	'src/lib/components/ui/TemplateLibrary.svelte',
 	// XYFlow handle rendering currently relies on inline SVG/canvas-style colors.
 	'src/lib/utils/mapping-dependency-xyflow.ts',
+	'src/lib/components/ui/mapping-dependency-graph.svelte',
 	'src/lib/components/ui/mapping-dependency-graph-node.svelte',
 	'src/lib/components/ui/mapping-dependency-hook-root-node.svelte'
 ]);
