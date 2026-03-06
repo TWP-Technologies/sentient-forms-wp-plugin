@@ -41,6 +41,7 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		parent::setUp();
 		$this->plugin = Sentient_Forms_Plugin::instance();
 		update_option( 'sentient_forms_settings', [] );
+		delete_option( 'sentient_forms_forced_execution_request_id' );
 		$this->plugin->set_license_data(
 			[
 				'proxy_api_key' => '',
@@ -56,6 +57,23 @@ class ActionExecutorTest extends WP_UnitTestCase {
 
 		$this->assertWPError( $result );
 		$this->assertSame( 'cps_missing_proxy_key', $result->get_error_code() );
+	}
+
+	public function test_generate_execution_request_id_applies_filter_override(): void {
+		$filter = static function ( $execution_request_id, ...$unused ) {
+			return 'filtered-request-id-42';
+		};
+
+		add_filter( 'sentient_forms_execution_request_id', $filter, 10, 5 );
+		$request_id = Sentient_Forms_Action_Executor::generate_execution_request_id(
+			'spam_detection_v1',
+			[ 'id' => 12, 'title' => 'Contact' ],
+			[ 'id' => 456, 'field_1' => 'Hello' ],
+			[ 'hook' => 'gform_after_submission', 'action_id' => 'map_spam' ]
+		);
+		remove_filter( 'sentient_forms_execution_request_id', $filter, 10 );
+
+		$this->assertSame( 'filtered-request-id-42', $request_id );
 	}
 
 	public function test_execute_invokes_client_and_returns_response(): void {

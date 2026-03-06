@@ -84,7 +84,7 @@ class Sentient_Forms_Action_Executor {
 
 		$client                = $this->client ?? $this->plugin->get_cps_api_client();
 		$submission_token      = self::derive_submission_token( $form, $entry );
-		$execution_request_id  = self::build_execution_request_id( $central_action_id, $form, $entry, $context, $submission_token );
+		$execution_request_id  = self::resolve_execution_request_id( $central_action_id, $form, $entry, $context, $submission_token );
 		$entry_id              = isset( $entry['id'] ) ? (int) $entry['id'] : 0;
 		$cached_result         = $this->get_cached_execution_result( $execution_request_id, $entry_id, $context );
 
@@ -179,7 +179,7 @@ class Sentient_Forms_Action_Executor {
 		$submission_token = self::derive_submission_token( $form, $entry );
 		$execution_request_id = isset( $context['execution_request_id'] )
 			? sanitize_text_field( (string) $context['execution_request_id'] )
-			: self::build_execution_request_id(
+			: self::resolve_execution_request_id(
 				$central_action_id,
 				$form,
 				$entry,
@@ -759,7 +759,51 @@ class Sentient_Forms_Action_Executor {
 	public static function generate_execution_request_id( string $central_action_id, array $form, array $entry, array $context = array() ): string {
 		$submission_token = self::derive_submission_token( $form, $entry );
 
-		return self::build_execution_request_id( $central_action_id, $form, $entry, $context, $submission_token );
+		return self::resolve_execution_request_id( $central_action_id, $form, $entry, $context, $submission_token );
+	}
+
+	private static function resolve_execution_request_id( string $central_action_id, array $form, array $entry, array $context, string $submission_token ): string {
+		$generated_request_id = self::build_execution_request_id( $central_action_id, $form, $entry, $context, $submission_token );
+		$execution_request_id = $generated_request_id;
+
+		if ( self::is_local_or_development_environment() ) {
+			$forced = get_option( 'sentient_forms_forced_execution_request_id', '' );
+			if ( is_scalar( $forced ) ) {
+				$forced = sanitize_text_field( (string) $forced );
+				if ( '' !== $forced ) {
+					$execution_request_id = $forced;
+				}
+			}
+		}
+
+		$execution_request_id = apply_filters(
+			'sentient_forms_execution_request_id',
+			$execution_request_id,
+			$central_action_id,
+			$form,
+			$entry,
+			$context
+		);
+
+		if ( ! is_string( $execution_request_id ) ) {
+			return $generated_request_id;
+		}
+
+		$execution_request_id = sanitize_text_field( trim( $execution_request_id ) );
+		if ( '' === $execution_request_id ) {
+			return $generated_request_id;
+		}
+
+		return $execution_request_id;
+	}
+
+	private static function is_local_or_development_environment(): bool {
+		$environment = function_exists( 'wp_get_environment_type' )
+			? wp_get_environment_type()
+			: getenv( 'WP_ENVIRONMENT_TYPE' );
+		$environment = strtolower( trim( (string) $environment ) );
+
+		return in_array( $environment, array( 'local', 'development' ), true );
 	}
 
 	private static function derive_submission_token( array $form, array $entry ): string {

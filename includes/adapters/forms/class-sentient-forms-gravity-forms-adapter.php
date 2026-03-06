@@ -23,11 +23,25 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     private const REALTIME_MAX_DEBOUNCE_MS = 3000;
     private const REALTIME_MIN_COOLDOWN_MS = 1000;
     private const REALTIME_MAX_COOLDOWN_MS = 60000;
+    private const DEFERRED_NOTIFICATION_IDS_META_KEY = 'deferred_notification_ids';
+    private const DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY = 'deferred_notification_mapping_ids';
+    private const DEFERRED_NOTIFICATION_DECISION_META_KEY = 'deferred_notification_decision';
+    private const DEFERRED_NOTIFICATION_DECISION_PENDING = 'pending';
+    private const DEFERRED_NOTIFICATION_DECISION_SUPPRESS = 'suppress';
+    private const DEFERRED_NOTIFICATION_REPLAY_FLAG = 'sentient_forms_async_spam_notification_replay';
+    private const DEFERRED_NOTIFICATION_ALLOWED_IDS = 'sentient_forms_allowed_notification_ids';
 
     /**
      * Plugin instance
      */
     private Sentient_Forms_Plugin $plugin;
+
+    /**
+     * Request-local cache for async spam notification gating decisions.
+     *
+     * @var array<string, bool>
+     */
+    private array $async_spam_notification_gate_cache = [];
 
     /**
      * Constructor
@@ -86,6 +100,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         add_action( 'gform_after_submission', [ $this, 'handle_after_submission' ], 10, 2 );
 
         // FR-003: Notification interception hook - suppress notifications for spam entries
+        add_filter( 'gform_disable_notification', [ $this, 'maybe_defer_async_spam_notification' ], 10, 5 );
         add_filter( 'gform_notification', [ $this, 'maybe_suppress_spam_notification' ], 10, 3 );
 
         // Add settings to the form editor
@@ -334,6 +349,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $plan                = $planner->build_execution_plan( $settings, 'gform_after_submission' );
         $mapping_outcomes    = [];
         $execution_request_ids = [];
+        $queued_spam_notification_mapping_ids = [];
 
         if ( ! empty( $plan['cycle_ids'] ) )
         {
@@ -517,6 +533,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 );
 
                 $mapping_outcomes[ $mapping_id ] = $scheduled ? 'queued' : 'failed';
+                if ( $scheduled && $this->should_defer_notifications_for_mapping( $action_settings, $should_async ) )
+                {
+                    $queued_spam_notification_mapping_ids[] = (string) $mapping_id;
+                }
                 continue;
             }
 
@@ -531,6 +551,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $result          = $action->execute( $data, $action_settings, $entry_id, $runtime_form_id );
             $mapping_outcomes[ $mapping_id ] = is_wp_error( $result ) ? 'failed' : 'succeeded';
         }
+
+        $this->reconcile_deferred_notifications_after_submission(
+            $entry,
+            $form,
+            $queued_spam_notification_mapping_ids,
+        );
     }
 
     /**
@@ -1769,6 +1795,11 @@ HTML;
 
         // FR-008: Log successful action execution
         $this->log_action_execution( $context, $result, 'success' );
+
+        $this->resolve_deferred_notifications_after_async_completion(
+            $context,
+            $this->should_suppress_deferred_notifications_from_result( $context, $result ),
+        );
     }
 
     /**
@@ -2065,6 +2096,70 @@ HTML;
     }
 
     /**
+     * Defer form-submission notifications until async spam detection finishes.
+     *
+     * @param bool  $is_disabled  Whether a previous filter already disabled the notification.
+     * @param array $notification The Gravity Forms notification config.
+     * @param array $form         The form object.
+     * @param array $entry        The entry object.
+     * @param array $data         Notification data payload.
+     *
+     * @return bool True to suppress the notification for now, false to allow it.
+     */
+    public function maybe_defer_async_spam_notification( bool $is_disabled, array $notification, array $form, array $entry, array $data = [] ): bool
+    {
+        if ( $is_disabled )
+        {
+            return true;
+        }
+
+        if ( $this->is_entry_spam( $entry ) )
+        {
+            return true;
+        }
+
+        $notification_id = isset( $notification['id'] ) && is_scalar( $notification['id'] )
+            ? (string) $notification['id']
+            : '';
+
+        if ( ! empty( $data[ self::DEFERRED_NOTIFICATION_REPLAY_FLAG ] ) )
+        {
+            $allowed_notification_ids = $this->normalize_deferred_notification_ids( $data[ self::DEFERRED_NOTIFICATION_ALLOWED_IDS ] ?? [] );
+
+            if ( empty( $allowed_notification_ids ) )
+            {
+                return false;
+            }
+
+            return ! in_array( $notification_id, $allowed_notification_ids, true );
+        }
+
+        $event = isset( $notification['event'] ) && is_scalar( $notification['event'] )
+            ? sanitize_key( (string) $notification['event'] )
+            : 'form_submission';
+
+        if ( 'form_submission' !== $event || '' === $notification_id )
+        {
+            return false;
+        }
+
+        if ( ! $this->should_defer_notifications_for_async_spam_submission( $form, $entry ) )
+        {
+            return false;
+        }
+
+        $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
+        if ( $entry_id <= 0 )
+        {
+            return false;
+        }
+
+        $this->store_deferred_notification_id( $entry_id, $notification_id );
+
+        return true;
+    }
+
+    /**
      * Suppress Gravity Forms notifications for spam entries.
      * Implements FR-003 (hook), FR-004 (suppress spam), FR-005 (pass ham).
      *
@@ -2151,12 +2246,19 @@ HTML;
 
         // FR-008: Log failed action execution
         $this->log_action_execution( $context, [], 'error', $error );
+
+        $this->resolve_deferred_notifications_after_async_completion( $context, false );
     }
 
     public function finalize_async_evaluation( array $context, array $result ): void
     {
         $entry_id = isset( $context['entry_id'] ) ? absint( $context['entry_id'] ) : 0;
         if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        if ( $this->is_spam_detection_async_result( $context, $result ) )
         {
             return;
         }
@@ -2200,6 +2302,469 @@ HTML;
         return __( 'Sentient Forms action', 'sentient-forms' );
     }
 
+    private function is_spam_detection_async_result( array $context, array $result ): bool
+    {
+        $candidates = [
+            $context['central_action_id'] ?? null,
+            $context['action_template_code'] ?? null,
+            $result['central_action_id'] ?? null,
+            $result['action_template_code'] ?? null,
+            $result['meta']['action_template_code'] ?? null,
+            $result['evaluation_payload']['central_action_id'] ?? null,
+            $result['evaluation_payload']['meta']['action_template_code'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( 'spam_detection_v1' === $candidate )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Determine whether a mapping should hold form-submission notifications.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     * @param bool                 $should_async Whether the mapping executes asynchronously.
+     *
+     * @return bool
+     */
+    private function should_defer_notifications_for_mapping( array $mapping, bool $should_async ): bool
+    {
+        if ( ! $should_async )
+        {
+            return false;
+        }
+
+        return ( $mapping['central_action_id'] ?? '' ) === 'spam_detection_v1'
+            && ! empty( $mapping['mark_as_spam'] );
+    }
+
+    /**
+     * Determine whether this submission should defer notifications for async spam detection.
+     *
+     * @param array $form  The form object.
+     * @param array $entry The entry object.
+     *
+     * @return bool
+     */
+    private function should_defer_notifications_for_async_spam_submission( array $form, array $entry ): bool
+    {
+        $form_id  = isset( $form['id'] ) ? absint( $form['id'] ) : 0;
+        $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
+        $cache_key = $form_id . ':' . $entry_id;
+
+        if ( array_key_exists( $cache_key, $this->async_spam_notification_gate_cache ) )
+        {
+            return $this->async_spam_notification_gate_cache[ $cache_key ];
+        }
+
+        $settings = $this->get_form_settings( $form_id );
+        $disable_flags = $this->get_execution_disable_flags( $settings );
+        if ( ! empty( $disable_flags['effective_disabled'] ) )
+        {
+            $this->async_spam_notification_gate_cache[ $cache_key ] = false;
+            return false;
+        }
+
+        $planner = $this->plugin->get_mapping_dependency_planner();
+        $plan    = $planner->build_execution_plan( $settings, 'gform_after_submission' );
+
+        foreach ( $plan['order'] as $mapping_id )
+        {
+            $node = $plan['nodes'][ $mapping_id ] ?? null;
+            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
+            {
+                continue;
+            }
+
+            if ( empty( $node['enabled'] ) || empty( $node['hook_enabled'] ) )
+            {
+                continue;
+            }
+
+            $mapping = $node['mapping'];
+            $mapping['local_mapping_id'] = $mapping['local_mapping_id'] ?? $mapping_id;
+
+            if ( ! $this->should_defer_notifications_for_mapping( $mapping, $this->is_mapping_async( $mapping ) ) )
+            {
+                continue;
+            }
+
+            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $mapping, $entry ) )
+            {
+                continue;
+            }
+
+            $this->async_spam_notification_gate_cache[ $cache_key ] = true;
+
+            return true;
+        }
+
+        $this->async_spam_notification_gate_cache[ $cache_key ] = false;
+
+        return false;
+    }
+
+    /**
+     * Persist a deferred notification ID for later replay.
+     *
+     * @param int    $entry_id         The entry ID.
+     * @param string $notification_id  The Gravity Forms notification ID.
+     *
+     * @return void
+     */
+    private function store_deferred_notification_id( int $entry_id, string $notification_id ): void
+    {
+        $notification_ids = $this->get_deferred_notification_ids( $entry_id );
+        $notification_ids[] = $notification_id;
+        $notification_ids   = $this->normalize_deferred_notification_ids( $notification_ids );
+
+        $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_IDS_META_KEY, $notification_ids );
+        $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_PENDING );
+    }
+
+    /**
+     * Reconcile deferred notification state after after-submission mappings are queued.
+     *
+     * @param array $entry               The entry object.
+     * @param array $form                The form object.
+     * @param array $queued_mapping_ids  Mapping IDs that were actually queued.
+     *
+     * @return void
+     */
+    private function reconcile_deferred_notifications_after_submission( array $entry, array $form, array $queued_mapping_ids ): void
+    {
+        $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
+        if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        $notification_ids = $this->get_deferred_notification_ids( $entry_id );
+        if ( empty( $notification_ids ) )
+        {
+            return;
+        }
+
+        $queued_mapping_ids = $this->normalize_deferred_notification_ids( $queued_mapping_ids );
+
+        if ( empty( $queued_mapping_ids ) )
+        {
+            $this->replay_deferred_notifications( $entry_id, absint( $form['id'] ?? 0 ) );
+            return;
+        }
+
+        $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY, $queued_mapping_ids );
+        $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_PENDING );
+    }
+
+    /**
+     * Resolve deferred notification state after a spam-classification async job completes.
+     *
+     * @param array $context          Async job context.
+     * @param bool  $should_suppress  Whether notifications should stay suppressed.
+     *
+     * @return void
+     */
+    private function resolve_deferred_notifications_after_async_completion( array $context, bool $should_suppress ): void
+    {
+        $entry_id = isset( $context['entry_id'] ) ? absint( $context['entry_id'] ) : 0;
+        if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        $pending_mapping_ids = $this->get_deferred_notification_mapping_ids( $entry_id );
+        if ( empty( $pending_mapping_ids ) )
+        {
+            return;
+        }
+
+        $current_mapping_id = $this->resolve_deferred_notification_mapping_id( $context );
+        if ( '' === $current_mapping_id )
+        {
+            return;
+        }
+
+        if ( $should_suppress )
+        {
+            $this->update_entry_meta(
+                $entry_id,
+                self::DEFERRED_NOTIFICATION_DECISION_META_KEY,
+                self::DEFERRED_NOTIFICATION_DECISION_SUPPRESS,
+            );
+        }
+
+        $remaining_mapping_ids = array_values(
+            array_diff(
+                $pending_mapping_ids,
+                [ $current_mapping_id ],
+            )
+        );
+
+        if ( ! empty( $remaining_mapping_ids ) )
+        {
+            $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY, $remaining_mapping_ids );
+            return;
+        }
+
+        $decision = $this->get_deferred_notification_decision( $entry_id );
+        if ( self::DEFERRED_NOTIFICATION_DECISION_SUPPRESS === $decision )
+        {
+            $this->clear_deferred_notification_state( $entry_id );
+            return;
+        }
+
+        $this->replay_deferred_notifications( $entry_id, absint( $context['form_id'] ?? 0 ) );
+    }
+
+    /**
+     * Decide whether the async spam result should permanently suppress deferred notifications.
+     *
+     * @param array $context Async job context.
+     * @param array $result  Async result payload.
+     *
+     * @return bool
+     */
+    private function should_suppress_deferred_notifications_from_result( array $context, array $result ): bool
+    {
+        if ( empty( $context['mark_as_spam'] ) )
+        {
+            return false;
+        }
+
+        $classification = $this->extract_spam_classification( $result );
+        if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+        {
+            return false;
+        }
+
+        $confidence = $this->extract_spam_confidence( $result );
+        $threshold  = isset( $context['spam_confidence_threshold'] )
+            ? (float) $context['spam_confidence_threshold']
+            : 0.80;
+
+        return ( $confidence ?? 1.0 ) >= $threshold;
+    }
+
+    /**
+     * Replay deferred notifications for a non-spam or errored async submission.
+     *
+     * @param int $entry_id The entry ID.
+     * @param int $form_id  The form ID.
+     *
+     * @return void
+     */
+    private function replay_deferred_notifications( int $entry_id, int $form_id ): void
+    {
+        $notification_ids = $this->get_deferred_notification_ids( $entry_id );
+        if ( empty( $notification_ids ) )
+        {
+            $this->clear_deferred_notification_state( $entry_id );
+            return;
+        }
+
+        $form = $this->get_form_object( $form_id );
+        $entry = $this->get_entry_record( $entry_id );
+
+        if ( ! is_array( $form ) || ! is_array( $entry ) )
+        {
+            error_log(
+                sprintf(
+                    'Sentient Forms: Unable to replay deferred notifications for entry %d on form %d.',
+                    $entry_id,
+                    $form_id,
+                )
+            );
+            return;
+        }
+
+        $this->dispatch_entry_notifications( $form, $entry, $notification_ids );
+        $this->clear_deferred_notification_state( $entry_id );
+    }
+
+    /**
+     * Dispatch deferred notifications through Gravity Forms using replay-only IDs.
+     *
+     * @param array<int|string, mixed> $form              The form object.
+     * @param array<int|string, mixed> $entry             The entry object.
+     * @param array<int, string>       $notification_ids  The notification IDs to replay.
+     *
+     * @return array<int, mixed>
+     */
+    protected function dispatch_entry_notifications( array $form, array $entry, array $notification_ids ): array
+    {
+        if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'send_notifications' ] ) )
+        {
+            return [];
+        }
+
+        $notification_ids = $this->normalize_deferred_notification_ids( $notification_ids );
+        if ( empty( $notification_ids ) )
+        {
+            return [];
+        }
+
+        $result = GFAPI::send_notifications(
+            $form,
+            $entry,
+            'form_submission',
+            [
+                self::DEFERRED_NOTIFICATION_REPLAY_FLAG => true,
+                self::DEFERRED_NOTIFICATION_ALLOWED_IDS => $notification_ids,
+            ],
+        );
+
+        return is_array( $result ) ? $result : [];
+    }
+
+    /**
+     * Load a Gravity Forms entry for deferred notification replay.
+     *
+     * @param int $entry_id The entry ID.
+     *
+     * @return array|null
+     */
+    protected function get_entry_record( int $entry_id ): ?array
+    {
+        if ( ! class_exists( 'GFAPI' ) )
+        {
+            return null;
+        }
+
+        $entry = GFAPI::get_entry( $entry_id );
+
+        return is_wp_error( $entry ) || ! is_array( $entry )
+            ? null
+            : $entry;
+    }
+
+    /**
+     * Resolve the mapping ID used to track deferred notification state.
+     *
+     * @param array $context Async job context.
+     *
+     * @return string
+     */
+    private function resolve_deferred_notification_mapping_id( array $context ): string
+    {
+        foreach ( [ 'mapping_id', 'local_mapping_id', 'action_id' ] as $candidate_key )
+        {
+            if ( isset( $context[ $candidate_key ] ) && is_scalar( $context[ $candidate_key ] ) )
+            {
+                $value = (string) $context[ $candidate_key ];
+                if ( '' !== $value )
+                {
+                    return $value;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Retrieve deferred notification IDs for an entry.
+     *
+     * @param int $entry_id The entry ID.
+     *
+     * @return array<int, string>
+     */
+    private function get_deferred_notification_ids( int $entry_id ): array
+    {
+        return $this->normalize_deferred_notification_ids(
+            $this->get_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_IDS_META_KEY ) ?? [],
+        );
+    }
+
+    /**
+     * Retrieve pending deferred notification mapping IDs for an entry.
+     *
+     * @param int $entry_id The entry ID.
+     *
+     * @return array<int, string>
+     */
+    private function get_deferred_notification_mapping_ids( int $entry_id ): array
+    {
+        return $this->normalize_deferred_notification_ids(
+            $this->get_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY ) ?? [],
+        );
+    }
+
+    /**
+     * Retrieve the current deferred notification decision state.
+     *
+     * @param int $entry_id The entry ID.
+     *
+     * @return string
+     */
+    private function get_deferred_notification_decision( int $entry_id ): string
+    {
+        $decision = $this->get_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_DECISION_META_KEY );
+
+        return is_scalar( $decision ) && '' !== (string) $decision
+            ? (string) $decision
+            : self::DEFERRED_NOTIFICATION_DECISION_PENDING;
+    }
+
+    /**
+     * Clear all deferred notification state for an entry.
+     *
+     * @param int $entry_id The entry ID.
+     *
+     * @return void
+     */
+    private function clear_deferred_notification_state( int $entry_id ): void
+    {
+        $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_IDS_META_KEY, [] );
+        $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY, [] );
+        $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_PENDING );
+    }
+
+    /**
+     * Normalize a stored notification/mapping ID list to unique strings.
+     *
+     * @param mixed $values Raw value.
+     *
+     * @return array<int, string>
+     */
+    private function normalize_deferred_notification_ids( mixed $values ): array
+    {
+        if ( is_scalar( $values ) )
+        {
+            $values = [ (string) $values ];
+        }
+
+        if ( ! is_array( $values ) )
+        {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ( $values as $value )
+        {
+            if ( ! is_scalar( $value ) )
+            {
+                continue;
+            }
+
+            $string_value = trim( (string) $value );
+            if ( '' === $string_value )
+            {
+                continue;
+            }
+
+            $normalized[] = $string_value;
+        }
+
+        return array_values( array_unique( $normalized ) );
+    }
+
     private function format_async_result_excerpt( array $result ): string
     {
         // CA-EXEC-001: Prefer structured_output for richer excerpts.
@@ -2239,6 +2804,11 @@ HTML;
 
         $entry_id = $context['entry_id'] ?? null;
         if ( empty( $entry_id ) )
+        {
+            return $jobs;
+        }
+
+        if ( $this->is_spam_detection_async_result( $context, $result ) )
         {
             return $jobs;
         }

@@ -1,5 +1,42 @@
 <?php
 
+if ( ! class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) ) {
+    class Sentient_Forms_Test_Gf_Meta_Store {
+        /** @var array<int,array<string,mixed>> */
+        private static array $meta = [];
+
+        public static function reset(): void {
+            self::$meta = [];
+        }
+
+        public static function set_meta( int $entry_id, string $key, mixed $value ): void {
+            if ( ! isset( self::$meta[ $entry_id ] ) ) {
+                self::$meta[ $entry_id ] = [];
+            }
+
+            self::$meta[ $entry_id ][ $key ] = $value;
+        }
+
+        public static function get_meta( int $entry_id, string $key ): mixed {
+            return self::$meta[ $entry_id ][ $key ] ?? null;
+        }
+    }
+}
+
+if ( ! function_exists( 'gform_get_meta' ) ) {
+    function gform_get_meta( $entry_id, $meta_key ) {
+        return Sentient_Forms_Test_Gf_Meta_Store::get_meta( (int) $entry_id, (string) $meta_key );
+    }
+}
+
+if ( ! function_exists( 'gform_update_meta' ) ) {
+    function gform_update_meta( $entry_id, $meta_key, $value ) {
+        Sentient_Forms_Test_Gf_Meta_Store::set_meta( (int) $entry_id, (string) $meta_key, $value );
+
+        return true;
+    }
+}
+
 final class Sentient_Forms_Test_Tracking_Action implements Sentient_Forms_Action_Interface
 {
     /** @var callable */
@@ -69,6 +106,66 @@ final class Sentient_Forms_Test_Tracking_Action implements Sentient_Forms_Action
     }
 }
 
+final class Sentient_Forms_Test_Gravity_Forms_Adapter_Spy extends Sentient_Forms_Gravity_Forms_Adapter
+{
+    /** @var array<int, array<string, mixed>> */
+    public array $notes = [];
+
+    /** @var array<int, array<string, mixed>> */
+    public array $dispatched_notifications = [];
+
+    /** @var array<int, array<string, mixed>> */
+    public array $forms = [];
+
+    /** @var array<int, array<string, mixed>> */
+    public array $entries = [];
+
+    public function add_entry_note( mixed $entry_id, string $note_author, string $note_content ): bool
+    {
+        $this->notes[] = [
+            'entry_id'     => $entry_id,
+            'note_author'  => $note_author,
+            'note_content' => $note_content,
+        ];
+
+        return true;
+    }
+
+    public function mark_entry_as_spam( mixed $entry_id ): bool
+    {
+        $entry_id = (int) $entry_id;
+
+        if ( ! isset( $this->entries[ $entry_id ] ) ) {
+            return false;
+        }
+
+        $this->entries[ $entry_id ]['status'] = 'spam';
+
+        return true;
+    }
+
+    public function get_form_object( int $form_id ): object | array | null
+    {
+        return $this->forms[ $form_id ] ?? parent::get_form_object( $form_id );
+    }
+
+    protected function get_entry_record( int $entry_id ): ?array
+    {
+        return $this->entries[ $entry_id ] ?? parent::get_entry_record( $entry_id );
+    }
+
+    protected function dispatch_entry_notifications( array $form, array $entry, array $notification_ids ): array
+    {
+        $this->dispatched_notifications[] = [
+            'form'             => $form,
+            'entry'            => $entry,
+            'notification_ids' => array_values( $notification_ids ),
+        ];
+
+        return array_values( $notification_ids );
+    }
+}
+
 class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 {
     private Sentient_Forms_Gravity_Forms_Adapter $adapter;
@@ -76,6 +173,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Sentient_Forms_Test_Gf_Meta_Store::reset();
         $this->adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance() );
     }
 
@@ -249,6 +347,66 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'Summary text', $evaluation['payload']['result_data']['llm_output'] );
     }
 
+    public function test_filter_async_evaluation_jobs_skips_spam_detection(): void
+    {
+        $jobs   = [];
+        $job    = [ 'context' => [
+            'form_source'       => 'gravity_forms',
+            'entry_id'          => 123,
+            'form_id'           => 9,
+            'central_action_id' => 'spam_detection_v1',
+            'action_name_label' => 'Spam Detection',
+        ] ];
+        $result = [
+            'evaluation_payload' => [
+                'central_action_id' => 'spam_detection_v1',
+                'result_data'       => [ 'classification' => 'spam' ],
+                'meta'              => [ 'action_template_code' => 'spam_detection_v1' ],
+            ],
+        ];
+
+        $filtered = $this->adapter->filter_async_evaluation_jobs( $jobs, $job, $result );
+
+        $this->assertSame( [], $filtered );
+    }
+
+    public function test_finalize_async_evaluation_ignores_spam_detection_payloads(): void
+    {
+        $spy_adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $entry_id    = 321;
+
+        $spy_adapter->finalize_async_evaluation(
+            [
+                'entry_id'                 => $entry_id,
+                'form_id'                  => 22,
+                'central_action_id'        => 'spam_detection_v1',
+                'mark_as_spam'             => true,
+                'spam_result_display_mode' => 'entry_note',
+                'spam_indicators_display'  => 'detailed',
+            ],
+            [
+                'central_action_id' => 'spam_detection_v1',
+                'result_data'       => [
+                    'classification' => 'spam',
+                    'confidence'     => 0.99,
+                    'justification'  => 'This note should not be added from evaluation finalization.',
+                    'indicators'     => [
+                        [
+                            'type'     => 'promotional_language',
+                            'evidence' => 'Buy now',
+                            'weight'   => 'high',
+                        ],
+                    ],
+                ],
+                'meta'              => [
+                    'action_template_code' => 'spam_detection_v1',
+                ],
+            ]
+        );
+
+        $this->assertSame( [], $spy_adapter->notes );
+    }
+
     /**
      * T-PHP-001: Test that spam classification extracts correctly from CPS results.
      * Tests FR-001: Auto spam marking extracts classification from various result structures.
@@ -335,11 +493,55 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         // First, ensure hooks are registered
         $this->adapter->register_hooks();
 
+        $has_disable_filter = has_filter( 'gform_disable_notification', [ $this->adapter, 'maybe_defer_async_spam_notification' ] );
         // Check that our filter is registered with the gform_notification hook
         $has_filter = has_filter( 'gform_notification', [ $this->adapter, 'maybe_suppress_spam_notification' ] );
 
+        $this->assertNotFalse( $has_disable_filter, 'gform_disable_notification filter should be registered' );
+        $this->assertSame( 10, $has_disable_filter, 'Disable filter should have priority 10' );
         $this->assertNotFalse( $has_filter, 'gform_notification filter should be registered' );
         $this->assertSame( 10, $has_filter, 'Filter should have priority 10' );
+    }
+
+    public function test_async_spam_notification_deferral_suppresses_and_persists_notification_ids(): void
+    {
+        $form_id    = 991;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_spam'    => [
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'mark_as_spam'               => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                ],
+            ]
+        );
+
+        $notification = [
+            'id'    => 'notif_admin',
+            'event' => 'form_submission',
+            'name'  => 'Admin Notification',
+        ];
+        $form = [ 'id' => $form_id ];
+        $entry = [
+            'id'     => 321,
+            'status' => 'active',
+        ];
+
+        $result = $this->adapter->maybe_defer_async_spam_notification( false, $notification, $form, $entry );
+
+        $this->assertTrue( $result );
+        $this->assertSame(
+            [ 'notif_admin' ],
+            gform_get_meta( 321, 'sentient_forms_deferred_notification_ids' ),
+        );
+
+        delete_option( $option_key );
     }
 
     /**
@@ -395,6 +597,174 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $result = $this->adapter->maybe_suppress_spam_notification( $notification, $form, $new_entry );
 
         $this->assertSame( $notification, $result, 'Entry without spam status should pass through' );
+    }
+
+    public function test_reconcile_deferred_notifications_replays_when_no_async_spam_jobs_queue(): void
+    {
+        $spy_adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $entry_id    = 501;
+        $form_id     = 22;
+
+        $spy_adapter->forms[ $form_id ] = [
+            'id'            => $form_id,
+            'notifications' => [],
+        ];
+        $spy_adapter->entries[ $entry_id ] = [
+            'id'      => $entry_id,
+            'form_id' => $form_id,
+            'status'  => 'active',
+        ];
+
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_ids', [ 'notif_admin' ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_decision', 'pending' );
+
+        $method = new ReflectionMethod( $spy_adapter, 'reconcile_deferred_notifications_after_submission' );
+        $method->setAccessible( true );
+        $method->invoke(
+            $spy_adapter,
+            [ 'id' => $entry_id ],
+            [ 'id' => $form_id ],
+            [],
+        );
+
+        $this->assertCount( 1, $spy_adapter->dispatched_notifications );
+        $this->assertSame(
+            [ 'notif_admin' ],
+            $spy_adapter->dispatched_notifications[0]['notification_ids'] ?? [],
+        );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+    }
+
+    public function test_finalize_async_success_replays_deferred_notifications_for_ham(): void
+    {
+        $spy_adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $entry_id    = 601;
+        $form_id     = 23;
+
+        $spy_adapter->forms[ $form_id ] = [
+            'id'            => $form_id,
+            'notifications' => [],
+        ];
+        $spy_adapter->entries[ $entry_id ] = [
+            'id'      => $entry_id,
+            'form_id' => $form_id,
+            'status'  => 'active',
+        ];
+
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_ids', [ 'notif_admin' ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids', [ 'map_spam' ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_decision', 'pending' );
+
+        $spy_adapter->finalize_async_success(
+            [
+                'entry_id'                  => $entry_id,
+                'form_id'                   => $form_id,
+                'mapping_id'                => 'map_spam',
+                'central_action_id'         => 'spam_detection_v1',
+                'mark_as_spam'              => true,
+                'spam_confidence_threshold' => 0.80,
+                'spam_result_display_mode'  => 'entry_note',
+                'action_name_label'         => 'Spam Detection',
+            ],
+            [
+                'result_data' => [
+                    'classification' => 'ham',
+                    'confidence'     => 0.10,
+                    'justification'  => 'Looks legitimate.',
+                ],
+            ],
+        );
+
+        $this->assertCount( 1, $spy_adapter->dispatched_notifications );
+        $this->assertSame(
+            [ 'notif_admin' ],
+            $spy_adapter->dispatched_notifications[0]['notification_ids'] ?? [],
+        );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
+    }
+
+    public function test_finalize_async_success_keeps_deferred_notifications_suppressed_for_spam(): void
+    {
+        $spy_adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $entry_id    = 602;
+        $form_id     = 24;
+
+        $spy_adapter->forms[ $form_id ] = [
+            'id'            => $form_id,
+            'notifications' => [],
+        ];
+        $spy_adapter->entries[ $entry_id ] = [
+            'id'      => $entry_id,
+            'form_id' => $form_id,
+            'status'  => 'active',
+        ];
+
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_ids', [ 'notif_admin' ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids', [ 'map_spam' ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_decision', 'pending' );
+
+        $spy_adapter->finalize_async_success(
+            [
+                'entry_id'                  => $entry_id,
+                'form_id'                   => $form_id,
+                'mapping_id'                => 'map_spam',
+                'central_action_id'         => 'spam_detection_v1',
+                'mark_as_spam'              => true,
+                'spam_confidence_threshold' => 0.80,
+                'spam_result_display_mode'  => 'entry_note',
+                'action_name_label'         => 'Spam Detection',
+            ],
+            [
+                'result_data' => [
+                    'classification' => 'spam',
+                    'confidence'     => 0.99,
+                    'justification'  => 'Spam signal matched.',
+                ],
+            ],
+        );
+
+        $this->assertCount( 0, $spy_adapter->dispatched_notifications );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_ids' ) );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
+    }
+
+    public function test_finalize_async_error_replays_deferred_notifications(): void
+    {
+        $spy_adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $entry_id    = 603;
+        $form_id     = 25;
+
+        $spy_adapter->forms[ $form_id ] = [
+            'id'            => $form_id,
+            'notifications' => [],
+        ];
+        $spy_adapter->entries[ $entry_id ] = [
+            'id'      => $entry_id,
+            'form_id' => $form_id,
+            'status'  => 'active',
+        ];
+
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_ids', [ 'notif_admin' ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids', [ 'map_spam' ] );
+        gform_update_meta( $entry_id, 'sentient_forms_deferred_notification_decision', 'pending' );
+
+        $spy_adapter->finalize_async_error(
+            [
+                'entry_id'          => $entry_id,
+                'form_id'           => $form_id,
+                'mapping_id'        => 'map_spam',
+                'central_action_id' => 'spam_detection_v1',
+                'action_name_label' => 'Spam Detection',
+            ],
+            new WP_Error( 'sentient_forms_async_failed', 'Timeout contacting CPS' ),
+        );
+
+        $this->assertCount( 1, $spy_adapter->dispatched_notifications );
+        $this->assertSame(
+            [ 'notif_admin' ],
+            $spy_adapter->dispatched_notifications[0]['notification_ids'] ?? [],
+        );
+        $this->assertSame( [], gform_get_meta( $entry_id, 'sentient_forms_deferred_notification_mapping_ids' ) );
     }
 
     /**
@@ -1387,5 +1757,6 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $excerpt_legacy = $method->invoke( $this->adapter, $result_legacy );
         $this->assertStringContainsString( 'Legacy output text', $excerpt_legacy );
     }
+
 }
 
