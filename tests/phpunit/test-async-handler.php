@@ -22,6 +22,73 @@ if ( ! function_exists( 'as_enqueue_async_action' ) )
     }
 }
 
+if ( ! class_exists( 'GFForms' ) )
+{
+    class GFForms {}
+}
+
+if ( ! class_exists( 'GFAPI' ) )
+{
+    class GFAPI {
+        /** @var array<int,array<string,mixed>> */
+        public static array $entries = [];
+
+        public static function get_entry( $entry_id ) {
+            $entry_id = (int) $entry_id;
+            if ( isset( self::$entries[ $entry_id ] ) )
+            {
+                return self::$entries[ $entry_id ];
+            }
+
+            return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+        }
+    }
+}
+
+if ( ! class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) )
+{
+    class Sentient_Forms_Test_Gf_Meta_Store {
+        /** @var array<int,array<string,mixed>> */
+        private static array $meta = [];
+
+        public static function reset(): void {
+            self::$meta = [];
+        }
+
+        public static function set_meta( int $entry_id, string $meta_key, mixed $value ): void {
+            self::update_meta( $entry_id, $meta_key, $value );
+        }
+
+        public static function update_meta( int $entry_id, string $meta_key, mixed $value ): void {
+            if ( ! isset( self::$meta[ $entry_id ] ) )
+            {
+                self::$meta[ $entry_id ] = [];
+            }
+
+            self::$meta[ $entry_id ][ $meta_key ] = $value;
+        }
+
+        public static function get_meta( int $entry_id, string $meta_key ): mixed {
+            return self::$meta[ $entry_id ][ $meta_key ] ?? null;
+        }
+    }
+}
+
+if ( ! function_exists( 'gform_get_meta' ) )
+{
+    function gform_get_meta( $entry_id, $meta_key ) {
+        return Sentient_Forms_Test_Gf_Meta_Store::get_meta( (int) $entry_id, (string) $meta_key );
+    }
+}
+
+if ( ! function_exists( 'gform_update_meta' ) )
+{
+    function gform_update_meta( $entry_id, $meta_key, $value ) {
+        Sentient_Forms_Test_Gf_Meta_Store::update_meta( (int) $entry_id, (string) $meta_key, $value );
+        return true;
+    }
+}
+
 class Sentient_Forms_Test_Action_Executor extends Sentient_Forms_Action_Executor
 {
     public array $captured = [];
@@ -155,6 +222,12 @@ class AsyncHandlerTest extends WP_UnitTestCase
         global $wpdb;
         $wpdb->query( 'TRUNCATE TABLE ' . $wpdb->prefix . 'sentient_async_requests' );
 		delete_option( 'sentient_forms_async_settings' );
+        GFAPI::$entries = [];
+
+        if ( class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) )
+        {
+            Sentient_Forms_Test_Gf_Meta_Store::reset();
+        }
 
         if ( class_exists( 'Sentient_Forms_Test_Gravity_Meta_Store' ) )
         {
@@ -179,6 +252,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         }
         $GLOBALS['__sentient_forms_async_queue'] = [ 'enqueued' => [] ];
         $GLOBALS['__sentient_forms_http_calls'] = [];
+        GFAPI::$entries = [];
         remove_all_filters( 'pre_http_request' );
         parent::tearDown();
     }
@@ -190,6 +264,14 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $property->setAccessible( true );
         $property->setValue( $this->plugin, $handler );
         $this->plugin->async = $handler;
+    }
+
+    private function set_action_executor( Sentient_Forms_Action_Executor $executor ): void
+    {
+        $reflection = new ReflectionClass( $this->plugin );
+        $property   = $reflection->getProperty( 'action_executor' );
+        $property->setAccessible( true );
+        $property->setValue( $this->plugin, $executor );
     }
 
     private function get_execute_async_calls(): array
@@ -700,6 +782,236 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
         $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
         $this->assertSame( 'skipped', $row['status'] ?? null );
+    }
+
+    public function test_process_action_marks_skipped_when_upstream_spam_classification_requires_skip(): void
+    {
+        $request_store = $this->plugin->get_async_request_store();
+        $executor      = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $classifications = [ 'spam', 'likely_spam' ];
+
+        foreach ( $classifications as $index => $classification )
+        {
+            $dependency_request_id = 'dep_req_spam_' . $classification;
+            $execution_request_id  = 'exec_req_skip_' . $classification;
+            $entry_id              = 910 + $index;
+            $form_id               = 210 + $index;
+
+            $request_store->record(
+                $dependency_request_id,
+                [
+                    'status'    => 'success',
+                    'action_id' => 'spam_detection_v1',
+                ]
+            );
+
+            GFAPI::$entries[ $entry_id ] = [
+                'id'      => $entry_id,
+                'form_id' => $form_id,
+                'status'  => 'active',
+            ];
+            gform_update_meta( $entry_id, 'sentient_forms_spam_classification', $classification );
+
+            $scheduled = $this->plugin->process_action_async(
+                'entry_summary_v1',
+                [
+                    'hook'  => 'gform_after_submission',
+                    'form'  => [ 'id' => $form_id, 'title' => 'Dependency Gate' ],
+                    'entry' => [ 'id' => $entry_id, 'field_1' => 'skip me' ],
+                ],
+                [
+                    'central_action_id'     => 'entry_summary_v1',
+                    'action_type_indicator' => 'master',
+                    'settings'              => [
+                        'skip_on_upstream_spam' => true,
+                    ],
+                ],
+                [
+                    'hook'                           => 'gform_after_submission',
+                    'form_source'                    => 'gravity_forms',
+                    'action_id'                      => 'map_summary',
+                    'action_name_label'              => 'Entry Summary',
+                    'local_mapping_id'               => 'map_summary',
+                    'dependency_mapping_ids'         => [ 'map_prereq' ],
+                    'dependency_execution_request_ids' => [ 'map_prereq' => $dependency_request_id ],
+                    'dependency_wait_started_at'     => time(),
+                    'dependency_wait_max_seconds'    => 120,
+                    'dependency_wait_poll_seconds'   => 5,
+                ]
+            );
+
+            $this->assertTrue( $scheduled );
+
+            $job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+            $handler = $this->plugin->get_async_handler();
+            $handler->process_action(
+                $job['args']['action_id'],
+                $job['args']['data'],
+                $job['args']['settings'],
+                $job['args']['execution_request_id'],
+                $job['args']['context'],
+            );
+
+            $metadata = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] );
+            $this->assertSame( 'skipped', $metadata['status'] ?? null );
+
+            $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
+            $this->assertSame( 'skipped', $row['status'] ?? null );
+            $this->assertStringContainsString( str_replace( '_', ' ', $classification ), (string) ( $row['last_error'] ?? '' ) );
+            $this->assertSame( [], $executor->captured );
+
+            $notes = gform_get_meta( $entry_id, 'sentient_forms_notes' );
+            $this->assertIsArray( $notes );
+            $this->assertCount( 1, $notes );
+            $this->assertStringContainsString( 'Skipped Entry Summary because upstream spam check classified this entry as', (string) $notes[0]['content'] );
+
+            $handler->process_action(
+                $job['args']['action_id'],
+                $job['args']['data'],
+                $job['args']['settings'],
+                $job['args']['execution_request_id'],
+                $job['args']['context'],
+            );
+
+            $notes = gform_get_meta( $entry_id, 'sentient_forms_notes' );
+            $this->assertCount( 1, $notes );
+        }
+    }
+
+    public function test_process_action_continues_when_upstream_spam_classification_is_ham(): void
+    {
+        $request_store = $this->plugin->get_async_request_store();
+        $executor      = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $request_store->record(
+            'dep_req_ham',
+            [
+                'status'    => 'success',
+                'action_id' => 'spam_detection_v1',
+            ]
+        );
+
+        GFAPI::$entries[ 920 ] = [
+            'id'      => 920,
+            'form_id' => 220,
+            'status'  => 'active',
+        ];
+        gform_update_meta( 920, 'sentient_forms_spam_classification', 'ham' );
+
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'  => 'gform_after_submission',
+                'form'  => [ 'id' => 220, 'title' => 'Ham Flow' ],
+                'entry' => [ 'id' => 920, 'field_1' => 'continue' ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'settings'              => [
+                    'skip_on_upstream_spam' => true,
+                ],
+            ],
+            [
+                'hook'                           => 'gform_after_submission',
+                'form_source'                    => 'gravity_forms',
+                'action_id'                      => 'map_summary_ham',
+                'action_name_label'              => 'Entry Summary',
+                'local_mapping_id'               => 'map_summary_ham',
+                'dependency_mapping_ids'         => [ 'map_prereq' ],
+                'dependency_execution_request_ids' => [ 'map_prereq' => 'dep_req_ham' ],
+                'dependency_wait_started_at'     => time(),
+                'dependency_wait_max_seconds'    => 120,
+                'dependency_wait_poll_seconds'   => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $metadata = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] );
+        $this->assertSame( 'success', $metadata['status'] ?? null );
+        $this->assertNotEmpty( $executor->captured );
+
+        $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'success', $row['status'] ?? null );
+    }
+
+    public function test_process_action_continues_when_upstream_spam_classification_is_missing(): void
+    {
+        $request_store = $this->plugin->get_async_request_store();
+        $executor      = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $request_store->record(
+            'dep_req_missing_classification',
+            [
+                'status'    => 'success',
+                'action_id' => 'spam_detection_v1',
+            ]
+        );
+
+        GFAPI::$entries[ 921 ] = [
+            'id'      => 921,
+            'form_id' => 221,
+            'status'  => 'active',
+        ];
+
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'  => 'gform_after_submission',
+                'form'  => [ 'id' => 221, 'title' => 'Missing Classification' ],
+                'entry' => [ 'id' => 921, 'field_1' => 'continue' ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'settings'              => [
+                    'skip_on_upstream_spam' => true,
+                ],
+            ],
+            [
+                'hook'                           => 'gform_after_submission',
+                'form_source'                    => 'gravity_forms',
+                'action_id'                      => 'map_summary_missing',
+                'action_name_label'              => 'Entry Summary',
+                'local_mapping_id'               => 'map_summary_missing',
+                'dependency_mapping_ids'         => [ 'map_prereq' ],
+                'dependency_execution_request_ids' => [ 'map_prereq' => 'dep_req_missing_classification' ],
+                'dependency_wait_started_at'     => time(),
+                'dependency_wait_max_seconds'    => 120,
+                'dependency_wait_poll_seconds'   => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $metadata = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] );
+        $this->assertSame( 'success', $metadata['status'] ?? null );
+        $this->assertNotEmpty( $executor->captured );
     }
 
     public function test_dispatch_action_evaluation_enqueues_evaluation_job(): void

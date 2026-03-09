@@ -549,6 +549,16 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( [ 'map_a', '123' ], $sanitized['dependency_ids'] ?? [] );
     }
 
+    public function test_sanitize_settings_normalizes_skip_on_upstream_spam_boolean(): void
+    {
+        $settings = [
+            'skip_on_upstream_spam' => '1',
+        ];
+
+        $sanitized = $this->invoke_private( 'sanitize_settings', [ $settings ] );
+        $this->assertTrue( $sanitized['skip_on_upstream_spam'] ?? false );
+    }
+
     public function test_validate_mapping_dependencies_rejects_unknown_dependency(): void
     {
         $actions = [
@@ -657,7 +667,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             ],
             'map_dual' => [
                 'local_mapping_id'      => 'map_dual',
-                'central_action_id'     => 'content_quality_v1',
+                'central_action_id'     => 'content_validation_v1',
                 'action_type_indicator' => 'master',
                 'trigger_hooks'         => [ 'gform_validation', 'gform_after_submission' ],
                 'settings'              => [
@@ -669,6 +679,88 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                             'mapping_id' => 'map_async',
                         ],
                     ],
+                ],
+            ],
+        ];
+
+        $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
+        $this->assertTrue( $result );
+    }
+
+    public function test_validate_mapping_dependencies_rejects_skip_on_upstream_spam_without_after_submission(): void
+    {
+        $actions = [
+            'map_spam' => [
+                'local_mapping_id'      => 'map_spam',
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation' ],
+                'settings'              => [],
+            ],
+            'map_child' => [
+                'local_mapping_id'      => 'map_child',
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation' ],
+                'settings'              => [
+                    'dependency_ids'          => [ 'map_spam' ],
+                    'skip_on_upstream_spam'   => true,
+                ],
+            ],
+        ];
+
+        $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
+        $this->assertWPError( $result );
+        $this->assertSame( 'rest_invalid_skip_on_upstream_spam', $result->get_error_code() );
+    }
+
+    public function test_validate_mapping_dependencies_rejects_skip_on_upstream_spam_for_non_spam_dependency(): void
+    {
+        $actions = [
+            'map_summary' => [
+                'local_mapping_id'      => 'map_summary',
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_after_submission' ],
+                'settings'              => [],
+            ],
+            'map_child' => [
+                'local_mapping_id'      => 'map_child',
+                'central_action_id'     => 'content_validation_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_after_submission' ],
+                'settings'              => [
+                    'execution_mode'         => 'after_submission',
+                    'dependency_ids'         => [ 'map_summary' ],
+                    'skip_on_upstream_spam'  => true,
+                ],
+            ],
+        ];
+
+        $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
+        $this->assertWPError( $result );
+        $this->assertSame( 'rest_invalid_skip_on_upstream_spam', $result->get_error_code() );
+    }
+
+    public function test_validate_mapping_dependencies_allows_skip_on_upstream_spam_for_single_upstream_spam_mapping(): void
+    {
+        $actions = [
+            'map_spam' => [
+                'local_mapping_id'      => 'map_spam',
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_after_submission' ],
+                'settings'              => [],
+            ],
+            'map_child' => [
+                'local_mapping_id'      => 'map_child',
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_after_submission' ],
+                'settings'              => [
+                    'execution_mode'        => 'after_submission',
+                    'dependency_ids'        => [ 'map_spam' ],
+                    'skip_on_upstream_spam' => true,
                 ],
             ],
         ];

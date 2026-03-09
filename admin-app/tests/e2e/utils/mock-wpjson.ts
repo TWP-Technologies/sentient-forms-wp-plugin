@@ -22,6 +22,11 @@ type Routes = {
 
 export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 	await page.context().unroute('**/wp-json/sentient-forms/v1/**').catch(() => {});
+	const envelope = (data: unknown) =>
+		JSON.stringify({
+			success: true,
+			data
+		});
 
 	const settingsState: Record<string, unknown> = {
 		enable_logging: true,
@@ -44,7 +49,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(forms)
+				body: envelope(forms)
 			});
 		}
 
@@ -52,7 +57,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(routes.actions.definitions)
+				body: envelope(routes.actions.definitions)
 			});
 		}
 
@@ -60,7 +65,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(settingsState)
+				body: envelope(settingsState)
 			});
 		}
 
@@ -70,7 +75,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				return route.fulfill({
 					status: 200,
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify(settingsState)
+					body: envelope(settingsState)
 				});
 			}
 
@@ -134,7 +139,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(routes.actions.creditBalance)
+				body: envelope(routes.actions.creditBalance)
 			});
 		}
 
@@ -142,7 +147,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(routes.actions.status)
+				body: envelope(routes.actions.status)
 			});
 		}
 
@@ -150,7 +155,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(routes.actions.formsActions)
+				body: envelope(routes.actions.formsActions)
 			});
 		}
 
@@ -158,7 +163,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(routes.actions.formFields)
+				body: envelope(routes.actions.formFields)
 			});
 		}
 
@@ -198,7 +203,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(responsePayload)
+				body: envelope(responsePayload)
 			});
 		}
 
@@ -220,7 +225,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 201,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(newLinkage)
+				body: envelope(newLinkage)
 			});
 		}
 
@@ -393,7 +398,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 201,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
+				body: envelope({
 					duplicate,
 					insertion: {
 						parent: {
@@ -448,7 +453,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(merged)
+				body: envelope(merged)
 			});
 		}
 
@@ -460,7 +465,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				return route.fulfill({
 					status: 200,
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify(payload)
+					body: envelope(payload)
 				});
 			}
 		}
@@ -469,7 +474,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(routes.customActions.list)
+				body: envelope(routes.customActions.list)
 			});
 		}
 
@@ -477,7 +482,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 201,
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(routes.customActions.create)
+				body: envelope(routes.customActions.create)
 			});
 		}
 

@@ -486,7 +486,7 @@ test.describe('Actions admin flows', () => {
 			customActions: { list: { actions: baseCustomActions, quota } }
 		});
 
-		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 		await expect(page.locator('nav a[href="#/actions"]')).toHaveClass(/sf-bg-slate-200/);
 		await expect(page.locator('nav a[href="#/actions"]')).toHaveClass(/sf-text-slate-900/);
@@ -558,7 +558,7 @@ test.describe('Actions admin flows', () => {
 			customActions: { list: { actions: baseCustomActions, quota } }
 		});
 
-		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
@@ -601,7 +601,7 @@ test.describe('Actions admin flows', () => {
 			customActions: { list: { actions: baseCustomActions, quota } }
 		});
 
-		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
@@ -651,7 +651,7 @@ test.describe('Actions admin flows', () => {
 			customActions: { list: { actions: baseCustomActions, quota } }
 		});
 
-		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
@@ -712,7 +712,7 @@ test.describe('Actions admin flows', () => {
 			customActions: { list: { actions: baseCustomActions, quota } }
 		});
 
-		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		await page.getByRole('heading', { name: 'Actions' }).waitFor();
 
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
@@ -760,7 +760,7 @@ test.describe('Actions admin flows', () => {
 			customActions: { list: { actions: baseCustomActions, quota } }
 		});
 
-		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
@@ -1006,6 +1006,214 @@ test.describe('Actions admin flows', () => {
 		const payload = request.postDataJSON() as Record<string, unknown>;
 		const settings = (payload.settings ?? {}) as Record<string, unknown>;
 		expect(settings.dependency_ids).toBeUndefined();
+	});
+
+	test('shows spam-aware skip toggle only when after-submission trigger source is spam detection', async ({
+		page
+	}) => {
+		const definitions = [
+			{
+				id: 'spam_detection_v1',
+				label: 'Spam detection',
+				source: 'cps',
+				hooks: ['gform_after_submission'],
+				base_credit_cost: 10,
+				model_hint: 'gemini-1.5-flash'
+			},
+			{
+				id: 'entry_summary_v1',
+				label: 'Entry summary',
+				source: 'cps',
+				hooks: ['gform_after_submission'],
+				base_credit_cost: 8,
+				model_hint: 'gemini-1.5-pro'
+			}
+		];
+		const linkages = [
+			{
+				local_mapping_id: 'map-spam',
+				central_action_id: 'spam_detection_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam gate',
+				trigger_hooks: ['gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-summary-gated',
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Summary after spam gate',
+				trigger_hooks: ['gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {
+					dependency_ids: ['map-spam'],
+					trigger_sources: {
+						gform_after_submission: { type: 'mapping', mapping_id: 'map-spam' }
+					}
+				}
+			},
+			{
+				local_mapping_id: 'map-summary-root',
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Autonomous summary',
+				trigger_hooks: ['gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {
+					trigger_sources: {
+						gform_after_submission: { type: 'hook_root' }
+					}
+				}
+			},
+			{
+				local_mapping_id: 'map-parent-summary',
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Summary parent',
+				trigger_hooks: ['gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-summary-from-summary',
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Summary from summary parent',
+				trigger_hooks: ['gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {
+					dependency_ids: ['map-parent-summary'],
+					trigger_sources: {
+						gform_after_submission: { type: 'mapping', mapping_id: 'map-parent-summary' }
+					}
+				}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.getByRole('heading', { name: 'Actions' }).waitFor();
+		const table = await openLinkedActionsTable(page);
+
+		await table
+			.locator('tbody tr')
+			.filter({ hasText: 'Summary after spam gate' })
+			.getByRole('button', { name: 'Configure' })
+			.first()
+			.click();
+		let modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toBeVisible();
+		await modal.getByTestId('mapping-config-make-autonomous').click();
+		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toHaveCount(0);
+		await modal.getByTestId('mapping-config-close-header').click();
+
+		await table
+			.locator('tbody tr')
+			.filter({ hasText: 'Summary from summary parent' })
+			.getByRole('button', { name: 'Configure' })
+			.first()
+			.click();
+		modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toHaveCount(0);
+	});
+
+	test('persists skip_on_upstream_spam for eligible dependent mappings', async ({ page }) => {
+		const definitions = [
+			{
+				id: 'spam_detection_v1',
+				label: 'Spam detection',
+				source: 'cps',
+				hooks: ['gform_after_submission'],
+				base_credit_cost: 10,
+				model_hint: 'gemini-1.5-flash'
+			},
+			{
+				id: 'entry_summary_v1',
+				label: 'Entry summary',
+				source: 'cps',
+				hooks: ['gform_after_submission'],
+				base_credit_cost: 8,
+				model_hint: 'gemini-1.5-pro'
+			}
+		];
+		const linkages = [
+			{
+				local_mapping_id: 'map-spam',
+				central_action_id: 'spam_detection_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Spam gate',
+				trigger_hooks: ['gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-summary',
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Entry summary',
+				trigger_hooks: ['gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {
+					dependency_ids: ['map-spam'],
+					trigger_sources: {
+						gform_after_submission: { type: 'mapping', mapping_id: 'map-spam' }
+					}
+				}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions,
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.getByRole('heading', { name: 'Actions' }).waitFor();
+		const table = await openLinkedActionsTable(page);
+		await table
+			.locator('tbody tr')
+			.filter({ hasText: 'Entry summary' })
+			.getByRole('button', { name: 'Configure' })
+			.first()
+			.click();
+
+		const modal = page.getByTestId('mapping-config-modal');
+		const skipToggle = modal.getByTestId('mapping-skip-on-upstream-spam');
+		await expect(skipToggle).toBeVisible();
+		await skipToggle.click();
+
+		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-summary$/, { timeout: 15_000 });
+		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-summary$/, { timeout: 15_000 });
+		await saveMappingConfigModal(page);
+
+		const request = await updateReq;
+		await updateRes;
+		const payload = request.postDataJSON() as Record<string, unknown>;
+		const settings = (payload.settings ?? {}) as Record<string, any>;
+
+		expect(settings.skip_on_upstream_spam).toBe(true);
+		expect(settings.dependency_ids).toEqual(['map-spam']);
+		expect(settings.trigger_sources?.gform_after_submission?.type).toBe('mapping');
+		expect(settings.trigger_sources?.gform_after_submission?.mapping_id).toBe('map-spam');
 	});
 
 	test('saves dependency_ids directly in graph view', async ({ page }) => {

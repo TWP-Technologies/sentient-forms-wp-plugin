@@ -2835,6 +2835,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 continue;
             }
 
+            if ( 'skip_on_upstream_spam' === $key )
+            {
+                $sanitized[ $key ] = rest_sanitize_boolean( $value );
+                continue;
+            }
+
             if ( is_array( $value ) )
             {
                 $sanitized[ $key ] = $this->sanitize_settings( $value );
@@ -3468,6 +3474,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             }
 
             $mapping_is_async = $this->is_mapping_async( $mapping );
+            $skip_on_upstream_spam_validation = $this->validate_skip_on_upstream_spam_dependency( $mapping_id, $mapping, $normalized, $planner );
+            if ( is_wp_error( $skip_on_upstream_spam_validation ) )
+            {
+                return $skip_on_upstream_spam_validation;
+            }
 
             foreach ( $trigger_hooks as $hook )
             {
@@ -3542,6 +3553,127 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return true;
+    }
+
+    /**
+     * Validate the narrow skip_on_upstream_spam mapping option.
+     *
+     * This option is only valid for after-submission mappings whose active
+     * dependency source resolves to exactly one upstream spam_detection_v1 mapping.
+     *
+     * @param string                                   $mapping_id Mapping id.
+     * @param array<string, mixed>                     $mapping    Mapping payload.
+     * @param array<string, array<string, mixed>>      $normalized All normalized mappings.
+     * @param Sentient_Forms_Mapping_Dependency_Planner $planner   Dependency planner.
+     *
+     * @return true|WP_Error
+     */
+    private function validate_skip_on_upstream_spam_dependency(
+        string $mapping_id,
+        array $mapping,
+        array $normalized,
+        Sentient_Forms_Mapping_Dependency_Planner $planner
+    ): true | WP_Error
+    {
+        if ( ! $this->is_skip_on_upstream_spam_enabled( $mapping ) )
+        {
+            return true;
+        }
+
+        $trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
+        if ( ! in_array( 'gform_after_submission', $trigger_hooks, true ) )
+        {
+            return new WP_Error(
+                'rest_invalid_skip_on_upstream_spam',
+                sprintf(
+                    /* translators: %s: mapping id */
+                    __( 'Mapping %s can only enable skip_on_upstream_spam when it runs on after-submission.', 'sentient-forms' ),
+                    sanitize_text_field( $mapping_id )
+                )
+            );
+        }
+
+        $dependency_ids = $planner->extract_dependency_ids_for_hook( $mapping, 'gform_after_submission' );
+        if ( 1 !== count( $dependency_ids ) )
+        {
+            return new WP_Error(
+                'rest_invalid_skip_on_upstream_spam',
+                sprintf(
+                    /* translators: %s: mapping id */
+                    __( 'Mapping %s can only enable skip_on_upstream_spam when after-submission depends on exactly one upstream spam check.', 'sentient-forms' ),
+                    sanitize_text_field( $mapping_id )
+                )
+            );
+        }
+
+        $dependency_id = sanitize_text_field( (string) $dependency_ids[0] );
+        if ( '' === $dependency_id || ! isset( $normalized[ $dependency_id ] ) )
+        {
+            return new WP_Error(
+                'rest_invalid_skip_on_upstream_spam',
+                sprintf(
+                    /* translators: 1: mapping id, 2: dependency id */
+                    __( 'Mapping %1$s enables skip_on_upstream_spam, but dependency %2$s is missing.', 'sentient-forms' ),
+                    sanitize_text_field( $mapping_id ),
+                    sanitize_text_field( $dependency_id )
+                )
+            );
+        }
+
+        $dependency_hooks = $this->sanitize_trigger_hooks( (array) ( $normalized[ $dependency_id ]['trigger_hooks'] ?? [] ) );
+        if ( ! $this->dependency_satisfies_hook( 'gform_after_submission', $dependency_hooks ) )
+        {
+            return new WP_Error(
+                'rest_invalid_skip_on_upstream_spam',
+                sprintf(
+                    /* translators: 1: mapping id, 2: dependency id */
+                    __( 'Mapping %1$s enables skip_on_upstream_spam, but dependency %2$s is not a valid upstream source for after-submission.', 'sentient-forms' ),
+                    sanitize_text_field( $mapping_id ),
+                    sanitize_text_field( $dependency_id )
+                )
+            );
+        }
+
+        $dependency_action_id = isset( $normalized[ $dependency_id ]['central_action_id'] ) && is_scalar( $normalized[ $dependency_id ]['central_action_id'] )
+            ? sanitize_key( (string) $normalized[ $dependency_id ]['central_action_id'] )
+            : '';
+
+        if ( 'spam_detection_v1' !== $dependency_action_id )
+        {
+            return new WP_Error(
+                'rest_invalid_skip_on_upstream_spam',
+                sprintf(
+                    /* translators: 1: mapping id, 2: dependency id */
+                    __( 'Mapping %1$s can only enable skip_on_upstream_spam when dependency %2$s uses spam_detection_v1.', 'sentient-forms' ),
+                    sanitize_text_field( $mapping_id ),
+                    sanitize_text_field( $dependency_id )
+                )
+            );
+        }
+
+        return true;
+    }
+
+    /**
+     * Determine whether the skip_on_upstream_spam option is enabled for a mapping.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     *
+     * @return bool
+     */
+    private function is_skip_on_upstream_spam_enabled( array $mapping ): bool
+    {
+        if ( ! isset( $mapping['settings'] ) || ! is_array( $mapping['settings'] ) )
+        {
+            return false;
+        }
+
+        if ( ! array_key_exists( 'skip_on_upstream_spam', $mapping['settings'] ) )
+        {
+            return false;
+        }
+
+        return rest_sanitize_boolean( $mapping['settings']['skip_on_upstream_spam'] );
     }
 
     /**

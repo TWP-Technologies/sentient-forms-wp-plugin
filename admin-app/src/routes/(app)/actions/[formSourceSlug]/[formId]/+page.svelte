@@ -354,6 +354,34 @@
 	const isSpamMapping = $derived.by(
 		() => editingLinkage?.central_action_id === 'spam_detection_v1'
 	);
+	const upstreamAfterSubmissionTriggerMapping = $derived.by(() => {
+		if (!editingLinkageId) return null;
+		const hooks = normalizeHookIds(draftHooks);
+		if (!hooks.includes('gform_after_submission')) return null;
+		const dependencyIds = normalizeDependencyIds(draftSettings.dependency_ids);
+		const triggerSources = deriveTriggerSourcesForDraft(
+			hooks,
+			dependencyIds,
+			normalizeDraftTriggerSources(draftSettings.trigger_sources, hooks)
+		);
+		const triggerSource = triggerSources.gform_after_submission;
+		const fallbackDependencyId = !triggerSource && dependencyIds.length === 1 ? dependencyIds[0] : null;
+		const mappingId =
+			triggerSource && triggerSource.type === 'mapping' && triggerSource.mapping_id
+				? triggerSource.mapping_id
+				: fallbackDependencyId;
+		if (!mappingId) return null;
+		const linkage = getLinkageById(mappingId);
+		if (!linkage) return null;
+		return linkage;
+	});
+	const canSkipOnUpstreamSpam = $derived.by(
+		() => upstreamAfterSubmissionTriggerMapping?.central_action_id === 'spam_detection_v1'
+	);
+	const skipOnUpstreamSpamSummary = $derived.by(() => {
+		if (!canSkipOnUpstreamSpam || !upstreamAfterSubmissionTriggerMapping) return '';
+		return `Triggered by ${friendlyActionLabel(upstreamAfterSubmissionTriggerMapping)}`;
+	});
 	const guidanceSummary = $derived.by(() => {
 		if (!isSpamMapping) return '';
 		const localPositive = Array.isArray(draftSettings.spam_positive_examples)
@@ -455,6 +483,15 @@
 			draftSettings.execution_mode === 'after_submission' ? 'Async' : 'Sync';
 		const model = selection.primary?.toString().trim() || 'sf_default';
 		return `${executionMode} · ${model}`;
+	});
+
+	$effect(() => {
+		if (!editingLinkageId) return;
+		if (draftSettings.skip_on_upstream_spam !== true) return;
+		if (canSkipOnUpstreamSpam) return;
+		const nextDraftSettings = { ...draftSettings };
+		delete nextDraftSettings.skip_on_upstream_spam;
+		draftSettings = nextDraftSettings;
 	});
 	const graphHasDraftChanges = $derived.by(() => Object.keys(graphDraftByMappingId).length > 0);
 	const hasGraphUnsavedChanges = $derived(hasUnsavedMappingChanges || graphHasDraftChanges);
@@ -1167,6 +1204,9 @@
 		const triggerSources = normalizeDraftTriggerSources(normalized.trigger_sources, hooks);
 		normalized.trigger_sources = triggerSources;
 		normalized.dependency_ids = deriveDependencyIdsForDraft(triggerSources);
+		if (normalized.skip_on_upstream_spam !== true) {
+			delete normalized.skip_on_upstream_spam;
+		}
 		return normalized;
 	}
 
@@ -1817,13 +1857,16 @@
 					: { type: 'hook_root' as const }
 			])
 		);
-		const nextSettings = {
+		const nextSettings: Record<string, unknown> = {
 			...draftSettings,
 			dependency_ids: normalizedDependencyIds,
 			trigger_sources: persistableTriggerSources
 		};
 		if (normalizedDependencyIds.length === 0) {
 			delete nextSettings.dependency_ids;
+		}
+		if (!canSkipOnUpstreamSpam || draftSettings.skip_on_upstream_spam !== true) {
+			delete nextSettings.skip_on_upstream_spam;
 		}
 
 		const updatedLinkage: FormActionLinkage = {
@@ -2870,6 +2913,32 @@
 											<p class="sf:mt-2 sf:text-xs sf:text-slate-500">
 												No dependencies configured. This action is autonomous.
 											</p>
+										{/if}
+
+										{#if canSkipOnUpstreamSpam}
+											<div class="sf:mt-4 sf:border-t sf:border-slate-200 sf:pt-4 sf:space-y-2">
+												<p
+													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500"
+												>
+													Spam-aware downstream gate
+												</p>
+												<Toggle
+													id="mapping-skip-on-upstream-spam"
+													data-testid="mapping-skip-on-upstream-spam"
+													checked={draftSettings.skip_on_upstream_spam === true}
+													label="Skip this action when the upstream spam check marks the entry as spam"
+													description={`${skipOnUpstreamSpamSummary}. Use this to avoid downstream credit spend on spam entries.`}
+													onchange={(event) => {
+														const nextDraftSettings = { ...draftSettings };
+														if (event.detail.checked) {
+															nextDraftSettings.skip_on_upstream_spam = true;
+														} else {
+															delete nextDraftSettings.skip_on_upstream_spam;
+														}
+														draftSettings = nextDraftSettings;
+													}}
+												/>
+											</div>
 										{/if}
 									</div>
 								{/if}

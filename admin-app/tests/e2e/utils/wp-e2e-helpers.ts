@@ -59,6 +59,20 @@ export type AsyncExecutionJobRecord = {
 	created_at: string;
 };
 
+export type WpAsyncMetadataJobRecord = {
+	job_id: string;
+	hook: string;
+	status: string;
+	action_id: string | null;
+	central_action_id: string | null;
+	local_mapping_id: string | null;
+	entry_id: string | null;
+	execution_request_id: string | null;
+	action_scheduler_id: number | null;
+	run_at: number | null;
+	last_error: string | null;
+};
+
 export type ActionExecutionDebitRecord = {
 	execution_request_id: string;
 	credits_delta: number;
@@ -122,6 +136,9 @@ type ActionMappingArgs = {
 	actionTypeIndicator?: 'master' | 'custom';
 	actionTemplateId?: string;
 	localMappingId?: string;
+	dependencyIds?: string[];
+	triggerSources?: Record<string, { type: 'hook_root' | 'mapping'; mapping_id?: string }>;
+	skipOnUpstreamSpam?: boolean;
 	inputMapping?: InputMapping;
 	batchSettings?: BatchSettings;
 	executionMode?: ExecutionMode;
@@ -601,6 +618,36 @@ echo (int) ( $form['id'] ?? 0 );
 
 export function configureGravityActionMapping(args: ActionMappingArgs): void {
 	const mappingId = args.localMappingId ?? `map_${args.actionId}`;
+	const dependencyIds = Array.from(
+		new Set(
+			(args.dependencyIds ?? [])
+				.map((dependencyId) => dependencyId?.toString().trim())
+				.filter(Boolean)
+		)
+	);
+	const triggerSources = args.triggerSources
+		? Object.fromEntries(
+				Object.entries(args.triggerSources)
+					.map(([hook, source]) => {
+						const normalizedHook = hook?.toString().trim();
+						if (!normalizedHook || !source?.type) {
+							return null;
+						}
+						if (source.type === 'mapping' && source.mapping_id) {
+							const mappingId = source.mapping_id.toString().trim();
+							if (!mappingId) {
+								return null;
+							}
+							return [normalizedHook, { type: 'mapping' as const, mapping_id: mappingId }];
+						}
+						return [normalizedHook, { type: 'hook_root' as const }];
+					})
+					.filter(
+						(entry): entry is [string, { type: 'hook_root' | 'mapping'; mapping_id?: string }] =>
+							Array.isArray(entry)
+					)
+			)
+		: undefined;
 	const inputMapping = args.inputMapping
 		? {
 				mode: args.inputMapping.mode,
@@ -628,7 +675,10 @@ export function configureGravityActionMapping(args: ActionMappingArgs): void {
 		batch_settings: batchSettings,
 		execution_mode: args.executionMode ?? undefined,
 		realtime_settings: realtimeSettings,
-		...(args.additionalSettings ?? {})
+		...(args.additionalSettings ?? {}),
+		...(dependencyIds.length > 0 ? { dependency_ids: dependencyIds } : {}),
+		...(triggerSources ? { trigger_sources: triggerSources } : {}),
+		...(args.skipOnUpstreamSpam ? { skip_on_upstream_spam: true } : {})
 	};
 	const mapping = {
 		id: mappingId,
@@ -667,12 +717,52 @@ if ( empty( $form_id ) || ! is_array( $data ) ) {
     return;
 }
 $option_name = sprintf( 'sentient_forms_actions_gravity_forms_%d', $form_id );
-$settings    = array_merge(
+$current = get_option( $option_name, [] );
+if ( ! is_array( $current ) ) {
+    $current = [];
+}
+
+$extract_mappings = static function ( array $payload ): array {
+    $mappings = [];
+
+    if ( isset( $payload['actions'] ) && is_array( $payload['actions'] ) ) {
+        foreach ( $payload['actions'] as $mapping_id => $mapping ) {
+            if ( is_array( $mapping ) ) {
+                $mappings[ $mapping_id ] = $mapping;
+            }
+        }
+    }
+
+    foreach ( $payload as $mapping_id => $mapping ) {
+        if ( 'actions' === $mapping_id || ! is_array( $mapping ) ) {
+            continue;
+        }
+
+        if ( isset( $mapping['local_mapping_id'] ) || isset( $mapping['central_action_id'] ) ) {
+            $mappings[ $mapping_id ] = $mapping;
+        }
+    }
+
+    return $mappings;
+};
+
+$merged_actions = array_replace(
+    $extract_mappings( $current ),
+    $extract_mappings( $data )
+);
+
+$settings = array_merge(
+    $current,
     [
         'enabled' => true,
     ],
     $data
 );
+$settings['actions'] = $merged_actions;
+
+foreach ( $merged_actions as $mapping_id => $mapping ) {
+    $settings[ $mapping_id ] = $mapping;
+}
 update_option( $option_name, $settings, false );
 echo 'ok';
 `
@@ -1025,6 +1115,96 @@ LIMIT 1;
 	}
 }
 
+export function getLatestWpAsyncMetadataJobByEntryId(
+	entryId: number,
+	centralActionId?: string,
+	hook?: string
+): WpAsyncMetadataJobRecord | null {
+	const result = runWpCli(['option', 'get', 'sentient_forms_async_jobs', '--format=json']);
+	if (result.status !== 0) {
+		throw new Error(`Failed to read async metadata jobs: ${stripCliNoise(result.stderr || result.stdout)}`);
+	}
+
+	const payload = (result.stdout ?? '').trim();
+
+	if (!payload) {
+		return null;
+	}
+
+	try {
+		const decoded = JSON.parse(payload) as unknown;
+		const jobs = Array.isArray(decoded)
+			? decoded
+			: decoded && typeof decoded === 'object'
+				? Object.values(decoded as Record<string, unknown>)
+				: [];
+		if (jobs.length === 0) {
+			return null;
+		}
+
+		const filtered = jobs
+			.filter((job): job is Record<string, unknown> => !!job && typeof job === 'object')
+			.filter((job) => {
+				const context =
+					job.context && typeof job.context === 'object'
+						? (job.context as Record<string, unknown>)
+						: {};
+				const jobEntryId = context.entry_id?.toString().trim() ?? '';
+				if (jobEntryId !== String(entryId)) {
+					return false;
+				}
+
+				if (hook) {
+					const jobHook = job.hook?.toString().trim() ?? '';
+					if (jobHook !== hook) {
+						return false;
+					}
+				}
+
+				if (centralActionId) {
+					const jobCentralActionId = context.central_action_id?.toString().trim() ?? '';
+					if (jobCentralActionId !== centralActionId) {
+						return false;
+					}
+				}
+
+				return true;
+			})
+			.sort((left, right) => {
+				const leftScheduledAt = Number(left.scheduled_at ?? 0);
+				const rightScheduledAt = Number(right.scheduled_at ?? 0);
+				return rightScheduledAt - leftScheduledAt;
+			});
+
+		const job = filtered[0];
+		if (!job) {
+			return null;
+		}
+
+		const context =
+			job.context && typeof job.context === 'object'
+				? (job.context as Record<string, unknown>)
+				: {};
+
+		return {
+			job_id: job.job_id?.toString() ?? '',
+			hook: job.hook?.toString() ?? '',
+			status: job.status?.toString() ?? '',
+			action_id: job.action_id?.toString() ?? null,
+			central_action_id: context.central_action_id?.toString() ?? null,
+			local_mapping_id: context.local_mapping_id?.toString() ?? null,
+			entry_id: context.entry_id?.toString() ?? null,
+			execution_request_id: context.execution_request_id?.toString() ?? null,
+			action_scheduler_id:
+				typeof job.action_scheduler_id === 'number' ? job.action_scheduler_id : null,
+			run_at: typeof job.run_at === 'number' ? job.run_at : null,
+			last_error: job.last_error?.toString() ?? null
+		};
+	} catch (_error) {
+		throw new Error(`Failed to parse WP async metadata job payload: ${payload}`);
+	}
+}
+
 export function getLatestActionExecutionDebitByEntryId(
 	entryId: number,
 	centralActionId?: string
@@ -1063,6 +1243,58 @@ LIMIT 1;
 	} catch (_error) {
 		throw new Error(`Failed to parse action execution debit payload: ${raw}`);
 	}
+}
+
+export function getActionExecutionDebitsByEntryId(
+	entryId: number,
+	centralActionId?: string
+): ActionExecutionDebitRecord[] {
+	const centralActionFilter = centralActionId
+		? `AND (
+      metadata->>'action_template_code' = '${sanitizeSqlLiteral(centralActionId)}'
+      OR metadata->'context'->>'central_action_id' = '${sanitizeSqlLiteral(centralActionId)}'
+    )`
+		: '';
+	const sql = `
+SELECT COALESCE(
+    json_agg(
+        json_build_object(
+            'execution_request_id', execution_request_id,
+            'credits_delta', credits_delta,
+            'central_action_id', COALESCE(metadata->>'action_template_code', metadata->'context'->>'central_action_id'),
+            'hook', metadata->'context'->>'hook'
+        )
+        ORDER BY created_at ASC
+    ),
+    '[]'::json
+)::text
+FROM credit_ledger_entries
+WHERE reason = 'action_execution'
+  AND (
+    metadata->>'entry_id' = '${sanitizeSqlLiteral(String(entryId))}'
+    OR metadata->'context'->>'entry_id' = '${sanitizeSqlLiteral(String(entryId))}'
+  )
+  ${centralActionFilter};
+`.trim();
+
+	const raw = runDbQuery(sql);
+	if (!raw) {
+		return [];
+	}
+
+	try {
+		const decoded = JSON.parse(raw) as ActionExecutionDebitRecord[];
+		return Array.isArray(decoded) ? decoded : [];
+	} catch (_error) {
+		throw new Error(`Failed to parse action execution debit list payload: ${raw}`);
+	}
+}
+
+export function countActionExecutionDebitsByEntryId(
+	entryId: number,
+	centralActionId?: string
+): number {
+	return getActionExecutionDebitsByEntryId(entryId, centralActionId).length;
 }
 
 export function setFormStatusOption(formId: number, status: 'success' | 'error', message: string): void {
@@ -1122,12 +1354,28 @@ export async function waitForEntryMeta(
 	throw new Error(`Meta ${metaKey} not satisfied after ${maxAttempts} attempts; lastValue=${JSON.stringify(lastValue)}`);
 }
 
-export async function submitGravityForm(page: Page, formId: number, name: string, email: string): Promise<void> {
+export async function submitGravityForm(
+	page: Page,
+	formId: number,
+	name: string,
+	email: string,
+	additionalFieldValues: Record<string, string> = {}
+): Promise<void> {
 	await loginToWpAdmin(page);
 	await page.goto(`${wpBaseUrl}/?gf_page=preview&id=${formId}`, { waitUntil: 'domcontentloaded' });
 	await waitForPreviewInputs(page, formId);
-	await page.fill('input[name="input_1"]', name);
-	await page.fill('input[name="input_2"]', email);
+	const fieldValues: Array<[string, string]> = [
+		['1', name],
+		['2', email],
+		...Object.entries(additionalFieldValues)
+	];
+	for (const [fieldId, value] of fieldValues) {
+		const field = page
+			.locator(`input[name="input_${fieldId}"], textarea[name="input_${fieldId}"]`)
+			.first();
+		await expect(field, `Gravity Forms preview field input_${fieldId} should exist`).toBeVisible();
+		await field.fill(value);
+	}
 	await Promise.all([
 		page.click('input[type="submit"], button[type="submit"]'),
 		page.waitForSelector('.gform_confirmation_message, .gform_confirmation_wrapper', { timeout: 15000 })

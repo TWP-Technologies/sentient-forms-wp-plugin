@@ -360,6 +360,8 @@ export interface FormActionSettings {
 	dependency_ids?: string[];
 	/** Per-hook trigger source authority (hook root or mapping parent) */
 	trigger_sources?: Record<string, TriggerSourceConfig>;
+	/** Skip this mapping when its upstream spam check classified the entry as spam */
+	skip_on_upstream_spam?: boolean;
 	/** Conditional run gates for this mapping (CB-FORMS-006) */
 	conditions?: MappingConditionsConfig;
 	/** Prompt overrides for this mapping */

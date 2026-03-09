@@ -957,7 +957,11 @@ class Sentient_Forms_Async_Handler
         $dependency_gate = $this->evaluate_dependency_gate( $job );
         if ( 'skip' === $dependency_gate['state'] )
         {
-            $this->handle_dependency_skip( $job, $dependency_gate['reason'] ?? __( 'Dependency failed or skipped', 'sentient-forms' ) );
+            $this->handle_dependency_skip(
+                $job,
+                $dependency_gate['reason'] ?? __( 'Dependency failed or skipped', 'sentient-forms' ),
+                $dependency_gate['reason_code'] ?? null
+            );
             $this->sweep_stale_async_rows();
             return;
         }
@@ -1078,7 +1082,7 @@ class Sentient_Forms_Async_Handler
      *
      * @param array<string, mixed> $job Job payload.
      *
-     * @return array{state: string, reason?: string, delay_seconds?: int}
+     * @return array{state: string, reason?: string, reason_code?: string, delay_seconds?: int}
      */
     private function evaluate_dependency_gate( array $job ): array
     {
@@ -1177,6 +1181,12 @@ class Sentient_Forms_Async_Handler
 
         if ( empty( $pending_dependencies ) )
         {
+            $spam_gate = $this->evaluate_upstream_spam_skip( $job, $dependency_ids );
+            if ( is_array( $spam_gate ) )
+            {
+                return $spam_gate;
+            }
+
             return [ 'state' => 'pass' ];
         }
 
@@ -1211,14 +1221,24 @@ class Sentient_Forms_Async_Handler
     /**
      * Mark a job as skipped due to dependency outcome.
      *
-     * @param array<string, mixed> $job    Job payload.
-     * @param string               $reason Skip reason.
+     * @param array<string, mixed> $job         Job payload.
+     * @param string               $reason      Skip reason.
+     * @param string|null          $reason_code Skip reason code.
      *
      * @return void
      */
-    private function handle_dependency_skip( array $job, string $reason ): void
+    private function handle_dependency_skip( array $job, string $reason, ?string $reason_code = null ): void
     {
         $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $already_recorded = false;
+
+        if ( ! empty( $job['execution_request_id'] ) )
+        {
+            $existing = $this->get_request_store()->get( (string) $job['execution_request_id'], 'job' );
+            $already_recorded = $existing
+                && 'skipped' === ( $existing['status'] ?? null )
+                && $reason === ( $existing['last_error'] ?? null );
+        }
 
         $this->get_metadata_store()->update_status(
             $context['job_id'] ?? null,
@@ -1234,11 +1254,161 @@ class Sentient_Forms_Async_Handler
             $this->get_request_store()->mark_status( (string) $job['execution_request_id'], 'skipped', $reason );
         }
 
+        if ( 'upstream_spam' === $reason_code && ! $already_recorded )
+        {
+            $this->maybe_add_dependency_skip_note( $job, $reason );
+        }
+
         $this->emit_async_event(
             'skipped',
             $context,
             [ 'reason' => $reason ]
         );
+    }
+
+    /**
+     * Evaluate whether a dependent mapping should be skipped because its upstream
+     * spam check classified the entry as spam.
+     *
+     * @param array<string, mixed> $job            Job payload.
+     * @param array<int, string>   $dependency_ids Dependency ids for this job.
+     *
+     * @return array<string, string>|null
+     */
+    private function evaluate_upstream_spam_skip( array $job, array $dependency_ids ): ?array
+    {
+        if ( ! $this->should_skip_on_upstream_spam( $job ) || 1 !== count( $dependency_ids ) )
+        {
+            return null;
+        }
+
+        $classification = $this->get_upstream_spam_classification( $job );
+        if ( null === $classification || ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+        {
+            return null;
+        }
+
+        return [
+            'state'       => 'skip',
+            'reason_code' => 'upstream_spam',
+            'reason'      => sprintf(
+                /* translators: %s: spam classification */
+                __( 'Upstream spam check classified this entry as %s.', 'sentient-forms' ),
+                str_replace( '_', ' ', $classification )
+            ),
+        ];
+    }
+
+    /**
+     * Determine whether a job opted into skip_on_upstream_spam.
+     *
+     * @param array<string, mixed> $job Job payload.
+     *
+     * @return bool
+     */
+    private function should_skip_on_upstream_spam( array $job ): bool
+    {
+        $settings = isset( $job['settings'] ) && is_array( $job['settings'] ) ? $job['settings'] : [];
+
+        if ( isset( $settings['settings'] ) && is_array( $settings['settings'] ) && array_key_exists( 'skip_on_upstream_spam', $settings['settings'] ) )
+        {
+            return rest_sanitize_boolean( $settings['settings']['skip_on_upstream_spam'] );
+        }
+
+        if ( array_key_exists( 'skip_on_upstream_spam', $settings ) )
+        {
+            return rest_sanitize_boolean( $settings['skip_on_upstream_spam'] );
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve the stored upstream spam classification for a dependent job.
+     *
+     * @param array<string, mixed> $job Job payload.
+     *
+     * @return string|null
+     */
+    private function get_upstream_spam_classification( array $job ): ?string
+    {
+        $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $entry_id = isset( $job['data']['entry']['id'] ) ? (int) $job['data']['entry']['id'] : (int) ( $context['entry_id'] ?? 0 );
+
+        if ( $entry_id <= 0 )
+        {
+            return null;
+        }
+
+        $classification = null;
+        $adapter = $this->resolve_async_adapter( $context['form_source'] ?? null, $context );
+        if ( $adapter && method_exists( $adapter, 'get_entry_meta' ) )
+        {
+            $classification = $adapter->get_entry_meta( $entry_id, 'spam_classification' );
+        }
+
+        $adapter_id = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? '' ) );
+        if ( null === $classification && 'gravity_forms' === $adapter_id && function_exists( 'gform_get_meta' ) )
+        {
+            $classification = gform_get_meta( $entry_id, 'sentient_forms_spam_classification' );
+        }
+
+        if ( ! is_scalar( $classification ) )
+        {
+            return null;
+        }
+
+        $normalized = sanitize_key( (string) $classification );
+        return '' === $normalized ? null : $normalized;
+    }
+
+    /**
+     * Add a concise note when a dependent action is skipped due to upstream spam.
+     *
+     * @param array<string, mixed> $job    Job payload.
+     * @param string               $reason Skip reason.
+     *
+     * @return void
+     */
+    private function maybe_add_dependency_skip_note( array $job, string $reason ): void
+    {
+        $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $entry_id = isset( $job['data']['entry']['id'] ) ? (int) $job['data']['entry']['id'] : (int) ( $context['entry_id'] ?? 0 );
+
+        if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        $adapter = $this->resolve_async_adapter( $context['form_source'] ?? null, $context );
+        if ( ! $adapter || ! method_exists( $adapter, 'add_entry_note' ) )
+        {
+            return;
+        }
+
+        $settings = isset( $job['settings'] ) && is_array( $job['settings'] ) ? $job['settings'] : [];
+        $action_name = $context['action_name_label'] ?? $settings['action_name_label'] ?? $settings['central_action_id'] ?? $job['action_id'] ?? __( 'this action', 'sentient-forms' );
+        $action_name = sanitize_text_field( (string) $action_name );
+        if ( '' === $action_name )
+        {
+            $action_name = __( 'this action', 'sentient-forms' );
+        }
+
+        $normalized_reason = trim( $reason );
+        $normalized_reason = rtrim( $normalized_reason, ". \t\n\r\0\x0B" );
+        if ( '' !== $normalized_reason )
+        {
+            $normalized_reason = strtolower( substr( $normalized_reason, 0, 1 ) ) . substr( $normalized_reason, 1 );
+        }
+
+        $note = sprintf(
+            /* translators: 1: action name, 2: skip reason */
+            __( 'Skipped %1$s because %2$s.', 'sentient-forms' ),
+            $action_name,
+            $normalized_reason
+        );
+
+        $adapter->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
     }
 
     /**

@@ -907,4 +907,58 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertSame( [ 'summary' => 'Looks good' ], $result['evaluation_payload']['result_data']['structured_output'] );
 		$this->assertTrue( $result['evaluation_payload']['result_data']['structured_output_valid'] );
 	}
+
+	public function test_execute_bridges_content_validation_structured_output_to_validation(): void {
+		$this->plugin->set_license_data(
+			[
+				'proxy_api_key' => 'proxy-validation',
+			]
+		);
+
+		$client = new class extends Sentient_Forms_Api_Client {
+			public function __construct() {}
+
+			public function post( string $path, array $payload, array $options = [] ): WP_Error | array {
+				return [
+					'result_data' => [
+						'llm_output'              => '{"is_valid":false}',
+						'structured_output'       => [
+							'is_valid' => false,
+							'message'  => 'Please provide more detail.',
+							'fields'   => [
+								[
+									'field_id' => '3',
+									'is_valid' => false,
+									'message'  => 'Tell us more about your project.',
+								],
+							],
+						],
+						'structured_output_valid' => true,
+					],
+					'meta'        => [
+						'credits_debited' => 8,
+					],
+				];
+			}
+		};
+
+		$executor = new Sentient_Forms_Action_Executor( $this->plugin, $client );
+		$result   = $executor->execute(
+			'content_validation_v1',
+			[ 'id' => 61, 'title' => 'Validation Form' ],
+			[ 'id' => 910, '3' => 'short' ],
+			[ 'hook' => 'gform_validation', 'action_id' => 'map_validation' ]
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertArrayHasKey( 'validation', $result );
+		$this->assertFalse( $result['validation']['is_valid'] );
+		$this->assertSame( 'Please provide more detail.', $result['validation']['message'] );
+		$this->assertSame( '3', $result['validation']['fields'][0]['field_id'] ?? null );
+		$this->assertFalse( $result['validation']['fields'][0]['is_valid'] ?? true );
+		$this->assertSame(
+			'Tell us more about your project.',
+			$result['validation']['fields'][0]['message'] ?? null
+		);
+	}
 }

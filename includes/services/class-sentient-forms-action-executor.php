@@ -143,6 +143,7 @@ class Sentient_Forms_Action_Executor {
 			return $response;
 		}
 
+		$response = $this->ensure_validation_payload( $response, $central_action_id );
 		$response = $this->ensure_evaluation_payload( $response, $central_action_id, $context );
 		$this->cache_execution_result( $execution_request_id, $response, $entry_id, $context );
 
@@ -321,6 +322,112 @@ class Sentient_Forms_Action_Executor {
 
 		$response['evaluation_payload'] = $payload;
 		return $response;
+	}
+
+	/**
+	 * Bridge content_validation_v1 structured output into the top-level validation shape
+	 * consumed by the Gravity Forms validation adapter.
+	 *
+	 * @param array  $response          CPS response payload.
+	 * @param string $central_action_id CPS central action identifier.
+	 *
+	 * @return array
+	 */
+	private function ensure_validation_payload( array $response, string $central_action_id ): array {
+		if ( 'content_validation_v1' !== sanitize_key( $central_action_id ) ) {
+			return $response;
+		}
+
+		if ( isset( $response['validation'] ) && is_array( $response['validation'] ) ) {
+			return $response;
+		}
+
+		$result_data = isset( $response['result_data'] ) && is_array( $response['result_data'] )
+			? $response['result_data']
+			: array();
+
+		$validation = $this->extract_content_validation_payload( $result_data );
+		if ( null === $validation ) {
+			return $response;
+		}
+
+		$response['validation'] = $validation;
+
+		return $response;
+	}
+
+	/**
+	 * Extract a normalized validation payload from content_validation_v1 result data.
+	 *
+	 * @param array<string, mixed> $result_data CPS result_data payload.
+	 *
+	 * @return array<string, mixed>|null
+	 */
+	private function extract_content_validation_payload( array $result_data ): ?array {
+		$candidates = array();
+
+		if (
+			! empty( $result_data['structured_output_valid'] )
+			&& isset( $result_data['structured_output'] )
+			&& is_array( $result_data['structured_output'] )
+		) {
+			$candidates[] = $result_data['structured_output'];
+		}
+
+		$candidates[] = $result_data;
+
+		foreach ( $candidates as $candidate ) {
+			$normalized = $this->normalize_content_validation_payload( $candidate );
+			if ( null !== $normalized ) {
+				return $normalized;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Normalize a content-validation payload into the adapter contract.
+	 *
+	 * @param array<string, mixed> $candidate Candidate payload.
+	 *
+	 * @return array<string, mixed>|null
+	 */
+	private function normalize_content_validation_payload( array $candidate ): ?array {
+		if ( ! array_key_exists( 'is_valid', $candidate ) ) {
+			return null;
+		}
+
+		$validation = array(
+			'is_valid' => rest_sanitize_boolean( $candidate['is_valid'] ),
+			'message'  => isset( $candidate['message'] ) && is_scalar( $candidate['message'] )
+				? sanitize_text_field( (string) $candidate['message'] )
+				: '',
+			'fields'   => array(),
+		);
+
+		if ( isset( $candidate['fields'] ) && is_array( $candidate['fields'] ) ) {
+			foreach ( $candidate['fields'] as $field ) {
+				if ( ! is_array( $field ) || ! isset( $field['field_id'] ) || ! is_scalar( $field['field_id'] ) ) {
+					continue;
+				}
+
+				$field_id = sanitize_text_field( (string) $field['field_id'] );
+				if ( '' === $field_id ) {
+					continue;
+				}
+
+				$validation['fields'][] = array(
+					'field_id' => $field_id,
+					'is_valid' => array_key_exists( 'is_valid', $field ) ? rest_sanitize_boolean( $field['is_valid'] ) : true,
+					'message'  => isset( $field['message'] ) && is_scalar( $field['message'] )
+						? sanitize_text_field( (string) $field['message'] )
+						: '',
+				);
+			}
+		}
+
+		return $validation;
 	}
 
 	/**
