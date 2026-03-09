@@ -173,6 +173,11 @@ type GravityFormOptions = {
 	notifications?: GravityFormNotificationConfig[];
 };
 
+export type GravityActionSettingsRecord = Record<string, unknown> & {
+	enabled?: boolean;
+	actions?: Record<string, Record<string, unknown>>;
+};
+
 type CreditAdjustmentArgs = {
 	delta: number;
 	licenseKey?: string;
@@ -800,6 +805,36 @@ echo 'ok';
 
 	if (result.status !== 0 || !stripCliNoise(result.stdout).includes('ok')) {
 		throw new Error(`Failed to configure action mapping: ${stripCliNoise(result.stderr || result.stdout)}`);
+	}
+}
+
+export function getGravityActionSettings(formId: number): GravityActionSettingsRecord {
+	const result = runWpCli([
+		'option',
+		'get',
+		`sentient_forms_actions_gravity_forms_${formId}`,
+		'--format=json'
+	]);
+
+	if (result.status !== 0) {
+		throw new Error(
+			`Failed to read action settings for form ${formId}: ${stripCliNoise(result.stderr || result.stdout)}`
+		);
+	}
+
+	const payload = result.stdout.trim();
+	if (!payload) {
+		throw new Error(`Empty action settings payload for form ${formId}`);
+	}
+
+	try {
+		return JSON.parse(payload) as GravityActionSettingsRecord;
+	} catch (error) {
+		throw new Error(
+			`Failed to parse action settings for form ${formId}: ${
+				error instanceof Error ? error.message : String(error)
+			}`
+		);
 	}
 }
 
@@ -1546,4 +1581,3 @@ export function resetE2eState(): void {
 	setExecutionRequestIdOverride(null);
 	clearCapturedMail();
 }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
