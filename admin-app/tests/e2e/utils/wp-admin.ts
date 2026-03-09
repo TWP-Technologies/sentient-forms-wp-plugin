@@ -6,6 +6,7 @@ const wpAdminUser = process.env.SENTIENT_WP_ADMIN_USER ?? 'admin';
 const wpAdminPass = process.env.SENTIENT_WP_ADMIN_PASS ?? 'password';
 
 type SentientWindow = Window & { sentientFormsConfig?: unknown };
+type SentientAppStatus = 'bootstrapping' | 'ready' | 'failed';
 
 async function maybeHandleAdminVerification(page: Page): Promise<void> {
 	const confirmButton = page.locator('button', { hasText: 'The email is correct' });
@@ -52,13 +53,59 @@ export async function ensureSentientFormsSpa(page: Page, hash = '/dashboard'): P
 		waitUntil: 'domcontentloaded'
 	});
 	await waitForSentientConfig(page);
-	await page.waitForFunction(() => {
-		const root = document.querySelector('#sentient-forms-admin-app');
-		if (!root) {
-			return false;
+	const deadline = Date.now() + 15000;
+	let bootState: {
+		appReady: SentientAppStatus | 'unknown';
+		hasContent: boolean;
+	} = {
+		appReady: 'unknown',
+		hasContent: false
+	};
+	while (Date.now() < deadline) {
+		try {
+			bootState = await page.evaluate(() => {
+				const appReady = (window as Window & { sentientFormsAppReady?: SentientAppStatus })
+					.sentientFormsAppReady;
+				const root = document.querySelector('#sentient-forms-admin-app');
+				const hasContent =
+					!!root && Array.from(root.children).some((child) => child.tagName !== 'SCRIPT');
+
+				return {
+					appReady: appReady ?? 'unknown',
+					hasContent
+				};
+			});
+		} catch {
+			bootState = {
+				appReady: 'unknown',
+				hasContent: false
+			};
 		}
-		return Array.from(root.children).some((child) => child.tagName !== 'SCRIPT');
-	}, { timeout: 15000 });
+
+		if (bootState.appReady === 'failed') {
+			break;
+		}
+
+		if (bootState.appReady === 'ready' && bootState.hasContent) {
+			break;
+		}
+
+		await page.waitForTimeout(200);
+	}
+
+	const { appReady, hasContent } = bootState;
+	if (appReady === 'failed') {
+		const rootHtml = await page
+			.locator('#sentient-forms-admin-app')
+			.evaluate((element) => element.innerHTML)
+			.catch(() => '<missing mount root>');
+		throw new Error(`Sentient Forms SPA failed to start. Root HTML: ${rootHtml}`);
+	}
+	if (appReady !== 'ready' || !hasContent) {
+		throw new Error(
+			`Sentient Forms SPA did not reach ready state within 15s (appReady=${appReady}, hasContent=${hasContent})`
+		);
+	}
 	await page.evaluate((desiredHash) => {
 		if (typeof window !== 'undefined' && window.location.hash !== desiredHash) {
 			window.location.hash = desiredHash;
