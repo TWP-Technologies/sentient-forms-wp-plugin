@@ -28,56 +28,41 @@ jobs:
           --health-retries=10
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Cache Cargo directories
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            Sentient-Forms-Central-Proxy-Server/target
-          key: ${{ runner.os }}-cps-cargo-${{ hashFiles('Sentient-Forms-Central-Proxy-Server/**/Cargo.lock') }}-${{ hashFiles('Sentient-Forms-Central-Proxy-Server/**/sqlx-data.json') }}
-          restore-keys: |
-            ${{ runner.os }}-cps-cargo-
+        uses: actions/checkout@v6
 
       - name: Cache Composer
-        uses: actions/cache@v4
+        id: composer-cache
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cache/composer
-            wp-plugin/vendor
-          key: ${{ runner.os }}-composer-${{ hashFiles('wp-plugin/composer.lock') }}
+            vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
           restore-keys: |
             ${{ runner.os }}-composer-
 
-      - name: Cache Bun dependencies
-        uses: actions/cache@v4
+      - name: Cache Bun install artifacts
+        id: bun-cache
+        uses: actions/cache@v5
         with:
-          path: |
-            ~/.cache/bun/install/cache
-            wp-plugin/admin-app/node_modules
-          key: ${{ runner.os }}-bun-${{ hashFiles('wp-plugin/admin-app/bun.lock') }}
+          path: ~/.cache/bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('admin-app/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        id: playwright-cache
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-ms-playwright-${{ hashFiles('wp-plugin/admin-app/package.json') }}
+          key: ${{ runner.os }}-ms-playwright-${{ hashFiles('admin-app/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-ms-playwright-
 
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-
-      - name: Install sqlx-cli
-        run: cargo install sqlx-cli --no-default-features --features rustls --locked --force
+      - name: Verify cache inputs
+        run: |
+          test -f composer.lock
+          test -f admin-app/bun.lock
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -98,12 +83,21 @@ jobs:
           done
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.0'
 
+      - name: Report cache state
+        run: |
+          echo "composer.lock hash: ${{ hashFiles('composer.lock') }}"
+          echo "admin-app/bun.lock hash: ${{ hashFiles('admin-app/bun.lock') }}"
+          echo "Composer cache hit: ${{ steps.composer-cache.outputs.cache-hit }}"
+          echo "Bun cache hit: ${{ steps.bun-cache.outputs.cache-hit }}"
+          echo "Playwright cache hit: ${{ steps.playwright-cache.outputs.cache-hit }}"
+
       - name: Run full QA script
         env:
+          SKIP_CPS: '1'
           WP_TESTS_DB_HOST: 127.0.0.1
           WP_TESTS_DB_NAME: sentient_forms_wpdb
           WP_TESTS_DB_USER: sf_wp_user

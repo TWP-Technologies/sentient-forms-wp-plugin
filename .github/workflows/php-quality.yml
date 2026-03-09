@@ -3,30 +3,41 @@ name: PHP Quality
 on:
   push:
     paths:
-      - 'wp-plugin/**'
+      - '**/*.php'
+      - 'composer.json'
+      - 'composer.lock'
+      - 'phpcs.xml'
+      - 'phpunit.xml'
+      - '.github/workflows/php-quality.yml'
   pull_request:
     paths:
-      - 'wp-plugin/**'
+      - '**/*.php'
+      - 'composer.json'
+      - 'composer.lock'
+      - 'phpcs.xml'
+      - 'phpunit.xml'
+      - '.github/workflows/php-quality.yml'
 
 jobs:
   phpcs:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: wp-plugin
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Cache Composer
-        uses: actions/cache@v4
+        id: composer-cache
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cache/composer
-            wp-plugin/vendor
-          key: ${{ runner.os }}-composer-${{ hashFiles('wp-plugin/composer.lock') }}
+            vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
           restore-keys: |
             ${{ runner.os }}-composer-
+
+      - name: Verify cache inputs
+        run: test -f composer.lock
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -34,6 +45,11 @@ jobs:
           php-version: '8.3'
           coverage: none
           extensions: mysqli
+
+      - name: Report cache state
+        run: |
+          echo "composer.lock hash: ${{ hashFiles('composer.lock') }}"
+          echo "Composer cache hit: ${{ steps.composer-cache.outputs.cache-hit }}"
 
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist
@@ -64,22 +80,23 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
-    defaults:
-      run:
-        working-directory: wp-plugin
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Cache Composer
-        uses: actions/cache@v4
+        id: composer-cache
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cache/composer
-            wp-plugin/vendor
-          key: ${{ runner.os }}-composer-${{ hashFiles('wp-plugin/composer.lock') }}
+            vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
           restore-keys: |
             ${{ runner.os }}-composer-
+
+      - name: Verify cache inputs
+        run: test -f composer.lock
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -98,6 +115,11 @@ jobs:
           for i in {1..30}; do
             mysqladmin ping -h 127.0.0.1 -uroot && break || sleep 2;
           done
+
+      - name: Report cache state
+        run: |
+          echo "composer.lock hash: ${{ hashFiles('composer.lock') }}"
+          echo "Composer cache hit: ${{ steps.composer-cache.outputs.cache-hit }}"
 
       - name: Install dependencies
         run: composer install --no-interaction --prefer-dist
