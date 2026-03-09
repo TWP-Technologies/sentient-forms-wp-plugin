@@ -144,6 +144,7 @@ type ActionMappingArgs = {
 	executionMode?: ExecutionMode;
 	realtimeSettings?: RealtimeSettings;
 	additionalSettings?: Record<string, unknown>;
+	mergeWithExistingMappings?: boolean;
 };
 
 type GravityField = {
@@ -526,7 +527,7 @@ if ( ! is_array( $payload ) || empty( $payload['title'] ) ) {
 }
 $title         = $payload['title'];
 $fields        = $payload['fields'] ?? [];
-$notifications = array_key_exists( 'notifications', $payload ) ? ( $payload['notifications'] ?? [] ) : null;
+$notifications = array_key_exists( 'notifications', $payload ) ? ( $payload['notifications'] ?? [] ) : [];
 $forms         = GFAPI::get_forms();
 $form          = null;
 foreach ( $forms as $candidate_form ) {
@@ -564,36 +565,48 @@ if ( ! is_array( $form ) ) {
     }
 }
 
-if ( is_array( $notifications ) ) {
-    $form['notifications'] = [];
-    foreach ( $notifications as $index => $notification ) {
-        if ( ! is_array( $notification ) ) {
-            continue;
-        }
+// Normalize the form on every call so repeated runs do not inherit stale fields
+// or notifications from previous tests that reused the same title.
+$form['title'] = $title;
+$form['fields'] = [];
+$form['button'] = [ 'type' => 'text', 'text' => 'Submit' ];
+foreach ( $fields as $field ) {
+    $form['fields'][] = [
+        'type'       => $field['type'] ?? 'text',
+        'id'         => (int) ( $field['id'] ?? 0 ),
+        'label'      => $field['label'] ?? '',
+        'isRequired' => ! empty( $field['isRequired'] ),
+    ];
+}
 
-        $notification_id = (string) ( $notification['id'] ?? ( 'playwright_notification_' . ( $index + 1 ) ) );
-        $form['notifications'][ $notification_id ] = [
-            'id'             => $notification_id,
-            'name'           => (string) ( $notification['name'] ?? ( 'Playwright Notification ' . ( $index + 1 ) ) ),
-            'event'          => (string) ( $notification['event'] ?? 'form_submission' ),
-            'to'             => (string) ( $notification['to'] ?? '' ),
-            'toType'         => (string) ( $notification['toType'] ?? 'email' ),
-            'toField'        => isset( $notification['toField'] ) ? (string) $notification['toField'] : '',
-            'subject'        => (string) ( $notification['subject'] ?? '' ),
-            'message'        => (string) ( $notification['message'] ?? '' ),
-            'from'           => (string) ( $notification['from'] ?? 'no-reply@example.test' ),
-            'fromName'       => (string) ( $notification['fromName'] ?? 'Playwright Mail Capture' ),
-            'message_format' => (string) ( $notification['messageFormat'] ?? 'html' ),
-            'service'        => (string) ( $notification['service'] ?? 'wordpress' ),
-            'isActive'       => true,
-        ];
+$form['notifications'] = [];
+foreach ( $notifications as $index => $notification ) {
+    if ( ! is_array( $notification ) ) {
+        continue;
     }
 
-    $updated = GFAPI::update_form( $form );
-    if ( is_wp_error( $updated ) ) {
-        echo "0";
-        return;
-    }
+    $notification_id = (string) ( $notification['id'] ?? ( 'playwright_notification_' . ( $index + 1 ) ) );
+    $form['notifications'][ $notification_id ] = [
+        'id'             => $notification_id,
+        'name'           => (string) ( $notification['name'] ?? ( 'Playwright Notification ' . ( $index + 1 ) ) ),
+        'event'          => (string) ( $notification['event'] ?? 'form_submission' ),
+        'to'             => (string) ( $notification['to'] ?? '' ),
+        'toType'         => (string) ( $notification['toType'] ?? 'email' ),
+        'toField'        => isset( $notification['toField'] ) ? (string) $notification['toField'] : '',
+        'subject'        => (string) ( $notification['subject'] ?? '' ),
+        'message'        => (string) ( $notification['message'] ?? '' ),
+        'from'           => (string) ( $notification['from'] ?? 'no-reply@example.test' ),
+        'fromName'       => (string) ( $notification['fromName'] ?? 'Playwright Mail Capture' ),
+        'message_format' => (string) ( $notification['messageFormat'] ?? 'html' ),
+        'service'        => (string) ( $notification['service'] ?? 'wordpress' ),
+        'isActive'       => true,
+    ];
+}
+
+$updated = GFAPI::update_form( $form );
+if ( is_wp_error( $updated ) ) {
+    echo "0";
+    return;
 }
 
 echo (int) ( $form['id'] ?? 0 );
@@ -746,13 +759,24 @@ $extract_mappings = static function ( array $payload ): array {
     return $mappings;
 };
 
-$merged_actions = array_replace(
-    $extract_mappings( $current ),
-    $extract_mappings( $data )
-);
+$existing_actions = $extract_mappings( $current );
+$incoming_actions = $extract_mappings( $data );
+$merged_actions = getenv( 'MERGE_EXISTING_MAPPINGS' ) === '1'
+    ? array_replace( $existing_actions, $incoming_actions )
+    : $incoming_actions;
+$base_settings = $current;
+unset( $base_settings['actions'] );
+foreach ( $base_settings as $setting_key => $setting_value ) {
+    if (
+        is_array( $setting_value ) &&
+        ( isset( $setting_value['local_mapping_id'] ) || isset( $setting_value['central_action_id'] ) )
+    ) {
+        unset( $base_settings[ $setting_key ] );
+    }
+}
 
 $settings = array_merge(
-    $current,
+    $base_settings,
     [
         'enabled' => true,
     ],
@@ -769,7 +793,8 @@ echo 'ok';
 		],
 		{
 			FORM_ID: String(args.formId),
-			SETTINGS_JSON: JSON.stringify(settings)
+			SETTINGS_JSON: JSON.stringify(settings),
+			MERGE_EXISTING_MAPPINGS: args.mergeWithExistingMappings ? '1' : '0'
 		}
 	);
 
@@ -1521,3 +1546,4 @@ export function resetE2eState(): void {
 	setExecutionRequestIdOverride(null);
 	clearCapturedMail();
 }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       

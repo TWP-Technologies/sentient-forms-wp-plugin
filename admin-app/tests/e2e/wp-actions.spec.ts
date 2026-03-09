@@ -1,7 +1,12 @@
 import { expect, test } from '@playwright/test';
 import { ensurePlaywrightFixtures } from './utils/wp-fixtures';
 import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
-import { requireWpRestHealthy } from './utils/wp-e2e-helpers';
+import {
+	configureGravityActionMapping,
+	ensureGravityForm,
+	getGravityActionSettings,
+	requireWpRestHealthy
+} from './utils/wp-e2e-helpers';
 import { installSentientCorsProxy } from './utils/cors-proxy';
 
 const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
@@ -32,9 +37,12 @@ test.describe('Sentient Forms admin actions', () => {
 	test('exposes runtime config for licensing/navigation', async ({ page }) => {
 		await openSentientForms(page);
 		const config = await page.evaluate(() => window.sentientFormsConfig);
+		const appReady = await page.evaluate(() => window.sentientFormsAppReady ?? null);
 		expect(config).toBeTruthy();
+		expect(appReady).toBe('ready');
 		expect(Array.isArray(config?.formSources)).toBeTruthy();
 		expect(config?.license?.status).toBeDefined();
+		await expect(page.locator('main h2')).toHaveText('Dashboard');
 
 		await page.evaluate(() => {
 			window.location.hash = '#/licensing';
@@ -99,5 +107,60 @@ test.describe('Sentient Forms admin actions', () => {
 		expect(state.hash).toBe('#/dashboard');
 		expect(state.heading).toBe('Dashboard');
 		expect(state.activeLinks).toEqual(['Dashboard']);
+	});
+
+	test('replaces stale mappings by default and merges only when explicitly requested', async ({ page }) => {
+		await requireWpRestHealthy(page);
+		const formId = ensureGravityForm(`Playwright Mapping Isolation ${Date.now()}`);
+
+		configureGravityActionMapping({
+			formId,
+			actionId: 'spam_gate',
+			centralActionId: 'spam_detection_v1',
+			actionNameLabel: 'Playwright Spam Gate',
+			localMappingId: 'map-spam-gate',
+			hooks: ['gform_after_submission'],
+			async: true,
+			markAsSpam: true
+		});
+
+		let settings = getGravityActionSettings(formId);
+		expect(Object.keys(settings.actions ?? {})).toEqual(['map-spam-gate']);
+		expect(settings['map-spam-gate']).toBeDefined();
+
+		configureGravityActionMapping({
+			formId,
+			actionId: 'summary_only',
+			centralActionId: 'entry_summary_v1',
+			actionNameLabel: 'Playwright Summary Only',
+			localMappingId: 'map-summary-only',
+			hooks: ['gform_after_submission'],
+			async: true
+		});
+
+		settings = getGravityActionSettings(formId);
+		expect(Object.keys(settings.actions ?? {})).toEqual(['map-summary-only']);
+		expect(settings['map-summary-only']).toBeDefined();
+		expect(settings['map-spam-gate']).toBeUndefined();
+
+		configureGravityActionMapping({
+			formId,
+			actionId: 'spam_gate_again',
+			centralActionId: 'spam_detection_v1',
+			actionNameLabel: 'Playwright Spam Gate Again',
+			localMappingId: 'map-spam-gate-again',
+			hooks: ['gform_after_submission'],
+			async: true,
+			markAsSpam: true,
+			mergeWithExistingMappings: true
+		});
+
+		settings = getGravityActionSettings(formId);
+		expect(Object.keys(settings.actions ?? {}).sort()).toEqual([
+			'map-spam-gate-again',
+			'map-summary-only'
+		]);
+		expect(settings['map-summary-only']).toBeDefined();
+		expect(settings['map-spam-gate-again']).toBeDefined();
 	});
 	});

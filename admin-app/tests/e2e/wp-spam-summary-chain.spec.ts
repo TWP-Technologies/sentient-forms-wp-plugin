@@ -161,7 +161,8 @@ test.describe('Spam-gated summary chain @after-submission @spam-e2e @summary-e2e
 			triggerSources: {
 				gform_after_submission: { type: 'mapping', mapping_id: 'map-spam-gate' }
 			},
-			skipOnUpstreamSpam: true
+			skipOnUpstreamSpam: true,
+			mergeWithExistingMappings: true
 		});
 
 		const proxyKey = ensureCpsSeeded();
