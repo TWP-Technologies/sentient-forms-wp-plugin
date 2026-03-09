@@ -57,10 +57,10 @@ async function ensureNoLegacyPatterns() {
 }
 
 (async () => {
-	if (await commandExists('npx')) {
-		await run('npx', ['sv', 'check']);
-	} else if (await commandExists('bunx')) {
+	if (await commandExists('bunx')) {
 		await run('bunx', ['sv', 'check']);
+	} else if (await commandExists('npx')) {
+		await run('npx', ['sv', 'check']);
 	} else {
 		throw new Error('Neither npx nor bunx is available to run `sv check`.');
 	}
