@@ -1,6 +1,7 @@
+---
 name: PHP Quality
 
-on:
+'on':
   push:
     paths:
       - '**/*.php'
