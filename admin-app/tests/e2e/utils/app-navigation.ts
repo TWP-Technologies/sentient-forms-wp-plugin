@@ -13,8 +13,8 @@ function normalizeAppPath(path: string): string {
 export function appUrlMatchesPath(url: URL, path: string): boolean {
 	const normalized = normalizeAppPath(path);
 	const pathname = normalizeAppPath(url.pathname);
-	const hashPath = normalizeAppPath(url.hash.slice(1));
-	return pathname === normalized || hashPath === normalized;
+	const hashPath = url.hash.length > 1 ? normalizeAppPath(url.hash.slice(1)) : null;
+	return pathname === normalized || (hashPath !== null && hashPath === normalized);
 }
 
 export async function expectAppUrl(page: Page, path: string): Promise<void> {
