@@ -336,9 +336,12 @@ async function connectHandlesAndAssert(
 		const baselineFeedbackText = await getVisibleFeedbackText(page, feedback);
 		await connectHandlesByMouse(page, sourceSelector, targetSelector, attempt - 1);
 		let outcome = await waitForConnectionOutcome(page, baselineFeedbackText);
-		if (!outcome.dirtyVisible && !outcome.feedbackVisible) {
+		if (
+			!outcome.dirtyVisible &&
+			(!outcome.feedbackVisible || /connection canceled/i.test(outcome.feedbackText))
+		) {
 			await connectHandlesByClick(page, sourceSelector, targetSelector);
-			outcome = await waitForConnectionOutcome(page, baselineFeedbackText);
+			outcome = await waitForConnectionOutcome(page, outcome.feedbackText || baselineFeedbackText);
 		}
 		const { dirtyVisible, feedbackVisible, feedbackText } = outcome;
 		if (feedbackText) {

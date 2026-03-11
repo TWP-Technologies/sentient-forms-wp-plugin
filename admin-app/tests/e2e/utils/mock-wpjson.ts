@@ -207,12 +207,12 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 
 		if (/forms\/\d+\/actions\/disable$/.test(url) && method === 'PUT') {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
-			Object.assign(disableState, {
-				sf_disabled: Boolean(payload.sf_disabled),
-				global_disabled: false,
-				provider_disabled: false,
-				effective_disabled: Boolean(payload.sf_disabled)
-			});
+			disableState.sf_disabled = Boolean(payload.sf_disabled);
+			disableState.effective_disabled = Boolean(
+				disableState.sf_disabled ||
+					disableState.global_disabled ||
+					disableState.provider_disabled
+			);
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
