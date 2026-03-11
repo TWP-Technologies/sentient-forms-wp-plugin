@@ -4,12 +4,15 @@ type Routes = {
 	actions?: {
 		forms?: Record<string, unknown[]>;
 		definitions?: unknown;
+		mappingTemplates?: unknown[];
 		status?: unknown;
 		settings?: Record<string, unknown>;
 		actionDefaultsById?: Record<string, Record<string, unknown>>;
 		formsActions?: unknown[];
 		formFields?: unknown[];
 		creditBalance?: unknown;
+		disableState?: unknown;
+		workflowPlan?: unknown;
 		executionStatus?: Record<number, unknown>;
 		createResponse?: (payload: Record<string, unknown>) => unknown;
 		requestTrace?: unknown | ((payload: Record<string, unknown>) => unknown);
@@ -36,6 +39,13 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 	};
 	const actionDefaultsState: Record<string, Record<string, unknown>> = {
 		...(routes.actions?.actionDefaultsById ?? {})
+	};
+	const disableState: Record<string, boolean> = {
+		sf_disabled: false,
+		global_disabled: false,
+		provider_disabled: false,
+		effective_disabled: false,
+		...((routes.actions?.disableState as Record<string, boolean> | undefined) ?? {})
 	};
 
 	await page.context().route('**/wp-json/sentient-forms/v1/**', (route) => {
@@ -127,11 +137,23 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				body: JSON.stringify({
 					success: true,
 					data: {
+						supports_custom_actions: true,
+						supports_credits: true,
+						supports_status: true,
+						cps_version: '1.2.0',
 						features: [],
 						form_sources: ['gravity_forms'],
 						actions: ['spam_detection_v1']
 					}
 				})
+			});
+		}
+
+		if (url.endsWith('/mappings/templates') && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope(routes.actions?.mappingTemplates ?? [])
 			});
 		}
 
@@ -164,6 +186,58 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				status: 200,
 				headers: { 'content-type': 'application/json' },
 				body: envelope(routes.actions.formFields)
+			});
+		}
+
+		if (/forms\/\d+\/actions\/fields$/.test(url) && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope([])
+			});
+		}
+
+		if (/forms\/\d+\/actions\/disable$/.test(url) && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope(disableState)
+			});
+		}
+
+		if (/forms\/\d+\/actions\/disable$/.test(url) && method === 'PUT') {
+			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+			disableState.sf_disabled = Boolean(payload.sf_disabled);
+			disableState.effective_disabled = Boolean(
+				disableState.sf_disabled ||
+					disableState.global_disabled ||
+					disableState.provider_disabled
+			);
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope(disableState)
+			});
+		}
+
+		if (/forms\/\d+\/actions\/workflow-plan(\?|$)/.test(url) && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope(
+					routes.actions?.workflowPlan ?? {
+						authority: 'local_fallback',
+						authority_reason: 'mock',
+						cps_unreachable: false,
+						policy_version: '2026-02-mixed-sync-async-v1',
+						hook_scope: 'all',
+						available_hooks: ['gform_validation', 'gform_after_submission'],
+						nodes: [],
+						edges: [],
+						hooks: [],
+						policy_violations: []
+					}
+				)
 			});
 		}
 
@@ -474,7 +548,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: envelope(routes.customActions.list)
+				body: JSON.stringify(routes.customActions.list)
 			});
 		}
 
@@ -482,7 +556,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 201,
 				headers: { 'content-type': 'application/json' },
-				body: envelope(routes.customActions.create)
+				body: JSON.stringify(routes.customActions.create)
 			});
 		}
 

@@ -2,6 +2,7 @@ import { expect, test, type Locator } from '@playwright/test';
 import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
 import { mockWpJson } from './utils/mock-wpjson';
+import { appNavLink, expectAppUrl } from './utils/app-navigation';
 
 const formSource = 'gravity_forms';
 const formId = 123;
@@ -335,9 +336,12 @@ async function connectHandlesAndAssert(
 		const baselineFeedbackText = await getVisibleFeedbackText(page, feedback);
 		await connectHandlesByMouse(page, sourceSelector, targetSelector, attempt - 1);
 		let outcome = await waitForConnectionOutcome(page, baselineFeedbackText);
-		if (!outcome.dirtyVisible && !outcome.feedbackVisible) {
+		if (
+			!outcome.dirtyVisible &&
+			(!outcome.feedbackVisible || /connection canceled/i.test(outcome.feedbackText))
+		) {
 			await connectHandlesByClick(page, sourceSelector, targetSelector);
-			outcome = await waitForConnectionOutcome(page, baselineFeedbackText);
+			outcome = await waitForConnectionOutcome(page, outcome.feedbackText || baselineFeedbackText);
 		}
 		const { dirtyVisible, feedbackVisible, feedbackText } = outcome;
 		if (feedbackText) {
@@ -468,7 +472,7 @@ test.describe('Actions admin flows', () => {
 
 		await page.getByRole('button', { name: 'Configure' }).click();
 
-		await expect(page).toHaveURL(/#\/actions\/gravity_forms\/123$/);
+		await expectAppUrl(page, '/actions/gravity_forms/123');
 		await expect(page.getByText('Action library')).toBeVisible();
 		const definitionsCard = page.getByTestId('action-definitions-card');
 		await expect(definitionsCard.getByText('Spam check', { exact: true })).toBeVisible();
@@ -488,14 +492,60 @@ test.describe('Actions admin flows', () => {
 
 		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
-		await expect(page.locator('nav a[href="#/actions"]')).toHaveClass(/sf-bg-slate-200/);
-		await expect(page.locator('nav a[href="#/actions"]')).toHaveClass(/sf-text-slate-900/);
-		await expect(page.locator('nav a[href="#/actions/custom"]')).not.toHaveClass(/sf-bg-slate-200/);
+		await expect(appNavLink(page, '/actions')).toHaveClass(/sf-bg-slate-200/);
+		await expect(appNavLink(page, '/actions')).toHaveClass(/sf-text-slate-900/);
+		await expect(appNavLink(page, '/actions/custom')).not.toHaveClass(/sf-bg-slate-200/);
 
-		await page.goto('/#/actions/custom/new', { waitUntil: 'networkidle' });
+		await page.goto('/actions/custom/new', { waitUntil: 'networkidle' });
 		await expect(page.locator('main > section > header h2', { hasText: 'Create Custom Action' })).toBeVisible();
-		await expect(page.locator('nav a[href="#/actions/custom"]')).toHaveClass(/sf-bg-slate-200/);
-		await expect(page.locator('nav a[href="#/actions/custom"]')).toHaveClass(/sf-text-slate-900/);
+		await expect(appNavLink(page, '/actions/custom')).toHaveClass(/sf-bg-slate-200/);
+		await expect(appNavLink(page, '/actions/custom')).toHaveClass(/sf-text-slate-900/);
+	});
+
+	test('persists the form disabled state across a reload in preview mode', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance,
+				disableState: {
+					sf_disabled: false,
+					global_disabled: false,
+					provider_disabled: false,
+					effective_disabled: false
+				}
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
+
+		const formToggle = page.getByRole('switch').first();
+		await expect(formToggle).toHaveAttribute('aria-checked', 'true');
+		await expect(
+			page.getByText('Sentient Forms execution is paused for this form', { exact: false })
+		).toHaveCount(0);
+
+		const disableResponse = page.waitForResponse(
+			(response) =>
+				response.request().method() === 'PUT' &&
+				/forms\/\d+\/actions\/disable$/.test(response.url()) &&
+				response.status() === 200,
+			{ timeout: 15_000 }
+		);
+
+		await formToggle.click();
+		await disableResponse;
+		await expect(formToggle).toHaveAttribute('aria-checked', 'false');
+		await expect(page.getByText('Sentient Forms execution is paused for this form')).toBeVisible();
+
+		await page.reload({ waitUntil: 'networkidle' });
+		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
+		await expect(page.getByRole('switch').first()).toHaveAttribute('aria-checked', 'false');
+		await expect(page.getByText('Sentient Forms execution is paused for this form')).toBeVisible();
 	});
 
 	test('opens spam defaults modal with guidance expanded by default from actions page', async ({
@@ -605,7 +655,9 @@ test.describe('Actions admin flows', () => {
 		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
-		await page.getByRole('button', { name: 'Custom actions' }).click();
+		const customActionsTab = page.getByRole('button', { name: 'Custom actions' });
+		await expect(customActionsTab).toBeEnabled();
+		await customActionsTab.click();
 
 		const drawer = page.getByTestId('link-action-form');
 		await expect(drawer).toBeVisible();
@@ -770,7 +822,9 @@ test.describe('Actions admin flows', () => {
 		await expect(form.getByText('Spam check', { exact: true })).toBeVisible();
 
 		// Switch to custom actions tab and ensure the sample action is shown
-		await page.getByRole('button', { name: 'Custom actions' }).click();
+		const customActionsTab = page.getByRole('button', { name: 'Custom actions' });
+		await expect(customActionsTab).toBeEnabled();
+		await customActionsTab.click();
 		await expect(form.getByText('Hello action')).toBeVisible();
 	});
 
