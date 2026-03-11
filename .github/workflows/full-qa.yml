@@ -9,6 +9,9 @@ name: Full QA
     paths:
       - '**'
 
+env:
+  BUN_VERSION: '1.3.0'
+
 jobs:
   full-qa:
     runs-on: ubuntu-latest
@@ -31,6 +34,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Verify cache inputs
+        run: |
+          test -f composer.lock
+          test -f admin-app/bun.lock
+
       - name: Cache Composer
         id: composer-cache
         uses: actions/cache@v5
@@ -38,18 +46,18 @@ jobs:
           path: |
             ~/.cache/composer
             vendor
-          key: ${{ runner.os }}-composer-${{ hashFiles('composer.lock') }}
+          key: ${{ runner.os }}-full-qa-composer-php83-${{ hashFiles('composer.lock') }}
           restore-keys: |
-            ${{ runner.os }}-composer-
+            ${{ runner.os }}-full-qa-composer-php83-
 
       - name: Cache Bun install artifacts
         id: bun-cache
         uses: actions/cache@v5
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-${{ hashFiles('admin-app/bun.lock') }}
+          key: ${{ runner.os }}-bun-${{ env.BUN_VERSION }}-${{ hashFiles('admin-app/bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-bun-
+            ${{ runner.os }}-bun-${{ env.BUN_VERSION }}-
 
       - name: Cache Playwright browsers
         id: playwright-cache
@@ -59,11 +67,6 @@ jobs:
           key: ${{ runner.os }}-ms-playwright-${{ hashFiles('admin-app/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-ms-playwright-
-
-      - name: Verify cache inputs
-        run: |
-          test -f composer.lock
-          test -f admin-app/bun.lock
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
@@ -86,10 +89,11 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.3.0'
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Report cache state
         run: |
+          echo "bun version: $BUN_VERSION"
           echo "composer.lock hash: ${{ hashFiles('composer.lock') }}"
           echo "admin-app/bun.lock hash: ${{ hashFiles('admin-app/bun.lock') }}"
           echo "Composer cache hit: ${{ steps.composer-cache.outputs.cache-hit }}"
