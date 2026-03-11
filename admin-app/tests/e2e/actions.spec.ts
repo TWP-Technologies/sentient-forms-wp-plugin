@@ -499,6 +499,52 @@ test.describe('Actions admin flows', () => {
 		await expect(appNavLink(page, '/actions/custom')).toHaveClass(/sf-text-slate-900/);
 	});
 
+	test('persists the form disabled state across a reload in preview mode', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance,
+				disableState: {
+					sf_disabled: false,
+					global_disabled: false,
+					provider_disabled: false,
+					effective_disabled: false
+				}
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
+
+		const formToggle = page.getByRole('switch').first();
+		await expect(formToggle).toHaveAttribute('aria-checked', 'true');
+		await expect(
+			page.getByText('Sentient Forms execution is paused for this form', { exact: false })
+		).toHaveCount(0);
+
+		const disableResponse = page.waitForResponse(
+			(response) =>
+				response.request().method() === 'PUT' &&
+				/forms\/\d+\/actions\/disable$/.test(response.url()) &&
+				response.status() === 200,
+			{ timeout: 15_000 }
+		);
+
+		await formToggle.click();
+		await disableResponse;
+		await expect(formToggle).toHaveAttribute('aria-checked', 'false');
+		await expect(page.getByText('Sentient Forms execution is paused for this form')).toBeVisible();
+
+		await page.reload({ waitUntil: 'networkidle' });
+		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
+		await expect(page.getByRole('switch').first()).toHaveAttribute('aria-checked', 'false');
+		await expect(page.getByText('Sentient Forms execution is paused for this form')).toBeVisible();
+	});
+
 	test('opens spam defaults modal with guidance expanded by default from actions page', async ({
 		page
 	}) => {

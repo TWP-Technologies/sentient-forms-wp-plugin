@@ -40,6 +40,13 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 	const actionDefaultsState: Record<string, Record<string, unknown>> = {
 		...(routes.actions?.actionDefaultsById ?? {})
 	};
+	const disableState: Record<string, boolean> = {
+		sf_disabled: false,
+		global_disabled: false,
+		provider_disabled: false,
+		effective_disabled: false,
+		...((routes.actions?.disableState as Record<string, boolean> | undefined) ?? {})
+	};
 
 	await page.context().route('**/wp-json/sentient-forms/v1/**', (route) => {
 		const url = route.request().url();
@@ -194,28 +201,22 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: envelope(
-					routes.actions?.disableState ?? {
-						sf_disabled: false,
-						global_disabled: false,
-						provider_disabled: false,
-						effective_disabled: false
-					}
-				)
+				body: envelope(disableState)
 			});
 		}
 
 		if (/forms\/\d+\/actions\/disable$/.test(url) && method === 'PUT') {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+			Object.assign(disableState, {
+				sf_disabled: Boolean(payload.sf_disabled),
+				global_disabled: false,
+				provider_disabled: false,
+				effective_disabled: Boolean(payload.sf_disabled)
+			});
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: envelope({
-					sf_disabled: Boolean(payload.sf_disabled),
-					global_disabled: false,
-					provider_disabled: false,
-					effective_disabled: Boolean(payload.sf_disabled)
-				})
+				body: envelope(disableState)
 			});
 		}
 
