@@ -21,6 +21,9 @@ name: PHP Quality
       - 'phpunit.xml'
       - '.github/workflows/php-quality.yml'
 
+env:
+  PHP_VERSION: '8.3'
+
 jobs:
   phpcs:
     runs-on: ubuntu-latest
@@ -38,14 +41,14 @@ jobs:
           path: |
             ~/.cache/composer
             vendor
-          key: ${{ runner.os }}-phpcs-composer-${{ hashFiles('composer.lock') }}
+          key: ${{ runner.os }}-phpcs-${{ env.PHP_VERSION }}-composer-${{ hashFiles('composer.lock') }}
           restore-keys: |
-            ${{ runner.os }}-phpcs-composer-
+            ${{ runner.os }}-phpcs-${{ env.PHP_VERSION }}-composer-
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3'
+          php-version: ${{ env.PHP_VERSION }}
           coverage: none
           extensions: mysqli
 
