@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { seedRuntimeConfig } from './utils/runtime-config';
+import { expectAppUrl } from './utils/app-navigation';
 
 test.describe('Custom actions admin view', () => {
 	test.beforeEach(async ({ page }) => {
@@ -185,7 +186,7 @@ test.describe('Custom actions admin view', () => {
 		await expect(tableRows).toHaveCount(1);
 
 		await page.getByRole('button', { name: /Create Action/i }).click();
-		await expect(page).toHaveURL(/#\/actions\/custom\/new$/);
+		await expectAppUrl(page, '/actions/custom/new');
 
 		const createForm = page.getByTestId('custom-action-form');
 		await createForm
@@ -195,7 +196,7 @@ test.describe('Custom actions admin view', () => {
 		await createForm.getByLabel('Code').fill('beta');
 		await createForm.getByRole('button', { name: 'Create Action' }).click();
 
-		await expect(page).toHaveURL(/#\/actions\/custom$/);
+		await expectAppUrl(page, '/actions/custom');
 		tableRows = page.getByTestId('custom-actions-table').locator('tbody tr');
 
 		await expect(tableRows).toHaveCount(2);

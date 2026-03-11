@@ -5,13 +5,15 @@
 	const fallbackPath = '/dashboard';
 
 	onMount(() => {
+		const hashPath = readHashPathFromLocation();
 		const targetPath =
 			routerType === 'hash'
-				? (() => {
-					const hashPath = readHashPathFromLocation();
-					return hashPath === '/' ? fallbackPath : hashPath;
-				})()
-				: fallbackPath;
+				? hashPath === '/'
+					? fallbackPath
+					: hashPath
+				: hashPath !== '/'
+					? hashPath
+					: fallbackPath;
 
 		void navigateToAppPath(targetPath, {
 			replaceState: true,

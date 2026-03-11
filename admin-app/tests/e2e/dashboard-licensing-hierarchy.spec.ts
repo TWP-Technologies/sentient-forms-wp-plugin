@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
+import { expectAppUrl } from './utils/app-navigation';
 
 test.describe('Dashboard and Licensing hierarchy uplift', () => {
 	test.beforeEach(async ({ page }) => {
@@ -140,7 +141,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('dashboard-quota-cta-button')).toBeEnabled();
 
 		await page.getByTestId('dashboard-quota-cta-button').click();
-		await expect(page).toHaveURL(/#\/licensing$/);
+		await expectAppUrl(page, '/licensing');
 		await expect(page.getByRole('heading', { name: 'License management' })).toBeVisible();
 		await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
 		await expect(page.getByTestId('licensing-quota-cta-button')).toBeEnabled();
