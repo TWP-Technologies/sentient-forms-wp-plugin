@@ -10,17 +10,15 @@ function normalizeAppPath(path: string): string {
 	return normalized.length > 1 && normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
 }
 
-function escapeRegex(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-export function appRouteRegex(path: string): RegExp {
-	const normalized = escapeRegex(normalizeAppPath(path));
-	return new RegExp(`(?:${normalized}|#${normalized})$`);
+export function appUrlMatchesPath(url: URL, path: string): boolean {
+	const normalized = normalizeAppPath(path);
+	const pathname = normalizeAppPath(url.pathname);
+	const hashPath = normalizeAppPath(url.hash.slice(1));
+	return pathname === normalized || hashPath === normalized;
 }
 
 export async function expectAppUrl(page: Page, path: string): Promise<void> {
-	await expect(page).toHaveURL(appRouteRegex(path));
+	await expect(page).toHaveURL((url) => appUrlMatchesPath(url, path));
 }
 
 export function appNavLink(page: Page, path: string): Locator {
