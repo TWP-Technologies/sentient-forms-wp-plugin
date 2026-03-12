@@ -67,25 +67,8 @@ class Sentient_Forms_Custom_Actions_Service
 
     public function archive( string $id, string $actor_hint ): WP_Error | Sentient_Forms_Custom_Action_Mutation_Response
     {
-        $options = $this->build_bearer_options();
-        if ( is_wp_error( $options ) )
-        {
-            return $options;
-        }
-
-        $path     = sprintf( '/custom-actions/%s', rawurlencode( $id ) );
-        $response = $this->client->delete(
-            $path,
-            [ 'actor_hint' => $actor_hint ],
-            $options
-        );
-
-        if ( is_wp_error( $response ) )
-        {
-            return $response;
-        }
-
-        return Sentient_Forms_Custom_Action_Mutation_Response::from_api_payload( $response );
+        $path = sprintf( '/custom-actions/%s/archive', rawurlencode( $id ) );
+        return $this->send_mutation( $path, 'post', [], $actor_hint );
     }
 
     public function reactivate( string $id, string $actor_hint ): WP_Error | Sentient_Forms_Custom_Action_Mutation_Response

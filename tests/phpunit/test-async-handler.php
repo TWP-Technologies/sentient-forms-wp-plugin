@@ -1513,6 +1513,79 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertSame( 'success', $job['status'], 'Master action should execute via CPS executor and succeed' );
 	}
 
+	/**
+	 * Test that schedule_action allows CPS custom actions without local PHP class.
+	 */
+	public function test_schedule_action_allows_custom_actions_without_local_class(): void
+	{
+		$data = [
+			'form'  => [ 'id' => 103, 'title' => 'Custom Action Test' ],
+			'entry' => [ 'id' => 503, 'field_1' => 'custom content' ],
+		];
+
+		$settings = [
+			'central_action_id'       => 'pw_custom_action',
+			'action_type_indicator'   => 'custom',
+		];
+		$context = [ 'hook' => 'gform_after_submission', 'form_source' => 'gravity_forms' ];
+
+		$result = $this->plugin->process_action_async( 'nonexistent_custom_action', $data, $settings, $context );
+
+		$this->assertTrue( $result, 'Custom actions should schedule even without local PHP class' );
+		$this->assertGreaterThanOrEqual( 1, count( $GLOBALS['__sentient_forms_async_queue']['enqueued'] ) );
+
+		$job = $GLOBALS['__sentient_forms_async_queue']['enqueued'][0];
+		$this->assertSame( 'sentient_forms_process_action', $job['hook'] );
+	}
+
+	/**
+	 * Test that process_action executes CPS custom actions via the action executor.
+	 */
+	public function test_process_action_routes_custom_actions_to_executor(): void
+	{
+		$data = [
+			'form'  => [ 'id' => 104, 'title' => 'Custom CPS Executor Test' ],
+			'entry' => [ 'id' => 504, 'field_1' => 'custom payload' ],
+		];
+
+		$settings = [
+			'central_action_id'       => 'pw_custom_action',
+			'action_type_indicator'   => 'custom',
+		];
+		$context = [
+			'hook'        => 'gform_after_submission',
+			'form_source' => 'gravity_forms',
+			'entry_id'    => 504,
+			'form_id'     => 104,
+		];
+
+		$scheduled = $this->plugin->process_action_async(
+			'nonexistent_custom_action',
+			$data,
+			$settings,
+			$context
+		);
+		$this->assertTrue( $scheduled, 'Custom action should schedule successfully' );
+
+		$queued = $GLOBALS['__sentient_forms_async_queue']['enqueued'];
+		$this->assertNotEmpty( $queued, 'Job should be in queue' );
+
+		$job_payload = end( $queued )['args'];
+		$handler = $this->plugin->get_async_handler();
+		$handler->process_action(
+			$job_payload['action_id'],
+			$job_payload['data'],
+			$job_payload['settings'],
+			$job_payload['execution_request_id'],
+			$job_payload['context']
+		);
+
+		$jobs = $this->plugin->get_async_metadata_store()->all();
+		$this->assertNotEmpty( $jobs, 'Metadata store should have the job' );
+		$job = reset( $jobs );
+		$this->assertSame( 'success', $job['status'], 'Custom action should execute via CPS executor and succeed' );
+	}
+
 	public function test_process_action_passes_central_action_and_payload_to_executor(): void
 	{
 		$executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );

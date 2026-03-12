@@ -361,7 +361,10 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         $plugin       = Sentient_Forms_Plugin::instance();
         $license_data = $plugin->get_license_data();
 
-        if ( ! empty( $license_data['proxy_api_key'] ) && 'active' === ( $license_data['license_status'] ?? 'inactive' ) )
+        if (
+            ! empty( $license_data['proxy_api_key'] ) &&
+            in_array( $license_data['license_status'] ?? 'inactive', [ 'active', 'trial' ], true )
+        )
         {
             return $this->prepare_item_for_response(
                 $this->format_license_response( $license_data ),
@@ -420,8 +423,11 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             return $this->prepare_cps_error( $response );
         }
 
+        $payload = $this->normalize_activation_payload( $response );
+        $this->sync_cached_license_from_billing_state( $payload );
+
         return $this->prepare_item_for_response(
-            $this->normalize_activation_payload( $response ),
+            $payload,
             200
         );
     }
@@ -733,6 +739,29 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         }
 
         return $proxy_key;
+    }
+
+    private function sync_cached_license_from_billing_state( array $payload ): void
+    {
+        $updates = [];
+
+        if ( isset( $payload['license_status'] ) && is_string( $payload['license_status'] ) )
+        {
+            $updates['license_status'] = $payload['license_status'];
+        }
+
+        if ( isset( $payload['tier'] ) && ( is_array( $payload['tier'] ) || is_string( $payload['tier'] ) ) )
+        {
+            $updates['tier'] = $payload['tier'];
+        }
+
+        if ( empty( $updates ) )
+        {
+            return;
+        }
+
+        $updates['last_synced'] = current_time( 'mysql' );
+        Sentient_Forms_Plugin::instance()->set_license_data( $updates );
     }
 
     private function prepare_cps_error( WP_Error $error ): WP_Error

@@ -68,20 +68,20 @@ function assignLicenseState(partial: Partial<LicenseState>) {
 	Object.assign(licenseState, partial);
 }
 
+export async function loadLicenseInfoSnapshot(): Promise<LicenseInfoResponse> {
+	const response = await client.getLicenseInfo({ showNotifications: false });
+	if (response.proxy_key_present) {
+		return response;
+	}
+
+	return client.bootstrapLicense({ showNotifications: false });
+}
+
 async function load() {
 	assignLicenseState({ loading: true, error: null });
 
 	try {
-		const response = await client.getLicenseInfo({ showNotifications: false });
-		const mapped = mapResponse(response);
-
-		if (!mapped.proxyKeyPresent) {
-			const bootstrap = await client.bootstrapLicense({ showNotifications: false });
-			assignLicenseState(mapResponse(bootstrap));
-			return;
-		}
-
-		assignLicenseState(mapped);
+		assignLicenseState(mapResponse(await loadLicenseInfoSnapshot()));
 	} catch (error) {
 		console.error('Failed to load license info', error);
 		assignLicenseState({ loading: false, error: 'load' });

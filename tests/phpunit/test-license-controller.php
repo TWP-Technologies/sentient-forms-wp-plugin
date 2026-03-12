@@ -192,6 +192,13 @@ class LicenseControllerTest extends WP_UnitTestCase
             [
                 'success' => true,
                 'data'    => [
+                    'license_status' => 'trial',
+                    'tier'      => [
+                        'code'                 => 'starter',
+                        'display_name'         => 'Starter',
+                        'site_limit'           => 1,
+                        'monthly_credit_quota' => 1500,
+                    ],
                     'provider' => 'stripe',
                     'credits'  => [
                         'current_balance' => 100,
@@ -208,6 +215,12 @@ class LicenseControllerTest extends WP_UnitTestCase
                         'grace_expires_at'         => null,
                         'capacity_policy'          => 'tier_x_quantity_v1',
                     ],
+                    'policy' => [
+                        'paid_trial_days'           => 14,
+                        'free_plan_monthly_credits' => 50,
+                        'free_plan_indefinite'      => true,
+                        'private_beta_trial_enabled' => true,
+                    ],
                 ],
             ]
         );
@@ -222,6 +235,16 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 100, $data['credits']['current_balance'] );
         $this->assertSame( 1, $data['allocation']['allowed_sites'] );
         $this->assertFalse( $data['allocation']['blocked_new_activations'] );
+        $this->assertSame( 'trial', $data['license_status'] );
+        $this->assertSame( 'starter', $data['tier']['code'] );
+        $this->assertSame( 14, $data['policy']['paid_trial_days'] );
+        $this->assertSame( 50, $data['policy']['free_plan_monthly_credits'] );
+        $this->assertTrue( $data['policy']['free_plan_indefinite'] );
+        $this->assertTrue( $data['policy']['private_beta_trial_enabled'] );
+
+        $updated_license = $plugin->get_license_data();
+        $this->assertSame( 'trial', $updated_license['license_status'] );
+        $this->assertSame( 'starter', $updated_license['tier']['code'] ?? null );
     }
 
     public function test_create_checkout_session_with_plan_code(): void
@@ -243,16 +266,23 @@ class LicenseControllerTest extends WP_UnitTestCase
                     'checkout_url' => 'https://checkout.stripe.com/c/pay/cs_test_123',
                     'customer_id'  => 'cus_test_123',
                 ],
-            ]
+            ],
+            function ( array $args ): void {
+                $body = json_decode( (string) ( $args['body'] ?? '' ), true );
+                $this->assertIsArray( $body );
+                $this->assertSame( 'starter', $body['plan_code'] ?? null );
+                $this->assertSame( 14, $body['trial_period_days'] ?? null );
+            }
         );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/checkout-session' );
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->add_header( 'Content-Type', 'application/json' );
         $request->set_body( wp_json_encode( [
-            'plan_code'   => 'starter',
-            'success_url' => 'https://example.test/success',
-            'cancel_url'  => 'https://example.test/cancel',
+            'plan_code'         => 'starter',
+            'success_url'       => 'https://example.test/success',
+            'cancel_url'        => 'https://example.test/cancel',
+            'trial_period_days' => 14,
         ] ) );
         $response = rest_get_server()->dispatch( $request );
 
@@ -374,6 +404,39 @@ class LicenseControllerTest extends WP_UnitTestCase
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 200, $response->get_status() );
+    }
+
+    public function test_change_subscription_maps_upstream_non_json_failure(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => 'site-uuid-456',
+        ] );
+
+        $this->mock_http_response(
+            '/billing/subscription/change',
+            '<html><body>Bad gateway</body></html>',
+            null,
+            502
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/subscription-change' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'plan_code'     => 'business',
+            'change_timing' => 'start_now',
+            'quantity'      => 1,
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'license_invalid_json', $data['code'] ?? null );
+        $this->assertStringContainsString( 'Invalid response from licensing service', $data['message'] ?? '' );
     }
 
     public function test_create_portal_session_success(): void
@@ -550,21 +613,21 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 400, $response->get_status() );
     }
 
-    private function mock_http_response( string $path_suffix, array $body, ?callable $assert_request = null ): void
+    private function mock_http_response( string $path_suffix, array | string $body, ?callable $assert_request = null, int $status_code = 200 ): void
     {
         add_filter(
             'pre_http_request',
-            function ( $preempt, $args, $url ) use ( $path_suffix, $body, $assert_request ) {
+            function ( $preempt, $args, $url ) use ( $path_suffix, $body, $assert_request, $status_code ) {
                 if ( str_ends_with( $url, $path_suffix ) ) {
                     if ( is_callable( $assert_request ) ) {
                         $assert_request( is_array( $args ) ? $args : [] );
                     }
                     return [
                         'headers'  => [],
-                        'body'     => wp_json_encode( $body ),
+                        'body'     => is_array( $body ) ? wp_json_encode( $body ) : $body,
                         'response' => [
-                            'code'    => 200,
-                            'message' => 'OK',
+                            'code'    => $status_code,
+                            'message' => $status_code >= 400 ? 'Error' : 'OK',
                         ],
                     ];
                 }

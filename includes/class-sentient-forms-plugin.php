@@ -472,11 +472,12 @@ final class Sentient_Forms_Plugin
             : [];
         $batch_enabled = ! empty( $batch_settings['enabled'] )
             && ( ( $context['hook'] ?? '' ) === 'gform_after_submission' );
-        $is_master_action = ( $settings['action_type_indicator'] ?? '' ) === 'master';
+        $action_type_indicator = (string) ( $settings['action_type_indicator'] ?? '' );
+        $is_cps_managed_action = in_array( $action_type_indicator, [ 'master', 'custom' ], true );
 
-        // CB-EXEC-003/004: Use CPS-managed queue for batched master actions.
+        // CB-EXEC-003/004: Use CPS-managed queue for batched CPS-backed actions.
         // If enqueue fails, schedule a local fallback at max_wait_seconds.
-        if ( $is_master_action && $batch_enabled )
+        if ( $is_cps_managed_action && $batch_enabled )
         {
             $async_options = [
                 'delay_seconds'    => (int) ( $batch_settings['delay_seconds'] ?? 60 ),

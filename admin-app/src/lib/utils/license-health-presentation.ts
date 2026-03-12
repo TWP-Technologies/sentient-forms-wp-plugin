@@ -44,7 +44,9 @@ function clampPercentage(value: number): number {
 	return value;
 }
 
-export function resolveTierDisplayName(tier: string | TierSummary | null | undefined): string | null {
+export function resolveTierDisplayName(
+	tier: string | TierSummary | null | undefined
+): string | null {
 	if (typeof tier === 'string') {
 		const trimmed = tier.trim();
 		return trimmed.length > 0 ? trimmed : null;
@@ -62,7 +64,14 @@ export function resolveTierDisplayName(tier: string | TierSummary | null | undef
 	return null;
 }
 
-export function resolveCreditSeverity(balance: number | null, quota: number | null): CreditSeverity {
+export function isConnectedLicenseStatus(status: string | null | undefined): boolean {
+	return status === 'active' || status === 'trial';
+}
+
+export function resolveCreditSeverity(
+	balance: number | null,
+	quota: number | null
+): CreditSeverity {
 	if (balance === null || quota === null) {
 		return 'unknown';
 	}
@@ -110,7 +119,7 @@ export function creditSeverityToBadgeVariant(
 export function licenseStatusToBadgeVariant(
 	status: string | null | undefined
 ): 'success' | 'warning' | 'danger' {
-	if (status === 'active') return 'success';
+	if (isConnectedLicenseStatus(status)) return 'success';
 	if (status === 'error') return 'danger';
 	return 'warning';
 }
@@ -154,7 +163,8 @@ function buildQuotaCtaState(
 		return {
 			label: 'Refresh billing state',
 			enabled: false,
-			reason: 'Billing details are temporarily unavailable. Retry after the current refresh finishes.',
+			reason:
+				'Billing details are temporarily unavailable. Retry after the current refresh finishes.',
 			action: 'none'
 		};
 	}
@@ -177,7 +187,9 @@ export function buildCreditPresentation(
 	const severity = resolveCreditSeverity(balance, quota);
 
 	const percentage =
-		balance !== null && quota !== null ? clampPercentage(Math.round((balance / quota) * 100)) : null;
+		balance !== null && quota !== null
+			? clampPercentage(Math.round((balance / quota) * 100))
+			: null;
 
 	let headline = 'Credit balance unavailable';
 	if (balance !== null && quota !== null) {

@@ -101,10 +101,19 @@ export interface BillingPortalSessionRequest {
 	subscription_id?: string;
 }
 
+export interface BillingPolicyState {
+	paid_trial_days: number;
+	free_plan_monthly_credits: number;
+	free_plan_indefinite: boolean;
+	private_beta_trial_enabled: boolean;
+}
+
 export interface BillingStateResponse {
 	provider: string;
 	provider_mode?: 'test' | 'live' | 'auto' | string;
 	provider_livemode?: boolean;
+	license_status?: string | null;
+	tier?: TierSummary | null;
 	customer_id?: string | null;
 	subscription?: {
 		provider_subscription_id: string;
@@ -132,6 +141,7 @@ export interface BillingStateResponse {
 		grace_expires_at?: string | null;
 		capacity_policy: string;
 	} | null;
+	policy?: BillingPolicyState | null;
 }
 
 export interface ApiErrorPayload {

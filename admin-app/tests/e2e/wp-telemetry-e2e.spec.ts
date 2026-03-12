@@ -1,13 +1,16 @@
+import { existsSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import {
+	ensureCpsSeeded,
 	getLatestTelemetryEvent,
-	getProxyApiKey,
 	isTelemetryDbHealthy,
 	setTelemetryOptIn
 } from './utils/wp-e2e-helpers';
+import { wpBaseUrl } from './utils/wp-admin';
 
 const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
-const rawCpsBase = process.env.SENTIENT_FORMS_CPS_BASE_URL ?? 'http://localhost:10081/v1';
+const defaultCpsBase = existsSync('/.dockerenv') ? 'http://cps-api:8080/v1' : 'http://localhost:10081/v1';
+const rawCpsBase = process.env.SENTIENT_FORMS_CPS_BASE_URL ?? process.env.SENTIENT_FORMS_CPS_HOST_URL ?? defaultCpsBase;
 const cpsBaseUrl = rawCpsBase.endsWith('/v1')
 	? rawCpsBase
 	: `${rawCpsBase.replace(/\/$/, '')}/v1`;
@@ -18,8 +21,8 @@ test.describe('Telemetry ingestion @telemetry-e2e', () => {
 	test.skip(!telemetryHealthy, 'Telemetry DB not healthy; ensure telemetry-db container is running.');
 
 	test('records async telemetry when opted in', async ({ request, page }) => {
-		const proxyKey = getProxyApiKey();
 		setTelemetryOptIn(true);
+		const proxyKey = ensureCpsSeeded();
 
 		const event = `playwright_telemetry_${Date.now()}`;
 		const timestamp = new Date().toISOString();
@@ -38,7 +41,7 @@ test.describe('Telemetry ingestion @telemetry-e2e', () => {
 			},
 			data: {
 				event,
-				site_url: 'http://localhost:8080/',
+				site_url: `${wpBaseUrl}/`,
 				timestamp,
 				payload
 			}

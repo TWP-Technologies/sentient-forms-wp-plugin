@@ -1,7 +1,12 @@
 import { expect, type Page } from '@playwright/test';
+import { existsSync } from 'node:fs';
 import { installSentientCorsProxy } from './cors-proxy';
 
-export const wpBaseUrl = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+const defaultWpBaseUrl = existsSync('/.dockerenv')
+	? 'http://host.docker.internal:8080'
+	: 'http://localhost:8080';
+
+export const wpBaseUrl = process.env.SENTIENT_WP_BASE_URL ?? defaultWpBaseUrl;
 const wpAdminUser = process.env.SENTIENT_WP_ADMIN_USER ?? 'admin';
 const wpAdminPass = process.env.SENTIENT_WP_ADMIN_PASS ?? 'password';
 

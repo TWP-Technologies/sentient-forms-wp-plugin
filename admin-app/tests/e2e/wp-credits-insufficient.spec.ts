@@ -2,9 +2,9 @@ import { expect, test } from '@playwright/test';
 import {
 	configureGravityActionMapping,
 	ensureGravityForm,
+	ensureCpsSeeded,
 	fetchCreditBalance,
 	getLatestEntryId,
-	getProxyApiKey,
 	requireWpRestHealthy,
 	setCreditBalance
 } from './utils/wp-e2e-helpers';
@@ -37,7 +37,7 @@ test.describe('Gravity Forms credits @credits-insufficient', () => {
 			executionPriority: 5
 		});
 
-		const proxyKey = getProxyApiKey();
+		const proxyKey = ensureCpsSeeded();
 		const originalBalance = await fetchCreditBalance(page, proxyKey);
 		const baselineEntryId = getLatestEntryId(formId);
 

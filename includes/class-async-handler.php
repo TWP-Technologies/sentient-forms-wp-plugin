@@ -640,13 +640,14 @@ class Sentient_Forms_Async_Handler
      */
     public function schedule_action( string $action_id, array $data, array $settings, array $context = [], ?int $run_at = null ): bool
     {
-        // For CPS-managed 'master' actions, we don't require a local PHP action class
-        // The CPS handles execution, so we can proceed without a local action
-        $is_master_action = ( $settings['action_type_indicator'] ?? '' ) === 'master';
+        // For CPS-managed actions, we don't require a local PHP action class.
+        // CPS-backed master and custom actions execute remotely, so scheduling can proceed.
+        $action_type_indicator = (string) ( $settings['action_type_indicator'] ?? '' );
+        $is_cps_managed_action = in_array( $action_type_indicator, [ 'master', 'custom' ], true );
         
-        // Get the action instance (optional for master actions)
+        // Get the action instance (optional for CPS-managed actions)
         $action = $this->plugin->get_action( $action_id );
-        if ( !$action && !$is_master_action )
+        if ( !$action && !$is_cps_managed_action )
         {
             return false;
         }
@@ -986,9 +987,10 @@ class Sentient_Forms_Async_Handler
         try
         {
             $action = $this->plugin->get_action( $action_id );
-            $is_master_action = ( $settings['action_type_indicator'] ?? '' ) === 'master';
+            $action_type_indicator = (string) ( $settings['action_type_indicator'] ?? '' );
+            $is_cps_managed_action = in_array( $action_type_indicator, [ 'master', 'custom' ], true );
             
-            if ( !$action && !$is_master_action )
+            if ( !$action && !$is_cps_managed_action )
             {
                 $this->handle_failure(
                     $job,
@@ -1003,8 +1005,8 @@ class Sentient_Forms_Async_Handler
             $entry_id = $data['entry']['id'] ?? $context['entry_id'] ?? null;
             $form_id  = $data['form']['id'] ?? $context['form_id'] ?? null;
 
-            // For CPS master actions without a local handler, execute via Action Executor
-            if ( !$action && $is_master_action )
+            // For CPS-managed actions without a local handler, execute via Action Executor.
+            if ( !$action && $is_cps_managed_action )
             {
                 // Apply hierarchical settings resolution (form-level merging)
                 $resolved_settings = $this->resolve_hierarchical_settings( $settings, $context );

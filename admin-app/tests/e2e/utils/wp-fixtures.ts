@@ -1,19 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { wpBaseUrl } from './wp-admin';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, '../../../../..');
-const pluginPath = 'wp-content/plugins/sentient-forms/scripts/wp-playwright-fixtures.php';
-const composeArgs = ['compose', '-f', 'docker-compose.yml', 'exec', '-T', 'wordpress'];
+const pluginPath = '/var/www/html/wp-content/plugins/sentient-forms/scripts/wp-playwright-fixtures.php';
+const wordpressContainer = 'sentient_forms_wordpress';
 
 export function ensurePlaywrightFixtures(): number {
 	const result = spawnSync(
 		'docker',
-		[...composeArgs, 'wp', 'eval-file', pluginPath],
+		['exec', wordpressContainer, 'wp', `--url=${wpBaseUrl}`, 'eval-file', pluginPath],
 		{
-			cwd: repoRoot,
 			encoding: 'utf-8'
 		}
 	);

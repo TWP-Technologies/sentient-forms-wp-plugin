@@ -1,13 +1,16 @@
 import { expect, test, type Page } from '@playwright/test';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
 import { loginToWpAdmin, wpBaseUrl } from './wp-admin';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, '../../../../..');
-const composeArgs = ['compose', '-f', 'docker-compose.yml'];
+const defaultCpsHostUrl = existsSync('/.dockerenv')
+	? 'http://cps-api:8080'
+	: 'http://localhost:10081';
+const dockerContainers: Record<string, string> = {
+	wordpress: 'sentient_forms_wordpress',
+	'cps-db': 'sentient_forms_cps_db',
+	'telemetry-db': 'sentient_forms_telemetry_db'
+};
 
 type DockerEnv = NodeJS.ProcessEnv;
 
@@ -77,6 +80,7 @@ export type ActionExecutionDebitRecord = {
 	execution_request_id: string;
 	credits_delta: number;
 	central_action_id: string | null;
+	action_template_code: string | null;
 	hook: string | null;
 };
 
@@ -103,7 +107,8 @@ export type GravityEntryNoteRecord = {
 };
 
 export async function requireWpRestHealthy(page: Page): Promise<void> {
-	const res = await page.request.get('http://localhost:8080/index.php?rest_route=/', {
+	ensureWpBaseUrlConfigured();
+	const res = await page.request.get(`${wpBaseUrl}/index.php?rest_route=/`, {
 		timeout: 5000
 	});
 	if (!res.ok()) {
@@ -173,6 +178,23 @@ type GravityFormOptions = {
 	notifications?: GravityFormNotificationConfig[];
 };
 
+type StoredLicenseData = {
+	license_key: string;
+	license_status: string;
+	license_id: string;
+	site_id: string;
+	proxy_api_key: string;
+	local_site_identifier: string;
+};
+
+type ActivationPayload = {
+	proxy_api_key: string;
+	license_id: string;
+	site_id: string;
+	local_site_identifier: string;
+	status?: string;
+};
+
 export type GravityActionSettingsRecord = Record<string, unknown> & {
 	enabled?: boolean;
 	actions?: Record<string, Record<string, unknown>>;
@@ -194,23 +216,30 @@ function stripCliNoise(output: string): string {
 }
 
 function runDocker(args: string[], env: DockerEnv = {}): SpawnSyncReturns<string> {
-	const envEntries = Object.entries(env ?? {});
-	let finalArgs: string[] = [...composeArgs, ...args];
-
-	if (args[0] === 'exec' && envEntries.length > 0) {
-		const optionArgs: string[] = [];
-		let cursor = 1;
-		while (cursor < args.length && args[cursor]?.startsWith('-')) {
-			optionArgs.push(args[cursor]);
-			cursor += 1;
-		}
-
-		const envArgs = envEntries.flatMap(([key, value]) => ['-e', `${key}=${value ?? ''}`]);
-		finalArgs = [...composeArgs, 'exec', ...optionArgs, ...envArgs, ...args.slice(cursor)];
+	if (args[0] !== 'exec') {
+		throw new Error(`Unsupported docker helper invocation: ${args.join(' ')}`);
 	}
 
+	const envEntries = Object.entries(env ?? {});
+	const optionArgs: string[] = [];
+	let cursor = 1;
+	while (cursor < args.length && args[cursor]?.startsWith('-')) {
+		if (args[cursor] !== '-T') {
+			optionArgs.push(args[cursor]);
+		}
+		cursor += 1;
+	}
+
+	const serviceName = args[cursor];
+	if (!serviceName) {
+		throw new Error(`Missing docker exec target in helper invocation: ${args.join(' ')}`);
+	}
+
+	const containerName = dockerContainers[serviceName] ?? serviceName;
+	const envArgs = envEntries.flatMap(([key, value]) => ['-e', `${key}=${value ?? ''}`]);
+	const finalArgs = ['exec', ...optionArgs, ...envArgs, containerName, ...args.slice(cursor + 1)];
+
 	const result = spawnSync('docker', finalArgs, {
-		cwd: repoRoot,
 		env: { ...process.env, ...env },
 		encoding: 'utf-8'
 	});
@@ -223,7 +252,7 @@ function runDocker(args: string[], env: DockerEnv = {}): SpawnSyncReturns<string
 }
 
 function runWpCli(args: string[], env: DockerEnv = {}): SpawnSyncReturns<string> {
-	return runDocker(['exec', '-T', 'wordpress', 'wp', '--url=http://localhost:8080', ...args], env);
+	return runDocker(['exec', '-T', 'wordpress', 'wp', `--url=${wpBaseUrl}`, ...args], env);
 }
 
 function runWpEval(phpScript: string, env: DockerEnv = {}): string {
@@ -234,6 +263,18 @@ function runWpEval(phpScript: string, env: DockerEnv = {}): string {
 	}
 
 	return stripCliNoise(result.stdout);
+}
+
+export function ensureWpBaseUrlConfigured(): void {
+	const php = `
+update_option( 'home', '${wpBaseUrl}' );
+update_option( 'siteurl', '${wpBaseUrl}' );
+echo 'ok';
+`;
+	const output = runWpEval(php);
+	if (!output.includes('ok')) {
+		throw new Error(`Failed to align WordPress base URL: ${output}`);
+	}
 }
 
 export function setExecutionRequestIdOverride(executionRequestId: string | null): void {
@@ -298,6 +339,101 @@ function sanitizeSqlLiteral(value: string): string {
 	return value.replace(/'/g, "''");
 }
 
+function normalizeCpsHostUrl(cpsHostUrl: string): string {
+	return cpsHostUrl.replace(/\/+$/, '');
+}
+
+function isProxyKeyHealthy(proxyApiKey: string, cpsHostUrl: string): boolean {
+	if (!proxyApiKey.trim()) {
+		return false;
+	}
+
+	const balanceUrl = `${normalizeCpsHostUrl(cpsHostUrl)}/v1/credits/balance`;
+	const result = spawnSync(
+		'curl',
+		['-s', '-H', `x-api-key: ${proxyApiKey}`, balanceUrl],
+		{ encoding: 'utf-8', timeout: 15000 }
+	);
+
+	if (result.error || result.status !== 0) {
+		return false;
+	}
+
+	const stdout = result.stdout?.trim() ?? '';
+	if (!stdout) {
+		return false;
+	}
+
+	try {
+		const body = JSON.parse(stdout) as {
+			success?: boolean;
+			data?: { current_balance?: number };
+		};
+		return (
+			body?.success === true ||
+			typeof body?.data?.current_balance === 'number'
+		);
+	} catch (_error) {
+		return false;
+	}
+}
+
+function readStoredLicenseData(): StoredLicenseData | null {
+	const payload = runWpEval(
+		`
+$plugin = Sentient_Forms_Plugin::instance();
+echo wp_json_encode( $plugin->get_license_data() );
+`
+	);
+
+	if (!payload) {
+		return null;
+	}
+
+	try {
+		const decoded = JSON.parse(payload) as Partial<StoredLicenseData>;
+		return {
+			license_key: typeof decoded.license_key === 'string' ? decoded.license_key : '',
+			license_status: typeof decoded.license_status === 'string' ? decoded.license_status : '',
+			license_id: typeof decoded.license_id === 'string' ? decoded.license_id : '',
+			site_id: typeof decoded.site_id === 'string' ? decoded.site_id : '',
+			proxy_api_key: typeof decoded.proxy_api_key === 'string' ? decoded.proxy_api_key : '',
+			local_site_identifier:
+				typeof decoded.local_site_identifier === 'string' ? decoded.local_site_identifier : ''
+		};
+	} catch (error) {
+		throw new Error(
+			`Failed to parse stored WordPress license data: ${
+				error instanceof Error ? error.message : String(error)
+			}`
+		);
+	}
+}
+
+function persistWpLicenseState(activation: ActivationPayload, licenseKey: string): void {
+	const output = runWpEval(
+		`
+$plugin = Sentient_Forms_Plugin::instance();
+$plugin->set_license_data(
+	[
+		'license_key' => '${sanitizeSqlLiteral(licenseKey)}',
+		'license_status' => '${sanitizeSqlLiteral(activation.status ?? 'active')}',
+		'license_id' => '${sanitizeSqlLiteral(activation.license_id)}',
+		'site_id' => '${sanitizeSqlLiteral(activation.site_id)}',
+		'proxy_api_key' => '${sanitizeSqlLiteral(activation.proxy_api_key)}',
+		'local_site_identifier' => '${sanitizeSqlLiteral(activation.local_site_identifier)}',
+		'last_synced' => current_time( 'mysql' ),
+	]
+);
+echo 'ok';
+`
+	);
+
+	if (!output.includes('ok')) {
+		throw new Error(`Failed to persist WordPress license state: ${output}`);
+	}
+}
+
 export function getLicenseIdByKey(licenseKey = 'LIC-LOCAL-DEV'): string {
 	const raw = runDbQuery(
 		`SELECT id FROM licenses WHERE license_key='${sanitizeSqlLiteral(licenseKey)}' LIMIT 1;`
@@ -330,10 +466,12 @@ function tryGetLicenseId(licenseKey: string): string | null {
  */
 export function ensureCpsSeeded(
 	licenseKey = 'LIC-LOCAL-DEV',
-	cpsHostUrl = 'http://localhost:10081',
-	siteUrl = 'http://localhost:8080/',
+	cpsHostUrl = process.env.SENTIENT_FORMS_CPS_HOST_URL ?? defaultCpsHostUrl,
+	siteUrl = `${wpBaseUrl}/`,
 	localSiteIdentifier = 'local-site'
 ): string {
+	ensureWpBaseUrlConfigured();
+
 	// 1. Ensure license exists in CPS DB
 	let licenseId = tryGetLicenseId(licenseKey);
 	if (!licenseId) {
@@ -369,6 +507,17 @@ export function ensureCpsSeeded(
 		WHERE license_key='${sanitizeSqlLiteral(licenseKey)}';
 	`);
 
+	const storedLicense = readStoredLicenseData();
+	const existingProxyKey = tryGetProxyApiKey();
+	const existingLicenseMatches =
+		!!storedLicense &&
+		storedLicense.license_key.trim() === licenseKey &&
+		(!storedLicense.license_id.trim() || storedLicense.license_id.trim() === licenseId);
+	if (existingProxyKey && existingLicenseMatches && isProxyKeyHealthy(existingProxyKey, cpsHostUrl)) {
+		ensureWpCpsConfig(existingProxyKey);
+		return existingProxyKey;
+	}
+
 	// 2. Re-activate via CPS API to guarantee a valid proxy key for this run.
 	// Reuse an existing site identifier when present to avoid consuming new site slots
 	// on licenses with low tier limits (e.g. free tier site_limit=1).
@@ -379,12 +528,44 @@ export function ensureCpsSeeded(
 		typeof existingIdentifierRaw === 'string' && existingIdentifierRaw.trim().length > 0
 			? existingIdentifierRaw.trim()
 			: localSiteIdentifier;
-	const proxyKey = activateLicenseViaCps(licenseKey, cpsHostUrl, siteUrl, activationIdentifier);
+	const activation = activateLicenseViaCps(licenseKey, cpsHostUrl, siteUrl, activationIdentifier);
 
 	// 3. Configure WordPress plugin settings
-	ensureWpCpsConfig(proxyKey);
+	ensureWpCpsConfig(activation.proxy_api_key);
+	persistWpLicenseState(
+		{
+			...activation,
+			license_id: activation.license_id || licenseId
+		},
+		licenseKey
+	);
 
-	return proxyKey;
+	return activation.proxy_api_key;
+}
+
+/**
+ * Prepare WordPress + CPS for a true free-license bootstrap flow.
+ *
+ * Existing CPS site allocations for the current site URL are tombstoned to a
+ * deterministic archive URL so `/license/bootstrap` cannot silently reuse a
+ * previously activated paid/dev license for the same WordPress site.
+ */
+export function prepareFreeLicenseBootstrapState(
+	siteUrl = `${wpBaseUrl}/`,
+	cpsDockerUrl = 'http://cps-api:8080/v1'
+): void {
+	const normalizedSiteUrl = siteUrl.endsWith('/') ? siteUrl : `${siteUrl}/`;
+	const archivedPrefix = `${normalizedSiteUrl}__archived_bootstrap__/`;
+
+	runDbQuery(`
+UPDATE sites
+SET site_url = '${sanitizeSqlLiteral(archivedPrefix)}' || substr(id::text, 1, 8) || '/' || EXTRACT(EPOCH FROM now())::bigint::text,
+    updated_at = now()
+WHERE site_url = '${sanitizeSqlLiteral(normalizedSiteUrl)}';
+`);
+
+	ensureWpCpsConfig('', cpsDockerUrl);
+	clearStoredLicenseState();
 }
 
 /**
@@ -395,7 +576,7 @@ function activateLicenseViaCps(
 	cpsHostUrl: string,
 	siteUrl: string,
 	localSiteIdentifier: string
-): string {
+): ActivationPayload {
 	const activateUrl = `${cpsHostUrl}/v1/license/activate`;
 	const payload = JSON.stringify({
 		license_key: licenseKey,
@@ -418,19 +599,25 @@ function activateLicenseViaCps(
 		throw new Error(`CPS activation HTTP error (exit ${result.status}): ${stdout}`);
 	}
 
-	let body: { success?: boolean; data?: { proxy_api_key?: string } };
+	let body: { success?: boolean; data?: Partial<ActivationPayload> };
 	try {
 		body = JSON.parse(stdout);
 	} catch (_error) {
 		throw new Error(`CPS activation returned non-JSON: ${stdout.slice(0, 300)}`);
 	}
 
-	const proxyApiKey = body?.data?.proxy_api_key;
-	if (!proxyApiKey) {
+	const activation = body?.data;
+	if (!activation?.proxy_api_key) {
 		throw new Error(`CPS activation did not return proxy_api_key: ${stdout.slice(0, 300)}`);
 	}
 
-	return proxyApiKey;
+	return {
+		proxy_api_key: activation.proxy_api_key,
+		license_id: activation.license_id ?? '',
+		site_id: activation.site_id ?? '',
+		local_site_identifier: activation.local_site_identifier ?? localSiteIdentifier,
+		status: activation.status ?? 'active'
+	};
 }
 
 /**
@@ -460,13 +647,52 @@ export function getActionTemplateIdByCode(code: string): string {
 	return raw.trim();
 }
 
-export function setTelemetryOptIn(optIn: boolean, licenseKey = 'LIC-LOCAL-DEV'): void {
-	const licenseId = getLicenseIdByKey(licenseKey);
-	const sql = `
-UPDATE sites SET telemetry_opt_in = ${optIn ? 'TRUE' : 'FALSE'}
-WHERE license_id = '${sanitizeSqlLiteral(licenseId)}';
-`;
-	runDbQuery(sql);
+export function setTelemetryOptIn(
+	optIn: boolean,
+	licenseKey = 'LIC-LOCAL-DEV',
+	cpsHostUrl = process.env.SENTIENT_FORMS_CPS_HOST_URL ?? defaultCpsHostUrl
+): void {
+	const proxyKey = ensureCpsSeeded(licenseKey, cpsHostUrl);
+	const telemetryUrl = `${normalizeCpsHostUrl(cpsHostUrl)}/v1/telemetry`;
+	const payload = JSON.stringify({
+		telemetry_opt_in: optIn,
+		actor_hint: 'playwright-e2e'
+	});
+	const result = spawnSync(
+		'curl',
+		[
+			'-s',
+			'-X',
+			'POST',
+			telemetryUrl,
+			'-H',
+			'Content-Type: application/json',
+			'-H',
+			`x-api-key: ${proxyKey}`,
+			'-d',
+			payload
+		],
+		{ encoding: 'utf-8', timeout: 15000 }
+	);
+
+	if (result.error || result.status !== 0) {
+		throw new Error(
+			`Failed to update telemetry consent via CPS: ${stripCliNoise(result.stderr || result.stdout)}`
+		);
+	}
+
+	let body:
+		| { success?: boolean; data?: { telemetry_opt_in?: boolean } }
+		| undefined;
+	try {
+		body = JSON.parse(result.stdout?.trim() ?? '{}');
+	} catch (_error) {
+		throw new Error(`Telemetry consent update returned non-JSON: ${(result.stdout ?? '').slice(0, 300)}`);
+	}
+
+	if (body?.success !== true || body?.data?.telemetry_opt_in !== optIn) {
+		throw new Error(`Telemetry consent update failed: ${(result.stdout ?? '').trim()}`);
+	}
 }
 
 export function getLatestTelemetryEvent(
@@ -492,12 +718,29 @@ LIMIT 1;
 	}
 }
 
-export function createCustomAction(code: string, displayName: string, baseCreditCost: number): string {
+export function getActionTemplateBaseCreditCost(code: string): number {
+	const raw = runDbQuery(
+		`
+SELECT base_credit_cost
+FROM action_templates
+WHERE code = '${sanitizeSqlLiteral(code)}'
+LIMIT 1;
+`
+	);
+	const parsed = Number.parseInt(raw.trim(), 10);
+	if (!Number.isInteger(parsed) || parsed < 0) {
+		throw new Error(`Failed to resolve template base credit cost for ${code}: ${raw}`);
+	}
+
+	return parsed;
+}
+
+export function createCustomAction(code: string, displayName: string): string {
 	const licenseId = getLicenseIdByKey();
 	const templateId = getActionTemplateIdByCode('spam_detection_v1');
 	const sql = `
 INSERT INTO custom_actions (license_id, template_id, display_name, description, configuration, prompt_overrides, model_hint, base_credit_cost, code, status)
-VALUES ('${licenseId}', '${templateId}', '${sanitizeSqlLiteral(displayName)}', 'Playwright custom action', '{}'::jsonb, '{}'::jsonb, 'gemini-pro', ${baseCreditCost}, '${sanitizeSqlLiteral(code)}', 'active')
+VALUES ('${licenseId}', '${templateId}', '${sanitizeSqlLiteral(displayName)}', 'Playwright custom action', '{}'::jsonb, '{}'::jsonb, 'gemini-pro', NULL, '${sanitizeSqlLiteral(code)}', 'active')
 ON CONFLICT (license_id, code) DO UPDATE SET updated_at = now()
 RETURNING code;
 `;
@@ -846,6 +1089,15 @@ export function runActionScheduler(): void {
 }
 
 export function getProxyApiKey(): string {
+	const proxyKey = tryGetProxyApiKey();
+	if (proxyKey) {
+		return proxyKey;
+	}
+
+	throw new Error('Proxy API key not found in sentient_forms_settings.');
+}
+
+function tryGetProxyApiKey(): string | null {
 	const result = runWpCli(['option', 'get', 'sentient_forms_settings', '--format=json']);
 
 	let payload = stripCliNoise(result.stdout);
@@ -854,7 +1106,7 @@ export function getProxyApiKey(): string {
 	}
 
 	if (!payload) {
-		throw new Error('Proxy API key lookup returned empty payload');
+		return null;
 	}
 
 	try {
@@ -878,7 +1130,21 @@ export function getProxyApiKey(): string {
 		return match[1];
 	}
 
-	throw new Error('Proxy API key not found in sentient_forms_settings.');
+	return null;
+}
+
+export function clearStoredLicenseState(): void {
+	const output = runWpEval(
+		`
+$plugin = Sentient_Forms_Plugin::instance();
+$plugin->clear_license_data();
+echo 'ok';
+`
+	);
+
+	if (!output.includes('ok')) {
+		throw new Error(`Failed to clear stored license state: ${output}`);
+	}
 }
 
 export function getLatestEntryId(formId: number): number {
@@ -1271,7 +1537,8 @@ export function getLatestActionExecutionDebitByEntryId(
 ): ActionExecutionDebitRecord | null {
 	const centralActionFilter = centralActionId
 		? `AND (
-      metadata->>'action_template_code' = '${sanitizeSqlLiteral(centralActionId)}'
+      metadata->>'custom_action_code' = '${sanitizeSqlLiteral(centralActionId)}'
+      OR metadata->>'action_template_code' = '${sanitizeSqlLiteral(centralActionId)}'
       OR metadata->'context'->>'central_action_id' = '${sanitizeSqlLiteral(centralActionId)}'
     )`
 		: '';
@@ -1279,7 +1546,12 @@ export function getLatestActionExecutionDebitByEntryId(
 SELECT json_build_object(
     'execution_request_id', execution_request_id,
     'credits_delta', credits_delta,
-    'central_action_id', COALESCE(metadata->>'action_template_code', metadata->'context'->>'central_action_id'),
+    'central_action_id', COALESCE(
+        metadata->>'custom_action_code',
+        metadata->'context'->>'central_action_id',
+        metadata->>'action_template_code'
+    ),
+    'action_template_code', metadata->>'action_template_code',
     'hook', metadata->'context'->>'hook'
 )::text
 FROM credit_ledger_entries
@@ -1311,7 +1583,8 @@ export function getActionExecutionDebitsByEntryId(
 ): ActionExecutionDebitRecord[] {
 	const centralActionFilter = centralActionId
 		? `AND (
-      metadata->>'action_template_code' = '${sanitizeSqlLiteral(centralActionId)}'
+      metadata->>'custom_action_code' = '${sanitizeSqlLiteral(centralActionId)}'
+      OR metadata->>'action_template_code' = '${sanitizeSqlLiteral(centralActionId)}'
       OR metadata->'context'->>'central_action_id' = '${sanitizeSqlLiteral(centralActionId)}'
     )`
 		: '';
@@ -1321,7 +1594,12 @@ SELECT COALESCE(
         json_build_object(
             'execution_request_id', execution_request_id,
             'credits_delta', credits_delta,
-            'central_action_id', COALESCE(metadata->>'action_template_code', metadata->'context'->>'central_action_id'),
+            'central_action_id', COALESCE(
+                metadata->>'custom_action_code',
+                metadata->'context'->>'central_action_id',
+                metadata->>'action_template_code'
+            ),
+            'action_template_code', metadata->>'action_template_code',
             'hook', metadata->'context'->>'hook'
         )
         ORDER BY created_at ASC
@@ -1445,7 +1723,7 @@ export async function submitGravityForm(
 export async function fetchCreditBalance(
 	page: Page,
 	apiKey: string,
-	baseUrl = 'http://localhost:10081'
+	baseUrl = process.env.SENTIENT_FORMS_CPS_HOST_URL ?? defaultCpsHostUrl
 ): Promise<number> {
 	const response = await page.request.get(`${baseUrl}/v1/credits/balance`, {
 		headers: { 'x-api-key': apiKey }

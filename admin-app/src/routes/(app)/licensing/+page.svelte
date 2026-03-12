@@ -2,6 +2,7 @@
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
 	import type {
 		ApiErrorPayload,
+		BillingPolicyState,
 		BillingPortalSessionRequest,
 		BillingStateResponse,
 		CreditBalanceResponse
@@ -27,6 +28,7 @@
 		type QuotaCtaAction,
 		creditSeverityToBadgeVariant,
 		formatCreditSeverityLabel,
+		isConnectedLicenseStatus,
 		licenseStatusToBadgeVariant,
 		resolveTierDisplayName
 	} from '$lib/utils/license-health-presentation';
@@ -64,33 +66,34 @@
 		retry: () => Promise<void>;
 	}
 
-	const PAID_PLAN_TRIAL_DAYS = 30;
-	const FREE_PLAN_MONTHLY_CREDITS = 50;
 	const BUSINESS_PLAN_SITE_CAP = 200;
+	const DEFAULT_BILLING_POLICY: BillingPolicyState = {
+		paid_trial_days: 14,
+		free_plan_monthly_credits: 50,
+		free_plan_indefinite: true,
+		private_beta_trial_enabled: true
+	};
 
-	const checkoutPlans: CheckoutPlanOption[] = [
+	const checkoutPlanCatalog = [
 		{
 			code: 'starter',
 			label: 'Starter',
-			description: `$15/month, 1 site, 1,500 monthly credits. Includes a one-time ${PAID_PLAN_TRIAL_DAYS}-day paid-plan trial when eligible.`,
-			ctaLabel: 'Choose Starter',
-			trialPeriodDays: PAID_PLAN_TRIAL_DAYS
+			priceDescription: '$15/month, 1 site, 1,500 monthly credits.',
+			ctaLabel: 'Choose Starter'
 		},
 		{
 			code: 'pro',
 			label: 'Pro',
-			description: `$39/month, up to 5 sites, 4,000 monthly credits. Includes a one-time ${PAID_PLAN_TRIAL_DAYS}-day paid-plan trial when eligible.`,
-			ctaLabel: 'Choose Pro',
-			trialPeriodDays: PAID_PLAN_TRIAL_DAYS
+			priceDescription: '$39/month, up to 5 sites, 4,000 monthly credits.',
+			ctaLabel: 'Choose Pro'
 		},
 		{
 			code: 'business',
 			label: 'Business',
-			description: `$99/month, up to ${BUSINESS_PLAN_SITE_CAP} sites during launch, 12,000 monthly credits.`,
-			ctaLabel: 'Choose Business',
-			trialPeriodDays: PAID_PLAN_TRIAL_DAYS
+			priceDescription: `$99/month, up to ${BUSINESS_PLAN_SITE_CAP} sites during launch, 12,000 monthly credits.`,
+			ctaLabel: 'Choose Business'
 		}
-	];
+	] as const;
 
 	const topUpPacks: TopUpPackOption[] = [
 		{
@@ -116,6 +119,34 @@
 		}
 	];
 
+	function buildEffectiveCreditSnapshot(
+		billingState: BillingStateResponse | null,
+		fallbackCredits: CreditBalanceResponse | null
+	): CreditBalanceResponse | null {
+		if (!billingState?.credits) {
+			return fallbackCredits;
+		}
+
+		return {
+			current_balance: billingState.credits.current_balance,
+			ledger_delta: billingState.credits.ledger_delta,
+			tier:
+				billingState.tier ??
+				(fallbackCredits?.tier
+					? {
+							...fallbackCredits.tier,
+							monthly_credit_quota:
+								billingState.credits.tier_quota ?? fallbackCredits.tier.monthly_credit_quota
+						}
+					: {
+							code: 'unknown',
+							display_name: 'Unknown',
+							monthly_credit_quota: billingState.credits.tier_quota
+						}),
+			stale: false
+		};
+	}
+
 	const client = createClientFromConfig();
 
 	let licenseKey = $state('');
@@ -133,21 +164,36 @@
 	let portalLoading = $state(false);
 
 	let resetInfo = $derived(getNextCreditReset());
+	let effectiveCredits = $derived(buildEffectiveCreditSnapshot(billing, credits));
 	let creditPresentation = $derived(
-		buildCreditPresentation(credits, resetInfo.summary, 'licensing')
+		buildCreditPresentation(effectiveCredits, resetInfo.summary, 'licensing')
 	);
+	let billingPolicy = $derived(resolveBillingPolicy(billing?.policy));
 	let creditSeverityLabel = $derived(formatCreditSeverityLabel(creditPresentation.severity));
 	let creditSeverityVariant = $derived(creditSeverityToBadgeVariant(creditPresentation.severity));
 	let licenseStatusVariant = $derived(licenseStatusToBadgeVariant($licenseStore.status));
+	let checkoutPlans = $derived.by(() =>
+		checkoutPlanCatalog.map((plan) => ({
+			code: plan.code,
+			label: plan.label,
+			description: `${plan.priceDescription} Includes a one-time ${billingPolicy.paid_trial_days}-day paid-plan trial when eligible.`,
+			ctaLabel: plan.ctaLabel,
+			trialPeriodDays: billingPolicy.paid_trial_days
+		}))
+	);
 	let tierLabel = $derived(
-		resolveTierDisplayName(credits?.tier ?? $licenseStore.tier ?? null) ?? '—'
+		resolveTierDisplayName(billing?.tier ?? $licenseStore.tier ?? effectiveCredits?.tier ?? null) ??
+			'—'
 	);
 	let hasExistingSubscription = $derived(Boolean(billing?.subscription?.provider_subscription_id));
 	let billingBusy = $derived(
 		Boolean(checkoutPlanPending || topUpPackPending || subscriptionChangePending || portalLoading)
 	);
+	let hasConnectedLicense = $derived(
+		isConnectedLicenseStatus($licenseStore.status) && $licenseStore.proxyKeyPresent
+	);
 	let billingSubscriptionStatus = $derived(
-		billing?.subscription?.status ?? ($licenseStore.status === 'active' ? 'free' : 'inactive')
+		billing?.subscription?.status ?? (hasConnectedLicense ? 'free' : 'inactive')
 	);
 	let billingAllocation = $derived(billing?.allocation ?? null);
 	let billingAllocationUsage = $derived(
@@ -159,7 +205,7 @@
 	onMount(() => {
 		void (async () => {
 			await licenseStore.load();
-			await Promise.all([fetchCredits(), fetchBillingState()]);
+			await refreshLicenseAndBilling();
 		})();
 	});
 
@@ -216,7 +262,7 @@
 				case 'billing_not_configured':
 					return 'Billing is not configured for this environment yet. Ask an administrator to verify Stripe keys and webhook secrets.';
 				case 'trial_unavailable':
-					return `This license already consumed its one-time ${PAID_PLAN_TRIAL_DAYS}-day paid-plan trial. Continue with a paid plan to switch tiers.`;
+					return `This license already consumed its one-time ${billingPolicy.paid_trial_days}-day paid-plan trial. Continue with a paid plan to switch tiers.`;
 				case 'billing_provider_unreachable':
 				case 'billing_provider_error':
 					return 'Stripe is temporarily unavailable. Retry in a moment or use Manage billing once connectivity recovers.';
@@ -283,12 +329,14 @@
 		}
 	}
 
-	async function fetchCredits() {
+	async function fetchCredits(forceRefresh = false) {
 		creditsLoading = true;
 		creditsError = null;
 
 		try {
-			credits = await wpFetch<CreditBalanceResponse>('credits/balance');
+			credits = await wpFetch<CreditBalanceResponse>(
+				forceRefresh ? 'credits/balance?force_refresh=1' : 'credits/balance'
+			);
 		} catch (error) {
 			console.error('Failed to fetch credits', error);
 			credits = null;
@@ -299,7 +347,7 @@
 	}
 
 	async function fetchBillingState() {
-		if ($licenseStore.status !== 'active' || !$licenseStore.proxyKeyPresent) {
+		if (!hasConnectedLicense) {
 			billing = null;
 			billingError = null;
 			billingLoading = false;
@@ -317,6 +365,22 @@
 			setBillingError(error, 'billing_state', fetchBillingState, false);
 		} finally {
 			billingLoading = false;
+		}
+	}
+
+	async function refreshLicenseAndBilling() {
+		if (!hasConnectedLicense) {
+			credits = null;
+			creditsError = null;
+			billing = null;
+			billingError = null;
+			return;
+		}
+
+		await fetchBillingState();
+		await fetchCredits(true);
+		if ($licenseStore.proxyKeyPresent) {
+			await licenseStore.load();
 		}
 	}
 
@@ -338,7 +402,7 @@
 
 		await licenseStore.activate(licenseKey.trim());
 		licenseKey = '';
-		await Promise.all([fetchCredits(), fetchBillingState()]);
+		await refreshLicenseAndBilling();
 	}
 
 	async function handleOpenBillingPortal() {
@@ -410,7 +474,7 @@
 			const modeLabel =
 				response.change_timing === 'start_now' ? 'started now' : 'scheduled for next cycle';
 			notifications.success(`Plan updated to ${plan.label} (${modeLabel}).`);
-			await Promise.all([fetchCredits(), fetchBillingState()]);
+			await refreshLicenseAndBilling();
 		} catch (error) {
 			console.error('Failed to change subscription plan', error);
 			if (
@@ -463,7 +527,7 @@
 
 	async function handleDeactivateLicense() {
 		await licenseStore.deactivate();
-		await Promise.all([fetchCredits(), fetchBillingState()]);
+		await refreshLicenseAndBilling();
 	}
 
 	function handleQuotaCtaAction(action: QuotaCtaAction) {
@@ -485,17 +549,48 @@
 		}
 		return 'Credit balance unavailable';
 	}
+
+	function resolveBillingPolicy(
+		policy: BillingStateResponse['policy'] | null | undefined
+	): BillingPolicyState {
+		return {
+			paid_trial_days:
+				typeof policy?.paid_trial_days === 'number' && policy.paid_trial_days > 0
+					? policy.paid_trial_days
+					: DEFAULT_BILLING_POLICY.paid_trial_days,
+			free_plan_monthly_credits:
+				typeof policy?.free_plan_monthly_credits === 'number' &&
+				policy.free_plan_monthly_credits >= 0
+					? policy.free_plan_monthly_credits
+					: DEFAULT_BILLING_POLICY.free_plan_monthly_credits,
+			free_plan_indefinite:
+				typeof policy?.free_plan_indefinite === 'boolean'
+					? policy.free_plan_indefinite
+					: DEFAULT_BILLING_POLICY.free_plan_indefinite,
+			private_beta_trial_enabled:
+				typeof policy?.private_beta_trial_enabled === 'boolean'
+					? policy.private_beta_trial_enabled
+					: DEFAULT_BILLING_POLICY.private_beta_trial_enabled
+		};
+	}
+
+	function freePlanPolicyText(policy: BillingPolicyState): string {
+		const cadence = policy.free_plan_indefinite
+			? 'remains available indefinitely'
+			: 'remains available';
+		return `The Free plan ${cadence} with ${policy.free_plan_monthly_credits} monthly credits.`;
+	}
 </script>
 
 <Section
-	heading={$licenseStore.status === 'active' ? 'License management' : 'License activation'}
-	description={$licenseStore.status === 'active'
+	heading={hasConnectedLicense ? 'License management' : 'License activation'}
+	description={hasConnectedLicense
 		? 'Review license status, tier, credits, and reset timing before making changes.'
 		: 'Provide your Sentient Forms license key to enable CPS-backed automations.'}
 >
 	<ValidationSummary {issues} />
 
-	{#if $licenseStore.status !== 'active'}
+	{#if !hasConnectedLicense}
 		<Card>
 			<form class="sf:space-y-4" onsubmit={handleActivate}>
 				<InputField
@@ -521,7 +616,7 @@
 		</Card>
 	{/if}
 
-	{#if $licenseStore.status === 'active'}
+	{#if hasConnectedLicense}
 		<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="licensing-overview-card">
 			<div class="sf:grid sf:gap-6 sf:lg:grid-cols-2 sf:items-start">
 				<div class="sf:space-y-3">
@@ -592,7 +687,7 @@
 					message={creditsError}
 					actionLabel="Retry credits"
 					onAction={() => {
-						void fetchCredits();
+						void refreshLicenseAndBilling();
 					}}
 					inline
 					testId="licensing-credit-error-state"
@@ -641,7 +736,7 @@
 								{:else}
 									Trial active for this subscription.
 								{/if}
-								One-time {PAID_PLAN_TRIAL_DAYS}-day paid-plan trial.
+								One-time {billingPolicy.paid_trial_days}-day paid-plan trial.
 							</p>
 						{/if}
 						<p class="sf:text-xs sf:text-slate-500">Site capacity: {billingAllocationUsage}</p>
@@ -681,9 +776,11 @@
 							class="sf:md:col-span-3 sf:text-xs sf:text-slate-500"
 							data-testid="licensing-trial-policy-note"
 						>
-							New paid subscriptions include a one-time {PAID_PLAN_TRIAL_DAYS}-day trial when
-							eligible. Private beta sites can remain on Free with {FREE_PLAN_MONTHLY_CREDITS} credits
-							each month until you upgrade.
+							Eligible paid subscriptions start with a one-time {billingPolicy.paid_trial_days}-day
+							paid-plan trial. {freePlanPolicyText(billingPolicy)}
+							{#if billingPolicy.private_beta_trial_enabled}
+								Invite-only Private Beta sites can remain on Private Beta until you upgrade.
+							{/if}
 						</p>
 					{/if}
 					{#if hasExistingSubscription}
@@ -889,7 +986,7 @@
 			/>
 		{/if}
 
-		{#if $licenseStore.status === 'active'}
+		{#if hasConnectedLicense}
 			<Button
 				variant="secondary"
 				class="sf:mt-4"

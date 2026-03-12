@@ -17,8 +17,17 @@ export default defineConfig({
     strictPort: true,
     port: 5173,
     host: devHost,
-    cors: true,
+    cors: {
+      origin: '*',
+      methods: ['GET', 'HEAD', 'OPTIONS'],
+      allowedHeaders: ['Origin', 'Content-Type', 'Accept', 'Authorization', 'X-WP-Nonce']
+    },
     allowedHosts: ['host.docker.internal', 'localhost', '127.0.0.1', 'admin-app-dev'],
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Origin, Content-Type, Accept, Authorization, X-WP-Nonce'
+    },
     hmr: {
       host: hmrHost,
       port: hmrPort,

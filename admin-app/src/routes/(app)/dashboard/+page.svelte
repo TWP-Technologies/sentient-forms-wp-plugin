@@ -7,6 +7,7 @@
 		type CreditSeverity,
 		creditSeverityToBadgeVariant,
 		formatCreditSeverityLabel,
+		isConnectedLicenseStatus,
 		licenseStatusToBadgeVariant,
 		type QuotaCtaAction,
 		resolveTierDisplayName
@@ -14,6 +15,7 @@
 	import { getNextCreditReset } from '$lib/utils/credits';
 	import { formatTimestamp } from '$lib/utils/date-time';
 	import { navigateToAppPath } from '$lib/navigation';
+	import { loadLicenseInfoSnapshot } from '$lib/stores/license';
 	import { sessionStore, type LicenseStatus } from '$lib/stores/session';
 	import { wpFetch } from '$lib/wp';
 
@@ -23,16 +25,24 @@
 	let creditData = $state<CreditBalanceResponse | null>(null);
 
 	let resetInfo = $derived(getNextCreditReset());
-	let creditPresentation = $derived(buildCreditPresentation(creditData, resetInfo.summary, 'dashboard'));
+	let creditPresentation = $derived(
+		buildCreditPresentation(creditData, resetInfo.summary, 'dashboard')
+	);
 	let creditSeverityLabel = $derived(formatCreditSeverityLabel(creditPresentation.severity));
 	let creditSeverityVariant = $derived(creditSeverityToBadgeVariant(creditPresentation.severity));
 	let licenseStatusVariant = $derived(licenseStatusToBadgeVariant($sessionStore.licenseStatus));
-	let tierLabel = $derived(resolveTierDisplayName(creditData?.tier ?? licenseData?.tier ?? null) ?? '—');
+	let tierLabel = $derived(
+		resolveTierDisplayName(creditData?.tier ?? licenseData?.tier ?? null) ?? '—'
+	);
 	let licenseSummaryText = $derived(
-		$sessionStore.licenseStatus === 'active'
+		isConnectedLicenseStatus($sessionStore.licenseStatus)
 			? $sessionStore.proxyKeyPresent
-				? 'License active'
-				: 'License active — proxy key missing'
+				? $sessionStore.licenseStatus === 'trial'
+					? 'Trial active'
+					: 'License active'
+				: $sessionStore.licenseStatus === 'trial'
+					? 'Trial active — proxy key missing'
+					: 'License active — proxy key missing'
 			: $sessionStore.licenseStatus === 'activating'
 				? 'Activating license…'
 				: $sessionStore.licenseStatus === 'error'
@@ -45,20 +55,18 @@
 		error = null;
 
 		try {
-			const [licenseResponse, creditResponse] = await Promise.allSettled([
-				wpFetch<LicenseInfoResponse>('license'),
-				wpFetch<CreditBalanceResponse>('credits/balance')
-			]);
+			licenseData = await loadLicenseInfoSnapshot();
 
-			licenseData = licenseResponse.status === 'fulfilled' ? licenseResponse.value : null;
-			creditData = creditResponse.status === 'fulfilled' ? creditResponse.value : null;
-
-			if (licenseResponse.status === 'rejected' && creditResponse.status === 'rejected') {
-				error = 'Unable to refresh license and credit details right now.';
-			} else if (licenseResponse.status === 'rejected') {
-				error = 'License details are temporarily unavailable.';
-			} else if (creditResponse.status === 'rejected') {
-				error = 'Credit details are temporarily unavailable.';
+			if (isConnectedLicenseStatus(licenseData.status) && licenseData.proxy_key_present) {
+				try {
+					creditData = await wpFetch<CreditBalanceResponse>('credits/balance?force_refresh=1');
+				} catch (creditError) {
+					console.error('Failed to fetch dashboard credit balance', creditError);
+					creditData = null;
+					error = 'Credit details are temporarily unavailable.';
+				}
+			} else {
+				creditData = null;
 			}
 
 			sessionStore.hydrate({
@@ -69,7 +77,8 @@
 				lastSync: licenseData?.last_synced ?? null
 			});
 		} catch (requestError) {
-			error = requestError instanceof Error ? requestError.message : 'Failed to fetch dashboard data';
+			error =
+				requestError instanceof Error ? requestError.message : 'Failed to fetch dashboard data';
 
 			sessionStore.hydrate({
 				siteUrl: window.location.origin,
@@ -108,7 +117,10 @@
 	});
 </script>
 
-<Section heading="Dashboard" description="At-a-glance health for license status and credit availability.">
+<Section
+	heading="Dashboard"
+	description="At-a-glance health for license status and credit availability."
+>
 	{#snippet actions()}
 		<Button variant="secondary" onclick={fetchDashboardData} disabled={loading}>
 			{loading ? 'Refreshing...' : 'Refresh'}
@@ -132,7 +144,10 @@
 				<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
 					License health
 				</p>
-				<p class="sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-license-summary">
+				<p
+					class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+					data-testid="dashboard-license-summary"
+				>
 					{licenseSummaryText}
 				</p>
 				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
@@ -148,8 +163,13 @@
 			</div>
 
 			<div class="sf:space-y-3">
-				<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">Credits</p>
-				<p class="sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-credits-headline">
+				<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
+					Credits
+				</p>
+				<p
+					class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+					data-testid="dashboard-credits-headline"
+				>
 					{loading ? 'Loading credit balance…' : creditPresentation.headline}
 				</p>
 				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
@@ -184,7 +204,9 @@
 	<div class="sf:grid sf:gap-4 sf:md:grid-cols-3">
 		<Card data-testid="dashboard-tier-card">
 			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Tier</h3>
-			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">{loading ? 'Loading…' : tierLabel}</p>
+			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">
+				{loading ? 'Loading…' : tierLabel}
+			</p>
 		</Card>
 
 		<Card data-testid="dashboard-last-sync-card">

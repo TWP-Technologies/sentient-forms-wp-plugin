@@ -1,6 +1,7 @@
 import { readable, toStore } from 'svelte/store';
+import { isConnectedLicenseStatus } from '$lib/utils/license-health-presentation';
 
-export type LicenseStatus = 'inactive' | 'activating' | 'active' | 'error';
+export type LicenseStatus = 'inactive' | 'activating' | 'active' | 'trial' | 'error';
 
 export interface SessionState {
 	siteUrl: string;
@@ -33,15 +34,19 @@ export const sessionStore = {
 };
 
 function computeLicenseSummary() {
-	return sessionState.licenseStatus === 'active'
+	return isConnectedLicenseStatus(sessionState.licenseStatus)
 		? sessionState.proxyKeyPresent
-			? 'License active'
-			: 'License active — proxy key missing'
+			? sessionState.licenseStatus === 'trial'
+				? 'Trial active'
+				: 'License active'
+			: sessionState.licenseStatus === 'trial'
+				? 'Trial active — proxy key missing'
+				: 'License active — proxy key missing'
 		: sessionState.licenseStatus === 'activating'
-		? 'Activating license…'
-		: sessionState.licenseStatus === 'error'
-		? 'Activation error'
-		: 'No active license';
+			? 'Activating license…'
+			: sessionState.licenseStatus === 'error'
+				? 'Activation error'
+				: 'No active license';
 }
 
 export const licenseSummary = readable(computeLicenseSummary(), (set) =>

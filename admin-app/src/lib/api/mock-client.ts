@@ -142,6 +142,13 @@ export class MockSentientFormsApiClient {
 	async getBillingState(): Promise<BillingStateResponse> {
 		return {
 			provider: 'stripe',
+			license_status: 'active',
+			tier: {
+				code: this.creditBalance.tier?.code ?? 'starter',
+				display_name: this.creditBalance.tier?.display_name ?? 'Starter',
+				monthly_credit_quota: this.creditBalance.tier?.monthly_credit_quota ?? 100,
+				site_limit: 1
+			},
 			customer_id: 'cus_mock_123',
 			subscription: {
 				provider_subscription_id: 'sub_mock_123',
@@ -168,6 +175,12 @@ export class MockSentientFormsApiClient {
 				blocked_new_activations: false,
 				grace_expires_at: null,
 				capacity_policy: 'tier_x_quantity_v1'
+			},
+			policy: {
+				paid_trial_days: 14,
+				free_plan_monthly_credits: 50,
+				free_plan_indefinite: true,
+				private_beta_trial_enabled: true
 			}
 		};
 	}

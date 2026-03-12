@@ -1433,7 +1433,8 @@ test.describe('Actions admin flows', () => {
 		await page.getByTestId('mapping-config-open-graph').click();
 
 		const sourceHandle = '[data-nodeid=\"map-3\"][data-handleid=\"dependency-source\"]';
-		const targetHandle = '[data-nodeid=\"map-2\"][data-handleid=\"dependency-target\"]';
+		const targetHandle =
+			'[data-nodeid=\"map-2\"][data-handleid=\"hook-root-target:gform_validation\"]';
 		await connectHandlesAndAssert(page, sourceHandle, targetHandle);
 	});
 

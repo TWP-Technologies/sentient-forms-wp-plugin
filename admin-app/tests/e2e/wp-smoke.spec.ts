@@ -35,7 +35,7 @@ test.describe('WordPress runtime smoke', () => {
 	test('home page loads without console errors', async ({ page }) => {
 		const watcher = await expectNoConsoleErrors(page);
 
-		const response = await page.goto('http://localhost:8080/', { waitUntil: 'domcontentloaded' });
+		const response = await page.goto(`${wpBaseUrl}/`, { waitUntil: 'domcontentloaded' });
 		expect(response?.ok(), 'Home page should return HTTP 200').toBeTruthy();
 
 		await expect(page).toHaveTitle(/Sentient Forms/i);
@@ -52,14 +52,14 @@ test.describe('WordPress runtime smoke', () => {
 		watcher.assert();
 	});
 
-		test('Sentient Forms admin SPA renders inside wp-admin without console errors', async ({ page }) => {
-			const watcher = await expectNoConsoleErrors(page);
+	test('Sentient Forms admin SPA renders inside wp-admin without console errors', async ({ page }) => {
+		const watcher = await expectNoConsoleErrors(page);
 
-			await loginToWpAdmin(page);
-			await ensureSentientFormsSpa(page);
-			await waitForSentientConfig(page);
-			await page.waitForFunction(() => !!document.querySelector('#sentient-forms-admin-app'));
+		await loginToWpAdmin(page);
+		await ensureSentientFormsSpa(page);
+		await waitForSentientConfig(page);
+		await page.waitForFunction(() => !!document.querySelector('#sentient-forms-admin-app'));
 
-			watcher.assert();
-		});
+		watcher.assert();
 	});
+});

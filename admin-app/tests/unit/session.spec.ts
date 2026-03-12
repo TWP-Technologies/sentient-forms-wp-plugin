@@ -21,4 +21,11 @@ describe('sessionStore', () => {
 		const summary = get(licenseSummary);
 		expect(summary).toBe('License active');
 	});
+
+	it('treats trial as connected in the summary', () => {
+		sessionStore.hydrate({ licenseStatus: 'trial', proxyKeyPresent: true });
+
+		const summary = get(licenseSummary);
+		expect(summary).toBe('Trial active');
+	});
 });

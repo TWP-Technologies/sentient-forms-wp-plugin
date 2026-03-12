@@ -3,6 +3,7 @@ import {
 	buildCreditPresentation,
 	creditSeverityToBadgeVariant,
 	formatCreditSeverityLabel,
+	isConnectedLicenseStatus,
 	licenseStatusToBadgeVariant,
 	resolveCreditSeverity,
 	resolveTierDisplayName
@@ -16,10 +17,10 @@ function withCredits(balance: number, quota: number | null): CreditBalanceRespon
 			quota === null
 				? null
 				: {
-					code: 'starter',
-					display_name: 'Starter',
-					monthly_credit_quota: quota
-				}
+						code: 'starter',
+						display_name: 'Starter',
+						monthly_credit_quota: quota
+					}
 	};
 }
 
@@ -96,15 +97,13 @@ describe('license-health-presentation', () => {
 		expect(warningPresentation.quotaCta).toEqual({
 			label: 'Manage billing',
 			enabled: true,
-			reason:
-				'Open billing management to upgrade plans, adjust seats, or update payment details.',
+			reason: 'Open billing management to upgrade plans, adjust seats, or update payment details.',
 			action: 'open_billing'
 		});
 		expect(criticalPresentation.quotaCta).toEqual({
 			label: 'Manage billing',
 			enabled: true,
-			reason:
-				'Open billing management to upgrade plans, adjust seats, or update payment details.',
+			reason: 'Open billing management to upgrade plans, adjust seats, or update payment details.',
 			action: 'open_billing'
 		});
 	});
@@ -115,8 +114,12 @@ describe('license-health-presentation', () => {
 		expect(creditSeverityToBadgeVariant('critical')).toBe('danger');
 		expect(creditSeverityToBadgeVariant('unknown')).toBe('neutral');
 		expect(licenseStatusToBadgeVariant('active')).toBe('success');
+		expect(licenseStatusToBadgeVariant('trial')).toBe('success');
 		expect(licenseStatusToBadgeVariant('error')).toBe('danger');
 		expect(licenseStatusToBadgeVariant('inactive')).toBe('warning');
+		expect(isConnectedLicenseStatus('active')).toBe(true);
+		expect(isConnectedLicenseStatus('trial')).toBe(true);
+		expect(isConnectedLicenseStatus('inactive')).toBe(false);
 		expect(formatCreditSeverityLabel('normal')).toBe('Healthy');
 		expect(formatCreditSeverityLabel('warning')).toBe('Low');
 		expect(formatCreditSeverityLabel('critical')).toBe('Exhausted');

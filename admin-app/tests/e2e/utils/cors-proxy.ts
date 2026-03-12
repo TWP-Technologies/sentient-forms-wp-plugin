@@ -1,9 +1,15 @@
+import { existsSync } from 'node:fs';
 import type { Page, Route } from '@playwright/test';
 
 const ACA_HEADERS = {
 	'access-control-allow-headers': 'authorization, content-type, x-wp-nonce',
 	'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
 };
+
+const defaultWpOrigin = existsSync('/.dockerenv')
+	? 'http://host.docker.internal:8080'
+	: 'http://localhost:8080';
+const wpOrigin = new URL(process.env.SENTIENT_WP_BASE_URL ?? defaultWpOrigin);
 
 async function fulfillWithCors(route: Route, origin: string | undefined): Promise<void> {
 	const req = route.request();
@@ -20,11 +26,10 @@ async function fulfillWithCors(route: Route, origin: string | undefined): Promis
 		});
 	}
 
-	const original = new URL(req.url());
 	const target = new URL(req.url());
-	// Force traffic to real WP host:port and use ?rest_route for reliability.
-	target.hostname = 'localhost';
-	target.port = '8080';
+	target.protocol = wpOrigin.protocol;
+	target.hostname = wpOrigin.hostname;
+	target.port = wpOrigin.port;
 
 	if (target.pathname.startsWith('/wp-json/')) {
 		const restRoute = target.pathname.replace('/wp-json', '');
@@ -37,7 +42,7 @@ async function fulfillWithCors(route: Route, origin: string | undefined): Promis
 			url: target.toString(),
 			headers: {
 				...req.headers(),
-				host: 'localhost:8080'
+				host: wpOrigin.host
 			}
 		});
 		const body = await upstream.text();
@@ -71,7 +76,7 @@ async function fulfillWithCors(route: Route, origin: string | undefined): Promis
 
 /**
  * Inject CORS headers for Sentient Forms REST routes to allow the Playwright preview
- * origin (resolved via PREVIEW_HOST/PREVIEW_PORT) to call WP REST (localhost:8080) during E2E.
+ * origin (resolved via PREVIEW_HOST/PREVIEW_PORT) to call WordPress REST during E2E.
  */
 export async function installSentientCorsProxy(page: Page): Promise<void> {
 	await page.route('**/wp-json/sentient-forms/v1/**', (route) =>

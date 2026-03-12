@@ -168,8 +168,9 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 
 		await expect(page.getByTestId('dashboard-error-state')).toBeVisible();
 		await expect(page.getByTestId('dashboard-error-state')).toContainText(
-			'Unable to refresh license and credit details right now.'
+			'Dashboard data is partially unavailable'
 		);
+		await expect(page.getByTestId('dashboard-error-state')).toContainText('Retry');
 	});
 
 	test('licensing active screen leads with status, tier, credits, and reset timing', async ({ page }) => {
