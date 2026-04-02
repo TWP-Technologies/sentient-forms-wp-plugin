@@ -406,11 +406,11 @@ export class MockSentientFormsApiClient {
 
 		this.formActions = [...this.formActions, linkage];
 		// pretend balance consumption
-		this.creditBalance = {
-			...this.creditBalance,
-			current_balance: Math.max(0, (this.creditBalance.current_balance ?? 0) - 1),
-			ledger_delta: (this.creditBalance.ledger_delta ?? 0) + 1
-		};
+			this.creditBalance = {
+				...this.creditBalance,
+				current_balance: (this.creditBalance.current_balance ?? 0) - 1,
+				ledger_delta: (this.creditBalance.ledger_delta ?? 0) + 1
+			};
 		return linkage;
 	}
 

@@ -245,7 +245,9 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 		).toBe(true);
 
 		const messages = formatDependencyIssues(issues);
-		expect(messages.some((message) => message.includes('must also run async'))).toBe(true);
+		expect(messages.some((message) => message.includes('must also run in Background'))).toBe(
+			true
+		);
 	});
 
 	it('marks execution-mode mismatch as blocked in after-submission preview', () => {

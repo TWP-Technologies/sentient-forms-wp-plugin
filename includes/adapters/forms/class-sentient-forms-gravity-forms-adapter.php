@@ -23,6 +23,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     private const REALTIME_MAX_DEBOUNCE_MS = 3000;
     private const REALTIME_MIN_COOLDOWN_MS = 1000;
     private const REALTIME_MAX_COOLDOWN_MS = 60000;
+    private const FORM_ACTION_CONFIG_OPTION_PREFIX = 'sentient_forms_form_config_';
+    private const ACTION_DEFAULTS_OPTION_PREFIX = 'sentient_forms_action_defaults_';
+    private const SPAM_NOTIFICATION_PREFERENCE_META_KEY = 'spam_notification_preference';
+    private const SPAM_NOTIFICATION_PREFERENCE_SUPPRESS = 'suppress';
+    private const SPAM_NOTIFICATION_PREFERENCE_ALLOW = 'allow';
     private const DEFERRED_NOTIFICATION_IDS_META_KEY = 'deferred_notification_ids';
     private const DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY = 'deferred_notification_mapping_ids';
     private const DEFERRED_NOTIFICATION_DECISION_META_KEY = 'deferred_notification_decision';
@@ -35,13 +40,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      * Plugin instance
      */
     private Sentient_Forms_Plugin $plugin;
-
-    /**
-     * Request-local cache for async spam notification gating decisions.
-     *
-     * @var array<string, bool>
-     */
-    private array $async_spam_notification_gate_cache = [];
 
     /**
      * Constructor
@@ -97,10 +95,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     {
         // Register hooks for all forms
         add_filter( 'gform_validation', [ $this, 'handle_validation' ], 10, 1 );
-        add_action( 'gform_after_submission', [ $this, 'handle_after_submission' ], 10, 2 );
+        add_filter( 'gform_entry_post_save', [ $this, 'handle_after_submission_entry_post_save' ], 10, 2 );
 
-        // FR-003: Notification interception hook - suppress notifications for spam entries
-        add_filter( 'gform_disable_notification', [ $this, 'maybe_defer_async_spam_notification' ], 10, 5 );
+        // FR-003: Notification interception hook - suppress notifications for blocking spam entries only
         add_filter( 'gform_notification', [ $this, 'maybe_suppress_spam_notification' ], 10, 3 );
 
         // Add settings to the form editor
@@ -110,6 +107,25 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         add_action( 'gform_enqueue_scripts', [ $this, 'enqueue_realtime_suggestions_runtime' ], 20, 2 );
 
         add_filter( 'sentient_forms_async_evaluation_jobs', [ $this, 'filter_async_evaluation_jobs' ], 10, 3 );
+    }
+
+    /**
+     * Execute logical after-submission mappings after the entry is saved, before Gravity Forms dispatches notifications.
+     *
+     * Gravity Forms sends form-submission notifications before the later gform_after_submission action,
+     * so blocking/background execution must be resolved at entry-post-save time instead of the literal
+     * after-submission hook.
+     *
+     * @param array $entry The saved entry.
+     * @param array $form  The form configuration.
+     *
+     * @return array The original entry for Gravity Forms' filter contract.
+     */
+    public function handle_after_submission_entry_post_save( array $entry, array $form ): array
+    {
+        $this->handle_after_submission( $entry, $form );
+
+        return $entry;
     }
 
     /**
@@ -150,6 +166,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $planner          = $this->plugin->get_mapping_dependency_planner();
         $plan             = $planner->build_execution_plan( $settings, 'gform_validation' );
         $mapping_outcomes = [];
+        $mapping_classifications = [];
 
         if ( ! empty( $plan['cycle_ids'] ) )
         {
@@ -175,7 +192,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
-            $action_settings = $node['mapping'];
+            $action_settings = $this->resolve_mapping_runtime_settings( $node['mapping'], $form_id );
             $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
             $should_async = $this->is_mapping_async( $action_settings );
 
@@ -232,6 +249,30 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
+            $upstream_spam_skip = $this->resolve_upstream_spam_skip_classification(
+                $action_settings,
+                is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [],
+                $mapping_classifications,
+                $plan['nodes'],
+                $form_id,
+            );
+            if ( null !== $upstream_spam_skip )
+            {
+                $mapping_outcomes[ $mapping_id ] = 'skipped';
+                $logger->info(
+                    'validation skipped because upstream spam check classified submission as spam',
+                    [
+                        'hook'           => 'gform_validation',
+                        'action_id'      => $action_id,
+                        'mapping_id'     => $mapping_id,
+                        'form_id'        => $form_id,
+                        'correlation_id' => $correlation_id,
+                        'classification' => $upstream_spam_skip,
+                    ]
+                );
+                continue;
+            }
+
             $logger->info(
                 'validation start',
                 [
@@ -281,9 +322,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 {
                     $validation_result = $result[ 'validation_result' ];
                 }
+
+                $this->record_mapping_spam_classification( $mapping_classifications, $mapping_id, $result );
             }
 
             $cps_execution_status = 'success';
+            $cps_response         = null;
             $validation_result    = $this->maybe_execute_cps_validation(
                 $validation_result,
                 $form,
@@ -291,7 +335,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 $action_id,
                 $action_settings,
                 $cps_execution_status,
+                $cps_response,
             );
+            $this->record_mapping_spam_classification( $mapping_classifications, $mapping_id, $cps_response );
 
             $mapping_outcomes[ $mapping_id ] = ( $local_failed || 'failed' === $cps_execution_status ) ? 'failed' : 'succeeded';
 
@@ -348,8 +394,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $planner             = $this->plugin->get_mapping_dependency_planner();
         $plan                = $planner->build_execution_plan( $settings, 'gform_after_submission' );
         $mapping_outcomes    = [];
+        $mapping_classifications = [];
         $execution_request_ids = [];
-        $queued_spam_notification_mapping_ids = [];
 
         if ( ! empty( $plan['cycle_ids'] ) )
         {
@@ -376,7 +422,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
-            $action_settings = $node['mapping'];
+            $action_settings = $this->resolve_mapping_runtime_settings( $node['mapping'], $form_id );
             if ( empty( $node['enabled'] ) || empty( $node['hook_enabled'] ) )
             {
                 continue;
@@ -407,7 +453,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
-            $action_settings = $node['mapping'];
+            $action_settings = $this->resolve_mapping_runtime_settings( $node['mapping'], $form_id );
             $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
             $should_async = $this->is_mapping_async( $action_settings );
 
@@ -452,6 +498,31 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                         'form_id'        => $form_id,
                         'entry_id'       => $entry['id'] ?? null,
                         'correlation_id' => $correlation_id,
+                    ]
+                );
+                continue;
+            }
+
+            $upstream_spam_skip = $this->resolve_upstream_spam_skip_classification(
+                $action_settings,
+                is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [],
+                $mapping_classifications,
+                $plan['nodes'],
+                $form_id,
+            );
+            if ( null !== $upstream_spam_skip )
+            {
+                $mapping_outcomes[ $mapping_id ] = 'skipped';
+                $logger->info(
+                    'after-submission skipped because upstream spam check classified submission as spam',
+                    [
+                        'hook'           => 'gform_after_submission',
+                        'action_id'      => $action_settings['central_action_id'] ?? '',
+                        'mapping_id'     => $mapping_id,
+                        'form_id'        => $form_id,
+                        'entry_id'       => $entry['id'] ?? null,
+                        'correlation_id' => $correlation_id,
+                        'classification' => $upstream_spam_skip,
                     ]
                 );
                 continue;
@@ -514,6 +585,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                         'local_mapping_id'               => $mapping_id,
                         'form_id'                        => $form_id,
                         'entry_id'                       => $entry['id'] ?? null,
+                        'execution_request_id'           => $execution_request_ids[ $mapping_id ] ?? null,
                         'action_name_label'              => $action_settings['action_name_label'] ?? ( $action_settings['central_action_id'] ?? $action_id ),
                         'mark_as_spam'                   => ! empty( $action_settings['mark_as_spam'] ),
                         'spam_confidence_threshold'      => $action_settings['settings']['spam_confidence_threshold'] ?? $action_settings['spam_confidence_threshold'] ?? 0.80,
@@ -533,30 +605,96 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 );
 
                 $mapping_outcomes[ $mapping_id ] = $scheduled ? 'queued' : 'failed';
-                if ( $scheduled && $this->should_defer_notifications_for_mapping( $action_settings, $should_async ) )
+
+                if ( $scheduled )
                 {
-                    $queued_spam_notification_mapping_ids[] = (string) $mapping_id;
+                    $this->log_action_execution(
+                        [
+                            'hook'                 => 'gform_after_submission',
+                            'form_source'          => $this->get_id(),
+                            'action_id'            => $mapping_id,
+                            'mapping_id'           => $mapping_id,
+                            'local_mapping_id'     => $mapping_id,
+                            'form_id'              => $form_id,
+                            'entry_id'             => $entry['id'] ?? null,
+                            'execution_request_id' => $execution_request_ids[ $mapping_id ] ?? null,
+                            'action_name_label'    => $action_settings['action_name_label'] ?? ( $action_settings['central_action_id'] ?? $action_id ),
+                            'central_action_id'    => $action_settings['central_action_id'] ?? null,
+                            'settings'             => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                                ? $action_settings['settings']
+                                : [],
+                        ],
+                        [],
+                        'pending'
+                    );
                 }
+
                 continue;
             }
 
             if ( ! $action )
             {
-                $mapping_outcomes[ $mapping_id ] = 'failed';
-                continue;
+                if ( $this->is_cps_managed_mapping( $action_settings ) )
+                {
+                    $ran_via_cps_executor = true;
+                    $result = $this->execute_blocking_after_submission_cps_action( $form, $entry, $mapping_id, $action_settings );
+                }
+                else
+                {
+                    $mapping_outcomes[ $mapping_id ] = 'failed';
+                    continue;
+                }
+            }
+            else
+            {
+                $ran_via_cps_executor = false;
+                $entry_id        = $entry['id'] ?? 0;
+                $runtime_form_id = $form['id'] ?? 0;
+                $result          = $action->execute( $data, $action_settings, $entry_id, $runtime_form_id );
             }
 
-            $entry_id        = $entry['id'] ?? 0;
-            $runtime_form_id = $form['id'] ?? 0;
-            $result          = $action->execute( $data, $action_settings, $entry_id, $runtime_form_id );
+            $entry_id = $entry['id'] ?? 0;
             $mapping_outcomes[ $mapping_id ] = is_wp_error( $result ) ? 'failed' : 'succeeded';
-        }
 
-        $this->reconcile_deferred_notifications_after_submission(
-            $entry,
-            $form,
-            $queued_spam_notification_mapping_ids,
-        );
+            $context = [
+                'hook'              => 'gform_after_submission',
+                'form_source'       => $this->get_id(),
+                'action_id'         => $mapping_id,
+                'mapping_id'        => $mapping_id,
+                'local_mapping_id'  => $mapping_id,
+                'form_id'           => $form_id,
+                'entry_id'          => $entry['id'] ?? null,
+                'action_name_label' => $action_settings['action_name_label'] ?? ( $action_settings['central_action_id'] ?? $action_id ),
+                'central_action_id' => $action_settings['central_action_id'] ?? null,
+                'mark_as_spam'      => ! empty( $action_settings['mark_as_spam'] ),
+                'spam_confidence_threshold' => $action_settings['settings']['spam_confidence_threshold'] ?? $action_settings['spam_confidence_threshold'] ?? 0.80,
+                'spam_indicators_display'   => $action_settings['settings']['spam_indicators_display'] ?? $action_settings['spam_indicators_display'] ?? 'simple',
+                'spam_result_display_mode'  => $action_settings['settings']['spam_result_display_mode'] ?? $action_settings['spam_result_display_mode'] ?? 'entry_note',
+                'settings'          => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                    ? $action_settings['settings']
+                    : [],
+            ];
+
+            if ( is_array( $result ) )
+            {
+                if ( $ran_via_cps_executor && $entry_id > 0 )
+                {
+                    $this->maybe_mark_entry_as_spam_from_result( absint( $entry_id ), $context, $result );
+                }
+
+                $this->record_blocking_spam_notification_state( absint( $entry_id ), $action_settings, $result );
+            }
+
+            if ( is_wp_error( $result ) )
+            {
+                $this->log_action_execution( $context, [], 'error', $result );
+            }
+            elseif ( is_array( $result ) )
+            {
+                $this->log_action_execution( $context, $result, 'success' );
+                $this->record_mapping_spam_classification( $mapping_classifications, $mapping_id, $result );
+            }
+        }
     }
 
     /**
@@ -606,15 +744,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     private function is_mapping_async( array $mapping ): bool
     {
-        $indicator = isset( $mapping['action_type_indicator'] ) && is_scalar( $mapping['action_type_indicator'] )
-            ? sanitize_key( (string) $mapping['action_type_indicator'] )
-            : '';
-
-        if ( 'master' === $indicator )
-        {
-            return true;
-        }
-
         if ( isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) && array_key_exists( 'async', $mapping['settings'] ) )
         {
             return rest_sanitize_boolean( $mapping['settings']['async'] );
@@ -628,6 +757,20 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         if ( array_key_exists( 'async', $mapping ) )
         {
             return rest_sanitize_boolean( $mapping['async'] );
+        }
+
+        if ( isset( $mapping['execution_mode'] ) && is_scalar( $mapping['execution_mode'] ) )
+        {
+            return 'after_submission' === sanitize_key( (string) $mapping['execution_mode'] );
+        }
+
+        $indicator = isset( $mapping['action_type_indicator'] ) && is_scalar( $mapping['action_type_indicator'] )
+            ? sanitize_key( (string) $mapping['action_type_indicator'] )
+            : '';
+
+        if ( 'master' === $indicator )
+        {
+            return true;
         }
 
         return false;
@@ -672,13 +815,15 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         array $entry,
         string $action_id,
         array $action_settings,
-        ?string &$execution_status = null
+        ?string &$execution_status = null,
+        ?array &$execution_response = null
     ): array
     {
         $central_action_id = $action_settings['central_action_id'] ?? '';
         if ( empty( $central_action_id ) )
         {
             $execution_status = 'skipped';
+            $execution_response = null;
             return $validation_result;
         }
 
@@ -715,8 +860,303 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         );
 
         $execution_status = is_wp_error( $response ) ? 'failed' : 'success';
+        $execution_response = is_array( $response ) ? $response : null;
+
+        if ( is_wp_error( $response ) )
+        {
+            $this->log_action_execution( $context, [], 'error', $response );
+        }
+        elseif ( is_array( $response ) )
+        {
+            $this->log_action_execution( $context, $response, 'success' );
+        }
 
         return $this->apply_cps_validation_response( $validation_result, $response, $action_settings );
+    }
+
+    /**
+     * Capture spam classification from a mapping execution result when present.
+     *
+     * @param array<string, string> $mapping_classifications Known classifications keyed by mapping id.
+     * @param string                $mapping_id              Mapping id.
+     * @param mixed                 $result                  Local/CPS execution result.
+     *
+     * @return void
+     */
+    private function record_mapping_spam_classification( array &$mapping_classifications, string $mapping_id, $result ): void
+    {
+        if ( ! is_array( $result ) )
+        {
+            return;
+        }
+
+        $classification = $this->extract_spam_classification( $result );
+        if ( null === $classification || '' === $classification )
+        {
+            return;
+        }
+
+        $mapping_classifications[ $mapping_id ] = $classification;
+    }
+
+    /**
+     * Resolve whether the current mapping should skip because its upstream spam dependency
+     * classified the submission as spam during the active hook.
+     *
+     * @param array<string, mixed>                $mapping                 Mapping payload.
+     * @param array<int, string>                  $dependency_ids          Hook-specific dependency mapping ids.
+     * @param array<string, string>               $mapping_classifications Known classifications keyed by mapping id.
+     * @param array<string, array<string, mixed>> $plan_nodes              Execution plan nodes keyed by mapping id.
+     * @param int                                 $form_id                 Form id for hierarchy resolution.
+     *
+     * @return string|null Triggering classification when the mapping should skip, or null.
+     */
+    private function resolve_upstream_spam_skip_classification(
+        array $mapping,
+        array $dependency_ids,
+        array $mapping_classifications,
+        array $plan_nodes,
+        int $form_id
+    ): ?string
+    {
+        if ( 1 !== count( $dependency_ids ) )
+        {
+            return null;
+        }
+
+        $dependency_id = isset( $dependency_ids[0] ) && is_scalar( $dependency_ids[0] )
+            ? sanitize_text_field( (string) $dependency_ids[0] )
+            : '';
+        if ( '' === $dependency_id )
+        {
+            return null;
+        }
+
+        $dependency_node = $plan_nodes[ $dependency_id ] ?? null;
+        if ( ! is_array( $dependency_node ) || ! isset( $dependency_node['mapping'] ) || ! is_array( $dependency_node['mapping'] ) )
+        {
+            return null;
+        }
+
+        $dependency_mapping = $this->resolve_mapping_runtime_settings( $dependency_node['mapping'], $form_id );
+        $dependency_action_id = isset( $dependency_mapping['central_action_id'] ) && is_scalar( $dependency_mapping['central_action_id'] )
+            ? sanitize_key( (string) $dependency_mapping['central_action_id'] )
+            : '';
+        if ( 'spam_detection_v1' !== $dependency_action_id )
+        {
+            return null;
+        }
+
+        if ( ! $this->should_skip_on_upstream_spam( $mapping )
+            && ! $this->should_skip_downstream_on_spam_for_mapping( $dependency_mapping, $form_id ) )
+        {
+            return null;
+        }
+
+        $classification = $mapping_classifications[ $dependency_id ] ?? null;
+        if ( ! is_string( $classification ) )
+        {
+            return null;
+        }
+
+        return in_array( $classification, array( 'spam', 'likely_spam' ), true ) ? $classification : null;
+    }
+
+    /**
+     * Determine whether a spam mapping should skip downstream work by default or override.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     * @param int                  $form_id Form id.
+     *
+     * @return bool
+     */
+    private function should_skip_downstream_on_spam_for_mapping( array $mapping, int $form_id ): bool
+    {
+        $resolved_settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+            ? $mapping['settings']
+            : [];
+
+        if ( ! array_key_exists( 'skip_downstream_on_spam', $resolved_settings ) )
+        {
+            $mapping = $this->resolve_mapping_runtime_settings( $mapping, $form_id );
+            $resolved_settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
+                ? $mapping['settings']
+                : [];
+        }
+
+        if ( array_key_exists( 'skip_downstream_on_spam', $resolved_settings ) )
+        {
+            return rest_sanitize_boolean( $resolved_settings['skip_downstream_on_spam'] );
+        }
+
+        $action_id = isset( $mapping['central_action_id'] ) && is_scalar( $mapping['central_action_id'] )
+            ? sanitize_key( (string) $mapping['central_action_id'] )
+            : '';
+
+        return $this->is_spam_action_id( $action_id );
+    }
+
+    /**
+     * Persist spam classification state for blocking after-submission execution before notifications are evaluated.
+     *
+     * Gravity Forms passes the in-memory entry to notification filters immediately after gform_entry_post_save.
+     * When a blocking action classifies spam before notifications, we persist the classification meta here so the
+     * notification filters can suppress delivery even if the in-memory entry status has not been refreshed yet.
+     *
+     * @param int   $entry_id         Gravity Forms entry id.
+     * @param array $action_settings  Mapping settings.
+     * @param array $result           Blocking action result payload.
+     *
+     * @return void
+     */
+    private function record_blocking_spam_notification_state( int $entry_id, array $action_settings, array $result ): void
+    {
+        if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        $classification = $this->extract_spam_classification( $result );
+        if ( ! is_string( $classification ) || '' === $classification )
+        {
+            return;
+        }
+
+        if ( in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+        {
+            $this->update_entry_meta(
+                $entry_id,
+                self::SPAM_NOTIFICATION_PREFERENCE_META_KEY,
+                $this->should_suppress_notifications_on_spam( $action_settings )
+                    ? self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS
+                    : self::SPAM_NOTIFICATION_PREFERENCE_ALLOW,
+            );
+
+            if ( ! empty( $action_settings['mark_as_spam'] ) )
+            {
+                $this->update_entry_meta( $entry_id, 'spam_classification', 'spam' );
+            }
+
+            return;
+        }
+
+        if ( in_array( $classification, [ 'ham', 'legitimate' ], true ) )
+        {
+            $this->update_entry_meta( $entry_id, 'spam_classification', 'ham' );
+            $this->update_entry_meta( $entry_id, self::SPAM_NOTIFICATION_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW );
+        }
+    }
+
+    /**
+     * Determine whether a spam mapping should suppress notifications when it classifies spam.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     *
+     * @return bool
+     */
+    private function should_suppress_notifications_on_spam( array $mapping ): bool
+    {
+        $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
+        if ( array_key_exists( 'suppress_notifications_on_spam', $settings ) )
+        {
+            return rest_sanitize_boolean( $settings['suppress_notifications_on_spam'] );
+        }
+
+        $action_id = isset( $mapping['central_action_id'] ) && is_scalar( $mapping['central_action_id'] )
+            ? sanitize_key( (string) $mapping['central_action_id'] )
+            : '';
+
+        return $this->is_spam_action_id( $action_id ) && ! $this->is_mapping_async( $mapping );
+    }
+
+    /**
+     * Determine whether a mapping can execute directly through the CPS action executor.
+     *
+     * @param array<string, mixed> $mapping Mapping settings.
+     *
+     * @return bool
+     */
+    private function is_cps_managed_mapping( array $mapping ): bool
+    {
+        $indicator = isset( $mapping['action_type_indicator'] ) && is_scalar( $mapping['action_type_indicator'] )
+            ? sanitize_key( (string) $mapping['action_type_indicator'] )
+            : '';
+
+        return in_array( $indicator, [ 'master', 'custom' ], true );
+    }
+
+    /**
+     * Execute a Blocking after-submission CPS-managed mapping immediately instead of queueing it.
+     *
+     * @param array<string, mixed> $form            Form payload.
+     * @param array<string, mixed> $entry           Entry payload.
+     * @param string               $mapping_id      Local mapping id.
+     * @param array<string, mixed> $action_settings Mapping settings.
+     *
+     * @return array|WP_Error
+     */
+    private function execute_blocking_after_submission_cps_action( array $form, array $entry, string $mapping_id, array $action_settings )
+    {
+        $central_action_id = isset( $action_settings['central_action_id'] ) && is_scalar( $action_settings['central_action_id'] )
+            ? (string) $action_settings['central_action_id']
+            : '';
+
+        if ( '' === $central_action_id )
+        {
+            return new WP_Error(
+                'sentient_forms_missing_central_action',
+                __( 'Sentient Forms could not run this action because the central action id is missing.', 'sentient-forms' )
+            );
+        }
+
+        $local_mapping_id = isset( $action_settings['local_mapping_id'] ) && is_scalar( $action_settings['local_mapping_id'] ) && '' !== $action_settings['local_mapping_id']
+            ? (string) $action_settings['local_mapping_id']
+            : $mapping_id;
+
+        $context = [
+            'hook'                  => 'gform_after_submission',
+            'form_source'           => $this->get_id(),
+            'action_id'             => $mapping_id,
+            'mapping_id'            => $mapping_id,
+            'local_mapping_id'      => $local_mapping_id,
+            'form_id'               => $form['id'] ?? null,
+            'entry_id'              => $entry['id'] ?? null,
+            'action_name_label'     => $action_settings['action_name_label'] ?? $central_action_id,
+            'action_type_indicator' => $action_settings['action_type_indicator'] ?? null,
+            'central_action_id'     => $central_action_id,
+            'settings'              => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                ? $action_settings['settings']
+                : [],
+        ];
+
+        return $this->plugin->get_action_executor()->execute(
+            $central_action_id,
+            $form,
+            $entry,
+            $context,
+        );
+    }
+
+    /**
+     * Determine whether skip_on_upstream_spam is enabled for a mapping.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     *
+     * @return bool
+     */
+    private function should_skip_on_upstream_spam( array $mapping ): bool
+    {
+        if ( ! isset( $mapping['settings'] ) || ! is_array( $mapping['settings'] ) )
+        {
+            return false;
+        }
+
+        if ( ! array_key_exists( 'skip_on_upstream_spam', $mapping['settings'] ) )
+        {
+            return false;
+        }
+
+        return rest_sanitize_boolean( $mapping['settings']['skip_on_upstream_spam'] );
     }
 
     private function apply_cps_validation_response( array $validation_result, $response, array $action_settings ): array
@@ -770,6 +1210,40 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     private function map_error_to_message( WP_Error $error ): string
     {
+        if ( 'insufficient_credits' === $error->get_error_code() )
+        {
+            $error_data = $error->get_error_data();
+            $payload    = is_array( $error_data ) && isset( $error_data['payload'] ) && is_array( $error_data['payload'] )
+                ? $error_data['payload']
+                : array();
+            $meta       = isset( $payload['error']['meta'] ) && is_array( $payload['error']['meta'] )
+                ? $payload['error']['meta']
+                : array();
+
+            if ( isset( $meta['current_balance'] ) && is_numeric( $meta['current_balance'] ) && (int) $meta['current_balance'] < 0 )
+            {
+                return sprintf(
+                    /* translators: %d is the negative credit balance. */
+                    __( 'Sentient Forms could not run: this license now has a negative balance of %d credits. Add credits before retrying.', 'sentient-forms' ),
+                    (int) $meta['current_balance']
+                );
+            }
+
+            if (
+                isset( $meta['current_balance'], $meta['required_credits'] ) &&
+                is_numeric( $meta['current_balance'] ) &&
+                is_numeric( $meta['required_credits'] )
+            )
+            {
+                return sprintf(
+                    /* translators: 1: required credits, 2: current credits remaining. */
+                    __( 'Sentient Forms could not run: this action needs %1$d credits, but only %2$d remain for this license.', 'sentient-forms' ),
+                    (int) $meta['required_credits'],
+                    (int) $meta['current_balance']
+                );
+            }
+        }
+
         return match ( $error->get_error_code() ) {
             'insufficient_credits' => __( 'Sentient Forms could not run: insufficient credits remain for this license.', 'sentient-forms' ),
             'duplicate_execution'  => __( 'Sentient Forms already processed this submission. Refresh the status to view the existing result.', 'sentient-forms' ),
@@ -1335,6 +1809,229 @@ HTML;
     }
 
     /**
+     * Resolve mapping runtime settings by applying action/form defaults beneath mapping overrides.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     * @param int                  $form_id Form id.
+     *
+     * @return array<string, mixed>
+     */
+    private function resolve_mapping_runtime_settings( array $mapping, int $form_id ): array
+    {
+        $action_id = isset( $mapping['central_action_id'] ) && is_scalar( $mapping['central_action_id'] )
+            ? sanitize_key( (string) $mapping['central_action_id'] )
+            : '';
+        if ( '' === $action_id )
+        {
+            return $mapping;
+        }
+
+        $resolved        = $mapping;
+        $action_defaults = $this->get_action_defaults_config( $action_id );
+        $form_config     = $this->get_form_action_config( $this->get_id(), $form_id, $action_id );
+        $mapping_settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
+
+        foreach ( [ 'model_selection', 'include_site_context' ] as $field )
+        {
+            $mapping_settings = $this->merge_inherited_field( $mapping_settings, $field, $form_config, $action_defaults );
+        }
+
+        if ( $this->is_spam_action_id( $action_id ) )
+        {
+            foreach ( [ 'spam_positive_examples', 'spam_negative_examples' ] as $field )
+            {
+                $mapping_settings = $this->merge_inherited_field( $mapping_settings, $field, $form_config, $action_defaults );
+            }
+
+            foreach ( [ 'suppress_notifications_on_spam', 'skip_downstream_on_spam' ] as $field )
+            {
+                $mapping_settings = $this->merge_inherited_boolean_field( $mapping_settings, $field, $form_config, $action_defaults );
+            }
+        }
+
+        $resolved['settings'] = $mapping_settings;
+
+        return $resolved;
+    }
+
+    /**
+     * Load and normalize global action defaults for a specific action.
+     *
+     * @param string $action_id Action id.
+     *
+     * @return array<string, mixed>
+     */
+    private function get_action_defaults_config( string $action_id ): array
+    {
+        $config = get_option( self::ACTION_DEFAULTS_OPTION_PREFIX . sanitize_key( $action_id ), [] );
+
+        return $this->normalize_action_config_payload( $config );
+    }
+
+    /**
+     * Load and normalize form-level action config for a specific action.
+     *
+     * @param string $form_source Form source id.
+     * @param int    $form_id     Form id.
+     * @param string $action_id   Action id.
+     *
+     * @return array<string, mixed>
+     */
+    private function get_form_action_config( string $form_source, int $form_id, string $action_id ): array
+    {
+        $configs = get_option(
+            self::FORM_ACTION_CONFIG_OPTION_PREFIX . sanitize_key( $form_source ) . '_' . $form_id,
+            []
+        );
+
+        if ( ! is_array( $configs ) )
+        {
+            return [];
+        }
+
+        return $this->normalize_action_config_payload( $configs[ $action_id ] ?? [] );
+    }
+
+    /**
+     * Normalize persisted action config payloads for runtime use.
+     *
+     * @param mixed $config Raw config value.
+     *
+     * @return array<string, mixed>
+     */
+    private function normalize_action_config_payload( $config ): array
+    {
+        if ( ! is_array( $config ) )
+        {
+            return [];
+        }
+
+        if ( empty( $config['model_selection'] ) && ! empty( $config['model_override'] ) && is_string( $config['model_override'] ) )
+        {
+            $config['model_selection'] = [
+                'primary'   => sanitize_text_field( $config['model_override'] ),
+                'backup'    => null,
+                'is_preset' => str_starts_with( (string) $config['model_override'], 'sf_' ),
+            ];
+        }
+
+        foreach ( [ 'suppress_notifications_on_spam', 'skip_downstream_on_spam' ] as $field )
+        {
+            if ( array_key_exists( $field, $config ) )
+            {
+                $config[ $field ] = rest_sanitize_boolean( $config[ $field ] );
+            }
+        }
+
+        return $config;
+    }
+
+    /**
+     * Merge a generic inheritable field into resolved settings when mapping scope does not define it.
+     *
+     * @param array<string, mixed> $resolved        Current resolved settings.
+     * @param string               $field           Field name.
+     * @param array<string, mixed> $form_config     Form-level config.
+     * @param array<string, mixed> $action_defaults Action-level defaults.
+     *
+     * @return array<string, mixed>
+     */
+    private function merge_inherited_field( array $resolved, string $field, array $form_config, array $action_defaults ): array
+    {
+        if ( $this->has_inherited_value( $resolved, $field ) )
+        {
+            return $resolved;
+        }
+
+        if ( $this->has_inherited_value( $form_config, $field ) )
+        {
+            $resolved[ $field ] = $form_config[ $field ];
+            return $resolved;
+        }
+
+        if ( $this->has_inherited_value( $action_defaults, $field ) )
+        {
+            $resolved[ $field ] = $action_defaults[ $field ];
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * Merge an inheritable boolean field into resolved settings when mapping scope does not define it.
+     *
+     * @param array<string, mixed> $resolved        Current resolved settings.
+     * @param string               $field           Field name.
+     * @param array<string, mixed> $form_config     Form-level config.
+     * @param array<string, mixed> $action_defaults Action-level defaults.
+     *
+     * @return array<string, mixed>
+     */
+    private function merge_inherited_boolean_field( array $resolved, string $field, array $form_config, array $action_defaults ): array
+    {
+        if ( array_key_exists( $field, $resolved ) )
+        {
+            $resolved[ $field ] = rest_sanitize_boolean( $resolved[ $field ] );
+            return $resolved;
+        }
+
+        if ( array_key_exists( $field, $form_config ) )
+        {
+            $resolved[ $field ] = rest_sanitize_boolean( $form_config[ $field ] );
+            return $resolved;
+        }
+
+        if ( array_key_exists( $field, $action_defaults ) )
+        {
+            $resolved[ $field ] = rest_sanitize_boolean( $action_defaults[ $field ] );
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * Determine whether a field contains a meaningful inherited value.
+     *
+     * @param array<string, mixed> $settings Settings array.
+     * @param string               $field    Field name.
+     *
+     * @return bool
+     */
+    private function has_inherited_value( array $settings, string $field ): bool
+    {
+        if ( ! array_key_exists( $field, $settings ) )
+        {
+            return false;
+        }
+
+        $value = $settings[ $field ];
+
+        if ( is_array( $value ) )
+        {
+            return ! empty( $value );
+        }
+
+        if ( is_string( $value ) )
+        {
+            return '' !== trim( $value );
+        }
+
+        return null !== $value;
+    }
+
+    /**
+     * Determine whether an action id refers to spam detection.
+     *
+     * @param string $action_id Action id.
+     *
+     * @return bool
+     */
+    private function is_spam_action_id( string $action_id ): bool
+    {
+        return in_array( sanitize_key( $action_id ), [ 'spam_detection_v1', 'spam_analysis' ], true );
+    }
+
+    /**
      * Get available forms
      *
      * @return array The available forms.
@@ -1373,11 +2070,12 @@ HTML;
         foreach ( $forms as $form )
         {
             $result[] = [
-                'id'           => $form[ 'id' ],
-                'title'        => $form[ 'title' ],
-                'adapter'      => $this->get_id(),
-                'adapter_name' => $this->get_name(),
-                'settings'     => $this->get_form_settings( $form[ 'id' ] ),
+                'id'                 => $form[ 'id' ],
+                'title'              => $form[ 'title' ],
+                'adapter'            => $this->get_id(),
+                'adapter_name'       => $this->get_name(),
+                'provider_is_active' => !empty( $form['is_active'] ),
+                'settings'           => $this->get_form_settings( $form[ 'id' ] ),
             ];
         }
 
@@ -2053,7 +2751,7 @@ HTML;
      *
      * @param array         $context  The async job context.
      * @param array         $result   The CPS result (empty for errors).
-     * @param string        $status   'success' or 'error'.
+     * @param string        $status   'pending', 'success', 'blocked', or 'error'.
      * @param WP_Error|null $error    Error object if status is 'error'.
      */
     private function log_action_execution( array $context, array $result, string $status, ?WP_Error $error = null ): void
@@ -2064,10 +2762,10 @@ HTML;
         }
 
         $classification = $this->extract_spam_classification( $result );
+        $meta = $this->extract_action_log_meta( $result );
         $credits_used = 0;
-        
+
         // Try to extract credits from various result structures
-        $meta = $result['evaluation_payload']['meta'] ?? $result['meta'] ?? [];
         if ( isset( $meta['credits_debited'] ) )
         {
             $credits_used = absint( $meta['credits_debited'] );
@@ -2077,6 +2775,7 @@ HTML;
             $credits_used = absint( $meta['credits_used'] );
         }
 
+        $status = $this->resolve_action_log_status( $context, $result, $status );
         $log_data = [
             'form_source'              => $context['form_source'] ?? $this->get_id(),
             'form_id'                  => absint( $context['form_id'] ?? 0 ),
@@ -2084,15 +2783,187 @@ HTML;
             'action_code'              => $context['central_action_id'] ?? $context['action_id'] ?? '',
             'action_label'             => $context['action_name_label'] ?? $this->get_async_action_label( $context ),
             'status'                   => $status,
-            'result_summary'           => $this->format_async_result_excerpt( $result ),
+            'result_summary'           => 'pending' === $status
+                ? __( 'Queued for background execution.', 'sentient-forms' )
+                : $this->format_async_result_excerpt( $result ),
             'classification'           => $classification,
             'credits_used'             => $credits_used,
-            'structured_output_valid'  => ! empty( $result['result_data']['structured_output_valid'] ),
+            'structured_output_valid'  => $this->extract_structured_output_valid( $result ),
             'error_code'               => $error ? $error->get_error_code() : null,
             'error_message'            => $error ? $error->get_error_message() : null,
+            'execution_request_id'     => $this->extract_execution_request_id_from_log( $context, $result ),
+            'mapping_id'               => $context['mapping_id'] ?? $context['local_mapping_id'] ?? $context['action_id'] ?? null,
+            'resolved_model_id'        => isset( $meta['resolved_model_id'] ) && is_scalar( $meta['resolved_model_id'] )
+                ? sanitize_text_field( (string) $meta['resolved_model_id'] )
+                : null,
+            'pricing'                  => isset( $meta['pricing'] ) && is_array( $meta['pricing'] )
+                ? $meta['pricing']
+                : [],
+            'details'                  => [
+                'meta'               => $meta,
+                'evaluation_payload' => isset( $result['evaluation_payload'] ) && is_array( $result['evaluation_payload'] )
+                    ? $result['evaluation_payload']
+                    : [],
+            ],
         ];
 
         Sentient_Forms_Action_Log_Controller::log_execution( $log_data );
+    }
+
+    private function resolve_action_log_status( array $context, array $result, string $status ): string
+    {
+        if ( 'success' !== $status )
+        {
+            return $status;
+        }
+
+        if ( ! $this->is_blocking_execution_context( $context ) )
+        {
+            return $status;
+        }
+
+        $classification = $this->extract_spam_classification( $result );
+        if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+        {
+            return $status;
+        }
+
+        $validation = null;
+        if ( isset( $result['validation'] ) && is_array( $result['validation'] ) )
+        {
+            $validation = $result['validation'];
+        }
+        elseif ( isset( $result['evaluation_payload']['validation'] ) && is_array( $result['evaluation_payload']['validation'] ) )
+        {
+            $validation = $result['evaluation_payload']['validation'];
+        }
+
+        if ( is_array( $validation ) && array_key_exists( 'is_valid', $validation ) && false === $validation['is_valid'] )
+        {
+            return 'blocked';
+        }
+
+        if ( $this->should_suppress_notifications_on_spam_for_context( $context ) || ! empty( $context['mark_as_spam'] ) )
+        {
+            return 'blocked';
+        }
+
+        return $status;
+    }
+
+    private function is_blocking_execution_context( array $context ): bool
+    {
+        $settings = isset( $context['settings'] ) && is_array( $context['settings'] ) ? $context['settings'] : [];
+
+        if ( array_key_exists( 'async', $settings ) )
+        {
+            return ! rest_sanitize_boolean( $settings['async'] );
+        }
+
+        if ( isset( $settings['execution_mode'] ) && is_scalar( $settings['execution_mode'] ) )
+        {
+            return 'after_submission' !== sanitize_key( (string) $settings['execution_mode'] );
+        }
+
+        $hook = isset( $context['hook'] ) && is_scalar( $context['hook'] )
+            ? sanitize_key( (string) $context['hook'] )
+            : '';
+
+        if ( 'gform_validation' === $hook )
+        {
+            return true;
+        }
+
+        if ( isset( $context['execution_mode'] ) && is_scalar( $context['execution_mode'] ) )
+        {
+            return 'after_submission' !== sanitize_key( (string) $context['execution_mode'] );
+        }
+
+        if ( array_key_exists( 'async', $context ) )
+        {
+            return ! rest_sanitize_boolean( $context['async'] );
+        }
+
+        $indicator = isset( $context['action_type_indicator'] ) && is_scalar( $context['action_type_indicator'] )
+            ? sanitize_key( (string) $context['action_type_indicator'] )
+            : '';
+
+        if ( 'gform_after_submission' === $hook && 'master' === $indicator )
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function should_suppress_notifications_on_spam_for_context( array $context ): bool
+    {
+        $settings = isset( $context['settings'] ) && is_array( $context['settings'] ) ? $context['settings'] : [];
+        if ( array_key_exists( 'suppress_notifications_on_spam', $settings ) )
+        {
+            return rest_sanitize_boolean( $settings['suppress_notifications_on_spam'] );
+        }
+
+        $action_id = isset( $context['central_action_id'] ) && is_scalar( $context['central_action_id'] )
+            ? sanitize_key( (string) $context['central_action_id'] )
+            : '';
+
+        return $this->is_spam_action_id( $action_id ) && $this->is_blocking_execution_context( $context );
+    }
+
+    private function extract_action_log_meta( array $result ): array
+    {
+        if ( isset( $result['evaluation_payload']['meta'] ) && is_array( $result['evaluation_payload']['meta'] ) )
+        {
+            return $result['evaluation_payload']['meta'];
+        }
+
+        if ( isset( $result['meta'] ) && is_array( $result['meta'] ) )
+        {
+            return $result['meta'];
+        }
+
+        return [];
+    }
+
+    private function extract_structured_output_valid( array $result ): bool
+    {
+        if ( ! empty( $result['result_data']['structured_output_valid'] ) )
+        {
+            return true;
+        }
+
+        if ( ! empty( $result['evaluation_payload']['result_data']['structured_output_valid'] ) )
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function extract_execution_request_id_from_log( array $context, array $result ): ?string
+    {
+        $candidates = [
+            $context['execution_request_id'] ?? null,
+            $result['execution_request_id'] ?? null,
+            $result['meta']['execution_request_id'] ?? null,
+            $result['evaluation_payload']['execution_request_id'] ?? null,
+            $result['evaluation_payload']['meta']['execution_request_id'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( is_scalar( $candidate ) )
+            {
+                $value = sanitize_text_field( (string) $candidate );
+                if ( '' !== $value )
+                {
+                    return $value;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -2175,8 +3046,7 @@ HTML;
      */
     public function maybe_suppress_spam_notification( array $notification, array $form, array $entry )
     {
-        // FR-004: Check if entry is marked as spam in Gravity Forms
-        if ( $this->is_entry_spam( $entry ) )
+        if ( $this->should_suppress_notifications_for_entry( $entry ) )
         {
             // Log suppression for debugging
             if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
@@ -2195,6 +3065,62 @@ HTML;
 
         // FR-005: Pass through notification unchanged for ham entries
         return $notification;
+    }
+
+    /**
+     * Determine whether notifications should be suppressed for this entry.
+     *
+     * @param array $entry The entry data.
+     *
+     * @return bool
+     */
+    private function should_suppress_notifications_for_entry( array $entry ): bool
+    {
+        $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
+        if ( $entry_id > 0 )
+        {
+            $preference = $this->get_entry_spam_notification_preference( $entry_id );
+            if ( self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS === $preference )
+            {
+                return true;
+            }
+
+            if ( self::SPAM_NOTIFICATION_PREFERENCE_ALLOW === $preference )
+            {
+                return false;
+            }
+        }
+
+        return isset( $entry['status'] ) && 'spam' === $entry['status'];
+    }
+
+    /**
+     * Retrieve the persisted spam-notification preference for an entry, when set by Sentient Forms.
+     *
+     * @param int $entry_id Entry id.
+     *
+     * @return string|null
+     */
+    private function get_entry_spam_notification_preference( int $entry_id ): ?string
+    {
+        if ( $entry_id <= 0 )
+        {
+            return null;
+        }
+
+        $preference = $this->get_entry_meta( $entry_id, self::SPAM_NOTIFICATION_PREFERENCE_META_KEY );
+        if ( ! is_scalar( $preference ) )
+        {
+            return null;
+        }
+
+        $normalized = sanitize_key( (string) $preference );
+
+        return in_array(
+            $normalized,
+            [ self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW ],
+            true
+        ) ? $normalized : null;
     }
 
     /**

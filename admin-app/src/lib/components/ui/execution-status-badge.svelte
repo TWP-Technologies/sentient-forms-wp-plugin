@@ -8,7 +8,14 @@
 	 * CB-STATUS-001: Execution status per entry with refresh capability
 	 */
 
-	type ExecutionStatus = 'unknown' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+	type ExecutionStatus =
+		| 'unknown'
+		| 'queued'
+		| 'running'
+		| 'blocked'
+		| 'succeeded'
+		| 'failed'
+		| 'cancelled';
 	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 
 	interface Props {
@@ -58,6 +65,7 @@
 				return 'success';
 			case 'failed':
 			case 'cancelled':
+			case 'blocked':
 				return 'danger';
 			case 'running':
 				return 'info';
@@ -77,6 +85,8 @@
 				return '✗ Failed';
 			case 'cancelled':
 				return '⊘ Cancelled';
+			case 'blocked':
+				return '⛔ Blocked';
 			case 'running':
 				return '◐ Running';
 			case 'queued':
@@ -114,7 +124,7 @@
 
 	// Check if status is "final" (no more updates expected)
 	function isFinalStatus(s: ExecutionStatus): boolean {
-		return s === 'succeeded' || s === 'failed' || s === 'cancelled';
+		return s === 'succeeded' || s === 'failed' || s === 'cancelled' || s === 'blocked';
 	}
 
 	// Start/stop auto-refresh based on status

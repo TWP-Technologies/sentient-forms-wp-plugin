@@ -201,6 +201,21 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
                 'type'              => 'string',
                 'sanitize_callback' => 'sanitize_text_field',
             ],
+            'model_selection' => [
+                'description'       => __( 'Structured model selection for this action scope.', 'sentient-forms' ),
+                'type'              => 'object',
+                'sanitize_callback' => [ $this, 'sanitize_model_selection' ],
+            ],
+            'suppress_notifications_on_spam' => [
+                'description'       => __( 'Whether blocking spam classifications should suppress form-submission notifications.', 'sentient-forms' ),
+                'type'              => 'boolean',
+                'sanitize_callback' => 'rest_sanitize_boolean',
+            ],
+            'skip_downstream_on_spam' => [
+                'description'       => __( 'Whether downstream mappings should skip when this spam action classifies spam.', 'sentient-forms' ),
+                'type'              => 'boolean',
+                'sanitize_callback' => 'rest_sanitize_boolean',
+            ],
         ];
     }
 
@@ -218,6 +233,81 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
         }
 
         return array_map( 'sanitize_text_field', array_filter( $value, 'is_string' ) );
+    }
+
+    /**
+     * Sanitizes a structured model selection payload.
+     *
+     * @param mixed $value Value to sanitize.
+     * @return array|null
+     */
+    public function sanitize_model_selection( $value ): ?array
+    {
+        if ( !is_array( $value ) )
+        {
+            return null;
+        }
+
+        $primary = isset( $value['primary'] ) ? sanitize_text_field( (string) $value['primary'] ) : '';
+        if ( $primary === '' )
+        {
+            return null;
+        }
+
+        $backup = null;
+        if ( isset( $value['backup'] ) && is_string( $value['backup'] ) )
+        {
+            $sanitized_backup = sanitize_text_field( $value['backup'] );
+            $backup           = $sanitized_backup !== '' ? $sanitized_backup : null;
+        }
+
+        return [
+            'primary'   => $primary,
+            'backup'    => $backup,
+            'is_preset' => isset( $value['is_preset'] ) ? (bool) $value['is_preset'] : false,
+        ];
+    }
+
+    /**
+     * Normalizes a config payload for API responses and legacy option reads.
+     *
+     * @param mixed $config Raw config value.
+     * @return array
+     */
+    private function normalize_action_config( $config ): array
+    {
+        if ( !is_array( $config ) )
+        {
+            return [];
+        }
+
+        if ( empty( $config['model_selection'] ) && !empty( $config['model_override'] ) && is_string( $config['model_override'] ) )
+        {
+            $config['model_selection'] = [
+                'primary'   => sanitize_text_field( $config['model_override'] ),
+                'backup'    => null,
+                'is_preset' => str_starts_with( (string) $config['model_override'], 'sf_' ),
+            ];
+        }
+
+        if ( isset( $config['model_selection'] ) )
+        {
+            $config['model_selection'] = $this->sanitize_model_selection( $config['model_selection'] );
+            if ( $config['model_selection'] === null )
+            {
+                unset( $config['model_selection'] );
+            }
+        }
+
+        foreach ( [ 'suppress_notifications_on_spam', 'skip_downstream_on_spam' ] as $field )
+        {
+            if ( array_key_exists( $field, $config ) )
+            {
+                $config[ $field ] = rest_sanitize_boolean( $config[ $field ] );
+            }
+        }
+
+        return $config;
     }
 
     /**
@@ -280,7 +370,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
         $form_source = $request->get_param( 'form_source' );
         $form_id     = (int) $request->get_param( 'form_id' );
 
-        $configs = $this->get_all_configs( $form_source, $form_id );
+        $configs = array_map( [ $this, 'normalize_action_config' ], $this->get_all_configs( $form_source, $form_id ) );
 
         return $this->prepare_item_for_response( [
             'form_source' => $form_source,
@@ -303,7 +393,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
         $action_id   = $request->get_param( 'action_id' );
 
         $configs       = $this->get_all_configs( $form_source, $form_id );
-        $action_config = $configs[ $action_id ] ?? (object) [];
+        $action_config = $this->normalize_action_config( $configs[ $action_id ] ?? [] );
 
         return $this->prepare_item_for_response( [
             'form_source' => $form_source,
@@ -327,7 +417,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
         $action_id   = $request->get_param( 'action_id' );
 
         $configs       = $this->get_all_configs( $form_source, $form_id );
-        $action_config = $configs[ $action_id ] ?? [];
+        $action_config = $this->normalize_action_config( $configs[ $action_id ] ?? [] );
 
         // Update only provided fields
         $updateable_fields = [
@@ -335,6 +425,9 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
             'spam_negative_examples',
             'include_site_context',
             'model_override',
+            'model_selection',
+            'suppress_notifications_on_spam',
+            'skip_downstream_on_spam',
         ];
 
         foreach ( $updateable_fields as $field )
@@ -351,6 +444,10 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
                 else
                 {
                     $action_config[ $field ] = $value;
+                    if ( $field === 'model_selection' )
+                    {
+                        unset( $action_config['model_override'] );
+                    }
                 }
             }
         }
@@ -381,7 +478,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
             'form_source' => $form_source,
             'form_id'     => $form_id,
             'action_id'   => $action_id,
-            'config'      => $action_config,
+            'config'      => $this->normalize_action_config( $action_config ),
         ] );
     }
 
@@ -447,7 +544,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
     {
         $action_id = $request->get_param( 'action_id' );
         $option_key = $this->get_action_defaults_key( $action_id );
-        $config = get_option( $option_key, [] );
+        $config = $this->normalize_action_config( get_option( $option_key, [] ) );
 
         return $this->prepare_item_for_response( [
             'action_id' => $action_id,
@@ -479,6 +576,9 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
             'spam_negative_examples',
             'include_site_context',
             'model_override',
+            'model_selection',
+            'suppress_notifications_on_spam',
+            'skip_downstream_on_spam',
         ];
 
         foreach ( $updateable_fields as $field )
@@ -495,6 +595,10 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
                 else
                 {
                     $config[ $field ] = $value;
+                    if ( $field === 'model_selection' )
+                    {
+                        unset( $config['model_override'] );
+                    }
                 }
             }
         }
@@ -512,7 +616,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
 
         return $this->prepare_item_for_response( [
             'action_id' => $action_id,
-            'config'    => $config,
+            'config'    => $this->normalize_action_config( $config ),
         ] );
     }
 
@@ -571,6 +675,20 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
                         ],
                         'model_override' => [
                             'type' => 'string',
+                        ],
+                        'model_selection' => [
+                            'type'       => 'object',
+                            'properties' => [
+                                'primary' => [
+                                    'type' => 'string',
+                                ],
+                                'backup' => [
+                                    'type' => [ 'string', 'null' ],
+                                ],
+                                'is_preset' => [
+                                    'type' => 'boolean',
+                                ],
+                            ],
                         ],
                         'updated_at' => [
                             'type'     => 'string',

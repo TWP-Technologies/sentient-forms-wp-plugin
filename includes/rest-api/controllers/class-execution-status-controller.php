@@ -99,15 +99,22 @@ class Sentient_Forms_Execution_Status_Controller extends Abstract_Sentient_Forms
             );
         }
 
-        $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $client->get( '/v1/execution-status' );
+        $client   = $plugin->get_cps_api_client();
+        $response = $client->get(
+            '/execution-status',
+            [
+                'bearer_token' => $api_key,
+            ]
+        );
 
         if ( is_wp_error( $response ) )
         {
             return $this->prepare_error_response(
                 'cps_error',
                 $response->get_error_message(),
-                500,
+                is_array( $response->get_error_data() ) && isset( $response->get_error_data()['status'] )
+                    ? (int) $response->get_error_data()['status']
+                    : 500,
             );
         }
 
@@ -137,16 +144,23 @@ class Sentient_Forms_Execution_Status_Controller extends Abstract_Sentient_Forms
             );
         }
 
-        $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $endpoint = sprintf( '/v1/execution-status/%s/%d', $mappingId, $entryId );
-        $response = $client->get( $endpoint );
+        $client   = $plugin->get_cps_api_client();
+        $endpoint = sprintf( '/execution-status/%s/%d', rawurlencode( (string) $mappingId ), (int) $entryId );
+        $response = $client->get(
+            $endpoint,
+            [
+                'bearer_token' => $api_key,
+            ]
+        );
 
         if ( is_wp_error( $response ) )
         {
             return $this->prepare_error_response(
                 'cps_error',
                 $response->get_error_message(),
-                500,
+                is_array( $response->get_error_data() ) && isset( $response->get_error_data()['status'] )
+                    ? (int) $response->get_error_data()['status']
+                    : 500,
             );
         }
 
@@ -189,9 +203,9 @@ class Sentient_Forms_Execution_Status_Controller extends Abstract_Sentient_Forms
                     'readonly'    => true,
                 ],
                 'status' => [
-                    'description' => __( 'Execution status: queued, running, succeeded, failed, cancelled.', 'sentient-forms' ),
+                    'description' => __( 'Execution status: queued, running, blocked, succeeded, failed, cancelled.', 'sentient-forms' ),
                     'type'        => 'string',
-                    'enum'        => [ 'unknown', 'queued', 'running', 'succeeded', 'failed', 'cancelled' ],
+                    'enum'        => [ 'unknown', 'queued', 'running', 'blocked', 'succeeded', 'failed', 'cancelled' ],
                     'context'     => [ 'view' ],
                     'readonly'    => true,
                 ],

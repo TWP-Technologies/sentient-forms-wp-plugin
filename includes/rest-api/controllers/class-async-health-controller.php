@@ -74,7 +74,7 @@ class Sentient_Forms_Async_Health_Controller extends Abstract_Sentient_Forms_Bas
             $store->clear();
             return $this->prepare_item_for_response( [
                 'removed' => -1, // -1 indicates all cleared
-                'message' => 'All async job metadata cleared.',
+                'message' => 'All background job metadata cleared.',
             ] );
         }
 
@@ -116,4 +116,3 @@ class Sentient_Forms_Async_Health_Controller extends Abstract_Sentient_Forms_Bas
         ] );
     }
 }
-

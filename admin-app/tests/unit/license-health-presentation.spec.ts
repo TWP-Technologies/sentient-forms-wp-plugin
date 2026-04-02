@@ -41,10 +41,10 @@ describe('license-health-presentation', () => {
 		expect(presentation.headline).toBe('Low credits: 10 / 100');
 		expect(presentation.detail).toContain('Low balance');
 		expect(presentation.quotaCta).toEqual({
-			label: 'Review licensing',
+			label: 'Top up credits',
 			enabled: true,
-			reason: 'Open Licensing to review current credit status and next steps.',
-			action: 'navigate_licensing'
+			reason: 'Open Licensing to review current credit status and buy top-up credits.',
+			action: 'focus_licensing_billing'
 		});
 	});
 
@@ -52,10 +52,10 @@ describe('license-health-presentation', () => {
 		const presentation = buildCreditPresentation(withCredits(0, 100), 'Resets Mar 1 (5 days)');
 		expect(presentation.severity).toBe('critical');
 		expect(presentation.headline).toBe('No credits remaining');
-		expect(presentation.detail).toContain('Actions may pause');
+		expect(presentation.detail).toContain('Actions may pause until credits reset or you add more.');
 		expect(presentation.percentage).toBe(0);
 		expect(presentation.quotaCta?.enabled).toBe(true);
-		expect(presentation.quotaCta?.action).toBe('navigate_licensing');
+		expect(presentation.quotaCta?.action).toBe('focus_licensing_billing');
 	});
 
 	it('returns unknown severity when quota metadata is missing', () => {
@@ -95,16 +95,36 @@ describe('license-health-presentation', () => {
 		);
 
 		expect(warningPresentation.quotaCta).toEqual({
-			label: 'Manage billing',
+			label: 'View top-up options',
 			enabled: true,
-			reason: 'Open billing management to upgrade plans, adjust seats, or update payment details.',
-			action: 'open_billing'
+			reason: 'Jump to the billing section to buy top-up credits or review plan changes.',
+			action: 'focus_licensing_billing'
 		});
 		expect(criticalPresentation.quotaCta).toEqual({
-			label: 'Manage billing',
+			label: 'View top-up options',
 			enabled: true,
-			reason: 'Open billing management to upgrade plans, adjust seats, or update payment details.',
-			action: 'open_billing'
+			reason: 'Jump to the billing section to buy top-up credits or review plan changes.',
+			action: 'focus_licensing_billing'
+		});
+	});
+
+	it('treats negative balances as debt-carry critical state', () => {
+		const presentation = buildCreditPresentation(
+			withCredits(-4, 100),
+			'Resets Mar 1 (5 days)',
+			'global'
+		);
+
+		expect(presentation.severity).toBe('critical');
+		expect(presentation.calloutTitle).toBe('Negative credit balance');
+		expect(presentation.headline).toBe('Negative balance: -4 credits');
+		expect(presentation.detail).toContain('settled above its estimate');
+		expect(presentation.percentage).toBe(0);
+		expect(presentation.quotaCta).toEqual({
+			label: 'Resolve balance',
+			enabled: true,
+			reason: 'Open Licensing to add credits and clear the negative balance before new runs resume.',
+			action: 'focus_licensing_billing'
 		});
 	});
 

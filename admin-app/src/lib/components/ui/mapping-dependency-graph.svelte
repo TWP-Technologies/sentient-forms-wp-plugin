@@ -457,7 +457,7 @@
 					mapping_id: issue.mappingId,
 					dependency_id: issue.dependencyId,
 					code: issue.code,
-					message: `${issue.mappingId} depends on async mapping ${issue.dependencyId} during after-submission, so ${issue.mappingId} must also run async.`
+					message: `${issue.mappingId} depends on Background mapping ${issue.dependencyId} during after-submission, so ${issue.mappingId} must also run in Background.`
 				};
 			case 'unbound_trigger':
 				return {
@@ -1260,7 +1260,7 @@
 				return {
 					valid: false,
 					code: 'execution_mode_mismatch',
-					message: `${displayMappingLabel(issue.mappingId)} cannot depend on async mapping ${displayMappingLabel(issue.dependencyId)} unless it also runs async.`
+					message: `${displayMappingLabel(issue.mappingId)} cannot depend on Background mapping ${displayMappingLabel(issue.dependencyId)} unless it also runs in Background.`
 				};
 			case 'cycle':
 				return {
@@ -1671,7 +1671,7 @@
 			case 'would_run':
 				return 'Would run';
 			case 'would_queue':
-				return 'Would queue';
+				return 'Would continue in Background';
 			default:
 				return 'Blocked';
 		}
@@ -2371,7 +2371,7 @@
 												</p>
 												<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-1">
 													<Badge variant="success">Run: {hookTrace.runnable.length}</Badge>
-													<Badge variant="info">Queue: {hookTrace.queued.length}</Badge>
+													<Badge variant="info">Background: {hookTrace.queued.length}</Badge>
 													<Badge variant="danger">Blocked: {hookTrace.blocked.length}</Badge>
 												</div>
 											</div>

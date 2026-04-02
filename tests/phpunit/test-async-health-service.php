@@ -28,6 +28,8 @@ class AsyncHealthServiceTest extends WP_UnitTestCase
         $this->assertSame( 1, $result['queue_depth'] );
         $codes = wp_list_pluck( $result['warnings'], 'code' );
         $this->assertContains( 'queue_backlog', $codes );
+        $warning = $result['warnings'][0] ?? [];
+        $this->assertStringContainsString( 'Background queue backlog', (string) ( $warning['message'] ?? '' ) );
 
         remove_all_filters( 'sentient_forms_async_queue_threshold' );
     }

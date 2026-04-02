@@ -28,6 +28,17 @@
 		error_code: string | null;
 		error_message: string | null;
 		structured_output_valid: boolean;
+		execution_request_id?: string | null;
+		mapping_id?: string | null;
+		resolved_model_id?: string | null;
+		pricing?: {
+			pricing_policy_version?: string | null;
+			estimate_source?: string | null;
+			base_floor_credits?: number | null;
+			normalized_actual_credits?: number | null;
+			debited_credits?: number | null;
+		} | null;
+		details?: Record<string, unknown> | null;
 		created_at: string;
 		completed_at: string | null;
 	}
@@ -164,6 +175,80 @@
 		}
 	}
 
+	function isRecord(value: unknown): value is Record<string, unknown> {
+		return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+	}
+
+	function readStringPath(source: unknown, path: string[]): string | null {
+		let current: unknown = source;
+		for (const segment of path) {
+			if (!isRecord(current) || !(segment in current)) {
+				return null;
+			}
+			current = current[segment];
+		}
+
+		return typeof current === 'string' && current.trim().length > 0 ? current.trim() : null;
+	}
+
+	function readNumberPath(source: unknown, path: string[]): number | null {
+		let current: unknown = source;
+		for (const segment of path) {
+			if (!isRecord(current) || !(segment in current)) {
+				return null;
+			}
+			current = current[segment];
+		}
+
+		return typeof current === 'number' && Number.isFinite(current) ? current : null;
+	}
+
+	function readArrayPath(source: unknown, path: string[]): unknown[] {
+		let current: unknown = source;
+		for (const segment of path) {
+			if (!isRecord(current) || !(segment in current)) {
+				return [];
+			}
+			current = current[segment];
+		}
+
+		return Array.isArray(current) ? current : [];
+	}
+
+	function hasOperationalDetails(entry: ActionLogEntry): boolean {
+		return Boolean(
+			entry.execution_request_id ||
+				entry.mapping_id ||
+				entry.resolved_model_id ||
+				entry.pricing?.pricing_policy_version ||
+				readStringPath(entry.details, ['meta', 'request_id']) ||
+				readStringPath(entry.details, ['evaluation_payload', 'result_data', 'justification']) ||
+				readStringPath(entry.details, ['evaluation_payload', 'result_data', 'reasoning']) ||
+				readNumberPath(entry.details, ['evaluation_payload', 'result_data', 'confidence']) !== null ||
+				readArrayPath(entry.details, ['evaluation_payload', 'result_data', 'indicators']).length > 0
+		);
+	}
+
+	function indicatorLabel(indicator: unknown): string {
+		if (typeof indicator === 'string') {
+			return indicator;
+		}
+
+		if (isRecord(indicator)) {
+			const label = readStringPath(indicator, ['label']) ?? readStringPath(indicator, ['name']);
+			if (label) {
+				return label;
+			}
+
+			const reason = readStringPath(indicator, ['reason']);
+			if (reason) {
+				return reason;
+			}
+		}
+
+		return JSON.stringify(indicator);
+	}
+
 	onMount(() => {
 		void fetchLogs();
 	});
@@ -197,6 +282,7 @@
 					<option value="">All</option>
 					<option value="success">Success</option>
 					<option value="pending">Pending</option>
+					<option value="blocked">Blocked</option>
 					<option value="error">Error</option>
 				</select>
 			</div>
@@ -353,6 +439,86 @@
 									{formatTimestamp(entry.created_at)}
 								</td>
 							</tr>
+							{#if hasOperationalDetails(entry)}
+								<tr
+									class="sf:border-b sf:last:border-0 sf:bg-slate-50/60"
+									data-testid={`action-log-details-row-${entry.id}`}
+								>
+									<td colspan="8" class="sf:px-4 sf:pb-4 sf:pt-1">
+										<details data-testid={`action-log-details-${entry.id}`}>
+											<summary class="sf:cursor-pointer sf:text-sm sf:font-medium sf:text-slate-700">
+												Execution details
+											</summary>
+											<div class="sf:mt-3 sf:grid sf:gap-3 sf:text-xs sf:text-slate-600 md:sf:grid-cols-2">
+												{#if entry.execution_request_id}
+													<div>
+														<p class="sf:font-semibold sf:text-slate-700">Execution Request</p>
+														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.execution_request_id}</p>
+													</div>
+												{/if}
+												{#if readStringPath(entry.details, ['meta', 'request_id'])}
+													<div>
+														<p class="sf:font-semibold sf:text-slate-700">CPS Request</p>
+														<p class="sf:font-mono sf:text-[11px] sf:break-all">{readStringPath(entry.details, ['meta', 'request_id'])}</p>
+													</div>
+												{/if}
+												{#if entry.mapping_id}
+													<div>
+														<p class="sf:font-semibold sf:text-slate-700">Mapping</p>
+														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.mapping_id}</p>
+													</div>
+												{/if}
+												{#if entry.resolved_model_id}
+													<div>
+														<p class="sf:font-semibold sf:text-slate-700">Resolved Model</p>
+														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.resolved_model_id}</p>
+													</div>
+												{/if}
+												{#if entry.pricing?.pricing_policy_version}
+													<div>
+														<p class="sf:font-semibold sf:text-slate-700">Pricing Policy</p>
+														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.pricing.pricing_policy_version}</p>
+														<p class="sf:mt-1">
+															Debited {entry.pricing.debited_credits ?? entry.credits_used} credits
+															{#if entry.pricing.base_floor_credits !== null && entry.pricing.base_floor_credits !== undefined}
+																, base floor {entry.pricing.base_floor_credits}
+															{/if}
+															{#if entry.pricing.normalized_actual_credits !== null && entry.pricing.normalized_actual_credits !== undefined}
+																, normalized actual {entry.pricing.normalized_actual_credits}
+															{/if}
+														</p>
+													</div>
+												{/if}
+												{#if readStringPath(entry.details, ['evaluation_payload', 'result_data', 'justification']) || readStringPath(entry.details, ['evaluation_payload', 'result_data', 'reasoning'])}
+													<div class="md:sf:col-span-2">
+														<p class="sf:font-semibold sf:text-slate-700">Justification</p>
+														<p>
+															{readStringPath(entry.details, ['evaluation_payload', 'result_data', 'justification']) ??
+																readStringPath(entry.details, ['evaluation_payload', 'result_data', 'reasoning'])}
+														</p>
+													</div>
+												{/if}
+												{#if readNumberPath(entry.details, ['evaluation_payload', 'result_data', 'confidence']) !== null}
+													<div>
+														<p class="sf:font-semibold sf:text-slate-700">Confidence</p>
+														<p>{readNumberPath(entry.details, ['evaluation_payload', 'result_data', 'confidence'])}</p>
+													</div>
+												{/if}
+												{#if readArrayPath(entry.details, ['evaluation_payload', 'result_data', 'indicators']).length > 0}
+													<div class="md:sf:col-span-2">
+														<p class="sf:font-semibold sf:text-slate-700">Indicators</p>
+														<div class="sf:flex sf:flex-wrap sf:gap-2 sf:mt-1">
+															{#each readArrayPath(entry.details, ['evaluation_payload', 'result_data', 'indicators']) as indicator}
+																<Badge variant="warning">{indicatorLabel(indicator)}</Badge>
+															{/each}
+														</div>
+													</div>
+												{/if}
+											</div>
+										</details>
+									</td>
+								</tr>
+							{/if}
 						{/each}
 					</tbody>
 				</table>

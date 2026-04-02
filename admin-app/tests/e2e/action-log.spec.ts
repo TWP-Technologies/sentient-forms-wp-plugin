@@ -17,6 +17,27 @@ const mockLogEntries = [
 		error_code: null,
 		error_message: null,
 		structured_output_valid: true,
+		execution_request_id: 'req-uuid-1',
+		mapping_id: 'map-spam-detection',
+		resolved_model_id: 'gemini-pro',
+		pricing: {
+			pricing_policy_version: '2026-03-resolved-model-v1',
+			base_floor_credits: 8,
+			normalized_actual_credits: 10,
+			debited_credits: 10
+		},
+		details: {
+			meta: {
+				request_id: 'cps-req-1'
+			},
+			evaluation_payload: {
+				result_data: {
+					justification: 'High confidence ham based on message intent.',
+					confidence: 0.92,
+					indicators: ['trusted sender', 'clear intent']
+				}
+			}
+		},
 		created_at: '2025-12-26T12:00:00Z',
 		completed_at: '2025-12-26T12:00:01Z'
 	},
@@ -27,8 +48,8 @@ const mockLogEntries = [
 		entry_id: 101,
 		action_code: 'spam_detection_v1',
 		action_label: 'Spam Detection',
-		status: 'success',
-		result_summary: 'Detected spam patterns',
+		status: 'blocked',
+		result_summary: 'Submission blocked as spam',
 		classification: 'spam',
 		credits_used: 10,
 		error_code: null,
@@ -92,6 +113,7 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 		await expect(successRow.getByText('Ham')).toBeVisible();
 
 		const spamRow = page.getByTestId('action-log-row-uuid-2');
+		await expect(spamRow.getByText('Blocked')).toBeVisible();
 		await expect(spamRow.getByText('Raw')).toBeVisible();
 		await expect(spamRow.getByText(/^Spam$/)).toBeVisible();
 
@@ -99,6 +121,36 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 		await expect(errorRow.getByText('Error')).toBeVisible();
 		await expect(errorRow.getByText('Not available')).toBeVisible();
 		await expect(errorRow.getByText(/timeout/i)).toBeVisible();
+	});
+
+	test('action log exposes execution details in a disclosure without cluttering the main table', async ({
+		page
+	}) => {
+		await page.route('**/wp-json/sentient-forms/v1/actions/log**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					entries: mockLogEntries,
+					total: 3,
+					total_pages: 1,
+					page: 1,
+					per_page: 20
+				})
+			})
+		);
+
+		await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
+
+		const details = page.getByTestId('action-log-details-uuid-1');
+		await details.locator('summary').click();
+
+		await expect(details).toContainText('Execution Request');
+		await expect(details).toContainText('req-uuid-1');
+		await expect(details).toContainText('Pricing Policy');
+		await expect(details).toContainText('2026-03-resolved-model-v1');
+		await expect(details).toContainText('High confidence ham based on message intent.');
+		await expect(details).toContainText('trusted sender');
 	});
 
 	test('action log filtering by status shows active chips and allows chip clear', async ({ page }) => {

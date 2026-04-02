@@ -1,6 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Card, Button, Badge, Alert, SelectField, Toggle } from '$lib/components/ui';
+	import { Card, Button, Badge, Alert, SelectField } from '$lib/components/ui';
+	import type {
+		ModelCatalogResponse,
+		ModelEstimateResponse,
+		ModelInfo,
+		ModelPricingEstimate,
+		ModelPreset,
+		ModelSelection,
+		ResolvedModelSelection
+	} from '$lib/api/types';
 	import { wpFetch } from '$lib/wp';
 
 	/**
@@ -9,55 +18,6 @@
 	 * Provides simple preset selection by default with advanced toggle for explicit model selection.
 	 * Supports backup model selection and displays audit trail for resolved models.
 	 */
-
-	interface ModelInfo {
-		id: string;
-		display_name: string;
-		provider: string;
-		speed_tier: string;
-		cost_tier: string;
-		capabilities: {
-			reasoning: boolean;
-			code: boolean;
-			vision: boolean;
-			tools: boolean;
-			long_context: boolean;
-		};
-		context_window: number;
-		is_preview: boolean;
-		tags: string[];
-		recommended_for: string[];
-	}
-
-	interface ModelPreset {
-		code: string;
-		display_name: string;
-		description: string;
-		category: string;
-		resolved_model_id: string;
-		auto_upgrade: boolean;
-	}
-
-	interface ModelSelection {
-		primary: string;
-		backup: string | null;
-		is_preset: boolean;
-	}
-
-	interface OverrideStep {
-		level: string;
-		selection: string | null;
-		applied: boolean;
-		reason: string;
-	}
-
-	interface ResolvedModel {
-		model_id: string;
-		display_name: string;
-		resolution_source: string;
-		override_chain: OverrideStep[];
-		backup_model_id: string | null;
-	}
 
 	interface Props {
 		/** Current value (preset code or model ID) */
@@ -68,6 +28,17 @@
 		level?: 'global' | 'action' | 'form' | 'mapping';
 		/** Whether this is read-only (just showing resolved info) */
 		readonly?: boolean;
+		/** Action identifier used for pricing estimates */
+		actionId?: string | null;
+		/** Template-level model hint fallback */
+		templateModelHint?: string | null;
+		/** Base floor fallback when the action is not yet available remotely */
+		baseCreditCost?: number | null;
+		/** Inheritance inputs for live resolution/estimate */
+		globalSelection?: ModelSelection | null;
+		actionSelection?: ModelSelection | null;
+		formSelection?: ModelSelection | null;
+		mappingSelection?: ModelSelection | null;
 		/** Callback when selection changes */
 		onchange?: (selection: ModelSelection) => void;
 	}
@@ -77,6 +48,13 @@
 		label = 'Model Selection',
 		level = 'mapping',
 		readonly = false,
+		actionId = null,
+		templateModelHint = null,
+		baseCreditCost = null,
+		globalSelection = null,
+		actionSelection = null,
+		formSelection = null,
+		mappingSelection = null,
 		onchange
 	}: Props = $props();
 
@@ -90,31 +68,36 @@
 	let error = $state<string | null>(null);
 
 	// Resolved model info (for display)
-	let resolved = $state<ResolvedModel | null>(null);
+	let resolved = $state<ResolvedModelSelection | null>(null);
+	let pricingEstimate = $state<ModelPricingEstimate | null>(null);
 	let resolving = $state(false);
+	let resolutionError = $state<string | null>(null);
+	let resolutionRequestToken = 0;
+
+	function syncSelectionFromValue(nextValue: ModelSelection | null | undefined) {
+		if (!nextValue) {
+			advancedMode = false;
+			selectedPreset = 'sf_default';
+			selectedModel = '';
+			selectedBackup = '';
+			return;
+		}
+
+		advancedMode = !nextValue.is_preset;
+		selectedPreset = nextValue.is_preset ? nextValue.primary : 'sf_default';
+		selectedModel = nextValue.is_preset ? '' : nextValue.primary;
+		selectedBackup = nextValue.backup ?? '';
+	}
 
 	async function loadModels() {
 		loading = true;
 		error = null;
 		try {
-			const response = await wpFetch<{
-				success: boolean;
-				data: { models: ModelInfo[]; presets: ModelPreset[] };
-			}>('models');
+			const response = await wpFetch<{ success: boolean; data: ModelCatalogResponse }>('models');
 			if (response?.data) {
 				models = response.data.models;
 				presets = response.data.presets;
-
-				// Initialize from value
-				if (value) {
-					advancedMode = !value.is_preset;
-					if (value.is_preset) {
-						selectedPreset = value.primary;
-					} else {
-						selectedModel = value.primary;
-					}
-					selectedBackup = value.backup ?? '';
-				}
+				syncSelectionFromValue(value);
 			}
 		} catch (e) {
 			console.error('Failed to load models', e);
@@ -130,6 +113,7 @@
 			backup: selectedBackup || null,
 			is_preset: !advancedMode
 		};
+		void resolveSelectionPreview(selection);
 		onchange?.(selection);
 	}
 
@@ -142,6 +126,96 @@
 			selectedPreset = presets[0].code;
 		}
 		handleSelectionChange();
+	}
+
+	function currentSelection(): ModelSelection {
+		return {
+			primary: advancedMode ? selectedModel : selectedPreset,
+			backup: selectedBackup || null,
+			is_preset: !advancedMode
+		};
+	}
+
+	function buildSelectionPayload(selection: ModelSelection) {
+		const payload = {
+			template_model_hint: templateModelHint ?? undefined,
+			global_selection: level === 'global' ? selection : (globalSelection ?? undefined),
+			action_selection: level === 'action' ? selection : (actionSelection ?? undefined),
+			form_selection: level === 'form' ? selection : (formSelection ?? undefined),
+			mapping_selection: level === 'mapping' ? selection : (mappingSelection ?? undefined)
+		};
+
+		return payload;
+	}
+
+	async function resolveSelectionPreview(selection: ModelSelection | null) {
+		if (!selection || selection.primary.trim().length === 0) {
+			resolved = null;
+			pricingEstimate = null;
+			resolutionError = null;
+			resolving = false;
+			return;
+		}
+
+		const requestToken = ++resolutionRequestToken;
+		resolving = true;
+		resolutionError = null;
+		const selectionPayload = buildSelectionPayload(selection);
+
+		try {
+			const resolvedResponse = await wpFetch<{ success: boolean; data: ResolvedModelSelection }>(
+				'models/resolve',
+				{
+					method: 'POST',
+					body: selectionPayload,
+					showNotifications: false
+				}
+			);
+
+			if (requestToken !== resolutionRequestToken) {
+				return;
+			}
+
+			resolved = resolvedResponse?.data ?? null;
+
+			if (actionId) {
+				const estimateResponse = await wpFetch<{ success: boolean; data: ModelEstimateResponse }>(
+					'models/estimate',
+					{
+						method: 'POST',
+						body: {
+							action_id: actionId,
+							template_model_hint: templateModelHint ?? undefined,
+							base_credit_cost: baseCreditCost ?? undefined,
+							...selectionPayload
+						},
+						showNotifications: false
+					}
+				);
+
+				if (requestToken !== resolutionRequestToken) {
+					return;
+				}
+
+				if (estimateResponse?.data?.resolved_model) {
+					resolved = estimateResponse.data.resolved_model;
+				}
+				pricingEstimate = estimateResponse?.data?.pricing_estimate ?? null;
+			} else {
+				pricingEstimate = null;
+			}
+		} catch (e) {
+			if (requestToken !== resolutionRequestToken) {
+				return;
+			}
+			console.error('Failed to resolve model selection', e);
+			resolutionError = e instanceof Error ? e.message : 'Failed to resolve model selection';
+			pricingEstimate = null;
+		} finally {
+			if (requestToken === resolutionRequestToken) {
+				resolving = false;
+			}
+		}
 	}
 
 	// Preset options for SelectField
@@ -205,6 +279,14 @@
 
 	onMount(() => {
 		loadModels();
+	});
+
+	$effect(() => {
+		syncSelectionFromValue(value);
+	});
+
+	$effect(() => {
+		void resolveSelectionPreview(currentSelection());
 	});
 </script>
 
@@ -323,6 +405,66 @@
 				bind:value={selectedBackup}
 				onchange={handleSelectionChange}
 			/>
+		{/if}
+
+		{#if resolutionError}
+			<Alert variant="warning">
+				Could not load the resolved model preview from CPS. {resolutionError}
+			</Alert>
+		{:else if resolving}
+			<p class="sf:text-xs sf:text-slate-500">Refreshing resolved model and pricing...</p>
+		{/if}
+
+		{#if resolved}
+			<Card class="sf:bg-slate-50">
+				<div class="sf:flex sf:flex-col sf:gap-2 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between">
+					<div class="sf:space-y-1">
+						<p class="sf:font-medium sf:text-slate-800">{resolved.display_name}</p>
+						<p class="sf:text-xs sf:text-slate-500">
+							Resolved from: {resolved.resolution_source}
+						</p>
+					</div>
+					{#if pricingEstimate}
+						<div class="sf:text-left sf:sm:text-right">
+							<p class="sf:text-xs sf:uppercase sf:tracking-wide sf:text-slate-500">
+								Estimated Debit
+							</p>
+							<p class="sf:text-lg sf:font-semibold sf:text-slate-900">
+								{pricingEstimate.estimated_debit_credits} credits
+							</p>
+						</div>
+					{/if}
+				</div>
+
+				{#if pricingEstimate}
+					<p class="sf:mt-2 sf:text-xs sf:text-slate-600">
+						Base floor: <strong>{pricingEstimate.base_floor_credits}</strong> · Normalized usage:
+						<strong>{pricingEstimate.normalized_actual_credits}</strong> · Policy:
+						{pricingEstimate.pricing_policy_version}
+					</p>
+					<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+						This is a live CPS estimate. Final debit may change when actual run usage exceeds the
+						base floor.
+					</p>
+				{/if}
+
+				{#if resolved.override_chain.length > 0}
+					<details class="sf:mt-3">
+						<summary class="sf:text-xs sf:text-slate-600 sf:cursor-pointer"> Override chain </summary>
+						<ul class="sf:mt-2 sf:space-y-1 sf:text-xs sf:text-slate-500">
+							{#each resolved.override_chain as step}
+								<li class="sf:flex sf:items-center sf:gap-2">
+									<span class={step.applied ? 'sf:text-green-600' : 'sf:text-slate-400'}>
+										{step.applied ? '✓' : '○'}
+									</span>
+									<span class="sf:font-medium">{step.level}:</span>
+									<span>{step.reason}</span>
+								</li>
+							{/each}
+						</ul>
+					</details>
+				{/if}
+			</Card>
 		{/if}
 	{/if}
 </div>

@@ -1727,7 +1727,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 {
                     return $this->prepare_error_response(
                         'rest_invalid_duplicate_parent_execution_mode',
-                        __( 'Selected parent mapping runs async in after-submission, but the source mapping does not.', 'sentient-forms' ),
+                        __( 'Selected parent mapping runs in Background during after-submission, but the source mapping does not.', 'sentient-forms' ),
                         400
                     );
                 }
@@ -1877,6 +1877,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
         $deleted = $actions[ $id ];
         unset( $actions[ $id ] );
+        $planner = Sentient_Forms_Plugin::instance()->get_mapping_dependency_planner();
 
         foreach ( $actions as &$mapping )
         {
@@ -1887,6 +1888,41 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
             if ( ! isset( $mapping['settings'] ) || ! is_array( $mapping['settings'] ) )
             {
+                continue;
+            }
+
+            $trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
+            $trigger_sources = $this->build_mapping_trigger_sources_for_hooks( $mapping, $trigger_hooks, $planner );
+            $rewired_to_unbound = false;
+
+            foreach ( $trigger_sources as $hook => $source )
+            {
+                if (
+                    ! is_array( $source ) ||
+                    ! isset( $source['type'], $source['mapping_id'] ) ||
+                    'mapping' !== $source['type'] ||
+                    $id !== $source['mapping_id']
+                )
+                {
+                    continue;
+                }
+
+                $trigger_sources[ $hook ] = [ 'type' => 'unbound' ];
+                $rewired_to_unbound = true;
+            }
+
+            if ( $rewired_to_unbound )
+            {
+                $mapping['settings']['trigger_sources'] = $this->serialize_trigger_sources_for_storage( $trigger_sources );
+                $dependency_ids = $this->derive_dependency_ids_from_trigger_sources( $trigger_sources );
+                if ( empty( $dependency_ids ) )
+                {
+                    unset( $mapping['settings']['dependency_ids'] );
+                }
+                else
+                {
+                    $mapping['settings']['dependency_ids'] = $dependency_ids;
+                }
                 continue;
             }
 
@@ -2775,7 +2811,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                             'dependency_id' => $dependency_id,
                             'code'          => 'execution_mode_mismatch',
                             'message'       => sprintf(
-                                __( 'Mapping %1$s depends on async mapping %2$s during after-submission, so %1$s must also run async.', 'sentient-forms' ),
+                                __( 'Mapping %1$s depends on Background mapping %2$s during after-submission, so %1$s must also run in Background.', 'sentient-forms' ),
                                 sanitize_text_field( $mapping_id ),
                                 sanitize_text_field( $dependency_id )
                             ),
@@ -2992,15 +3028,15 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $type = isset( $source['type'] ) && is_scalar( $source['type'] )
                 ? sanitize_key( (string) $source['type'] )
                 : '';
-            if ( 'mapping' !== $type && 'hook_root' !== $type )
+            if ( 'mapping' !== $type && 'hook_root' !== $type && 'unbound' !== $type )
             {
                 continue;
             }
 
-            if ( 'hook_root' === $type )
+            if ( 'hook_root' === $type || 'unbound' === $type )
             {
                 $sanitized[ $hook_key ] = [
-                    'type' => 'hook_root',
+                    'type' => $type,
                 ];
                 continue;
             }
@@ -3127,9 +3163,15 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 $type = isset( $source['type'] ) && is_scalar( $source['type'] )
                     ? sanitize_key( (string) $source['type'] )
                     : 'hook_root';
-                if ( 'mapping' !== $type )
+                if ( 'mapping' !== $type && 'unbound' !== $type )
                 {
                     $normalized[ $hook ] = [ 'type' => 'hook_root' ];
+                    continue;
+                }
+
+                if ( 'unbound' === $type )
+                {
+                    $normalized[ $hook ] = [ 'type' => 'unbound' ];
                     continue;
                 }
 
@@ -3324,9 +3366,15 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $type = isset( $source['type'] ) && is_scalar( $source['type'] )
                 ? sanitize_key( (string) $source['type'] )
                 : '';
-            if ( 'mapping' !== $type )
+            if ( 'mapping' !== $type && 'unbound' !== $type )
             {
                 $serialized[ $hook_key ] = [ 'type' => 'hook_root' ];
+                continue;
+            }
+
+            if ( 'unbound' === $type )
+            {
+                $serialized[ $hook_key ] = [ 'type' => 'unbound' ];
                 continue;
             }
 
@@ -3542,7 +3590,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                             'rest_invalid_dependency_execution_mode',
                             sprintf(
                                 /* translators: 1: mapping id, 2: dependency id */
-                                __( 'Mapping %1$s depends on async mapping %2$s during after-submission, so %1$s must also run async.', 'sentient-forms' ),
+                                __( 'Mapping %1$s depends on Background mapping %2$s during after-submission, so %1$s must also run in Background.', 'sentient-forms' ),
                                 sanitize_text_field( $mapping_id ),
                                 sanitize_text_field( $dependency_id )
                             )
@@ -3558,8 +3606,8 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     /**
      * Validate the narrow skip_on_upstream_spam mapping option.
      *
-     * This option is only valid for after-submission mappings whose active
-     * dependency source resolves to exactly one upstream spam_detection_v1 mapping.
+     * This option is only valid when at least one active trigger hook resolves
+     * to exactly one upstream spam_detection_v1 mapping.
      *
      * @param string                                   $mapping_id Mapping id.
      * @param array<string, mixed>                     $mapping    Mapping payload.
@@ -3581,77 +3629,44 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         $trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
-        if ( ! in_array( 'gform_after_submission', $trigger_hooks, true ) )
+        foreach ( $trigger_hooks as $hook )
         {
-            return new WP_Error(
-                'rest_invalid_skip_on_upstream_spam',
-                sprintf(
-                    /* translators: %s: mapping id */
-                    __( 'Mapping %s can only enable skip_on_upstream_spam when it runs on after-submission.', 'sentient-forms' ),
-                    sanitize_text_field( $mapping_id )
-                )
-            );
+            $dependency_ids = $planner->extract_dependency_ids_for_hook( $mapping, $hook );
+            if ( 1 !== count( $dependency_ids ) )
+            {
+                continue;
+            }
+
+            $dependency_id = sanitize_text_field( (string) $dependency_ids[0] );
+            if ( '' === $dependency_id || ! isset( $normalized[ $dependency_id ] ) )
+            {
+                continue;
+            }
+
+            $dependency_hooks = $this->sanitize_trigger_hooks( (array) ( $normalized[ $dependency_id ]['trigger_hooks'] ?? [] ) );
+            if ( ! $this->dependency_satisfies_hook( $hook, $dependency_hooks ) )
+            {
+                continue;
+            }
+
+            $dependency_action_id = isset( $normalized[ $dependency_id ]['central_action_id'] ) && is_scalar( $normalized[ $dependency_id ]['central_action_id'] )
+                ? sanitize_key( (string) $normalized[ $dependency_id ]['central_action_id'] )
+                : '';
+
+            if ( 'spam_detection_v1' === $dependency_action_id )
+            {
+                return true;
+            }
         }
 
-        $dependency_ids = $planner->extract_dependency_ids_for_hook( $mapping, 'gform_after_submission' );
-        if ( 1 !== count( $dependency_ids ) )
-        {
-            return new WP_Error(
-                'rest_invalid_skip_on_upstream_spam',
-                sprintf(
-                    /* translators: %s: mapping id */
-                    __( 'Mapping %s can only enable skip_on_upstream_spam when after-submission depends on exactly one upstream spam check.', 'sentient-forms' ),
-                    sanitize_text_field( $mapping_id )
-                )
-            );
-        }
-
-        $dependency_id = sanitize_text_field( (string) $dependency_ids[0] );
-        if ( '' === $dependency_id || ! isset( $normalized[ $dependency_id ] ) )
-        {
-            return new WP_Error(
-                'rest_invalid_skip_on_upstream_spam',
-                sprintf(
-                    /* translators: 1: mapping id, 2: dependency id */
-                    __( 'Mapping %1$s enables skip_on_upstream_spam, but dependency %2$s is missing.', 'sentient-forms' ),
-                    sanitize_text_field( $mapping_id ),
-                    sanitize_text_field( $dependency_id )
-                )
-            );
-        }
-
-        $dependency_hooks = $this->sanitize_trigger_hooks( (array) ( $normalized[ $dependency_id ]['trigger_hooks'] ?? [] ) );
-        if ( ! $this->dependency_satisfies_hook( 'gform_after_submission', $dependency_hooks ) )
-        {
-            return new WP_Error(
-                'rest_invalid_skip_on_upstream_spam',
-                sprintf(
-                    /* translators: 1: mapping id, 2: dependency id */
-                    __( 'Mapping %1$s enables skip_on_upstream_spam, but dependency %2$s is not a valid upstream source for after-submission.', 'sentient-forms' ),
-                    sanitize_text_field( $mapping_id ),
-                    sanitize_text_field( $dependency_id )
-                )
-            );
-        }
-
-        $dependency_action_id = isset( $normalized[ $dependency_id ]['central_action_id'] ) && is_scalar( $normalized[ $dependency_id ]['central_action_id'] )
-            ? sanitize_key( (string) $normalized[ $dependency_id ]['central_action_id'] )
-            : '';
-
-        if ( 'spam_detection_v1' !== $dependency_action_id )
-        {
-            return new WP_Error(
-                'rest_invalid_skip_on_upstream_spam',
-                sprintf(
-                    /* translators: 1: mapping id, 2: dependency id */
-                    __( 'Mapping %1$s can only enable skip_on_upstream_spam when dependency %2$s uses spam_detection_v1.', 'sentient-forms' ),
-                    sanitize_text_field( $mapping_id ),
-                    sanitize_text_field( $dependency_id )
-                )
-            );
-        }
-
-        return true;
+        return new WP_Error(
+            'rest_invalid_skip_on_upstream_spam',
+            sprintf(
+                /* translators: %s: mapping id */
+                __( 'Mapping %s can only enable skip_on_upstream_spam when at least one active trigger depends on exactly one upstream spam_detection_v1 mapping.', 'sentient-forms' ),
+                sanitize_text_field( $mapping_id )
+            )
+        );
     }
 
     /**

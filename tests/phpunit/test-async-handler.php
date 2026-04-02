@@ -1023,6 +1023,94 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertNotEmpty( $executor->captured );
     }
 
+    public function test_process_action_skips_when_upstream_spam_mapping_defaults_skip_downstream(): void
+    {
+        update_option(
+            'sentient_forms_actions_gravity_forms_226',
+            [
+                'map_prereq' => [
+                    'local_mapping_id'           => 'map_prereq',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'settings'                   => [
+                        'skip_downstream_on_spam' => true,
+                    ],
+                ],
+            ]
+        );
+
+        $request_store = $this->plugin->get_async_request_store();
+        $executor      = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $request_store->record(
+            'dep_req_spam_defaults',
+            [
+                'status'    => 'success',
+                'action_id' => 'spam_detection_v1',
+            ]
+        );
+
+        GFAPI::$entries[ 930 ] = [
+            'id'      => 930,
+            'form_id' => 226,
+            'status'  => 'active',
+        ];
+        gform_update_meta( 930, 'sentient_forms_spam_classification', 'spam' );
+
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'  => 'gform_after_submission',
+                'form'  => [ 'id' => 226, 'title' => 'Upstream Spam Defaults' ],
+                'entry' => [ 'id' => 930, 'field_1' => 'skip by upstream default' ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'settings'              => [],
+            ],
+            [
+                'hook'                             => 'gform_after_submission',
+                'form_source'                      => 'gravity_forms',
+                'form_id'                          => 226,
+                'entry_id'                         => 930,
+                'action_id'                        => 'map_summary_default_skip',
+                'action_name_label'                => 'Entry Summary',
+                'local_mapping_id'                 => 'map_summary_default_skip',
+                'dependency_mapping_ids'           => [ 'map_prereq' ],
+                'dependency_execution_request_ids' => [ 'map_prereq' => 'dep_req_spam_defaults' ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $metadata = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] );
+        $this->assertSame( 'skipped', $metadata['status'] ?? null );
+
+        $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'skipped', $row['status'] ?? null );
+        $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
+        $this->assertSame( [], $executor->captured );
+
+        delete_option( 'sentient_forms_actions_gravity_forms_226' );
+    }
+
     public function test_dispatch_action_evaluation_enqueues_evaluation_job(): void
     {
         $job = [
@@ -1791,6 +1879,121 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		);
 
 		delete_option( 'sentient_forms_form_config_gravity_forms_221' );
+	}
+
+	public function test_process_action_merges_action_level_defaults_for_non_spam_cps_actions(): void
+	{
+		update_option(
+			'sentient_forms_action_defaults_entry_summary_v1',
+			[
+				'model_selection' => [
+					'primary'   => 'sf_fast',
+					'backup'    => 'sf_quality',
+					'is_preset' => true,
+				],
+				'include_site_context' => 'never',
+			]
+		);
+
+		$executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+		$reflection = new ReflectionClass( $this->plugin );
+		$property   = $reflection->getProperty( 'action_executor' );
+		$property->setAccessible( true );
+		$property->setValue( $this->plugin, $executor );
+
+		$data = [
+			'form'  => [ 'id' => 224, 'title' => 'Action Defaults Model Test' ],
+			'entry' => [ 'id' => 804, 'field_1' => 'summary me' ],
+		];
+
+		$settings = [
+			'central_action_id'     => 'entry_summary_v1',
+			'action_type_indicator' => 'master',
+		];
+
+		$context = [
+			'form_source' => 'gravity_forms',
+			'form_id'     => 224,
+			'entry_id'    => 804,
+			'job_id'      => wp_generate_uuid4(),
+			'action_id'   => 'entry_summary_v1',
+		];
+
+		$handler = $this->plugin->get_async_handler();
+		$handler->process_action(
+			'entry_summary_v1',
+			$data,
+			$settings,
+			null,
+			$context
+		);
+
+		$captured_settings = $executor->captured['context']['settings'] ?? [];
+		$this->assertSame( 'sf_fast', $captured_settings['model_selection']['primary'] ?? null );
+		$this->assertSame( 'sf_quality', $captured_settings['model_selection']['backup'] ?? null );
+		$this->assertSame( 'never', $captured_settings['include_site_context'] ?? null );
+
+		delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
+	}
+
+	public function test_process_action_form_level_spam_policies_override_action_defaults(): void
+	{
+		update_option(
+			'sentient_forms_action_defaults_spam_detection_v1',
+			[
+				'suppress_notifications_on_spam' => true,
+				'skip_downstream_on_spam'        => false,
+			]
+		);
+		update_option(
+			'sentient_forms_form_config_gravity_forms_225',
+			[
+				'spam_detection_v1' => [
+					'suppress_notifications_on_spam' => false,
+					'skip_downstream_on_spam'        => true,
+				],
+			]
+		);
+
+		$executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+		$reflection = new ReflectionClass( $this->plugin );
+		$property   = $reflection->getProperty( 'action_executor' );
+		$property->setAccessible( true );
+		$property->setValue( $this->plugin, $executor );
+
+		$data = [
+			'form'  => [ 'id' => 225, 'title' => 'Spam Policy Override Test' ],
+			'entry' => [ 'id' => 805, 'field_1' => 'check policy' ],
+		];
+
+		$settings = [
+			'central_action_id'     => 'spam_detection_v1',
+			'action_type_indicator' => 'master',
+		];
+
+		$context = [
+			'form_source' => 'gravity_forms',
+			'form_id'     => 225,
+			'entry_id'    => 805,
+			'job_id'      => wp_generate_uuid4(),
+			'action_id'   => 'spam_detection_v1',
+		];
+
+		$handler = $this->plugin->get_async_handler();
+		$handler->process_action(
+			'spam_detection_v1',
+			$data,
+			$settings,
+			null,
+			$context
+		);
+
+		$captured_settings = $executor->captured['context']['settings'] ?? [];
+		$this->assertFalse( $captured_settings['suppress_notifications_on_spam'] ?? true );
+		$this->assertTrue( $captured_settings['skip_downstream_on_spam'] ?? false );
+
+		delete_option( 'sentient_forms_action_defaults_spam_detection_v1' );
+		delete_option( 'sentient_forms_form_config_gravity_forms_225' );
 	}
 
 	/**

@@ -8,6 +8,7 @@
 		Alert,
 		SelectField,
 		Toggle,
+		ModelSelector,
 		StateTemplate
 	} from '$lib/components/ui';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
@@ -20,11 +21,20 @@
 		FormSourceSummary,
 		FormSummary,
 		FormActionConfig,
-		FormExecutionStatus
+		FormExecutionStatus,
+		ModelSelection
 	} from '$lib/api/types';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { groupDefinitionsByCategory, getCategoryMeta } from '$lib/utils/action-categories';
 	import { getHealthBadge as resolveHealthBadge } from '$lib/utils/form-health';
+	import {
+		applyInheritableBooleanToConfig,
+		cloneDefaultModelSelection,
+		getInheritableBooleanMode,
+		isSpamActionCode,
+		type InheritableBooleanMode,
+		normalizeFormActionConfig
+	} from '$lib/utils/action-config';
 
 	const client = createClientFromConfig();
 	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
@@ -46,13 +56,13 @@
 	let healthByForm = $state<Map<string, FormExecutionStatus>>(new Map());
 	let healthLoading = $state<Set<string>>(new Set());
 
+	function createBlankActionDefaults(): FormActionConfig {
+		return normalizeFormActionConfig({});
+	}
+
 	// Action-level defaults state (global configuration)
 	let configuringActionId = $state<string | null>(null);
-	let actionDefaults = $state<FormActionConfig>({
-		include_site_context: 'global',
-		spam_positive_examples: [],
-		spam_negative_examples: []
-	});
+	let actionDefaults = $state<FormActionConfig>(createBlankActionDefaults());
 	let actionDefaultsLoading = $state(false);
 	let actionDefaultsSaving = $state(false);
 
@@ -134,6 +144,83 @@
 		}
 		if (err instanceof Error) return err.message ?? fallback;
 		return fallback;
+	}
+
+	function getActionDisplayName(actionId: string | null): string {
+		if (!actionId) {
+			return 'this action';
+		}
+
+		const definition = definitions.find((item) => item.id === actionId);
+		if (definition?.label) {
+			return definition.label;
+		}
+
+		const customAction = customActions.find((item) => item.code === actionId);
+		if (customAction?.display_name) {
+			return customAction.display_name;
+		}
+
+		return actionId;
+	}
+
+	function getActionDefinitionContext(actionId: string | null): {
+		actionId: string | null;
+		modelHint: string | null;
+		baseCreditCost: number | null;
+	} {
+		if (!actionId) {
+			return {
+				actionId: null,
+				modelHint: null,
+				baseCreditCost: null
+			};
+		}
+
+		const definition = definitions.find((item) => item.id === actionId);
+		if (definition) {
+			return {
+				actionId,
+				modelHint: definition.modelHint ?? null,
+				baseCreditCost: definition.baseCreditCost ?? null
+			};
+		}
+
+		const customAction = customActions.find((item) => item.code === actionId);
+		if (customAction) {
+			return {
+				actionId,
+				modelHint: customAction.model_hint ?? null,
+				baseCreditCost: customAction.base_credit_cost ?? null
+			};
+		}
+
+		return {
+			actionId,
+			modelHint: null,
+			baseCreditCost: null
+		};
+	}
+
+	function clearActionModelSelection() {
+		const nextDefaults = { ...actionDefaults };
+		delete nextDefaults.model_selection;
+		actionDefaults = nextDefaults;
+	}
+
+	function handleActionModelSelectionChange(selection: ModelSelection) {
+		actionDefaults = { ...actionDefaults, model_selection: selection };
+	}
+
+	function handleActionSpamPolicyChange(
+		field: 'suppress_notifications_on_spam' | 'skip_downstream_on_spam',
+		mode: string
+	) {
+		actionDefaults = applyInheritableBooleanToConfig(
+			actionDefaults,
+			field,
+			mode as InheritableBooleanMode
+		);
 	}
 
 	function normalizeProviderDisabledMap(
@@ -334,6 +421,10 @@
 		return form.settings && (form.settings as { enabled?: boolean })?.enabled === true;
 	}
 
+	function isProviderFormActive(form: FormSummary): boolean {
+		return form.provider_is_active !== false;
+	}
+
 	function prevPage() {
 		if (currentPage > 1) currentPage--;
 	}
@@ -368,25 +459,12 @@
 	async function loadActionDefaults(actionId: string) {
 		actionDefaultsLoading = true;
 		// Reset to defaults FIRST, then set configuringActionId to open modal immediately
-		actionDefaults = {
-			include_site_context: 'global' as const,
-			spam_positive_examples: [],
-			spam_negative_examples: []
-		};
+		actionDefaults = createBlankActionDefaults();
 		configuringActionId = actionId;
 
 		try {
 			const result = await client.getActionDefaults(actionId);
-
-			const configData =
-				result && typeof result === 'object' && !Array.isArray(result)
-					? result
-					: { include_site_context: 'global' as const };
-			actionDefaults = {
-				include_site_context: configData.include_site_context ?? 'global',
-				spam_positive_examples: configData.spam_positive_examples ?? [],
-				spam_negative_examples: configData.spam_negative_examples ?? []
-			};
+			actionDefaults = normalizeFormActionConfig(result);
 		} catch (error) {
 			console.warn('[ActionDefaults] Failed to load action defaults:', error);
 			notifications.warning('Could not load saved defaults. Starting fresh.');
@@ -412,11 +490,7 @@
 
 	function cancelActionDefaults() {
 		configuringActionId = null;
-		actionDefaults = {
-			include_site_context: 'global' as const,
-			spam_positive_examples: [],
-			spam_negative_examples: []
-		};
+		actionDefaults = createBlankActionDefaults();
 	}
 
 	function handleActionDefaultsBackdropClick(event: MouseEvent) {
@@ -496,17 +570,15 @@
 													</p>
 												</div>
 												<div class="sf:flex sf:items-center sf:gap-2">
-													{#if definition.id === 'spam_detection_v1' || definition.id === 'spam_analysis'}
-														<Button
-															size="sm"
-															variant="ghost"
-															onclick={() => loadActionDefaults(definition.id)}
-															disabled={actionDefaultsLoading}
-															data-testid={`action-defaults-button-${definition.id}`}
-														>
-															Defaults
-														</Button>
-													{/if}
+													<Button
+														size="sm"
+														variant="ghost"
+														onclick={() => loadActionDefaults(definition.id)}
+														disabled={actionDefaultsLoading}
+														data-testid={`action-defaults-button-${definition.id}`}
+													>
+														Defaults
+													</Button>
 													<Badge variant={formCount > 0 ? 'info' : 'neutral'}>
 														{formCount} form{formCount !== 1 ? 's' : ''}
 													</Badge>
@@ -557,6 +629,15 @@
 								<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
 							</div>
 							<div class="sf:flex sf:items-center sf:gap-2">
+								<Button
+									size="sm"
+									variant="ghost"
+									onclick={() => loadActionDefaults(action.code)}
+									disabled={actionDefaultsLoading}
+									data-testid={`action-defaults-button-${action.code}`}
+								>
+									Defaults
+								</Button>
 								<Badge variant={customFormCount > 0 ? 'info' : 'neutral'}>
 									{customFormCount} form{customFormCount !== 1 ? 's' : ''}
 								</Badge>
@@ -717,6 +798,7 @@
 					{#each displayedForms as form (form.id)}
 						{@const actionCount = configuredActionCount(form)}
 						{@const enabled = isFormEnabled(form)}
+						{@const providerActive = isProviderFormActive(form)}
 						{@const health = getHealthBadge(form)}
 						<Card>
 							<div class="sf:flex sf:justify-between sf:items-start sf:gap-3">
@@ -725,8 +807,11 @@
 									<p class="sf:text-xs sf:text-slate-500">ID: {form.id}</p>
 								</div>
 								<div class="sf:flex sf:flex-col sf:items-end sf:gap-1">
-									<Badge variant={enabled ? 'success' : 'neutral'}>
-										{enabled ? 'Active' : 'Inactive'}
+									<Badge variant={providerActive ? 'success' : 'warning'}>
+										{providerActive ? 'Form active' : 'Form inactive'}
+									</Badge>
+									<Badge variant={enabled ? 'info' : 'neutral'}>
+										{enabled ? 'Automation enabled' : 'Automation paused'}
 									</Badge>
 									<!-- CB-FORMS-003: Health badge -->
 									<span title={health.tooltip}>
@@ -747,6 +832,12 @@
 									<span class="sf:text-xs sf:text-amber-600">No actions configured</span>
 								{/if}
 							</div>
+							{#if !providerActive}
+								<p class="sf:mt-2 sf:text-xs sf:text-amber-700">
+									The provider form is inactive. Sentient Forms mappings remain editable, but the
+									form itself will not accept live submissions until it is reactivated.
+								</p>
+							{/if}
 							<div class="sf:mt-3">
 								<Button size="sm" onclick={() => openFormDetail(form)} class="sf:w-full">
 									Configure Actions
@@ -807,7 +898,8 @@
 						Global Action Defaults
 					</h2>
 					<p class="sf:text-sm sf:text-slate-500">
-						Configure default examples that apply across ALL forms using this action.
+						Configure defaults for <strong>{getActionDisplayName(configuringActionId)}</strong> across
+						all forms.
 					</p>
 				</div>
 				<Button
@@ -829,23 +921,85 @@
 				{:else}
 					<Alert variant="info">
 						<p class="sf:text-sm">
-							These examples serve as global defaults for <strong>Spam Detection</strong> across all forms.
-							Form-level and mapping-level settings can override these values.
+							Global defaults apply first. Form-level defaults and individual mappings can still
+							override them later.
 						</p>
 					</Alert>
 
-					<SpamCriteriaEditor
-						initiallyExpanded={true}
-						positiveExamples={actionDefaults.spam_positive_examples ?? []}
-						negativeExamples={actionDefaults.spam_negative_examples ?? []}
-						onchange={(data) => {
-							actionDefaults = {
-								...actionDefaults,
-								spam_positive_examples: data.positive,
-								spam_negative_examples: data.negative
-							};
-						}}
-					/>
+					<div class="sf:space-y-3">
+						<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center">
+							<div>
+								<p class="sf:text-sm sf:font-medium sf:text-slate-800">Default model</p>
+								<p class="sf:text-xs sf:text-slate-500">
+									Set the default model selection for this action across all forms.
+								</p>
+							</div>
+							{#if actionDefaults.model_selection}
+								<Button size="sm" variant="ghost" onclick={clearActionModelSelection}>
+									Use platform default
+								</Button>
+							{/if}
+						</div>
+						<ModelSelector
+							level="action"
+							value={actionDefaults.model_selection ?? cloneDefaultModelSelection()}
+							actionId={getActionDefinitionContext(configuringActionId).actionId}
+							templateModelHint={getActionDefinitionContext(configuringActionId).modelHint}
+							baseCreditCost={getActionDefinitionContext(configuringActionId).baseCreditCost}
+							actionSelection={actionDefaults.model_selection ?? null}
+							onchange={handleActionModelSelectionChange}
+						/>
+					</div>
+
+					{#if configuringActionId && isSpamActionCode(configuringActionId)}
+						<SpamCriteriaEditor
+							initiallyExpanded={true}
+							positiveExamples={actionDefaults.spam_positive_examples ?? []}
+							negativeExamples={actionDefaults.spam_negative_examples ?? []}
+							onchange={(data) => {
+								actionDefaults = {
+									...actionDefaults,
+									spam_positive_examples: data.positive,
+									spam_negative_examples: data.negative
+								};
+							}}
+						/>
+
+						<div class="sf:grid sf:gap-4 sf:md:grid-cols-2">
+							<SelectField
+								id="action-level-spam-notifications"
+								label="Spam notification policy"
+								description="Applies to Blocking spam mappings. Background mappings always allow notifications to send immediately."
+								value={getInheritableBooleanMode(actionDefaults.suppress_notifications_on_spam)}
+								options={[
+									{ value: 'inherit', label: 'Use platform default' },
+									{ value: 'enabled', label: 'Suppress notifications' },
+									{ value: 'disabled', label: 'Allow notifications' }
+								]}
+								onchange={(event) =>
+									handleActionSpamPolicyChange(
+										'suppress_notifications_on_spam',
+										event.currentTarget.value
+									)}
+							/>
+							<SelectField
+								id="action-level-spam-downstream"
+								label="Downstream spam gate"
+								description="Controls whether downstream work should stop when this spam action confirms spam."
+								value={getInheritableBooleanMode(actionDefaults.skip_downstream_on_spam)}
+								options={[
+									{ value: 'inherit', label: 'Use platform default' },
+									{ value: 'enabled', label: 'Skip downstream actions' },
+									{ value: 'disabled', label: 'Allow downstream actions' }
+								]}
+								onchange={(event) =>
+									handleActionSpamPolicyChange(
+										'skip_downstream_on_spam',
+										event.currentTarget.value
+									)}
+							/>
+						</div>
+					{/if}
 
 					<SelectField
 						id="action-level-context"
@@ -860,7 +1014,8 @@
 
 					<p class="sf:text-xs sf:text-slate-500 sf:pt-2 sf:flex sf:items-center sf:gap-1">
 						<span class="sf:text-amber-500">⚠</span>
-						These settings apply globally. Override at the form or mapping level for specific cases.
+						These settings apply globally. Override them per form or per mapping when the workflow
+						needs something different.
 					</p>
 				{/if}
 			</div>

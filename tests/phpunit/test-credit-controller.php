@@ -30,6 +30,8 @@ class CreditControllerTest extends WP_UnitTestCase
         Sentient_Forms_Plugin::instance()->clear_license_data();
         add_filter( 'sentient_forms_rest_api_controller_classes', '__return_empty_array' );
         remove_all_filters( 'pre_http_request' );  // Clean up HTTP mocks between tests
+        delete_option( 'sentient_forms_settings' );
+        putenv( 'SENTIENT_FORMS_PROXY_API_URL' );
         parent::tearDown();
     }
 
@@ -73,6 +75,74 @@ class CreditControllerTest extends WP_UnitTestCase
         $this->assertSame( 850, $data['current_balance'] );
         $this->assertArrayHasKey( 'tier', $data );
         $this->assertSame( 'pro', $data['tier']['code'] );
+    }
+
+    public function test_balance_uses_plugin_cps_client_base_url_instead_of_legacy_env_override(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'proxy_api_key' => 'proxy-key-123',
+        ] );
+
+        putenv( 'SENTIENT_FORMS_PROXY_API_URL=http://env-cps.invalid/v1' );
+        $options = $plugin->get_options();
+        $options['cps_base_url'] = 'http://option-cps.test/v1';
+        $plugin->update_options( $options );
+        $this->reset_plugin_cps_api_client();
+
+        $requested_urls = [];
+
+        add_filter(
+            'pre_http_request',
+            function ( $preempt, $args, $url ) use ( &$requested_urls ) {
+                $requested_urls[] = $url;
+
+                if ( $url === 'http://option-cps.test/v1/credits/balance' ) {
+                    return [
+                        'headers'  => [],
+                        'body'     => wp_json_encode(
+                            [
+                                'success' => true,
+                                'data'    => [
+                                    'current_balance' => -4,
+                                    'ledger_delta'    => -54,
+                                    'top_up_available' => 0,
+                                    'balance_state'   => 'negative',
+                                    'tier'            => [
+                                        'code'                 => 'free',
+                                        'display_name'         => 'Free',
+                                        'monthly_credit_quota' => 50,
+                                    ],
+                                ],
+                            ]
+                        ),
+                        'response' => [
+                            'code'    => 200,
+                            'message' => 'OK',
+                        ],
+                    ];
+                }
+
+                return $preempt;
+            },
+            10,
+            3
+        );
+
+        $controller = new Sentient_Forms_Credit_Controller();
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/credits/balance' );
+        $request->set_param( 'force_refresh', true );
+        $response = $controller->get_credit_balance( $request );
+
+        $this->assertContains( 'http://option-cps.test/v1/credits/balance', $requested_urls );
+        $this->assertNotContains( 'http://env-cps.invalid/v1/credits/balance', $requested_urls );
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+
+        $this->assertSame( -4, $data['current_balance'] );
+        $this->assertSame( -54, $data['ledger_delta'] );
+        $this->assertSame( 0, $data['top_up_available'] );
+        $this->assertSame( 'negative', $data['balance_state'] );
     }
 
     public function test_balance_returns_error_without_license(): void
@@ -146,5 +216,13 @@ class CreditControllerTest extends WP_UnitTestCase
             10,
             3
         );
+    }
+
+    private function reset_plugin_cps_api_client(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $property = new ReflectionProperty( $plugin, 'cps_api_client' );
+        $property->setAccessible( true );
+        $property->setValue( $plugin, null );
     }
 }

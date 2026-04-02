@@ -73,6 +73,34 @@ const friendlyMessages: Record<string, string> = {
 		'Sentient Forms already processed this submission. Refresh the status to review the previous result.'
 };
 
+function formatCreditCount(value: number): string {
+	const absolute = Math.abs(value).toLocaleString();
+	const label = Math.abs(value) === 1 ? 'credit' : 'credits';
+	return `${value < 0 ? '-' : ''}${absolute} ${label}`;
+}
+
+function insufficientCreditsMessage(payload: ApiErrorPayload | null): string {
+	const meta = payload?.error?.meta;
+	const currentBalance =
+		typeof meta?.current_balance === 'number' && Number.isFinite(meta.current_balance)
+			? meta.current_balance
+			: null;
+	const requiredCredits =
+		typeof meta?.required_credits === 'number' && Number.isFinite(meta.required_credits)
+			? meta.required_credits
+			: null;
+
+	if (currentBalance !== null && currentBalance < 0) {
+		return `Sentient Forms paused new runs because this license has a negative balance of ${formatCreditCount(currentBalance)}. Visit the Licensing tab to add credits before retrying.`;
+	}
+
+	if (currentBalance !== null && requiredCredits !== null) {
+		return `Sentient Forms needs ${formatCreditCount(requiredCredits)} for this run, but only ${formatCreditCount(currentBalance)} remain. Visit the Licensing tab to add credits before retrying.`;
+	}
+
+	return friendlyMessages.insufficient_credits;
+}
+
 function friendlyMessageFromError(error: unknown, fallback: string): string {
 	if (error instanceof ApiClientError) {
 		const payload = (error.payload ?? null) as ApiErrorPayload | null;
@@ -81,16 +109,20 @@ function friendlyMessageFromError(error: unknown, fallback: string): string {
 				? (payload.error as { code?: string }).code ?? ''
 				: '';
 		const code = error.code || nestedCode || '';
-		const payloadMessage =
-			typeof payload?.error?.message === 'string'
-				? payload?.error?.message
-				: typeof payload?.message === 'string'
-					? payload?.message
-					: undefined;
+			const payloadMessage =
+				typeof payload?.error?.message === 'string'
+					? payload?.error?.message
+					: typeof payload?.message === 'string'
+						? payload?.message
+						: undefined;
 
-		if (code && friendlyMessages[code]) {
-			return friendlyMessages[code];
-		}
+			if (code === 'insufficient_credits') {
+				return insufficientCreditsMessage(payload);
+			}
+
+			if (code && friendlyMessages[code]) {
+				return friendlyMessages[code];
+			}
 
 		if (payloadMessage) {
 			return payloadMessage;

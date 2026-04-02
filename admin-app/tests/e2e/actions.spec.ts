@@ -1062,7 +1062,7 @@ test.describe('Actions admin flows', () => {
 		expect(settings.dependency_ids).toBeUndefined();
 	});
 
-	test('shows spam-aware skip toggle only when after-submission trigger source is spam detection', async ({
+	test('shows spam-aware skip toggle for validation and after-submission spam dependencies only', async ({
 		page
 	}) => {
 		const definitions = [
@@ -1070,7 +1070,7 @@ test.describe('Actions admin flows', () => {
 				id: 'spam_detection_v1',
 				label: 'Spam detection',
 				source: 'cps',
-				hooks: ['gform_after_submission'],
+				hooks: ['gform_validation', 'gform_after_submission'],
 				base_credit_cost: 10,
 				model_hint: 'gemini-1.5-flash'
 			},
@@ -1078,18 +1078,49 @@ test.describe('Actions admin flows', () => {
 				id: 'entry_summary_v1',
 				label: 'Entry summary',
 				source: 'cps',
-				hooks: ['gform_after_submission'],
+				hooks: ['gform_validation', 'gform_after_submission'],
+				base_credit_cost: 8,
+				model_hint: 'gemini-1.5-pro'
+			},
+			{
+				id: 'content_validation_v1',
+				label: 'Content validation',
+				source: 'cps',
+				hooks: ['gform_validation', 'gform_after_submission'],
 				base_credit_cost: 8,
 				model_hint: 'gemini-1.5-pro'
 			}
 		];
 		const linkages = [
 			{
+				local_mapping_id: 'map-spam-validation',
+				central_action_id: 'spam_detection_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Validation spam gate',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-validation-gated',
+				central_action_id: 'content_validation_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Validation after spam gate',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {
+					dependency_ids: ['map-spam-validation'],
+					trigger_sources: {
+						gform_validation: { type: 'mapping', mapping_id: 'map-spam-validation' }
+					}
+				}
+			},
+			{
 				local_mapping_id: 'map-spam',
 				central_action_id: 'spam_detection_v1',
 				action_type_indicator: 'master',
 				action_name_label: 'Spam gate',
-				trigger_hooks: ['gform_after_submission'],
+				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
 				settings: {}
 			},
@@ -1104,6 +1135,21 @@ test.describe('Actions admin flows', () => {
 					dependency_ids: ['map-spam'],
 					trigger_sources: {
 						gform_after_submission: { type: 'mapping', mapping_id: 'map-spam' }
+					}
+				}
+			},
+			{
+				local_mapping_id: 'map-mixed-spam-gated',
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Mixed hook spam gate',
+				trigger_hooks: ['gform_validation', 'gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {
+					dependency_ids: ['map-spam-validation'],
+					trigger_sources: {
+						gform_validation: { type: 'mapping', mapping_id: 'map-spam-validation' },
+						gform_after_submission: { type: 'hook_root' }
 					}
 				}
 			},
@@ -1163,14 +1209,34 @@ test.describe('Actions admin flows', () => {
 
 		await table
 			.locator('tbody tr')
-			.filter({ hasText: 'Summary after spam gate' })
+			.filter({ hasText: 'Validation after spam gate' })
 			.getByRole('button', { name: 'Configure' })
 			.first()
 			.click();
 		let modal = page.getByTestId('mapping-config-modal');
 		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toBeVisible();
+		await modal.getByTestId('mapping-config-close-header').click();
+
+		await table
+			.locator('tbody tr')
+			.filter({ hasText: 'Summary after spam gate' })
+			.getByRole('button', { name: 'Configure' })
+			.first()
+			.click();
+		modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toBeVisible();
 		await modal.getByTestId('mapping-config-make-autonomous').click();
 		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toHaveCount(0);
+		await modal.getByTestId('mapping-config-close-header').click();
+
+		await table
+			.locator('tbody tr')
+			.filter({ hasText: 'Mixed hook spam gate' })
+			.getByRole('button', { name: 'Configure' })
+			.first()
+			.click();
+		modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toBeVisible();
 		await modal.getByTestId('mapping-config-close-header').click();
 
 		await table
@@ -1183,21 +1249,21 @@ test.describe('Actions admin flows', () => {
 		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toHaveCount(0);
 	});
 
-	test('persists skip_on_upstream_spam for eligible dependent mappings', async ({ page }) => {
+	test('persists skip_on_upstream_spam for eligible validation dependent mappings', async ({ page }) => {
 		const definitions = [
 			{
 				id: 'spam_detection_v1',
 				label: 'Spam detection',
 				source: 'cps',
-				hooks: ['gform_after_submission'],
+				hooks: ['gform_validation', 'gform_after_submission'],
 				base_credit_cost: 10,
 				model_hint: 'gemini-1.5-flash'
 			},
 			{
-				id: 'entry_summary_v1',
-				label: 'Entry summary',
+				id: 'content_validation_v1',
+				label: 'Content validation',
 				source: 'cps',
-				hooks: ['gform_after_submission'],
+				hooks: ['gform_validation'],
 				base_credit_cost: 8,
 				model_hint: 'gemini-1.5-pro'
 			}
@@ -1208,21 +1274,21 @@ test.describe('Actions admin flows', () => {
 				central_action_id: 'spam_detection_v1',
 				action_type_indicator: 'master',
 				action_name_label: 'Spam gate',
-				trigger_hooks: ['gform_after_submission'],
+				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
 				settings: {}
 			},
 			{
 				local_mapping_id: 'map-summary',
-				central_action_id: 'entry_summary_v1',
+				central_action_id: 'content_validation_v1',
 				action_type_indicator: 'master',
-				action_name_label: 'Entry summary',
-				trigger_hooks: ['gform_after_submission'],
+				action_name_label: 'Content validation',
+				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
 				settings: {
 					dependency_ids: ['map-spam'],
 					trigger_sources: {
-						gform_after_submission: { type: 'mapping', mapping_id: 'map-spam' }
+						gform_validation: { type: 'mapping', mapping_id: 'map-spam' }
 					}
 				}
 			}
@@ -1245,7 +1311,7 @@ test.describe('Actions admin flows', () => {
 		const table = await openLinkedActionsTable(page);
 		await table
 			.locator('tbody tr')
-			.filter({ hasText: 'Entry summary' })
+			.filter({ hasText: 'Content validation' })
 			.getByRole('button', { name: 'Configure' })
 			.first()
 			.click();
@@ -1266,8 +1332,8 @@ test.describe('Actions admin flows', () => {
 
 		expect(settings.skip_on_upstream_spam).toBe(true);
 		expect(settings.dependency_ids).toEqual(['map-spam']);
-		expect(settings.trigger_sources?.gform_after_submission?.type).toBe('mapping');
-		expect(settings.trigger_sources?.gform_after_submission?.mapping_id).toBe('map-spam');
+		expect(settings.trigger_sources?.gform_validation?.type).toBe('mapping');
+		expect(settings.trigger_sources?.gform_validation?.mapping_id).toBe('map-spam');
 	});
 
 	test('saves dependency_ids directly in graph view', async ({ page }) => {
@@ -2896,7 +2962,7 @@ test.describe('Actions admin flows', () => {
 				'[data-nodeid="map-2"][data-handleid="dependency-target"]',
 				{
 					expectRejected: true,
-					rejectedMessage: /must also run async|cannot depend on async/i,
+					rejectedMessage: /must also run in background|cannot depend on background/i,
 					allowNoFeedbackOnFailure: true
 				}
 			);

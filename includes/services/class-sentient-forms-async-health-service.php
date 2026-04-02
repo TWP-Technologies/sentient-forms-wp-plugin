@@ -64,7 +64,7 @@ class Sentient_Forms_Async_Health_Service
             $warnings[] = [
                 'code'    => 'queue_backlog',
                 'level'   => 'warning',
-                'message' => sprintf( __( 'Async queue backlog: %d jobs pending (threshold %d).', 'sentient-forms' ), $queue_depth, $queue_threshold ),
+                'message' => sprintf( __( 'Background queue backlog: %d jobs pending (threshold %d).', 'sentient-forms' ), $queue_depth, $queue_threshold ),
                 'data'    => [ 'queue_depth' => $queue_depth, 'threshold' => $queue_threshold, 'oldest_run_at' => $oldest_run ],
             ];
         }
@@ -88,7 +88,7 @@ class Sentient_Forms_Async_Health_Service
             $warnings[] = [
                 'code'    => 'scheduler_missing',
                 'level'   => 'error',
-                'message' => __( 'Action Scheduler is not available; Sentient Forms async jobs will not run.', 'sentient-forms' ),
+                'message' => __( 'Action Scheduler is not available; Sentient Forms background jobs will not run.', 'sentient-forms' ),
                 'data'    => [],
             ];
         }

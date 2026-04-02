@@ -146,13 +146,17 @@ export interface BillingStateResponse {
 
 export interface ApiErrorPayload {
 	error_code?: string;
-	error?: {
-		code?: string;
-		message?: string;
-		meta?: {
-			provider_subscription_id?: string;
-			stripe_error?: {
-				status?: number;
+		error?: {
+			code?: string;
+			message?: string;
+			meta?: {
+				current_balance?: number;
+				required_credits?: number;
+				deficit_credits?: number;
+				balance_state?: 'negative_carry' | 'insufficient_estimate' | string;
+				provider_subscription_id?: string;
+				stripe_error?: {
+					status?: number;
 				code?: string;
 				decline_code?: string;
 				message?: string;
@@ -372,6 +376,10 @@ export interface FormActionSettings {
 	trigger_sources?: Record<string, TriggerSourceConfig>;
 	/** Skip this mapping when its upstream spam check classified the entry as spam */
 	skip_on_upstream_spam?: boolean;
+	/** Explicit mapping override for suppressing notifications when spam is confirmed */
+	suppress_notifications_on_spam?: boolean;
+	/** Explicit mapping override for skipping downstream work when spam is confirmed */
+	skip_downstream_on_spam?: boolean;
 	/** Conditional run gates for this mapping (CB-FORMS-006) */
 	conditions?: MappingConditionsConfig;
 	/** Prompt overrides for this mapping */
@@ -617,6 +625,76 @@ export interface FormDisableStateResponse {
 	message?: string;
 }
 
+export interface ModelSelection {
+	primary: string;
+	backup?: string | null;
+	is_preset: boolean;
+}
+
+export interface ModelInfo {
+	id: string;
+	display_name: string;
+	provider: string;
+	speed_tier: string;
+	cost_tier: string;
+	capabilities: {
+		reasoning: boolean;
+		code: boolean;
+		vision: boolean;
+		tools: boolean;
+		long_context: boolean;
+	};
+	context_window: number;
+	is_preview: boolean;
+	tags: string[];
+	recommended_for: string[];
+}
+
+export interface ModelPreset {
+	code: string;
+	display_name: string;
+	description: string;
+	category: string;
+	resolved_model_id: string;
+	auto_upgrade: boolean;
+}
+
+export interface ModelResolutionStep {
+	level: string;
+	selection: string | null;
+	applied: boolean;
+	reason: string;
+}
+
+export interface ResolvedModelSelection {
+	model_id: string;
+	display_name: string;
+	resolution_source: string;
+	override_chain: ModelResolutionStep[];
+	backup_model_id: string | null;
+}
+
+export interface ModelPricingEstimate {
+	action_id: string;
+	resolved_model_id: string;
+	base_floor_credits: number;
+	normalized_actual_credits: number;
+	estimated_debit_credits: number;
+	pricing_policy_version: string;
+	estimate_source: 'resolved_model' | 'fallback' | 'legacy' | string;
+}
+
+export interface ModelCatalogResponse {
+	models: ModelInfo[];
+	presets: ModelPreset[];
+	pricing_policy_version?: string;
+}
+
+export interface ModelEstimateResponse {
+	resolved_model: ResolvedModelSelection;
+	pricing_estimate: ModelPricingEstimate;
+}
+
 /**
  * Form-level action configuration (hierarchical examples storage)
  * This configuration persists at the form level, surviving action mapping deletion.
@@ -626,9 +704,15 @@ export interface FormActionConfig {
 	spam_positive_examples?: string[];
 	/** Examples of spam submissions (negative examples) */
 	spam_negative_examples?: string[];
+	/** Default policy for suppressing notifications when blocking spam checks confirm spam */
+	suppress_notifications_on_spam?: boolean;
+	/** Default policy for skipping downstream work when spam is confirmed */
+	skip_downstream_on_spam?: boolean;
 	/** Site context inclusion: 'global' | 'always' | 'never' */
 	include_site_context?: 'global' | 'always' | 'never';
-	/** Model override for this action on this form */
+	/** Structured model selection default for this action scope */
+	model_selection?: ModelSelection;
+	/** Legacy string model override retained for transition reads */
 	model_override?: string;
 	/** Last update timestamp */
 	updated_at?: string;
@@ -854,6 +938,7 @@ export interface FormSummary {
 	title: string;
 	adapter: string;
 	adapter_name?: string;
+	provider_is_active?: boolean;
 	settings?: Record<string, unknown> | null;
 }
 

@@ -1,8 +1,12 @@
 import type { CreditBalanceResponse, TierSummary } from '$lib/api/types';
 
 export type CreditSeverity = 'normal' | 'warning' | 'critical' | 'unknown';
-export type QuotaCtaAction = 'navigate_licensing' | 'open_billing' | 'none';
-export type QuotaUiContext = 'dashboard' | 'licensing';
+export type QuotaCtaAction =
+	| 'navigate_licensing'
+	| 'focus_licensing_billing'
+	| 'open_billing'
+	| 'none';
+export type QuotaUiContext = 'dashboard' | 'licensing' | 'global';
 
 export interface QuotaCtaState {
 	label: string;
@@ -18,6 +22,7 @@ export interface CreditPresentationState {
 	severity: CreditSeverity;
 	headline: string;
 	detail: string;
+	calloutTitle: string;
 	quotaCta: QuotaCtaState | null;
 }
 
@@ -126,18 +131,34 @@ export function licenseStatusToBadgeVariant(
 
 function buildQuotaCtaState(
 	severity: CreditSeverity,
-	context: QuotaUiContext
+	context: QuotaUiContext,
+	balance: number | null
 ): QuotaCtaState | null {
 	if (severity === 'normal') {
 		return null;
 	}
 
+	const hasNegativeBalance = balance !== null && balance < 0;
+
+	if (context === 'global' && (severity === 'warning' || severity === 'critical')) {
+		return {
+			label: hasNegativeBalance ? 'Resolve balance' : 'Top up credits',
+			enabled: true,
+			reason: hasNegativeBalance
+				? 'Open Licensing to add credits and clear the negative balance before new runs resume.'
+				: 'Open Licensing to review current credit status and buy top-up credits.',
+			action: 'focus_licensing_billing'
+		};
+	}
+
 	if (context === 'dashboard' && (severity === 'warning' || severity === 'critical')) {
 		return {
-			label: 'Review licensing',
+			label: hasNegativeBalance ? 'Resolve balance' : 'Top up credits',
 			enabled: true,
-			reason: 'Open Licensing to review current credit status and next steps.',
-			action: 'navigate_licensing'
+			reason: hasNegativeBalance
+				? 'Open Licensing to add credits and clear the negative balance before new runs resume.'
+				: 'Open Licensing to review current credit status and buy top-up credits.',
+			action: 'focus_licensing_billing'
 		};
 	}
 
@@ -152,10 +173,12 @@ function buildQuotaCtaState(
 
 	if (context === 'licensing' && (severity === 'warning' || severity === 'critical')) {
 		return {
-			label: 'Manage billing',
+			label: hasNegativeBalance ? 'Resolve balance' : 'View top-up options',
 			enabled: true,
-			reason: 'Open billing management to upgrade plans, adjust seats, or update payment details.',
-			action: 'open_billing'
+			reason: hasNegativeBalance
+				? 'Jump to the billing section to buy top-up credits and clear the negative balance.'
+				: 'Jump to the billing section to buy top-up credits or review plan changes.',
+			action: 'focus_licensing_billing'
 		};
 	}
 
@@ -185,6 +208,7 @@ export function buildCreditPresentation(
 	const balance = normalizeBalance(credits);
 	const quota = normalizeQuota(credits);
 	const severity = resolveCreditSeverity(balance, quota);
+	const hasNegativeBalance = balance !== null && balance < 0;
 
 	const percentage =
 		balance !== null && quota !== null
@@ -192,25 +216,36 @@ export function buildCreditPresentation(
 			: null;
 
 	let headline = 'Credit balance unavailable';
+	let calloutTitle = 'Credit balance unavailable';
 	if (balance !== null && quota !== null) {
 		headline = `${balance} / ${quota} credits remaining`;
 	}
 
-	if (severity === 'critical') {
+	if (hasNegativeBalance && balance !== null) {
+		headline = `Negative balance: ${balance} credits`;
+		calloutTitle = 'Negative credit balance';
+	} else if (severity === 'critical') {
 		headline = 'No credits remaining';
+		calloutTitle = 'No credits remaining';
 	} else if (severity === 'warning' && balance !== null && quota !== null) {
 		headline = `Low credits: ${balance} / ${quota}`;
+		calloutTitle = 'Low credits remaining';
 	} else if (severity === 'unknown' && balance !== null) {
 		headline = `${balance} credits remaining`;
+		calloutTitle = 'Credit balance unavailable';
+	} else if (severity === 'normal') {
+		calloutTitle = 'Credit usage healthy';
 	}
 
 	let detail = `${resetSummary}.`;
-	if (severity === 'normal') {
+	if (hasNegativeBalance) {
+		detail = `A recent run settled above its estimate. New runs are paused until the balance returns to zero or above. ${resetSummary}.`;
+	} else if (severity === 'normal') {
 		detail = `${resetSummary}. Usage is healthy.`;
 	} else if (severity === 'warning') {
 		detail = `${resetSummary}. Low balance, consider upgrading soon to avoid interruptions.`;
 	} else if (severity === 'critical') {
-		detail = `Actions may pause until credits reset. ${resetSummary}.`;
+		detail = `Actions may pause until credits reset or you add more. ${resetSummary}.`;
 	} else if (severity === 'unknown') {
 		detail = `Credit details are currently unavailable. ${resetSummary}.`;
 	}
@@ -222,6 +257,7 @@ export function buildCreditPresentation(
 		severity,
 		headline,
 		detail,
-		quotaCta: buildQuotaCtaState(severity, context)
+		calloutTitle,
+		quotaCta: buildQuotaCtaState(severity, context, balance)
 	};
 }

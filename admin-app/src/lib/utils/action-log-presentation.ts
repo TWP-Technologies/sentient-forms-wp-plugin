@@ -1,4 +1,4 @@
-export type ActionLogStatus = 'pending' | 'success' | 'error';
+export type ActionLogStatus = 'pending' | 'success' | 'blocked' | 'error';
 
 export type ActionLogFilters = {
 	formId: string;
@@ -58,6 +58,7 @@ export type PaginationPresentation = {
 const STATUS_LABELS: Record<ActionLogStatus, string> = {
 	success: 'Success',
 	pending: 'Pending',
+	blocked: 'Blocked',
 	error: 'Error'
 };
 
@@ -122,6 +123,7 @@ export function statusVariantForActionLog(status: ActionLogStatus): ActionLogSta
 			return 'success';
 		case 'pending':
 			return 'warning';
+		case 'blocked':
 		case 'error':
 			return 'danger';
 		default:
@@ -133,12 +135,13 @@ export function buildActionLogRowPresentation(entry: ActionLogRowInput): ActionL
 	const statusLabel = STATUS_LABELS[entry.status];
 	const statusVariant = statusVariantForActionLog(entry.status);
 
-	const outputLabel = entry.status === 'success'
+	const hasExecutionOutput = entry.status === 'success' || entry.status === 'blocked';
+	const outputLabel = hasExecutionOutput
 		? entry.structuredOutputValid
 			? 'Structured'
 			: 'Raw'
 		: 'Not available';
-	const outputVariant = entry.status === 'success'
+	const outputVariant = hasExecutionOutput
 		? entry.structuredOutputValid
 			? 'success'
 			: 'warning'

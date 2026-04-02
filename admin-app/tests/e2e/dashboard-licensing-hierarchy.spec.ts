@@ -95,7 +95,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('dashboard-quota-cta-callout')).toHaveCount(0);
 	});
 
-	test('dashboard surfaces exhausted credits urgency in overview copy', async ({ page }) => {
+		test('dashboard surfaces exhausted credits urgency in overview copy', async ({ page }) => {
 		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
 			route.fulfill({
 				status: 200,
@@ -134,18 +134,66 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('dashboard-credits-headline')).toContainText('No credits remaining');
 		await expect(page.getByTestId('dashboard-credits-severity')).toContainText('Exhausted');
 		await expect(page.getByTestId('dashboard-credits-detail')).toContainText('Actions may pause');
-		await expect(page.getByTestId('dashboard-quota-cta-callout')).toBeVisible();
-		await expect(page.getByTestId('dashboard-quota-cta-reason')).toContainText(
-			'Open Licensing to review current credit status and next steps.'
-		);
-		await expect(page.getByTestId('dashboard-quota-cta-button')).toBeEnabled();
+			await expect(page.getByTestId('dashboard-quota-cta-callout')).toBeVisible();
+			await expect(page.getByTestId('dashboard-quota-cta-reason')).toContainText(
+				'Open Licensing to review current credit status and buy top-up credits.'
+			);
+			await expect(page.getByTestId('dashboard-quota-cta-button')).toBeEnabled();
 
 		await page.getByTestId('dashboard-quota-cta-button').click();
 		await expectAppUrl(page, '/licensing');
 		await expect(page.getByRole('heading', { name: 'License management' })).toBeVisible();
-		await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
-		await expect(page.getByTestId('licensing-quota-cta-button')).toBeEnabled();
-	});
+			await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
+			await expect(page.getByTestId('licensing-quota-cta-button')).toBeEnabled();
+		});
+
+		test('dashboard distinguishes negative carry debt from ordinary zero balance', async ({ page }) => {
+			await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
+				route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						status: 'active',
+						license_key_masked: 'LIC-****-****-1234',
+						proxy_key_present: true,
+						tier: 'starter',
+						expires_at: '2030-01-01T00:00:00Z',
+						last_synced: '2030-01-05T10:00:00Z',
+						license_id: 'lic-1',
+						site_id: 'site-1',
+						site_url: 'https://example.test'
+					})
+				})
+			);
+
+			await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
+				route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						current_balance: -4,
+						tier: {
+							code: 'starter',
+							display_name: 'Starter',
+							monthly_credit_quota: 100
+						}
+					})
+				})
+			);
+
+			await page.goto('/#/dashboard', { waitUntil: 'networkidle' });
+
+			await expect(page.getByTestId('dashboard-credits-headline')).toContainText(
+				'Negative balance: -4 credits'
+			);
+			await expect(page.getByTestId('dashboard-credits-detail')).toContainText(
+				'New runs are paused until the balance returns to zero or above.'
+			);
+			await expect(page.getByTestId('dashboard-quota-cta-callout')).toContainText(
+				'Negative credit balance'
+			);
+			await expect(page.getByTestId('dashboard-quota-cta-button')).toContainText('Resolve balance');
+		});
 
 	test('dashboard shows shared error state when both dashboard requests fail', async ({ page }) => {
 		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
@@ -217,12 +265,12 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('licensing-reset-summary')).toContainText('Resets');
 		await expect(page.getByTestId('licensing-details-status')).toContainText('active');
 		await expect(page.getByText('Tier: Starter')).toBeVisible();
-		await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
-		await expect(page.getByTestId('licensing-quota-cta-button')).toBeEnabled();
-		await expect(page.getByTestId('licensing-quota-cta-reason')).toContainText(
-			'Open billing management to upgrade plans, adjust seats, or update payment details.'
-		);
-	});
+			await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
+			await expect(page.getByTestId('licensing-quota-cta-button')).toBeEnabled();
+			await expect(page.getByTestId('licensing-quota-cta-reason')).toContainText(
+				'Jump to the billing section to buy top-up credits or review plan changes.'
+			);
+		});
 
 	test('licensing inactive flow still presents activation form', async ({ page }) => {
 		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>

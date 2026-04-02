@@ -1,19 +1,30 @@
-<script lang="ts">
-	import { page } from '$app/state';
-	import { onMount } from 'svelte';
-	import {
-		appHref,
+	<script lang="ts">
+		import type { CreditBalanceResponse } from '$lib/api/types';
+		import { page } from '$app/state';
+		import { onMount } from 'svelte';
+		import {
+			appHref,
 		deriveActivePath,
 		navigateToAppPath,
 		readHashPathFromLocation,
-		resolveActiveNavPath,
-		routerType,
-		type NavigationLinkPath
-	} from '$lib/navigation';
-	import { Button } from '$lib/components/ui';
-	interface Props {
-		children?: import('svelte').Snippet;
-	}
+			resolveActiveNavPath,
+			routerType,
+			type NavigationLinkPath
+		} from '$lib/navigation';
+		import { Button, QuotaCtaCallout } from '$lib/components/ui';
+		import { loadLicenseInfoSnapshot } from '$lib/stores/license';
+		import { sessionStore, type LicenseStatus } from '$lib/stores/session';
+		import { getNextCreditReset } from '$lib/utils/credits';
+		import {
+			buildCreditPresentation,
+			type CreditSeverity,
+			isConnectedLicenseStatus,
+			type QuotaCtaAction
+		} from '$lib/utils/license-health-presentation';
+		import { wpFetch } from '$lib/wp';
+		interface Props {
+			children?: import('svelte').Snippet;
+		}
 
 	let { children }: Props = $props();
 
@@ -28,19 +39,86 @@
 
 	let renderedPath = $derived(deriveActivePath(page.url));
 	let activePath = $derived(resolveActiveNavPath(renderedPath));
-	let mismatchKey = $state<string | null>(null);
-	let softRepairAttempted = $state(false);
-	let hardRepairAttempted = $state(false);
+		let mismatchKey = $state<string | null>(null);
+		let softRepairAttempted = $state(false);
+		let hardRepairAttempted = $state(false);
+		let shellCredits = $state<CreditBalanceResponse | null>(null);
+		let shellCreditRefreshPending = $state(false);
 
-	function handleNavClick(event: MouseEvent, path: NavigationLinkPath): void {
-		if (event.defaultPrevented || event.button !== 0) return;
-		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-		event.preventDefault();
-		void navigateToAppPath(path);
-	}
+		let resetInfo = $derived(getNextCreditReset());
+		let shellCreditPresentation = $derived(
+			buildCreditPresentation(shellCredits, resetInfo.summary, 'global')
+		);
+		let showGlobalCreditBanner = $derived(
+			activePath !== '/dashboard' &&
+				activePath !== '/licensing' &&
+				shellCreditPresentation.quotaCta !== null &&
+				isConnectedLicenseStatus($sessionStore.licenseStatus) &&
+				$sessionStore.proxyKeyPresent
+		);
 
-	$effect(() => {
-		if (routerType !== 'hash' || typeof window === 'undefined') return;
+		function handleNavClick(event: MouseEvent, path: NavigationLinkPath): void {
+			if (event.defaultPrevented || event.button !== 0) return;
+			if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+			event.preventDefault();
+			void navigateToAppPath(path);
+		}
+
+		function mapQuotaCalloutSeverity(
+			severity: CreditSeverity
+		): Exclude<CreditSeverity, 'normal'> {
+			return severity === 'normal' ? 'unknown' : severity;
+		}
+
+		function handleGlobalQuotaAction(action: QuotaCtaAction): void {
+			if (action === 'focus_licensing_billing') {
+				void navigateToAppPath('/licensing?focus=billing');
+				return;
+			}
+
+			if (action === 'navigate_licensing') {
+				void navigateToAppPath('/licensing');
+			}
+		}
+
+		async function refreshShellCreditHealth(): Promise<void> {
+			if (shellCreditRefreshPending) {
+				return;
+			}
+
+			shellCreditRefreshPending = true;
+
+			try {
+				const license = await loadLicenseInfoSnapshot();
+				const hydratedLicenseStatus = (license.status as LicenseStatus) ?? 'inactive';
+
+				sessionStore.hydrate({
+					siteUrl: license.site_url ?? window.location.origin,
+					licenseStatus: hydratedLicenseStatus,
+					proxyKeyPresent: license.proxy_key_present ?? false,
+					lastSync: license.last_synced ?? null
+				});
+
+				if (isConnectedLicenseStatus(hydratedLicenseStatus) && license.proxy_key_present) {
+					const credits = await wpFetch<CreditBalanceResponse>('credits/balance?force_refresh=1');
+					shellCredits = credits;
+					sessionStore.hydrate({
+						creditsRemaining: credits.current_balance
+					});
+				} else {
+					shellCredits = null;
+					sessionStore.hydrate({ creditsRemaining: null });
+				}
+			} catch (error) {
+				console.error('Failed to refresh app credit health', error);
+				shellCredits = null;
+			} finally {
+				shellCreditRefreshPending = false;
+			}
+		}
+
+		$effect(() => {
+			if (routerType !== 'hash' || typeof window === 'undefined') return;
 
 		const hashPath = readHashPathFromLocation();
 		if (hashPath === renderedPath) {
@@ -63,16 +141,24 @@
 			return;
 		}
 
-		if (!hardRepairAttempted) {
-			hardRepairAttempted = true;
-			window.location.replace(appHref(hashPath));
-		}
-	});
+			if (!hardRepairAttempted) {
+				hardRepairAttempted = true;
+				window.location.replace(appHref(hashPath));
+			}
+		});
 
-	onMount(() => {
-		if (routerType === 'hash' && typeof window !== 'undefined' && window.location.hash === '') {
-			void navigateToAppPath('/dashboard', { replaceState: true, noScroll: true, keepFocus: true });
-		}
+		$effect(() => {
+			renderedPath;
+			activePath;
+			if (typeof window === 'undefined') return;
+			if (activePath === '/dashboard' || activePath === '/licensing') return;
+			void refreshShellCreditHealth();
+		});
+
+		onMount(() => {
+			if (routerType === 'hash' && typeof window !== 'undefined' && window.location.hash === '') {
+				void navigateToAppPath('/dashboard', { replaceState: true, noScroll: true, keepFocus: true });
+			}
 	});
 </script>
 
@@ -98,9 +184,22 @@
 					{/each}
 			</nav>
 		</aside>
-			<main class="sf:flex-1 sf:min-w-0 sf:p-4 sf:sm:p-6 sf:bg-white sf:shadow-inner">
-				<svelte:boundary>
-					{@render children?.()}
+				<main class="sf:flex-1 sf:min-w-0 sf:p-4 sf:sm:p-6 sf:bg-white sf:shadow-inner">
+					{#if showGlobalCreditBanner}
+						<QuotaCtaCallout
+							class="sf:mb-6"
+							severity={mapQuotaCalloutSeverity(shellCreditPresentation.severity)}
+							title={shellCreditPresentation.calloutTitle}
+							message={shellCreditPresentation.detail}
+							cta={shellCreditPresentation.quotaCta}
+							onAction={handleGlobalQuotaAction}
+							testId="app-credit-banner"
+							ctaTestId="app-credit-banner-button"
+							reasonTestId="app-credit-banner-reason"
+						/>
+					{/if}
+					<svelte:boundary>
+						{@render children?.()}
 
 					{#snippet failed(error, reset)}
 						<section

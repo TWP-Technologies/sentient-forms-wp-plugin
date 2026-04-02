@@ -27,6 +27,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
 
     private const OPTION_KEY = 'sentient_forms_action_log';
     private const MAX_LOG_ENTRIES = 500; // Retention limit
+    private const REMOTE_PATH = '/execution-audit';
 
     private Sentient_Forms_Admin_Permission $permission_checker;
 
@@ -123,6 +124,21 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                             'type'              => 'string',
                             'sanitize_callback' => 'sanitize_textarea_field',
                         ],
+                        'execution_request_id' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                        ],
+                        'mapping_id' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                        ],
+                        'resolved_model_id' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                        ],
                     ],
                 ],
             ],
@@ -137,8 +153,19 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
      */
     public function get_log_entries( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
-        $page     = max( 1, (int) $request->get_param( 'page' ) );
-        $per_page = min( 100, max( 1, (int) $request->get_param( 'per_page' ) ) );
+        $page = $request->has_param( 'page' )
+            ? max( 1, (int) $request->get_param( 'page' ) )
+            : 1;
+        $per_page = $request->has_param( 'per_page' )
+            ? min( 100, max( 1, (int) $request->get_param( 'per_page' ) ) )
+            : 20;
+
+        $remote_entries = $this->get_remote_log_entries( $request );
+        if ( ! is_wp_error( $remote_entries ) )
+        {
+            return $this->prepare_item_for_response( $remote_entries );
+        }
+
         $form_id  = $request->get_param( 'form_id' );
         $action_code = $request->get_param( 'action_code' );
         $status   = $request->get_param( 'status' );
@@ -211,6 +238,9 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             'credits_used'   => (int) $request->get_param( 'credits_used' ),
             'error_code'     => $request->get_param( 'error_code' ) ?: null,
             'error_message'  => $request->get_param( 'error_message' ) ?: null,
+            'execution_request_id' => $request->get_param( 'execution_request_id' ) ?: null,
+            'mapping_id'     => $request->get_param( 'mapping_id' ) ?: null,
+            'resolved_model_id' => $request->get_param( 'resolved_model_id' ) ?: null,
             'created_at'     => gmdate( 'c' ),
             'completed_at'   => $request->get_param( 'status' ) !== 'pending' ? gmdate( 'c' ) : null,
         ];
@@ -237,6 +267,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
      */
     public static function log_execution( array $data ): bool
     {
+        $execution_request_id = self::resolve_execution_request_id( $data );
         $entry = [
             'id'             => wp_generate_uuid4(),
             'form_source'    => sanitize_key( $data['form_source'] ?? 'unknown' ),
@@ -244,7 +275,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             'entry_id'       => isset( $data['entry_id'] ) ? absint( $data['entry_id'] ) : null,
             'action_code'    => sanitize_text_field( $data['action_code'] ?? '' ),
             'action_label'   => sanitize_text_field( $data['action_label'] ?? '' ),
-            'status'         => in_array( $data['status'] ?? '', [ 'pending', 'success', 'error' ], true )
+            'status'         => in_array( $data['status'] ?? '', [ 'pending', 'success', 'blocked', 'error' ], true )
                                     ? $data['status'] : 'error',
             'result_summary' => isset( $data['result_summary'] )
                                     ? wp_trim_words( sanitize_textarea_field( $data['result_summary'] ), 50, '...' )
@@ -259,6 +290,15 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             'error_message'  => isset( $data['error_message'] )
                                     ? sanitize_textarea_field( $data['error_message'] )
                                     : null,
+            'execution_request_id' => $execution_request_id,
+            'mapping_id'     => isset( $data['mapping_id'] )
+                                    ? sanitize_text_field( (string) $data['mapping_id'] )
+                                    : null,
+            'resolved_model_id' => isset( $data['resolved_model_id'] )
+                                    ? sanitize_text_field( (string) $data['resolved_model_id'] )
+                                    : null,
+            'pricing'        => self::sanitize_log_json_value( $data['pricing'] ?? [] ),
+            'details'        => self::sanitize_log_json_value( $data['details'] ?? [] ),
             'structured_output_valid' => ! empty( $data['structured_output_valid'] ),
             'created_at'     => gmdate( 'c' ),
             'completed_at'   => ( $data['status'] ?? '' ) !== 'pending' ? gmdate( 'c' ) : null,
@@ -279,7 +319,10 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             $entries = array_slice( $entries, 0, self::MAX_LOG_ENTRIES );
         }
 
-        return update_option( self::OPTION_KEY, $entries, false );
+        $saved = update_option( self::OPTION_KEY, $entries, false );
+        self::mirror_execution_to_cps( $entry );
+
+        return $saved;
     }
 
     /**
@@ -304,6 +347,127 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         return self::log_execution( $entry );
     }
 
+    private function get_remote_log_entries( WP_REST_Request $request ): array | WP_Error
+    {
+        $plugin  = Sentient_Forms_Plugin::instance();
+        $api_key = $plugin->get_proxy_api_key();
+
+        if ( empty( $api_key ) )
+        {
+            return new WP_Error( 'missing_api_key', __( 'Proxy API key is not configured.', 'sentient-forms' ) );
+        }
+
+        $params = array_filter(
+            [
+                'page'        => $request->has_param( 'page' )
+                    ? max( 1, (int) $request->get_param( 'page' ) )
+                    : 1,
+                'per_page'    => $request->has_param( 'per_page' )
+                    ? min( 100, max( 1, (int) $request->get_param( 'per_page' ) ) )
+                    : 20,
+                'form_id'     => $request->get_param( 'form_id' ),
+                'action_code' => $request->get_param( 'action_code' ),
+                'status'      => $request->get_param( 'status' ),
+                'date_from'   => $request->get_param( 'date_from' ),
+                'date_to'     => $request->get_param( 'date_to' ),
+            ],
+            static function ( $value ): bool {
+                return null !== $value && '' !== $value;
+            }
+        );
+
+        $path = self::REMOTE_PATH;
+        if ( ! empty( $params ) )
+        {
+            $path .= '?' . http_build_query( $params );
+        }
+
+        return $plugin->get_cps_api_client()->get(
+            $path,
+            [
+                'bearer_token' => $api_key,
+            ]
+        );
+    }
+
+    private static function sanitize_log_json_value( $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        return json_decode( wp_json_encode( $value ), true ) ?: [];
+    }
+
+    private static function resolve_execution_request_id( array $data ): string
+    {
+        if ( ! empty( $data['execution_request_id'] ) && is_scalar( $data['execution_request_id'] ) )
+        {
+            return sanitize_text_field( (string) $data['execution_request_id'] );
+        }
+
+        $seed = [
+            'form_source' => sanitize_key( $data['form_source'] ?? 'unknown' ),
+            'form_id'     => absint( $data['form_id'] ?? 0 ),
+            'entry_id'    => isset( $data['entry_id'] ) ? absint( $data['entry_id'] ) : null,
+            'mapping_id'  => isset( $data['mapping_id'] ) ? sanitize_text_field( (string) $data['mapping_id'] ) : null,
+            'action_code' => sanitize_text_field( $data['action_code'] ?? '' ),
+        ];
+
+        return 'wp-' . substr( hash( 'sha256', wp_json_encode( $seed ) ), 0, 48 );
+    }
+
+    private static function mirror_execution_to_cps( array $entry ): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $api_key = $plugin->get_proxy_api_key();
+        if ( empty( $api_key ) )
+        {
+            return;
+        }
+
+        $payload = [
+            'execution_request_id'  => $entry['execution_request_id'],
+            'form_source'           => $entry['form_source'],
+            'form_id'               => (int) $entry['form_id'],
+            'entry_id'              => $entry['entry_id'],
+            'mapping_id'            => $entry['mapping_id'],
+            'action_code'           => $entry['action_code'],
+            'action_label'          => $entry['action_label'],
+            'status'                => $entry['status'],
+            'result_summary'        => $entry['result_summary'],
+            'classification'        => $entry['classification'],
+            'credits_used'          => (int) ( $entry['credits_used'] ?? 0 ),
+            'structured_output_valid' => ! empty( $entry['structured_output_valid'] ),
+            'error_code'            => $entry['error_code'],
+            'error_message'         => $entry['error_message'],
+            'resolved_model_id'     => $entry['resolved_model_id'],
+            'pricing'               => is_array( $entry['pricing'] ?? null ) ? $entry['pricing'] : [],
+            'details'               => is_array( $entry['details'] ?? null ) ? $entry['details'] : [],
+            'started_at'            => $entry['created_at'],
+            'completed_at'          => $entry['completed_at'],
+        ];
+
+        $response = $plugin->get_cps_api_client()->post(
+            self::REMOTE_PATH,
+            $payload,
+            [
+                'bearer_token' => $api_key,
+            ]
+        );
+
+        if ( is_wp_error( $response ) && defined( 'WP_DEBUG' ) && WP_DEBUG )
+        {
+            error_log(
+                sprintf(
+                    '[sentient-forms] failed to mirror execution audit to CPS: %s',
+                    $response->get_error_message()
+                )
+            );
+        }
+    }
+
     public function get_collection_params(): array
     {
         return array_merge(
@@ -322,7 +486,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                 'status' => [
                     'description' => __( 'Filter by status.', 'sentient-forms' ),
                     'type'        => 'string',
-                    'enum'        => [ 'pending', 'success', 'error' ],
+                    'enum'        => [ 'pending', 'success', 'blocked', 'error' ],
                 ],
                 'date_from' => [
                     'description'       => __( 'Filter entries created after this ISO date.', 'sentient-forms' ),
@@ -382,7 +546,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                 'status' => [
                     'description' => __( 'Execution status.', 'sentient-forms' ),
                     'type'        => 'string',
-                    'enum'        => [ 'pending', 'success', 'error' ],
+                    'enum'        => [ 'pending', 'success', 'blocked', 'error' ],
                 ],
                 'result_summary' => [
                     'description' => __( 'Truncated LLM output.', 'sentient-forms' ),
@@ -403,6 +567,28 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                 'error_message' => [
                     'description' => __( 'Error message if failed.', 'sentient-forms' ),
                     'type'        => [ 'string', 'null' ],
+                ],
+                'execution_request_id' => [
+                    'description' => __( 'Stable execution request identifier.', 'sentient-forms' ),
+                    'type'        => [ 'string', 'null' ],
+                ],
+                'mapping_id' => [
+                    'description' => __( 'Form mapping identifier, when available.', 'sentient-forms' ),
+                    'type'        => [ 'string', 'null' ],
+                ],
+                'resolved_model_id' => [
+                    'description' => __( 'Resolved model used for the execution, when available.', 'sentient-forms' ),
+                    'type'        => [ 'string', 'null' ],
+                ],
+                'pricing' => [
+                    'description' => __( 'Pricing summary metadata for the execution.', 'sentient-forms' ),
+                    'type'        => 'object',
+                    'readonly'    => true,
+                ],
+                'details' => [
+                    'description' => __( 'Extended operational details for the execution.', 'sentient-forms' ),
+                    'type'        => 'object',
+                    'readonly'    => true,
                 ],
                 'created_at' => [
                     'description' => __( 'When the action was queued.', 'sentient-forms' ),

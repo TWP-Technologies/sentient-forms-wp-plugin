@@ -65,12 +65,12 @@ export function createAsyncSettingsStore(client: SentientFormsApiClient = create
 				const response = await client.updateAsyncSettings(payload, { showNotifications: true });
 				const mapped = mapResponse(response);
 				set(mapped);
-				notifications.success('Async settings saved');
+				notifications.success('Background processing settings saved');
 				return mapped;
 			} catch (error) {
 				console.error('Failed to update async settings', error);
 				update((state) => ({ ...state, saving: false, lastError: 'update_failed' }));
-				notifications.error('Unable to save async settings');
+				notifications.error('Unable to save background processing settings');
 				return null;
 			}
 		},

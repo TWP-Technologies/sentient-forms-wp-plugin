@@ -167,12 +167,14 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
      */
 	private function fetch_and_cache_balance( string $api_key ): WP_Error | array
 	{
-		if ( !class_exists( 'Sentient_Forms_Llm_Api_Client' ) )
-		{
-			return new WP_Error( 'api_client_missing', __( 'LLM API Client class not found.', 'sentient-forms' ), [ 'status' => 500 ] );
-		}
-		$client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-		$response = $client->get_credit_balance();
+		$plugin = Sentient_Forms_Plugin::instance();
+		$client = $plugin->get_cps_api_client();
+		$response = $client->get(
+			'/credits/balance',
+			[
+				'bearer_token' => $api_key,
+			]
+		);
 
 		if ( is_wp_error( $response ) )
 		{
@@ -225,6 +227,8 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
 			'current_balance' => $current_balance,
 			'ledger_delta'    => isset( $data['ledger_delta'] ) ? (int) $data['ledger_delta'] : 0,
 			'tier'            => isset( $data['tier'] ) && is_array( $data['tier'] ) ? $data['tier'] : null,
+			'top_up_available' => isset( $data['top_up_available'] ) ? (int) $data['top_up_available'] : 0,
+			'balance_state'   => isset( $data['balance_state'] ) ? sanitize_text_field( (string) $data['balance_state'] ) : null,
 			'stale'           => false,
 		];
 	}
@@ -237,6 +241,8 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
 				'current_balance' => (int) $value['current_balance'],
 				'ledger_delta'    => isset( $value['ledger_delta'] ) ? (int) $value['ledger_delta'] : 0,
 				'tier'            => isset( $value['tier'] ) && is_array( $value['tier'] ) ? $value['tier'] : null,
+				'top_up_available' => isset( $value['top_up_available'] ) ? (int) $value['top_up_available'] : 0,
+				'balance_state'   => isset( $value['balance_state'] ) ? sanitize_text_field( (string) $value['balance_state'] ) : null,
 				'stale'           => isset( $value['stale'] ) ? rest_sanitize_boolean( $value['stale'] ) : false,
 			];
 		}
@@ -247,6 +253,8 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
 				'current_balance' => (int) $value,
 				'ledger_delta'    => 0,
 				'tier'            => null,
+				'top_up_available' => 0,
+				'balance_state'   => null,
 				'stale'           => false,
 			];
 		}
@@ -271,9 +279,33 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
             'title'      => $this->rest_base . '/balance',
             'type'       => 'object',
             'properties' => [
-                'balance' => [
-                    'description' => __( 'Remaining credit balance.', 'sentient-forms' ),
+                'current_balance' => [
+                    'description' => __( 'Signed credit balance for the connected license. Negative values indicate carry debt from prior settled runs.', 'sentient-forms' ),
                     'type'        => 'integer',
+                    'context'     => [ 'view' ],
+                    'readonly'    => true,
+                ],
+                'ledger_delta' => [
+                    'description' => __( 'Current billing-period ledger delta returned by CPS.', 'sentient-forms' ),
+                    'type'        => 'integer',
+                    'context'     => [ 'view' ],
+                    'readonly'    => true,
+                ],
+                'top_up_available' => [
+                    'description' => __( 'Remaining positive top-up credits available after debt retirement.', 'sentient-forms' ),
+                    'type'        => 'integer',
+                    'context'     => [ 'view' ],
+                    'readonly'    => true,
+                ],
+                'balance_state' => [
+                    'description' => __( 'Optional CPS-derived balance state, such as negative carry debt.', 'sentient-forms' ),
+                    'type'        => [ 'string', 'null' ],
+                    'context'     => [ 'view' ],
+                    'readonly'    => true,
+                ],
+                'tier' => [
+                    'description' => __( 'Tier snapshot returned by CPS.', 'sentient-forms' ),
+                    'type'        => [ 'object', 'null' ],
                     'context'     => [ 'view' ],
                     'readonly'    => true,
                 ],
@@ -284,7 +316,7 @@ class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Cont
                     'readonly'    => true,
                 ],
             ],
-            'required'   => [ 'balance' ],
+            'required'   => [ 'current_balance' ],
         ];
 
         return $this->schema;

@@ -79,6 +79,55 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
                 ],
             ],
         );
+
+        // POST /models/estimate - Resolve model and return a pricing estimate
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/estimate',
+            [
+                'methods'             => WP_REST_Server::CREATABLE,
+                'callback'            => [ $this, 'estimate_model' ],
+                'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                'args'                => [
+                    'action_id' => [
+                        'description'       => __( 'Action identifier used for pricing lookup.', 'sentient-forms' ),
+                        'type'              => 'string',
+                        'required'          => true,
+                        'sanitize_callback' => 'sanitize_text_field',
+                    ],
+                    'template_model_hint' => [
+                        'description'       => __( 'Template-level model hint fallback.', 'sentient-forms' ),
+                        'type'              => 'string',
+                        'sanitize_callback' => 'sanitize_text_field',
+                    ],
+                    'base_credit_cost' => [
+                        'description'       => __( 'Fallback base credit cost when the action template is not found in CPS.', 'sentient-forms' ),
+                        'type'              => 'integer',
+                        'sanitize_callback' => 'absint',
+                    ],
+                    'global_selection' => [
+                        'description'       => __( 'Global model selection.', 'sentient-forms' ),
+                        'type'              => 'object',
+                        'sanitize_callback' => 'rest_sanitize_request_arg',
+                    ],
+                    'action_selection' => [
+                        'description'       => __( 'Action-level model selection.', 'sentient-forms' ),
+                        'type'              => 'object',
+                        'sanitize_callback' => 'rest_sanitize_request_arg',
+                    ],
+                    'form_selection' => [
+                        'description'       => __( 'Form-level model selection.', 'sentient-forms' ),
+                        'type'              => 'object',
+                        'sanitize_callback' => 'rest_sanitize_request_arg',
+                    ],
+                    'mapping_selection' => [
+                        'description'       => __( 'Mapping-level model selection.', 'sentient-forms' ),
+                        'type'              => 'object',
+                        'sanitize_callback' => 'rest_sanitize_request_arg',
+                    ],
+                ],
+            ],
+        );
     }
 
     /**
@@ -102,8 +151,13 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             );
         }
 
-        $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $client->get_available_models();
+        $client   = $plugin->get_cps_api_client();
+        $response = $client->get(
+            '/models',
+            [
+                'bearer_token' => $api_key,
+            ]
+        );
 
         if ( is_wp_error( $response ) )
         {
@@ -147,8 +201,14 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             'mapping_selection' => $request->get_param( 'mapping_selection' ),
         ];
 
-        $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $client->post( '/v1/models/resolve', $body );
+        $client   = $plugin->get_cps_api_client();
+        $response = $client->post(
+            '/models/resolve',
+            $body,
+            [
+                'bearer_token' => $api_key,
+            ]
+        );
 
         if ( is_wp_error( $response ) )
         {
@@ -156,6 +216,60 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
                 'cps_error',
                 $response->get_error_message(),
                 500,
+            );
+        }
+
+        return $this->prepare_item_for_response( $response );
+    }
+
+    /**
+     * Resolve pricing estimate based on the override chain.
+     *
+     * @param WP_REST_Request $request Request object.
+     *
+     * @return WP_REST_Response|WP_Error
+     */
+    public function estimate_model( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $plugin  = Sentient_Forms_Plugin::instance();
+        $api_key = $plugin->get_proxy_api_key();
+
+        if ( empty( $api_key ) )
+        {
+            return $this->prepare_error_response(
+                'missing_api_key',
+                __( 'Proxy API key is not configured.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        $body = [
+            'action_id'           => $request->get_param( 'action_id' ),
+            'template_model_hint' => $request->get_param( 'template_model_hint' ),
+            'base_credit_cost'    => $request->get_param( 'base_credit_cost' ),
+            'global_selection'    => $request->get_param( 'global_selection' ),
+            'action_selection'    => $request->get_param( 'action_selection' ),
+            'form_selection'      => $request->get_param( 'form_selection' ),
+            'mapping_selection'   => $request->get_param( 'mapping_selection' ),
+        ];
+
+        $client   = $plugin->get_cps_api_client();
+        $response = $client->post(
+            '/models/estimate',
+            $body,
+            [
+                'bearer_token' => $api_key,
+            ]
+        );
+
+        if ( is_wp_error( $response ) )
+        {
+            return $this->prepare_error_response(
+                'cps_error',
+                $response->get_error_message(),
+                is_array( $response->get_error_data() ) && isset( $response->get_error_data()['status'] )
+                    ? (int) $response->get_error_data()['status']
+                    : 500,
             );
         }
 

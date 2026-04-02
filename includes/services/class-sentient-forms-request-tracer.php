@@ -588,7 +588,7 @@ class Sentient_Forms_Request_Tracer
                         'dependency_id' => $dependency_id,
                         'code'          => 'execution_mode_mismatch',
                         'message'       => sprintf(
-                            __( 'Mapping %1$s depends on async mapping %2$s during after-submission, so %1$s must also run async.', 'sentient-forms' ),
+                            __( 'Mapping %1$s depends on Background mapping %2$s during after-submission, so %1$s must also run in Background.', 'sentient-forms' ),
                             sanitize_text_field( $mapping_id ),
                             sanitize_text_field( $dependency_id )
                         ),

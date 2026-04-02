@@ -55,15 +55,28 @@
 		FormExecutionStatus,
 		FormFieldInfo,
 		InputMapping,
+		ModelSelection,
 		WorkflowPlanResponse
 	} from '$lib/api/types';
+	import {
+		applyInheritableBooleanToConfig,
+		cloneDefaultModelSelection,
+		getInheritableBooleanMode,
+		isSpamActionCode,
+		modeToOptionalBoolean,
+		normalizeFormActionConfig,
+		normalizeOptionalBoolean,
+		resolveInheritableBoolean,
+		resolveInheritableBooleanSource,
+		type InheritableBooleanMode
+	} from '$lib/utils/action-config';
 
 	type Props = { data: { formSourceSlug: string; formId: number } };
 	let { data }: Props = $props();
 
 	const FALLBACK_HOOK_LABELS: Record<string, string> = {
-		gform_validation: '🔄 During Validation (Sync)',
-		gform_after_submission: '📝 After Submission (Async)'
+		gform_validation: '🔄 During Validation (Blocking)',
+		gform_after_submission: '📝 After Submission (Background)'
 	};
 
 	const actionsState = formActionsState;
@@ -90,6 +103,7 @@
 	let editBaselineSignature = $state<string | null>(null);
 	type DraftTriggerSource = { type: 'hook_root' | 'mapping' | 'unbound'; mapping_id?: string };
 	type DraftTriggerSourceRecord = Record<string, DraftTriggerSource>;
+	type EligibleUpstreamSpamTrigger = { hook: string; mapping: FormActionLinkage };
 	let graphDraftByMappingId = $state<
 		Record<
 			string,
@@ -127,44 +141,142 @@
 	let formFields = $state<FormFieldInfo[]>([]);
 	let fieldsLoading = $state(false);
 
+	function createBlankFormActionConfig(): FormActionConfig {
+		return normalizeFormActionConfig({});
+	}
+
+	function getActionDisplayName(actionId: string | null): string {
+		if (!actionId) {
+			return 'this action';
+		}
+
+		const definition = definitions.find((item) => item.id === actionId);
+		if (definition?.label) {
+			return definition.label;
+		}
+
+		const customAction = customActions.find((item) => item.code === actionId);
+		if (customAction?.display_name) {
+			return customAction.display_name;
+		}
+
+		return actionId;
+	}
+
+	function getActionDefinitionContext(actionId: string | null): {
+		actionId: string | null;
+		modelHint: string | null;
+		baseCreditCost: number | null;
+	} {
+		if (!actionId) {
+			return {
+				actionId: null,
+				modelHint: null,
+				baseCreditCost: null
+			};
+		}
+
+		const definition = definitions.find((item) => item.id === actionId);
+		if (definition) {
+			return {
+				actionId,
+				modelHint: definition.modelHint ?? null,
+				baseCreditCost: definition.baseCreditCost ?? null
+			};
+		}
+
+		const customAction = customActions.find((item) => item.code === actionId);
+		if (customAction) {
+			return {
+				actionId,
+				modelHint: customAction.model_hint ?? null,
+				baseCreditCost: customAction.base_credit_cost ?? null
+			};
+		}
+
+		return {
+			actionId,
+			modelHint: null,
+			baseCreditCost: null
+		};
+	}
+
 	// Form-level action config state (hierarchical spam examples)
 	let configuringActionId = $state<string | null>(null);
-	let formLevelConfig = $state<FormActionConfig>({ include_site_context: 'global' });
+	let formLevelConfig = $state<FormActionConfig>(createBlankFormActionConfig());
 	let formLevelConfigLoading = $state(false);
 	let formLevelConfigSaving = $state(false);
+	let formLevelConfigByActionId = $state<Record<string, FormActionConfig>>({});
+	let actionDefaultsByActionId = $state<Record<string, FormActionConfig>>({});
 
-	async function loadFormLevelConfig(actionId: string) {
-		formLevelConfigLoading = true;
-		// Reset to defaults FIRST, then set configuringActionId to open modal immediately
-		formLevelConfig = {
-			include_site_context: 'global' as const,
-			spam_positive_examples: [],
-			spam_negative_examples: []
+	async function loadActionDefaultsForAction(
+		actionId: string,
+		options: { force?: boolean } = {}
+	): Promise<FormActionConfig> {
+		if (!options.force && actionDefaultsByActionId[actionId]) {
+			return actionDefaultsByActionId[actionId];
+		}
+
+		const client = createClientFromConfig();
+		const config = normalizeFormActionConfig(await client.getActionDefaults(actionId));
+		actionDefaultsByActionId = {
+			...actionDefaultsByActionId,
+			[actionId]: config
 		};
-		configuringActionId = actionId;
+		return config;
+	}
+
+	async function loadFormLevelConfig(
+		actionId: string,
+		options: { openModal?: boolean; force?: boolean } = {}
+	): Promise<FormActionConfig> {
+		const shouldOpenModal = options.openModal ?? true;
+		const shouldForce = options.force ?? shouldOpenModal;
+		formLevelConfigLoading = true;
+		formLevelConfig = createBlankFormActionConfig();
+		if (shouldOpenModal) {
+			configuringActionId = actionId;
+		}
 
 		try {
-			const client = createClientFromConfig();
-			const result = await client.getFormActionConfig(data.formSourceSlug, data.formId, actionId);
+			if (!shouldForce && formLevelConfigByActionId[actionId]) {
+				const cachedConfig = formLevelConfigByActionId[actionId];
+				if (shouldOpenModal) {
+					formLevelConfig = cachedConfig;
+				}
+				return cachedConfig;
+			}
 
-			// Ensure result is always an object, not an array or null
-			const configData =
-				result && typeof result === 'object' && !Array.isArray(result)
-					? result
-					: { include_site_context: 'global' as const };
-			// Merge with defaults to ensure all props exist
-			formLevelConfig = {
-				include_site_context: configData.include_site_context ?? 'global',
-				spam_positive_examples: configData.spam_positive_examples ?? [],
-				spam_negative_examples: configData.spam_negative_examples ?? []
+			const client = createClientFromConfig();
+			const config = normalizeFormActionConfig(
+				await client.getFormActionConfig(data.formSourceSlug, data.formId, actionId)
+			);
+			formLevelConfigByActionId = {
+				...formLevelConfigByActionId,
+				[actionId]: config
 			};
+			if (shouldOpenModal) {
+				formLevelConfig = config;
+			}
+			return config;
 		} catch (error) {
 			console.warn('[FormLevelConfig] Failed to load form-level config:', error);
-			// Keep the defaults we set above - modal will still open
-			notifications.warning('Could not load saved config. Starting with defaults.');
+			if (shouldOpenModal) {
+				notifications.warning('Could not load saved config. Starting with defaults.');
+			};
+			return createBlankFormActionConfig();
 		} finally {
 			formLevelConfigLoading = false;
 		}
+	}
+
+	function preloadActionHierarchy(actionId: string) {
+		void loadActionDefaultsForAction(actionId, { force: false }).catch((error) => {
+			console.warn('[ActionDefaults] Failed to preload action defaults:', error);
+		});
+		void loadFormLevelConfig(actionId, { openModal: false, force: false }).catch((error) => {
+			console.warn('[FormLevelConfig] Failed to preload form-level config:', error);
+		});
 	}
 
 	async function saveFormLevelConfig() {
@@ -172,12 +284,19 @@
 		formLevelConfigSaving = true;
 		try {
 			const client = createClientFromConfig();
-			await client.updateFormActionConfig(
-				data.formSourceSlug,
-				data.formId,
-				configuringActionId,
-				formLevelConfig
+			const savedConfig = normalizeFormActionConfig(
+				await client.updateFormActionConfig(
+					data.formSourceSlug,
+					data.formId,
+					configuringActionId,
+					formLevelConfig
+				)
 			);
+			formLevelConfigByActionId = {
+				...formLevelConfigByActionId,
+				[configuringActionId]: savedConfig
+			};
+			formLevelConfig = savedConfig;
 			notifications.success('Form-level configuration saved successfully.');
 			configuringActionId = null;
 		} catch (error) {
@@ -188,9 +307,56 @@
 		}
 	}
 
+	function clearFormLevelModelSelection() {
+		const nextConfig = { ...formLevelConfig };
+		delete nextConfig.model_selection;
+		formLevelConfig = nextConfig;
+	}
+
+	function handleFormLevelModelSelectionChange(selection: ModelSelection) {
+		formLevelConfig = { ...formLevelConfig, model_selection: selection };
+	}
+
+	function handleFormLevelSpamPolicyChange(
+		field: 'suppress_notifications_on_spam' | 'skip_downstream_on_spam',
+		mode: string
+	) {
+		formLevelConfig = applyInheritableBooleanToConfig(
+			formLevelConfig,
+			field,
+			mode as InheritableBooleanMode
+		);
+	}
+
+	function clearMappingModelSelection() {
+		const nextDraftSettings = { ...draftSettings };
+		delete nextDraftSettings.model_selection;
+		draftSettings = nextDraftSettings;
+	}
+
+	function handleMappingModelSelectionChange(selection: ModelSelection) {
+		draftSettings = { ...draftSettings, model_selection: selection };
+	}
+
+	function handleMappingSpamPolicyChange(
+		field: 'suppress_notifications_on_spam' | 'skip_downstream_on_spam',
+		mode: string
+	) {
+		const nextDraftSettings = { ...draftSettings };
+		const nextValue = modeToOptionalBoolean(mode as InheritableBooleanMode);
+
+		if (typeof nextValue === 'undefined') {
+			delete nextDraftSettings[field];
+		} else {
+			nextDraftSettings[field] = nextValue;
+		}
+
+		draftSettings = nextDraftSettings;
+	}
+
 	function cancelFormLevelConfig() {
 		configuringActionId = null;
-		formLevelConfig = {};
+		formLevelConfig = createBlankFormActionConfig();
 	}
 
 	function handleFormLevelDefaultsBackdropClick(event: MouseEvent) {
@@ -343,6 +509,24 @@
 		if (!editingLinkageId) return null;
 		return actionsState.items.find((item) => item.local_mapping_id === editingLinkageId) ?? null;
 	});
+	const currentActionDefaults = $derived.by<FormActionConfig>(() => {
+		if (!editingLinkage?.central_action_id) {
+			return createBlankFormActionConfig();
+		}
+
+		return (
+			actionDefaultsByActionId[editingLinkage.central_action_id] ?? createBlankFormActionConfig()
+		);
+	});
+	const currentFormActionConfig = $derived.by<FormActionConfig>(() => {
+		if (!editingLinkage?.central_action_id) {
+			return createBlankFormActionConfig();
+		}
+
+		return (
+			formLevelConfigByActionId[editingLinkage.central_action_id] ?? createBlankFormActionConfig()
+		);
+	});
 	const currentDraftSignature = $derived.by(() => {
 		if (!editingLinkageId) return null;
 		return createDraftSignature(draftHooks, draftSettings);
@@ -351,36 +535,125 @@
 		if (!editingLinkageId || !editBaselineSignature || !currentDraftSignature) return false;
 		return editBaselineSignature !== currentDraftSignature;
 	});
-	const isSpamMapping = $derived.by(
-		() => editingLinkage?.central_action_id === 'spam_detection_v1'
+	const isSpamMapping = $derived.by(() => isSpamActionCode(editingLinkage?.central_action_id));
+	const effectiveMappingModelSelection = $derived.by<ModelSelection>(() => {
+		const mappingSelection =
+			draftSettings.model_selection &&
+			typeof draftSettings.model_selection === 'object' &&
+			!Array.isArray(draftSettings.model_selection)
+				? (draftSettings.model_selection as ModelSelection)
+				: null;
+		if (mappingSelection?.primary) {
+			return mappingSelection;
+		}
+
+		if (currentFormActionConfig.model_selection?.primary) {
+			return currentFormActionConfig.model_selection;
+		}
+
+		if (currentActionDefaults.model_selection?.primary) {
+			return currentActionDefaults.model_selection;
+		}
+
+		return cloneDefaultModelSelection();
+	});
+	const effectiveMappingModelSource = $derived.by(() => {
+		if (draftSettings.model_selection?.primary) {
+			return 'mapping';
+		}
+		if (currentFormActionConfig.model_selection?.primary) {
+			return 'form';
+		}
+		if (currentActionDefaults.model_selection?.primary) {
+			return 'action';
+		}
+		return 'system';
+	});
+	const isBlockingSpamMapping = $derived.by(
+		() => isSpamMapping && draftSettings.execution_mode !== 'after_submission'
 	);
-	const upstreamAfterSubmissionTriggerMapping = $derived.by(() => {
-		if (!editingLinkageId) return null;
+	const effectiveSuppressNotificationsOnSpam = $derived.by(() => {
+		if (!isSpamMapping) return false;
+		return resolveInheritableBoolean(
+			[
+				normalizeOptionalBoolean(draftSettings.suppress_notifications_on_spam),
+				currentFormActionConfig.suppress_notifications_on_spam,
+				currentActionDefaults.suppress_notifications_on_spam
+			],
+			draftSettings.execution_mode !== 'after_submission'
+		);
+	});
+	const effectiveSuppressNotificationsOnSpamSource = $derived.by(() =>
+		resolveInheritableBooleanSource(
+			[
+				{ level: 'mapping', value: normalizeOptionalBoolean(draftSettings.suppress_notifications_on_spam) },
+				{ level: 'form', value: currentFormActionConfig.suppress_notifications_on_spam },
+				{ level: 'action', value: currentActionDefaults.suppress_notifications_on_spam }
+			],
+			draftSettings.execution_mode !== 'after_submission'
+				? 'blocking default'
+				: 'background inactive'
+		)
+	);
+	const effectiveSkipDownstreamOnSpam = $derived.by(() => {
+		if (!isSpamMapping) return false;
+		return resolveInheritableBoolean(
+			[
+				normalizeOptionalBoolean(draftSettings.skip_downstream_on_spam),
+				currentFormActionConfig.skip_downstream_on_spam,
+				currentActionDefaults.skip_downstream_on_spam
+			],
+			true
+		);
+	});
+	const effectiveSkipDownstreamOnSpamSource = $derived.by(() =>
+		resolveInheritableBooleanSource(
+			[
+				{ level: 'mapping', value: normalizeOptionalBoolean(draftSettings.skip_downstream_on_spam) },
+				{ level: 'form', value: currentFormActionConfig.skip_downstream_on_spam },
+				{ level: 'action', value: currentActionDefaults.skip_downstream_on_spam }
+			],
+			'spam default'
+		)
+	);
+	const eligibleUpstreamSpamTriggers = $derived.by<EligibleUpstreamSpamTrigger[]>(() => {
+		if (!editingLinkageId) return [];
 		const hooks = normalizeHookIds(draftHooks);
-		if (!hooks.includes('gform_after_submission')) return null;
+		if (hooks.length === 0) return [];
 		const dependencyIds = normalizeDependencyIds(draftSettings.dependency_ids);
 		const triggerSources = deriveTriggerSourcesForDraft(
 			hooks,
 			dependencyIds,
 			normalizeDraftTriggerSources(draftSettings.trigger_sources, hooks)
 		);
-		const triggerSource = triggerSources.gform_after_submission;
-		const fallbackDependencyId = !triggerSource && dependencyIds.length === 1 ? dependencyIds[0] : null;
-		const mappingId =
-			triggerSource && triggerSource.type === 'mapping' && triggerSource.mapping_id
-				? triggerSource.mapping_id
-				: fallbackDependencyId;
-		if (!mappingId) return null;
-		const linkage = getLinkageById(mappingId);
-		if (!linkage) return null;
-		return linkage;
+		const eligible: EligibleUpstreamSpamTrigger[] = [];
+		for (const hook of hooks) {
+			const triggerSource = triggerSources[hook];
+			if (triggerSource?.type !== 'mapping' || !triggerSource.mapping_id) continue;
+			const linkage = getLinkageById(triggerSource.mapping_id);
+			if (!linkage || linkage.central_action_id !== 'spam_detection_v1') continue;
+			const dependencyHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
+			if (!canDependencySatisfyHook(dependencyHooks, hook)) continue;
+			eligible.push({ hook, mapping: linkage });
+		}
+		return eligible;
 	});
-	const canSkipOnUpstreamSpam = $derived.by(
-		() => upstreamAfterSubmissionTriggerMapping?.central_action_id === 'spam_detection_v1'
-	);
+	const canSkipOnUpstreamSpam = $derived.by(() => eligibleUpstreamSpamTriggers.length > 0);
 	const skipOnUpstreamSpamSummary = $derived.by(() => {
-		if (!canSkipOnUpstreamSpam || !upstreamAfterSubmissionTriggerMapping) return '';
-		return `Triggered by ${friendlyActionLabel(upstreamAfterSubmissionTriggerMapping)}`;
+		if (!canSkipOnUpstreamSpam) return '';
+		const uniqueHookLabels = Array.from(
+			new Set(
+				eligibleUpstreamSpamTriggers.map(
+					({ hook }) => hookOptions[hook] ?? hook ?? 'Unknown hook'
+				)
+			)
+		);
+		const uniqueMappingLabels = Array.from(
+			new Set(
+				eligibleUpstreamSpamTriggers.map(({ mapping }) => friendlyActionLabel(mapping))
+			)
+		);
+		return `Applies on ${uniqueHookLabels.join(', ')} when triggered by ${uniqueMappingLabels.join(', ')}`;
 	});
 	const guidanceSummary = $derived.by(() => {
 		if (!isSpamMapping) return '';
@@ -390,11 +663,11 @@
 		const localNegative = Array.isArray(draftSettings.spam_negative_examples)
 			? draftSettings.spam_negative_examples.length
 			: 0;
-		const inheritedPositive = Array.isArray(formLevelConfig.spam_positive_examples)
-			? formLevelConfig.spam_positive_examples.length
+		const inheritedPositive = Array.isArray(currentFormActionConfig.spam_positive_examples)
+			? currentFormActionConfig.spam_positive_examples.length
 			: 0;
-		const inheritedNegative = Array.isArray(formLevelConfig.spam_negative_examples)
-			? formLevelConfig.spam_negative_examples.length
+		const inheritedNegative = Array.isArray(currentFormActionConfig.spam_negative_examples)
+			? currentFormActionConfig.spam_negative_examples.length
 			: 0;
 		const localTotal = localPositive + localNegative;
 		const inheritedTotal = inheritedPositive + inheritedNegative;
@@ -426,7 +699,15 @@
 			typeof draftSettings.spam_indicators_display === 'string'
 				? draftSettings.spam_indicators_display
 				: 'simple';
-		return `Threshold ${threshold} · ${displayMode}`;
+		const notificationPolicy = isBlockingSpamMapping
+			? effectiveSuppressNotificationsOnSpam
+				? 'suppress notifications'
+				: 'allow notifications'
+			: 'background notifications';
+		const downstreamPolicy = effectiveSkipDownstreamOnSpam
+			? 'skip downstream'
+			: 'allow downstream';
+		return `Threshold ${threshold} · ${displayMode} · ${notificationPolicy} · ${downstreamPolicy}`;
 	});
 	const inputMappingSummary = $derived.by(() => {
 		const mapping = (draftSettings.input_mapping ?? {
@@ -475,12 +756,9 @@
 		return `${ruleCount} rule${ruleCount === 1 ? '' : 's'} active`;
 	});
 	const modelExecutionSummary = $derived.by(() => {
-		const selection = (draftSettings.model_selection ?? {
-			primary: 'sf_default',
-			is_preset: true
-		}) as { primary?: string };
+		const selection = effectiveMappingModelSelection;
 		const executionMode =
-			draftSettings.execution_mode === 'after_submission' ? 'Async' : 'Sync';
+			draftSettings.execution_mode === 'after_submission' ? 'Background' : 'Blocking';
 		const model = selection.primary?.toString().trim() || 'sf_default';
 		return `${executionMode} · ${model}`;
 	});
@@ -862,11 +1140,23 @@
 	const definitionSourceBadgeVariant = (definition: ActionDefinition) =>
 		definition.source === 'cps' ? 'success' : 'warning';
 
+	function invalidHooksForLinkage(linkage: FormActionLinkage): string[] {
+		const triggerHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
+		const triggerSources = getMappingTriggerSources(linkage);
+		return triggerHooks.filter((hook) => triggerSources[hook]?.type === 'unbound');
+	}
+
+	function isLinkageInvalid(linkage: FormActionLinkage): boolean {
+		return invalidHooksForLinkage(linkage).length > 0;
+	}
+
 	function statusVariant(linkage: FormActionLinkage) {
+		if (isLinkageInvalid(linkage)) return 'danger';
 		return linkage.is_action_enabled_for_form === false ? 'warning' : 'success';
 	}
 
 	function statusLabel(linkage: FormActionLinkage) {
+		if (isLinkageInvalid(linkage)) return 'Invalid';
 		return linkage.is_action_enabled_for_form === false ? 'Disabled' : 'Enabled';
 	}
 
@@ -1395,8 +1685,7 @@
 		showMappingConfigModal = openModal;
 		editBaselineSignature = createDraftSignature(initialHooks, nextDraftSettings);
 		clearRootAttachUndoState();
-		// Note: Form-level config is now accessed via a separate "Edit Form Defaults" button
-		// to avoid confusing auto-open modal behavior (UX fix)
+		preloadActionHierarchy(linkage.central_action_id);
 	}
 
 	function cancelEditingAction() {
@@ -2016,6 +2305,13 @@
 	}
 
 	async function toggleEnabled(linkage: FormActionLinkage) {
+		if (isLinkageInvalid(linkage)) {
+			notifications.warning(
+				'Repair the missing upstream trigger source before changing this mapping state.'
+			);
+			return;
+		}
+
 		const enabled = linkage.is_action_enabled_for_form !== false;
 		await formActionsStore.toggleEnabled(data.formSourceSlug, data.formId, linkage, !enabled);
 	}
@@ -2159,7 +2455,8 @@
 							Form-Level Defaults
 						</h2>
 						<p class="sf:text-sm sf:text-slate-500">
-							Configure default examples for all spam detection actions on this form.
+							Configure defaults for <strong>{getActionDisplayName(configuringActionId)}</strong>
+							on this form.
 						</p>
 					</div>
 					<Button
@@ -2181,22 +2478,88 @@
 					{:else}
 						<Alert variant="info">
 							<p class="sf:text-sm">
-								These examples serve as defaults for all <strong>Spam Detection</strong> mappings on this
-								form. Individual mappings can override these values.
+								These defaults apply to this form before any individual mapping override is applied.
 							</p>
 						</Alert>
 
-						<SpamCriteriaEditor
-							positiveExamples={formLevelConfig.spam_positive_examples ?? []}
-							negativeExamples={formLevelConfig.spam_negative_examples ?? []}
-							onchange={(data) => {
-								formLevelConfig = {
-									...formLevelConfig,
-									spam_positive_examples: data.positive,
-									spam_negative_examples: data.negative
-								};
-							}}
-						/>
+						<div class="sf:space-y-3">
+							<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center">
+								<div>
+									<p class="sf:text-sm sf:font-medium sf:text-slate-800">Default model</p>
+									<p class="sf:text-xs sf:text-slate-500">
+										Set the default model for this action on this form.
+									</p>
+								</div>
+								{#if formLevelConfig.model_selection}
+									<Button size="sm" variant="ghost" onclick={clearFormLevelModelSelection}>
+										Use global defaults
+									</Button>
+								{/if}
+							</div>
+							<ModelSelector
+								level="form"
+								value={formLevelConfig.model_selection ?? cloneDefaultModelSelection()}
+								actionId={getActionDefinitionContext(configuringActionId).actionId}
+								templateModelHint={getActionDefinitionContext(configuringActionId).modelHint}
+								baseCreditCost={getActionDefinitionContext(configuringActionId).baseCreditCost}
+								actionSelection={
+									actionDefaultsByActionId[configuringActionId ?? '']?.model_selection ?? null
+								}
+								formSelection={formLevelConfig.model_selection ?? null}
+								onchange={handleFormLevelModelSelectionChange}
+							/>
+						</div>
+
+						{#if configuringActionId && isSpamActionCode(configuringActionId)}
+							<SpamCriteriaEditor
+								positiveExamples={formLevelConfig.spam_positive_examples ?? []}
+								negativeExamples={formLevelConfig.spam_negative_examples ?? []}
+								onchange={(data) => {
+									formLevelConfig = {
+										...formLevelConfig,
+										spam_positive_examples: data.positive,
+										spam_negative_examples: data.negative
+									};
+								}}
+							/>
+
+							<div class="sf:grid sf:gap-4 sf:md:grid-cols-2">
+								<SelectField
+									id="form-level-spam-notifications"
+									label="Spam notification policy"
+									description="Applies to Blocking spam mappings on this form. Background mappings still send notifications immediately."
+									value={getInheritableBooleanMode(
+										formLevelConfig.suppress_notifications_on_spam
+									)}
+									options={[
+										{ value: 'inherit', label: 'Use global default' },
+										{ value: 'enabled', label: 'Suppress notifications' },
+										{ value: 'disabled', label: 'Allow notifications' }
+									]}
+									onchange={(event) =>
+										handleFormLevelSpamPolicyChange(
+											'suppress_notifications_on_spam',
+											event.currentTarget.value
+										)}
+								/>
+								<SelectField
+									id="form-level-spam-downstream"
+									label="Downstream spam gate"
+									description="Controls whether downstream work should stop when this form’s spam mapping confirms spam."
+									value={getInheritableBooleanMode(formLevelConfig.skip_downstream_on_spam)}
+									options={[
+										{ value: 'inherit', label: 'Use global default' },
+										{ value: 'enabled', label: 'Skip downstream actions' },
+										{ value: 'disabled', label: 'Allow downstream actions' }
+									]}
+									onchange={(event) =>
+										handleFormLevelSpamPolicyChange(
+											'skip_downstream_on_spam',
+											event.currentTarget.value
+										)}
+								/>
+							</div>
+						{/if}
 
 						<SelectField
 							id="form-level-context"
@@ -2350,16 +2713,14 @@
 										</p>
 									</div>
 									<div class="sf:flex sf:items-center sf:gap-2">
-										{#if definition.id === 'spam_detection_v1' || definition.id === 'spam_analysis'}
-											<Button
-												size="sm"
-												variant="ghost"
-												onclick={() => loadFormLevelConfig(definition.id)}
-												disabled={formLevelConfigLoading}
-											>
-												Defaults
-											</Button>
-										{/if}
+										<Button
+											size="sm"
+											variant="ghost"
+											onclick={() => loadFormLevelConfig(definition.id)}
+											disabled={formLevelConfigLoading}
+										>
+											Defaults
+										</Button>
 										<Badge variant={definitionSourceBadgeVariant(definition)}>
 											{definition.source === 'cps' ? 'CPS' : 'Local'}
 										</Badge>
@@ -2400,7 +2761,17 @@
 										</p>
 										<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
 									</div>
-									<Badge variant="success">Active</Badge>
+									<div class="sf:flex sf:items-center sf:gap-2">
+										<Button
+											size="sm"
+											variant="ghost"
+											onclick={() => loadFormLevelConfig(action.code)}
+											disabled={formLevelConfigLoading}
+										>
+											Defaults
+										</Button>
+										<Badge variant="success">Active</Badge>
+									</div>
 								</li>
 							{/each}
 						</ul>
@@ -2725,11 +3096,22 @@
 								</td>
 								<td class="sf:px-4 sf:py-3">
 									<Badge variant={statusVariant(linkage)}>{statusLabel(linkage)}</Badge>
+									{#if isLinkageInvalid(linkage)}
+										<p class="sf:mt-2 sf:text-xs sf:text-rose-700">
+											Missing upstream source for {invalidHooksForLinkage(linkage).join(', ')}.
+										</p>
+									{/if}
 								</td>
 								<td class="sf:px-4 sf:py-3 sf:text-right sf:space-x-2">
-									<Button size="sm" variant="secondary" onclick={() => toggleEnabled(linkage)}>
-										{linkage.is_action_enabled_for_form === false ? 'Enable' : 'Disable'}
-									</Button>
+									{#if isLinkageInvalid(linkage)}
+										<Button size="sm" variant="secondary" onclick={() => startEditingAction(linkage)}>
+											Repair
+										</Button>
+									{:else}
+										<Button size="sm" variant="secondary" onclick={() => toggleEnabled(linkage)}>
+											{linkage.is_action_enabled_for_form === false ? 'Enable' : 'Disable'}
+										</Button>
+									{/if}
 									{#if pendingRemovalId === linkage.local_mapping_id}
 										<Button size="sm" variant="danger" onclick={() => confirmRemove(linkage)}>
 											Confirm
@@ -2866,12 +3248,13 @@
 												(dependency). Use the graph editor for per-hook trigger source wiring.
 											</p>
 											<p>
-												<strong>Sync:</strong> AI runs while user waits. Can block spam before
-												saving.
+												<strong>Blocking:</strong> AI runs while the submission is still in the
+												request path. Use this when the result must be known before the form flow
+												continues.
 											</p>
 											<p>
-												<strong>Async:</strong> User gets instant confirmation. AI runs in
-												background.
+												<strong>Background:</strong> AI runs after the form has been accepted, so
+												the submission flow is not held open.
 											</p>
 										</div>
 									</div>
@@ -2915,29 +3298,15 @@
 											</p>
 										{/if}
 
-										{#if canSkipOnUpstreamSpam}
-											<div class="sf:mt-4 sf:border-t sf:border-slate-200 sf:pt-4 sf:space-y-2">
-												<p
-													class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500"
-												>
-													Spam-aware downstream gate
-												</p>
-												<Toggle
-													id="mapping-skip-on-upstream-spam"
-													data-testid="mapping-skip-on-upstream-spam"
-													checked={draftSettings.skip_on_upstream_spam === true}
-													label="Skip this action when the upstream spam check marks the entry as spam"
-													description={`${skipOnUpstreamSpamSummary}. Use this to avoid downstream credit spend on spam entries.`}
-													onchange={(event) => {
-														const nextDraftSettings = { ...draftSettings };
-														if (event.detail.checked) {
-															nextDraftSettings.skip_on_upstream_spam = true;
-														} else {
-															delete nextDraftSettings.skip_on_upstream_spam;
-														}
-														draftSettings = nextDraftSettings;
-													}}
-												/>
+										{#if canSkipOnUpstreamSpam || draftSettings.skip_on_upstream_spam === true}
+											<div class="sf:mt-4 sf:border-t sf:border-slate-200 sf:pt-4">
+												<Alert variant="info">
+													<p class="sf:text-sm">
+														Spam-aware downstream gating now belongs on the upstream spam action.
+														Use that spam mapping’s advanced settings to decide whether downstream
+														work should stop after a spam classification.
+													</p>
+												</Alert>
 											</div>
 										{/if}
 									</div>
@@ -2980,10 +3349,10 @@
 										<SpamCriteriaEditor
 											positiveExamples={draftSettings.spam_positive_examples ?? []}
 											negativeExamples={draftSettings.spam_negative_examples ?? []}
-											inheritedPositive={formLevelConfig.spam_positive_examples ?? []}
-											inheritedNegative={formLevelConfig.spam_negative_examples ?? []}
-											inheritanceSource={formLevelConfig.spam_positive_examples?.length > 0 ||
-											formLevelConfig.spam_negative_examples?.length > 0
+											inheritedPositive={currentFormActionConfig.spam_positive_examples ?? []}
+											inheritedNegative={currentFormActionConfig.spam_negative_examples ?? []}
+											inheritanceSource={currentFormActionConfig.spam_positive_examples?.length > 0 ||
+											currentFormActionConfig.spam_negative_examples?.length > 0
 												? 'form'
 												: null}
 											onchange={(details) => {
@@ -3008,10 +3377,10 @@
 												variant="secondary"
 												onclick={() => loadFormLevelConfig(editingLinkage.central_action_id)}
 											>
-												📋 Edit Form Defaults
+												Edit Form Defaults
 											</Button>
 											<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
-												Set default classification examples for all spam actions on this form.
+												Set default classification guidance for this action on this form.
 											</p>
 										</div>
 									{/if}
@@ -3072,6 +3441,45 @@
 													{ value: 'always', label: 'Always include' },
 													{ value: 'never', label: 'Never include' }
 												]}
+											/>
+											<SelectField
+												id="spam-notification-policy"
+												label="Notification policy on spam"
+												description={isBlockingSpamMapping
+													? `Current effective value: ${effectiveSuppressNotificationsOnSpam ? 'Suppress notifications' : 'Allow notifications'} (${effectiveSuppressNotificationsOnSpamSource}).`
+													: `Background spam mappings do not hold notifications. Current inherited value remains ${effectiveSuppressNotificationsOnSpam ? 'suppress' : 'allow'} but is inactive while this mapping runs in Background mode.`}
+												value={getInheritableBooleanMode(
+													draftSettings.suppress_notifications_on_spam
+												)}
+												options={[
+													{ value: 'inherit', label: 'Use inherited policy' },
+													{ value: 'enabled', label: 'Suppress notifications' },
+													{ value: 'disabled', label: 'Allow notifications' }
+												]}
+												disabled={!isBlockingSpamMapping}
+												onchange={(event) =>
+													handleMappingSpamPolicyChange(
+														'suppress_notifications_on_spam',
+														event.currentTarget.value
+													)}
+											/>
+											<SelectField
+												id="spam-downstream-policy"
+												label="Downstream spam gate"
+												description={`Current effective value: ${effectiveSkipDownstreamOnSpam ? 'Skip downstream actions' : 'Allow downstream actions'} (${effectiveSkipDownstreamOnSpamSource}).`}
+												value={getInheritableBooleanMode(
+													draftSettings.skip_downstream_on_spam
+												)}
+												options={[
+													{ value: 'inherit', label: 'Use inherited policy' },
+													{ value: 'enabled', label: 'Skip downstream actions' },
+													{ value: 'disabled', label: 'Allow downstream actions' }
+												]}
+												onchange={(event) =>
+													handleMappingSpamPolicyChange(
+														'skip_downstream_on_spam',
+														event.currentTarget.value
+													)}
 											/>
 										</div>
 									{/if}
@@ -3311,14 +3719,54 @@
 								hidden={!mappingSectionExpansion.model_execution}
 							>
 								{#if mappingSectionExpansion.model_execution}
+									<Alert variant="info">
+										<p class="sf:text-sm">
+											{#if effectiveMappingModelSource === 'mapping'}
+												This mapping is using its own model override.
+											{:else if effectiveMappingModelSource === 'form'}
+												This mapping is inheriting its model from the form-level defaults.
+											{:else if effectiveMappingModelSource === 'action'}
+												This mapping is inheriting its model from the global action defaults.
+											{:else}
+												This mapping is using the platform default model selection.
+											{/if}
+										</p>
+									</Alert>
+									<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
+										<p class="sf:text-xs sf:text-slate-500">
+											Changing the selector below creates or updates a mapping-specific override.
+										</p>
+										{#if draftSettings.model_selection}
+											<Button size="sm" variant="ghost" onclick={clearMappingModelSelection}>
+												Use inherited defaults
+											</Button>
+										{:else if editingLinkage}
+											<Button
+												size="sm"
+												variant="ghost"
+												onclick={() => loadFormLevelConfig(editingLinkage.central_action_id)}
+											>
+												Edit Form Defaults
+											</Button>
+										{/if}
+									</div>
 									<ModelSelector
-										value={draftSettings.model_selection ?? {
-											primary: 'sf_default',
-											is_preset: true
-										}}
-										onchange={(selection) => {
-											draftSettings = { ...draftSettings, model_selection: selection };
-										}}
+										level="mapping"
+										value={effectiveMappingModelSelection ?? cloneDefaultModelSelection()}
+										actionId={getActionDefinitionContext(editingLinkage?.central_action_id ?? null).actionId}
+										templateModelHint={
+											getActionDefinitionContext(editingLinkage?.central_action_id ?? null).modelHint
+										}
+										baseCreditCost={
+											getActionDefinitionContext(editingLinkage?.central_action_id ?? null)
+												.baseCreditCost
+										}
+										actionSelection={currentActionDefaults.model_selection ?? null}
+										formSelection={currentFormActionConfig.model_selection ?? null}
+										mappingSelection={
+											(draftSettings.model_selection as ModelSelection | undefined) ?? null
+										}
+										onchange={handleMappingModelSelectionChange}
 									/>
 
 									{#if draftSettings.execution_mode === 'after_submission'}

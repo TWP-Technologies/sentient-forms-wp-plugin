@@ -100,6 +100,40 @@ describe('formActionsStore', () => {
 		);
 	});
 
+	it('uses debt-carry wording when insufficient credits are caused by a negative balance', async () => {
+		const apiError = new ApiClientError('Request failed', 402, {
+			error: {
+				code: 'insufficient_credits',
+				message: 'Insufficient credits',
+				meta: {
+					current_balance: -4,
+					required_credits: 16,
+					deficit_credits: 20,
+					balance_state: 'negative_carry'
+				}
+			}
+		});
+
+		stubClient.getFormActions.mockRejectedValue(apiError);
+		stubClient.getCreditBalance.mockResolvedValue({
+			current_balance: -4,
+			ledger_delta: -24,
+			tier: null
+		});
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+
+		await formActionsStore.load('gravity_forms', 1);
+		const state = snapshotState();
+
+		expect(state.error).toBe(
+			'Sentient Forms paused new runs because this license has a negative balance of -4 credits. Visit the Licensing tab to add credits before retrying.'
+		);
+		expect(notifyErrorSpy).toHaveBeenCalledWith(
+			'Sentient Forms paused new runs because this license has a negative balance of -4 credits. Visit the Licensing tab to add credits before retrying.'
+		);
+	});
+
 	it('warns but keeps state when credit balance refresh times out', async () => {
 		stubClient.getFormActions.mockResolvedValue([]);
 		stubClient.getCreditBalance.mockResolvedValue({

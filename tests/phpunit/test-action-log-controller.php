@@ -15,12 +15,15 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
     {
         parent::setUp();
         delete_option( self::OPTION_KEY );
+        Sentient_Forms_Plugin::instance()->clear_license_data();
         $this->controller = new Sentient_Forms_Action_Log_Controller();
     }
 
     protected function tearDown(): void
     {
         delete_option( self::OPTION_KEY );
+        Sentient_Forms_Plugin::instance()->clear_license_data();
+        remove_all_filters( 'pre_http_request' );
         parent::tearDown();
     }
 
@@ -159,6 +162,27 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertStringContainsString( 'timed out', $entry['error_message'] );
     }
 
+    public function test_log_execution_accepts_blocked_status(): void
+    {
+        Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'    => 'gravity_forms',
+            'form_id'        => 7,
+            'entry_id'       => 701,
+            'action_code'    => 'spam_detection_v1',
+            'action_label'   => 'Spam Detection',
+            'status'         => 'blocked',
+            'classification' => 'spam',
+            'result_summary' => 'Submission blocked as spam.',
+            'credits_used'   => 3,
+        ] );
+
+        $entries = get_option( self::OPTION_KEY, [] );
+        $this->assertCount( 1, $entries );
+        $this->assertSame( 'blocked', $entries[0]['status'] );
+        $this->assertSame( 'spam', $entries[0]['classification'] );
+        $this->assertSame( 3, $entries[0]['credits_used'] );
+    }
+
     /**
      * Test log entries are limited to retention limit.
      */
@@ -250,5 +274,179 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         // Entries are prepended (newest first), so index 0 = second entry, index 1 = first entry
         $this->assertTrue( $entries[1]['structured_output_valid'], 'structured_output_valid should be true when provided' );
         $this->assertFalse( $entries[0]['structured_output_valid'], 'structured_output_valid should default to false when omitted' );
+    }
+
+    public function test_get_log_entries_prefers_cps_audit_when_available(): void
+    {
+        Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'  => 'gravity_forms',
+            'form_id'      => 99,
+            'entry_id'     => 999,
+            'action_code'  => 'local_only',
+            'action_label' => 'Local Only',
+            'status'       => 'success',
+        ] );
+
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'proxy_api_key' => 'proxy-log-123',
+            ]
+        );
+
+        $this->mock_http_response(
+            'GET',
+            '/execution-audit?page=1&per_page=20',
+            200,
+            [
+                'success' => true,
+                'data'    => [
+                    'entries' => [
+                        [
+                            'id'                     => 'remote-1',
+                            'form_source'            => 'gravity_forms',
+                            'form_id'                => 7,
+                            'entry_id'               => 777,
+                            'action_code'            => 'spam_detection_v1',
+                            'action_label'           => 'Spam Detection',
+                            'status'                 => 'success',
+                            'result_summary'         => 'Remote audit row',
+                            'classification'         => 'ham',
+                            'credits_used'           => 4,
+                            'error_code'             => null,
+                            'error_message'          => null,
+                            'structured_output_valid'=> true,
+                            'execution_request_id'   => 'req-remote-1',
+                            'mapping_id'             => 'map-remote-1',
+                            'resolved_model_id'      => 'gemini-pro',
+                            'pricing'                => [ 'debited_credits' => 4 ],
+                            'details'                => [ 'source' => 'cps' ],
+                            'created_at'             => '2026-03-21T08:00:00Z',
+                            'completed_at'           => '2026-03-21T08:00:01Z',
+                        ],
+                    ],
+                    'total'       => 1,
+                    'total_pages' => 1,
+                    'page'        => 1,
+                    'per_page'    => 20,
+                ],
+            ],
+            function ( $args ) {
+                $this->assertSame( 'Bearer proxy-log-123', $args['headers']['Authorization'] ?? null );
+            }
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 1, $data['total'] );
+        $this->assertSame( 'remote-1', $data['entries'][0]['id'] );
+        $this->assertSame( 'req-remote-1', $data['entries'][0]['execution_request_id'] );
+    }
+
+    public function test_log_execution_mirrors_to_cps_when_proxy_key_present(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'proxy_api_key' => 'proxy-log-456',
+            ]
+        );
+
+        $captured_request = null;
+
+        add_filter(
+            'pre_http_request',
+            function ( $preempt, $args, $url ) use ( &$captured_request ) {
+                if ( strtoupper( (string) ( $args['method'] ?? 'GET' ) ) !== 'POST' )
+                {
+                    return $preempt;
+                }
+
+                if ( ! str_ends_with( $url, '/execution-audit' ) )
+                {
+                    return $preempt;
+                }
+
+                $captured_request = [
+                    'headers' => $args['headers'],
+                    'body'    => json_decode( (string) $args['body'], true ),
+                ];
+
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode(
+                        [
+                            'success' => true,
+                            'data'    => [
+                                'id' => 'remote-created',
+                            ],
+                        ]
+                    ),
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                ];
+            },
+            10,
+            3
+        );
+
+        $result = Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'          => 'gravity_forms',
+            'form_id'              => 5,
+            'entry_id'             => 500,
+            'action_code'          => 'entry_summary_v1',
+            'action_label'         => 'Entry Summary',
+            'status'               => 'success',
+            'execution_request_id' => 'req-log-mirror',
+            'mapping_id'           => 'map-log-mirror',
+            'resolved_model_id'    => 'gemini-pro',
+            'pricing'              => [ 'debited_credits' => 8 ],
+            'details'              => [ 'source' => 'phpunit' ],
+        ] );
+
+        $this->assertTrue( $result );
+        $this->assertNotNull( $captured_request, 'Expected CPS mirror request to be captured.' );
+        $this->assertSame( 'Bearer proxy-log-456', $captured_request['headers']['Authorization'] ?? null );
+        $this->assertSame( 'req-log-mirror', $captured_request['body']['execution_request_id'] ?? null );
+        $this->assertSame( 'map-log-mirror', $captured_request['body']['mapping_id'] ?? null );
+        $this->assertSame( 'gemini-pro', $captured_request['body']['resolved_model_id'] ?? null );
+        $this->assertSame( 8, $captured_request['body']['pricing']['debited_credits'] ?? null );
+    }
+
+    private function mock_http_response( string $method, string $path_suffix, int $status, array $body, ?callable $assertion = null ): void
+    {
+        add_filter(
+            'pre_http_request',
+            function ( $preempt, $args, $url ) use ( $method, $path_suffix, $status, $body, $assertion ) {
+                $request_method = isset( $args['method'] ) ? strtoupper( (string) $args['method'] ) : 'GET';
+                if ( $request_method !== strtoupper( $method ) )
+                {
+                    return $preempt;
+                }
+
+                if ( ! str_ends_with( $url, $path_suffix ) )
+                {
+                    return $preempt;
+                }
+
+                if ( is_callable( $assertion ) )
+                {
+                    $assertion( $args, $url );
+                }
+
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode( $body ),
+                    'response' => [
+                        'code'    => $status,
+                        'message' => $status >= 200 && $status < 300 ? 'OK' : 'Error',
+                    ],
+                ];
+            },
+            10,
+            3
+        );
     }
 }

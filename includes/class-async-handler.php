@@ -21,6 +21,8 @@ class Sentient_Forms_Async_Handler
 	private const MAX_ATTEMPTS = 3;
 	private const BASE_BACKOFF_SECONDS = 60;
 	private const ACTION_SCHEDULER_GROUP = 'sentient_forms_async';
+	private const FORM_ACTION_CONFIG_OPTION_PREFIX = 'sentient_forms_form_config_';
+	private const ACTION_DEFAULTS_OPTION_PREFIX = 'sentient_forms_action_defaults_';
 
 	/**
 	 * Plugin instance
@@ -537,63 +539,233 @@ class Sentient_Forms_Async_Handler
     }
 
     /**
-     * Resolve hierarchical settings by merging form-level config.
+     * Resolve hierarchical settings for CPS-managed actions.
      *
      * Implements the waterfall resolution pattern:
      * 1. Mapping-level settings (highest priority)
      * 2. Form-level settings from wp_options
-     * 3. Action-level defaults (handled by CPS)
+     * 3. Action-level defaults from wp_options
      *
      * @param array $settings Mapping-level settings.
      * @param array $context  Job context with form_source and form_id.
      *
-     * @return array Resolved settings with form-level values merged in.
+     * @return array Resolved settings with inherited values merged in.
      */
     private function resolve_hierarchical_settings( array $settings, array $context ): array
     {
-        // Only applies to spam_detection actions
-        $action_id = $context['action_id'] ?? $settings['central_action_id'] ?? '';
-        if ( strpos( $action_id, 'spam_detection' ) === false )
+        $action_id = isset( $settings['central_action_id'] ) && is_scalar( $settings['central_action_id'] )
+            ? sanitize_key( (string) $settings['central_action_id'] )
+            : sanitize_key( (string) ( $context['action_id'] ?? '' ) );
+        if ( '' === $action_id )
         {
             return $settings;
         }
 
-        // Get form-level config from wp_options
-        $form_source = $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms';
-        $form_id     = $context['form_id'] ?? '';
-        if ( empty( $form_id ) )
+        $form_source = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
+        $form_id     = absint( $context['form_id'] ?? 0 );
+        $resolved    = $settings;
+
+        $action_defaults = $this->get_action_defaults_config( $action_id );
+        $form_config     = $form_id > 0
+            ? $this->get_form_action_config( $form_source, $form_id, $action_id )
+            : [];
+
+        foreach ( [ 'model_selection', 'include_site_context' ] as $field )
         {
-            return $settings;
+            $resolved = $this->merge_inherited_field( $resolved, $field, $form_config, $action_defaults );
         }
 
-        $option_key  = sprintf( 'sentient_forms_form_config_%s_%s', sanitize_key( $form_source ), sanitize_key( $form_id ) );
-        $form_config = get_option( $option_key, [] );
-        if ( ! is_array( $form_config ) || empty( $form_config ) )
+        if ( $this->is_spam_action_id( $action_id ) )
         {
-            return $settings;
-        }
+            foreach ( [ 'spam_positive_examples', 'spam_negative_examples' ] as $field )
+            {
+                $resolved = $this->merge_inherited_field( $resolved, $field, $form_config, $action_defaults );
+            }
 
-        // Get form-level examples from action-specific config
-        $action_config = $form_config[ $action_id ] ?? [];
-        if ( empty( $action_config ) )
-        {
-            return $settings;
-        }
-
-        // Apply waterfall: mapping settings override form-level
-        $resolved = $settings;
-
-        if ( empty( $resolved['spam_positive_examples'] ) && ! empty( $action_config['spam_positive_examples'] ) )
-        {
-            $resolved['spam_positive_examples'] = $action_config['spam_positive_examples'];
-        }
-
-        if ( empty( $resolved['spam_negative_examples'] ) && ! empty( $action_config['spam_negative_examples'] ) )
-        {
-            $resolved['spam_negative_examples'] = $action_config['spam_negative_examples'];
+            foreach ( [ 'suppress_notifications_on_spam', 'skip_downstream_on_spam' ] as $field )
+            {
+                $resolved = $this->merge_inherited_boolean_field( $resolved, $field, $form_config, $action_defaults );
+            }
         }
 
         return $resolved;
+    }
+
+    /**
+     * Load and normalize global action defaults for a specific action.
+     *
+     * @param string $action_id Action id.
+     *
+     * @return array<string, mixed>
+     */
+    private function get_action_defaults_config( string $action_id ): array
+    {
+        $config = get_option( self::ACTION_DEFAULTS_OPTION_PREFIX . sanitize_key( $action_id ), [] );
+
+        return $this->normalize_action_config_payload( $config );
+    }
+
+    /**
+     * Load and normalize form-level action config for a specific action.
+     *
+     * @param string $form_source Form source id.
+     * @param int    $form_id     Form id.
+     * @param string $action_id   Action id.
+     *
+     * @return array<string, mixed>
+     */
+    private function get_form_action_config( string $form_source, int $form_id, string $action_id ): array
+    {
+        $configs = get_option(
+            self::FORM_ACTION_CONFIG_OPTION_PREFIX . sanitize_key( $form_source ) . '_' . $form_id,
+            []
+        );
+
+        if ( ! is_array( $configs ) )
+        {
+            return [];
+        }
+
+        return $this->normalize_action_config_payload( $configs[ $action_id ] ?? [] );
+    }
+
+    /**
+     * Normalize persisted action config payloads for runtime use.
+     *
+     * @param mixed $config Raw config value.
+     *
+     * @return array<string, mixed>
+     */
+    private function normalize_action_config_payload( $config ): array
+    {
+        if ( ! is_array( $config ) )
+        {
+            return [];
+        }
+
+        if ( empty( $config['model_selection'] ) && ! empty( $config['model_override'] ) && is_string( $config['model_override'] ) )
+        {
+            $config['model_selection'] = [
+                'primary'   => sanitize_text_field( $config['model_override'] ),
+                'backup'    => null,
+                'is_preset' => str_starts_with( (string) $config['model_override'], 'sf_' ),
+            ];
+        }
+
+        foreach ( [ 'suppress_notifications_on_spam', 'skip_downstream_on_spam' ] as $field )
+        {
+            if ( array_key_exists( $field, $config ) )
+            {
+                $config[ $field ] = rest_sanitize_boolean( $config[ $field ] );
+            }
+        }
+
+        return $config;
+    }
+
+    /**
+     * Merge a generic inheritable field into resolved settings when mapping scope does not define it.
+     *
+     * @param array<string, mixed> $resolved        Current resolved settings.
+     * @param string               $field           Field name.
+     * @param array<string, mixed> $form_config     Form-level config.
+     * @param array<string, mixed> $action_defaults Action-level defaults.
+     *
+     * @return array<string, mixed>
+     */
+    private function merge_inherited_field( array $resolved, string $field, array $form_config, array $action_defaults ): array
+    {
+        if ( $this->has_inherited_value( $resolved, $field ) )
+        {
+            return $resolved;
+        }
+
+        if ( $this->has_inherited_value( $form_config, $field ) )
+        {
+            $resolved[ $field ] = $form_config[ $field ];
+            return $resolved;
+        }
+
+        if ( $this->has_inherited_value( $action_defaults, $field ) )
+        {
+            $resolved[ $field ] = $action_defaults[ $field ];
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * Merge an inheritable boolean field into resolved settings when mapping scope does not define it.
+     *
+     * @param array<string, mixed> $resolved        Current resolved settings.
+     * @param string               $field           Field name.
+     * @param array<string, mixed> $form_config     Form-level config.
+     * @param array<string, mixed> $action_defaults Action-level defaults.
+     *
+     * @return array<string, mixed>
+     */
+    private function merge_inherited_boolean_field( array $resolved, string $field, array $form_config, array $action_defaults ): array
+    {
+        if ( array_key_exists( $field, $resolved ) )
+        {
+            $resolved[ $field ] = rest_sanitize_boolean( $resolved[ $field ] );
+            return $resolved;
+        }
+
+        if ( array_key_exists( $field, $form_config ) )
+        {
+            $resolved[ $field ] = rest_sanitize_boolean( $form_config[ $field ] );
+            return $resolved;
+        }
+
+        if ( array_key_exists( $field, $action_defaults ) )
+        {
+            $resolved[ $field ] = rest_sanitize_boolean( $action_defaults[ $field ] );
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * Determine whether a field contains a meaningful inherited value.
+     *
+     * @param array<string, mixed> $settings Settings array.
+     * @param string               $field    Field name.
+     *
+     * @return bool
+     */
+    private function has_inherited_value( array $settings, string $field ): bool
+    {
+        if ( ! array_key_exists( $field, $settings ) )
+        {
+            return false;
+        }
+
+        $value = $settings[ $field ];
+
+        if ( is_array( $value ) )
+        {
+            return ! empty( $value );
+        }
+
+        if ( is_string( $value ) )
+        {
+            return '' !== trim( $value );
+        }
+
+        return null !== $value;
+    }
+
+    /**
+     * Determine whether an action id refers to spam detection.
+     *
+     * @param string $action_id Action id.
+     *
+     * @return bool
+     */
+    private function is_spam_action_id( string $action_id ): bool
+    {
+        return in_array( sanitize_key( $action_id ), [ 'spam_detection_v1', 'spam_analysis' ], true );
     }
 
     /**
@@ -624,7 +796,7 @@ class Sentient_Forms_Async_Handler
         if ( function_exists( 'as_register_group' ) )
         {
             $group = $this->get_scheduler_group();
-            $label = apply_filters( 'sentient_forms_async_scheduler_group_label', __( 'Sentient Forms Async', 'sentient-forms' ), $group );
+            $label = apply_filters( 'sentient_forms_async_scheduler_group_label', __( 'Sentient Forms Background', 'sentient-forms' ), $group );
             as_register_group( $group, $label );
         }
     }
@@ -1279,7 +1451,21 @@ class Sentient_Forms_Async_Handler
      */
     private function evaluate_upstream_spam_skip( array $job, array $dependency_ids ): ?array
     {
-        if ( ! $this->should_skip_on_upstream_spam( $job ) || 1 !== count( $dependency_ids ) )
+        if ( 1 !== count( $dependency_ids ) )
+        {
+            return null;
+        }
+
+        $dependency_id = is_scalar( $dependency_ids[0] ?? null )
+            ? sanitize_text_field( (string) $dependency_ids[0] )
+            : '';
+        if ( '' === $dependency_id )
+        {
+            return null;
+        }
+
+        if ( ! $this->should_skip_on_upstream_spam( $job )
+            && ! $this->upstream_mapping_skips_downstream_on_spam( $job, $dependency_id ) )
         {
             return null;
         }
@@ -1323,6 +1509,59 @@ class Sentient_Forms_Async_Handler
         }
 
         return false;
+    }
+
+    /**
+     * Determine whether the upstream spam mapping opts into skipping downstream work.
+     *
+     * @param array<string, mixed> $job           Job payload.
+     * @param string               $dependency_id Upstream mapping id.
+     *
+     * @return bool
+     */
+    private function upstream_mapping_skips_downstream_on_spam( array $job, string $dependency_id ): bool
+    {
+        $context    = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $form_source = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
+        $form_id     = absint( $context['form_id'] ?? 0 );
+
+        if ( '' === $form_source || $form_id <= 0 )
+        {
+            return false;
+        }
+
+        $form_settings = get_option( sprintf( 'sentient_forms_actions_%s_%d', $form_source, $form_id ), [] );
+        if ( ! is_array( $form_settings ) || ! isset( $form_settings[ $dependency_id ] ) || ! is_array( $form_settings[ $dependency_id ] ) )
+        {
+            return false;
+        }
+
+        $dependency_mapping = $this->resolve_hierarchical_settings(
+            $form_settings[ $dependency_id ],
+            [
+                'form_source' => $form_source,
+                'form_id'     => $form_id,
+                'action_id'   => $form_settings[ $dependency_id ]['central_action_id'] ?? '',
+            ]
+        );
+        $dependency_action_id = isset( $dependency_mapping['central_action_id'] ) && is_scalar( $dependency_mapping['central_action_id'] )
+            ? sanitize_key( (string) $dependency_mapping['central_action_id'] )
+            : '';
+        if ( ! $this->is_spam_action_id( $dependency_action_id ) )
+        {
+            return false;
+        }
+
+        $settings = isset( $dependency_mapping['settings'] ) && is_array( $dependency_mapping['settings'] )
+            ? $dependency_mapping['settings']
+            : [];
+
+        if ( array_key_exists( 'skip_downstream_on_spam', $settings ) )
+        {
+            return rest_sanitize_boolean( $settings['skip_downstream_on_spam'] );
+        }
+
+        return true;
     }
 
     /**

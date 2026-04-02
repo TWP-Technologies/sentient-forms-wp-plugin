@@ -96,17 +96,16 @@
 		return severity === 'normal' ? 'unknown' : severity;
 	}
 
-	function resolveQuotaCalloutTitle(severity: CreditSeverity): string {
-		if (severity === 'critical') {
-			return 'No credits remaining';
-		}
-		if (severity === 'warning') {
-			return 'Low credits remaining';
-		}
-		return 'Credit balance unavailable';
+	function resolveQuotaCalloutTitle(_severity: CreditSeverity): string {
+		return creditPresentation.calloutTitle;
 	}
 
 	function handleQuotaCtaAction(action: QuotaCtaAction) {
+		if (action === 'focus_licensing_billing') {
+			void navigateToAppPath('/licensing?focus=billing');
+			return;
+		}
+
 		if (action === 'navigate_licensing') {
 			void navigateToAppPath('/licensing');
 		}

@@ -687,7 +687,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $result );
     }
 
-    public function test_validate_mapping_dependencies_rejects_skip_on_upstream_spam_without_after_submission(): void
+    public function test_validate_mapping_dependencies_allows_skip_on_upstream_spam_for_validation_spam_dependency(): void
     {
         $actions = [
             'map_spam' => [
@@ -703,15 +703,14 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                 'action_type_indicator' => 'master',
                 'trigger_hooks'         => [ 'gform_validation' ],
                 'settings'              => [
-                    'dependency_ids'          => [ 'map_spam' ],
-                    'skip_on_upstream_spam'   => true,
+                    'dependency_ids'        => [ 'map_spam' ],
+                    'skip_on_upstream_spam' => true,
                 ],
             ],
         ];
 
         $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
-        $this->assertWPError( $result );
-        $this->assertSame( 'rest_invalid_skip_on_upstream_spam', $result->get_error_code() );
+        $this->assertTrue( $result );
     }
 
     public function test_validate_mapping_dependencies_rejects_skip_on_upstream_spam_for_non_spam_dependency(): void
@@ -761,6 +760,38 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                     'execution_mode'        => 'after_submission',
                     'dependency_ids'        => [ 'map_spam' ],
                     'skip_on_upstream_spam' => true,
+                ],
+            ],
+        ];
+
+        $result = $this->invoke_private( 'validate_mapping_dependencies', [ $actions ] );
+        $this->assertTrue( $result );
+    }
+
+    public function test_validate_mapping_dependencies_allows_skip_on_upstream_spam_when_only_one_hook_uses_upstream_spam(): void
+    {
+        $actions = [
+            'map_spam' => [
+                'local_mapping_id'      => 'map_spam',
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation' ],
+                'settings'              => [],
+            ],
+            'map_child' => [
+                'local_mapping_id'      => 'map_child',
+                'central_action_id'     => 'content_validation_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_validation', 'gform_after_submission' ],
+                'settings'              => [
+                    'skip_on_upstream_spam' => true,
+                    'trigger_sources'       => [
+                        'gform_validation'       => [
+                            'type'       => 'mapping',
+                            'mapping_id' => 'map_spam',
+                        ],
+                        'gform_after_submission' => [ 'type' => 'hook_root' ],
+                    ],
                 ],
             ],
         ];
@@ -849,7 +880,15 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                     'central_action_id'     => 'entry_evaluation',
                     'action_type_indicator' => 'master',
                     'trigger_hooks'         => [ 'gform_after_submission' ],
-                    'settings'              => [ 'dependency_ids' => [ 'map_a', 'map_a' ] ],
+                    'settings'              => [
+                        'dependency_ids'  => [ 'map_a', 'map_a' ],
+                        'trigger_sources' => [
+                            'gform_after_submission' => [
+                                'type'       => 'mapping',
+                                'mapping_id' => 'map_a',
+                            ],
+                        ],
+                    ],
                 ],
             ]
         );
@@ -865,7 +904,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $this->assertTrue( $data['deleted'] ?? false );
         $this->assertArrayNotHasKey( 'map_a', $stored );
-        $this->assertSame( [], $stored['map_b']['settings']['dependency_ids'] ?? [] );
+        $this->assertArrayNotHasKey( 'dependency_ids', $stored['map_b']['settings'] ?? [] );
+        $this->assertSame( 'unbound', $stored['map_b']['settings']['trigger_sources']['gform_after_submission']['type'] ?? null );
 
         delete_option( $option_key );
     }

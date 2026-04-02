@@ -415,7 +415,7 @@ export function formatDependencyIssues(issues: DependencyValidationIssue[]): str
 			case 'hook_mismatch':
 				return `${issue.mappingId} depends on ${issue.dependencyId}, but ${issue.dependencyId} is missing hooks: ${issue.missingHooks.join(', ')}.`;
 			case 'execution_mode_mismatch':
-				return `${issue.mappingId} depends on async mapping ${issue.dependencyId} during after-submission, so ${issue.mappingId} must also run async.`;
+				return `${issue.mappingId} depends on Background mapping ${issue.dependencyId} during after-submission, so ${issue.mappingId} must also run in Background.`;
 			case 'unbound_trigger':
 				return `${issue.mappingId} has no trigger source bound for hook ${issue.hook}.`;
 			case 'cycle':

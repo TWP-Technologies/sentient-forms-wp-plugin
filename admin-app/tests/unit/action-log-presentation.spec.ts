@@ -40,6 +40,7 @@ describe('action-log-presentation utilities', () => {
 	it('maps status values to row badge variants', () => {
 		expect(statusVariantForActionLog('success')).toBe('success');
 		expect(statusVariantForActionLog('pending')).toBe('warning');
+		expect(statusVariantForActionLog('blocked')).toBe('danger');
 		expect(statusVariantForActionLog('error')).toBe('danger');
 	});
 
@@ -55,6 +56,24 @@ describe('action-log-presentation utilities', () => {
 
 		expect(presentation.statusLabel).toBe('Success');
 		expect(presentation.outputLabel).toBe('Structured');
+		expect(presentation.resultKind).toBe('badge');
+		expect(presentation.resultLabel).toBe('Spam');
+		expect(presentation.resultVariant).toBe('danger');
+	});
+
+	it('builds row presentation for blocked spam outcomes with output details', () => {
+		const presentation = buildActionLogRowPresentation({
+			status: 'blocked',
+			structuredOutputValid: false,
+			classification: 'spam',
+			resultSummary: 'Submission blocked as spam.',
+			errorCode: null,
+			errorMessage: null
+		});
+
+		expect(presentation.statusLabel).toBe('Blocked');
+		expect(presentation.statusVariant).toBe('danger');
+		expect(presentation.outputLabel).toBe('Raw');
 		expect(presentation.resultKind).toBe('badge');
 		expect(presentation.resultLabel).toBe('Spam');
 		expect(presentation.resultVariant).toBe('danger');

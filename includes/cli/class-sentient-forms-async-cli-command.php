@@ -25,7 +25,7 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
 
             if ( empty( $jobs ) )
             {
-                WP_CLI::success( 'No async jobs recorded.' );
+                WP_CLI::success( 'No background jobs recorded.' );
                 return;
             }
 
@@ -51,7 +51,7 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
 		public function clear(): void
 		{
 			$this->get_store()->clear();
-			WP_CLI::success( 'Cleared async job metadata.' );
+			WP_CLI::success( 'Cleared background job metadata.' );
 		}
 
 		public function settings( array $args, array $assoc_args ): void
@@ -98,7 +98,7 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
 			$settings = $service->update_settings( $payload, 'wp_cli' );
 			WP_CLI::success(
 				sprintf(
-					'Async settings updated (max attempts %d, base %ds, max %ds).',
+					'Background settings updated (max attempts %d, base %ds, max %ds).',
 					$settings['max_attempts'],
 					$settings['base_delay_seconds'],
 					$settings['max_delay_seconds']
@@ -280,7 +280,7 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
 
             if ( 0 === (int) ( $result['candidates'] ?? 0 ) )
             {
-                WP_CLI::success( 'No stale async metadata rows detected.' );
+                WP_CLI::success( 'No stale background metadata rows detected.' );
                 return;
             }
 
@@ -341,16 +341,16 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
 		{
 			$service = Sentient_Forms_Plugin::instance()->get_async_health_service();
 			$summary = $service->evaluate();
-			WP_CLI::line( sprintf( 'Queue depth: %d', $summary['queue_depth'] ?? 0 ) );
+			WP_CLI::line( sprintf( 'Background queue depth: %d', $summary['queue_depth'] ?? 0 ) );
 			if ( ! empty( $summary['oldest_run_at'] ) )
 			{
-				WP_CLI::line( 'Oldest scheduled run: ' . gmdate( 'c', (int) $summary['oldest_run_at'] ) );
+				WP_CLI::line( 'Oldest scheduled background run: ' . gmdate( 'c', (int) $summary['oldest_run_at'] ) );
 			}
 
 			$warnings = $summary['warnings'] ?? [];
 			if ( empty( $warnings ) )
 			{
-				WP_CLI::success( 'No async warnings detected.' );
+				WP_CLI::success( 'No background-processing warnings detected.' );
 				return;
 			}
 
@@ -377,7 +377,7 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
 			$rows   = $store->list( [ 'limit' => $limit, 'status' => $status, 'record_type' => $record_type ] );
 			if ( empty( $rows ) )
 			{
-				WP_CLI::success( 'No async requests recorded.' );
+				WP_CLI::success( 'No background requests recorded.' );
 				return;
 			}
 

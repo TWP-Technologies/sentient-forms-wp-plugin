@@ -33,7 +33,7 @@
 		resolveTierDisplayName
 	} from '$lib/utils/license-health-presentation';
 	import { wpFetch } from '$lib/wp';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 
 	interface CheckoutPlanOption {
 		code: string;
@@ -162,6 +162,7 @@
 	let subscriptionChangePending = $state<string | null>(null);
 	let subscriptionChangeTiming = $state<'start_next_cycle' | 'start_now'>('start_next_cycle');
 	let portalLoading = $state(false);
+	let billingControlsElement = $state<HTMLDivElement | null>(null);
 
 	let resetInfo = $derived(getNextCreditReset());
 	let effectiveCredits = $derived(buildEffectiveCreditSnapshot(billing, credits));
@@ -206,8 +207,39 @@
 		void (async () => {
 			await licenseStore.load();
 			await refreshLicenseAndBilling();
+			await maybeFocusBillingControls();
 		})();
 	});
+
+	function shouldFocusBillingControls(): boolean {
+		if (typeof window === 'undefined') return false;
+
+		const searchFocus = new URLSearchParams(window.location.search).get('focus');
+		if (searchFocus === 'billing') {
+			return true;
+		}
+
+		const rawHash = window.location.hash.replace(/^#/, '');
+		const queryIndex = rawHash.indexOf('?');
+		if (queryIndex === -1) {
+			return false;
+		}
+
+		return new URLSearchParams(rawHash.slice(queryIndex + 1)).get('focus') === 'billing';
+	}
+
+	function focusBillingControls(): void {
+		billingControlsElement?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
+
+	async function maybeFocusBillingControls(): Promise<void> {
+		if (!shouldFocusBillingControls()) {
+			return;
+		}
+
+		await tick();
+		focusBillingControls();
+	}
 
 	function defaultBillingErrorMessage(context: BillingActionContext): string {
 		switch (context) {
@@ -531,6 +563,11 @@
 	}
 
 	function handleQuotaCtaAction(action: QuotaCtaAction) {
+		if (action === 'focus_licensing_billing') {
+			focusBillingControls();
+			return;
+		}
+
 		if (action === 'open_billing') {
 			void handleOpenBillingPortal();
 		}
@@ -540,14 +577,8 @@
 		return severity === 'normal' ? 'unknown' : severity;
 	}
 
-	function resolveQuotaCalloutTitle(severity: CreditSeverity): string {
-		if (severity === 'critical') {
-			return 'No credits remaining';
-		}
-		if (severity === 'warning') {
-			return 'Low credits remaining';
-		}
-		return 'Credit balance unavailable';
+	function resolveQuotaCalloutTitle(_severity: CreditSeverity): string {
+		return creditPresentation.calloutTitle;
 	}
 
 	function resolveBillingPolicy(
@@ -705,10 +736,12 @@
 				/>
 			{/if}
 
-			<div
-				class="sf:mt-6 sf:pt-5 sf:border-t sf:border-slate-200 sf:space-y-4"
-				data-testid="licensing-billing-controls"
-			>
+				<div
+					bind:this={billingControlsElement}
+					class="sf:mt-6 sf:pt-5 sf:border-t sf:border-slate-200 sf:space-y-4"
+					id="licensing-billing-controls"
+					data-testid="licensing-billing-controls"
+				>
 				<div class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-3">
 					<div>
 						<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">

@@ -194,27 +194,27 @@
 
 	function describeAsyncSettingsError(code: string | null): string {
 		if (code === 'load_failed') {
-			return 'Async retry settings could not be loaded from the API.';
+			return 'Background processing settings could not be loaded from the API.';
 		}
 		if (code === 'update_failed') {
-			return 'Async retry settings could not be saved.';
+			return 'Background processing settings could not be saved.';
 		}
-		return 'Async retry settings are temporarily unavailable.';
+		return 'Background processing settings are temporarily unavailable.';
 	}
 </script>
 
 <section class="sf:min-w-0 sf:space-y-6 sf:max-w-3xl">
 	<header class="sf:space-y-2">
-		<h1 class="sf:text-2xl sf:font-semibold sf:text-slate-900">Telemetry &amp; Async Processing</h1>
+		<h1 class="sf:text-2xl sf:font-semibold sf:text-slate-900">Telemetry &amp; Background Processing</h1>
 		<p class="sf:text-slate-600 sf:text-sm">
-			Control telemetry consent and tune the async retry queue for Sentient Forms.
+			Control telemetry consent and tune the background processing queue for Sentient Forms.
 		</p>
 	</header>
 
 	{#if $asyncHealth.warnings.length}
 		<div class="sf:rounded-xl sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4 sf:space-y-2">
 			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
-				<p class="sf:font-semibold sf:text-amber-900">Async warnings</p>
+				<p class="sf:font-semibold sf:text-amber-900">Background processing warnings</p>
 				<Button
 					type="button"
 					variant="ghost"
@@ -411,9 +411,9 @@
 		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"
 	>
 		<div class="sf:space-y-1">
-			<p class="sf:font-medium sf:text-slate-900">Async retry policy</p>
+			<p class="sf:font-medium sf:text-slate-900">Background retry policy</p>
 			<p class="sf:text-sm sf:text-slate-600">
-				Configure how many times Sentient Forms retries async jobs and how long it waits between
+				Configure how many times Sentient Forms retries background jobs and how long it waits between
 				attempts.
 			</p>
 		</div>
@@ -478,7 +478,7 @@
 			{#if $asyncSettings.loading}
 				<StateTemplate
 					variant="loading"
-					title="Loading async retry settings"
+					title="Loading background processing settings"
 					message="Retrieving the current retry policy from the API."
 					inline
 					dense
@@ -487,7 +487,7 @@
 			{:else if $asyncSettings.lastError}
 				<StateTemplate
 					variant="error"
-					title="Async retry settings issue"
+					title="Background processing settings issue"
 					message={describeAsyncSettingsError($asyncSettings.lastError)}
 					actionLabel="Retry"
 					onAction={() => {
@@ -506,7 +506,7 @@
 		<div class="sf:space-y-1">
 			<p class="sf:font-medium sf:text-slate-900">Queue maintenance</p>
 			<p class="sf:text-sm sf:text-slate-600">
-				Clear stale or stuck jobs from the async processing queue.
+				Clear stale or stuck jobs from the background processing queue.
 			</p>
 		</div>
 
@@ -566,7 +566,7 @@
 			<div class="sf:bg-white sf:rounded-xl sf:p-6 sf:max-w-sm sf:space-y-4 sf:shadow-xl">
 				<p class="sf:font-semibold sf:text-slate-900">Clear all job metadata?</p>
 				<p class="sf:text-sm sf:text-slate-600">
-					This will remove all tracked async jobs, including successful ones. This action cannot be
+					This will remove all tracked background jobs, including successful ones. This action cannot be
 					undone.
 				</p>
 				<div class="sf:flex sf:flex-wrap sf:gap-3 sf:justify-end">
