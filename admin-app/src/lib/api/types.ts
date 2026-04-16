@@ -384,6 +384,8 @@ export interface FormActionSettings {
 	conditions?: MappingConditionsConfig;
 	/** Prompt overrides for this mapping */
 	prompt_overrides?: Record<string, unknown>;
+	/** Non-blocking WordPress side effects to run after successful action execution */
+	post_execution_actions?: CustomActionPostExecutionActionPayload[];
 	/** Execution mode: validation (sync) or after_submission (async) - CB-EXEC-002 */
 	execution_mode?: ExecutionMode;
 	/** Batch settings for after-submission execution (CB-EXEC-003/004) */
@@ -780,6 +782,27 @@ export interface WorkflowDefinitionPayload extends Record<string, unknown> {
 	retry_policy?: Record<string, unknown>;
 }
 
+export type CustomActionPostExecutionActionType =
+	| 'entry_note'
+	| 'send_email'
+	| 'wp_hook'
+	| 'webhook';
+
+export interface CustomActionPostExecutionActionPayload extends Record<string, unknown> {
+	type: CustomActionPostExecutionActionType;
+	enabled?: boolean;
+	message?: string;
+	template?: string;
+	to?: string | string[];
+	recipients?: string | string[];
+	subject?: string;
+	body?: string;
+	hook_name?: string;
+	url?: string;
+	method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+	headers?: Record<string, string>;
+}
+
 /**
  * Full action definition for custom_definition kind
  */
@@ -796,7 +819,9 @@ export interface ActionDefinitionPayload extends Record<string, unknown> {
 		explanation?: string;
 	}>;
 	input_requirements?: Record<string, unknown>;
-	execution_defaults?: Record<string, unknown>;
+	execution_defaults?: Record<string, unknown> & {
+		post_execution_actions?: CustomActionPostExecutionActionPayload[];
+	};
 }
 
 export interface CustomAction {
@@ -939,6 +964,7 @@ export interface FormSummary {
 	adapter: string;
 	adapter_name?: string;
 	provider_is_active?: boolean;
+	provider_edit_url?: string | null;
 	settings?: Record<string, unknown> | null;
 }
 

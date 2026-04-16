@@ -89,6 +89,7 @@ export class MockSentientFormsApiClient {
 			title: 'Contact us',
 			adapter: 'gravity_forms',
 			adapter_name: 'Gravity Forms',
+			provider_edit_url: 'admin.php?page=gf_edit_forms&id=123',
 			settings: { enabled: true, actions: {} }
 		}
 	];

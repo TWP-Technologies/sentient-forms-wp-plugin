@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$app/navigation', () => ({
 	goto: vi.fn(() => Promise.reject(new Error('goto unavailable')))
@@ -11,6 +11,7 @@ import {
 	appHref,
 	deriveActivePath,
 	navigateToAppPath,
+	isInternalAppPath,
 	normalizeRoutePath,
 	readHashPathFromLocation,
 	resolveRouterType,
@@ -18,9 +19,16 @@ import {
 	routerType
 } from '../../src/lib/navigation';
 
+let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+	consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+});
+
 afterEach(() => {
 	window.location.hash = '';
 	vi.clearAllMocks();
+	consoleErrorSpy.mockRestore();
 });
 
 describe('navigation helpers', () => {
@@ -50,6 +58,16 @@ describe('navigation helpers', () => {
 		expect(resolveActiveNavPath('/actions/custom/new')).toBe('/actions/custom');
 		expect(resolveActiveNavPath('/actions/log/details/1')).toBe('/actions/log');
 		expect(resolveActiveNavPath('/settings/context')).toBe('/settings');
+	});
+
+	it('does not classify WordPress admin or external URLs as app routes', () => {
+		expect(isInternalAppPath('/actions/gravity_forms/123')).toBe(true);
+		expect(isInternalAppPath('actions/custom/new')).toBe(true);
+		expect(isInternalAppPath('admin.php?page=gf_edit_forms&id=1')).toBe(false);
+		expect(isInternalAppPath('/wp-admin/admin.php?page=gf_edit_forms&id=1')).toBe(false);
+		expect(isInternalAppPath('https://example.com/wp-admin/admin.php?page=gf_edit_forms&id=1')).toBe(
+			false
+		);
 	});
 
 	it('builds pathname hrefs when requested', () => {

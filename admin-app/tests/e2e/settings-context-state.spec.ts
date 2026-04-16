@@ -33,6 +33,30 @@ test.describe('Settings context state templates', () => {
 		await expect(page.getByTestId('site-context-empty-state')).toBeVisible();
 	});
 
+	test('shows empty template when backend returns an explicit empty context envelope', async ({
+		page
+	}) => {
+		await page.route('**/wp-json/sentient-forms/v1/site-context**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ context: null })
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ current_balance: 120, tier: null })
+			})
+		);
+
+		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
+		await expect(page.getByRole('heading', { name: 'Site Context' })).toBeVisible();
+		await expect(page.getByTestId('site-context-empty-state')).toBeVisible();
+	});
+
 	test('shows error template and recovers on retry', async ({ page }) => {
 		let attempts = 0;
 

@@ -33,7 +33,7 @@ define( 'SENTIENT_FORMS_PLUGIN_URL', plugin_dir_url( SENTIENT_FORMS_PLUGIN_FILE 
  */
 if ( !defined( 'SENTIENT_FORMS_DEFAULT_FREE_LLM_ID' ) )
 {
-    define( 'SENTIENT_FORMS_DEFAULT_FREE_LLM_ID', 'gemini-2.0-flash' );
+    define( 'SENTIENT_FORMS_DEFAULT_FREE_LLM_ID', 'gemini-3-flash-preview' );
 }
 
 // Bootstrap Composer dependencies (Action Scheduler and tooling).
@@ -60,13 +60,23 @@ register_activation_hook( __FILE__, [ 'Sentient_Forms_Installer', 'activate' ] )
 // Include template functions if any.
 // require_once SENTIENT_FORMS_PLUGIN_PATH . 'includes/template-functions.php';
 
-if ( class_exists( 'Sentient_Forms_Plugin' ) )
+$sentient_forms_bootstrap = static function (): void {
+    if ( class_exists( 'Sentient_Forms_Plugin' ) )
+    {
+        Sentient_Forms_Plugin::instance();
+        return;
+    }
+
+    error_log( 'Sentient Forms: Main plugin function sentient_forms() not found.' );
+};
+
+if ( did_action( 'init' ) )
 {
-    Sentient_Forms_Plugin::instance();
+    $sentient_forms_bootstrap();
 }
 else
 {
-    error_log( 'Sentient Forms: Main plugin function sentient_forms() not found.' );
+    add_action( 'init', $sentient_forms_bootstrap, 0 );
 }
 
 // Activation/Deactivation hooks are typically registered within the main plugin class constructor or a dedicated hooks method.

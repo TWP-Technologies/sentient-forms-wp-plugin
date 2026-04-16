@@ -1,61 +1,112 @@
 <?php
 require dirname(__DIR__) . '/vendor/autoload.php';
 
+// WordPress' test suite chmods upload directories when the process umask masks
+// permissions. Windows bind mounts reject chmod(), so keep test-created dirs at
+// the requested mode from the start.
+umask( 0 );
+
 $tests_dir    = __DIR__ . '/wordpress-tests-lib';
 $includes_dir = $tests_dir . '/tests/phpunit/includes';
+$tmp_dir      = __DIR__ . '/wp-temp';
 $wp_dir       = __DIR__ . '/wordpress';
 $project_root = dirname( __DIR__ );
+
+$remove_broken_link = static function ( string $path ): void {
+    if ( is_link( $path ) && ! file_exists( $path ) ) {
+        unlink( $path );
+    }
+};
+
+$remove_path = static function ( string $path ) use ( &$remove_path ): void {
+    if ( is_link( $path ) || is_file( $path ) ) {
+        unlink( $path );
+        return;
+    }
+
+    if ( ! is_dir( $path ) ) {
+        return;
+    }
+
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator( $path, FilesystemIterator::SKIP_DOTS ),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+
+    foreach ( $items as $item ) {
+        $item->isDir() ? rmdir( $item->getPathname() ) : unlink( $item->getPathname() );
+    }
+
+    rmdir( $path );
+};
 
 $ensure_directory = static function ( string $path ): bool {
     if ( is_dir( $path ) ) {
         return true;
     }
 
+    if ( file_exists( $path ) ) {
+        return false;
+    }
+
     return mkdir( $path, 0775, true );
 };
 
-if ( ! file_exists( "$includes_dir/functions.php" ) ) {
-    // Download the WordPress test library using PHP's native functions.
-    if ( ! $ensure_directory( $tests_dir ) ) {
-        fwrite( STDERR, "Failed to create test directory: {$tests_dir}\n" );
-        return;
-    }
+$remove_broken_link( $tests_dir );
+$remove_broken_link( $tmp_dir );
+$remove_broken_link( __DIR__ . '/wp.tar.gz' );
 
+if ( ! file_exists( "$includes_dir/functions.php" ) ) {
     $archive      = __DIR__ . '/wp.tar.gz';
     $download_url = 'https://codeload.github.com/WordPress/wordpress-develop/tar.gz/refs/tags/6.5.4';
 
     if ( ! file_exists( $archive ) ) {
         $data = file_get_contents( $download_url );
         if ( false === $data ) {
-            fwrite( STDERR, "Failed to download WordPress test library.\n" );
-            return;
+            throw new RuntimeException( 'Failed to download WordPress test library.' );
         }
         file_put_contents( $archive, $data );
     }
 
     if ( file_exists( $archive ) ) {
-        $tmp_dir = __DIR__ . '/wp-temp';
+        $remove_path( $tmp_dir );
         if ( ! $ensure_directory( $tmp_dir ) ) {
-            fwrite( STDERR, "Failed to create {$tmp_dir}\n" );
-            return;
+            throw new RuntimeException( "Failed to create {$tmp_dir}" );
         }
+
+        $tar_command = sprintf(
+            'tar --no-same-owner --no-same-permissions --touch -xzf %s -C %s 2>&1',
+            escapeshellarg( $archive ),
+            escapeshellarg( $tmp_dir )
+        );
+        exec( $tar_command, $tar_output, $tar_exit_code );
+
+        if ( 0 !== $tar_exit_code ) {
+            throw new RuntimeException( 'Extraction error: ' . implode( "\n", $tar_output ) );
+        }
+
         try {
-            $phar = new PharData( $archive );
-            $phar->extractTo( $tmp_dir, null, true );
             $extracted = glob( $tmp_dir . '/wordpress-develop-*' );
-            if ( ! empty( $extracted ) ) {
-                rename( $extracted[0], $tests_dir );
+            if ( empty( $extracted ) || ! is_dir( $extracted[0] ) ) {
+                throw new RuntimeException( 'Extracted WordPress test library was not found.' );
+            }
+
+            $remove_path( $tests_dir );
+            if ( @rename( $extracted[0], $tests_dir ) ) {
+                $remove_path( $tmp_dir );
+            } else {
+                // Windows bind mounts can reject directory renames from inside Docker.
+                $tests_dir    = $extracted[0];
+                $includes_dir = $tests_dir . '/tests/phpunit/includes';
             }
         } catch ( Exception $e ) {
-            fwrite( STDERR, 'Extraction error: ' . $e->getMessage() . "\n" );
-            return;
+            throw new RuntimeException( 'Extraction error: ' . $e->getMessage(), 0, $e );
         }
     }
 }
 
 if ( ! file_exists( "$includes_dir/functions.php" ) ) {
-    fwrite( STDERR, "WordPress test library not found.\n" );
-    return;
+    throw new RuntimeException( 'WordPress test library not found.' );
 }
 
 if ( ! defined( 'WP_TESTS_CONFIG_FILE_PATH' ) ) {

@@ -163,4 +163,23 @@ test.describe('Sentient Forms admin actions', () => {
 		expect(settings['map-summary-only']).toBeDefined();
 		expect(settings['map-spam-gate-again']).toBeDefined();
 	});
+
+	test('opens provider edit links outside the Svelte router', async ({ page }) => {
+		await openSentientForms(page, `/actions/gravity_forms/${seededFormId}`);
+
+		const link = page.getByTestId('actions-provider-edit-link');
+		await expect(link).toHaveAttribute('data-sveltekit-reload', '');
+		await expect(link).toHaveAttribute('rel', /external/);
+		await expect(link).toHaveAttribute(
+			'href',
+			new RegExp(`admin\\.php\\?page=gf_edit_forms&id=${seededFormId}`)
+		);
+
+		await link.click();
+
+		await expect(page).toHaveURL(
+			new RegExp(`/wp-admin/admin\\.php\\?page=gf_edit_forms&id=${seededFormId}`)
+		);
+		expect(page.url()).not.toContain('sentient-forms-actions');
+	});
 	});

@@ -39,7 +39,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertArrayHasKey( '/sentient-forms/v1/site-context', $routes );
     }
 
-    public function test_get_context_returns_null_when_cps_has_no_summary(): void
+    public function test_get_context_returns_empty_context_envelope_when_cps_has_no_summary(): void
     {
         Sentient_Forms_Plugin::instance()->set_license_data(
             [
@@ -64,7 +64,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 200, $response->get_status() );
-        $this->assertNull( $response->get_data() );
+        $this->assertSame( [ 'context' => null ], $response->get_data() );
     }
 
     public function test_create_context_propagates_cps_status_code(): void

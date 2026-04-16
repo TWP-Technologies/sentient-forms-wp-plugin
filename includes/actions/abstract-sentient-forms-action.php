@@ -179,7 +179,7 @@ abstract class Sentient_Forms_Abstract_Action implements Sentient_Forms_Action_I
             // Registry not available, critical issue.
             // Use a hardcoded fallback if absolutely necessary, though this state should be avoided.
             $default_global_llm_id = defined( 'SENTIENT_FORMS_DEFAULT_FALLBACK_MODEL_ID' ) ? SENTIENT_FORMS_DEFAULT_FALLBACK_MODEL_ID
-                : 'gemini-2.0-flash';
+                : 'gemini-3-flash-preview';
         }
 
         foreach ( $this->get_settings_fields() as $key => $field )

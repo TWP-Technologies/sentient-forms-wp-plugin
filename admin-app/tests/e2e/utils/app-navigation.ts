@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 function normalizeAppPath(path: string): string {
 	if (!path) return '/';
@@ -18,6 +18,7 @@ export function appUrlMatchesPath(url: URL, path: string): boolean {
 }
 
 export async function expectAppUrl(page: Page, path: string): Promise<void> {
+	const { expect } = await import('@playwright/test');
 	await expect(page).toHaveURL((url) => appUrlMatchesPath(url, path));
 }
 

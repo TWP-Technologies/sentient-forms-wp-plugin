@@ -6,6 +6,7 @@
             <!-- Custom plugin tests live under tests/phpunit with filenames like test-async-handler.php -->
             <directory prefix="test-" suffix=".php">./tests/phpunit</directory>
             <exclude>./tests/wordpress-tests-lib</exclude>
+            <exclude>./tests/wp-temp</exclude>
             <exclude>./tests/phpunit/tests</exclude>
             <exclude>./tests/ajax-nonce-test.php</exclude>
         </testsuite>

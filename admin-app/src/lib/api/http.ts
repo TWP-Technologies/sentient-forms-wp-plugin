@@ -109,13 +109,15 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
         fullUrl = `${config.apiBaseUrl}${path.replace('?', '&')}`;
     }
 
-    const response = await fetch(fullUrl, requestInit);
+	const response = await fetch(fullUrl, requestInit);
 
-    const contentType = response.headers.get('content-type');
-    const isJson = contentType?.includes('application/json');
-    const payload = isJson ? await response.json() : await response.text();
+	const contentType = response.headers.get('content-type');
+	const isJson = contentType?.includes('application/json');
+	const hasNoBody =
+		response.status === 204 || response.status === 205 || response.headers.get('content-length') === '0';
+	const payload = hasNoBody ? null : isJson ? await response.json() : await response.text();
 
-    if (!response.ok) {
+	if (!response.ok) {
         const error = new ApiError('Request failed', response.status, payload);
         if (showNotifications) {
             const message = isApiErrorPayload(payload) ? payload.message : null;

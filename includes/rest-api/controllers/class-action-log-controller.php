@@ -326,6 +326,113 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
     }
 
     /**
+     * Attach a saved form entry id to prior validation-hook audit rows.
+     *
+     * Gravity Forms validation runs before the entry exists. Once gform_entry_post_save fires,
+     * the plugin can safely re-mirror matching execution_request_id rows to CPS; the CPS audit
+     * endpoint upserts on execution_request_id and fills entry_id without duplicating rows.
+     *
+     * @param array<int, string> $execution_request_ids Execution request ids from the validation hook.
+     * @param int                $entry_id              Saved form entry id.
+     * @param string|null        $form_source           Optional form source guard.
+     * @param int|null           $form_id               Optional form id guard.
+     * @return int Number of local audit rows updated.
+     */
+    public static function backfill_entry_id_for_execution_requests(
+        array $execution_request_ids,
+        int $entry_id,
+        ?string $form_source = null,
+        ?int $form_id = null
+    ): int
+    {
+        $entry_id = absint( $entry_id );
+        if ( $entry_id <= 0 || empty( $execution_request_ids ) )
+        {
+            return 0;
+        }
+
+        $request_ids = [];
+        foreach ( $execution_request_ids as $execution_request_id )
+        {
+            if ( ! is_scalar( $execution_request_id ) )
+            {
+                continue;
+            }
+
+            $execution_request_id = sanitize_text_field( (string) $execution_request_id );
+            if ( '' !== $execution_request_id )
+            {
+                $request_ids[ $execution_request_id ] = true;
+            }
+        }
+
+        if ( empty( $request_ids ) )
+        {
+            return 0;
+        }
+
+        $expected_form_source = null !== $form_source ? sanitize_key( $form_source ) : null;
+        $expected_form_id     = null !== $form_id ? absint( $form_id ) : null;
+        $entries              = get_option( self::OPTION_KEY, [] );
+        if ( ! is_array( $entries ) )
+        {
+            return 0;
+        }
+
+        $updated_entries = [];
+        foreach ( $entries as &$entry )
+        {
+            if ( ! is_array( $entry ) )
+            {
+                continue;
+            }
+
+            $execution_request_id = isset( $entry['execution_request_id'] ) && is_scalar( $entry['execution_request_id'] )
+                ? sanitize_text_field( (string) $entry['execution_request_id'] )
+                : '';
+
+            if ( '' === $execution_request_id || ! isset( $request_ids[ $execution_request_id ] ) )
+            {
+                continue;
+            }
+
+            if ( null !== $expected_form_source && ( $entry['form_source'] ?? '' ) !== $expected_form_source )
+            {
+                continue;
+            }
+
+            if ( null !== $expected_form_id && absint( $entry['form_id'] ?? 0 ) !== $expected_form_id )
+            {
+                continue;
+            }
+
+            $current_entry_id = absint( $entry['entry_id'] ?? 0 );
+            if ( $current_entry_id > 0 )
+            {
+                continue;
+            }
+
+            $entry['entry_id'] = $entry_id;
+            $updated_entries[] = $entry;
+        }
+        unset( $entry );
+
+        if ( empty( $updated_entries ) )
+        {
+            return 0;
+        }
+
+        update_option( self::OPTION_KEY, $entries, false );
+
+        foreach ( $updated_entries as $updated_entry )
+        {
+            self::mirror_execution_to_cps( $updated_entry );
+        }
+
+        return count( $updated_entries );
+    }
+
+    /**
      * Get all log entries from storage.
      *
      * @return array

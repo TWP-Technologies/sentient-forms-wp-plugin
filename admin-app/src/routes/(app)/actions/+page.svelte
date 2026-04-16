@@ -20,6 +20,7 @@
 		ActionCategory,
 		FormSourceSummary,
 		FormSummary,
+		FormActionLinkage,
 		FormActionConfig,
 		FormExecutionStatus,
 		ModelSelection
@@ -55,6 +56,8 @@
 	// CB-FORMS-003: Per-form health status
 	let healthByForm = $state<Map<string, FormExecutionStatus>>(new Map());
 	let healthLoading = $state<Set<string>>(new Set());
+	let formActionsByForm = $state<Map<string, FormActionLinkage[]>>(new Map());
+	let formActionsLoading = $state<Set<string>>(new Set());
 
 	function createBlankActionDefaults(): FormActionConfig {
 		return normalizeFormActionConfig({});
@@ -80,8 +83,28 @@
 	// CB-ACTIONS-002: count how many forms have each action enabled
 	const formsPerAction = $derived.by(() => {
 		const counts = new Map<string, number>();
-		for (const forms of Object.values(formsBySource)) {
+		const loadedFormKeys = new Set(formActionsByForm.keys());
+
+		for (const [formKey, linkages] of formActionsByForm) {
+			const enabledActionIds = new Set(
+				linkages
+					.filter(isLinkageEnabled)
+					.map((linkage) => getLinkageActionId(linkage))
+					.filter((actionId): actionId is string => Boolean(actionId))
+			);
+
+			for (const actionId of enabledActionIds) {
+				counts.set(actionId, (counts.get(actionId) ?? 0) + 1);
+			}
+		}
+
+		for (const [sourceSlug, forms] of Object.entries(formsBySource)) {
 			for (const form of forms) {
+				const key = formStateKey(sourceSlug, form.id);
+				if (loadedFormKeys.has(key)) {
+					continue;
+				}
+
 				const actions =
 					form.settings && typeof form.settings === 'object'
 						? (form.settings as Record<string, unknown>)['actions']
@@ -365,6 +388,7 @@
 
 			// CB-FORMS-003: Load health statuses after forms are available
 			loadFormHealthStatuses();
+			loadFormActionCounts();
 		} catch (err) {
 			error = friendlyMessageFromError(err, 'Failed to load forms');
 			formsBySource = {};
@@ -396,6 +420,32 @@
 		healthLoading = nextLoading;
 	}
 
+	function loadFormActionCounts() {
+		const nextLoading = new Set<string>();
+		const validKeys = new Set<string>();
+
+		for (const [sourceSlug, forms] of Object.entries(formsBySource)) {
+			for (const form of forms) {
+				const key = formStateKey(sourceSlug, form.id);
+				validKeys.add(key);
+				nextLoading.add(key);
+
+				client
+					.getFormActions(sourceSlug, form.id, { showNotifications: false })
+					.then((actions) => {
+						formActionsByForm = new Map(formActionsByForm).set(key, actions);
+						formActionsLoading = new Set([...formActionsLoading].filter((k) => k !== key));
+					})
+					.catch(() => {
+						formActionsLoading = new Set([...formActionsLoading].filter((k) => k !== key));
+					});
+			}
+		}
+
+		formActionsByForm = new Map([...formActionsByForm].filter(([key]) => validKeys.has(key)));
+		formActionsLoading = nextLoading;
+	}
+
 	// CB-FORMS-003: Derive badge properties from execution status
 	function getHealthBadge(form: FormSummary) {
 		const sourceSlug = selectedSource?.slug ?? form.adapter;
@@ -403,7 +453,23 @@
 		return resolveHealthBadge(healthByForm.get(key) ?? null, healthLoading.has(key));
 	}
 
-	function configuredActionCount(form: FormSummary): number {
+	function formStateKey(sourceSlug: string, formId: number): string {
+		return `${sourceSlug}:${formId}`;
+	}
+
+	function getLinkageActionId(linkage: FormActionLinkage): string | null {
+		return (
+			linkage.central_action_id ??
+			(linkage as FormActionLinkage & { action_code?: string }).action_code ??
+			null
+		);
+	}
+
+	function isLinkageEnabled(linkage: FormActionLinkage): boolean {
+		return linkage.is_action_enabled_for_form !== false;
+	}
+
+	function legacyConfiguredActionCount(form: FormSummary): number {
 		const actions =
 			form.settings && typeof form.settings === 'object'
 				? (form.settings as Record<string, unknown>)['actions']
@@ -417,8 +483,25 @@
 		return 0;
 	}
 
+	function configuredActionCount(form: FormSummary): number | null {
+		const key = formStateKey(selectedSource?.slug ?? form.adapter, form.id);
+		const linkages = formActionsByForm.get(key);
+		if (linkages) {
+			return linkages.filter(isLinkageEnabled).length;
+		}
+		if (formActionsLoading.has(key)) {
+			return null;
+		}
+		return legacyConfiguredActionCount(form);
+	}
+
 	function isFormEnabled(form: FormSummary): boolean {
-		return form.settings && (form.settings as { enabled?: boolean })?.enabled === true;
+		if (!form.settings || typeof form.settings !== 'object') {
+			return false;
+		}
+
+		const settings = form.settings as Record<string, unknown>;
+		return settings.sf_disabled !== true;
 	}
 
 	function isProviderFormActive(form: FormSummary): boolean {
@@ -800,7 +883,7 @@
 						{@const enabled = isFormEnabled(form)}
 						{@const providerActive = isProviderFormActive(form)}
 						{@const health = getHealthBadge(form)}
-						<Card>
+						<Card data-testid={`actions-form-card-${form.id}`}>
 							<div class="sf:flex sf:justify-between sf:items-start sf:gap-3">
 								<div class="sf:min-w-0 sf:flex-1">
 									<p class="sf:font-semibold sf:text-slate-800 sf:truncate">{form.title}</p>
@@ -817,7 +900,9 @@
 									<span title={health.tooltip}>
 										<Badge variant={health.variant}>{health.label}</Badge>
 									</span>
-									{#if actionCount > 0}
+									{#if actionCount === null}
+										<span class="sf:text-xs sf:text-slate-500">Checking actions…</span>
+									{:else if actionCount > 0}
 										<span class="sf:text-xs sf:text-indigo-600 sf:font-medium">
 											{actionCount} action{actionCount !== 1 ? 's' : ''}
 										</span>
@@ -842,6 +927,17 @@
 								<Button size="sm" onclick={() => openFormDetail(form)} class="sf:w-full">
 									Configure Actions
 								</Button>
+								{#if form.provider_edit_url}
+									<a
+										href={form.provider_edit_url}
+										class="sf:mt-2 sf:block sf:text-center sf:text-xs sf:font-medium sf:text-slate-600 hover:sf:text-slate-900"
+										data-sveltekit-reload
+										rel="external"
+										data-testid={`actions-provider-edit-link-${form.id}`}
+									>
+										Open in {selectedSource?.label ?? form.adapter_name ?? form.adapter}
+									</a>
+								{/if}
 							</div>
 						</Card>
 					{/each}
@@ -1021,7 +1117,7 @@
 			</div>
 
 			<footer
-				class="sf:flex sf:flex-wrap sf:justify-end sf:gap-2 sf:px-4 sf:sm:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
+				class="sf:sticky sf:bottom-0 sf:flex sf:flex-wrap sf:justify-end sf:gap-2 sf:px-4 sf:sm:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
 			>
 				<Button variant="secondary" onclick={cancelActionDefaults}>Cancel</Button>
 				<Button

@@ -124,6 +124,11 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             );
         }
 
+        if ( null === $response )
+        {
+            return $this->prepare_item_for_response( [ 'context' => null ] );
+        }
+
         return $this->prepare_item_for_response( $response );
     }
 

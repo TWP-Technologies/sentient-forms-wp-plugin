@@ -435,10 +435,14 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( [], $filtered );
     }
 
-    public function test_finalize_async_evaluation_ignores_spam_detection_payloads(): void
+    public function test_finalize_async_evaluation_adds_spam_note_and_marks_entry(): void
     {
         $spy_adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
         $entry_id    = 321;
+        $spy_adapter->entries[ $entry_id ] = [
+            'id'     => $entry_id,
+            'status' => 'active',
+        ];
 
         $spy_adapter->finalize_async_evaluation(
             [
@@ -454,7 +458,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 'result_data'       => [
                     'classification' => 'spam',
                     'confidence'     => 0.99,
-                    'justification'  => 'This note should not be added from evaluation finalization.',
+                    'justification'  => 'This async spam explanation must be added as a GF entry note.',
                     'indicators'     => [
                         [
                             'type'     => 'promotional_language',
@@ -469,7 +473,132 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             ]
         );
 
-        $this->assertSame( [], $spy_adapter->notes );
+        $this->assertNotEmpty( $spy_adapter->notes );
+        $this->assertStringContainsString(
+            'This async spam explanation must be added as a GF entry note.',
+            (string) ( $spy_adapter->notes[0]['note_content'] ?? '' )
+        );
+        $this->assertSame( 'spam', $spy_adapter->entries[ $entry_id ]['status'] ?? null );
+        $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+    }
+
+    public function test_finalize_async_evaluation_does_not_duplicate_spam_notes_on_repeat_completion(): void
+    {
+        $entry_id = 322;
+
+        $context = [
+            'entry_id'                 => $entry_id,
+            'form_id'                  => 22,
+            'central_action_id'        => 'spam_detection_v1',
+            'mark_as_spam'             => true,
+            'spam_result_display_mode' => 'entry_note',
+            'spam_indicators_display'  => 'detailed',
+        ];
+        $result = [
+            'central_action_id' => 'spam_detection_v1',
+            'result_data'       => [
+                'classification' => 'spam',
+                'confidence'     => 0.99,
+                'justification'  => 'Duplicate async completion must not duplicate this note.',
+            ],
+            'meta'              => [
+                'action_template_code' => 'spam_detection_v1',
+            ],
+        ];
+
+        $this->adapter->finalize_async_evaluation( $context, $result );
+        $this->adapter->finalize_async_evaluation( $context, $result );
+
+        $notes = gform_get_meta( $entry_id, 'sentient_forms_notes' );
+        $this->assertIsArray( $notes );
+        $classification_notes = array_values(
+            array_filter(
+                $notes,
+                static fn ( array $note ): bool => str_contains(
+                    (string) ( $note['content'] ?? '' ),
+                    'Sentient Forms AI classified this entry as SPAM'
+                )
+            )
+        );
+
+        $this->assertCount( 1, $classification_notes );
+        $this->assertSame( 'spam', gform_get_meta( $entry_id, 'sentient_forms_spam_classification' ) );
+    }
+
+    public function test_finalize_async_success_runs_post_execution_entry_note_and_hook(): void
+    {
+        $spy_adapter = new Sentient_Forms_Test_Gravity_Forms_Adapter_Spy( Sentient_Forms_Plugin::instance() );
+        $entry_id    = 701;
+
+        $spy_adapter->entries[ $entry_id ] = [
+            'id'      => $entry_id,
+            'form_id' => 44,
+            '1'       => 'Ava',
+            '2'       => 'ava@example.test',
+            'status'  => 'active',
+        ];
+
+        $hook_calls = [];
+        $hook       = static function ( array $context, array $result, array $action, int $called_entry_id ) use ( &$hook_calls ): void {
+            $hook_calls[] = [
+                'context'  => $context,
+                'result'   => $result,
+                'action'   => $action,
+                'entry_id' => $called_entry_id,
+            ];
+        };
+
+        add_action( 'sentient_forms_demo_custom_effect', $hook, 10, 4 );
+
+        try {
+            $spy_adapter->finalize_async_success(
+                [
+                    'entry_id'          => $entry_id,
+                    'form_id'           => 44,
+                    'central_action_id' => 'custom_follow_up',
+                    'action_name_label' => 'Demo Custom Follow-up',
+                    'settings'          => [
+                        'post_execution_actions' => [
+                            [
+                                'type'    => 'entry_note',
+                                'message' => 'Follow up with {{field:1}} about {{llm_output}}.',
+                            ],
+                            [
+                                'type'      => 'wp_hook',
+                                'hook_name' => 'sentient_forms_demo_custom_effect',
+                            ],
+                        ],
+                    ],
+                ],
+                [
+                    'result_data' => [
+                        'llm_output'    => 'support plan',
+                        'justification' => 'Helpful request',
+                    ],
+                ]
+            );
+        } finally {
+            remove_action( 'sentient_forms_demo_custom_effect', $hook, 10 );
+        }
+
+        $note_contents = array_map(
+            static fn ( array $note ): string => (string) ( $note['note_content'] ?? '' ),
+            $spy_adapter->notes
+        );
+
+        $this->assertContains( 'Follow up with Ava about support plan.', $note_contents );
+        $this->assertCount( 1, $hook_calls );
+        $this->assertSame( $entry_id, $hook_calls[0]['entry_id'] );
+        $this->assertSame( 'custom_follow_up', $hook_calls[0]['context']['central_action_id'] ?? null );
+
+        $audit_json = gform_get_meta( $entry_id, 'sentient_forms_post_execution_actions' );
+        $audit      = json_decode( (string) $audit_json, true );
+
+        $this->assertIsArray( $audit );
+        $this->assertSame( 'success', $audit[0]['results'][0]['status'] ?? null );
+        $this->assertSame( 'entry_note', $audit[0]['results'][0]['type'] ?? null );
+        $this->assertSame( 'success', $audit[0]['results'][1]['status'] ?? null );
+        $this->assertSame( 'wp_hook', $audit[0]['results'][1]['type'] ?? null );
     }
 
     /**
@@ -551,7 +680,8 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
     /**
      * T-PHP-003: Test that notification filters are registered.
-     * Blocking spam suppression should be handled in gform_notification only.
+     * Blocking spam suppression uses gform_notification, and async suppression
+     * defers decisions through gform_disable_notification.
      */
     public function test_notification_filter_registered(): void
     {
@@ -562,12 +692,11 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         // Check that our filter is registered with the gform_notification hook
         $has_filter = has_filter( 'gform_notification', [ $this->adapter, 'maybe_suppress_spam_notification' ] );
 
-        $this->assertFalse(
-            has_filter( 'gform_disable_notification', [ $this->adapter, 'maybe_defer_async_spam_notification' ] ),
-            'Background spam should not register a notification deferral filter'
-        );
+        $has_async_deferral_filter = has_filter( 'gform_disable_notification', [ $this->adapter, 'maybe_defer_async_spam_notification' ] );
         $this->assertNotFalse( $has_entry_post_save_filter, 'gform_entry_post_save filter should be registered for after-submission execution' );
         $this->assertSame( 10, $has_entry_post_save_filter, 'Entry post-save filter should have priority 10' );
+        $this->assertNotFalse( $has_async_deferral_filter, 'gform_disable_notification filter should be registered for async spam deferral' );
+        $this->assertSame( 10, $has_async_deferral_filter, 'Async deferral filter should have priority 10' );
         $this->assertNotFalse( $has_filter, 'gform_notification filter should be registered' );
         $this->assertSame( 10, $has_filter, 'Filter should have priority 10' );
     }
@@ -1177,6 +1306,143 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         // With fail-open disabled, submission should be blocked
         $this->assertFalse( $result['is_valid'] );
         $this->assertTrue( $result['form']['failed_validation'] );
+    }
+
+    /**
+     * Test content_validation_v1 can block from CPS structured_output without a top-level validation envelope.
+     */
+    public function test_apply_cps_validation_response_blocks_from_content_validation_structured_output(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'apply_cps_validation_response' );
+        $method->setAccessible( true );
+
+        $field = (object) [
+            'id'                 => 3,
+            'failed_validation'  => false,
+            'validation_message' => '',
+        ];
+
+        $validation_result = [
+            'is_valid' => true,
+            'form'     => [
+                'failed_validation' => false,
+                'fields'            => [ $field ],
+            ],
+        ];
+
+        $response = [
+            'result_data' => [
+                'structured_output_valid' => true,
+                'structured_output'       => [
+                    'is_valid' => false,
+                    'message'  => 'Please provide a real project description.',
+                    'fields'   => [
+                        [
+                            'field_id' => '3',
+                            'is_valid' => false,
+                            'message'  => 'Tell us what you need built.',
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $action_settings = [
+            'central_action_id'  => 'content_validation_v1',
+            'action_name_label'  => 'Content Quality',
+            'validation_message' => 'Fallback content message.',
+        ];
+
+        $result = $method->invoke( $this->adapter, $validation_result, $response, $action_settings );
+
+        $this->assertFalse( $result['is_valid'] );
+        $this->assertTrue( $result['form']['failed_validation'] );
+        $this->assertStringContainsString(
+            'Please provide a real project description.',
+            (string) ( $result['form']['validation_message'] ?? '' )
+        );
+        $this->assertTrue( $result['form']['fields'][0]->failed_validation );
+        $this->assertSame( 'Tell us what you need built.', $result['form']['fields'][0]->validation_message );
+    }
+
+    /**
+     * Test the validation hook blocks when CPS returns content_validation_v1 structured output.
+     */
+    public function test_handle_validation_blocks_content_validation_structured_output_without_top_level_validation(): void
+    {
+        $form_id    = 99024;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $calls      = [];
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_content_quality' => [
+                    'local_mapping_id'           => 'map_content_quality',
+                    'central_action_id'          => 'content_validation_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'settings'                   => [],
+                ],
+            ]
+        );
+
+        $this->set_action_executor(
+            new Sentient_Forms_Test_Validation_Action_Executor(
+                Sentient_Forms_Plugin::instance(),
+                static function ( string $central_action_id ) use ( &$calls ): array {
+                    $calls[] = $central_action_id;
+
+                    return [
+                        'result_data' => [
+                            'structured_output_valid' => true,
+                            'structured_output'       => [
+                                'is_valid' => false,
+                                'message'  => 'Please provide a real project description.',
+                                'fields'   => [
+                                    [
+                                        'field_id' => '3',
+                                        'is_valid' => false,
+                                        'message'  => 'Tell us what you need built.',
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ];
+                }
+            )
+        );
+
+        $field = (object) [
+            'id'                 => 3,
+            'failed_validation'  => false,
+            'validation_message' => '',
+        ];
+
+        $result = $this->adapter->handle_validation(
+            [
+                'is_valid' => true,
+                'form'     => [
+                    'id'                => $form_id,
+                    'failed_validation' => false,
+                    'fields'            => [ $field ],
+                ],
+            ]
+        );
+
+        $this->assertSame( [ 'content_validation_v1' ], $calls );
+        $this->assertFalse( $result['is_valid'] );
+        $this->assertTrue( $result['form']['failed_validation'] );
+        $this->assertStringContainsString(
+            'Please provide a real project description.',
+            (string) ( $result['form']['validation_message'] ?? '' )
+        );
+        $this->assertTrue( $result['form']['fields'][0]->failed_validation );
+        $this->assertSame( 'Tell us what you need built.', $result['form']['fields'][0]->validation_message );
+
+        delete_option( $option_key );
     }
 
     // =========================================================================
@@ -2020,6 +2286,82 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         delete_option( 'sentient_forms_action_log' );
     }
 
+    public function test_entry_post_save_backfills_validation_action_log_entry_id(): void
+    {
+        $form_id    = 99022;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        delete_option( 'sentient_forms_action_log' );
+
+        update_option(
+            $option_key,
+            [
+                'sf_disabled' => false,
+                'map_validation' => [
+                    'local_mapping_id'           => 'map_validation',
+                    'central_action_id'          => 'content_validation_v1',
+                    'action_type_indicator'      => 'master',
+                    'action_name_label'          => 'Content Quality',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'gform_validation' ],
+                    'settings'                   => [],
+                ],
+            ]
+        );
+
+        $this->set_action_executor(
+            new Sentient_Forms_Test_Validation_Action_Executor(
+                Sentient_Forms_Plugin::instance(),
+                static function (): array {
+                    return [
+                        'result_data' => [
+                            'classification' => 'ham',
+                        ],
+                        'meta' => [
+                            'execution_request_id' => 'req-validation-entry-backfill',
+                            'credits_debited'      => 12,
+                        ],
+                        'validation' => [
+                            'is_valid' => true,
+                        ],
+                    ];
+                }
+            )
+        );
+
+        $_POST = [];
+        $this->adapter->handle_validation(
+            [
+                'is_valid' => true,
+                'form'     => [
+                    'id'     => $form_id,
+                    'fields' => [],
+                ],
+            ]
+        );
+
+        $entries = get_option( 'sentient_forms_action_log', [] );
+        $this->assertNotEmpty( $entries );
+        $this->assertNull( $entries[0]['entry_id'] ?? null );
+        $this->assertNotEmpty( $entries[0]['execution_request_id'] ?? null );
+
+        $this->adapter->handle_after_submission_entry_post_save(
+            [
+                'id' => 9090,
+            ],
+            [
+                'id' => $form_id,
+            ]
+        );
+
+        $updated_entries = get_option( 'sentient_forms_action_log', [] );
+
+        $this->assertSame( 9090, $updated_entries[0]['entry_id'] ?? null );
+        $this->assertSame( $entries[0]['execution_request_id'], $updated_entries[0]['execution_request_id'] ?? null );
+
+        delete_option( $option_key );
+        delete_option( 'sentient_forms_action_log' );
+    }
+
     public function test_handle_validation_skips_spam_gated_dependent_mapping_when_upstream_classifies_likely_spam(): void
     {
         $form_id    = 9903;
@@ -2525,4 +2867,3 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
     }
 
 }
-

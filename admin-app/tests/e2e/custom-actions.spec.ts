@@ -32,6 +32,7 @@ test.describe('Custom actions admin view', () => {
 		];
 
 		const quotaMax = 5;
+		let lastCreatePayload: Record<string, unknown> | null = null;
 
 		function quotaSummary() {
 			const activeCount = actions.filter((action) => action.status === 'active').length;
@@ -67,10 +68,14 @@ test.describe('Custom actions admin view', () => {
 					body: JSON.stringify([
 						{
 							id: 'spam_detection_v1',
+							templateId: '11111111-1111-4111-8111-111111111111',
 							code: 'spam_detection_v1',
-							name: 'Spam Detection',
+							label: 'Spam Detection',
 							description: 'Detects spam submissions',
-							form_sources: ['gravity_forms']
+							form_sources: ['gravity_forms'],
+							baseCreditCost: 10,
+							modelHint: 'gemini-3-flash-preview',
+							source: 'cps'
 						}
 					])
 				});
@@ -93,6 +98,7 @@ test.describe('Custom actions admin view', () => {
 
 				if (method === 'POST' && !reactivateMatch) {
 					const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+					lastCreatePayload = payload;
 					const now = new Date().toISOString();
 					const newAction = {
 						id: `action-${Date.now()}`,
@@ -189,14 +195,41 @@ test.describe('Custom actions admin view', () => {
 		await expectAppUrl(page, '/actions/custom/new');
 
 		const createForm = page.getByTestId('custom-action-form');
-		await createForm
-			.getByLabel('Template ID')
-			.fill('11111111-1111-4111-8111-111111111111');
+		await expect(createForm.getByLabel('Template ID')).toHaveCount(0);
+		await expect(createForm.getByLabel('Code')).toHaveCount(0);
 		await createForm.getByLabel('Display Name').fill('Beta action');
-		await createForm.getByLabel('Code').fill('beta');
+		await expect(createForm.getByTestId('custom-action-generated-code')).toContainText(
+			'beta-action'
+		);
+		await createForm
+			.getByLabel('Custom Instructions')
+			.fill('Write a direct, demo-ready follow-up summary.');
+		await createForm.getByRole('switch', { name: 'Trigger a WordPress hook' }).click();
 		await createForm.getByRole('button', { name: 'Create Action' }).click();
 
 		await expectAppUrl(page, '/actions/custom');
+		expect(lastCreatePayload).toMatchObject({
+			template_id: '11111111-1111-4111-8111-111111111111',
+			code: 'beta-action',
+			prompt_overrides: {
+				custom_instructions: 'Write a direct, demo-ready follow-up summary.'
+			}
+		});
+		expect(
+			(
+				(lastCreatePayload?.definition as Record<string, unknown> | undefined)?.execution_defaults as
+					| Record<string, unknown>
+					| undefined
+			)?.post_execution_actions
+		).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ type: 'entry_note' }),
+				expect.objectContaining({
+					type: 'wp_hook',
+					hook_name: 'sentient_forms_custom_action_completed'
+				})
+			])
+		);
 		tableRows = page.getByTestId('custom-actions-table').locator('tbody tr');
 
 		await expect(tableRows).toHaveCount(2);

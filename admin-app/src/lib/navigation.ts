@@ -44,6 +44,22 @@ export const normalizeRoutePath = (path: string): string => {
 	return normalized;
 };
 
+const APP_ROUTE_PREFIXES = ['/', '/dashboard', '/licensing', '/actions', '/settings'] as const;
+const ABSOLUTE_OR_PROTOCOL_RELATIVE_URL = /^(?:[a-z][a-z0-9+.-]*:)?\/\//i;
+
+export const isInternalAppPath = (path: string): boolean => {
+	if (!path) return true;
+	const trimmed = path.trim();
+	if (!trimmed) return true;
+	if (ABSOLUTE_OR_PROTOCOL_RELATIVE_URL.test(trimmed)) return false;
+
+	const normalized = normalizeRoutePath(trimmed);
+	return APP_ROUTE_PREFIXES.some((prefix) => {
+		if (prefix === '/') return normalized === '/';
+		return normalized === prefix || normalized.startsWith(`${prefix}/`);
+	});
+};
+
 const NAV_MATCHERS: Array<{ path: NavigationLinkPath; matches: (value: string) => boolean }> = [
 	{
 		path: '/actions/custom',
@@ -120,6 +136,11 @@ export const navigateToAppPath = async (
 	options?: Parameters<typeof goto>[1]
 ): Promise<void> => {
 	if (!browser) return;
+
+	if (!isInternalAppPath(path)) {
+		window.location.assign(path);
+		return;
+	}
 
 	const href = appPath(path);
 

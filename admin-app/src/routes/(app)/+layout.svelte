@@ -1,7 +1,7 @@
 	<script lang="ts">
 		import type { CreditBalanceResponse } from '$lib/api/types';
 		import { page } from '$app/state';
-		import { onMount } from 'svelte';
+		import { onMount, untrack } from 'svelte';
 		import {
 			appHref,
 		deriveActivePath,
@@ -44,6 +44,7 @@
 		let hardRepairAttempted = $state(false);
 		let shellCredits = $state<CreditBalanceResponse | null>(null);
 		let shellCreditRefreshPending = $state(false);
+		let lastShellCreditRefreshPath: string | null = null;
 
 		let resetInfo = $derived(getNextCreditReset());
 		let shellCreditPresentation = $derived(
@@ -79,6 +80,17 @@
 			if (action === 'navigate_licensing') {
 				void navigateToAppPath('/licensing');
 			}
+		}
+
+		function hasConnectedShellLicense(): boolean {
+			const runtimeLicense =
+				typeof window === 'undefined' ? undefined : window.sentientFormsConfig?.license;
+			const runtimeStatus = (runtimeLicense?.status as LicenseStatus | undefined) ?? 'inactive';
+
+			return (
+				(Boolean(runtimeLicense?.proxyKeyPresent) && isConnectedLicenseStatus(runtimeStatus)) ||
+				($sessionStore.proxyKeyPresent && isConnectedLicenseStatus($sessionStore.licenseStatus))
+			);
 		}
 
 		async function refreshShellCreditHealth(): Promise<void> {
@@ -148,11 +160,28 @@
 		});
 
 		$effect(() => {
-			renderedPath;
-			activePath;
+			const currentPath = activePath;
 			if (typeof window === 'undefined') return;
-			if (activePath === '/dashboard' || activePath === '/licensing') return;
-			void refreshShellCreditHealth();
+			if (currentPath === '/dashboard' || currentPath === '/licensing') {
+				lastShellCreditRefreshPath = null;
+				return;
+			}
+
+			const isConnected = untrack(() => hasConnectedShellLicense());
+			if (!isConnected) {
+				lastShellCreditRefreshPath = null;
+				shellCredits = null;
+				return;
+			}
+
+			if (lastShellCreditRefreshPath === currentPath) {
+				return;
+			}
+
+			lastShellCreditRefreshPath = currentPath;
+			untrack(() => {
+				void refreshShellCreditHealth();
+			});
 		});
 
 		onMount(() => {

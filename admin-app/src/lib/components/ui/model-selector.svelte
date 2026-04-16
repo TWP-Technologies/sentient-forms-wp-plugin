@@ -10,6 +10,7 @@
 		ModelSelection,
 		ResolvedModelSelection
 	} from '$lib/api/types';
+	import { unwrapRestResponse, type RestEnvelope } from '$lib/api/response';
 	import { wpFetch } from '$lib/wp';
 
 	/**
@@ -74,6 +75,54 @@
 	let resolutionError = $state<string | null>(null);
 	let resolutionRequestToken = 0;
 
+	function isRecord(value: unknown): value is Record<string, unknown> {
+		return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+	}
+
+	function normalizeModelCatalog(
+		catalog: ModelCatalogResponse | Record<string, unknown> | null | undefined
+	): ModelCatalogResponse {
+		return {
+			models: Array.isArray(catalog?.models) ? (catalog.models as ModelInfo[]) : [],
+			presets: Array.isArray(catalog?.presets) ? (catalog.presets as ModelPreset[]) : [],
+			pricing_policy_version:
+				typeof catalog?.pricing_policy_version === 'string'
+					? catalog.pricing_policy_version
+					: undefined
+		};
+	}
+
+	function normalizeResolvedModel(
+		candidate: ResolvedModelSelection | Record<string, unknown> | null | undefined
+	): ResolvedModelSelection | null {
+		if (!isRecord(candidate)) {
+			return null;
+		}
+
+		const modelId = typeof candidate.model_id === 'string' ? candidate.model_id : '';
+		const displayName =
+			typeof candidate.display_name === 'string' ? candidate.display_name : modelId;
+		const resolutionSource =
+			typeof candidate.resolution_source === 'string'
+				? candidate.resolution_source
+				: 'unavailable';
+
+		if (!modelId || !displayName) {
+			return null;
+		}
+
+		return {
+			model_id: modelId,
+			display_name: displayName,
+			resolution_source: resolutionSource,
+			override_chain: Array.isArray(candidate.override_chain)
+				? (candidate.override_chain as ResolvedModelSelection['override_chain'])
+				: [],
+			backup_model_id:
+				typeof candidate.backup_model_id === 'string' ? candidate.backup_model_id : null
+		};
+	}
+
 	function syncSelectionFromValue(nextValue: ModelSelection | null | undefined) {
 		if (!nextValue) {
 			advancedMode = false;
@@ -93,12 +142,13 @@
 		loading = true;
 		error = null;
 		try {
-			const response = await wpFetch<{ success: boolean; data: ModelCatalogResponse }>('models');
-			if (response?.data) {
-				models = response.data.models;
-				presets = response.data.presets;
-				syncSelectionFromValue(value);
-			}
+			const response = await wpFetch<ModelCatalogResponse | RestEnvelope<ModelCatalogResponse>>('models');
+			const catalog = normalizeModelCatalog(
+				unwrapRestResponse<ModelCatalogResponse | Record<string, unknown>>(response)
+			);
+			models = catalog.models;
+			presets = catalog.presets;
+			syncSelectionFromValue(value);
 		} catch (e) {
 			console.error('Failed to load models', e);
 			error = e instanceof Error ? e.message : 'Failed to load models';
@@ -163,7 +213,9 @@
 		const selectionPayload = buildSelectionPayload(selection);
 
 		try {
-			const resolvedResponse = await wpFetch<{ success: boolean; data: ResolvedModelSelection }>(
+			const resolvedResponse = await wpFetch<
+				ResolvedModelSelection | RestEnvelope<ResolvedModelSelection>
+			>(
 				'models/resolve',
 				{
 					method: 'POST',
@@ -176,10 +228,14 @@
 				return;
 			}
 
-			resolved = resolvedResponse?.data ?? null;
+			resolved = normalizeResolvedModel(
+				unwrapRestResponse<ResolvedModelSelection | Record<string, unknown>>(resolvedResponse)
+			);
 
 			if (actionId) {
-				const estimateResponse = await wpFetch<{ success: boolean; data: ModelEstimateResponse }>(
+				const estimateResponse = await wpFetch<
+					ModelEstimateResponse | RestEnvelope<ModelEstimateResponse>
+				>(
 					'models/estimate',
 					{
 						method: 'POST',
@@ -197,10 +253,12 @@
 					return;
 				}
 
-				if (estimateResponse?.data?.resolved_model) {
-					resolved = estimateResponse.data.resolved_model;
+				const estimate = unwrapRestResponse<ModelEstimateResponse>(estimateResponse);
+				const estimateResolved = normalizeResolvedModel(estimate?.resolved_model);
+				if (estimateResolved) {
+					resolved = estimateResolved;
 				}
-				pricingEstimate = estimateResponse?.data?.pricing_estimate ?? null;
+				pricingEstimate = estimate?.pricing_estimate ?? null;
 			} else {
 				pricingEstimate = null;
 			}

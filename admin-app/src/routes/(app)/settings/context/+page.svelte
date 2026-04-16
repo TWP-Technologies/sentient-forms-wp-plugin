@@ -35,6 +35,14 @@
 		updated_at: string;
 	}
 
+	type SiteContextResponse =
+		| SiteContext
+		| null
+		| {
+				context?: SiteContext | null;
+				data?: SiteContext | null;
+		  };
+
 	let loading = $state(true);
 	let saving = $state(false);
 	let generating = $state(false);
@@ -47,6 +55,26 @@
 	let showRegenConfirm = $state(false);
 	let creditBalance = $state<CreditBalanceResponse | null>(null);
 	let creditsLoading = $state(false);
+
+	function normalizeSiteContextResponse(response: SiteContextResponse): SiteContext | null {
+		if (!response) {
+			return null;
+		}
+
+		if ('summary_text' in response) {
+			return response;
+		}
+
+		if ('context' in response) {
+			return response.context ?? null;
+		}
+
+		if ('data' in response) {
+			return response.data ?? null;
+		}
+
+		return null;
+	}
 
 	async function loadCredits() {
 		creditsLoading = true;
@@ -63,12 +91,12 @@
 		loading = true;
 		error = null;
 		try {
-			const response = await wpFetch<SiteContext | null>('site-context');
+			const response = normalizeSiteContextResponse(await wpFetch<SiteContextResponse>('site-context'));
 			context = response;
-			if (response) {
-				editedText = response.summary_text;
-				autoInclude = response.auto_include;
-				piiAck = response.pii_ack;
+			if (context) {
+				editedText = context.summary_text;
+				autoInclude = context.auto_include;
+				piiAck = context.pii_ack;
 			} else {
 				editedText = '';
 				autoInclude = true;

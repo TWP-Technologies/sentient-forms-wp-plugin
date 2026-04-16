@@ -47,6 +47,7 @@
 		ActionDefinition,
 		AttachmentMapping,
 		CustomAction,
+		CustomActionPostExecutionActionPayload,
 		DuplicateParentSelection,
 		ExecutionStatus,
 		FormActionConfig,
@@ -78,6 +79,12 @@
 		gform_validation: '🔄 During Validation (Blocking)',
 		gform_after_submission: '📝 After Submission (Background)'
 	};
+
+	const providerEditUrl = $derived(
+		data.formSourceSlug === 'gravity_forms'
+			? `admin.php?page=gf_edit_forms&id=${encodeURIComponent(String(data.formId))}`
+			: null
+	);
 
 	const actionsState = formActionsState;
 	const customState = customActionsState;
@@ -199,6 +206,29 @@
 			modelHint: null,
 			baseCreditCost: null
 		};
+	}
+
+	function isPlainObject(value: unknown): value is Record<string, unknown> {
+		return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+	}
+
+	function getCustomActionPostExecutionActions(
+		action: CustomAction | null
+	): CustomActionPostExecutionActionPayload[] {
+		const defaults = action?.definition?.execution_defaults;
+		if (!isPlainObject(defaults)) {
+			return [];
+		}
+
+		const actions = defaults.post_execution_actions;
+		if (!Array.isArray(actions)) {
+			return [];
+		}
+
+		return actions.filter(
+			(effect): effect is CustomActionPostExecutionActionPayload =>
+				isPlainObject(effect) && typeof effect.type === 'string'
+		);
 	}
 
 	// Form-level action config state (hierarchical spam examples)
@@ -2271,6 +2301,8 @@
 							: { type: 'hook_root' as const }
 					])
 				);
+			const customPostExecutionActions =
+				createKind === 'custom' ? getCustomActionPostExecutionActions(chosenCustom) : [];
 			await formActionsStore.create(data.formSourceSlug, data.formId, {
 				central_action_id: centralActionId,
 				action_type_indicator: createKind === 'template' ? 'master' : 'custom',
@@ -2278,7 +2310,10 @@
 				action_name_label: label,
 				settings: {
 					...(dependencyIds.length > 0 ? { dependency_ids: dependencyIds } : {}),
-					trigger_sources: triggerSources
+					trigger_sources: triggerSources,
+					...(customPostExecutionActions.length > 0
+						? { post_execution_actions: customPostExecutionActions }
+						: {})
 				}
 			});
 			pendingRemovalId = null;
@@ -2629,6 +2664,17 @@
 				/>
 			</div>
 			<Button variant="secondary" onclick={() => navigateToAppPath('/actions')}>All forms</Button>
+			{#if providerEditUrl}
+				<a
+					href={providerEditUrl}
+					class="sf:inline-flex sf:h-10 sf:items-center sf:justify-center sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-4 sf:text-sm sf:font-medium sf:text-slate-700 hover:sf:bg-slate-50 hover:sf:text-slate-900"
+					data-sveltekit-reload
+					rel="external"
+					data-testid="actions-provider-edit-link"
+				>
+					Open in Gravity Forms
+				</a>
+			{/if}
 			<Button variant="secondary" onclick={refresh}>Refresh</Button>
 			<Button onclick={openAddActionPanel}>Add action</Button>
 			<Button variant="secondary" onclick={() => (showTemplateLibrary = true)}

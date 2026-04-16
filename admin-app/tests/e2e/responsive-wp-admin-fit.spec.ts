@@ -42,7 +42,7 @@ const routeChecks: RouteCheck[] = [
 	},
 	{
 		path: '/#/settings',
-		ready: (page) => page.getByRole('heading', { name: /Telemetry .* Async Processing/i })
+		ready: (page) => page.getByRole('heading', { name: /Telemetry .* Background Processing/i })
 	},
 	{
 		path: '/#/settings/context',

@@ -42,6 +42,20 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     private Sentient_Forms_Plugin $plugin;
 
     /**
+     * Cache async spam notification mapping checks per form/entry.
+     *
+     * @var array<string, array<int, string>>
+     */
+    private array $async_spam_notification_gate_cache = [];
+
+    /**
+     * Validation-hook audit request ids that can be linked once Gravity Forms saves the entry.
+     *
+     * @var array<int, array<int, string>>
+     */
+    private array $validation_execution_request_ids_by_form = [];
+
+    /**
      * Constructor
      *
      * @param Sentient_Forms_Plugin $plugin Plugin instance.
@@ -99,6 +113,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         // FR-003: Notification interception hook - suppress notifications for blocking spam entries only
         add_filter( 'gform_notification', [ $this, 'maybe_suppress_spam_notification' ], 10, 3 );
+        add_filter( 'gform_disable_notification', [ $this, 'maybe_defer_async_spam_notification' ], 10, 5 );
 
         // Add settings to the form editor
         add_action( 'gform_editor_js', [ $this, 'editor_js' ] );
@@ -123,9 +138,58 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     public function handle_after_submission_entry_post_save( array $entry, array $form ): array
     {
+        $this->backfill_validation_action_log_entry_ids( $entry, $form );
         $this->handle_after_submission( $entry, $form );
 
         return $entry;
+    }
+
+    private function backfill_validation_action_log_entry_ids( array $entry, array $form ): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
+        {
+            return;
+        }
+
+        $entry_id = absint( $entry['id'] ?? 0 );
+        $form_id  = absint( $form['id'] ?? 0 );
+        if ( $entry_id <= 0 || $form_id <= 0 )
+        {
+            return;
+        }
+
+        $execution_request_ids = $this->validation_execution_request_ids_by_form[ $form_id ] ?? [];
+        if ( empty( $execution_request_ids ) )
+        {
+            return;
+        }
+
+        Sentient_Forms_Action_Log_Controller::backfill_entry_id_for_execution_requests(
+            $execution_request_ids,
+            $entry_id,
+            $this->get_id(),
+            $form_id,
+        );
+
+        unset( $this->validation_execution_request_ids_by_form[ $form_id ] );
+    }
+
+    private function remember_validation_execution_request_id( int $form_id, ?string $execution_request_id ): void
+    {
+        if ( $form_id <= 0 || null === $execution_request_id || '' === $execution_request_id )
+        {
+            return;
+        }
+
+        if ( ! isset( $this->validation_execution_request_ids_by_form[ $form_id ] ) )
+        {
+            $this->validation_execution_request_ids_by_form[ $form_id ] = [];
+        }
+
+        $this->validation_execution_request_ids_by_form[ $form_id ][] = $execution_request_id;
+        $this->validation_execution_request_ids_by_form[ $form_id ] = array_values(
+            array_unique( $this->validation_execution_request_ids_by_form[ $form_id ] )
+        );
     }
 
     /**
@@ -692,6 +756,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             elseif ( is_array( $result ) )
             {
                 $this->log_action_execution( $context, $result, 'success' );
+                $this->run_post_execution_actions( absint( $entry_id ), $context, $result );
                 $this->record_mapping_spam_classification( $mapping_classifications, $mapping_id, $result );
             }
         }
@@ -852,6 +917,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 : [],
         ];
 
+        $context['execution_request_id'] = Sentient_Forms_Action_Executor::generate_execution_request_id(
+            (string) $central_action_id,
+            $form,
+            $entry,
+            $context,
+        );
+
         $response = $this->plugin->get_action_executor()->execute(
             $central_action_id,
             $form,
@@ -864,11 +936,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         if ( is_wp_error( $response ) )
         {
-            $this->log_action_execution( $context, [], 'error', $response );
+            $execution_request_id = $this->log_action_execution( $context, [], 'error', $response );
+            $this->remember_validation_execution_request_id( absint( $form['id'] ?? 0 ), $execution_request_id );
         }
         elseif ( is_array( $response ) )
         {
-            $this->log_action_execution( $context, $response, 'success' );
+            $execution_request_id = $this->log_action_execution( $context, $response, 'success' );
+            $this->remember_validation_execution_request_id( absint( $form['id'] ?? 0 ), $execution_request_id );
         }
 
         return $this->apply_cps_validation_response( $validation_result, $response, $action_settings );
@@ -1187,9 +1261,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return $this->inject_validation_message( $validation_result, $response->get_error_message(), $action_settings );
         }
 
-        if ( isset( $response['validation'] ) && is_array( $response['validation'] ) )
+        $validation = $this->extract_cps_validation_payload( $response, $action_settings );
+        if ( null !== $validation )
         {
-            $validation = $response['validation'];
             if ( array_key_exists( 'is_valid', $validation ) && false === $validation['is_valid'] )
             {
                 $message = $validation['message'] ?? $this->default_validation_failure_message( $action_settings );
@@ -1203,6 +1277,155 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         return $validation_result;
+    }
+
+    /**
+     * Extract validation failure payloads from CPS envelopes.
+     *
+     * @param mixed                $response        CPS response payload.
+     * @param array<string, mixed> $action_settings Mapping settings.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function extract_cps_validation_payload( $response, array $action_settings ): ?array
+    {
+        if ( ! is_array( $response ) )
+        {
+            return null;
+        }
+
+        if ( isset( $response['validation'] ) && is_array( $response['validation'] ) )
+        {
+            return $this->normalize_cps_validation_payload( $response['validation'] );
+        }
+
+        if ( ! $this->is_content_validation_payload_context( $response, $action_settings ) )
+        {
+            return null;
+        }
+
+        $result_data_candidates = [];
+        if ( isset( $response['result_data'] ) && is_array( $response['result_data'] ) )
+        {
+            $result_data_candidates[] = $response['result_data'];
+        }
+
+        if (
+            isset( $response['evaluation_payload']['result_data'] )
+            && is_array( $response['evaluation_payload']['result_data'] )
+        )
+        {
+            $result_data_candidates[] = $response['evaluation_payload']['result_data'];
+        }
+
+        foreach ( $result_data_candidates as $result_data )
+        {
+            if (
+                ! empty( $result_data['structured_output_valid'] )
+                && isset( $result_data['structured_output'] )
+                && is_array( $result_data['structured_output'] )
+            )
+            {
+                $structured_validation = $this->normalize_cps_validation_payload( $result_data['structured_output'] );
+                if ( null !== $structured_validation )
+                {
+                    return $structured_validation;
+                }
+            }
+
+            $direct_validation = $this->normalize_cps_validation_payload( $result_data );
+            if ( null !== $direct_validation )
+            {
+                return $direct_validation;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Determine whether a CPS response belongs to content_validation_v1.
+     *
+     * @param array<string, mixed> $response        CPS response payload.
+     * @param array<string, mixed> $action_settings Mapping settings.
+     *
+     * @return bool
+     */
+    private function is_content_validation_payload_context( array $response, array $action_settings ): bool
+    {
+        $candidates = [
+            $action_settings['central_action_id'] ?? null,
+            $action_settings['action_id'] ?? null,
+            $action_settings['action_code'] ?? null,
+            $response['central_action_id'] ?? null,
+            $response['action_id'] ?? null,
+            $response['action_code'] ?? null,
+            $response['meta']['central_action_id'] ?? null,
+            $response['meta']['action_template_code'] ?? null,
+            $response['evaluation_payload']['central_action_id'] ?? null,
+            $response['evaluation_payload']['action_id'] ?? null,
+            $response['evaluation_payload']['action_template_code'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( is_scalar( $candidate ) && 'content_validation_v1' === sanitize_key( (string) $candidate ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Normalize CPS validation-style payloads into the adapter contract.
+     *
+     * @param array<string, mixed> $candidate Candidate payload.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function normalize_cps_validation_payload( array $candidate ): ?array
+    {
+        if ( ! array_key_exists( 'is_valid', $candidate ) )
+        {
+            return null;
+        }
+
+        $validation = [
+            'is_valid' => rest_sanitize_boolean( $candidate['is_valid'] ),
+            'message'  => isset( $candidate['message'] ) && is_scalar( $candidate['message'] )
+                ? sanitize_text_field( (string) $candidate['message'] )
+                : '',
+            'fields'   => [],
+        ];
+
+        if ( isset( $candidate['fields'] ) && is_array( $candidate['fields'] ) )
+        {
+            foreach ( $candidate['fields'] as $field )
+            {
+                if ( ! is_array( $field ) || ! isset( $field['field_id'] ) || ! is_scalar( $field['field_id'] ) )
+                {
+                    continue;
+                }
+
+                $field_id = sanitize_text_field( (string) $field['field_id'] );
+                if ( '' === $field_id )
+                {
+                    continue;
+                }
+
+                $validation['fields'][] = [
+                    'field_id' => $field_id,
+                    'is_valid' => array_key_exists( 'is_valid', $field ) ? rest_sanitize_boolean( $field['is_valid'] ) : true,
+                    'message'  => isset( $field['message'] ) && is_scalar( $field['message'] )
+                        ? sanitize_text_field( (string) $field['message'] )
+                        : '',
+                ];
+            }
+        }
+
+        return $validation;
     }
 
     /**
@@ -2075,6 +2298,12 @@ HTML;
                 'adapter'            => $this->get_id(),
                 'adapter_name'       => $this->get_name(),
                 'provider_is_active' => !empty( $form['is_active'] ),
+                'provider_edit_url'  => admin_url(
+                    sprintf(
+                        'admin.php?page=gf_edit_forms&id=%d',
+                        absint( $form['id'] )
+                    )
+                ),
                 'settings'           => $this->get_form_settings( $form[ 'id' ] ),
             ];
         }
@@ -2211,13 +2440,18 @@ HTML;
                 return false;
             }
 
+            if ( isset( $entry['status'] ) && 'spam' === $entry['status'] )
+            {
+                return true;
+            }
+
             // Update the status property to 'spam' (per Gravity Forms API)
             $result = GFAPI::update_entry_property( $entry_id, 'status', 'spam' );
 
             // Add a note about the spam marking
             if ( $result && !is_wp_error( $result ) )
             {
-                $this->add_entry_note(
+                $this->add_entry_note_if_missing(
                     $entry_id,
                     'Sentient Forms AI',
                     __( 'This entry has been marked as spam by Sentient Forms AI.', 'sentient-forms' ),
@@ -2313,19 +2547,19 @@ HTML;
             return false;
         }
 
-        // Verify entry exists
-        try
+        if ( class_exists( 'GFAPI' ) && is_callable( [ 'GFAPI', 'get_entry' ] ) )
         {
-            $entry = GFAPI::get_entry( $entry_id );
-            if ( is_wp_error( $entry ) )
+            try
             {
-                error_log( 'Sentient Forms: Could not find entry ' . $entry_id . ': ' . $entry->get_error_message() );
-                return false;
+                $entry = GFAPI::get_entry( $entry_id );
+                if ( is_wp_error( $entry ) )
+                {
+                    error_log( 'Sentient Forms: Could not find entry ' . $entry_id . ': ' . $entry->get_error_message() );
+                }
+            } catch ( Exception $e )
+            {
+                error_log( 'Sentient Forms: Error getting entry: ' . $e->getMessage() );
             }
-        } catch ( Exception $e )
-        {
-            error_log( 'Sentient Forms: Error getting entry: ' . $e->getMessage() );
-            return false;
         }
 
         // Check if GF Notes API method exists
@@ -2359,6 +2593,68 @@ HTML;
             error_log( 'Sentient Forms: Error adding note: ' . $e->getMessage() );
             return false;
         }
+    }
+
+    private function add_entry_note_if_missing( mixed $entry_id, string $note_author, string $note_content ): bool
+    {
+        if ( $this->entry_note_exists( $entry_id, $note_author, $note_content ) )
+        {
+            return true;
+        }
+
+        return $this->add_entry_note( $entry_id, $note_author, $note_content );
+    }
+
+    private function entry_note_exists( mixed $entry_id, string $note_author, string $note_content ): bool
+    {
+        $notes = [];
+
+        if ( class_exists( 'GFFormsModel' ) && is_callable( [ 'GFFormsModel', 'get_lead_notes' ] ) )
+        {
+            try
+            {
+                $notes = GFFormsModel::get_lead_notes( $entry_id );
+            } catch ( Throwable $throwable )
+            {
+                $notes = [];
+            }
+        }
+
+        if ( empty( $notes ) )
+        {
+            $fallback_notes = $this->get_entry_meta( (int) $entry_id, 'sentient_forms_notes' );
+            $notes          = is_array( $fallback_notes ) ? $fallback_notes : [];
+        }
+
+        if ( ! is_array( $notes ) )
+        {
+            return false;
+        }
+
+        foreach ( $notes as $note )
+        {
+            if ( is_array( $note ) )
+            {
+                $stored_author = (string) ( $note['user_name'] ?? $note['note_author'] ?? $note['author'] ?? '' );
+                $stored_value  = (string) ( $note['value'] ?? $note['note'] ?? $note['content'] ?? '' );
+            }
+            elseif ( is_object( $note ) )
+            {
+                $stored_author = (string) ( $note->user_name ?? $note->note_author ?? $note->author ?? '' );
+                $stored_value  = (string) ( $note->value ?? $note->note ?? $note->content ?? '' );
+            }
+            else
+            {
+                continue;
+            }
+
+            if ( $stored_author === $note_author && $stored_value === $note_content )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -2493,11 +2789,564 @@ HTML;
 
         // FR-008: Log successful action execution
         $this->log_action_execution( $context, $result, 'success' );
+        $this->run_post_execution_actions( $entry_id, $context, $result );
 
         $this->resolve_deferred_notifications_after_async_completion(
             $context,
             $this->should_suppress_deferred_notifications_from_result( $context, $result ),
         );
+    }
+
+    /**
+     * Run configured post-execution side effects after CPS/local action success.
+     *
+     * These effects are intentionally best-effort. The form submission and CPS result are already
+     * complete, so a failed email/webhook/hook must be observable without converting the action to
+     * a failed execution.
+     *
+     * @param int   $entry_id Gravity Forms entry ID.
+     * @param array $context  Runtime action context.
+     * @param array $result   CPS/local action result.
+     */
+    private function run_post_execution_actions( int $entry_id, array $context, array $result ): void
+    {
+        if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        $actions = $this->get_configured_post_execution_actions( $context );
+        if ( [] === $actions )
+        {
+            return;
+        }
+
+        $results = [];
+        foreach ( $actions as $index => $action )
+        {
+            $type = isset( $action['type'] ) && is_scalar( $action['type'] )
+                ? sanitize_key( (string) $action['type'] )
+                : 'unknown';
+
+            try
+            {
+                $results[] = $this->run_post_execution_action( $entry_id, $context, $result, $action, $index );
+            }
+            catch ( Throwable $throwable )
+            {
+                $results[] = [
+                    'index'   => $index,
+                    'type'    => $type,
+                    'status'  => 'failed',
+                    'message' => $throwable->getMessage(),
+                ];
+            }
+        }
+
+        $this->record_post_execution_action_results( $entry_id, $results );
+    }
+
+    /**
+     * Read configured post-execution effects from a mapping context.
+     *
+     * @param array $context Runtime action context.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function get_configured_post_execution_actions( array $context ): array
+    {
+        $settings = isset( $context['settings'] ) && is_array( $context['settings'] )
+            ? $context['settings']
+            : [];
+
+        $candidates = [
+            $settings['post_execution_actions'] ?? null,
+            $settings['custom_effects'] ?? null,
+            $settings['effects'] ?? null,
+            $context['post_execution_actions'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_array( $candidate ) || [] === $candidate )
+            {
+                continue;
+            }
+
+            if ( isset( $candidate['type'] ) || isset( $candidate['kind'] ) )
+            {
+                $candidate = [ $candidate ];
+            }
+
+            $actions = [];
+            foreach ( $candidate as $action )
+            {
+                if ( ! is_array( $action ) )
+                {
+                    continue;
+                }
+
+                if ( isset( $action['enabled'] ) && false === (bool) $action['enabled'] )
+                {
+                    continue;
+                }
+
+                if ( ! isset( $action['type'] ) && isset( $action['kind'] ) )
+                {
+                    $action['type'] = $action['kind'];
+                }
+
+                if ( isset( $action['type'] ) && is_scalar( $action['type'] ) )
+                {
+                    $actions[] = $action;
+                }
+            }
+
+            if ( [] !== $actions )
+            {
+                return array_values( $actions );
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * Execute one configured post-execution effect.
+     *
+     * @param int   $entry_id Gravity Forms entry ID.
+     * @param array $context  Runtime action context.
+     * @param array $result   CPS/local action result.
+     * @param array $action   Effect configuration.
+     * @param int   $index    Effect index.
+     *
+     * @return array<string, mixed>
+     */
+    private function run_post_execution_action( int $entry_id, array $context, array $result, array $action, int $index ): array
+    {
+        $type = isset( $action['type'] ) && is_scalar( $action['type'] )
+            ? sanitize_key( (string) $action['type'] )
+            : '';
+
+        if ( '' === $type )
+        {
+            return [
+                'index'   => $index,
+                'type'    => 'unknown',
+                'status'  => 'failed',
+                'message' => __( 'Missing post-execution action type.', 'sentient-forms' ),
+            ];
+        }
+
+        switch ( $type )
+        {
+            case 'entry_note':
+                $message = isset( $action['message'] ) && is_scalar( $action['message'] )
+                    ? (string) $action['message']
+                    : (string) ( $action['template'] ?? __( 'Sentient Forms completed {{action_label}}. Result: {{llm_output}}', 'sentient-forms' ) );
+                $note = $this->render_post_execution_template( $message, $entry_id, $context, $result );
+
+                return [
+                    'index'   => $index,
+                    'type'    => $type,
+                    'status'  => $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note ) ? 'success' : 'failed',
+                    'message' => $note,
+                ];
+
+            case 'send_email':
+                return $this->run_post_execution_email_action( $entry_id, $context, $result, $action, $index, $type );
+
+            case 'wp_hook':
+                return $this->run_post_execution_hook_action( $entry_id, $context, $result, $action, $index, $type );
+
+            case 'webhook':
+                return $this->run_post_execution_webhook_action( $entry_id, $context, $result, $action, $index, $type );
+
+            default:
+                return [
+                    'index'   => $index,
+                    'type'    => $type,
+                    'status'  => 'failed',
+                    'message' => sprintf(
+                        /* translators: %s is the unsupported effect type. */
+                        __( 'Unsupported post-execution action type: %s', 'sentient-forms' ),
+                        $type,
+                    ),
+                ];
+        }
+    }
+
+    /**
+     * Run a post-execution email effect.
+     *
+     * @param int    $entry_id Gravity Forms entry ID.
+     * @param array  $context  Runtime action context.
+     * @param array  $result   CPS/local action result.
+     * @param array  $action   Effect configuration.
+     * @param int    $index    Effect index.
+     * @param string $type     Effect type.
+     *
+     * @return array<string, mixed>
+     */
+    private function run_post_execution_email_action( int $entry_id, array $context, array $result, array $action, int $index, string $type ): array
+    {
+        if ( ! function_exists( 'wp_mail' ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'WordPress mail is unavailable.', 'sentient-forms' ),
+            ];
+        }
+
+        $raw_recipients = $action['to'] ?? $action['recipients'] ?? '';
+        if ( is_string( $raw_recipients ) )
+        {
+            $raw_recipients = array_filter( array_map( 'trim', explode( ',', $raw_recipients ) ) );
+        }
+        elseif ( ! is_array( $raw_recipients ) )
+        {
+            $raw_recipients = [];
+        }
+
+        if ( [] === $raw_recipients )
+        {
+            $raw_recipients[] = get_option( 'admin_email' );
+        }
+
+        $recipients = [];
+        foreach ( $raw_recipients as $recipient )
+        {
+            if ( ! is_scalar( $recipient ) )
+            {
+                continue;
+            }
+
+            $email = sanitize_email(
+                $this->render_post_execution_template( (string) $recipient, $entry_id, $context, $result )
+            );
+            if ( is_email( $email ) )
+            {
+                $recipients[] = $email;
+            }
+        }
+
+        if ( [] === $recipients )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'No valid email recipients were configured.', 'sentient-forms' ),
+            ];
+        }
+
+        $subject_template = isset( $action['subject'] ) && is_scalar( $action['subject'] )
+            ? (string) $action['subject']
+            : __( 'Sentient Forms completed {{action_label}}', 'sentient-forms' );
+        $body_template = isset( $action['body'] ) && is_scalar( $action['body'] )
+            ? (string) $action['body']
+            : (string) ( $action['message'] ?? "{{llm_output}}\n\n{{justification}}" );
+
+        $sent = wp_mail(
+            $recipients,
+            $this->render_post_execution_template( $subject_template, $entry_id, $context, $result ),
+            $this->render_post_execution_template( $body_template, $entry_id, $context, $result ),
+            [ 'Content-Type: text/plain; charset=UTF-8' ],
+        );
+
+        return [
+            'index'      => $index,
+            'type'       => $type,
+            'status'     => $sent ? 'success' : 'failed',
+            'recipients' => $recipients,
+        ];
+    }
+
+    /**
+     * Run a post-execution WordPress hook effect.
+     *
+     * @param int    $entry_id Gravity Forms entry ID.
+     * @param array  $context  Runtime action context.
+     * @param array  $result   CPS/local action result.
+     * @param array  $action   Effect configuration.
+     * @param int    $index    Effect index.
+     * @param string $type     Effect type.
+     *
+     * @return array<string, mixed>
+     */
+    private function run_post_execution_hook_action( int $entry_id, array $context, array $result, array $action, int $index, string $type ): array
+    {
+        $hook_template = isset( $action['hook_name'] ) && is_scalar( $action['hook_name'] )
+            ? (string) $action['hook_name']
+            : '';
+        $hook_name = preg_replace(
+            '/[^A-Za-z0-9_.-]/',
+            '',
+            $this->render_post_execution_template( $hook_template, $entry_id, $context, $result )
+        );
+
+        if ( '' === $hook_name )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'Missing WordPress hook name.', 'sentient-forms' ),
+            ];
+        }
+
+        do_action( $hook_name, $context, $result, $action, $entry_id );
+
+        return [
+            'index'     => $index,
+            'type'      => $type,
+            'status'    => 'success',
+            'hook_name' => $hook_name,
+        ];
+    }
+
+    /**
+     * Run a post-execution webhook effect.
+     *
+     * @param int    $entry_id Gravity Forms entry ID.
+     * @param array  $context  Runtime action context.
+     * @param array  $result   CPS/local action result.
+     * @param array  $action   Effect configuration.
+     * @param int    $index    Effect index.
+     * @param string $type     Effect type.
+     *
+     * @return array<string, mixed>
+     */
+    private function run_post_execution_webhook_action( int $entry_id, array $context, array $result, array $action, int $index, string $type ): array
+    {
+        if ( ! function_exists( 'wp_remote_request' ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'WordPress HTTP API is unavailable.', 'sentient-forms' ),
+            ];
+        }
+
+        $url_template = isset( $action['url'] ) && is_scalar( $action['url'] )
+            ? (string) $action['url']
+            : '';
+        $url = esc_url_raw( $this->render_post_execution_template( $url_template, $entry_id, $context, $result ) );
+        $scheme = wp_parse_url( $url, PHP_URL_SCHEME );
+        if ( ! in_array( $scheme, [ 'http', 'https' ], true ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'Webhook URL must use http or https.', 'sentient-forms' ),
+            ];
+        }
+
+        $method = isset( $action['method'] ) && is_scalar( $action['method'] )
+            ? strtoupper( sanitize_key( (string) $action['method'] ) )
+            : 'POST';
+        $headers = isset( $action['headers'] ) && is_array( $action['headers'] )
+            ? array_map( 'sanitize_text_field', $action['headers'] )
+            : [];
+        $headers['Content-Type'] = $headers['Content-Type'] ?? 'application/json';
+
+        $response = wp_remote_request(
+            $url,
+            [
+                'method'  => in_array( $method, [ 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) ? $method : 'POST',
+                'timeout' => 5,
+                'headers' => $headers,
+                'body'    => wp_json_encode(
+                    [
+                        'entry_id' => $entry_id,
+                        'context'  => $context,
+                        'result'   => $result,
+                        'action'   => $action,
+                    ]
+                ),
+            ]
+        );
+
+        if ( is_wp_error( $response ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => $response->get_error_message(),
+            ];
+        }
+
+        $status_code = function_exists( 'wp_remote_retrieve_response_code' )
+            ? (int) wp_remote_retrieve_response_code( $response )
+            : 0;
+
+        return [
+            'index'       => $index,
+            'type'        => $type,
+            'status'      => $status_code >= 200 && $status_code < 400 ? 'success' : 'failed',
+            'status_code' => $status_code,
+        ];
+    }
+
+    /**
+     * Render supported placeholders for post-execution effect templates.
+     *
+     * @param string $template Template text.
+     * @param int    $entry_id Gravity Forms entry ID.
+     * @param array  $context  Runtime action context.
+     * @param array  $result   CPS/local action result.
+     *
+     * @return string
+     */
+    private function render_post_execution_template( string $template, int $entry_id, array $context, array $result ): string
+    {
+        $entry = $this->get_entry_record( $entry_id ) ?? [];
+
+        return (string) preg_replace_callback(
+            '/{{\s*([A-Za-z0-9_.:-]+)\s*}}/',
+            function ( array $matches ) use ( $entry_id, $entry, $context, $result ): string
+            {
+                $key = strtolower( (string) $matches[1] );
+
+                if ( str_starts_with( $key, 'field:' ) )
+                {
+                    $field_id = substr( $key, strlen( 'field:' ) );
+                    return $this->stringify_post_execution_value( $entry[ $field_id ] ?? '' );
+                }
+
+                $payload = $this->extract_execution_result_payload( $result );
+                $values  = [
+                    'entry_id'      => $entry_id,
+                    'form_id'       => $context['form_id'] ?? '',
+                    'action_label'  => $this->get_async_action_label( $context ),
+                    'classification'=> $this->extract_spam_classification( $result ) ?? $this->extract_nested_post_execution_value( $payload, 'classification' ),
+                    'confidence'    => $this->extract_nested_post_execution_value( $payload, 'confidence' ),
+                    'justification' => $this->extract_nested_post_execution_value( $payload, 'justification' ),
+                    'llm_output'    => $this->extract_nested_post_execution_value( $payload, 'llm_output' ),
+                    'result_json'   => wp_json_encode( $result ),
+                    'structured_output' => wp_json_encode( $this->extract_nested_post_execution_value( $payload, 'structured_output' ) ),
+                ];
+
+                if ( array_key_exists( $key, $values ) )
+                {
+                    return $this->stringify_post_execution_value( $values[ $key ] );
+                }
+
+                $value = $this->extract_nested_post_execution_value( $payload, $key );
+                if ( null !== $value )
+                {
+                    return $this->stringify_post_execution_value( $value );
+                }
+
+                $value = $this->extract_nested_post_execution_value( $context, $key );
+                return null === $value ? '' : $this->stringify_post_execution_value( $value );
+            },
+            $template
+        );
+    }
+
+    /**
+     * Extract the most useful result payload for placeholders.
+     *
+     * @param array $result CPS/local action result.
+     *
+     * @return array<string, mixed>
+     */
+    private function extract_execution_result_payload( array $result ): array
+    {
+        if ( isset( $result['evaluation_payload']['result_data'] ) && is_array( $result['evaluation_payload']['result_data'] ) )
+        {
+            return $result['evaluation_payload']['result_data'];
+        }
+
+        if ( isset( $result['result_data'] ) && is_array( $result['result_data'] ) )
+        {
+            return $result['result_data'];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Resolve a dot-notated value from an array.
+     *
+     * @param array  $source Source array.
+     * @param string $path   Dot-notated path.
+     *
+     * @return mixed|null
+     */
+    private function extract_nested_post_execution_value( array $source, string $path )
+    {
+        $segments = array_filter( explode( '.', $path ), static fn ( string $segment ): bool => '' !== $segment );
+        $value    = $source;
+
+        foreach ( $segments as $segment )
+        {
+            if ( is_array( $value ) && array_key_exists( $segment, $value ) )
+            {
+                $value = $value[ $segment ];
+                continue;
+            }
+
+            return null;
+        }
+
+        return $value;
+    }
+
+    /**
+     * Convert placeholder values into plain strings.
+     *
+     * @param mixed $value Value to stringify.
+     *
+     * @return string
+     */
+    private function stringify_post_execution_value( $value ): string
+    {
+        if ( null === $value )
+        {
+            return '';
+        }
+
+        if ( is_scalar( $value ) )
+        {
+            return (string) $value;
+        }
+
+        return wp_json_encode( $value ) ?: '';
+    }
+
+    /**
+     * Persist the post-execution side-effect audit trail on the entry.
+     *
+     * @param int   $entry_id Gravity Forms entry ID.
+     * @param array $results  Effect results.
+     */
+    private function record_post_execution_action_results( int $entry_id, array $results ): void
+    {
+        $existing = $this->get_entry_meta( $entry_id, 'post_execution_actions' );
+        if ( is_string( $existing ) )
+        {
+            $decoded  = json_decode( $existing, true );
+            $existing = is_array( $decoded ) ? $decoded : [];
+        }
+
+        if ( ! is_array( $existing ) )
+        {
+            $existing = [];
+        }
+
+        $existing[] = [
+            'ran_at'  => current_time( 'mysql' ),
+            'results' => $results,
+        ];
+
+        $this->update_entry_meta( $entry_id, 'post_execution_actions', wp_json_encode( $existing ) );
     }
 
     /**
@@ -2532,8 +3381,8 @@ HTML;
             // If ham/legitimate, add a review note but don't mark as spam
             if ( $should_note && ( $classification === 'ham' || $classification === 'legitimate' ) )
             {
-                $note = $this->format_spam_detection_note( $result, $context, false );
-                $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
+            $note = $this->format_spam_detection_note( $result, $context, false );
+                $this->add_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $note );
                 $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'ham' );
             }
             return;
@@ -2553,31 +3402,31 @@ HTML;
                     round( $effective_confidence * 100 ),
                     round( $threshold * 100 ),
                 );
-                $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
+                $this->add_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $note );
             }
             $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'reviewed' );
             return;
         }
 
+        $note_added = false;
+        if ( $should_note )
+        {
+            $note       = $this->format_spam_detection_note( $result, $context, true );
+            $note_added = $this->add_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $note );
+        }
+
         // Spam classification above threshold - mark as spam when enabled
         if ( $mark_as_spam && $this->mark_entry_as_spam( $entry_id ) )
         {
-            // Format detailed note with structured data
-            if ( $should_note )
-            {
-                $note = $this->format_spam_detection_note( $result, $context, true );
-                $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
-            }
-
             // Store spam classification meta for notification filtering
             $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'spam' );
             return;
         }
 
-        if ( $should_note )
+        if ( $should_note && ! $note_added )
         {
             $note = $this->format_spam_detection_note( $result, $context, true );
-            $this->add_entry_note( $entry_id, 'Sentient Forms AI', $note );
+            $this->add_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $note );
         }
         $this->update_entry_meta( $entry_id, 'sentient_forms_spam_classification', 'spam' );
     }
@@ -2753,12 +3602,13 @@ HTML;
      * @param array         $result   The CPS result (empty for errors).
      * @param string        $status   'pending', 'success', 'blocked', or 'error'.
      * @param WP_Error|null $error    Error object if status is 'error'.
+     * @return string|null The execution request id mirrored to the action log.
      */
-    private function log_action_execution( array $context, array $result, string $status, ?WP_Error $error = null ): void
+    private function log_action_execution( array $context, array $result, string $status, ?WP_Error $error = null ): ?string
     {
         if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
         {
-            return;
+            return null;
         }
 
         $classification = $this->extract_spam_classification( $result );
@@ -2808,6 +3658,8 @@ HTML;
         ];
 
         Sentient_Forms_Action_Log_Controller::log_execution( $log_data );
+
+        return $log_data['execution_request_id'];
     }
 
     private function resolve_action_log_status( array $context, array $result, string $status ): string
@@ -3014,7 +3866,8 @@ HTML;
             return false;
         }
 
-        if ( ! $this->should_defer_notifications_for_async_spam_submission( $form, $entry ) )
+        $deferred_mapping_ids = $this->get_deferred_notification_mapping_ids_for_async_spam_submission( $form, $entry );
+        if ( empty( $deferred_mapping_ids ) )
         {
             return false;
         }
@@ -3026,6 +3879,16 @@ HTML;
         }
 
         $this->store_deferred_notification_id( $entry_id, $notification_id );
+        $this->update_entry_meta(
+            $entry_id,
+            self::DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY,
+            $deferred_mapping_ids,
+        );
+        $this->update_entry_meta(
+            $entry_id,
+            self::DEFERRED_NOTIFICATION_DECISION_META_KEY,
+            self::DEFERRED_NOTIFICATION_DECISION_PENDING,
+        );
 
         return true;
     }
@@ -3178,34 +4041,7 @@ HTML;
 
     public function finalize_async_evaluation( array $context, array $result ): void
     {
-        $entry_id = isset( $context['entry_id'] ) ? absint( $context['entry_id'] ) : 0;
-        if ( $entry_id <= 0 )
-        {
-            return;
-        }
-
-        if ( $this->is_spam_detection_async_result( $context, $result ) )
-        {
-            return;
-        }
-
-        $excerpt = $this->format_async_result_excerpt( $result );
-        $this->add_entry_note(
-            $entry_id,
-            'Sentient Forms AI',
-            sprintf(
-                /* translators: %s is the action label */
-                __( 'Evaluation updated for %s: %s', 'sentient-forms' ),
-                $this->get_async_action_label( $context ),
-                $excerpt,
-            ),
-        );
-
-        // FR-001, FR-002: Auto-mark spam entries in Gravity Forms
-        $this->maybe_mark_entry_as_spam_from_result( $entry_id, $context, $result );
-
-        // FR-008: Log successful action execution
-        $this->log_action_execution( $context, $result, 'success' );
+        $this->finalize_async_success( $context, $result );
     }
 
     private function get_async_action_label( array $context ): string
@@ -3280,6 +4116,19 @@ HTML;
      */
     private function should_defer_notifications_for_async_spam_submission( array $form, array $entry ): bool
     {
+        return ! empty( $this->get_deferred_notification_mapping_ids_for_async_spam_submission( $form, $entry ) );
+    }
+
+    /**
+     * Resolve async spam mapping IDs that should hold form-submission notifications.
+     *
+     * @param array $form  The form object.
+     * @param array $entry The entry object.
+     *
+     * @return array<int, string>
+     */
+    private function get_deferred_notification_mapping_ids_for_async_spam_submission( array $form, array $entry ): array
+    {
         $form_id  = isset( $form['id'] ) ? absint( $form['id'] ) : 0;
         $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
         $cache_key = $form_id . ':' . $entry_id;
@@ -3293,12 +4142,13 @@ HTML;
         $disable_flags = $this->get_execution_disable_flags( $settings );
         if ( ! empty( $disable_flags['effective_disabled'] ) )
         {
-            $this->async_spam_notification_gate_cache[ $cache_key ] = false;
-            return false;
+            $this->async_spam_notification_gate_cache[ $cache_key ] = [];
+            return [];
         }
 
         $planner = $this->plugin->get_mapping_dependency_planner();
         $plan    = $planner->build_execution_plan( $settings, 'gform_after_submission' );
+        $mapping_ids = [];
 
         foreach ( $plan['order'] as $mapping_id )
         {
@@ -3326,14 +4176,13 @@ HTML;
                 continue;
             }
 
-            $this->async_spam_notification_gate_cache[ $cache_key ] = true;
-
-            return true;
+            $mapping_ids[] = (string) $mapping_id;
         }
 
-        $this->async_spam_notification_gate_cache[ $cache_key ] = false;
+        $mapping_ids = $this->normalize_deferred_notification_ids( $mapping_ids );
+        $this->async_spam_notification_gate_cache[ $cache_key ] = $mapping_ids;
 
-        return false;
+        return $mapping_ids;
     }
 
     /**

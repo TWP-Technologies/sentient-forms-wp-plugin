@@ -222,8 +222,16 @@ final class Sentient_Forms_Plugin
      */
     private function init_hooks(): void
     {
-        // Hook for loading plugin text domain for internationalization.
-        add_action( 'plugins_loaded', [ $this, 'load_plugin_textdomain' ] );
+        // Load translations no earlier than init. WordPress 6.7+ warns when plugins
+        // trigger just-in-time translations before init.
+        if ( did_action( 'init' ) )
+        {
+            $this->load_plugin_textdomain();
+        }
+        else
+        {
+            add_action( 'init', [ $this, 'load_plugin_textdomain' ], 0 );
+        }
 
         // Add other core plugin hooks here. For example, hooks for processing form submissions
         // might be set up here or dynamically by the adapters/actions themselves.

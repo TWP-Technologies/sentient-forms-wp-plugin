@@ -35,6 +35,8 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
     const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
 
+    private const ACTION_LOG_OPTION_KEY = 'sentient_forms_action_log';
+
     /** Allowed values for action_type_indicator. */
     private const ACTION_TYPE_INDICATORS = [ 'master', 'custom' ];
 
@@ -539,12 +541,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $local_actions = [];
         }
 
-        // CB-FORMS-001: Filter out the sf_disabled flag — it's metadata, not an action linkage.
-        unset( $local_actions['sf_disabled'] );
+        $local_actions = $this->extract_action_linkages_from_option( $local_actions );
 
         // Phase 7 CSM: Optionally merge CPS mappings
         $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
-        $merged = $this->merge_local_and_cps_actions( array_values( $local_actions ), $cps_actions );
+        $merged = $this->merge_local_and_cps_actions( $local_actions, $cps_actions );
 
         return $this->prepare_item_for_response( $merged );
     }
@@ -570,14 +571,29 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $hook_scope = 'all';
         }
 
-        $cps_error = null;
+        $option_key    = $this->get_actions_option_key( $form_source_slug, $form_id );
+        $local_actions = get_option( $option_key, [] );
+        if ( ! is_array( $local_actions ) )
+        {
+            $local_actions = [];
+        }
+        $local_actions = $this->extract_action_linkages_from_option( $local_actions );
+
+        $cps_error        = null;
+        $cps_sync_error   = null;
         $authority_reason = 'cps_unavailable';
         if ( $this->mappings_sync )
         {
             $cps_plan = $this->mappings_sync->plan_workflow( $form_source_slug, $form_id, $hook_scope );
             if ( ! is_wp_error( $cps_plan ) && is_array( $cps_plan ) )
             {
-                return $this->prepare_item_for_response( $this->normalize_workflow_plan_payload( $cps_plan, $hook_scope ) );
+                $normalized_plan = $this->normalize_workflow_plan_payload( $cps_plan, $hook_scope );
+                if ( $this->workflow_plan_covers_local_actions( $normalized_plan, $local_actions ) )
+                {
+                    return $this->prepare_item_for_response( $normalized_plan );
+                }
+
+                $authority_reason = 'cps_mismatch';
             }
 
             if ( is_wp_error( $cps_plan ) )
@@ -592,23 +608,54 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     }
                 }
             }
-        }
 
-        $option_key    = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $local_actions = get_option( $option_key, [] );
-        if ( ! is_array( $local_actions ) )
-        {
-            $local_actions = [];
+            if ( 'cps_mismatch' === $authority_reason && ! empty( $local_actions ) )
+            {
+                $sync_result = $this->mappings_sync->sync_form_mappings_for_form(
+                    $form_source_slug,
+                    $form_id,
+                    $local_actions,
+                    true
+                );
+
+                if ( is_wp_error( $sync_result ) )
+                {
+                    $cps_sync_error = $sync_result->get_error_code();
+                }
+                elseif ( $this->mapping_sync_result_is_clean( $sync_result ) )
+                {
+                    $retry_plan = $this->mappings_sync->plan_workflow( $form_source_slug, $form_id, $hook_scope );
+                    if ( ! is_wp_error( $retry_plan ) && is_array( $retry_plan ) )
+                    {
+                        $normalized_plan = $this->normalize_workflow_plan_payload( $retry_plan, $hook_scope );
+                        if ( $this->workflow_plan_covers_local_actions( $normalized_plan, $local_actions ) )
+                        {
+                            return $this->prepare_item_for_response( $normalized_plan );
+                        }
+                    }
+                    elseif ( is_wp_error( $retry_plan ) )
+                    {
+                        $cps_error = $retry_plan->get_error_code();
+                    }
+                }
+                else
+                {
+                    $cps_sync_error = 'cps_sync_incomplete';
+                }
+            }
         }
-        unset( $local_actions['sf_disabled'] );
 
         $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
-        $merged      = $this->merge_local_and_cps_actions( array_values( $local_actions ), $cps_actions );
+        $merged      = $this->merge_local_and_cps_actions( $local_actions, $cps_actions );
         $fallback = $this->build_local_workflow_plan_payload( $merged, $hook_scope, $authority_reason );
         $fallback['cps_unreachable'] = 'cps_mismatch' !== $authority_reason;
         if ( is_string( $cps_error ) && '' !== $cps_error )
         {
             $fallback['cps_error_code'] = $cps_error;
+        }
+        if ( is_string( $cps_sync_error ) && '' !== $cps_sync_error )
+        {
+            $fallback['cps_sync_error_code'] = $cps_sync_error;
         }
 
         return $this->prepare_item_for_response( $fallback );
@@ -927,10 +974,10 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         {
             $local_actions = [];
         }
-        unset( $local_actions['sf_disabled'] );
+        $local_actions = $this->extract_action_linkages_from_option( $local_actions );
 
         $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
-        $merged      = $this->merge_local_and_cps_actions( array_values( $local_actions ), $cps_actions );
+        $merged      = $this->merge_local_and_cps_actions( $local_actions, $cps_actions );
 
         return $this->normalize_local_action_mappings( $merged );
     }
@@ -1349,7 +1396,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             return [];
         }
 
-        $site_id = get_option( 'sentient_forms_site_id', '' );
+        $site_id = $this->resolve_cps_site_id_for_mappings();
         if ( empty( $site_id ) ) {
             return [];
         }
@@ -1372,6 +1419,70 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     }
 
     /**
+     * Determine whether automatic CPS mapping reconciliation completed without errors.
+     */
+    private function mapping_sync_result_is_clean( array $sync_result ): bool
+    {
+        $counts = isset( $sync_result['counts'] ) && is_array( $sync_result['counts'] )
+            ? $sync_result['counts']
+            : [];
+
+        return 0 === (int) ( $counts['error'] ?? 0 );
+    }
+
+    /**
+     * Best-effort CPS reconciliation after local CRUD mutations.
+     *
+     * Local persistence remains the fallback if CPS is down, but a healthy CPS
+     * should not be left stale until the admin planner is opened again.
+     */
+    private function sync_form_mappings_after_local_change( string $form_source_slug, int $form_id, array $actions ): void
+    {
+        if ( ! $this->mappings_sync )
+        {
+            return;
+        }
+
+        $this->mappings_sync->sync_form_mappings_for_form(
+            $form_source_slug,
+            $form_id,
+            $this->extract_action_linkages_from_option( $actions ),
+            true
+        );
+    }
+
+    /**
+     * Resolve the site UUID used by CPS form mapping records.
+     */
+    private function resolve_cps_site_id_for_mappings(): string
+    {
+        if ( $this->mappings_sync )
+        {
+            $site_id = $this->mappings_sync->get_site_id();
+            if ( '' !== $site_id )
+            {
+                return $site_id;
+            }
+        }
+
+        $license_data = [];
+        if ( class_exists( 'Sentient_Forms_Plugin' ) )
+        {
+            $license_data = Sentient_Forms_Plugin::instance()->get_license_data();
+        }
+
+        $license_site_id = isset( $license_data['site_id'] ) && is_scalar( $license_data['site_id'] )
+            ? sanitize_text_field( (string) $license_data['site_id'] )
+            : '';
+        if ( '' !== $license_site_id )
+        {
+            return $license_site_id;
+        }
+
+        return sanitize_text_field( (string) get_option( 'sentient_forms_site_id', '' ) );
+    }
+
+    /**
      * Phase 7 CSM: Transform a CPS mapping to local linkage format.
      *
      * @param array $mapping CPS mapping.
@@ -1380,15 +1491,18 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     private function transform_cps_mapping_to_linkage( array $mapping ): array
     {
         $settings = $mapping['settings'] ?? [];
+        $local_mapping_id = isset( $settings['local_mapping_id'] ) && is_scalar( $settings['local_mapping_id'] )
+            ? sanitize_text_field( (string) $settings['local_mapping_id'] )
+            : 'cps_' . ( $mapping['id'] ?? uniqid() );
 
         return [
-            'local_mapping_id'           => 'cps_' . ( $mapping['id'] ?? uniqid() ),
+            'local_mapping_id'           => $local_mapping_id,
             'cps_mapping_id'             => $mapping['id'] ?? null, // Track CPS origin
-            'central_action_id'          => $mapping['action_template_id'] ?? $mapping['custom_action_id'] ?? '',
+            'central_action_id'          => $mapping['action_template_code'] ?? $mapping['action_template_id'] ?? $mapping['custom_action_id'] ?? '',
             'action_type_indicator'      => ! empty( $mapping['custom_action_id'] ) ? 'custom' : 'master',
             'trigger_hooks'              => $settings['trigger_hooks'] ?? [],
-            'is_action_enabled_for_form' => true,
-            'execution_priority'         => 10,
+            'is_action_enabled_for_form' => $settings['is_action_enabled_for_form'] ?? true,
+            'execution_priority'         => $settings['execution_priority'] ?? 10,
             'action_name_label'          => $mapping['display_name'] ?? 'CPS Mapping',
             'settings'                   => $settings,
             'source'                     => 'cps', // Mark as CPS-sourced
@@ -1562,6 +1676,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
         $actions[ $new_id ] = $action;
         update_option( $option_key, $actions, false );
+        $this->sync_form_mappings_after_local_change(
+            $request->get_param( 'form_source_slug' ),
+            (int) $request->get_param( 'form_id' ),
+            $actions
+        );
 
         return $this->prepare_item_for_response( $action, 201 );
     }
@@ -1641,6 +1760,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
         $actions[ $id ] = $linkage;
         update_option( $option_key, $actions, false );
+        $this->sync_form_mappings_after_local_change(
+            $request->get_param( 'form_source_slug' ),
+            (int) $request->get_param( 'form_id' ),
+            $actions
+        );
 
         return $this->prepare_item_for_response( $linkage );
     }
@@ -1843,6 +1967,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         update_option( $option_key, $working, false );
+        $this->sync_form_mappings_after_local_change(
+            $request->get_param( 'form_source_slug' ),
+            (int) $request->get_param( 'form_id' ),
+            $working
+        );
 
         $warnings = [];
         if ( ! empty( $skipped_children ) )
@@ -1942,6 +2071,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         unset( $mapping );
 
         update_option( $option_key, $actions, false );
+        $this->sync_form_mappings_after_local_change(
+            $request->get_param( 'form_source_slug' ),
+            (int) $request->get_param( 'form_id' ),
+            $actions
+        );
 
         return $this->prepare_item_for_response( [ 'deleted' => true, 'previous' => $deleted ] );
     }
@@ -1962,7 +2096,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
         if ( ! is_array( $status ) )
         {
-            $status = [
+            $status = $this->get_form_execution_status_from_action_log( $form_source_slug, $form_id ) ?? [
                 'status'          => 'unknown',
                 'message'         => null,
                 'entry_id'        => null,
@@ -1973,6 +2107,67 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return $this->prepare_item_for_response( $status );
+    }
+
+    private function get_form_execution_status_from_action_log( string $form_source_slug, int $form_id ): ?array
+    {
+        $entries = get_option( self::ACTION_LOG_OPTION_KEY, [] );
+        if ( ! is_array( $entries ) )
+        {
+            return null;
+        }
+
+        foreach ( $entries as $entry )
+        {
+            if ( ! is_array( $entry ) )
+            {
+                continue;
+            }
+
+            if ( (string) ( $entry['form_source'] ?? '' ) !== $form_source_slug )
+            {
+                continue;
+            }
+
+            if ( absint( $entry['form_id'] ?? 0 ) !== $form_id )
+            {
+                continue;
+            }
+
+            $status = sanitize_key( (string) ( $entry['status'] ?? 'unknown' ) );
+            if ( ! in_array( $status, [ 'success', 'error' ], true ) )
+            {
+                $status = 'error';
+            }
+
+            $message = null;
+            if ( 'error' === $status )
+            {
+                $message = isset( $entry['error_message'] ) && is_scalar( $entry['error_message'] )
+                    ? sanitize_text_field( (string) $entry['error_message'] )
+                    : null;
+            }
+
+            if ( null === $message && isset( $entry['result_summary'] ) && is_scalar( $entry['result_summary'] ) )
+            {
+                $message = sanitize_text_field( (string) $entry['result_summary'] );
+            }
+
+            return [
+                'status'          => $status,
+                'message'         => $message,
+                'entry_id'        => isset( $entry['entry_id'] ) ? absint( $entry['entry_id'] ) : null,
+                'last_error_code' => isset( $entry['error_code'] ) && is_scalar( $entry['error_code'] )
+                    ? sanitize_key( (string) $entry['error_code'] )
+                    : null,
+                'last_result'     => $entry['details'] ?? $entry['result_summary'] ?? null,
+                'updated_at'      => isset( $entry['created_at'] ) && is_scalar( $entry['created_at'] )
+                    ? sanitize_text_field( (string) $entry['created_at'] )
+                    : null,
+            ];
+        }
+
+        return null;
     }
 
     /**
@@ -2392,6 +2587,57 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 ? array_values( $payload['policy_violations'] )
                 : [],
         ];
+    }
+
+    /**
+     * Confirm a CPS-authored workflow plan still represents local WordPress linkages.
+     *
+     * CPS can return an empty successful plan when it has not caught up with local-only
+     * mappings. In that case the local planner is more truthful for the admin graph.
+     *
+     * @param array $plan          Normalized CPS workflow plan payload.
+     * @param array $local_actions Local WordPress linkage payload.
+     *
+     * @return bool
+     */
+    private function workflow_plan_covers_local_actions( array $plan, array $local_actions ): bool
+    {
+        $normalized_actions = $this->normalize_local_action_mappings( $local_actions );
+        if ( empty( $normalized_actions ) )
+        {
+            return true;
+        }
+
+        $plan_node_ids = [];
+        foreach ( (array) ( $plan['nodes'] ?? [] ) as $node )
+        {
+            if ( ! is_array( $node ) )
+            {
+                continue;
+            }
+
+            foreach ( [ 'mapping_id', 'local_mapping_id', 'node_id' ] as $id_key )
+            {
+                if ( isset( $node[ $id_key ] ) && is_scalar( $node[ $id_key ] ) )
+                {
+                    $node_id = sanitize_text_field( (string) $node[ $id_key ] );
+                    if ( '' !== $node_id )
+                    {
+                        $plan_node_ids[ $node_id ] = true;
+                    }
+                }
+            }
+        }
+
+        foreach ( array_keys( $normalized_actions ) as $mapping_id )
+        {
+            if ( ! isset( $plan_node_ids[ $mapping_id ] ) )
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -3786,6 +4032,41 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return array_values( array_unique( $missing ) );
+    }
+
+    /**
+     * Extract real action linkages from the stored per-form option.
+     *
+     * Older UI flows persisted metadata and a nested `actions` wrapper beside the
+     * top-level mapping keys. CPS sync and graph planning must only see mapping rows.
+     *
+     * @param array $stored_actions Raw option payload.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function extract_action_linkages_from_option( array $stored_actions ): array
+    {
+        $candidates = [];
+
+        if ( isset( $stored_actions['actions'] ) && is_array( $stored_actions['actions'] ) )
+        {
+            foreach ( $stored_actions['actions'] as $mapping_key => $mapping )
+            {
+                $candidates[ $mapping_key ] = $mapping;
+            }
+        }
+
+        foreach ( $stored_actions as $mapping_key => $mapping )
+        {
+            if ( in_array( (string) $mapping_key, [ 'actions', 'enabled', 'sf_disabled' ], true ) )
+            {
+                continue;
+            }
+
+            $candidates[ $mapping_key ] = $mapping;
+        }
+
+        return array_values( $this->normalize_local_action_mappings( $candidates ) );
     }
 
     /**

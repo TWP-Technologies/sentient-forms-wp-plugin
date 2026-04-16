@@ -269,7 +269,7 @@ class Sentient_Forms_Admin
 			? rtrim( $asset_base, '/' ) . '/node_modules/@sveltejs/kit/src/runtime/client/entry.js'
 			: $start_module_url;
 		$app_import = $is_dev
-			? rtrim( $asset_base, '/' ) . '/@fs/app/.svelte-kit/generated/client/app.js'
+			? rtrim( $asset_base, '/' ) . $this->get_dev_app_entry_path()
 			: $app_module_url;
 
 		$this->spa_bootstrap_script = $bootstrap_js;
@@ -277,6 +277,25 @@ class Sentient_Forms_Admin
 		// Store dev/prod module URLs for enqueue output.
 		$this->spa_start_module_url = $runtime_import;
 		$this->spa_app_module_url   = $app_import;
+	}
+
+	private function get_dev_app_entry_path(): string
+	{
+		if ( defined( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' ) && is_string( constant( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' ) ) )
+		{
+			$configured = constant( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' );
+		}
+		else
+		{
+			$configured = getenv( 'SENTIENT_FORMS_ADMIN_DEV_APP_ENTRY' );
+		}
+
+		if ( is_string( $configured ) && '' !== trim( $configured ) )
+		{
+			return '/' . ltrim( trim( $configured ), '/' );
+		}
+
+		return '/@fs/app/.svelte-kit/generated/client/app.js';
 	}
 
 	public function force_module_type_for_spa( string $tag, string $handle, string $src ): string

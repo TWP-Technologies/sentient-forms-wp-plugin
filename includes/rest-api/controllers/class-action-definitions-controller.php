@@ -228,7 +228,7 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
                 'description'    => $template['description'] ?? '',
                 'settingsFields' => [],
                 'icon'           => '',
-                'hooks'          => [],
+                'hooks'          => $this->resolve_template_hooks( $template ),
                 'compatibility'  => [],
                 'source'         => 'cps',
                 'baseCreditCost' => $template['base_credit_cost'] ?? null,
@@ -238,5 +238,61 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
         }
 
         return $mapped;
+    }
+
+    /**
+     * Resolve supported hooks for a CPS action template.
+     *
+     * Older CPS deployments did not expose hook metadata. Keep inference here so
+     * healthy CPS templates do not degrade into ambiguous local defaults.
+     *
+     * @param array<string, mixed> $template CPS template summary.
+     *
+     * @return array<int, string>
+     */
+    private function resolve_template_hooks( array $template ): array
+    {
+        $hooks = [];
+        if ( isset( $template['hooks'] ) && is_array( $template['hooks'] ) )
+        {
+            foreach ( $template['hooks'] as $hook )
+            {
+                if ( is_scalar( $hook ) )
+                {
+                    $hook_key = sanitize_key( (string) $hook );
+                    if ( '' !== $hook_key )
+                    {
+                        $hooks[] = $hook_key;
+                    }
+                    continue;
+                }
+
+                if ( is_array( $hook ) && isset( $hook['id'] ) && is_scalar( $hook['id'] ) )
+                {
+                    $hook_key = sanitize_key( (string) $hook['id'] );
+                    if ( '' !== $hook_key )
+                    {
+                        $hooks[] = $hook_key;
+                    }
+                }
+            }
+        }
+
+        $hooks = array_values( array_unique( $hooks ) );
+        if ( ! empty( $hooks ) )
+        {
+            return $hooks;
+        }
+
+        $code = isset( $template['code'] ) && is_scalar( $template['code'] )
+            ? sanitize_key( (string) $template['code'] )
+            : '';
+
+        return match ( $code ) {
+            'spam_detection_v1'    => [ 'gform_validation', 'gform_after_submission' ],
+            'content_validation_v1'=> [ 'gform_validation' ],
+            'entry_summary_v1'     => [ 'gform_after_submission' ],
+            default                => [],
+        };
     }
 }

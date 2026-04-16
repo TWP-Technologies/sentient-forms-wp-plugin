@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { parsePromptOverridesInput, sanitizeCustomActionCode } from '$lib/utils/custom-actions';
+import {
+	generateCustomActionCode,
+	parsePromptOverridesInput,
+	sanitizeCustomActionCode
+} from '$lib/utils/custom-actions';
 
 describe('custom action helpers', () => {
 	it('sanitizes codes to lowercase alphanumerics and dashes', () => {
 		expect(sanitizeCustomActionCode('Follow-Up Reply!')).toBe('follow-upreply');
 		expect(sanitizeCustomActionCode('SPAM_check')).toBe('spamcheck');
+	});
+
+	it('generates webmaster-safe action codes from display names', () => {
+		expect(generateCustomActionCode('Follow-Up Reply!')).toBe('follow-up-reply');
+		expect(generateCustomActionCode('  Demo: Lead Intake  ')).toBe('demo-lead-intake');
 	});
 
 	it('parses prompt overrides JSON objects', () => {

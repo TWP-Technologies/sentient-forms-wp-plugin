@@ -34,6 +34,25 @@ describe('apiFetch', () => {
 		expect(result).toEqual(payload);
 	});
 
+	it('returns null for successful empty responses', async () => {
+		window.sentientFormsConfig = config;
+		const json = vi.fn();
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				status: 204,
+				headers: new Headers({ 'content-type': 'application/json', 'content-length': '0' }),
+				json
+			})
+		);
+
+		const result = await apiFetch('empty');
+		expect(result).toBeNull();
+		expect(json).not.toHaveBeenCalled();
+	});
+
 	it('throws ApiError on failure', async () => {
 		window.sentientFormsConfig = config;
 

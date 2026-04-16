@@ -65,6 +65,93 @@ if ( ! function_exists( 'gform_update_meta' ) ) {
 	}
 }
 
+if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Empty_Workflow_Plan' ) ) {
+	class Sentient_Forms_Test_Mappings_Sync_Empty_Workflow_Plan extends Sentient_Forms_Mappings_Sync {
+		public function plan_workflow( string $form_source_slug, int $form_id, string $hook_scope = 'all' ) {
+			return [
+				'authority'         => 'cps',
+				'policy_version'    => '2026-02-mixed-sync-async-v1',
+				'hook_scope'        => $hook_scope,
+				'available_hooks'   => [],
+				'nodes'             => [],
+				'edges'             => [],
+				'hooks'             => [],
+				'policy_violations' => [],
+			];
+		}
+
+		public function fetch_mappings(): array {
+			return [];
+		}
+	}
+}
+
+if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan' ) ) {
+	class Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan extends Sentient_Forms_Mappings_Sync {
+		public int $plan_calls = 0;
+		public int $sync_calls = 0;
+		/** @var array<int, array<string,mixed>> */
+		public array $synced_actions = [];
+
+		public function plan_workflow( string $form_source_slug, int $form_id, string $hook_scope = 'all' ) {
+			$this->plan_calls++;
+
+			if ( 1 === $this->plan_calls ) {
+				return [
+					'authority'         => 'cps',
+					'policy_version'    => '2026-02-mixed-sync-async-v1',
+					'hook_scope'        => $hook_scope,
+					'available_hooks'   => [],
+					'nodes'             => [],
+					'edges'             => [],
+					'hooks'             => [],
+					'policy_violations' => [],
+				];
+			}
+
+			return [
+				'authority'         => 'cps',
+				'policy_version'    => '2026-02-mixed-sync-async-v1',
+				'hook_scope'        => $hook_scope,
+				'available_hooks'   => [ 'gform_validation' ],
+				'nodes'             => [
+					[
+						'mapping_id'        => 'map_spam_v1',
+						'label'             => 'Local Spam Detection',
+						'central_action_id' => 'spam_detection_v1',
+						'trigger_hooks'     => [ 'gform_validation' ],
+						'dependency_ids'    => [],
+						'is_enabled'        => true,
+						'is_async'          => false,
+					],
+				],
+				'edges'             => [],
+				'hooks'             => [],
+				'policy_violations' => [],
+			];
+		}
+
+		public function sync_form_mappings_for_form( string $form_source_slug, int $form_id, array $local_actions, bool $include_disabled = true ) {
+			$this->sync_calls++;
+			$this->synced_actions = $local_actions;
+
+			return [
+				'counts' => [
+					'create' => 1,
+					'update' => 0,
+					'delete' => 0,
+					'skip'   => 0,
+					'error'  => 0,
+				],
+			];
+		}
+
+		public function fetch_mappings(): array {
+			return [];
+		}
+	}
+}
+
 class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     private Sentient_Forms_Form_Actions_Controller $controller;
 
@@ -73,6 +160,58 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->controller = new Sentient_Forms_Form_Actions_Controller();
         GFAPI::$entries = [];
         $this->reset_entry_meta_store();
+        delete_option( 'sentient_forms_action_log' );
+        delete_option( 'sentient_forms_form_status_gravity_forms_42' );
+    }
+
+    public function test_get_form_execution_status_falls_back_to_latest_action_log_entry(): void
+    {
+        update_option(
+            'sentient_forms_action_log',
+            [
+                [
+                    'form_source'      => 'gravity_forms',
+                    'form_id'          => 42,
+                    'entry_id'         => 110,
+                    'action_code'      => 'entry_summary_v1',
+                    'action_label'     => 'Entry Summary',
+                    'status'           => 'success',
+                    'result_summary'   => 'Entry summary completed.',
+                    'credits_used'     => 12,
+                    'created_at'       => '2026-04-14T20:43:26+00:00',
+                    'details'          => [
+                        'meta' => [
+                            'execution_request_id' => 'req-entry-110',
+                        ],
+                    ],
+                ],
+                [
+                    'form_source'    => 'gravity_forms',
+                    'form_id'        => 7,
+                    'entry_id'       => 999,
+                    'status'         => 'error',
+                    'error_code'     => 'wrong_form',
+                    'error_message'  => 'Wrong form.',
+                    'result_summary' => 'Wrong form.',
+                    'created_at'     => '2026-04-14T20:40:00+00:00',
+                ],
+            ],
+            false
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/42/actions/status' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 42 );
+
+        $response = $this->controller->get_form_execution_status( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data = $response->get_data();
+        $this->assertSame( 'success', $data['status'] ?? null );
+        $this->assertSame( 'Entry summary completed.', $data['message'] ?? null );
+        $this->assertSame( 110, $data['entry_id'] ?? null );
+        $this->assertSame( '2026-04-14T20:43:26+00:00', $data['updated_at'] ?? null );
+        $this->assertSame( 'req-entry-110', $data['last_result']['meta']['execution_request_id'] ?? null );
     }
 
     public function test_get_entry_execution_status_includes_metering_summary_for_workflow_meta(): void
@@ -1187,6 +1326,175 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( $option_key );
     }
 
+    public function test_get_form_actions_excludes_wrapped_option_metadata_from_response(): void
+    {
+        $option_key = 'sentient_forms_actions_gravity_forms_1';
+        $mapping    = [
+            'local_mapping_id'           => 'map_spam_v1',
+            'central_action_id'          => 'spam_detection_v1',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'gform_validation' ],
+        ];
+
+        update_option(
+            $option_key,
+            [
+                'enabled'       => true,
+                'actions'       => [
+                    'map_spam_v1' => $mapping,
+                ],
+                'map_spam_v1'   => $mapping,
+                'sf_disabled'   => false,
+            ]
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+
+        $response = $this->controller->get_form_actions( $request );
+        $data     = $response->get_data();
+
+        $this->assertCount( 1, $data );
+        $this->assertSame( 'map_spam_v1', $data[0]['local_mapping_id'] ?? null );
+        $this->assertSame( 'spam_detection_v1', $data[0]['central_action_id'] ?? null );
+
+        delete_option( $option_key );
+    }
+
+    public function test_get_workflow_plan_falls_back_when_cps_plan_omits_local_mappings(): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Empty_Workflow_Plan' ) ) {
+            $this->markTestSkipped( 'Mappings sync test double is unavailable.' );
+        }
+
+        $option_key = 'sentient_forms_actions_gravity_forms_1';
+        update_option( $option_key, [
+            'sf_disabled' => false,
+            'map_spam_v1' => [
+                'local_mapping_id'           => 'map_spam_v1',
+                'central_action_id'          => 'spam_detection_v1',
+                'action_type_indicator'      => 'master',
+                'is_action_enabled_for_form' => true,
+                'trigger_hooks'              => [ 'gform_validation' ],
+                'action_name_label'          => 'Local Spam Detection',
+                'settings'                   => [
+                    'trigger_sources' => [
+                        'gform_validation' => [ 'type' => 'hook_root' ],
+                    ],
+                ],
+            ],
+        ] );
+
+        $this->set_mappings_sync( new Sentient_Forms_Test_Mappings_Sync_Empty_Workflow_Plan() );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions/workflow-plan' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'hook_scope', 'all' );
+
+        $response = $this->controller->get_workflow_plan( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 'local_fallback', $data['authority'] ?? null );
+        $this->assertSame( 'cps_mismatch', $data['authority_reason'] ?? null );
+        $this->assertFalse( $data['cps_unreachable'] ?? true );
+        $this->assertContains( 'gform_validation', $data['available_hooks'] ?? [] );
+
+        $node_ids = array_column( $data['nodes'] ?? [], 'mapping_id' );
+        $this->assertContains( 'map_spam_v1', $node_ids );
+
+        delete_option( $option_key );
+    }
+
+    public function test_get_workflow_plan_syncs_and_retries_when_cps_plan_omits_local_mappings(): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan' ) ) {
+            $this->markTestSkipped( 'Mappings sync reconciliation test double is unavailable.' );
+        }
+
+        $option_key = 'sentient_forms_actions_gravity_forms_1';
+        update_option( $option_key, [
+            'sf_disabled' => false,
+            'map_spam_v1' => [
+                'local_mapping_id'           => 'map_spam_v1',
+                'central_action_id'          => 'spam_detection_v1',
+                'action_type_indicator'      => 'master',
+                'is_action_enabled_for_form' => true,
+                'trigger_hooks'              => [ 'gform_validation' ],
+                'action_name_label'          => 'Local Spam Detection',
+            ],
+        ] );
+
+        $sync = new Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan();
+        $this->set_mappings_sync( $sync );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions/workflow-plan' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'hook_scope', 'all' );
+
+        $response = $this->controller->get_workflow_plan( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 'cps', $data['authority'] ?? null );
+        $this->assertFalse( $data['cps_unreachable'] ?? true );
+        $this->assertSame( 2, $sync->plan_calls, 'Planner should retry once after reconciliation.' );
+        $this->assertSame( 1, $sync->sync_calls, 'Local mappings should be reconciled to CPS before retrying.' );
+        $this->assertSame( 'map_spam_v1', $sync->synced_actions[0]['local_mapping_id'] ?? null );
+
+        delete_option( $option_key );
+    }
+
+    public function test_get_workflow_plan_syncs_only_real_mappings_from_wrapped_option_shape(): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan' ) ) {
+            $this->markTestSkipped( 'Mappings sync reconciliation test double is unavailable.' );
+        }
+
+        $option_key = 'sentient_forms_actions_gravity_forms_1';
+        $mapping    = [
+            'local_mapping_id'           => 'map_spam_v1',
+            'central_action_id'          => 'spam_detection_v1',
+            'action_type_indicator'      => 'master',
+            'is_action_enabled_for_form' => true,
+            'trigger_hooks'              => [ 'gform_validation' ],
+            'action_name_label'          => 'Local Spam Detection',
+        ];
+
+        update_option(
+            $option_key,
+            [
+                'enabled'       => true,
+                'actions'       => [
+                    'map_spam_v1' => $mapping,
+                ],
+                'map_spam_v1'   => $mapping,
+                'sf_disabled'   => false,
+            ]
+        );
+
+        $sync = new Sentient_Forms_Test_Mappings_Sync_Reconciles_Workflow_Plan();
+        $this->set_mappings_sync( $sync );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions/workflow-plan' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'hook_scope', 'all' );
+
+        $response = $this->controller->get_workflow_plan( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 'cps', $data['authority'] ?? null );
+        $this->assertSame( 1, $sync->sync_calls );
+        $this->assertCount( 1, $sync->synced_actions );
+        $this->assertSame( 'map_spam_v1', $sync->synced_actions[0]['local_mapping_id'] ?? null );
+        $this->assertArrayNotHasKey( 'cps_sync_error_code', $data );
+
+        delete_option( $option_key );
+    }
+
     /**
      * CB-FORMS-001: toggle_form_disabled round-trip — set, read, clear.
      */
@@ -1267,6 +1575,13 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $reflection->setAccessible( true );
 
         return $reflection->invokeArgs( $this->controller, $args );
+    }
+
+    private function set_mappings_sync( ?Sentient_Forms_Mappings_Sync $mappings_sync ): void
+    {
+        $property = new ReflectionProperty( $this->controller, 'mappings_sync' );
+        $property->setAccessible( true );
+        $property->setValue( $this->controller, $mappings_sync );
     }
 
     private function reset_entry_meta_store(): void

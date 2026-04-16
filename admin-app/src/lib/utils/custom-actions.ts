@@ -2,6 +2,14 @@ export function sanitizeCustomActionCode(value: string): string {
 	return value.toLowerCase().replace(/[^a-z0-9-]/g, '');
 }
 
+export function generateCustomActionCode(value: string): string {
+	return value
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '');
+}
+
 export function parsePromptOverridesInput(raw: string): {
 	result?: Record<string, unknown>;
 	error?: string;

@@ -3,6 +3,7 @@
 vendor
 tests/wordpress
 tests/wordpress-tests-lib
+tests/wp-temp/
 tests/wp.tar.gz
 .phpunit.result.cache
 assets/dist/

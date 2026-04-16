@@ -22,7 +22,17 @@ const baseConfig: SentientFormsConfig = {
 	ajaxNonce: 'e2e-ajax-nonce',
 	siteUrl: wpHost,
 	localSiteIdentifier: 'local-dev',
-	formSources: defaultFormSources
+	formSources: defaultFormSources,
+	license: {
+		status: 'inactive',
+		licenseKeyMasked: '',
+		proxyKeyPresent: false,
+		tier: null,
+		expiresAt: null,
+		lastSynced: null,
+		licenseId: null,
+		siteId: null
+	}
 };
 
 export async function seedRuntimeConfig(

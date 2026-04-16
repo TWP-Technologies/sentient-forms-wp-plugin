@@ -65,7 +65,7 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
                     'templates' => [
                         [
                             'id'               => '0a3c9d89-14d3-4e7a-8e1b-c99877e4fb0f',
-                            'code'             => 'spam_analysis',
+                            'code'             => 'spam_detection_v1',
                             'display_name'     => 'Spam Analysis',
                             'description'      => 'Detect spam entries using LLMs',
                             'model_hint'       => 'models/gemini-1.5-flash',
@@ -92,13 +92,15 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $this->assertNotEmpty( $data );
         $definition = $data[0];
 
-        $this->assertSame( 'spam_analysis', $definition['id'] );
+        $this->assertSame( 'spam_detection_v1', $definition['id'] );
         $this->assertSame( 'Spam Analysis', $definition['label'] );
         $this->assertSame( 'cps', $definition['source'] );
         $this->assertSame( 'models/gemini-1.5-flash', $definition['modelHint'] );
         $this->assertSame( 5, $definition['baseCreditCost'] );
         $this->assertArrayHasKey( 'hooks', $definition );
         $this->assertIsArray( $definition['hooks'] );
+        $this->assertContains( 'gform_validation', $definition['hooks'] );
+        $this->assertContains( 'gform_after_submission', $definition['hooks'] );
         $this->assertArrayHasKey( 'settingsFields', $definition );
     }
 

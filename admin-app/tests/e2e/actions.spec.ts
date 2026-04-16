@@ -453,6 +453,92 @@ test.describe('Actions admin flows', () => {
 		});
 	});
 
+	test('does not continuously refetch shell license health on the actions route', async ({
+		page
+	}) => {
+		const licenseRequests: string[] = [];
+		const creditRequests: string[] = [];
+
+		await seedRuntimeConfig(page, {
+			license: {
+				status: 'active',
+				proxyKeyPresent: true,
+				tier: {
+					code: 'pro',
+					display_name: 'Pro',
+					monthly_credit_quota: 1000
+				},
+				lastSynced: '2030-01-05T10:00:00Z',
+				licenseId: 'lic-1',
+				siteId: 'site-1'
+			}
+		});
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance: {
+					current_balance: 875,
+					tier: {
+						code: 'pro',
+						display_name: 'Pro',
+						monthly_credit_quota: 1000
+					}
+				}
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/license', (route) => {
+			licenseRequests.push(route.request().url());
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					status: 'active',
+					license_key_masked: 'LIC-****-****-1234',
+					proxy_key_present: true,
+					tier: {
+						code: 'pro',
+						display_name: 'Pro',
+						monthly_credit_quota: 1000
+					},
+					expires_at: '2030-01-01T00:00:00Z',
+					last_synced: '2030-01-05T10:00:00Z',
+					license_id: 'lic-1',
+					site_id: 'site-1',
+					site_url: 'https://example.test'
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) => {
+			creditRequests.push(route.request().url());
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					current_balance: 875,
+					tier: {
+						code: 'pro',
+						display_name: 'Pro',
+						monthly_credit_quota: 1000
+					}
+				})
+			});
+		});
+
+		await page.goto('/#/actions');
+		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
+		await page.waitForTimeout(2000);
+
+		expect(licenseRequests.length).toBeLessThanOrEqual(2);
+		expect(creditRequests.length).toBeLessThanOrEqual(2);
+	});
+
 	test('hash navigation opens the form actions editor', async ({ page }) => {
 		await mockWpJson(page, {
 			actions: {
@@ -476,6 +562,85 @@ test.describe('Actions admin flows', () => {
 		await expect(page.getByText('Action library')).toBeVisible();
 		const definitionsCard = page.getByTestId('action-definitions-card');
 		await expect(definitionsCard.getByText('Spam check', { exact: true })).toBeVisible();
+	});
+
+	test('shows overview mapping count from linked form actions', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		const card = page.getByTestId(`actions-form-card-${formId}`);
+		await expect(card.getByText('Contact us')).toBeVisible();
+		await expect(card.getByText('1 action')).toBeVisible();
+		await expect(card.getByText('No actions configured')).toHaveCount(0);
+	});
+
+	test('uses the runtime form disable flag for overview automation status', async ({ page }) => {
+		const runtimeEnabledForms = [
+			{
+				...baseForms[0],
+				settings: {
+					...baseForms[0].settings,
+					enabled: false,
+					sf_disabled: false
+				}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: runtimeEnabledForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		const card = page.getByTestId(`actions-form-card-${formId}`);
+		await expect(card.getByText('Automation enabled')).toBeVisible();
+		await expect(card.getByText('Automation paused')).toHaveCount(0);
+	});
+
+	test('treats a missing runtime disable flag as enabled on the overview', async ({ page }) => {
+		const legacyConfiguredForms = [
+			{
+				...baseForms[0],
+				settings: {
+					...baseForms[0].settings,
+					enabled: false
+				}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: legacyConfiguredForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		const card = page.getByTestId(`actions-form-card-${formId}`);
+		await expect(card.getByText('Automation enabled')).toBeVisible();
+		await expect(card.getByText('Automation paused')).toHaveCount(0);
 	});
 
 	test('keeps sidebar active state aligned for nested action routes', async ({ page }) => {
@@ -1062,9 +1227,11 @@ test.describe('Actions admin flows', () => {
 		expect(settings.dependency_ids).toBeUndefined();
 	});
 
-	test('shows spam-aware skip toggle for validation and after-submission spam dependencies only', async ({
+	test('shows upstream spam-gate advisory for dependent downstream mappings only', async ({
 		page
 	}) => {
+		const spamGateAdvisoryText =
+			'Spam-aware downstream gating now belongs on the upstream spam action.';
 		const definitions = [
 			{
 				id: 'spam_detection_v1',
@@ -1214,7 +1381,7 @@ test.describe('Actions admin flows', () => {
 			.first()
 			.click();
 		let modal = page.getByTestId('mapping-config-modal');
-		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toBeVisible();
+		await expect(modal.getByText(spamGateAdvisoryText)).toBeVisible();
 		await modal.getByTestId('mapping-config-close-header').click();
 
 		await table
@@ -1224,9 +1391,9 @@ test.describe('Actions admin flows', () => {
 			.first()
 			.click();
 		modal = page.getByTestId('mapping-config-modal');
-		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toBeVisible();
+		await expect(modal.getByText(spamGateAdvisoryText)).toBeVisible();
 		await modal.getByTestId('mapping-config-make-autonomous').click();
-		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toHaveCount(0);
+		await expect(modal.getByText(spamGateAdvisoryText)).toHaveCount(0);
 		await modal.getByTestId('mapping-config-close-header').click();
 
 		await table
@@ -1236,7 +1403,7 @@ test.describe('Actions admin flows', () => {
 			.first()
 			.click();
 		modal = page.getByTestId('mapping-config-modal');
-		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toBeVisible();
+		await expect(modal.getByText(spamGateAdvisoryText)).toBeVisible();
 		await modal.getByTestId('mapping-config-close-header').click();
 
 		await table
@@ -1246,10 +1413,10 @@ test.describe('Actions admin flows', () => {
 			.first()
 			.click();
 		modal = page.getByTestId('mapping-config-modal');
-		await expect(modal.getByTestId('mapping-skip-on-upstream-spam')).toHaveCount(0);
+		await expect(modal.getByText(spamGateAdvisoryText)).toHaveCount(0);
 	});
 
-	test('persists skip_on_upstream_spam for eligible validation dependent mappings', async ({ page }) => {
+	test('persists upstream skip_downstream_on_spam for spam mappings', async ({ page }) => {
 		const definitions = [
 			{
 				id: 'spam_detection_v1',
@@ -1311,18 +1478,17 @@ test.describe('Actions admin flows', () => {
 		const table = await openLinkedActionsTable(page);
 		await table
 			.locator('tbody tr')
-			.filter({ hasText: 'Content validation' })
+			.filter({ hasText: 'Spam gate' })
 			.getByRole('button', { name: 'Configure' })
 			.first()
 			.click();
 
 		const modal = page.getByTestId('mapping-config-modal');
-		const skipToggle = modal.getByTestId('mapping-skip-on-upstream-spam');
-		await expect(skipToggle).toBeVisible();
-		await skipToggle.click();
+		await modal.getByTestId('mapping-section-toggle-spam_advanced').click();
+		await modal.getByLabel('Downstream spam gate').selectOption('enabled');
 
-		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-summary$/, { timeout: 15_000 });
-		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-summary$/, { timeout: 15_000 });
+		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-spam$/, { timeout: 15_000 });
+		const updateRes = page.waitForResponse(/forms\/\d+\/actions\/map-spam$/, { timeout: 15_000 });
 		await saveMappingConfigModal(page);
 
 		const request = await updateReq;
@@ -1330,10 +1496,9 @@ test.describe('Actions admin flows', () => {
 		const payload = request.postDataJSON() as Record<string, unknown>;
 		const settings = (payload.settings ?? {}) as Record<string, any>;
 
-		expect(settings.skip_on_upstream_spam).toBe(true);
-		expect(settings.dependency_ids).toEqual(['map-spam']);
-		expect(settings.trigger_sources?.gform_validation?.type).toBe('mapping');
-		expect(settings.trigger_sources?.gform_validation?.mapping_id).toBe('map-spam');
+		expect(settings.skip_downstream_on_spam).toBe(true);
+		expect(settings.skip_on_upstream_spam).toBeUndefined();
+		expect(settings.dependency_ids).toBeUndefined();
 	});
 
 	test('saves dependency_ids directly in graph view', async ({ page }) => {

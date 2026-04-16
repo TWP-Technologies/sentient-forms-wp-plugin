@@ -415,6 +415,82 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 8, $captured_request['body']['pricing']['debited_credits'] ?? null );
     }
 
+    public function test_backfill_entry_id_for_execution_requests_updates_local_row_and_remirrors(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'proxy_api_key' => 'proxy-log-backfill',
+            ]
+        );
+
+        $captured_requests = [];
+
+        add_filter(
+            'pre_http_request',
+            function ( $preempt, $args, $url ) use ( &$captured_requests ) {
+                if ( strtoupper( (string) ( $args['method'] ?? 'GET' ) ) !== 'POST' )
+                {
+                    return $preempt;
+                }
+
+                if ( ! str_ends_with( $url, '/execution-audit' ) )
+                {
+                    return $preempt;
+                }
+
+                $captured_requests[] = [
+                    'headers' => $args['headers'],
+                    'body'    => json_decode( (string) $args['body'], true ),
+                ];
+
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode(
+                        [
+                            'success' => true,
+                            'data'    => [
+                                'id' => 'remote-backfilled',
+                            ],
+                        ]
+                    ),
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                ];
+            },
+            10,
+            3
+        );
+
+        Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'          => 'gravity_forms',
+            'form_id'              => 77,
+            'entry_id'             => null,
+            'action_code'          => 'content_validation_v1',
+            'action_label'         => 'Content Quality',
+            'status'               => 'success',
+            'execution_request_id' => 'req-validation-backfill',
+            'mapping_id'           => 'map-validation-backfill',
+        ] );
+
+        $updated = Sentient_Forms_Action_Log_Controller::backfill_entry_id_for_execution_requests(
+            [ 'req-validation-backfill' ],
+            707,
+            'gravity_forms',
+            77
+        );
+
+        $entries = get_option( self::OPTION_KEY, [] );
+
+        $this->assertSame( 1, $updated );
+        $this->assertSame( 707, $entries[0]['entry_id'] ?? null );
+        $this->assertCount( 2, $captured_requests );
+        $this->assertSame( 'Bearer proxy-log-backfill', $captured_requests[1]['headers']['Authorization'] ?? null );
+        $this->assertSame( 'req-validation-backfill', $captured_requests[1]['body']['execution_request_id'] ?? null );
+        $this->assertSame( 707, $captured_requests[1]['body']['entry_id'] ?? null );
+    }
+
     private function mock_http_response( string $method, string $path_suffix, int $status, array $body, ?callable $assertion = null ): void
     {
         add_filter(

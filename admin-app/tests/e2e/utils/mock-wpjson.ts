@@ -23,6 +23,27 @@ type Routes = {
 	};
 };
 
+const defaultLicense = {
+	status: 'inactive',
+	license_key_masked: '',
+	proxy_key_present: false,
+	tier: null,
+	expires_at: null,
+	last_synced: null,
+	license_id: null,
+	site_id: null,
+	site_url: 'https://example.test'
+};
+
+const defaultCreditBalance = {
+	current_balance: 1000,
+	tier: {
+		code: 'free',
+		display_name: 'Free',
+		monthly_credit_quota: 1000
+	}
+};
+
 export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 	await page.context().unroute('**/wp-json/sentient-forms/v1/**').catch(() => {});
 	const envelope = (data: unknown) =>
@@ -50,7 +71,24 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 
 	await page.context().route('**/wp-json/sentient-forms/v1/**', (route) => {
 		const url = route.request().url();
+		const urlWithoutQuery = url.split('?')[0] ?? url;
 		const method = route.request().method();
+
+		if (urlWithoutQuery.endsWith('/license') && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope(defaultLicense)
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/license/bootstrap') && method === 'POST') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope(defaultLicense)
+			});
+		}
 
 		const formsMatch = url.match(/\/([^/]+)\/forms$/);
 		if (routes.actions?.forms && formsMatch && method === 'GET') {
@@ -157,11 +195,11 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (routes.actions?.creditBalance && url.endsWith('/credits/balance')) {
+		if (urlWithoutQuery.endsWith('/credits/balance') && method === 'GET') {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: envelope(routes.actions.creditBalance)
+				body: envelope(routes.actions?.creditBalance ?? defaultCreditBalance)
 			});
 		}
 
