@@ -317,7 +317,10 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			'free or available model'
 		);
 		await expect(page.getByTestId('local-setup-no-credential')).toContainText(
-			'No ready OpenRouter key'
+			'OpenRouter key needs attention'
+		);
+		await expect(page.getByTestId('local-setup-no-credential')).toContainText(
+			'OpenRouter reported insufficient credits'
 		);
 	});
 

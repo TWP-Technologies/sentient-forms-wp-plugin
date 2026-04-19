@@ -68,6 +68,28 @@
 	let localSetupReady = $derived(
 		Boolean(selectedOpenRouterCredential) && String(setupFormId).trim().length > 0
 	);
+	let localSetupBlockedCredential = $derived(
+		openRouterCredentials.find((credential) => credential.status === 'limited') ??
+			openRouterCredentials.find(
+				(credential) => credential.status !== 'valid' || !credential.secret_configured
+			) ??
+			openRouterCredentials[0] ??
+			null
+	);
+	let localSetupUnavailableTitle = $derived(
+		openRouterCredentials.length > 0 ? 'OpenRouter key needs attention' : 'No ready OpenRouter key'
+	);
+	let localSetupUnavailableMessage = $derived.by(() => {
+		if (!localSetupBlockedCredential) {
+			return 'Validate and save a key before creating a local action.';
+		}
+
+		const detail = credentialStatusDetail(localSetupBlockedCredential);
+
+		return detail
+			? `${detail} Then validate a ready OpenRouter key before creating a local action.`
+			: 'Validate and save a key before creating a local action.';
+	});
 	let freeModelPreview = $derived(
 		(modelCatalog?.models ?? []).filter((model) => model.free).slice(0, 6)
 	);
@@ -695,8 +717,8 @@
 			{#if readyOpenRouterCredentials.length === 0}
 				<StateTemplate
 					variant="empty"
-					title="No ready OpenRouter key"
-					message="Validate and save a key before creating a local action."
+					title={localSetupUnavailableTitle}
+					message={localSetupUnavailableMessage}
 					dense
 					testId="local-setup-no-credential"
 				/>
