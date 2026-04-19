@@ -2984,6 +2984,124 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         }
     }
 
+    public function test_handle_after_submission_queues_local_openrouter_async_mapping_from_local_tables(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $vault          = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted      = $vault->encrypt( 'sk-or-gf-local-async-secret' );
+        $http_urls      = [];
+        $scheduled_jobs = [];
+
+        $this->assertIsString( $encrypted );
+
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Async OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $this->assertIsInt( $consents->record( 'openrouter', '2026-04-18', 0 ) );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'gf_local_openrouter_async_summary',
+                'display_name'         => 'GF Local OpenRouter Async Summary',
+                'definition_json'      => [
+                    'prompt_template' => 'Lead: {{name}} on {{form.title}}',
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '321',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'name' => '1',
+                ],
+                'execution_mode'      => 'async',
+                'effect_mapping_json' => [
+                    'store_result' => true,
+                    'meta'         => [
+                        'sentient_forms_async_summary' => 'structured.summary',
+                    ],
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $http_filter = static function ( $preempt, array $args, string $url ) use ( &$http_urls ): mixed {
+            $http_urls[] = $url;
+
+            return $preempt;
+        };
+        $listener = static function ( $hook, $args, $group, $action_id, $run_at ) use ( &$scheduled_jobs ): void {
+            $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+        };
+
+        add_filter( 'pre_http_request', $http_filter, 10, 3 );
+        add_action( 'sentient_forms_async_job_scheduled', $listener, 10, 5 );
+
+        $entry = [
+            'id'      => 655,
+            'form_id' => 321,
+            '1'       => 'Async Local First Lead',
+        ];
+        $form = [
+            'id'     => 321,
+            'title'  => 'Local Async Form',
+            'fields' => [],
+        ];
+
+        $returned_entry = $this->adapter->handle_after_submission_entry_post_save( $entry, $form );
+
+        remove_action( 'sentient_forms_async_job_scheduled', $listener, 10 );
+        remove_filter( 'pre_http_request', $http_filter, 10 );
+
+        $this->assertSame( $entry, $returned_entry );
+        $this->assertSame( [], $http_urls, 'Async local mappings should queue without calling OpenRouter during submission.' );
+        $this->assertCount( 1, $scheduled_jobs );
+        $this->assertSame( 'sentient_forms_process_local_mapping', $scheduled_jobs[0]['hook'] ?? null );
+
+        $payload = $scheduled_jobs[0]['args'][0] ?? [];
+        $this->assertSame( $mapping_id, $payload['local_mapping_id'] ?? null );
+        $this->assertSame( '321', $payload['form_id'] ?? null );
+        $this->assertSame( '655', $payload['entry_id'] ?? null );
+        $this->assertArrayNotHasKey( 'form', $payload );
+        $this->assertArrayNotHasKey( 'entry', $payload );
+        $this->assertNull( gform_get_meta( 655, 'sentient_forms_async_summary' ) );
+
+        $event = $events->get_by_request_id( (string) ( $payload['execution_request_id'] ?? '' ) );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'queued', $event['status'] ?? null );
+        $this->assertSame( $mapping_id, (int) ( $event['mapping_id'] ?? 0 ) );
+    }
+
     // =========================================================================
     // CA-EXEC-001: Structured Output Tests
     // =========================================================================

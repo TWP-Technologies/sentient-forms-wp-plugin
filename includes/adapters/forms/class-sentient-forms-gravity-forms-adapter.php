@@ -611,8 +611,76 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 'entry' => $entry,
             ];
 
+            $dependency_ids                   = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
+            $dependency_initial_outcomes      = [];
+            $dependency_execution_request_ids = [];
+
+            foreach ( $dependency_ids as $dependency_id )
+            {
+                if ( isset( $mapping_outcomes[ $dependency_id ] ) )
+                {
+                    $dependency_initial_outcomes[ $dependency_id ] = $mapping_outcomes[ $dependency_id ];
+                }
+
+                if ( isset( $execution_request_ids[ $dependency_id ] ) )
+                {
+                    $dependency_execution_request_ids[ $dependency_id ] = $execution_request_ids[ $dependency_id ];
+                }
+            }
+
             if ( $this->is_local_first_mapping( $action_settings ) )
             {
+                if ( $should_async )
+                {
+                    $logger->info(
+                        'local-first async action enqueued',
+                        [
+                            'hook'           => 'gform_after_submission',
+                            'mapping_id'     => $mapping_id,
+                            'form_id'        => $form_id,
+                            'entry_id'       => $entry['id'] ?? null,
+                            'correlation_id' => $correlation_id,
+                        ]
+                    );
+
+                    $scheduled = $this->schedule_local_first_after_submission_mapping(
+                        $form,
+                        $entry,
+                        $mapping_id,
+                        $action_settings,
+                        $execution_request_ids[ $mapping_id ] ?? null,
+                        [
+                            'dependency_mapping_ids'           => $dependency_ids,
+                            'dependency_execution_request_ids' => $dependency_execution_request_ids,
+                            'dependency_initial_outcomes'      => $dependency_initial_outcomes,
+                            'dependency_wait_started_at'       => time(),
+                            'dependency_wait_max_seconds'      => max(
+                                30,
+                                (int) ( $action_settings['settings']['batch_settings']['max_wait_seconds'] ?? 600 )
+                            ),
+                            'dependency_wait_poll_seconds'     => 10,
+                        ]
+                    );
+
+                    $mapping_outcomes[ $mapping_id ] = $scheduled ? 'queued' : 'failed';
+
+                    if ( ! $scheduled )
+                    {
+                        $logger->error(
+                            'local-first async action scheduling failed',
+                            [
+                                'hook'           => 'gform_after_submission',
+                                'mapping_id'     => $mapping_id,
+                                'form_id'        => $form_id,
+                                'entry_id'       => $entry['id'] ?? null,
+                                'correlation_id' => $correlation_id,
+                            ]
+                        );
+                    }
+
+                    continue;
+                }
+
                 $result = $this->execute_local_first_after_submission_mapping(
                     $form,
                     $entry,
@@ -647,23 +715,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
             if ( $should_async )
             {
-                $dependency_ids                 = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
-                $dependency_initial_outcomes    = [];
-                $dependency_execution_request_ids = [];
-
-                foreach ( $dependency_ids as $dependency_id )
-                {
-                    if ( isset( $mapping_outcomes[ $dependency_id ] ) )
-                    {
-                        $dependency_initial_outcomes[ $dependency_id ] = $mapping_outcomes[ $dependency_id ];
-                    }
-
-                    if ( isset( $execution_request_ids[ $dependency_id ] ) )
-                    {
-                        $dependency_execution_request_ids[ $dependency_id ] = $execution_request_ids[ $dependency_id ];
-                    }
-                }
-
                 $logger->info(
                     'async action enqueued',
                     [
@@ -1245,6 +1296,57 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         ];
 
         return $this->get_local_execution_service()->execute_mapping( $local_mapping_id, $form, $entry, $context );
+    }
+
+    /**
+     * Queue a local-first mapping through the plugin-owned async handler.
+     *
+     * @param array<string, mixed> $form                 Gravity Forms form payload.
+     * @param array<string, mixed> $entry                Gravity Forms entry payload.
+     * @param string               $mapping_id           Runtime planner mapping id.
+     * @param array<string, mixed> $action_settings      Mapping settings.
+     * @param string|null          $execution_request_id Optional precomputed request id.
+     * @param array<string, mixed> $async_context        Dependency/runtime context.
+     *
+     * @return bool Whether the mapping was queued.
+     */
+    private function schedule_local_first_after_submission_mapping(
+        array $form,
+        array $entry,
+        string $mapping_id,
+        array $action_settings,
+        ?string $execution_request_id = null,
+        array $async_context = []
+    ): bool
+    {
+        $local_mapping_id = absint( $action_settings['local_form_mapping_id'] ?? 0 );
+        if ( $local_mapping_id <= 0 )
+        {
+            return false;
+        }
+
+        $context = array_merge(
+            [
+                'hook'                    => 'gform_after_submission',
+                'form_source'             => $this->get_id(),
+                'mapping_id'              => $mapping_id,
+                'local_mapping_id'        => $mapping_id,
+                'local_form_mapping_id'   => $local_mapping_id,
+                'form_id'                 => $form['id'] ?? null,
+                'entry_id'                => $entry['id'] ?? null,
+                'action_name_label'       => $action_settings['action_name_label'] ?? __( 'Local OpenRouter action', 'sentient-forms' ),
+                'central_action_id'       => $action_settings['central_action_id'] ?? 'sentient_forms_local_custom_action',
+                'execution_request_id'    => $execution_request_id,
+            ],
+            $async_context,
+        );
+
+        return $this->plugin->get_async_handler()->schedule_local_mapping(
+            $local_mapping_id,
+            $form,
+            $entry,
+            $context
+        );
     }
 
     private function get_local_execution_service(): Sentient_Forms_Local_Action_Execution_Service

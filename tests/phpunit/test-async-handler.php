@@ -234,6 +234,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $wpdb->query( 'TRUNCATE TABLE ' . $wpdb->prefix . 'sentient_async_requests' );
 		delete_option( 'sentient_forms_async_settings' );
         GFAPI::$entries = [];
+        GFAPI::$forms = [];
 
         if ( class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) )
         {
@@ -263,6 +264,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $GLOBALS['__sentient_forms_async_queue'] = [ 'enqueued' => [] ];
         $GLOBALS['__sentient_forms_http_calls'] = [];
         GFAPI::$entries = [];
+        GFAPI::$forms = [];
         remove_all_filters( 'pre_http_request' );
         parent::tearDown();
     }
@@ -2097,5 +2099,239 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		// Should execute without error even with no form config
 		$this->assertNotEmpty( $executor->captured, 'Executor should be called even without form config' );
 		$this->assertSame( 'spam_detection_v1', $executor->captured['central_action_id'] );
+	}
+
+	public function test_schedule_local_mapping_enqueues_identifier_only_payload(): void
+	{
+		Sentient_Forms_Installer::maybe_upgrade();
+		$this->truncate_local_first_runtime_tables();
+
+		$scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+			77,
+			[
+				'id'     => 321,
+				'title'  => 'Local Async Form',
+				'fields' => [ 'large form payload should not be queued' ],
+			],
+			[
+				'id' => 654,
+				'1'  => 'private field value should not be queued',
+			],
+			[
+				'form_source'          => 'gravity_forms',
+					'form_id'              => 321,
+					'entry_id'             => 654,
+					'action_id'            => 'local_first_77',
+					'execution_request_id' => null,
+				]
+			);
+
+		$this->assertTrue( $scheduled );
+		$this->assertNotEmpty( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+
+		$job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+		$this->assertSame( 'sentient_forms_process_local_mapping', $job['hook'] );
+		$this->assertSame( 'sentient_forms_async', $job['group'] );
+
+		$payload = $job['args'][0] ?? [];
+			$this->assertSame( 77, $payload['local_mapping_id'] ?? null );
+			$this->assertSame( '321', $payload['form_id'] ?? null );
+			$this->assertSame( '654', $payload['entry_id'] ?? null );
+			$this->assertNotEmpty( $payload['execution_request_id'] ?? '' );
+			$this->assertSame( $payload['execution_request_id'], $payload['context']['execution_request_id'] ?? null );
+			$this->assertArrayNotHasKey( 'form', $payload );
+			$this->assertArrayNotHasKey( 'entry', $payload );
+
+		$metadata = $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] );
+		$this->assertSame( 'queued', $metadata['status'] ?? null );
+		$this->assertArrayNotHasKey( 'form', $metadata['payload'] ?? [] );
+		$this->assertArrayNotHasKey( 'entry', $metadata['payload'] ?? [] );
+
+			global $wpdb;
+			$events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+			$event  = $events->get_by_request_id( (string) $payload['execution_request_id'] );
+		$this->assertIsArray( $event );
+		$this->assertSame( 'queued', $event['status'] ?? null );
+		$this->assertSame( 77, (int) ( $event['mapping_id'] ?? 0 ) );
+	}
+
+	public function test_process_local_mapping_executes_openrouter_mapping_from_identifiers(): void
+	{
+		Sentient_Forms_Installer::maybe_upgrade();
+		$this->truncate_local_first_runtime_tables();
+
+		global $wpdb;
+
+		$credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+		$consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+		$custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+		$mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+		$events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+		$vault          = new Sentient_Forms_Provider_Credential_Vault();
+		$encrypted      = $vault->encrypt( 'sk-or-local-async-test-secret' );
+
+		$this->assertIsString( $encrypted );
+
+		$credential_id = $credentials->create(
+			[
+				'provider'          => 'openrouter',
+				'label'             => 'Async OpenRouter key',
+				'auth_mode'         => 'manual_key',
+				'encrypted_secret'  => $encrypted,
+				'status'            => 'valid',
+				'last_validated_at' => current_time( 'mysql' ),
+			]
+		);
+		$this->assertIsInt( $credential_id );
+
+		$this->assertIsInt( $consents->record( 'openrouter', '2026-04-18', 0 ) );
+
+		$action_id = $custom_actions->create(
+			[
+				'code'                 => 'local_async_summary',
+				'display_name'         => 'Local Async Summary',
+				'definition_json'      => [
+					'prompt_template' => 'Summarize {{name}} from {{form.title}}.',
+				],
+				'model_selection_json' => [
+					'provider'      => 'openrouter',
+					'model'         => 'openrouter/auto',
+					'credential_id' => $credential_id,
+				],
+				'status'               => 'active',
+			]
+		);
+		$this->assertIsInt( $action_id );
+
+		$mapping_id = $mappings->create(
+			[
+				'form_source'         => 'gravity_forms',
+				'form_id'             => '321',
+				'hook'                => 'gform_after_submission',
+				'action_kind'         => 'custom_action',
+				'action_id'           => $action_id,
+				'input_bindings_json' => [
+					'name' => '1',
+				],
+				'execution_mode'      => 'async',
+				'effect_mapping_json' => [
+					'store_result' => true,
+					'meta'         => [
+						'sentient_forms_async_summary' => 'structured.summary',
+					],
+				],
+				'enabled'             => true,
+			]
+		);
+		$this->assertIsInt( $mapping_id );
+
+		GFAPI::$forms[321] = [
+			'id'     => 321,
+			'title'  => 'Async Local Form',
+			'fields' => [],
+		];
+		GFAPI::$entries[654] = [
+			'id'      => 654,
+			'form_id' => 321,
+			'1'       => 'Async Lead',
+		];
+
+		add_filter(
+			'pre_http_request',
+			static function ( $preempt, array $args, string $url ): mixed {
+				if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+				{
+					return [
+						'headers'  => [],
+						'body'     => wp_json_encode(
+							[
+								'id'      => 'chatcmpl-local-async',
+								'model'   => 'openrouter/auto',
+								'choices' => [
+									[
+										'message'       => [
+											'role'    => 'assistant',
+											'content' => wp_json_encode(
+												[
+													'summary' => 'Async local execution completed.',
+												]
+											),
+										],
+										'finish_reason' => 'stop',
+									],
+								],
+								'usage'   => [
+									'prompt_tokens'     => 7,
+									'completion_tokens' => 5,
+									'total_tokens'      => 12,
+								],
+							]
+						),
+						'response' => [
+							'code'    => 200,
+							'message' => 'OK',
+						],
+						'cookies'  => [],
+					];
+				}
+
+				return $preempt;
+			},
+			9,
+			3
+		);
+
+		$handler   = $this->plugin->get_async_handler();
+		$scheduled = $handler->schedule_local_mapping(
+			$mapping_id,
+			[ 'id' => 321 ],
+			[ 'id' => 654 ],
+			[
+				'form_source'          => 'gravity_forms',
+				'form_id'              => 321,
+				'entry_id'             => 654,
+				'action_id'            => 'local_first_' . $mapping_id,
+				'execution_request_id' => 'local-async-request-success',
+			]
+		);
+		$this->assertTrue( $scheduled );
+
+		$job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+		$payload = $job['args'][0] ?? [];
+		$handler->process_local_mapping( $payload );
+
+		$this->assertSame( 'Async local execution completed.', gform_get_meta( 654, 'sentient_forms_async_summary' ) );
+
+		$event = $events->get_by_request_id( 'local-async-request-success' );
+		$this->assertIsArray( $event );
+		$this->assertSame( 'succeeded', $event['status'] ?? null );
+		$this->assertSame( $mapping_id, (int) ( $event['mapping_id'] ?? 0 ) );
+		$this->assertSame( 'Async local execution completed.', $event['result_json']['structured']['summary'] ?? null );
+
+		$request = $this->plugin->get_async_request_store()->get( 'local-async-request-success' );
+		$this->assertSame( 'success', $request['status'] ?? null );
+
+		foreach ( $GLOBALS['__sentient_forms_http_calls'] as $call )
+		{
+			$this->assertStringNotContainsString( 'sentientforms.com', $call['url'] );
+		}
+	}
+
+	private function truncate_local_first_runtime_tables(): void
+	{
+		global $wpdb;
+
+		foreach (
+			[
+				'sentient_provider_credentials',
+				'sentient_external_service_consents',
+				'sentient_custom_actions',
+				'sentient_form_mappings',
+				'sentient_execution_events',
+			] as $table
+		)
+		{
+			$wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
+		}
 	}
 }

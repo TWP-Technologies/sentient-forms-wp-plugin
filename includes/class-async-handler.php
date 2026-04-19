@@ -21,6 +21,7 @@ class Sentient_Forms_Async_Handler
 	private const MAX_ATTEMPTS = 3;
 	private const BASE_BACKOFF_SECONDS = 60;
 	private const ACTION_SCHEDULER_GROUP = 'sentient_forms_async';
+	private const LOCAL_MAPPING_HOOK = 'sentient_forms_process_local_mapping';
 	private const FORM_ACTION_CONFIG_OPTION_PREFIX = 'sentient_forms_form_config_';
 	private const ACTION_DEFAULTS_OPTION_PREFIX = 'sentient_forms_action_defaults_';
 
@@ -778,6 +779,7 @@ class Sentient_Forms_Async_Handler
         // Register the action hook for processing actions
         add_action( 'sentient_forms_process_action', [ $this, 'process_action' ], 10, 5 );
         add_action( 'sentient_forms_evaluate_action', [ $this, 'process_evaluation' ], 10, 1 );
+        add_action( self::LOCAL_MAPPING_HOOK, [ $this, 'process_local_mapping' ], 10, 1 );
 
         // Register the action hook for Action Scheduler
         if ( function_exists( 'as_schedule_single_action' ) )
@@ -882,6 +884,563 @@ class Sentient_Forms_Async_Handler
         }
 
         return $scheduled['scheduled'];
+    }
+
+    /**
+     * Schedule a local-first form mapping without storing raw form payloads in the queue.
+     *
+     * @param int                  $local_mapping_id Local custom-table mapping id.
+     * @param array<string, mixed> $form             Runtime form snapshot used only for idempotency.
+     * @param array<string, mixed> $entry            Runtime entry snapshot used only for idempotency.
+     * @param array<string, mixed> $context          Runtime context.
+     * @param int|null             $run_at           Optional Unix timestamp.
+     *
+     * @return bool Whether the local mapping job was scheduled.
+     */
+    public function schedule_local_mapping( int $local_mapping_id, array $form, array $entry, array $context = [], ?int $run_at = null ): bool
+    {
+        $local_mapping_id = absint( $local_mapping_id );
+        if ( $local_mapping_id <= 0 )
+        {
+            return false;
+        }
+
+        $form_source = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
+        $form_id     = sanitize_text_field( (string) ( $context['form_id'] ?? $form['id'] ?? '' ) );
+        $entry_id    = sanitize_text_field( (string) ( $context['entry_id'] ?? $entry['id'] ?? '' ) );
+
+        if ( '' === $form_source || '' === $form_id || '' === $entry_id )
+        {
+            return false;
+        }
+
+        $execution_request_id = isset( $context['execution_request_id'] ) && is_scalar( $context['execution_request_id'] )
+            ? sanitize_text_field( (string) $context['execution_request_id'] )
+            : '';
+        if ( '' === $execution_request_id )
+        {
+            $execution_request_id = $this->generate_local_mapping_request_id( $local_mapping_id, $form_source, $form_id, $entry_id, $context );
+        }
+
+        $job_context = $this->normalize_context(
+            array_merge(
+                $context,
+                [
+                    'action_id'             => $context['action_id'] ?? sprintf( 'local_first_%d', $local_mapping_id ),
+                    'central_action_id'     => $context['central_action_id'] ?? 'sentient_forms_local_custom_action',
+                    'form_source'           => $form_source,
+                    'form_id'               => $form_id,
+                    'entry_id'              => $entry_id,
+                    'execution_request_id'  => $execution_request_id,
+                    'job_type'              => 'local_mapping',
+                    'local_form_mapping_id' => $local_mapping_id,
+                ],
+            ),
+            'sentient_forms_local_mapping',
+        );
+
+        $attempt = (int) ( $job_context['attempt'] ?? 1 );
+        if ( $attempt <= 1 && $this->get_request_store()->should_block( $execution_request_id ) )
+        {
+            return false;
+        }
+
+        $payload = [
+            'local_mapping_id'      => $local_mapping_id,
+            'form_source'           => $form_source,
+            'form_id'               => $form_id,
+            'entry_id'              => $entry_id,
+            'execution_request_id'  => $execution_request_id,
+            'context'               => $job_context,
+        ];
+        $payload_digest = $this->local_mapping_payload_digest( $payload );
+
+        $this->get_request_store()->record(
+            $execution_request_id,
+            [
+                'action_id'      => 'local_mapping_' . $local_mapping_id,
+                'adapter'        => $form_source,
+                'status'         => 'queued',
+                'payload_digest' => $payload_digest,
+            ]
+        );
+
+        $this->record_local_execution_event( $payload, 'queued' );
+
+        $run_at_ts = $run_at ?? time();
+        $scheduled = $this->enqueue_job(
+            self::LOCAL_MAPPING_HOOK,
+            [ $payload ],
+            $run_at_ts,
+        );
+
+        if ( $scheduled['scheduled'] )
+        {
+            $this->get_metadata_store()->record_job(
+                $payload['context']['job_id'],
+                self::LOCAL_MAPPING_HOOK,
+                $payload,
+                $run_at_ts,
+                $scheduled['action_id'],
+                $this->get_scheduler_group(),
+            );
+            return true;
+        }
+
+        $this->get_request_store()->mark_status(
+            $execution_request_id,
+            'failed',
+            __( 'Local mapping scheduling failed.', 'sentient-forms' )
+        );
+        $this->record_local_execution_event(
+            $payload,
+            'failed',
+            null,
+            new WP_Error( 'sentient_forms_local_mapping_schedule_failed', __( 'Local mapping scheduling failed.', 'sentient-forms' ) )
+        );
+
+        return false;
+    }
+
+    /**
+     * Process a queued local-first mapping.
+     *
+     * @param array<string, mixed> $payload Local mapping job payload.
+     *
+     * @return void
+     */
+    public function process_local_mapping( array $payload ): void
+    {
+        if ( isset( $payload[0] ) && is_array( $payload[0] ) && ! isset( $payload['local_mapping_id'] ) )
+        {
+            $payload = $payload[0];
+        }
+
+        $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
+        $context = $this->normalize_context( $context, 'sentient_forms_local_mapping' );
+        $payload['context'] = $context;
+
+        $execution_request_id = isset( $payload['execution_request_id'] ) && is_scalar( $payload['execution_request_id'] )
+            ? sanitize_text_field( (string) $payload['execution_request_id'] )
+            : sanitize_text_field( (string) ( $context['execution_request_id'] ?? '' ) );
+
+        $job = [
+            'action_id'            => 'sentient_forms_local_mapping',
+            'data'                 => [
+                'entry' => [ 'id' => $payload['entry_id'] ?? $context['entry_id'] ?? null ],
+            ],
+            'settings'             => [],
+            'execution_request_id' => $execution_request_id,
+            'context'              => $context,
+        ];
+
+        $dependency_gate = $this->evaluate_dependency_gate( $job );
+        if ( 'skip' === $dependency_gate['state'] )
+        {
+            $reason = $dependency_gate['reason'] ?? __( 'Dependency failed or skipped', 'sentient-forms' );
+            $this->handle_dependency_skip( $job, $reason, $dependency_gate['reason_code'] ?? null );
+            $this->record_local_execution_event( $payload, 'skipped', null, new WP_Error( 'sentient_forms_local_mapping_dependency_skipped', $reason ) );
+            $this->sweep_stale_async_rows();
+            return;
+        }
+
+        if ( 'wait' === $dependency_gate['state'] )
+        {
+            $this->requeue_local_mapping_waiting_on_dependencies(
+                $payload,
+                (int) ( $dependency_gate['delay_seconds'] ?? 10 ),
+                $dependency_gate['reason'] ?? __( 'Waiting for dependency completion', 'sentient-forms' ),
+            );
+            $this->sweep_stale_async_rows();
+            return;
+        }
+
+        $this->get_metadata_store()->update_status( $context['job_id'] ?? null, 'running' );
+        if ( '' !== $execution_request_id )
+        {
+            $this->get_request_store()->mark_status( $execution_request_id, 'running' );
+        }
+        $this->record_local_execution_event( $payload, 'running' );
+
+        try
+        {
+            $resolved = $this->resolve_local_mapping_form_entry( $payload );
+            if ( is_wp_error( $resolved ) )
+            {
+                $this->handle_local_mapping_failure( $payload, $resolved );
+                return;
+            }
+
+            $local_mapping_id = absint( $payload['local_mapping_id'] ?? 0 );
+            $result = ( new Sentient_Forms_Local_Action_Execution_Service() )->execute_mapping(
+                $local_mapping_id,
+                $resolved['form'],
+                $resolved['entry'],
+                $context,
+            );
+
+            if ( is_wp_error( $result ) )
+            {
+                $this->handle_local_mapping_failure( $payload, $result );
+                return;
+            }
+
+            $this->handle_local_mapping_success( $payload, $result );
+        }
+        catch ( Throwable $throwable )
+        {
+            $this->handle_local_mapping_failure(
+                $payload,
+                new WP_Error( 'sentient_forms_local_mapping_exception', $throwable->getMessage() )
+            );
+        }
+        finally
+        {
+            $this->sweep_stale_async_rows();
+        }
+    }
+
+    /**
+     * Resolve form and entry records for a queued local mapping.
+     *
+     * @param array<string, mixed> $payload Local mapping job payload.
+     *
+     * @return array{form: array<string, mixed>, entry: array<string, mixed>}|WP_Error
+     */
+    private function resolve_local_mapping_form_entry( array $payload ): array | WP_Error
+    {
+        $context     = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
+        $form_source = sanitize_key( (string) ( $payload['form_source'] ?? $context['form_source'] ?? $context['adapter_id'] ?? '' ) );
+        $form_id     = sanitize_text_field( (string) ( $payload['form_id'] ?? $context['form_id'] ?? '' ) );
+        $entry_id    = sanitize_text_field( (string) ( $payload['entry_id'] ?? $context['entry_id'] ?? '' ) );
+
+        if ( '' === $form_source || '' === $form_id || '' === $entry_id )
+        {
+            return new WP_Error(
+                'sentient_forms_local_mapping_missing_identifiers',
+                __( 'Local mapping job is missing form or entry identifiers.', 'sentient-forms' )
+            );
+        }
+
+        $registry = $this->plugin->get_form_adapter_registry();
+        $adapter  = $registry ? $registry->get_adapter_by_id( $form_source ) : null;
+        if ( ! $adapter )
+        {
+            return new WP_Error(
+                'sentient_forms_local_mapping_adapter_unavailable',
+                __( 'The form adapter for this local mapping is unavailable.', 'sentient-forms' )
+            );
+        }
+
+        $form = null;
+        if ( method_exists( $adapter, 'get_form_data' ) )
+        {
+            $form = $adapter->get_form_data( $form_id );
+        }
+
+        if ( ! $form && method_exists( $adapter, 'get_form_object' ) )
+        {
+            $form = $adapter->get_form_object( absint( $form_id ) );
+        }
+
+        if ( ! is_array( $form ) && ! is_object( $form ) )
+        {
+            return new WP_Error(
+                'sentient_forms_local_mapping_form_not_found',
+                __( 'The form for this local mapping could not be found.', 'sentient-forms' )
+            );
+        }
+
+        $entry = method_exists( $adapter, 'get_entry_data' )
+            ? $adapter->get_entry_data( $entry_id, $form_id )
+            : null;
+        if ( is_wp_error( $entry ) )
+        {
+            return $entry;
+        }
+
+        if ( ! is_array( $entry ) && ! is_object( $entry ) )
+        {
+            return new WP_Error(
+                'sentient_forms_local_mapping_entry_not_found',
+                __( 'The entry for this local mapping could not be found.', 'sentient-forms' )
+            );
+        }
+
+        return [
+            'form'  => (array) $form,
+            'entry' => (array) $entry,
+        ];
+    }
+
+    /**
+     * Mark a queued local mapping as successful.
+     *
+     * @param array<string, mixed> $payload Local mapping job payload.
+     * @param array<string, mixed> $result  Local execution result.
+     *
+     * @return void
+     */
+    private function handle_local_mapping_success( array $payload, array $result ): void
+    {
+        $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
+        $execution_request_id = sanitize_text_field(
+            (string) ( $payload['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
+        );
+
+        do_action( 'sentient_forms_async_success', $context, $result );
+        $this->emit_async_event( 'local_mapping_success', $context, $result );
+
+        $this->get_metadata_store()->update_status(
+            $context['job_id'] ?? null,
+            'success',
+            [ 'completed_at' => time() ]
+        );
+
+        if ( '' !== $execution_request_id )
+        {
+            $this->get_request_store()->mark_status( $execution_request_id, 'success' );
+        }
+    }
+
+    /**
+     * Handle a failed local mapping, retrying only transient provider failures.
+     *
+     * @param array<string, mixed> $payload Local mapping job payload.
+     * @param WP_Error             $error   Failure details.
+     *
+     * @return void
+     */
+    private function handle_local_mapping_failure( array $payload, WP_Error $error ): void
+    {
+        $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
+        $context = $this->normalize_context( $context, 'sentient_forms_local_mapping' );
+        $attempt = (int) ( $context['attempt'] ?? 1 );
+        $max     = (int) ( $context['max_attempts'] ?? self::MAX_ATTEMPTS );
+        $execution_request_id = sanitize_text_field(
+            (string) ( $payload['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
+        );
+
+        if ( $attempt < $max && $this->is_local_mapping_retryable_error( $error ) )
+        {
+            $context['attempt']    = $attempt + 1;
+            $context['last_error'] = $error->get_error_message();
+            $delay                 = $this->compute_backoff_delay( $attempt, $context );
+            $run_at                = time() + $delay;
+
+            $this->get_metadata_store()->update_status(
+                $context['job_id'] ?? null,
+                'retry_scheduled',
+                [
+                    'last_error' => $error->get_error_message(),
+                    'run_at'     => $run_at,
+                ]
+            );
+
+            unset( $context['job_id'] );
+            $scheduled = $this->schedule_local_mapping(
+                absint( $payload['local_mapping_id'] ?? 0 ),
+                [ 'id' => $payload['form_id'] ?? $context['form_id'] ?? '' ],
+                [ 'id' => $payload['entry_id'] ?? $context['entry_id'] ?? '' ],
+                $context,
+                $run_at,
+            );
+
+            if ( $scheduled )
+            {
+                if ( '' !== $execution_request_id )
+                {
+                    $this->get_request_store()->mark_status( $execution_request_id, 'queued', $error->get_error_message() );
+                }
+                $this->emit_async_event(
+                    'local_mapping_retry_scheduled',
+                    $context,
+                    [
+                        'error'  => $error->get_error_message(),
+                        'run_at' => $run_at,
+                    ]
+                );
+                return;
+            }
+        }
+
+        $this->record_local_execution_event( $payload, 'failed', null, $error );
+        $this->get_metadata_store()->update_status(
+            $context['job_id'] ?? null,
+            'failed',
+            [
+                'last_error'   => $error->get_error_message(),
+                'completed_at' => time(),
+            ]
+        );
+
+        if ( '' !== $execution_request_id )
+        {
+            $this->get_request_store()->mark_status( $execution_request_id, 'failed', $error->get_error_message() );
+        }
+
+        do_action( 'sentient_forms_async_failure', $context, $error );
+        $this->notify_adapter_error( $context, $error );
+        $this->emit_async_event(
+            'local_mapping_failed',
+            $context,
+            [ 'error' => $error->get_error_message() ],
+        );
+    }
+
+    private function requeue_local_mapping_waiting_on_dependencies( array $payload, int $delay_seconds, string $reason ): void
+    {
+        $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
+        if ( ! isset( $context['dependency_wait_started_at'] ) )
+        {
+            $context['dependency_wait_started_at'] = time();
+        }
+
+        $run_at = time() + max( 5, $delay_seconds );
+        $this->get_metadata_store()->update_status(
+            $context['job_id'] ?? null,
+            'retry_scheduled',
+            [
+                'last_error' => $reason,
+                'run_at'     => $run_at,
+            ]
+        );
+
+        $execution_request_id = sanitize_text_field(
+            (string) ( $payload['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
+        );
+        if ( '' !== $execution_request_id )
+        {
+            $this->get_request_store()->mark_status( $execution_request_id, 'queued', $reason );
+        }
+
+        unset( $context['job_id'] );
+        $scheduled = $this->schedule_local_mapping(
+            absint( $payload['local_mapping_id'] ?? 0 ),
+            [ 'id' => $payload['form_id'] ?? $context['form_id'] ?? '' ],
+            [ 'id' => $payload['entry_id'] ?? $context['entry_id'] ?? '' ],
+            $context,
+            $run_at,
+        );
+
+        if ( ! $scheduled )
+        {
+            $this->handle_local_mapping_failure(
+                $payload,
+                new WP_Error( 'sentient_forms_local_mapping_dependency_wait_reschedule_failed', $reason )
+            );
+            return;
+        }
+
+        $this->emit_async_event(
+            'local_mapping_dependency_wait',
+            $context,
+            [
+                'reason' => $reason,
+                'run_at' => $run_at,
+            ],
+        );
+    }
+
+    private function is_local_mapping_retryable_error( WP_Error $error ): bool
+    {
+        $data   = $error->get_error_data();
+        $status = is_array( $data ) && isset( $data['status'] ) ? (int) $data['status'] : 0;
+
+        if ( 429 === $status || $status >= 500 )
+        {
+            return true;
+        }
+
+        return in_array(
+            $error->get_error_code(),
+            [
+                'http_request_failed',
+                'openrouter_http_error',
+                'sentient_forms_local_mapping_exception',
+            ],
+            true
+        );
+    }
+
+    private function generate_local_mapping_request_id( int $local_mapping_id, string $form_source, string $form_id, string $entry_id, array $context ): string
+    {
+        return substr(
+            hash(
+                'sha256',
+                wp_json_encode(
+                    [
+                        'local_mapping_id' => $local_mapping_id,
+                        'form_source'      => $form_source,
+                        'form_id'          => $form_id,
+                        'entry_id'         => $entry_id,
+                        'hook'             => $context['hook'] ?? 'gform_after_submission',
+                    ]
+                )
+            ),
+            0,
+            40
+        );
+    }
+
+    private function local_mapping_payload_digest( array $payload ): string
+    {
+        return hash(
+            'sha256',
+            wp_json_encode(
+                [
+                    'local_mapping_id' => absint( $payload['local_mapping_id'] ?? 0 ),
+                    'form_source'      => sanitize_key( (string) ( $payload['form_source'] ?? '' ) ),
+                    'form_id'          => sanitize_text_field( (string) ( $payload['form_id'] ?? '' ) ),
+                    'entry_id'         => sanitize_text_field( (string) ( $payload['entry_id'] ?? '' ) ),
+                ]
+            )
+        );
+    }
+
+    private function record_local_execution_event( array $payload, string $status, ?array $result = null, ?WP_Error $error = null ): void
+    {
+        $context = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
+        $execution_request_id = sanitize_text_field(
+            (string) ( $payload['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
+        );
+        if ( '' === $execution_request_id )
+        {
+            return;
+        }
+
+        $event = [
+            'execution_request_id' => $execution_request_id,
+            'mapping_id'           => absint( $payload['local_mapping_id'] ?? $context['local_form_mapping_id'] ?? 0 ),
+            'form_source'          => $payload['form_source'] ?? $context['form_source'] ?? 'gravity_forms',
+            'form_id'              => $payload['form_id'] ?? $context['form_id'] ?? null,
+            'entry_id'             => $payload['entry_id'] ?? $context['entry_id'] ?? null,
+            'provider'             => $result['provider'] ?? $context['provider'] ?? 'openrouter',
+            'model'                => $result['model'] ?? $context['model'] ?? null,
+            'status'               => $status,
+            'payload_digest'       => $this->local_mapping_payload_digest( $payload ),
+        ];
+
+        if ( is_array( $result ) )
+        {
+            $event['result_json']      = $result['result'] ?? $result;
+            $event['token_usage_json'] = is_array( $result['result']['usage'] ?? null ) ? $result['result']['usage'] : null;
+        }
+
+        if ( $error )
+        {
+            $event['error_code']    = $error->get_error_code();
+            $event['error_message'] = $error->get_error_message();
+        }
+
+        $this->get_execution_events_repository()->record( $event );
+    }
+
+    private function get_execution_events_repository(): Sentient_Forms_Execution_Events_Repository
+    {
+        global $wpdb;
+
+        return new Sentient_Forms_Execution_Events_Repository( $wpdb );
     }
 
     /**
