@@ -42,6 +42,16 @@ Sentient managed execution:
 * Terms: https://sentientforms.com/terms
 * Privacy policy: https://sentientforms.com/privacy
 
+Administrator-configured webhooks:
+
+* Service: the webhook URL entered by the site administrator.
+* Endpoint: the administrator-provided webhook URL.
+* When used: only when an administrator explicitly enables a post-execution webhook for an action.
+* Data sent: the form entry identifier, local action context, action result, and configured webhook action metadata needed by the webhook receiver.
+* Account required: depends on the administrator-provided webhook receiver.
+* Terms: provided by the administrator-chosen webhook receiver.
+* Privacy policy: provided by the administrator-chosen webhook receiver.
+
 No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure.
 
 == Installation ==

@@ -10,7 +10,7 @@ The new product direction keeps site-owned configuration in WordPress: provider 
 - Direct OpenRouter client using the WordPress HTTP API for key validation and chat completions.
 - Consent-gated local provider REST endpoints and redacted credential listing.
 - Local workspace REST endpoints for templates, custom actions, mappings, execution events, support bundles, and mapping test runs.
-- Local prompt rendering, structured JSON result extraction, idempotent execution-event recording, and basic Gravity Forms-style result effects.
+- Local prompt rendering, structured JSON result extraction, idempotent execution-event recording, Gravity Forms-style result effects, and post-execution notes/email/hooks/webhooks with entry-level audit metadata.
 - Privacy export/erase hooks, scheduled execution-event retention cleanup, configurable uninstall behavior, and redacted support bundles.
 - WordPress.org source/package scanner plus a repeatable package-directory builder.
 - CPS `/v2` minimal-service shell with a route allowlist test.

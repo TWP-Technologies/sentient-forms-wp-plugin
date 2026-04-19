@@ -248,7 +248,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             'cached'               => false,
             'result'               => $result,
         ];
-        $effects = $this->result_applier->apply( $mapping, $form, $entry, $execution_result );
+        $effects = $this->result_applier->apply( $mapping, $form, $entry, $execution_result, $action );
         if ( is_wp_error( $effects ) )
         {
             $effects = [

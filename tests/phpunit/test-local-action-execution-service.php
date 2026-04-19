@@ -391,6 +391,209 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertContains( 'mark_as_spam', $event['result_json']['effects']['applied'] );
     }
 
+    public function test_applies_custom_action_post_execution_defaults_for_local_mapping(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'execution_defaults' => [
+                    'post_execution_actions' => [
+                        [
+                            'type'    => 'entry_note',
+                            'message' => 'Follow up with {{field:1}} about {{structured.summary}} from {{action_label}}.',
+                        ],
+                        [
+                            'type'      => 'wp_hook',
+                            'hook_name' => 'sentient_forms_local_post_execution_test',
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'display_name' => 'Local follow-up router',
+            ]
+        );
+
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'classification' => 'ham',
+                    'confidence'     => 0.98,
+                    'summary'        => 'enterprise support plan',
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+
+        $hook_calls = [];
+        $hook       = static function ( array $context, array $execution_result, array $effect, int $entry_id ) use ( &$hook_calls ): void {
+            $hook_calls[] = [
+                'context'          => $context,
+                'execution_result' => $execution_result,
+                'effect'           => $effect,
+                'entry_id'         => $entry_id,
+            ];
+        };
+
+        add_action( 'sentient_forms_local_post_execution_test', $hook, 10, 4 );
+
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [
+                    'id' => 99,
+                    '1'  => 'Ada Lovelace',
+                    '2'  => 'ada@example.test',
+                ],
+                [ 'hook' => 'gform_after_submission' ]
+            );
+        }
+        finally
+        {
+            remove_action( 'sentient_forms_local_post_execution_test', $hook, 10 );
+        }
+
+        $this->assertIsArray( $result );
+        $this->assertContains( 'post_execution:entry_note', $result['effects']['applied'] );
+        $this->assertContains( 'post_execution:wp_hook', $result['effects']['applied'] );
+
+        $this->assertCount( 1, GFFormsModel::$notes );
+        $this->assertSame( 99, GFFormsModel::$notes[0]['entry_id'] );
+        $this->assertSame( 'sentient_forms_local_post_execution', GFFormsModel::$notes[0]['note_type'] );
+        $this->assertStringContainsString(
+            'Follow up with Ada Lovelace about enterprise support plan from Local follow-up router.',
+            GFFormsModel::$notes[0]['note']
+        );
+
+        $this->assertCount( 1, $hook_calls );
+        $this->assertSame( 99, $hook_calls[0]['entry_id'] );
+        $this->assertSame( 'Local follow-up router', $hook_calls[0]['context']['action_label'] );
+        $this->assertSame( $fixture['mapping_id'], $hook_calls[0]['context']['local_form_mapping_id'] );
+        $this->assertSame( 'ham', $hook_calls[0]['execution_result']['result']['structured']['classification'] );
+        $this->assertSame( 'wp_hook', $hook_calls[0]['effect']['type'] );
+
+        $audit_json = gform_get_meta( 99, 'sentient_forms_post_execution_actions' );
+        $audit      = json_decode( (string) $audit_json, true );
+
+        $this->assertIsArray( $audit );
+        $this->assertSame( 'success', $audit[0]['results'][0]['status'] ?? null );
+        $this->assertSame( 'entry_note', $audit[0]['results'][0]['type'] ?? null );
+        $this->assertSame( 'success', $audit[0]['results'][1]['status'] ?? null );
+        $this->assertSame( 'wp_hook', $audit[0]['results'][1]['type'] ?? null );
+
+        $event = $this->events->get_by_request_id( $result['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertContains( 'post_execution:entry_note', $event['result_json']['effects']['applied'] );
+        $this->assertContains( 'post_execution:wp_hook', $event['result_json']['effects']['applied'] );
+    }
+
+    public function test_applies_mapping_level_email_and_webhook_post_execution_effects(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            [
+                'post_execution_actions' => [
+                    [
+                        'type'    => 'send_email',
+                        'to'      => '{{field:2}}',
+                        'subject' => 'Follow-up: {{summary}}',
+                        'body'    => 'Result: {{structured.summary}}',
+                    ],
+                    [
+                        'type'   => 'webhook',
+                        'url'    => 'https://hooks.example.test/sentient/{{entry_id}}',
+                        'method' => 'POST',
+                    ],
+                ],
+            ]
+        );
+
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'classification' => 'ham',
+                    'confidence'     => 0.94,
+                    'summary'        => 'priority sales inquiry',
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+
+        $mail_calls = [];
+        $mail_filter = static function ( $pre, array $atts ) use ( &$mail_calls ): bool {
+            $mail_calls[] = $atts;
+            return true;
+        };
+
+        $http_calls = [];
+        $http_filter = static function ( $pre, array $args, string $url ) use ( &$http_calls ): array {
+            $http_calls[] = [
+                'url'  => $url,
+                'args' => $args,
+            ];
+
+            return [
+                'headers'  => [],
+                'body'     => '',
+                'response' => [
+                    'code'    => 202,
+                    'message' => 'Accepted',
+                ],
+                'cookies'  => [],
+            ];
+        };
+
+        add_filter( 'pre_wp_mail', $mail_filter, 10, 2 );
+        add_filter( 'pre_http_request', $http_filter, 10, 3 );
+
+        try
+        {
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [
+                    'id' => 99,
+                    '1'  => 'Ada Lovelace',
+                    '2'  => 'ada@example.test',
+                ],
+                [ 'hook' => 'gform_after_submission' ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_wp_mail', $mail_filter, 10 );
+            remove_filter( 'pre_http_request', $http_filter, 10 );
+        }
+
+        $this->assertIsArray( $result );
+        $this->assertContains( 'post_execution:send_email', $result['effects']['applied'] );
+        $this->assertContains( 'post_execution:webhook', $result['effects']['applied'] );
+
+        $this->assertCount( 1, $mail_calls );
+        $this->assertSame( [ 'ada@example.test' ], $mail_calls[0]['to'] );
+        $this->assertSame( 'Follow-up: priority sales inquiry', $mail_calls[0]['subject'] );
+        $this->assertSame( 'Result: priority sales inquiry', $mail_calls[0]['message'] );
+
+        $this->assertCount( 1, $http_calls );
+        $this->assertSame( 'https://hooks.example.test/sentient/99', $http_calls[0]['url'] );
+        $this->assertSame( 'POST', $http_calls[0]['args']['method'] );
+        $webhook_payload = json_decode( (string) $http_calls[0]['args']['body'], true );
+        $this->assertIsArray( $webhook_payload );
+        $this->assertSame( 99, $webhook_payload['entry_id'] );
+        $this->assertSame( 'ham', $webhook_payload['result']['result']['structured']['classification'] );
+
+        $audit = json_decode( (string) gform_get_meta( 99, 'sentient_forms_post_execution_actions' ), true );
+        $this->assertIsArray( $audit );
+        $this->assertSame( 'send_email', $audit[0]['results'][0]['type'] ?? null );
+        $this->assertSame( 'success', $audit[0]['results'][0]['status'] ?? null );
+        $this->assertSame( 'webhook', $audit[0]['results'][1]['type'] ?? null );
+        $this->assertSame( 'success', $audit[0]['results'][1]['status'] ?? null );
+        $this->assertSame( 202, $audit[0]['results'][1]['status_code'] ?? null );
+    }
+
     public function test_validates_structured_result_against_custom_action_schema(): void
     {
         $fixture = $this->create_local_openrouter_mapping(

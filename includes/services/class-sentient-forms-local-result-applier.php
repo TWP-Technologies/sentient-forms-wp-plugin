@@ -17,13 +17,15 @@ class Sentient_Forms_Local_Result_Applier
      * @param array<string, mixed> $form             Form metadata.
      * @param array<string, mixed> $entry            Form entry values.
      * @param array<string, mixed> $execution_result Normalized execution result.
+     * @param array<string, mixed> $action           Local custom action row.
      *
      * @return array{applied: array<int, string>, skipped: array<int, array<string, string>>}|WP_Error
      */
-    public function apply( array $mapping, array $form, array $entry, array $execution_result ): array | WP_Error
+    public function apply( array $mapping, array $form, array $entry, array $execution_result, array $action = [] ): array | WP_Error
     {
-        $effects = is_array( $mapping['effect_mapping_json'] ?? null ) ? $mapping['effect_mapping_json'] : [];
-        if ( [] === $effects )
+        $effects                = is_array( $mapping['effect_mapping_json'] ?? null ) ? $mapping['effect_mapping_json'] : [];
+        $post_execution_actions = $this->get_configured_post_execution_actions( $effects, $action );
+        if ( [] === $effects && [] === $post_execution_actions )
         {
             return [
                 'applied' => [],
@@ -154,6 +156,35 @@ class Sentient_Forms_Local_Result_Applier
             }
         }
 
+        if ( [] !== $post_execution_actions )
+        {
+            $post_execution_results = $this->run_post_execution_actions(
+                $entry_id,
+                $mapping,
+                $form,
+                $entry,
+                $execution_result,
+                $action,
+                $post_execution_actions
+            );
+            $this->record_post_execution_action_results( $entry_id, $post_execution_results );
+
+            foreach ( $post_execution_results as $post_execution_result )
+            {
+                $effect_name = 'post_execution:' . sanitize_key( (string) ( $post_execution_result['type'] ?? 'unknown' ) );
+                if ( 'success' === (string) ( $post_execution_result['status'] ?? '' ) )
+                {
+                    $applied[] = $effect_name;
+                    continue;
+                }
+
+                $skipped[] = [
+                    'effect' => $effect_name,
+                    'reason' => sanitize_key( (string) ( $post_execution_result['status'] ?? 'failed' ) ),
+                ];
+            }
+        }
+
         return [
             'applied' => $applied,
             'skipped' => $skipped,
@@ -267,6 +298,682 @@ class Sentient_Forms_Local_Result_Applier
         }
 
         return ! empty( $effects['mark_as_spam'] );
+    }
+
+    /**
+     * @param array<string, mixed> $effects Local effect mapping JSON.
+     * @param array<string, mixed> $action  Local custom action row.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function get_configured_post_execution_actions( array $effects, array $action ): array
+    {
+        $definition = isset( $action['definition_json'] ) && is_array( $action['definition_json'] )
+            ? $action['definition_json']
+            : [];
+        $defaults = isset( $definition['execution_defaults'] ) && is_array( $definition['execution_defaults'] )
+            ? $definition['execution_defaults']
+            : [];
+
+        $candidates = [
+            $effects['post_execution_actions'] ?? null,
+            $effects['custom_effects'] ?? null,
+            $effects['effects'] ?? null,
+            $defaults['post_execution_actions'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            $actions = $this->normalize_post_execution_actions( $candidate );
+            if ( [] !== $actions )
+            {
+                return $actions;
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * @param mixed $candidate Effect action config or list.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalize_post_execution_actions( mixed $candidate ): array
+    {
+        if ( ! is_array( $candidate ) || [] === $candidate )
+        {
+            return [];
+        }
+
+        if ( isset( $candidate['type'] ) || isset( $candidate['kind'] ) )
+        {
+            $candidate = [ $candidate ];
+        }
+
+        $actions = [];
+        foreach ( $candidate as $action )
+        {
+            if ( ! is_array( $action ) )
+            {
+                continue;
+            }
+
+            if ( isset( $action['enabled'] ) && false === rest_sanitize_boolean( $action['enabled'] ) )
+            {
+                continue;
+            }
+
+            if ( ! isset( $action['type'] ) && isset( $action['kind'] ) )
+            {
+                $action['type'] = $action['kind'];
+            }
+
+            if ( isset( $action['type'] ) && is_scalar( $action['type'] ) )
+            {
+                $actions[] = $action;
+            }
+        }
+
+        return array_values( $actions );
+    }
+
+    /**
+     * @param array<string, mixed>               $mapping Local form mapping row.
+     * @param array<string, mixed>               $form Form metadata.
+     * @param array<string, mixed>               $entry Form entry values.
+     * @param array<string, mixed>               $execution_result Normalized execution result.
+     * @param array<string, mixed>               $action Local custom action row.
+     * @param array<int, array<string, mixed>>   $actions Post-execution actions.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function run_post_execution_actions(
+        int $entry_id,
+        array $mapping,
+        array $form,
+        array $entry,
+        array $execution_result,
+        array $action,
+        array $actions
+    ): array
+    {
+        $results = [];
+        foreach ( $actions as $index => $post_execution_action )
+        {
+            $type = isset( $post_execution_action['type'] ) && is_scalar( $post_execution_action['type'] )
+                ? sanitize_key( (string) $post_execution_action['type'] )
+                : 'unknown';
+
+            try
+            {
+                $results[] = $this->run_post_execution_action(
+                    $entry_id,
+                    $mapping,
+                    $form,
+                    $entry,
+                    $execution_result,
+                    $action,
+                    $post_execution_action,
+                    $index
+                );
+            }
+            catch ( Throwable $throwable )
+            {
+                $results[] = [
+                    'index'   => $index,
+                    'type'    => $type,
+                    'status'  => 'failed',
+                    'message' => $throwable->getMessage(),
+                ];
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * @param array<string, mixed> $mapping Local form mapping row.
+     * @param array<string, mixed> $form Form metadata.
+     * @param array<string, mixed> $entry Form entry values.
+     * @param array<string, mixed> $execution_result Normalized execution result.
+     * @param array<string, mixed> $action Local custom action row.
+     * @param array<string, mixed> $post_execution_action Effect configuration.
+     *
+     * @return array<string, mixed>
+     */
+    private function run_post_execution_action(
+        int $entry_id,
+        array $mapping,
+        array $form,
+        array $entry,
+        array $execution_result,
+        array $action,
+        array $post_execution_action,
+        int $index
+    ): array
+    {
+        $type = isset( $post_execution_action['type'] ) && is_scalar( $post_execution_action['type'] )
+            ? sanitize_key( (string) $post_execution_action['type'] )
+            : '';
+
+        if ( '' === $type )
+        {
+            return [
+                'index'   => $index,
+                'type'    => 'unknown',
+                'status'  => 'failed',
+                'message' => __( 'Missing post-execution action type.', 'sentient-forms' ),
+            ];
+        }
+
+        return match ( $type )
+        {
+            'entry_note' => $this->run_post_execution_entry_note_action( $entry_id, $mapping, $form, $entry, $execution_result, $action, $post_execution_action, $index, $type ),
+            'send_email' => $this->run_post_execution_email_action( $entry_id, $mapping, $form, $entry, $execution_result, $action, $post_execution_action, $index, $type ),
+            'wp_hook' => $this->run_post_execution_hook_action( $entry_id, $mapping, $form, $entry, $execution_result, $action, $post_execution_action, $index, $type ),
+            'webhook' => $this->run_post_execution_webhook_action( $entry_id, $mapping, $form, $entry, $execution_result, $action, $post_execution_action, $index, $type ),
+            default => [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => sprintf(
+                    /* translators: %s is the unsupported local post-execution action type. */
+                    __( 'Unsupported post-execution action type: %s', 'sentient-forms' ),
+                    $type
+                ),
+            ],
+        };
+    }
+
+    /**
+     * @param array<string, mixed> $mapping Local form mapping row.
+     * @param array<string, mixed> $form Form metadata.
+     * @param array<string, mixed> $entry Form entry values.
+     * @param array<string, mixed> $execution_result Normalized execution result.
+     * @param array<string, mixed> $action Local custom action row.
+     * @param array<string, mixed> $post_execution_action Effect configuration.
+     *
+     * @return array<string, mixed>
+     */
+    private function run_post_execution_entry_note_action(
+        int $entry_id,
+        array $mapping,
+        array $form,
+        array $entry,
+        array $execution_result,
+        array $action,
+        array $post_execution_action,
+        int $index,
+        string $type
+    ): array
+    {
+        if ( ! class_exists( 'GFFormsModel' ) || ! method_exists( 'GFFormsModel', 'add_note' ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'Gravity Forms notes are unavailable.', 'sentient-forms' ),
+            ];
+        }
+
+        $message = isset( $post_execution_action['message'] ) && is_scalar( $post_execution_action['message'] )
+            ? (string) $post_execution_action['message']
+            : (string) ( $post_execution_action['template'] ?? __( 'Sentient Forms completed {{action_label}}. Result: {{llm_output}}', 'sentient-forms' ) );
+        $note = $this->render_post_execution_template( $message, $mapping, $form, $entry, $execution_result, $action );
+
+        if ( '' === trim( $note ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'Entry note template rendered empty.', 'sentient-forms' ),
+            ];
+        }
+
+        GFFormsModel::add_note(
+            $entry_id,
+            0,
+            'Sentient Forms AI',
+            sanitize_textarea_field( $note ),
+            'sentient_forms_local_post_execution'
+        );
+
+        return [
+            'index'   => $index,
+            'type'    => $type,
+            'status'  => 'success',
+            'message' => $note,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $mapping Local form mapping row.
+     * @param array<string, mixed> $form Form metadata.
+     * @param array<string, mixed> $entry Form entry values.
+     * @param array<string, mixed> $execution_result Normalized execution result.
+     * @param array<string, mixed> $action Local custom action row.
+     * @param array<string, mixed> $post_execution_action Effect configuration.
+     *
+     * @return array<string, mixed>
+     */
+    private function run_post_execution_email_action(
+        int $entry_id,
+        array $mapping,
+        array $form,
+        array $entry,
+        array $execution_result,
+        array $action,
+        array $post_execution_action,
+        int $index,
+        string $type
+    ): array
+    {
+        if ( ! function_exists( 'wp_mail' ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'WordPress mail is unavailable.', 'sentient-forms' ),
+            ];
+        }
+
+        $raw_recipients = $post_execution_action['to'] ?? $post_execution_action['recipients'] ?? '';
+        if ( is_string( $raw_recipients ) )
+        {
+            $raw_recipients = array_filter( array_map( 'trim', explode( ',', $raw_recipients ) ) );
+        }
+        elseif ( ! is_array( $raw_recipients ) )
+        {
+            $raw_recipients = [];
+        }
+
+        if ( [] === $raw_recipients )
+        {
+            $raw_recipients[] = get_option( 'admin_email' );
+        }
+
+        $recipients = [];
+        foreach ( $raw_recipients as $recipient )
+        {
+            if ( ! is_scalar( $recipient ) )
+            {
+                continue;
+            }
+
+            $email = sanitize_email(
+                $this->render_post_execution_template( (string) $recipient, $mapping, $form, $entry, $execution_result, $action )
+            );
+            if ( is_email( $email ) )
+            {
+                $recipients[] = $email;
+            }
+        }
+
+        if ( [] === $recipients )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'No valid email recipients were configured.', 'sentient-forms' ),
+            ];
+        }
+
+        $subject_template = isset( $post_execution_action['subject'] ) && is_scalar( $post_execution_action['subject'] )
+            ? (string) $post_execution_action['subject']
+            : __( 'Sentient Forms completed {{action_label}}', 'sentient-forms' );
+        $body_template = isset( $post_execution_action['body'] ) && is_scalar( $post_execution_action['body'] )
+            ? (string) $post_execution_action['body']
+            : (string) ( $post_execution_action['message'] ?? "{{llm_output}}\n\n{{justification}}" );
+
+        $sent = wp_mail(
+            $recipients,
+            $this->render_post_execution_template( $subject_template, $mapping, $form, $entry, $execution_result, $action ),
+            $this->render_post_execution_template( $body_template, $mapping, $form, $entry, $execution_result, $action ),
+            [ 'Content-Type: text/plain; charset=UTF-8' ]
+        );
+
+        return [
+            'index'      => $index,
+            'type'       => $type,
+            'status'     => $sent ? 'success' : 'failed',
+            'recipients' => $recipients,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $mapping Local form mapping row.
+     * @param array<string, mixed> $form Form metadata.
+     * @param array<string, mixed> $entry Form entry values.
+     * @param array<string, mixed> $execution_result Normalized execution result.
+     * @param array<string, mixed> $action Local custom action row.
+     * @param array<string, mixed> $post_execution_action Effect configuration.
+     *
+     * @return array<string, mixed>
+     */
+    private function run_post_execution_hook_action(
+        int $entry_id,
+        array $mapping,
+        array $form,
+        array $entry,
+        array $execution_result,
+        array $action,
+        array $post_execution_action,
+        int $index,
+        string $type
+    ): array
+    {
+        $hook_template = isset( $post_execution_action['hook_name'] ) && is_scalar( $post_execution_action['hook_name'] )
+            ? (string) $post_execution_action['hook_name']
+            : '';
+        $hook_name = preg_replace(
+            '/[^A-Za-z0-9_.-]/',
+            '',
+            $this->render_post_execution_template( $hook_template, $mapping, $form, $entry, $execution_result, $action )
+        );
+
+        if ( '' === $hook_name )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'Missing WordPress hook name.', 'sentient-forms' ),
+            ];
+        }
+
+        $context = $this->build_post_execution_context( $mapping, $form, $entry, $execution_result, $action );
+
+        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- The hook name is an admin-configured local result effect and is sanitized before dispatch.
+        do_action( $hook_name, $context, $execution_result, $post_execution_action, $entry_id );
+
+        return [
+            'index'     => $index,
+            'type'      => $type,
+            'status'    => 'success',
+            'hook_name' => $hook_name,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $mapping Local form mapping row.
+     * @param array<string, mixed> $form Form metadata.
+     * @param array<string, mixed> $entry Form entry values.
+     * @param array<string, mixed> $execution_result Normalized execution result.
+     * @param array<string, mixed> $action Local custom action row.
+     * @param array<string, mixed> $post_execution_action Effect configuration.
+     *
+     * @return array<string, mixed>
+     */
+    private function run_post_execution_webhook_action(
+        int $entry_id,
+        array $mapping,
+        array $form,
+        array $entry,
+        array $execution_result,
+        array $action,
+        array $post_execution_action,
+        int $index,
+        string $type
+    ): array
+    {
+        if ( ! function_exists( 'wp_remote_request' ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'WordPress HTTP API is unavailable.', 'sentient-forms' ),
+            ];
+        }
+
+        $url_template = isset( $post_execution_action['url'] ) && is_scalar( $post_execution_action['url'] )
+            ? (string) $post_execution_action['url']
+            : '';
+        $url = esc_url_raw( $this->render_post_execution_template( $url_template, $mapping, $form, $entry, $execution_result, $action ) );
+        $scheme = wp_parse_url( $url, PHP_URL_SCHEME );
+        if ( ! in_array( $scheme, [ 'http', 'https' ], true ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => __( 'Webhook URL must use http or https.', 'sentient-forms' ),
+            ];
+        }
+
+        $method = isset( $post_execution_action['method'] ) && is_scalar( $post_execution_action['method'] )
+            ? strtoupper( sanitize_key( (string) $post_execution_action['method'] ) )
+            : 'POST';
+        $headers = $this->sanitize_webhook_headers( $post_execution_action['headers'] ?? [] );
+        $headers['Content-Type'] = $headers['Content-Type'] ?? 'application/json';
+
+        $response = wp_remote_request(
+            $url,
+            [
+                'method'  => in_array( $method, [ 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) ? $method : 'POST',
+                'timeout' => 5,
+                'headers' => $headers,
+                'body'    => wp_json_encode(
+                    [
+                        'entry_id' => $entry_id,
+                        'context'  => $this->build_post_execution_context( $mapping, $form, $entry, $execution_result, $action ),
+                        'result'   => $execution_result,
+                        'action'   => $post_execution_action,
+                    ]
+                ),
+            ]
+        );
+
+        if ( is_wp_error( $response ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => $response->get_error_message(),
+            ];
+        }
+
+        $status_code = function_exists( 'wp_remote_retrieve_response_code' )
+            ? (int) wp_remote_retrieve_response_code( $response )
+            : 0;
+
+        return [
+            'index'       => $index,
+            'type'        => $type,
+            'status'      => $status_code >= 200 && $status_code < 400 ? 'success' : 'failed',
+            'status_code' => $status_code,
+        ];
+    }
+
+    /**
+     * @param mixed $headers Raw webhook headers.
+     *
+     * @return array<string, string>
+     */
+    private function sanitize_webhook_headers( mixed $headers ): array
+    {
+        if ( ! is_array( $headers ) )
+        {
+            return [];
+        }
+
+        $sanitized = [];
+        foreach ( $headers as $key => $value )
+        {
+            if ( ! is_scalar( $key ) || ! is_scalar( $value ) )
+            {
+                continue;
+            }
+
+            $name = sanitize_text_field( (string) $key );
+            if ( '' === $name )
+            {
+                continue;
+            }
+
+            $sanitized[ $name ] = sanitize_text_field( (string) $value );
+        }
+
+        return $sanitized;
+    }
+
+    /**
+     * @param array<string, mixed> $mapping Local form mapping row.
+     * @param array<string, mixed> $form Form metadata.
+     * @param array<string, mixed> $entry Form entry values.
+     * @param array<string, mixed> $execution_result Normalized execution result.
+     * @param array<string, mixed> $action Local custom action row.
+     *
+     * @return array<string, mixed>
+     */
+    private function build_post_execution_context( array $mapping, array $form, array $entry, array $execution_result, array $action ): array
+    {
+        return [
+            'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
+            'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
+            'local_form_mapping_id'=> isset( $mapping['id'] ) ? (int) $mapping['id'] : null,
+            'action_kind'          => $mapping['action_kind'] ?? 'custom_action',
+            'action_id'            => isset( $mapping['action_id'] ) ? (int) $mapping['action_id'] : null,
+            'action_label'         => $this->get_action_label( $action ),
+            'provider'             => $execution_result['provider'] ?? null,
+            'model'                => $execution_result['model'] ?? null,
+            'execution_request_id' => $execution_result['execution_request_id'] ?? null,
+            'form'                 => $form,
+            'entry'                => $entry,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $mapping Local form mapping row.
+     * @param array<string, mixed> $form Form metadata.
+     * @param array<string, mixed> $entry Form entry values.
+     * @param array<string, mixed> $execution_result Normalized execution result.
+     * @param array<string, mixed> $action Local custom action row.
+     */
+    private function render_post_execution_template(
+        string $template,
+        array $mapping,
+        array $form,
+        array $entry,
+        array $execution_result,
+        array $action
+    ): string
+    {
+        $result = is_array( $execution_result['result'] ?? null ) ? $execution_result['result'] : [];
+
+        return (string) preg_replace_callback(
+            '/{{\s*([A-Za-z0-9_.:-]+)\s*}}/',
+            function ( array $matches ) use ( $mapping, $form, $entry, $execution_result, $action, $result ): string
+            {
+                $key = strtolower( (string) $matches[1] );
+
+                if ( str_starts_with( $key, 'field:' ) )
+                {
+                    $field_id = substr( $key, strlen( 'field:' ) );
+                    return $this->stringify_value( $entry[ $field_id ] ?? '' );
+                }
+
+                $structured = is_array( $result['structured'] ?? null ) ? $result['structured'] : [];
+                $values     = [
+                    'entry_id'             => $entry['id'] ?? '',
+                    'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? '' ),
+                    'form_title'           => $form['title'] ?? '',
+                    'local_form_mapping_id'=> $mapping['id'] ?? '',
+                    'action_label'         => $this->get_action_label( $action ),
+                    'provider'             => $execution_result['provider'] ?? '',
+                    'model'                => $execution_result['model'] ?? '',
+                    'execution_request_id' => $execution_result['execution_request_id'] ?? '',
+                    'llm_output'           => $result['content'] ?? '',
+                    'content'              => $result['content'] ?? '',
+                    'classification'       => $structured['classification'] ?? $result['classification'] ?? '',
+                    'confidence'           => $structured['confidence'] ?? $result['confidence'] ?? '',
+                    'summary'              => $structured['summary'] ?? $result['summary'] ?? '',
+                    'justification'        => $structured['justification'] ?? $result['justification'] ?? '',
+                    'structured_output'    => wp_json_encode( $structured ),
+                    'result_json'          => wp_json_encode( $result ),
+                ];
+
+                if ( array_key_exists( $key, $values ) )
+                {
+                    return $this->stringify_value( $values[ $key ] );
+                }
+
+                foreach ( [ $result, $execution_result, $mapping, $form, $entry ] as $source )
+                {
+                    if ( ! is_array( $source ) )
+                    {
+                        continue;
+                    }
+
+                    $value = $this->resolve_path( $source, $key );
+                    if ( null !== $value )
+                    {
+                        return $this->stringify_value( $value );
+                    }
+                }
+
+                return '';
+            },
+            $template
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $action Local custom action row.
+     */
+    private function get_action_label( array $action ): string
+    {
+        if ( isset( $action['display_name'] ) && is_scalar( $action['display_name'] ) )
+        {
+            return sanitize_text_field( (string) $action['display_name'] );
+        }
+
+        if ( isset( $action['code'] ) && is_scalar( $action['code'] ) )
+        {
+            return sanitize_text_field( (string) $action['code'] );
+        }
+
+        return __( 'Local OpenRouter action', 'sentient-forms' );
+    }
+
+    /**
+     * Persist post-execution effect audit entries on the Gravity Forms entry.
+     *
+     * @param array<int, array<string, mixed>> $results Effect results.
+     */
+    private function record_post_execution_action_results( int $entry_id, array $results ): void
+    {
+        if ( [] === $results || ! function_exists( 'gform_update_meta' ) )
+        {
+            return;
+        }
+
+        $existing = function_exists( 'gform_get_meta' )
+            ? gform_get_meta( $entry_id, 'sentient_forms_post_execution_actions' )
+            : null;
+        if ( is_string( $existing ) )
+        {
+            $decoded  = json_decode( $existing, true );
+            $existing = is_array( $decoded ) ? $decoded : [];
+        }
+
+        if ( ! is_array( $existing ) )
+        {
+            $existing = [];
+        }
+
+        $existing[] = [
+            'ran_at'  => current_time( 'mysql' ),
+            'results' => $results,
+        ];
+
+        gform_update_meta( $entry_id, 'sentient_forms_post_execution_actions', wp_json_encode( $existing ) );
     }
 
     /**
