@@ -5,14 +5,21 @@
 		LocalCustomActionRecord,
 		LocalFormMappingRecord,
 		LocalProviderCredential,
-		LocalProviderStatus,
 		OpenRouterModelsResponse,
 		OpenRouterValidateResponse
 	} from '$lib/api/types';
 	import { Badge, Button, Card, InputField, Section, StateTemplate } from '$lib/components/ui';
 	import { formatTimestamp } from '$lib/utils/date-time';
+	import {
+		isReadyOpenRouterCredential,
+		localOpenRouterSetupUnavailableMessage,
+		localOpenRouterSetupUnavailableTitle,
+		providerCredentialStatusDetail,
+		providerCredentialStatusDetailClass,
+		providerStatusLabel,
+		providerStatusVariant
+	} from '$lib/utils/provider-health';
 
-	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 	type LocalSubmissionSetupResult = {
 		action: LocalCustomActionRecord;
 		mapping: LocalFormMappingRecord;
@@ -50,9 +57,7 @@
 		credentials.filter((credential) => credential.provider === 'openrouter')
 	);
 	let readyOpenRouterCredentials = $derived(
-		openRouterCredentials.filter(
-			(credential) => credential.status === 'valid' && credential.secret_configured
-		)
+		openRouterCredentials.filter((credential) => isReadyOpenRouterCredential(credential))
 	);
 	let primaryOpenRouterCredential = $derived(openRouterCredentials[0] ?? null);
 	let selectedOpenRouterCredential = $derived(
@@ -68,28 +73,12 @@
 	let localSetupReady = $derived(
 		Boolean(selectedOpenRouterCredential) && String(setupFormId).trim().length > 0
 	);
-	let localSetupBlockedCredential = $derived(
-		openRouterCredentials.find((credential) => credential.status === 'limited') ??
-			openRouterCredentials.find(
-				(credential) => credential.status !== 'valid' || !credential.secret_configured
-			) ??
-			openRouterCredentials[0] ??
-			null
-	);
 	let localSetupUnavailableTitle = $derived(
-		openRouterCredentials.length > 0 ? 'OpenRouter key needs attention' : 'No ready OpenRouter key'
+		localOpenRouterSetupUnavailableTitle(openRouterCredentials)
 	);
-	let localSetupUnavailableMessage = $derived.by(() => {
-		if (!localSetupBlockedCredential) {
-			return 'Validate and save a key before creating a local action.';
-		}
-
-		const detail = credentialStatusDetail(localSetupBlockedCredential);
-
-		return detail
-			? `${detail} Then validate a ready OpenRouter key before creating a local action.`
-			: 'Validate and save a key before creating a local action.';
-	});
+	let localSetupUnavailableMessage = $derived(
+		localOpenRouterSetupUnavailableMessage(openRouterCredentials)
+	);
 	let freeModelPreview = $derived(
 		(modelCatalog?.models ?? []).filter((model) => model.free).slice(0, 6)
 	);
@@ -108,92 +97,6 @@
 			selectedCredentialId = String(readyOpenRouterCredentials[0].id);
 		}
 	});
-
-	function statusVariant(status: LocalProviderStatus | 'missing'): BadgeVariant {
-		switch (status) {
-			case 'valid':
-				return 'success';
-			case 'limited':
-				return 'warning';
-			case 'invalid':
-			case 'disabled':
-				return 'danger';
-			default:
-				return 'neutral';
-		}
-	}
-
-	function statusLabel(status: LocalProviderStatus | 'missing'): string {
-		switch (status) {
-			case 'valid':
-				return 'Ready';
-			case 'limited':
-				return 'Limited';
-			case 'invalid':
-				return 'Invalid';
-			case 'disabled':
-				return 'Disabled';
-			default:
-				return 'Not connected';
-		}
-	}
-
-	function credentialHttpStatus(credential: LocalProviderCredential): number | null {
-		const httpStatus = credential.status_json?.http_status;
-
-		if (typeof httpStatus === 'number' && Number.isFinite(httpStatus)) {
-			return httpStatus;
-		}
-
-		if (typeof httpStatus === 'string' && httpStatus.trim().length > 0) {
-			const parsedStatus = Number(httpStatus);
-			return Number.isFinite(parsedStatus) ? parsedStatus : null;
-		}
-
-		return null;
-	}
-
-	function credentialStatusDetail(credential: LocalProviderCredential): string | null {
-		const httpStatus = credentialHttpStatus(credential);
-
-		if (!credential.secret_configured) {
-			return 'The secret is missing. Save and validate this key before using it.';
-		}
-
-		if (credential.status === 'limited') {
-			if (httpStatus === 402) {
-				return 'OpenRouter reported insufficient credits. Add OpenRouter credits or switch this action to a free or available model before retrying.';
-			}
-
-			if (httpStatus === 429) {
-				return 'OpenRouter rate-limited this key. Wait for the provider limit to reset or use another OpenRouter key.';
-			}
-
-			return 'OpenRouter limited this key. Review your OpenRouter account limits before retrying.';
-		}
-
-		if (credential.status === 'invalid') {
-			return 'OpenRouter rejected this key. Validate a current key before running direct actions.';
-		}
-
-		if (credential.status === 'disabled') {
-			return 'This key is disabled locally and will not be used for direct actions.';
-		}
-
-		return null;
-	}
-
-	function credentialStatusDetailClass(credential: LocalProviderCredential): string {
-		if (credential.status === 'limited') {
-			return 'sf:text-warning-700';
-		}
-
-		if (credential.status === 'invalid' || credential.status === 'disabled') {
-			return 'sf:text-danger-700';
-		}
-
-		return 'sf:text-slate-500';
-	}
 
 	function errorMessage(requestError: unknown): string {
 		if (requestError instanceof ApiClientError) {
@@ -443,8 +346,8 @@
 		>
 			<div class="sf:space-y-2">
 				<div class="sf:flex sf:flex-wrap sf:gap-2">
-					<Badge variant={statusVariant(primaryOpenRouterCredential?.status ?? 'missing')}>
-						{statusLabel(primaryOpenRouterCredential?.status ?? 'missing')}
+					<Badge variant={providerStatusVariant(primaryOpenRouterCredential?.status ?? 'missing')}>
+						{providerStatusLabel(primaryOpenRouterCredential?.status ?? 'missing')}
 					</Badge>
 					<Badge variant="info">Local credential storage</Badge>
 				</div>
@@ -645,8 +548,8 @@
 					data-testid="providers-openrouter-validation-result"
 				>
 					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-						<Badge variant={statusVariant(validationResult.status)}>
-							{statusLabel(validationResult.status)}
+						<Badge variant={providerStatusVariant(validationResult.status)}>
+							{providerStatusLabel(validationResult.status)}
 						</Badge>
 						<span class="sf:text-sm sf:text-success-800">
 							Consent #{validationResult.consent_id} recorded.
@@ -674,15 +577,15 @@
 			{:else}
 				<div class="sf:space-y-3">
 					{#each openRouterCredentials as credential}
-						{@const statusDetail = credentialStatusDetail(credential)}
+						{@const statusDetail = providerCredentialStatusDetail(credential)}
 						<div
 							class="sf:border-l sf:border-slate-300 sf:pl-3"
 							data-testid="providers-openrouter-credential"
 						>
 							<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
 								<p class="sf:font-medium sf:text-slate-900">{credential.label}</p>
-								<Badge variant={statusVariant(credential.status)}
-									>{statusLabel(credential.status)}</Badge
+								<Badge variant={providerStatusVariant(credential.status)}
+									>{providerStatusLabel(credential.status)}</Badge
 								>
 							</div>
 							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
@@ -695,7 +598,7 @@
 							</p>
 							{#if statusDetail}
 								<p
-									class={`sf:mt-2 sf:text-xs ${credentialStatusDetailClass(credential)}`}
+									class={`sf:mt-2 sf:text-xs ${providerCredentialStatusDetailClass(credential)}`}
 									data-testid="providers-openrouter-credential-status-detail"
 								>
 									{statusDetail}

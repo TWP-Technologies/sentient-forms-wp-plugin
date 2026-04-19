@@ -78,6 +78,20 @@ const baseFormFields = [
 	{ id: '3', label: 'Amount', type: 'number' }
 ];
 
+const limitedOpenRouterCredential = {
+	id: 7,
+	provider: 'openrouter',
+	label: 'OpenRouter key',
+	auth_mode: 'manual_key',
+	constant_name: null,
+	status: 'limited',
+	status_json: { http_status: 402 },
+	last_validated_at: '2026-04-18T22:00:00Z',
+	created_at: '2026-04-18T22:00:00Z',
+	updated_at: '2026-04-18T22:00:00Z',
+	secret_configured: true
+};
+
 const statusUnknown = {
 	status: 'unknown',
 	last_run_at: null,
@@ -562,6 +576,39 @@ test.describe('Actions admin flows', () => {
 		await expect(page.getByText('Action library')).toBeVisible();
 		const definitionsCard = page.getByTestId('action-definitions-card');
 		await expect(definitionsCard.getByText('Spam check', { exact: true })).toBeVisible();
+	});
+
+	test('surfaces degraded OpenRouter health on overview and form mapping views', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } },
+			localProviders: { credentials: [limitedOpenRouterCredential] }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		const overviewHealth = page.getByTestId('actions-openrouter-health');
+		await expect(overviewHealth).toContainText('OpenRouter key needs attention');
+		await expect(overviewHealth).toContainText('OpenRouter reported insufficient credits');
+		await expect(overviewHealth.getByText('Limited')).toBeVisible();
+		await expect(overviewHealth.getByRole('button', { name: 'Review OpenRouter' })).toBeVisible();
+
+		await page.getByRole('button', { name: 'Configure' }).click();
+
+		const formHealth = page.getByTestId('form-openrouter-health');
+		await expect(formHealth).toContainText('OpenRouter key needs attention');
+		await expect(formHealth).toContainText('OpenRouter reported insufficient credits');
+		await expect(formHealth.getByText('Limited')).toBeVisible();
+		await expect(formHealth.getByRole('button', { name: 'Review OpenRouter' })).toBeVisible();
 	});
 
 	test('shows overview mapping count from linked form actions', async ({ page }) => {

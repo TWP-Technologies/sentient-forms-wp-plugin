@@ -23,6 +23,7 @@
 		FormActionLinkage,
 		FormActionConfig,
 		FormExecutionStatus,
+		LocalProviderCredential,
 		ModelSelection
 	} from '$lib/api/types';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
@@ -36,6 +37,11 @@
 		type InheritableBooleanMode,
 		normalizeFormActionConfig
 	} from '$lib/utils/action-config';
+	import {
+		openRouterActionHealth,
+		providerStatusLabel,
+		providerStatusVariant
+	} from '$lib/utils/provider-health';
 
 	const client = createClientFromConfig();
 	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
@@ -74,11 +80,15 @@
 	let executionSettingsSaving = $state(false);
 	let executionGlobalDisabled = $state(false);
 	let executionProviderDisabled = $state<Record<string, boolean>>({});
+	let providerCredentials = $state<LocalProviderCredential[]>([]);
+	let providerCredentialsLoading = $state(false);
+	let providerCredentialsError = $state<string | null>(null);
 
 	const activeSources = $derived(formSources.filter((source) => source.isActive));
 	const customActions = $derived(
 		customActionsState.actions.filter((action) => action.status === 'active')
 	);
+	const openRouterHealth = $derived(openRouterActionHealth(providerCredentials));
 
 	// CB-ACTIONS-002: count how many forms have each action enabled
 	const formsPerAction = $derived.by(() => {
@@ -351,6 +361,23 @@
 		return executionGlobalDisabled || Boolean(executionProviderDisabled[providerSlug]);
 	}
 
+	async function loadProviderCredentials() {
+		providerCredentialsLoading = true;
+		providerCredentialsError = null;
+
+		try {
+			providerCredentials = await client.getLocalProviderCredentials({ showNotifications: false });
+		} catch (err) {
+			providerCredentials = [];
+			providerCredentialsError = friendlyMessageFromError(
+				err,
+				'Failed to load local OpenRouter status'
+			);
+		} finally {
+			providerCredentialsLoading = false;
+		}
+	}
+
 	async function loadDefinitions() {
 		definitionsLoading = true;
 		error = null;
@@ -526,6 +553,7 @@
 		loadForms(); // CB-FORMS-003: also triggers loadFormHealthStatuses()
 		customActionsStore.reload();
 		loadExecutionSettings();
+		loadProviderCredentials();
 	}
 
 	onMount(() => {
@@ -533,6 +561,7 @@
 		loadForms();
 		customActionsStore.load({ status: 'active' });
 		loadExecutionSettings();
+		loadProviderCredentials();
 	});
 
 	// ============================================================
@@ -757,6 +786,46 @@
 								disabled={executionSettingsSaving || executionSettingsLoading}
 								onchange={() => toggleGlobalExecutionDisabled(!executionGlobalDisabled)}
 							/>
+						</div>
+					</div>
+
+					<div
+						class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3"
+						data-testid="actions-openrouter-health"
+					>
+						<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
+							<div>
+								<p class="sf:text-sm sf:font-medium sf:text-slate-700">
+									{providerCredentialsLoading ? 'Checking OpenRouter status' : openRouterHealth.title}
+								</p>
+								<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
+									{providerCredentialsError ?? openRouterHealth.message}
+								</p>
+							</div>
+							<div class="sf:flex sf:items-center sf:gap-2">
+								<Badge
+									variant={providerCredentialsError
+										? 'warning'
+										: providerCredentialsLoading
+											? 'neutral'
+											: providerStatusVariant(openRouterHealth.badgeStatus)}
+								>
+									{providerCredentialsError
+										? 'Status unavailable'
+										: providerCredentialsLoading
+											? 'Checking'
+											: providerStatusLabel(openRouterHealth.badgeStatus)}
+								</Badge>
+								{#if openRouterHealth.status !== 'ready' || providerCredentialsError}
+									<Button
+										size="sm"
+										variant="secondary"
+										onclick={() => navigateToAppPath('/providers')}
+									>
+										Review OpenRouter
+									</Button>
+								{/if}
+							</div>
 						</div>
 					</div>
 

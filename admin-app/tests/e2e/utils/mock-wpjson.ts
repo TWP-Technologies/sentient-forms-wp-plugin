@@ -21,6 +21,9 @@ type Routes = {
 		list?: unknown;
 		create?: unknown;
 	};
+	localProviders?: {
+		credentials?: unknown[];
+	};
 };
 
 const defaultLicense = {
@@ -87,6 +90,14 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				status: 200,
 				headers: { 'content-type': 'application/json' },
 				body: envelope(defaultLicense)
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/local/providers/credentials') && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(routes.localProviders?.credentials ?? [])
 			});
 		}
 

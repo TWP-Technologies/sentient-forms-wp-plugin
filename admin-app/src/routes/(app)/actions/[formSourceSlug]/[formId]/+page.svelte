@@ -56,6 +56,7 @@
 		FormExecutionStatus,
 		FormFieldInfo,
 		InputMapping,
+		LocalProviderCredential,
 		ModelSelection,
 		WorkflowPlanResponse
 	} from '$lib/api/types';
@@ -71,6 +72,11 @@
 		resolveInheritableBooleanSource,
 		type InheritableBooleanMode
 	} from '$lib/utils/action-config';
+	import {
+		openRouterActionHealth,
+		providerStatusLabel,
+		providerStatusVariant
+	} from '$lib/utils/provider-health';
 
 	type Props = { data: { formSourceSlug: string; formId: number } };
 	let { data }: Props = $props();
@@ -88,6 +94,7 @@
 
 	const actionsState = formActionsState;
 	const customState = customActionsState;
+	const providerClient = createClientFromConfig();
 
 	let createKind = $state<'template' | 'custom'>('template');
 	let selectedTemplateId = $state('');
@@ -143,6 +150,10 @@
 	let checkedEntryStatus = $state<ExecutionStatus | null>(null);
 	let refreshInterval: number | null = null;
 	let visibilityHandler: (() => void) | null = null;
+	let providerCredentials = $state<LocalProviderCredential[]>([]);
+	let providerCredentialsLoading = $state(false);
+	let providerCredentialsError = $state<string | null>(null);
+	const openRouterHealth = $derived(openRouterActionHealth(providerCredentials));
 
 	// CA-MAP-001: Field selection state (loaded from API)
 	let formFields = $state<FormFieldInfo[]>([]);
@@ -405,6 +416,23 @@
 			formFields = []; // Graceful fallback
 		} finally {
 			fieldsLoading = false;
+		}
+	}
+
+	async function loadProviderCredentials() {
+		providerCredentialsLoading = true;
+		providerCredentialsError = null;
+
+		try {
+			providerCredentials = await providerClient.getLocalProviderCredentials({
+				showNotifications: false
+			});
+		} catch (error) {
+			providerCredentials = [];
+			providerCredentialsError =
+				error instanceof Error ? error.message : 'Failed to load local OpenRouter status.';
+		} finally {
+			providerCredentialsLoading = false;
 		}
 	}
 
@@ -977,6 +1005,7 @@
 		formActionsStore.load(data.formSourceSlug, data.formId);
 		customActionsStore.load({ status: 'active' });
 		loadFormFields(); // CA-MAP-001: Load form fields for FieldSelector
+		loadProviderCredentials();
 		restoreLastHooks();
 		startRefreshInterval();
 
@@ -2353,6 +2382,7 @@
 
 	function refresh() {
 		formActionsStore.refresh(data.formSourceSlug, data.formId);
+		loadProviderCredentials();
 	}
 
 	// Phase 7 CSM: Save current action config as a template
@@ -2704,6 +2734,43 @@
 							<Badge variant="warning">This form is paused</Badge>
 						{/if}
 					</div>
+				</div>
+			</div>
+		</Alert>
+	{/if}
+
+	{#if providerCredentialsLoading || providerCredentialsError || openRouterHealth.status !== 'ready'}
+		<Alert
+			variant={providerCredentialsLoading ? 'info' : 'warning'}
+			class="sf:mt-3"
+			data-testid="form-openrouter-health"
+		>
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
+				<div>
+					<p class="sf:font-medium">
+						{providerCredentialsLoading ? 'Checking OpenRouter status' : openRouterHealth.title}
+					</p>
+					<p class="sf:text-sm sf:mt-1">
+						{providerCredentialsError ?? openRouterHealth.message}
+					</p>
+				</div>
+				<div class="sf:flex sf:items-center sf:gap-2">
+					<Badge
+						variant={providerCredentialsError
+							? 'warning'
+							: providerCredentialsLoading
+								? 'neutral'
+								: providerStatusVariant(openRouterHealth.badgeStatus)}
+					>
+						{providerCredentialsError
+							? 'Status unavailable'
+							: providerCredentialsLoading
+								? 'Checking'
+								: providerStatusLabel(openRouterHealth.badgeStatus)}
+					</Badge>
+					<Button size="sm" variant="secondary" onclick={() => navigateToAppPath('/providers')}>
+						Review OpenRouter
+					</Button>
 				</div>
 			</div>
 		</Alert>
