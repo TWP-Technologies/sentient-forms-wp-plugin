@@ -2317,6 +2317,145 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		}
 	}
 
+	public function test_process_local_mapping_retries_transient_openrouter_failure(): void
+	{
+		Sentient_Forms_Installer::maybe_upgrade();
+		$this->truncate_local_first_runtime_tables();
+
+		global $wpdb;
+
+		$credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+		$consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+		$custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+		$mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+		$vault          = new Sentient_Forms_Provider_Credential_Vault();
+		$encrypted      = $vault->encrypt( 'sk-or-local-async-retry-secret' );
+
+		$this->assertIsString( $encrypted );
+
+		$credential_id = $credentials->create(
+			[
+				'provider'          => 'openrouter',
+				'label'             => 'Async retry OpenRouter key',
+				'auth_mode'         => 'manual_key',
+				'encrypted_secret'  => $encrypted,
+				'status'            => 'valid',
+				'last_validated_at' => current_time( 'mysql' ),
+			]
+		);
+		$this->assertIsInt( $credential_id );
+		$this->assertIsInt( $consents->record( 'openrouter', '2026-04-18', 0 ) );
+
+		$action_id = $custom_actions->create(
+			[
+				'code'                 => 'local_async_retry_summary',
+				'display_name'         => 'Local Async Retry Summary',
+				'definition_json'      => [
+					'prompt_template' => 'Summarize {{name}}.',
+				],
+				'model_selection_json' => [
+					'provider'      => 'openrouter',
+					'model'         => 'openrouter/auto',
+					'credential_id' => $credential_id,
+				],
+				'status'               => 'active',
+			]
+		);
+		$this->assertIsInt( $action_id );
+
+		$mapping_id = $mappings->create(
+			[
+				'form_source'         => 'gravity_forms',
+				'form_id'             => '322',
+				'hook'                => 'gform_after_submission',
+				'action_kind'         => 'custom_action',
+				'action_id'           => $action_id,
+				'input_bindings_json' => [
+					'name' => '1',
+				],
+				'execution_mode'      => 'async',
+				'effect_mapping_json' => [
+					'store_result' => true,
+				],
+				'enabled'             => true,
+			]
+		);
+		$this->assertIsInt( $mapping_id );
+
+		GFAPI::$forms[322] = [
+			'id'     => 322,
+			'title'  => 'Async Retry Form',
+			'fields' => [],
+		];
+		GFAPI::$entries[655] = [
+			'id'      => 655,
+			'form_id' => 322,
+			'1'       => 'Retry Lead',
+		];
+
+		add_filter(
+			'pre_http_request',
+			static function ( $preempt, array $args, string $url ): mixed {
+				if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+				{
+					return [
+						'headers'  => [],
+						'body'     => wp_json_encode( [ 'error' => [ 'message' => 'Provider temporarily unavailable.' ] ] ),
+						'response' => [
+							'code'    => 500,
+							'message' => 'Server Error',
+						],
+						'cookies'  => [],
+					];
+				}
+
+				return $preempt;
+			},
+			9,
+			3
+		);
+
+		$handler   = $this->plugin->get_async_handler();
+		$scheduled = $handler->schedule_local_mapping(
+			$mapping_id,
+			[ 'id' => 322 ],
+			[ 'id' => 655 ],
+			[
+				'form_source'          => 'gravity_forms',
+				'form_id'              => 322,
+				'entry_id'             => 655,
+				'action_id'            => 'local_first_' . $mapping_id,
+				'execution_request_id' => 'local-async-request-retry',
+				'backoff_base_delay'   => 5,
+				'backoff_max_delay'    => 5,
+			]
+		);
+		$this->assertTrue( $scheduled );
+
+		$first_job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+		$first_payload = $first_job['args'][0] ?? [];
+
+		$before_retry = time();
+		$handler->process_local_mapping( $first_payload );
+
+		$jobs = $GLOBALS['__sentient_forms_async_queue']['enqueued'];
+		$this->assertGreaterThanOrEqual( 2, count( $jobs ) );
+
+		$retry_job     = end( $jobs );
+		$retry_payload = $retry_job['args'][0] ?? [];
+		$this->assertSame( 'sentient_forms_process_local_mapping', $retry_job['hook'] );
+		$this->assertSame( 'local-async-request-retry', $retry_payload['execution_request_id'] ?? null );
+		$this->assertSame( 2, (int) ( $retry_payload['context']['attempt'] ?? 0 ) );
+		$this->assertGreaterThanOrEqual( $before_retry + 5, (int) ( $retry_job['run_at'] ?? 0 ) );
+
+		$request = $this->plugin->get_async_request_store()->get( 'local-async-request-retry' );
+		$this->assertSame( 'queued', $request['status'] ?? null );
+		$this->assertStringContainsString( 'Provider temporarily unavailable', (string) ( $request['last_error'] ?? '' ) );
+
+		$metadata = $this->plugin->get_async_metadata_store()->get( $first_payload['context']['job_id'] );
+		$this->assertSame( 'retry_scheduled', $metadata['status'] ?? null );
+	}
+
 	private function truncate_local_first_runtime_tables(): void
 	{
 		global $wpdb;
