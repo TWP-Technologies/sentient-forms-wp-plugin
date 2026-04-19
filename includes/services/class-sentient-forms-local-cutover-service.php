@@ -249,7 +249,7 @@ class Sentient_Forms_Local_Cutover_Service
         foreach ( $suffixes as $suffix )
         {
             $table_name = $this->wpdb->prefix . $suffix;
-            if ( $table_name !== $this->wpdb->get_var( $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) )
+            if ( ! $this->table_exists( $table_name ) )
             {
                 $counts[ $suffix ] = null;
                 continue;
@@ -459,7 +459,7 @@ class Sentient_Forms_Local_Cutover_Service
         foreach ( $suffixes as $suffix )
         {
             $table_name = $this->wpdb->prefix . $suffix;
-            if ( $table_name !== $this->wpdb->get_var( $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) )
+            if ( ! $this->table_exists( $table_name ) )
             {
                 $deleted[ $suffix ] = null;
                 continue;
@@ -524,16 +524,25 @@ class Sentient_Forms_Local_Cutover_Service
      */
     private function option_names_for_prefix( string $prefix, int $limit = 100 ): array
     {
-        $limit = max( 1, min( 5000, $limit ) );
-        $rows  = $this->wpdb->get_col(
-            $this->wpdb->prepare(
-                'SELECT option_name FROM ' . esc_sql( $this->wpdb->options ) . ' WHERE option_name LIKE %s ORDER BY option_name ASC LIMIT %d',
-                $this->wpdb->esc_like( $prefix ) . '%',
-                $limit
-            )
+        $limit         = max( 1, min( 5000, $limit ) );
+        $options_table = esc_sql( $this->wpdb->options );
+        $query         = $this->wpdb->prepare(
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- The only interpolated value is the escaped core options table name; option prefix and limit are prepared placeholders.
+            "SELECT option_name FROM {$options_table} WHERE option_name LIKE %s ORDER BY option_name ASC LIMIT %d",
+            $this->wpdb->esc_like( $prefix ) . '%',
+            $limit
         );
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above; the interpolated table name is the escaped core options table.
+        $rows          = $this->wpdb->get_col( $query );
 
         return array_values( array_map( 'strval', is_array( $rows ) ? $rows : [] ) );
+    }
+
+    private function table_exists( string $table_name ): bool
+    {
+        $query = $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name );
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above for a dynamic plugin-owned table existence check.
+        return $table_name === $this->wpdb->get_var( $query );
     }
 
     private function describe_value_shape( mixed $value ): string
