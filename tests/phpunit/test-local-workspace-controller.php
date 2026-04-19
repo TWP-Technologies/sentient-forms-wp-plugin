@@ -210,6 +210,168 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 1, $row['summary_json']['local_tables']['sentient_form_mappings'] );
     }
 
+    public function test_migration_import_dry_run_reports_bundle_without_mutating_local_tables(): void
+    {
+        $bundle = $this->sample_cps_export_bundle();
+
+        $result = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/import/dry-run',
+            [
+                'bundle' => $bundle,
+            ],
+            201
+        );
+
+        $this->assertSame( 'dry_run_complete', $result['status'] );
+        $this->assertTrue( $result['dry_run'] );
+        $this->assertTrue( $result['report']['ready_to_import'] );
+        $this->assertSame( Sentient_Forms_Local_Import_Service::SCHEMA_VERSION, $result['report']['schema_version'] );
+        $this->assertSame( 1, $result['report']['counts']['action_templates'] );
+        $this->assertSame( 1, $result['report']['counts']['custom_actions'] );
+        $this->assertSame( 1, $result['report']['counts']['form_mappings'] );
+        $this->assertSame( 1, $result['report']['counts']['execution_events'] );
+        $this->assertSame( 4, $result['report']['changes']['total_writes'] );
+        $this->assertSame( [], $result['report']['conflicts'] );
+        $this->assertSame( 'create', $result['report']['mapping']['action_templates']['template-cps-1']['operation'] );
+        $this->assertSame( 'create', $result['report']['mapping']['custom_actions']['custom-cps-1']['operation'] );
+        $this->assertSame( 'create', $result['report']['mapping']['form_mappings']['mapping-cps-1']['operation'] );
+        $this->assertSame( 'review', $result['report']['mapping']['settings']['operation'] );
+
+        $this->assertSame( 0, $this->table_count( 'sentient_action_templates' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_custom_actions' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_execution_events' ) );
+
+        global $wpdb;
+        $runs = new Sentient_Forms_Migration_Runs_Repository( $wpdb );
+        $row  = $runs->get( (int) $result['run_id'] );
+
+        $this->assertSame( 'cps_export', $row['source'] );
+        $this->assertSame( 'dry_run_complete', $row['status'] );
+        $this->assertTrue( (bool) $row['dry_run'] );
+        $this->assertTrue( $row['summary_json']['ready_to_import'] );
+        $this->assertSame( 4, $row['summary_json']['changes']['total_writes'] );
+        $this->assertSame( [], $row['conflicts_json']['conflicts'] );
+        $this->assertSame( 'create', $row['mapping_json']['form_mappings']['mapping-cps-1']['operation'] );
+    }
+
+    public function test_migration_import_dry_run_reports_conflicts_and_existing_records(): void
+    {
+        $this->seed_local_cutover_state();
+        $bundle = $this->sample_cps_export_bundle(
+            [
+                'action_templates' => [
+                    [
+                        'external_id'     => 'template-cps-1',
+                        'code'            => 'spam_triage_v1',
+                        'display_name'    => 'Spam Triage Remote',
+                        'prompt_template' => 'Classify {{entry}}.',
+                        'version'         => '2.0.0',
+                        'is_active'       => true,
+                    ],
+                    [
+                        'external_id'     => 'template-cps-duplicate',
+                        'code'            => 'spam_triage_v1',
+                        'display_name'    => 'Duplicate Spam Triage',
+                        'prompt_template' => 'Duplicate.',
+                        'version'         => '2.0.0',
+                        'is_active'       => true,
+                    ],
+                ],
+                'custom_actions' => [
+                    [
+                        'external_id'          => 'custom-cps-1',
+                        'template_code'        => 'spam_triage_v1',
+                        'code'                 => 'contact_spam_triage',
+                        'display_name'         => 'Contact Spam Triage Remote',
+                        'definition_json'      => [
+                            'prompt' => 'Classify contact form entry.',
+                        ],
+                        'model_selection_json' => [
+                            'provider' => 'openrouter',
+                            'model'    => 'openrouter/auto',
+                        ],
+                    ],
+                ],
+                'form_mappings' => [
+                    [
+                        'external_id'         => 'mapping-cps-1',
+                        'form_source'         => 'gravity_forms',
+                        'form_id'             => '42',
+                        'hook'                => 'gform_after_submission',
+                        'action_kind'         => 'custom_action',
+                        'action_code'         => 'contact_spam_triage',
+                        'input_bindings_json' => [
+                            'email' => '3',
+                        ],
+                        'execution_mode'      => 'async',
+                        'enabled'             => true,
+                    ],
+                    [
+                        'external_id'         => 'mapping-cps-missing-action',
+                        'form_source'         => 'gravity_forms',
+                        'form_id'             => '99',
+                        'hook'                => 'gform_after_submission',
+                        'action_kind'         => 'custom_action',
+                        'action_code'         => 'missing_remote_action',
+                        'input_bindings_json' => [
+                            'email' => '3',
+                        ],
+                        'execution_mode'      => 'async',
+                        'enabled'             => true,
+                    ],
+                ],
+                'execution_events' => [
+                    [
+                        'execution_request_id' => 'cutover-request-1',
+                        'mapping_external_id'  => 'mapping-cps-1',
+                        'provider'             => 'openrouter',
+                        'model'                => 'openrouter/auto',
+                        'status'               => 'succeeded',
+                    ],
+                ],
+            ]
+        );
+
+        $result = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/import/dry-run',
+            [
+                'bundle' => $bundle,
+            ],
+            201
+        );
+
+        $this->assertFalse( $result['report']['ready_to_import'] );
+        $this->assertContains(
+            'duplicate_action_template_code',
+            wp_list_pluck( $result['report']['conflicts'], 'code' )
+        );
+        $this->assertContains(
+            'form_mapping_action_missing',
+            wp_list_pluck( $result['report']['conflicts'], 'code' )
+        );
+        $this->assertSame( 'blocked', $result['report']['mapping']['action_templates']['template-cps-1']['operation'] );
+        $this->assertSame( 'update', $result['report']['mapping']['custom_actions']['custom-cps-1']['operation'] );
+        $this->assertSame( 'update', $result['report']['mapping']['form_mappings']['mapping-cps-1']['operation'] );
+        $this->assertSame( 'blocked', $result['report']['mapping']['form_mappings']['mapping-cps-missing-action']['operation'] );
+        $this->assertSame( 'update', $result['report']['mapping']['execution_events']['cutover-request-1']['operation'] );
+
+        $this->assertSame( 1, $this->table_count( 'sentient_action_templates' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_custom_actions' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_execution_events' ) );
+
+        global $wpdb;
+        $runs = new Sentient_Forms_Migration_Runs_Repository( $wpdb );
+        $row  = $runs->get( (int) $result['run_id'] );
+
+        $this->assertFalse( $row['summary_json']['ready_to_import'] );
+        $this->assertGreaterThanOrEqual( 2, $row['summary_json']['conflict_count'] );
+        $this->assertSame( 'blocked', $row['mapping_json']['form_mappings']['mapping-cps-missing-action']['operation'] );
+    }
+
     public function test_migration_approved_reset_requires_confirmation_phrase(): void
     {
         $this->seed_local_cutover_state();
@@ -539,6 +701,89 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         global $wpdb;
 
         return (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . esc_sql( $wpdb->prefix . $suffix ) );
+    }
+
+    private function sample_cps_export_bundle( array $overrides = [] ): array
+    {
+        return array_merge(
+            [
+                'schema_version'   => Sentient_Forms_Local_Import_Service::SCHEMA_VERSION,
+                'source_version'   => 'cps-dev-export-1',
+                'exported_at'      => '2026-04-19T20:00:00+00:00',
+                'action_templates' => [
+                    [
+                        'external_id'              => 'template-cps-1',
+                        'code'                     => 'remote_spam_triage_v1',
+                        'display_name'             => 'Remote Spam Triage',
+                        'description'              => 'Classifies incoming form entries.',
+                        'prompt_template'          => 'Classify {{entry}}.',
+                        'default_model'            => 'openrouter/auto',
+                        'structured_output_schema' => [
+                            'type' => 'object',
+                        ],
+                        'version'                  => '1.0.0',
+                        'is_active'                => true,
+                    ],
+                ],
+                'custom_actions'   => [
+                    [
+                        'external_id'          => 'custom-cps-1',
+                        'template_code'        => 'remote_spam_triage_v1',
+                        'code'                 => 'remote_contact_spam_triage',
+                        'display_name'         => 'Remote Contact Spam Triage',
+                        'definition_json'      => [
+                            'prompt' => 'Classify contact form entry.',
+                        ],
+                        'model_selection_json' => [
+                            'provider' => 'openrouter',
+                            'model'    => 'openrouter/auto',
+                        ],
+                        'status'               => 'active',
+                    ],
+                ],
+                'form_mappings'    => [
+                    [
+                        'external_id'         => 'mapping-cps-1',
+                        'form_source'         => 'gravity_forms',
+                        'form_id'             => '7',
+                        'hook'                => 'gform_after_submission',
+                        'action_kind'         => 'custom_action',
+                        'action_code'         => 'remote_contact_spam_triage',
+                        'input_bindings_json' => [
+                            'email' => '3',
+                        ],
+                        'conditions_json'     => [
+                            'all' => [],
+                        ],
+                        'effect_mapping_json' => [
+                            'entry_note' => true,
+                        ],
+                        'execution_mode'      => 'async',
+                        'enabled'             => true,
+                    ],
+                ],
+                'execution_events' => [
+                    [
+                        'execution_request_id' => 'remote-request-1',
+                        'mapping_external_id'  => 'mapping-cps-1',
+                        'form_source'          => 'gravity_forms',
+                        'form_id'              => '7',
+                        'entry_id'             => '99',
+                        'provider'             => 'openrouter',
+                        'model'                => 'openrouter/auto',
+                        'status'               => 'succeeded',
+                        'token_usage_json'     => [
+                            'prompt_tokens'     => 25,
+                            'completion_tokens' => 8,
+                        ],
+                    ],
+                ],
+                'settings'         => [
+                    'default_provider' => 'openrouter',
+                ],
+            ],
+            $overrides
+        );
     }
 }
 
