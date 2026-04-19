@@ -27,9 +27,11 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
 
     private const OPTION_KEY = 'sentient_forms_action_log';
     private const MAX_LOG_ENTRIES = 500; // Retention limit
-    private const REMOTE_PATH = '/execution-audit';
 
     private Sentient_Forms_Admin_Permission $permission_checker;
+    private array $local_mapping_cache = [];
+    private array $local_custom_action_cache = [];
+    private array $local_action_template_cache = [];
 
     public function __construct()
     {
@@ -159,12 +161,6 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         $per_page = $request->has_param( 'per_page' )
             ? min( 100, max( 1, (int) $request->get_param( 'per_page' ) ) )
             : 20;
-
-        $remote_entries = $this->get_remote_log_entries( $request );
-        if ( ! is_wp_error( $remote_entries ) )
-        {
-            return $this->prepare_item_for_response( $remote_entries );
-        }
 
         $form_id  = $request->get_param( 'form_id' );
         $action_code = $request->get_param( 'action_code' );
@@ -320,7 +316,6 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         }
 
         $saved = update_option( self::OPTION_KEY, $entries, false );
-        self::mirror_execution_to_cps( $entry );
 
         return $saved;
     }
@@ -329,8 +324,8 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
      * Attach a saved form entry id to prior validation-hook audit rows.
      *
      * Gravity Forms validation runs before the entry exists. Once gform_entry_post_save fires,
-     * the plugin can safely re-mirror matching execution_request_id rows to CPS; the CPS audit
-     * endpoint upserts on execution_request_id and fills entry_id without duplicating rows.
+     * the plugin can safely backfill matching local execution_request_id rows without relying on
+     * the retired CPS audit mirror.
      *
      * @param array<int, string> $execution_request_ids Execution request ids from the validation hook.
      * @param int                $entry_id              Saved form entry id.
@@ -376,7 +371,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         $entries              = get_option( self::OPTION_KEY, [] );
         if ( ! is_array( $entries ) )
         {
-            return 0;
+            $entries = [];
         }
 
         $updated_entries = [];
@@ -417,19 +412,20 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         }
         unset( $entry );
 
-        if ( empty( $updated_entries ) )
+        if ( ! empty( $updated_entries ) )
         {
-            return 0;
+            update_option( self::OPTION_KEY, $entries, false );
         }
 
-        update_option( self::OPTION_KEY, $entries, false );
+        $updated_count = count( $updated_entries );
+        $updated_count += self::backfill_local_execution_events(
+            array_keys( $request_ids ),
+            $entry_id,
+            $expected_form_source,
+            $expected_form_id
+        );
 
-        foreach ( $updated_entries as $updated_entry )
-        {
-            self::mirror_execution_to_cps( $updated_entry );
-        }
-
-        return count( $updated_entries );
+        return $updated_count;
     }
 
     /**
@@ -439,8 +435,16 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
      */
     private function get_all_entries(): array
     {
-        $entries = get_option( self::OPTION_KEY, [] );
-        return is_array( $entries ) ? $entries : [];
+        $legacy_entries = get_option( self::OPTION_KEY, [] );
+        if ( ! is_array( $legacy_entries ) )
+        {
+            $legacy_entries = [];
+        }
+
+        return array_merge(
+            $this->get_local_execution_event_entries(),
+            $legacy_entries
+        );
     }
 
     /**
@@ -454,47 +458,320 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         return self::log_execution( $entry );
     }
 
-    private function get_remote_log_entries( WP_REST_Request $request ): array | WP_Error
+    private function get_local_execution_event_entries(): array
     {
-        $plugin  = Sentient_Forms_Plugin::instance();
-        $api_key = $plugin->get_proxy_api_key();
-
-        if ( empty( $api_key ) )
+        if ( ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
         {
-            return new WP_Error( 'missing_api_key', __( 'Proxy API key is not configured.', 'sentient-forms' ) );
+            return [];
         }
 
-        $params = array_filter(
-            [
-                'page'        => $request->has_param( 'page' )
-                    ? max( 1, (int) $request->get_param( 'page' ) )
-                    : 1,
-                'per_page'    => $request->has_param( 'per_page' )
-                    ? min( 100, max( 1, (int) $request->get_param( 'per_page' ) ) )
-                    : 20,
-                'form_id'     => $request->get_param( 'form_id' ),
-                'action_code' => $request->get_param( 'action_code' ),
-                'status'      => $request->get_param( 'status' ),
-                'date_from'   => $request->get_param( 'date_from' ),
-                'date_to'     => $request->get_param( 'date_to' ),
+        global $wpdb;
+
+        $repository = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        return array_values(
+            array_filter(
+                array_map(
+                    [ $this, 'format_local_execution_event_for_log' ],
+                    $repository->list_recent_for_action_log( self::MAX_LOG_ENTRIES )
+                )
+            )
+        );
+    }
+
+    private function format_local_execution_event_for_log( array $event ): array
+    {
+        $result_json = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
+        $result_data = $this->extract_local_result_data( $result_json );
+        $status      = $this->normalize_local_execution_status( (string) ( $event['status'] ?? '' ) );
+        $action      = $this->resolve_local_execution_action( $event );
+        $cost        = is_array( $event['cost_json'] ?? null ) ? $event['cost_json'] : [];
+
+        $pricing = [
+            'pricing_policy_version'     => 'local-direct-provider-v1',
+            'estimate_source'            => 'local_direct_provider',
+            'base_floor_credits'         => 0,
+            'normalized_actual_credits'  => 0,
+            'debited_credits'            => 0,
+        ];
+
+        if ( ! empty( $cost ) )
+        {
+            $pricing['provider_cost'] = $cost;
+        }
+
+        return [
+            'id'                      => 'local-event-' . absint( $event['id'] ?? 0 ),
+            'form_source'             => sanitize_key( (string) ( $event['form_source'] ?? 'unknown' ) ),
+            'form_id'                 => absint( $event['form_id'] ?? 0 ),
+            'entry_id'                => $this->normalize_log_entry_id( $event['entry_id'] ?? null ),
+            'action_code'             => $action['code'],
+            'action_label'            => $action['label'],
+            'status'                  => $status,
+            'result_summary'          => $this->extract_local_result_summary( $result_json, $result_data ),
+            'classification'          => $this->extract_local_result_classification( $result_json, $result_data ),
+            'credits_used'            => 0,
+            'error_code'              => isset( $event['error_code'] ) ? sanitize_text_field( (string) $event['error_code'] ) : null,
+            'error_message'           => isset( $event['error_message'] ) ? sanitize_textarea_field( (string) $event['error_message'] ) : null,
+            'execution_request_id'    => isset( $event['execution_request_id'] ) ? sanitize_text_field( (string) $event['execution_request_id'] ) : null,
+            'mapping_id'              => isset( $event['mapping_id'] ) ? 'local_first_' . absint( $event['mapping_id'] ) : null,
+            'resolved_model_id'       => isset( $event['model'] ) ? sanitize_text_field( (string) $event['model'] ) : null,
+            'pricing'                 => $pricing,
+            'details'                 => [
+                'source'             => 'local_execution_events',
+                'provider'           => sanitize_key( (string) ( $event['provider'] ?? 'openrouter' ) ),
+                'token_usage'        => is_array( $event['token_usage_json'] ?? null ) ? $event['token_usage_json'] : [],
+                'cost'               => $cost,
+                'evaluation_payload' => [
+                    'result_data' => $result_data,
+                ],
             ],
-            static function ( $value ): bool {
-                return null !== $value && '' !== $value;
-            }
-        );
+            'structured_output_valid' => 'success' === $status && ! empty( $result_data ),
+            'created_at'              => sanitize_text_field( (string) ( $event['created_at'] ?? '' ) ),
+            'completed_at'            => $this->is_terminal_log_status( $status )
+                ? sanitize_text_field( (string) ( $event['updated_at'] ?? $event['created_at'] ?? '' ) )
+                : null,
+        ];
+    }
 
-        $path = self::REMOTE_PATH;
-        if ( ! empty( $params ) )
+    private function normalize_log_entry_id( mixed $entry_id ): ?int
+    {
+        if ( null === $entry_id || '' === $entry_id )
         {
-            $path .= '?' . http_build_query( $params );
+            return null;
         }
 
-        return $plugin->get_cps_api_client()->get(
-            $path,
+        $normalized = absint( $entry_id );
+        return $normalized > 0 ? $normalized : null;
+    }
+
+    private function normalize_local_execution_status( string $status ): string
+    {
+        return match ( sanitize_key( $status ) ) {
+            'succeeded', 'success' => 'success',
+            'failed', 'error'      => 'error',
+            'blocked', 'skipped'   => 'blocked',
+            default                => 'pending',
+        };
+    }
+
+    private function is_terminal_log_status( string $status ): bool
+    {
+        return in_array( $status, [ 'success', 'blocked', 'error' ], true );
+    }
+
+    private function resolve_local_execution_action( array $event ): array
+    {
+        $mapping_id = absint( $event['mapping_id'] ?? 0 );
+        $fallback   = [
+            'code'  => $mapping_id > 0 ? 'local_first_' . $mapping_id : 'local_openrouter_action',
+            'label' => $mapping_id > 0
+                /* translators: %d: Local form mapping database ID. */
+                ? sprintf( __( 'Local mapping #%d', 'sentient-forms' ), $mapping_id )
+                : __( 'Local OpenRouter action', 'sentient-forms' ),
+        ];
+
+        if ( $mapping_id <= 0 )
+        {
+            return $fallback;
+        }
+
+        $mapping = $this->get_local_mapping( $mapping_id );
+        if ( ! $mapping )
+        {
+            return $fallback;
+        }
+
+        $action_id   = absint( $mapping['action_id'] ?? 0 );
+        $action_kind = sanitize_key( (string) ( $mapping['action_kind'] ?? '' ) );
+        if ( 'custom_action' === $action_kind )
+        {
+            $action = $this->get_local_custom_action( $action_id );
+            if ( $action )
+            {
+                return [
+                    'code'  => sanitize_key( (string) ( $action['code'] ?? $fallback['code'] ) ),
+                    'label' => sanitize_text_field( (string) ( $action['display_name'] ?? $fallback['label'] ) ),
+                ];
+            }
+        }
+
+        if ( 'template' === $action_kind )
+        {
+            $template = $this->get_local_action_template( $action_id );
+            if ( $template )
+            {
+                return [
+                    'code'  => sanitize_key( (string) ( $template['code'] ?? $fallback['code'] ) ),
+                    'label' => sanitize_text_field( (string) ( $template['display_name'] ?? $fallback['label'] ) ),
+                ];
+            }
+        }
+
+        return $fallback;
+    }
+
+    private function get_local_mapping( int $mapping_id ): ?array
+    {
+        if ( array_key_exists( $mapping_id, $this->local_mapping_cache ) )
+        {
+            return $this->local_mapping_cache[ $mapping_id ];
+        }
+
+        if ( ! class_exists( 'Sentient_Forms_Form_Mappings_Repository' ) )
+        {
+            $this->local_mapping_cache[ $mapping_id ] = null;
+            return null;
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $this->local_mapping_cache[ $mapping_id ] = $repository->get( $mapping_id );
+        return $this->local_mapping_cache[ $mapping_id ];
+    }
+
+    private function get_local_custom_action( int $action_id ): ?array
+    {
+        if ( array_key_exists( $action_id, $this->local_custom_action_cache ) )
+        {
+            return $this->local_custom_action_cache[ $action_id ];
+        }
+
+        if ( $action_id <= 0 || ! class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
+        {
+            $this->local_custom_action_cache[ $action_id ] = null;
+            return null;
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $this->local_custom_action_cache[ $action_id ] = $repository->get( $action_id );
+        return $this->local_custom_action_cache[ $action_id ];
+    }
+
+    private function get_local_action_template( int $template_id ): ?array
+    {
+        if ( array_key_exists( $template_id, $this->local_action_template_cache ) )
+        {
+            return $this->local_action_template_cache[ $template_id ];
+        }
+
+        if ( $template_id <= 0 || ! class_exists( 'Sentient_Forms_Action_Templates_Repository' ) )
+        {
+            $this->local_action_template_cache[ $template_id ] = null;
+            return null;
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $this->local_action_template_cache[ $template_id ] = $repository->get( $template_id );
+        return $this->local_action_template_cache[ $template_id ];
+    }
+
+    private function extract_local_result_data( array $result_json ): array
+    {
+        foreach ( [ 'structured', 'result_data', 'structured_output' ] as $key )
+        {
+            if ( is_array( $result_json[ $key ] ?? null ) )
+            {
+                return $result_json[ $key ];
+            }
+        }
+
+        $result_data = [];
+        foreach ( [ 'classification', 'summary', 'reasoning', 'justification', 'confidence', 'indicators' ] as $key )
+        {
+            if ( array_key_exists( $key, $result_json ) )
+            {
+                $result_data[ $key ] = $result_json[ $key ];
+            }
+        }
+
+        return $result_data;
+    }
+
+    private function extract_local_result_summary( array $result_json, array $result_data ): ?string
+    {
+        foreach (
             [
-                'bearer_token' => $api_key,
-            ]
-        );
+                $result_data['summary'] ?? null,
+                $result_data['justification'] ?? null,
+                $result_data['reasoning'] ?? null,
+                $result_json['summary'] ?? null,
+                $result_json['result_summary'] ?? null,
+                $result_json['content'] ?? null,
+            ] as $candidate
+        )
+        {
+            if ( is_scalar( $candidate ) && '' !== trim( (string) $candidate ) )
+            {
+                return wp_trim_words( sanitize_textarea_field( (string) $candidate ), 50, '...' );
+            }
+        }
+
+        return null;
+    }
+
+    private function extract_local_result_classification( array $result_json, array $result_data ): ?string
+    {
+        foreach ( [ $result_data['classification'] ?? null, $result_json['classification'] ?? null ] as $candidate )
+        {
+            if ( is_scalar( $candidate ) && '' !== trim( (string) $candidate ) )
+            {
+                return sanitize_text_field( (string) $candidate );
+            }
+        }
+
+        return null;
+    }
+
+    private static function backfill_local_execution_events(
+        array $execution_request_ids,
+        int $entry_id,
+        ?string $expected_form_source,
+        ?int $expected_form_id
+    ): int
+    {
+        if ( ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
+        {
+            return 0;
+        }
+
+        global $wpdb;
+
+        $repository = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $updated    = 0;
+        foreach ( $execution_request_ids as $execution_request_id )
+        {
+            $event = $repository->get_by_request_id( $execution_request_id );
+            if ( ! $event )
+            {
+                continue;
+            }
+
+            if ( null !== $expected_form_source && ( $event['form_source'] ?? '' ) !== $expected_form_source )
+            {
+                continue;
+            }
+
+            if ( null !== $expected_form_id && absint( $event['form_id'] ?? 0 ) !== $expected_form_id )
+            {
+                continue;
+            }
+
+            if ( absint( $event['entry_id'] ?? 0 ) > 0 )
+            {
+                continue;
+            }
+
+            $event['entry_id'] = (string) $entry_id;
+            $recorded          = $repository->record( $event );
+            if ( ! is_wp_error( $recorded ) )
+            {
+                $updated++;
+            }
+        }
+
+        return $updated;
     }
 
     private static function sanitize_log_json_value( $value ): array
@@ -523,57 +800,6 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         ];
 
         return 'wp-' . substr( hash( 'sha256', wp_json_encode( $seed ) ), 0, 48 );
-    }
-
-    private static function mirror_execution_to_cps( array $entry ): void
-    {
-        $plugin = Sentient_Forms_Plugin::instance();
-        $api_key = $plugin->get_proxy_api_key();
-        if ( empty( $api_key ) )
-        {
-            return;
-        }
-
-        $payload = [
-            'execution_request_id'  => $entry['execution_request_id'],
-            'form_source'           => $entry['form_source'],
-            'form_id'               => (int) $entry['form_id'],
-            'entry_id'              => $entry['entry_id'],
-            'mapping_id'            => $entry['mapping_id'],
-            'action_code'           => $entry['action_code'],
-            'action_label'          => $entry['action_label'],
-            'status'                => $entry['status'],
-            'result_summary'        => $entry['result_summary'],
-            'classification'        => $entry['classification'],
-            'credits_used'          => (int) ( $entry['credits_used'] ?? 0 ),
-            'structured_output_valid' => ! empty( $entry['structured_output_valid'] ),
-            'error_code'            => $entry['error_code'],
-            'error_message'         => $entry['error_message'],
-            'resolved_model_id'     => $entry['resolved_model_id'],
-            'pricing'               => is_array( $entry['pricing'] ?? null ) ? $entry['pricing'] : [],
-            'details'               => is_array( $entry['details'] ?? null ) ? $entry['details'] : [],
-            'started_at'            => $entry['created_at'],
-            'completed_at'          => $entry['completed_at'],
-        ];
-
-        $response = $plugin->get_cps_api_client()->post(
-            self::REMOTE_PATH,
-            $payload,
-            [
-                'bearer_token' => $api_key,
-            ]
-        );
-
-        if ( is_wp_error( $response ) && defined( 'WP_DEBUG' ) && WP_DEBUG )
-        {
-            sentient_forms_debug_log(
-                '[sentient-forms] failed to mirror execution audit to CPS.',
-                [
-                    'error_code'    => $response->get_error_code(),
-                    'error_message' => $response->get_error_message(),
-                ]
-            );
-        }
     }
 
     public function get_collection_params(): array
@@ -628,7 +854,6 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                 'id' => [
                     'description' => __( 'Unique log entry identifier.', 'sentient-forms' ),
                     'type'        => 'string',
-                    'format'      => 'uuid',
                     'readonly'    => true,
                 ],
                 'form_source' => [
@@ -665,7 +890,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                     'type'        => [ 'string', 'null' ],
                 ],
                 'credits_used' => [
-                    'description' => __( 'Credits consumed.', 'sentient-forms' ),
+                    'description' => __( 'Sentient credits debited; zero for direct local provider runs.', 'sentient-forms' ),
                     'type'        => 'integer',
                 ],
                 'error_code' => [
@@ -711,7 +936,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                     'readonly'    => true,
                 ],
                 'structured_output_valid' => [
-                    'description' => __( 'Whether the CPS response included valid structured output.', 'sentient-forms' ),
+                    'description' => __( 'Whether execution produced valid structured output.', 'sentient-forms' ),
                     'type'        => 'boolean',
                     'readonly'    => true,
                 ],

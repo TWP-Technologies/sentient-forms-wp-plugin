@@ -254,7 +254,7 @@
 	});
 </script>
 
-<Section heading="Action Log" description="View history of AI action executions.">
+<Section heading="Action Log" description="View local and managed AI action execution history.">
 	{#snippet actions()}
 		<Button variant="secondary" onclick={fetchLogs} disabled={loading}>
 			{loading ? 'Refreshing...' : 'Refresh'}
@@ -353,7 +353,7 @@
 		<StateTemplate
 			variant="loading"
 			title="Loading action logs"
-			message="Fetching the latest Sentient Forms execution history."
+			message="Fetching local execution history."
 			testId="action-log-loading-state"
 		/>
 	{:else if error}
@@ -388,7 +388,7 @@
 							<th class="sf:pb-2 sf:pr-4">Status</th>
 							<th class="sf:pb-2 sf:pr-4">Output</th>
 							<th class="sf:pb-2 sf:pr-4">Result</th>
-							<th class="sf:pb-2 sf:pr-4">Credits</th>
+							<th class="sf:pb-2 sf:pr-4">Sentient debit</th>
 							<th class="sf:pb-2">Time</th>
 						</tr>
 					</thead>
@@ -458,7 +458,7 @@
 												{/if}
 												{#if readStringPath(entry.details, ['meta', 'request_id'])}
 													<div>
-														<p class="sf:font-semibold sf:text-slate-700">CPS Request</p>
+														<p class="sf:font-semibold sf:text-slate-700">Managed request</p>
 														<p class="sf:font-mono sf:text-[11px] sf:break-all">{readStringPath(entry.details, ['meta', 'request_id'])}</p>
 													</div>
 												{/if}
@@ -476,10 +476,10 @@
 												{/if}
 												{#if entry.pricing?.pricing_policy_version}
 													<div>
-														<p class="sf:font-semibold sf:text-slate-700">Pricing Policy</p>
+														<p class="sf:font-semibold sf:text-slate-700">Usage policy</p>
 														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.pricing.pricing_policy_version}</p>
 														<p class="sf:mt-1">
-															Debited {entry.pricing.debited_credits ?? entry.credits_used} credits
+															Sentient debit {entry.pricing.debited_credits ?? entry.credits_used} credits
 															{#if entry.pricing.base_floor_credits !== null && entry.pricing.base_floor_credits !== undefined}
 																, base floor {entry.pricing.base_floor_credits}
 															{/if}

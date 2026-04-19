@@ -14,6 +14,8 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_workspace_tables();
         delete_option( self::OPTION_KEY );
         Sentient_Forms_Plugin::instance()->clear_license_data();
         $this->controller = new Sentient_Forms_Action_Log_Controller();
@@ -22,6 +24,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
     protected function tearDown(): void
     {
         delete_option( self::OPTION_KEY );
+        $this->truncate_local_workspace_tables();
         Sentient_Forms_Plugin::instance()->clear_license_data();
         remove_all_filters( 'pre_http_request' );
         parent::tearDown();
@@ -276,16 +279,9 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertFalse( $entries[0]['structured_output_valid'], 'structured_output_valid should default to false when omitted' );
     }
 
-    public function test_get_log_entries_prefers_cps_audit_when_available(): void
+    public function test_get_log_entries_uses_local_execution_events_even_when_proxy_key_exists(): void
     {
-        Sentient_Forms_Action_Log_Controller::log_execution( [
-            'form_source'  => 'gravity_forms',
-            'form_id'      => 99,
-            'entry_id'     => 999,
-            'action_code'  => 'local_only',
-            'action_label' => 'Local Only',
-            'status'       => 'success',
-        ] );
+        $mapping_id = $this->seed_local_custom_action_mapping_and_event();
 
         Sentient_Forms_Plugin::instance()->set_license_data(
             [
@@ -293,45 +289,12 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
             ]
         );
 
-        $this->mock_http_response(
-            'GET',
-            '/execution-audit?page=1&per_page=20',
-            200,
-            [
-                'success' => true,
-                'data'    => [
-                    'entries' => [
-                        [
-                            'id'                     => 'remote-1',
-                            'form_source'            => 'gravity_forms',
-                            'form_id'                => 7,
-                            'entry_id'               => 777,
-                            'action_code'            => 'spam_detection_v1',
-                            'action_label'           => 'Spam Detection',
-                            'status'                 => 'success',
-                            'result_summary'         => 'Remote audit row',
-                            'classification'         => 'ham',
-                            'credits_used'           => 4,
-                            'error_code'             => null,
-                            'error_message'          => null,
-                            'structured_output_valid'=> true,
-                            'execution_request_id'   => 'req-remote-1',
-                            'mapping_id'             => 'map-remote-1',
-                            'resolved_model_id'      => 'gemini-pro',
-                            'pricing'                => [ 'debited_credits' => 4 ],
-                            'details'                => [ 'source' => 'cps' ],
-                            'created_at'             => '2026-03-21T08:00:00Z',
-                            'completed_at'           => '2026-03-21T08:00:01Z',
-                        ],
-                    ],
-                    'total'       => 1,
-                    'total_pages' => 1,
-                    'page'        => 1,
-                    'per_page'    => 20,
-                ],
-            ],
-            function ( $args ) {
-                $this->assertSame( 'Bearer proxy-log-123', $args['headers']['Authorization'] ?? null );
+        $captured_requests = 0;
+        add_filter(
+            'pre_http_request',
+            function ( $preempt ) use ( &$captured_requests ) {
+                $captured_requests++;
+                return $preempt;
             }
         );
 
@@ -340,11 +303,21 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $data     = $response->get_data();
 
         $this->assertSame( 1, $data['total'] );
-        $this->assertSame( 'remote-1', $data['entries'][0]['id'] );
-        $this->assertSame( 'req-remote-1', $data['entries'][0]['execution_request_id'] );
+        $this->assertSame( 0, $captured_requests, 'Action log reads should not call the CPS audit endpoint.' );
+        $this->assertStringStartsWith( 'local-event-', $data['entries'][0]['id'] );
+        $this->assertSame( 'contact_spam_triage', $data['entries'][0]['action_code'] );
+        $this->assertSame( 'Contact Spam Triage', $data['entries'][0]['action_label'] );
+        $this->assertSame( 'success', $data['entries'][0]['status'] );
+        $this->assertSame( 'ham', $data['entries'][0]['classification'] );
+        $this->assertSame( 0, $data['entries'][0]['credits_used'] );
+        $this->assertSame( 'req-local-log-1', $data['entries'][0]['execution_request_id'] );
+        $this->assertSame( 'local_first_' . $mapping_id, $data['entries'][0]['mapping_id'] );
+        $this->assertSame( 'openrouter/auto', $data['entries'][0]['resolved_model_id'] );
+        $this->assertSame( 'local_execution_events', $data['entries'][0]['details']['source'] );
+        $this->assertSame( 0, $data['entries'][0]['pricing']['debited_credits'] );
     }
 
-    public function test_log_execution_mirrors_to_cps_when_proxy_key_present(): void
+    public function test_log_execution_stays_local_when_proxy_key_present(): void
     {
         Sentient_Forms_Plugin::instance()->set_license_data(
             [
@@ -352,44 +325,14 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
             ]
         );
 
-        $captured_request = null;
+        $captured_requests = 0;
 
         add_filter(
             'pre_http_request',
-            function ( $preempt, $args, $url ) use ( &$captured_request ) {
-                if ( strtoupper( (string) ( $args['method'] ?? 'GET' ) ) !== 'POST' )
-                {
-                    return $preempt;
-                }
-
-                if ( ! str_ends_with( $url, '/execution-audit' ) )
-                {
-                    return $preempt;
-                }
-
-                $captured_request = [
-                    'headers' => $args['headers'],
-                    'body'    => json_decode( (string) $args['body'], true ),
-                ];
-
-                return [
-                    'headers'  => [],
-                    'body'     => wp_json_encode(
-                        [
-                            'success' => true,
-                            'data'    => [
-                                'id' => 'remote-created',
-                            ],
-                        ]
-                    ),
-                    'response' => [
-                        'code'    => 200,
-                        'message' => 'OK',
-                    ],
-                ];
-            },
-            10,
-            3
+            function ( $preempt ) use ( &$captured_requests ) {
+                $captured_requests++;
+                return $preempt;
+            }
         );
 
         $result = Sentient_Forms_Action_Log_Controller::log_execution( [
@@ -407,15 +350,17 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         ] );
 
         $this->assertTrue( $result );
-        $this->assertNotNull( $captured_request, 'Expected CPS mirror request to be captured.' );
-        $this->assertSame( 'Bearer proxy-log-456', $captured_request['headers']['Authorization'] ?? null );
-        $this->assertSame( 'req-log-mirror', $captured_request['body']['execution_request_id'] ?? null );
-        $this->assertSame( 'map-log-mirror', $captured_request['body']['mapping_id'] ?? null );
-        $this->assertSame( 'gemini-pro', $captured_request['body']['resolved_model_id'] ?? null );
-        $this->assertSame( 8, $captured_request['body']['pricing']['debited_credits'] ?? null );
+        $this->assertSame( 0, $captured_requests, 'Local option-backed log writes should not mirror to CPS.' );
+
+        $entries = get_option( self::OPTION_KEY, [] );
+        $this->assertCount( 1, $entries );
+        $this->assertSame( 'req-log-mirror', $entries[0]['execution_request_id'] ?? null );
+        $this->assertSame( 'map-log-mirror', $entries[0]['mapping_id'] ?? null );
+        $this->assertSame( 'gemini-pro', $entries[0]['resolved_model_id'] ?? null );
+        $this->assertSame( 8, $entries[0]['pricing']['debited_credits'] ?? null );
     }
 
-    public function test_backfill_entry_id_for_execution_requests_updates_local_row_and_remirrors(): void
+    public function test_backfill_entry_id_for_execution_requests_updates_local_rows_without_cps_mirror(): void
     {
         Sentient_Forms_Plugin::instance()->set_license_data(
             [
@@ -423,44 +368,14 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
             ]
         );
 
-        $captured_requests = [];
+        $captured_requests = 0;
 
         add_filter(
             'pre_http_request',
-            function ( $preempt, $args, $url ) use ( &$captured_requests ) {
-                if ( strtoupper( (string) ( $args['method'] ?? 'GET' ) ) !== 'POST' )
-                {
-                    return $preempt;
-                }
-
-                if ( ! str_ends_with( $url, '/execution-audit' ) )
-                {
-                    return $preempt;
-                }
-
-                $captured_requests[] = [
-                    'headers' => $args['headers'],
-                    'body'    => json_decode( (string) $args['body'], true ),
-                ];
-
-                return [
-                    'headers'  => [],
-                    'body'     => wp_json_encode(
-                        [
-                            'success' => true,
-                            'data'    => [
-                                'id' => 'remote-backfilled',
-                            ],
-                        ]
-                    ),
-                    'response' => [
-                        'code'    => 200,
-                        'message' => 'OK',
-                    ],
-                ];
-            },
-            10,
-            3
+            function ( $preempt ) use ( &$captured_requests ) {
+                $captured_requests++;
+                return $preempt;
+            }
         );
 
         Sentient_Forms_Action_Log_Controller::log_execution( [
@@ -474,6 +389,20 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
             'mapping_id'           => 'map-validation-backfill',
         ] );
 
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $events->record(
+            [
+                'execution_request_id' => 'req-validation-backfill',
+                'mapping_id'           => 12,
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '77',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+            ]
+        );
+
         $updated = Sentient_Forms_Action_Log_Controller::backfill_entry_id_for_execution_requests(
             [ 'req-validation-backfill' ],
             707,
@@ -482,47 +411,95 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         );
 
         $entries = get_option( self::OPTION_KEY, [] );
+        $event   = $events->get_by_request_id( 'req-validation-backfill' );
 
-        $this->assertSame( 1, $updated );
+        $this->assertSame( 2, $updated );
         $this->assertSame( 707, $entries[0]['entry_id'] ?? null );
-        $this->assertCount( 2, $captured_requests );
-        $this->assertSame( 'Bearer proxy-log-backfill', $captured_requests[1]['headers']['Authorization'] ?? null );
-        $this->assertSame( 'req-validation-backfill', $captured_requests[1]['body']['execution_request_id'] ?? null );
-        $this->assertSame( 707, $captured_requests[1]['body']['entry_id'] ?? null );
+        $this->assertSame( '707', $event['entry_id'] ?? null );
+        $this->assertSame( 0, $captured_requests );
     }
 
-    private function mock_http_response( string $method, string $path_suffix, int $status, array $body, ?callable $assertion = null ): void
+    private function seed_local_custom_action_mapping_and_event(): int
     {
-        add_filter(
-            'pre_http_request',
-            function ( $preempt, $args, $url ) use ( $method, $path_suffix, $status, $body, $assertion ) {
-                $request_method = isset( $args['method'] ) ? strtoupper( (string) $args['method'] ) : 'GET';
-                if ( $request_method !== strtoupper( $method ) )
-                {
-                    return $preempt;
-                }
+        global $wpdb;
 
-                if ( ! str_ends_with( $url, $path_suffix ) )
-                {
-                    return $preempt;
-                }
+        $actions  = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events   = new Sentient_Forms_Execution_Events_Repository( $wpdb );
 
-                if ( is_callable( $assertion ) )
-                {
-                    $assertion( $args, $url );
-                }
-
-                return [
-                    'headers'  => [],
-                    'body'     => wp_json_encode( $body ),
-                    'response' => [
-                        'code'    => $status,
-                        'message' => $status >= 200 && $status < 300 ? 'OK' : 'Error',
-                    ],
-                ];
-            },
-            10,
-            3
+        $action_id = $actions->create(
+            [
+                'code'            => 'contact_spam_triage',
+                'display_name'    => 'Contact Spam Triage',
+                'definition_json' => [
+                    'prompt' => 'Classify the entry.',
+                ],
+            ]
         );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '7',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'email' => '3',
+                ],
+                'effect_mapping_json' => [
+                    'entry_note' => true,
+                ],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $event_id = $events->record(
+            [
+                'execution_request_id' => 'req-local-log-1',
+                'mapping_id'           => $mapping_id,
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'entry_id'             => '77',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'token_usage_json'     => [
+                    'prompt_tokens'     => 11,
+                    'completion_tokens' => 5,
+                ],
+                'result_json'          => [
+                    'content'    => 'Submission looks legitimate.',
+                    'structured' => [
+                        'classification' => 'ham',
+                        'summary'        => 'Submission looks legitimate.',
+                        'confidence'     => 0.93,
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $event_id );
+
+        return $mapping_id;
+    }
+
+    private function truncate_local_workspace_tables(): void
+    {
+        global $wpdb;
+
+        foreach (
+            [
+                'sentient_action_templates',
+                'sentient_custom_actions',
+                'sentient_form_mappings',
+                'sentient_execution_events',
+            ] as $table
+        )
+        {
+            $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
+        }
     }
 }

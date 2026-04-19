@@ -123,6 +123,19 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         return array_map( [ $this, 'decode_row' ], $rows );
     }
 
+    public function list_recent_for_action_log( int $limit = 500 ): array
+    {
+        $wpdb = $this->wpdb;
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' ORDER BY created_at DESC, id DESC LIMIT %d',
+                max( 1, min( 500, $limit ) )
+            ),
+            ARRAY_A
+        ) ?: [];
+        return array_map( [ $this, 'decode_row' ], $rows );
+    }
+
     public function cleanup_expired( ?string $before = null ): int
     {
         $before = $before ?: $this->now();

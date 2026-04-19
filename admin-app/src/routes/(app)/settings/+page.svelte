@@ -205,9 +205,9 @@
 
 <section class="sf:min-w-0 sf:space-y-6 sf:max-w-3xl">
 	<header class="sf:space-y-2">
-		<h1 class="sf:text-2xl sf:font-semibold sf:text-slate-900">Telemetry &amp; Background Processing</h1>
+		<h1 class="sf:text-2xl sf:font-semibold sf:text-slate-900">Privacy &amp; Local Processing</h1>
 		<p class="sf:text-slate-600 sf:text-sm">
-			Control telemetry consent and tune the background processing queue for Sentient Forms.
+			Control telemetry consent and tune the on-site processing queue for Sentient Forms.
 		</p>
 	</header>
 
@@ -240,8 +240,8 @@
 			<div>
 				<p class="sf:font-medium sf:text-slate-900">Enable telemetry sharing</p>
 				<p class="sf:text-sm sf:text-slate-600">
-					Share aggregated action metrics and CPS diagnostics to help Sentient Forms improve
-					reliability.
+					Share aggregated action metrics and local reliability diagnostics to help Sentient
+					Forms improve reliability.
 				</p>
 			</div>
 			<label class="sf:flex sf:items-center sf:gap-3">
@@ -261,7 +261,7 @@
 					<p>Synced {$telemetry.syncedAt}</p>
 				{/if}
 				{#if $telemetry.remoteUpdatedAt}
-					<p>Recorded by CPS {$telemetry.remoteUpdatedAt}</p>
+					<p>Remote consent record updated {$telemetry.remoteUpdatedAt}</p>
 				{/if}
 			</div>
 			{#if $telemetry.loading}
@@ -479,7 +479,7 @@
 				<StateTemplate
 					variant="loading"
 					title="Loading background processing settings"
-					message="Retrieving the current retry policy from the API."
+					message="Retrieving the current on-site retry policy."
 					inline
 					dense
 					testId="settings-async-settings-loading-state"
