@@ -142,24 +142,39 @@ export class MockSentientFormsApiClient {
 
 	async getBillingState(): Promise<BillingStateResponse> {
 		return {
-			provider: 'stripe',
-			license_status: 'active',
-			tier: {
+			service: 'sentient-managed',
+			status: 'active',
+			site_id: 'site-mock',
+			license_id: 'license-mock',
+			plan: {
 				code: this.creditBalance.tier?.code ?? 'starter',
 				display_name: this.creditBalance.tier?.display_name ?? 'Starter',
 				monthly_credit_quota: this.creditBalance.tier?.monthly_credit_quota ?? 100,
 				site_limit: 1
 			},
-			customer_id: 'cus_mock_123',
-			subscription: {
-				provider_subscription_id: 'sub_mock_123',
-				status: 'active',
-				quantity: 1,
-				cancel_at_period_end: false,
-				current_period_start: new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString(),
-				current_period_end: new Date(Date.now() + 23 * 24 * 3600 * 1000).toISOString(),
-				trial_end: null,
-				provider_price_id: 'price_mock_starter'
+			account: {
+				license_status: 'active',
+				tier: {
+					code: this.creditBalance.tier?.code ?? 'starter',
+					display_name: this.creditBalance.tier?.display_name ?? 'Starter',
+					monthly_credit_quota: this.creditBalance.tier?.monthly_credit_quota ?? 100,
+					site_limit: 1
+				}
+			},
+			billing: {
+				provider: 'stripe',
+				customer_id: 'cus_mock_123',
+				managed_enabled: true,
+				subscription: {
+					provider_subscription_id: 'sub_mock_123',
+					status: 'active',
+					quantity: 1,
+					cancel_at_period_end: false,
+					current_period_start: new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString(),
+					current_period_end: new Date(Date.now() + 23 * 24 * 3600 * 1000).toISOString(),
+					trial_end: null,
+					provider_price_id: 'price_mock_starter'
+				}
 			},
 			credits: {
 				current_balance: this.creditBalance.current_balance,
@@ -182,6 +197,22 @@ export class MockSentientFormsApiClient {
 				free_plan_monthly_credits: 50,
 				free_plan_indefinite: true,
 				private_beta_trial_enabled: true
+			},
+			managed_usage: {
+				site_id: 'site-mock',
+				total_events: 12,
+				succeeded_events: 11,
+				failed_events: 1,
+				total_input_tokens: 3200,
+				total_output_tokens: 900,
+				total_billed_micro_usd: 18000,
+				free_usage_events: 0,
+				first_event_at: new Date(Date.now() - 20 * 24 * 3600 * 1000).toISOString(),
+				last_event_at: new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString()
+			},
+			billing_boundary: {
+				direct_openrouter_billed_by_sentient: false,
+				managed_proxy_billed_by_sentient: true
 			}
 		};
 	}
@@ -407,11 +438,11 @@ export class MockSentientFormsApiClient {
 
 		this.formActions = [...this.formActions, linkage];
 		// pretend balance consumption
-			this.creditBalance = {
-				...this.creditBalance,
-				current_balance: (this.creditBalance.current_balance ?? 0) - 1,
-				ledger_delta: (this.creditBalance.ledger_delta ?? 0) + 1
-			};
+		this.creditBalance = {
+			...this.creditBalance,
+			current_balance: (this.creditBalance.current_balance ?? 0) - 1,
+			ledger_delta: (this.creditBalance.ledger_delta ?? 0) + 1
+		};
 		return linkage;
 	}
 

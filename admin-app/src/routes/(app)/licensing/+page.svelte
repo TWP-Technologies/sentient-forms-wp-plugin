@@ -4,8 +4,10 @@
 		ApiErrorPayload,
 		BillingPolicyState,
 		BillingPortalSessionRequest,
+		BillingSubscriptionState,
 		BillingStateResponse,
-		CreditBalanceResponse
+		CreditBalanceResponse,
+		TierSummary
 	} from '$lib/api/types';
 	import {
 		Badge,
@@ -64,6 +66,11 @@
 		message: string;
 		actionLabel: string;
 		retry: () => Promise<void>;
+	}
+
+	interface RestEnvelope<T> {
+		success: boolean;
+		data: T;
 	}
 
 	const BUSINESS_PLAN_SITE_CAP = 200;
@@ -131,7 +138,7 @@
 			current_balance: billingState.credits.current_balance,
 			ledger_delta: billingState.credits.ledger_delta,
 			tier:
-				billingState.tier ??
+				resolveBillingTier(billingState) ??
 				(fallbackCredits?.tier
 					? {
 							...fallbackCredits.tier,
@@ -145,6 +152,64 @@
 						}),
 			stale: false
 		};
+	}
+
+	function resolveBillingTier(billingState: BillingStateResponse | null): TierSummary | null {
+		return billingState?.plan ?? billingState?.account?.tier ?? billingState?.tier ?? null;
+	}
+
+	function resolveBillingStatus(billingState: BillingStateResponse | null): string | null {
+		return (
+			billingState?.status ??
+			billingState?.account?.license_status ??
+			billingState?.license_status ??
+			null
+		);
+	}
+
+	function resolveBillingSubscription(
+		billingState: BillingStateResponse | null
+	): BillingSubscriptionState | null {
+		return billingState?.billing?.subscription ?? billingState?.subscription ?? null;
+	}
+
+	function resolveBillingProvider(billingState: BillingStateResponse | null): string {
+		return billingState?.billing?.provider ?? billingState?.provider ?? 'not configured';
+	}
+
+	function formatBillingBoundaryValue(value: boolean | null | undefined): string {
+		if (value === true) {
+			return 'Sentient billed';
+		}
+		if (value === false) {
+			return 'Not Sentient billed';
+		}
+		return 'Not configured';
+	}
+
+	function billingBoundaryVariant(
+		value: boolean | null | undefined
+	): 'neutral' | 'success' | 'warning' {
+		if (value === true) {
+			return 'warning';
+		}
+		if (value === false) {
+			return 'success';
+		}
+		return 'neutral';
+	}
+
+	function formatMicroUsd(microUsd: number): string {
+		const dollars = microUsd / 1_000_000;
+		return dollars >= 0.01 ? `$${dollars.toFixed(2)}` : `$${dollars.toFixed(4)}`;
+	}
+
+	function unwrapRestData<T>(payload: T | RestEnvelope<T>): T {
+		if (payload && typeof payload === 'object' && 'success' in payload && 'data' in payload) {
+			return (payload as RestEnvelope<T>).data;
+		}
+
+		return payload as T;
 	}
 
 	const client = createClientFromConfig();
@@ -169,6 +234,12 @@
 	let creditPresentation = $derived(
 		buildCreditPresentation(effectiveCredits, resetInfo.summary, 'licensing')
 	);
+	let billingTier = $derived(resolveBillingTier(billing));
+	let billingStatus = $derived(resolveBillingStatus(billing));
+	let billingSubscription = $derived(resolveBillingSubscription(billing));
+	let billingProviderLabel = $derived(resolveBillingProvider(billing));
+	let billingBoundary = $derived(billing?.billing_boundary ?? null);
+	let managedUsage = $derived(billing?.managed_usage ?? null);
 	let billingPolicy = $derived(resolveBillingPolicy(billing?.policy));
 	let creditSeverityLabel = $derived(formatCreditSeverityLabel(creditPresentation.severity));
 	let creditSeverityVariant = $derived(creditSeverityToBadgeVariant(creditPresentation.severity));
@@ -183,10 +254,10 @@
 		}))
 	);
 	let tierLabel = $derived(
-		resolveTierDisplayName(billing?.tier ?? $licenseStore.tier ?? effectiveCredits?.tier ?? null) ??
+		resolveTierDisplayName(billingTier ?? $licenseStore.tier ?? effectiveCredits?.tier ?? null) ??
 			'—'
 	);
-	let hasExistingSubscription = $derived(Boolean(billing?.subscription?.provider_subscription_id));
+	let hasExistingSubscription = $derived(Boolean(billingSubscription?.provider_subscription_id));
 	let billingBusy = $derived(
 		Boolean(checkoutPlanPending || topUpPackPending || subscriptionChangePending || portalLoading)
 	);
@@ -194,13 +265,31 @@
 		isConnectedLicenseStatus($licenseStore.status) && $licenseStore.proxyKeyPresent
 	);
 	let billingSubscriptionStatus = $derived(
-		billing?.subscription?.status ?? (hasConnectedLicense ? 'free' : 'inactive')
+		billingSubscription?.status ?? (hasConnectedLicense ? (billingStatus ?? 'free') : 'inactive')
 	);
 	let billingAllocation = $derived(billing?.allocation ?? null);
 	let billingAllocationUsage = $derived(
 		billingAllocation
 			? `${billingAllocation.active_sites} / ${billingAllocation.allowed_sites}`
 			: '—'
+	);
+	let directOpenRouterBoundaryLabel = $derived(
+		formatBillingBoundaryValue(billingBoundary?.direct_openrouter_billed_by_sentient)
+	);
+	let managedProxyBoundaryLabel = $derived(
+		formatBillingBoundaryValue(billingBoundary?.managed_proxy_billed_by_sentient)
+	);
+	let managedUsageSummary = $derived(
+		managedUsage
+			? `${managedUsage.total_events.toLocaleString()} managed run${
+					managedUsage.total_events === 1 ? '' : 's'
+				}, ${managedUsage.succeeded_events.toLocaleString()} succeeded, ${managedUsage.failed_events.toLocaleString()} failed.`
+			: 'No managed proxy usage recorded yet.'
+	);
+	let managedUsageTokens = $derived(
+		managedUsage
+			? `${managedUsage.total_input_tokens.toLocaleString()} input tokens, ${managedUsage.total_output_tokens.toLocaleString()} output tokens, ${formatMicroUsd(managedUsage.total_billed_micro_usd)} billed.`
+			: 'Sentient metering starts only after managed proxy execution is enabled.'
 	);
 
 	onMount(() => {
@@ -328,7 +417,7 @@
 	}
 
 	function buildPortalSessionRequest(): BillingPortalSessionRequest {
-		const subscriptionId = billing?.subscription?.provider_subscription_id ?? null;
+		const subscriptionId = billingSubscription?.provider_subscription_id ?? null;
 		if (subscriptionId) {
 			return {
 				return_url: currentRouteUrl(),
@@ -366,8 +455,10 @@
 		creditsError = null;
 
 		try {
-			credits = await wpFetch<CreditBalanceResponse>(
-				forceRefresh ? 'credits/balance?force_refresh=1' : 'credits/balance'
+			credits = unwrapRestData(
+				await wpFetch<CreditBalanceResponse | RestEnvelope<CreditBalanceResponse>>(
+					forceRefresh ? 'credits/balance?force_refresh=1' : 'credits/balance'
+				)
 			);
 		} catch (error) {
 			console.error('Failed to fetch credits', error);
@@ -616,8 +707,8 @@
 <Section
 	heading={hasConnectedLicense ? 'License management' : 'License activation'}
 	description={hasConnectedLicense
-		? 'Review license status, tier, credits, and reset timing before making changes.'
-		: 'Provide your Sentient Forms license key to enable CPS-backed automations.'}
+		? 'Review Sentient managed billing, usage, and site allocation. Direct OpenRouter remains outside Sentient billing.'
+		: 'Provide your Sentient Forms license key to enable optional Sentient managed billing.'}
 >
 	<ValidationSummary {issues} />
 
@@ -673,7 +764,7 @@
 
 				<div class="sf:space-y-3">
 					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
-						Credits
+						Managed credits
 					</p>
 					<p
 						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
@@ -736,12 +827,12 @@
 				/>
 			{/if}
 
-				<div
-					bind:this={billingControlsElement}
-					class="sf:mt-6 sf:pt-5 sf:border-t sf:border-slate-200 sf:space-y-4"
-					id="licensing-billing-controls"
-					data-testid="licensing-billing-controls"
-				>
+			<div
+				bind:this={billingControlsElement}
+				class="sf:mt-6 sf:pt-5 sf:border-t sf:border-slate-200 sf:space-y-4"
+				id="licensing-billing-controls"
+				data-testid="licensing-billing-controls"
+			>
 				<div class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-3">
 					<div>
 						<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
@@ -754,18 +845,21 @@
 								<span class="sf:ml-2 sf:text-xs sf:text-slate-500">(refreshing…)</span>
 							{/if}
 						</p>
-						{#if billing?.subscription?.current_period_end}
+						<p class="sf:text-xs sf:text-slate-500">
+							Billing provider: {billingProviderLabel}
+						</p>
+						{#if billingSubscription?.current_period_end}
 							<p class="sf:text-xs sf:text-slate-500">
-								Current period ends {formatTimestamp(billing.subscription.current_period_end)}
+								Current period ends {formatTimestamp(billingSubscription.current_period_end)}
 							</p>
 						{/if}
-						{#if billing?.subscription?.status === 'trialing'}
+						{#if billingSubscription?.status === 'trialing'}
 							<p
 								class="sf:text-xs sf:font-semibold sf:text-success-700"
 								data-testid="licensing-trial-status-note"
 							>
-								{#if billing.subscription.trial_end}
-									Trial active until {formatTimestamp(billing.subscription.trial_end)}.
+								{#if billingSubscription.trial_end}
+									Trial active until {formatTimestamp(billingSubscription.trial_end)}.
 								{:else}
 									Trial active for this subscription.
 								{/if}
@@ -801,6 +895,49 @@
 					>
 						{portalLoading ? 'Opening…' : 'Manage billing'}
 					</Button>
+				</div>
+
+				<div
+					class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:space-y-3"
+					data-testid="licensing-billing-boundary"
+				>
+					<div>
+						<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
+							Billing boundary
+						</p>
+						<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
+							BYOK and OpenRouter free-model runs stay outside Sentient metering. Sentient charges
+							only for managed proxy runs.
+						</p>
+					</div>
+					<div class="sf:grid sf:gap-2 sf:md:grid-cols-2">
+						<div class="sf:flex sf:items-center sf:justify-between sf:gap-2">
+							<span class="sf:text-sm sf:font-medium sf:text-slate-700">Direct OpenRouter</span>
+							<Badge
+								variant={billingBoundaryVariant(
+									billingBoundary?.direct_openrouter_billed_by_sentient
+								)}
+							>
+								{directOpenRouterBoundaryLabel}
+							</Badge>
+						</div>
+						<div class="sf:flex sf:items-center sf:justify-between sf:gap-2">
+							<span class="sf:text-sm sf:font-medium sf:text-slate-700">Sentient managed proxy</span
+							>
+							<Badge
+								variant={billingBoundaryVariant(billingBoundary?.managed_proxy_billed_by_sentient)}
+							>
+								{managedProxyBoundaryLabel}
+							</Badge>
+						</div>
+					</div>
+					<div
+						class="sf:rounded-md sf:bg-slate-50 sf:p-3 sf:text-xs sf:text-slate-600"
+						data-testid="licensing-managed-usage-summary"
+					>
+						<p>{managedUsageSummary}</p>
+						<p>{managedUsageTokens}</p>
+					</div>
 				</div>
 
 				<div class="sf:grid sf:gap-3 sf:md:grid-cols-3">
@@ -972,8 +1109,20 @@
 			>
 				<span class="sf:font-medium sf:text-slate-600">Billing period end</span>
 				<span class="sf:text-slate-900">
-					{formatTimestamp(billing?.subscription?.current_period_end ?? null)}
+					{formatTimestamp(billingSubscription?.current_period_end ?? null)}
 				</span>
+			</div>
+			<div
+				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
+			>
+				<span class="sf:font-medium sf:text-slate-600">Direct OpenRouter billing</span>
+				<span class="sf:text-slate-900">{directOpenRouterBoundaryLabel}</span>
+			</div>
+			<div
+				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
+			>
+				<span class="sf:font-medium sf:text-slate-600">Managed proxy billing</span>
+				<span class="sf:text-slate-900">{managedProxyBoundaryLabel}</span>
 			</div>
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"

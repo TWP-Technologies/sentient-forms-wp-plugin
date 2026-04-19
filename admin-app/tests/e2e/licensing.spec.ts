@@ -299,6 +299,142 @@ test('licensing screen prefers billing-state tier and quota when credit refresh 
 	);
 });
 
+test('licensing screen explains the v2 managed billing boundary', async ({ page }) => {
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+
+	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					status: 'active',
+					license_key_masked: 'LIC-****-****-****',
+					proxy_key_present: true,
+					tier: 'free',
+					expires_at: null,
+					last_synced: '2030-01-01T00:00:00Z',
+					license_id: 'lic-v2-boundary',
+					site_id: 'site-v2-boundary',
+					site_url: 'https://example.test'
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					current_balance: 42,
+					ledger_delta: 0,
+					tier: {
+						code: 'free',
+						display_name: 'Free',
+						monthly_credit_quota: 50
+					}
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					service: 'sentient-managed',
+					status: 'active',
+					site_id: 'site-v2-boundary',
+					license_id: 'lic-v2-boundary',
+					plan: {
+						code: 'pro',
+						display_name: 'Pro',
+						site_limit: 5,
+						monthly_credit_quota: 4000
+					},
+					account: {
+						license_status: 'active',
+						tier: {
+							code: 'pro',
+							display_name: 'Pro',
+							site_limit: 5,
+							monthly_credit_quota: 4000
+						}
+					},
+					billing: {
+						provider: 'stripe',
+						customer_id: 'cus_v2_boundary',
+						managed_enabled: true,
+						subscription: {
+							provider_subscription_id: 'sub_v2_boundary',
+							status: 'active',
+							quantity: 2,
+							cancel_at_period_end: false,
+							current_period_start: '2030-01-01T00:00:00Z',
+							current_period_end: '2030-02-01T00:00:00Z',
+							trial_end: null,
+							provider_price_id: 'price_v2_pro'
+						}
+					},
+					allocation: {
+						seat_quantity: 2,
+						tier_site_limit: 5,
+						allowed_sites: 10,
+						active_sites: 3,
+						over_limit: false,
+						blocked_new_activations: false,
+						grace_expires_at: null,
+						capacity_policy: 'tier_x_quantity_v1'
+					},
+					managed_usage: {
+						site_id: 'site-v2-boundary',
+						total_events: 8,
+						succeeded_events: 7,
+						failed_events: 1,
+						total_input_tokens: 1234,
+						total_output_tokens: 567,
+						total_billed_micro_usd: 12500,
+						free_usage_events: 0,
+						first_event_at: '2030-01-01T00:00:00Z',
+						last_event_at: '2030-01-05T00:00:00Z'
+					},
+					billing_boundary: {
+						direct_openrouter_billed_by_sentient: false,
+						managed_proxy_billed_by_sentient: true
+					}
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.goto('/#/licensing', { waitUntil: 'networkidle' });
+
+	await expect(page.getByText('Tier: Pro')).toBeVisible();
+	await expect(page.getByTestId('licensing-credits-headline')).toContainText(
+		'42 / 50 credits remaining'
+	);
+	await expect(page.getByText('Subscription status: active')).toBeVisible();
+	await expect(page.getByText('Site capacity: 3 / 10')).toBeVisible();
+
+	const boundary = page.getByTestId('licensing-billing-boundary');
+	await expect(boundary).toContainText('Direct OpenRouter');
+	await expect(boundary).toContainText('Not Sentient billed');
+	await expect(boundary).toContainText('Sentient managed proxy');
+	await expect(boundary).toContainText('Sentient billed');
+	await expect(page.getByTestId('licensing-managed-usage-summary')).toContainText(
+		'8 managed runs, 7 succeeded, 1 failed'
+	);
+	await expect(page.getByTestId('licensing-managed-usage-summary')).toContainText('$0.01 billed');
+});
+
 test('start-next-cycle plan changes stay available while a subscription is trialing', async ({
 	page
 }) => {
@@ -434,9 +570,7 @@ test('start-next-cycle plan changes stay available while a subscription is trial
 	});
 
 	await page.goto('/#/licensing', { waitUntil: 'networkidle' });
-	await expect(page.getByTestId('licensing-trial-status-note')).toContainText(
-		'Trial active until'
-	);
+	await expect(page.getByTestId('licensing-trial-status-note')).toContainText('Trial active until');
 
 	await page.getByRole('button', { name: 'Start next cycle' }).click();
 	await page.getByRole('button', { name: 'Switch to Business' }).click();

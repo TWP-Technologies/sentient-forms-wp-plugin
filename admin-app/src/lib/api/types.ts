@@ -108,24 +108,67 @@ export interface BillingPolicyState {
 	private_beta_trial_enabled: boolean;
 }
 
-export interface BillingStateResponse {
+export interface BillingSubscriptionState {
+	provider_subscription_id: string;
+	status: string;
+	quantity: number;
+	cancel_at_period_end: boolean;
+	current_period_start?: string | null;
+	current_period_end?: string | null;
+	trial_end?: string | null;
+	provider_price_id?: string | null;
+}
+
+export interface BillingProviderState {
 	provider: string;
+	provider_mode?: 'test' | 'live' | 'auto' | string;
+	provider_livemode?: boolean;
+	customer_id?: string | null;
+	subscription?: BillingSubscriptionState | null;
+	managed_enabled?: boolean;
+}
+
+export interface BillingAccountState {
+	license_status?: string | null;
+	tier?: TierSummary | null;
+}
+
+export interface ManagedUsageSummary {
+	site_id?: string | null;
+	total_events: number;
+	succeeded_events: number;
+	failed_events: number;
+	total_input_tokens: number;
+	total_output_tokens: number;
+	total_billed_micro_usd: number;
+	free_usage_events?: number;
+	first_event_at?: string | null;
+	last_event_at?: string | null;
+}
+
+export interface BillingBoundaryState {
+	direct_openrouter_billed_by_sentient: boolean;
+	managed_proxy_billed_by_sentient: boolean;
+}
+
+export interface BillingStateResponse {
+	service?: string;
+	site_id?: string | null;
+	license_id?: string | null;
+	status?: string | null;
+	plan?: TierSummary | null;
+	account?: BillingAccountState | null;
+	billing?: BillingProviderState | null;
+	managed_usage?: ManagedUsageSummary | null;
+	billing_boundary?: BillingBoundaryState | null;
+	provider?: string;
 	provider_mode?: 'test' | 'live' | 'auto' | string;
 	provider_livemode?: boolean;
 	license_status?: string | null;
 	tier?: TierSummary | null;
 	customer_id?: string | null;
-	subscription?: {
-		provider_subscription_id: string;
-		status: string;
-		quantity: number;
-		cancel_at_period_end: boolean;
-		current_period_start?: string | null;
-		current_period_end?: string | null;
-		trial_end?: string | null;
-		provider_price_id?: string | null;
-	} | null;
-	credits: {
+	subscription?: BillingSubscriptionState | null;
+	credits?: {
 		current_balance: number;
 		tier_quota: number;
 		ledger_delta: number;
