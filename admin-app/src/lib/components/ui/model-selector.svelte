@@ -467,10 +467,10 @@
 
 		{#if resolutionError}
 			<Alert variant="warning">
-				Could not load the resolved model preview from CPS. {resolutionError}
+				Could not load the local resolved model preview. {resolutionError}
 			</Alert>
 		{:else if resolving}
-			<p class="sf:text-xs sf:text-slate-500">Refreshing resolved model and pricing...</p>
+			<p class="sf:text-xs sf:text-slate-500">Refreshing resolved model and local cost preview...</p>
 		{/if}
 
 		{#if resolved}
@@ -485,7 +485,7 @@
 					{#if pricingEstimate}
 						<div class="sf:text-left sf:sm:text-right">
 							<p class="sf:text-xs sf:uppercase sf:tracking-wide sf:text-slate-500">
-								Estimated Debit
+								Sentient Debit
 							</p>
 							<p class="sf:text-lg sf:font-semibold sf:text-slate-900">
 								{pricingEstimate.estimated_debit_credits} credits
@@ -496,13 +496,13 @@
 
 				{#if pricingEstimate}
 					<p class="sf:mt-2 sf:text-xs sf:text-slate-600">
-						Base floor: <strong>{pricingEstimate.base_floor_credits}</strong> · Normalized usage:
+						Base floor: <strong>{pricingEstimate.base_floor_credits}</strong> · Normalized direct-provider estimate:
 						<strong>{pricingEstimate.normalized_actual_credits}</strong> · Policy:
 						{pricingEstimate.pricing_policy_version}
 					</p>
 					<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-						This is a live CPS estimate. Final debit may change when actual run usage exceeds the
-						base floor.
+						Local OpenRouter runs do not spend Sentient credits. Provider charges are billed by
+						OpenRouter according to the selected model and your OpenRouter account.
 					</p>
 				{/if}
 
