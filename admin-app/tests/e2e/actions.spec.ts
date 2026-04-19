@@ -132,10 +132,7 @@ async function ensureDependencyGraphVisible(page: Parameters<typeof test>[0]['pa
 
 async function saveMappingConfigModal(page: Parameters<typeof test>[0]['page']) {
 	const modal = page.getByTestId('mapping-config-modal');
-	await modal
-		.locator('footer')
-		.getByRole('button', { name: 'Save mapping' })
-		.click();
+	await modal.locator('footer').getByRole('button', { name: 'Save mapping' }).click();
 }
 
 async function ensureMappingSectionExpanded(
@@ -448,10 +445,7 @@ async function expectRelativeBoxPositionStable(
 				if (!box || !containerBox) return Number.POSITIVE_INFINITY;
 
 				const relative = toRelativeBox(box, containerBox);
-				return Math.max(
-					Math.abs(relative.x - expected.x),
-					Math.abs(relative.y - expected.y)
-				);
+				return Math.max(Math.abs(relative.x - expected.x), Math.abs(relative.y - expected.y));
 			},
 			{ timeout: 2_000 }
 		)
@@ -733,7 +727,9 @@ test.describe('Actions admin flows', () => {
 		await expect(appNavLink(page, '/actions/custom')).not.toHaveClass(/sf-bg-slate-200/);
 
 		await page.goto('/actions/custom/new', { waitUntil: 'networkidle' });
-		await expect(page.locator('main > section > header h2', { hasText: 'Create Custom Action' })).toBeVisible();
+		await expect(
+			page.locator('main > section > header h2', { hasText: 'Create Custom Action' })
+		).toBeVisible();
 		await expect(appNavLink(page, '/actions/custom')).toHaveClass(/sf-bg-slate-200/);
 		await expect(appNavLink(page, '/actions/custom')).toHaveClass(/sf-text-slate-900/);
 	});
@@ -1012,8 +1008,9 @@ test.describe('Actions admin flows', () => {
 						{
 							level: 'action',
 							selection:
-								((payload.action_selection as Record<string, unknown> | undefined)
-									?.primary as string | undefined) ?? 'sf_default',
+								((payload.action_selection as Record<string, unknown> | undefined)?.primary as
+									| string
+									| undefined) ?? 'sf_default',
 							applied: true,
 							reason: 'Selected local action builder preset.'
 						}
@@ -1036,10 +1033,8 @@ test.describe('Actions admin flows', () => {
 					template_id: null,
 					code: 'local_openrouter_summary_1',
 					display_name: payload.display_name ?? 'Local OpenRouter summary',
-					definition_json:
-						(payload.definition_json as Record<string, unknown>) ?? {},
-					model_selection_json:
-						(payload.model_selection_json as Record<string, unknown>) ?? null,
+					definition_json: (payload.definition_json as Record<string, unknown>) ?? {},
+					model_selection_json: (payload.model_selection_json as Record<string, unknown>) ?? null,
 					status: 'active',
 					created_at: '2030-01-05T10:00:00Z',
 					updated_at: '2030-01-05T10:00:00Z'
@@ -1062,12 +1057,10 @@ test.describe('Actions admin flows', () => {
 					hook: payload.hook ?? 'gform_after_submission',
 					action_kind: 'custom_action',
 					action_id: 81,
-					input_bindings_json:
-						(payload.input_bindings_json as Record<string, unknown>) ?? {},
+					input_bindings_json: (payload.input_bindings_json as Record<string, unknown>) ?? {},
 					conditions_json: null,
 					execution_mode: payload.execution_mode ?? 'async',
-					effect_mapping_json:
-						(payload.effect_mapping_json as Record<string, unknown>) ?? {},
+					effect_mapping_json: (payload.effect_mapping_json as Record<string, unknown>) ?? {},
 					enabled: true,
 					created_at: '2030-01-05T10:00:00Z',
 					updated_at: '2030-01-05T10:00:00Z'
@@ -1084,9 +1077,13 @@ test.describe('Actions admin flows', () => {
 		await page.getByRole('button', { name: 'Direct OpenRouter' }).click();
 
 		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
+		await drawer.getByTestId('local-builder-template').selectOption('lead_qualification');
 		await expect(drawer.getByTestId('local-builder-model-selector')).toBeVisible();
 		await drawer.getByLabel('Preset').selectOption('sf_free');
-		await drawer.getByTestId('local-builder-action-name').fill('Local drawer summary');
+		await expect(drawer.getByTestId('local-builder-result-meta-key')).toHaveValue(
+			'sentient_forms_qualification'
+		);
+		await drawer.getByTestId('local-builder-action-name').fill('Local drawer qualification');
 		await drawer.getByRole('button', { name: 'Create local action' }).click();
 
 		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #81');
@@ -1101,7 +1098,10 @@ test.describe('Actions admin flows', () => {
 			})
 		);
 		expect(createdActionPayload).toMatchObject({
-			display_name: 'Local drawer summary',
+			display_name: 'Local drawer qualification',
+			definition_json: {
+				builder_template: 'lead_qualification'
+			},
 			model_selection_json: {
 				provider: 'openrouter',
 				model: 'openai/gpt-oss-20b:free',
@@ -1118,7 +1118,7 @@ test.describe('Actions admin flows', () => {
 		expect(createdActionPayload?.definition_json).toMatchObject({
 			response_format: { type: 'json_object' },
 			structured_output_schema: {
-				required: ['summary']
+				required: ['qualification']
 			}
 		});
 		expect(createdMappingPayload).toMatchObject({
@@ -1131,7 +1131,7 @@ test.describe('Actions admin flows', () => {
 			effect_mapping_json: {
 				store_result: true,
 				meta: {
-					sentient_forms_summary: 'structured.summary'
+					sentient_forms_qualification: 'structured.qualification'
 				}
 			}
 		});
@@ -1186,9 +1186,10 @@ test.describe('Actions admin flows', () => {
 		const payload = request.postDataJSON() as Record<string, unknown>;
 		const settings = (payload.settings ?? {}) as Record<string, unknown>;
 		expect(settings.dependency_ids).toEqual(['map-1']);
-		expect((settings.trigger_sources as Record<string, { type?: string; mapping_id?: string }>)?.gform_validation?.type).toBe(
-			'mapping'
-		);
+		expect(
+			(settings.trigger_sources as Record<string, { type?: string; mapping_id?: string }>)
+				?.gform_validation?.type
+		).toBe('mapping');
 		expect(
 			(settings.trigger_sources as Record<string, { type?: string; mapping_id?: string }>)
 				?.gform_validation?.mapping_id
@@ -2126,8 +2127,7 @@ test.describe('Actions admin flows', () => {
 
 		const rootSource =
 			'[data-nodeid="__hook_root__:gform_validation"][data-handleid="hook-root-source"]';
-		const rootTarget =
-			'[data-nodeid="map-2"][data-handleid="hook-root-target:gform_validation"]';
+		const rootTarget = '[data-nodeid="map-2"][data-handleid="hook-root-target:gform_validation"]';
 		await connectHandlesAndAssert(page, rootSource, rootTarget);
 
 		const updateReq = page.waitForRequest(/forms\/\d+\/actions\/map-2$/, { timeout: 15_000 });
@@ -2138,9 +2138,9 @@ test.describe('Actions admin flows', () => {
 
 		const payload = request.postDataJSON() as Record<string, unknown>;
 		const settings = (payload.settings ?? {}) as Record<string, unknown>;
-		expect((settings.trigger_sources as Record<string, { type?: string }>)?.gform_validation?.type).toBe(
-			'hook_root'
-		);
+		expect(
+			(settings.trigger_sources as Record<string, { type?: string }>)?.gform_validation?.type
+		).toBe('hook_root');
 		expect(settings.dependency_ids).toBeUndefined();
 	});
 
@@ -2796,7 +2796,8 @@ test.describe('Actions admin flows', () => {
 					overlapHitTag = hit.tagName.toLowerCase();
 					overlapHitTestId = hit.getAttribute('data-testid');
 					overlapHitCardTestId =
-						hit.closest('[data-testid^="dependency-node-card-"]')?.getAttribute('data-testid') ?? null;
+						hit.closest('[data-testid^="dependency-node-card-"]')?.getAttribute('data-testid') ??
+						null;
 				}
 				break;
 			}
@@ -3132,7 +3133,9 @@ test.describe('Actions admin flows', () => {
 		await firstRow.getByRole('button', { name: 'Configure' }).click();
 		modal = page.getByTestId('mapping-config-modal');
 		await expect(modal.getByTestId('mapping-trigger-hook-gform_validation')).toBeChecked();
-		await expect(modal.getByTestId('mapping-trigger-hook-gform_after_submission')).not.toBeChecked();
+		await expect(
+			modal.getByTestId('mapping-trigger-hook-gform_after_submission')
+		).not.toBeChecked();
 	});
 
 	test('runs request tracer with manual values and renders step diagnostics', async ({ page }) => {
@@ -3348,14 +3351,14 @@ test.describe('Actions admin flows', () => {
 		await page.getByTestId('mapping-config-open-graph').click();
 		await connectHandlesAndAssert(
 			page,
-				'[data-nodeid="map-1"][data-handleid="dependency-source"]',
-				'[data-nodeid="map-2"][data-handleid="dependency-target"]',
-				{
-					expectRejected: true,
-					rejectedMessage: /cycle/i,
-					allowNoFeedbackOnFailure: true
-				}
-			);
+			'[data-nodeid="map-1"][data-handleid="dependency-source"]',
+			'[data-nodeid="map-2"][data-handleid="dependency-target"]',
+			{
+				expectRejected: true,
+				rejectedMessage: /cycle/i,
+				allowNoFeedbackOnFailure: true
+			}
+		);
 
 		const cycleRequestPromise = page
 			.waitForRequest(
@@ -3414,14 +3417,14 @@ test.describe('Actions admin flows', () => {
 		await page.getByTestId('mapping-config-open-graph').click();
 		await connectHandlesAndAssert(
 			page,
-				'[data-nodeid="map-1"][data-handleid="dependency-source"]',
-				'[data-nodeid="map-2"][data-handleid="dependency-target"]',
-				{
-					expectRejected: true,
-					rejectedMessage: /must also run in background|cannot depend on background/i,
-					allowNoFeedbackOnFailure: true
-				}
-			);
+			'[data-nodeid="map-1"][data-handleid="dependency-source"]',
+			'[data-nodeid="map-2"][data-handleid="dependency-target"]',
+			{
+				expectRejected: true,
+				rejectedMessage: /must also run in background|cannot depend on background/i,
+				allowNoFeedbackOnFailure: true
+			}
+		);
 
 		const mismatchRequestPromise = page
 			.waitForRequest(

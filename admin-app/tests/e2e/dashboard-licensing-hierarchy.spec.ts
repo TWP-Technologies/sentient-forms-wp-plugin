@@ -154,14 +154,18 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('dashboard-template-count')).toContainText('2');
 		await expect(page.getByTestId('dashboard-custom-action-count')).toContainText('1');
 		await expect(page.getByTestId('dashboard-execution-count')).toContainText('1');
-		await expect(page.getByTestId('dashboard-free-path-card')).toContainText('Direct OpenRouter: no');
+		await expect(page.getByTestId('dashboard-free-path-card')).toContainText(
+			'Direct OpenRouter: no'
+		);
 		await expect(page.getByText('License health')).toHaveCount(0);
 		await expect(page.getByText(/credits remaining/i)).toHaveCount(0);
 		expect(licenseRequests).toBe(0);
 		expect(creditRequests).toBe(0);
 	});
 
-	test('dashboard surfaces local endpoint failures without reverting to license copy', async ({ page }) => {
+	test('dashboard surfaces local endpoint failures without reverting to license copy', async ({
+		page
+	}) => {
 		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
 			route.fulfill({
 				status: 500,
@@ -229,21 +233,24 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			})
 		);
 
-		await page.route('**/wp-json/sentient-forms/v1/local/providers/openrouter/validate**', async (route) => {
-			validatePayload = route.request().postDataJSON() as Record<string, unknown>;
-			return route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					provider: 'openrouter',
-					status: 'valid',
-					credential_id: 12,
-					key_status: { label: 'test key', is_free_tier: true },
-					consent_recorded: true,
-					consent_id: 44
-				})
-			});
-		});
+		await page.route(
+			'**/wp-json/sentient-forms/v1/local/providers/openrouter/validate**',
+			async (route) => {
+				validatePayload = route.request().postDataJSON() as Record<string, unknown>;
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						provider: 'openrouter',
+						status: 'valid',
+						credential_id: 12,
+						key_status: { label: 'test key', is_free_tier: true },
+						consent_recorded: true,
+						consent_id: 44
+					})
+				});
+			}
+		);
 
 		await page.goto('/#/providers', { waitUntil: 'networkidle' });
 
@@ -264,10 +271,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		});
 	});
 
-	test('providers local setup resolves the selected local model policy', async ({ page }) => {
-		let resolvePayload: Record<string, unknown> | null = null;
-		let createdActionPayload: Record<string, unknown> | null = null;
-
+	test('providers points local action setup to the Actions builder', async ({ page }) => {
 		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
 			route.fulfill({
 				status: 200,
@@ -320,150 +324,16 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			})
 		);
 
-		await page.route('**/wp-json/sentient-forms/v1/models', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					models: [
-						{
-							id: 'openai/gpt-oss-20b:free',
-							display_name: 'OpenAI GPT OSS 20B Free',
-							provider: 'openrouter',
-							speed_tier: 'fast',
-							cost_tier: 'free',
-							capabilities: {
-								reasoning: false,
-								code: false,
-								vision: false,
-								tools: false,
-								long_context: true
-							},
-							context_window: 131072,
-							is_preview: false,
-							tags: ['free'],
-							recommended_for: ['summary']
-						}
-					],
-					presets: [
-						{
-							code: 'sf_default',
-							display_name: 'Default',
-							description: 'Use the default local policy.',
-							category: 'general',
-							resolved_model_id: 'openrouter/auto',
-							auto_upgrade: true
-						},
-						{
-							code: 'sf_free',
-							display_name: 'Free OpenRouter',
-							description: 'Prefer a locally cached free OpenRouter model.',
-							category: 'cost',
-							resolved_model_id: 'openai/gpt-oss-20b:free',
-							auto_upgrade: false
-						}
-					],
-					pricing_policy_version: 'local-openrouter-v1'
-				})
-			})
-		);
-
-		await page.route('**/wp-json/sentient-forms/v1/models/resolve', async (route) => {
-			resolvePayload = route.request().postDataJSON() as Record<string, unknown>;
-
-			return route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					model_id: 'openai/gpt-oss-20b:free',
-					display_name: 'OpenAI GPT OSS 20B Free',
-					resolution_source: 'preset',
-					override_chain: [
-						{
-							level: 'action',
-							selection: 'sf_free',
-							applied: true,
-							reason: 'Selected local provider setup preset.'
-						}
-					],
-					backup_model_id: null
-				})
-			});
-		});
-
-		await page.route('**/wp-json/sentient-forms/v1/local/custom-actions', async (route) => {
-			createdActionPayload = route.request().postDataJSON() as Record<string, unknown>;
-
-			return route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					id: 81,
-					external_id: null,
-					template_id: null,
-					code: 'local_openrouter_summary_1',
-					display_name: 'Local OpenRouter summary',
-					definition_json: {},
-					model_selection_json:
-						(createdActionPayload?.model_selection_json as Record<string, unknown>) ?? null,
-					status: 'active',
-					created_at: '2030-01-05T10:00:00Z',
-					updated_at: '2030-01-05T10:00:00Z'
-				})
-			});
-		});
-
-		await page.route('**/wp-json/sentient-forms/v1/local/form-mappings', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					id: 91,
-					external_id: null,
-					form_source: 'gravity_forms',
-					form_id: '123',
-					hook: 'gform_after_submission',
-					action_kind: 'custom_action',
-					action_id: 81,
-					input_bindings_json: {},
-					condition_json: null,
-					execution_mode: 'sync',
-					effect_mapping_json: {},
-					enabled: true,
-					created_at: '2030-01-05T10:00:00Z',
-					updated_at: '2030-01-05T10:00:00Z'
-				})
-			})
-		);
-
 		await page.goto('/#/providers', { waitUntil: 'networkidle' });
 
-		await expect(page.getByTestId('local-setup-model-selector')).toBeVisible();
-		await page.getByLabel('Preset').selectOption('sf_free');
-		await page.getByTestId('local-setup-form-id').fill('123');
-		await page.getByTestId('local-setup-submit').click();
-
-		await expect(page.getByTestId('local-setup-result')).toContainText('Action #81');
-		expect(resolvePayload).toMatchObject({
-			action_selection: {
-				primary: 'sf_free',
-				is_preset: true
-			},
-			template_model_hint: 'openrouter/auto'
-		});
-		expect(createdActionPayload).toMatchObject({
-			model_selection_json: {
-				provider: 'openrouter',
-				model: 'openai/gpt-oss-20b:free',
-				credential_id: 42,
-				resolution_source: 'preset',
-				policy_hint: 'local_models_resolve',
-				selection: {
-					primary: 'sf_free',
-					is_preset: true
-				}
-			}
-		});
+		await expect(page.getByTestId('providers-actions-builder-redirect-card')).toContainText(
+			'Actions owns setup'
+		);
+		await expect(page.getByTestId('providers-actions-builder-redirect-card')).toContainText(
+			'Choose a form in Actions'
+		);
+		await expect(page.getByTestId('providers-open-actions')).toBeVisible();
+		await expect(page.getByTestId('local-setup-model-selector')).toHaveCount(0);
 	});
 
 	test('providers explains limited OpenRouter keys with remediation copy', async ({ page }) => {
@@ -518,15 +388,17 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('providers-openrouter-credential-status-detail')).toContainText(
 			'free or available model'
 		);
-		await expect(page.getByTestId('local-setup-no-credential')).toContainText(
+		await expect(page.getByTestId('providers-actions-builder-no-credential')).toContainText(
 			'OpenRouter key needs attention'
 		);
-		await expect(page.getByTestId('local-setup-no-credential')).toContainText(
+		await expect(page.getByTestId('providers-actions-builder-no-credential')).toContainText(
 			'OpenRouter reported insufficient credits'
 		);
 	});
 
-	test('licensing active screen leads with status, tier, credits, and reset timing', async ({ page }) => {
+	test('licensing active screen leads with status, tier, credits, and reset timing', async ({
+		page
+	}) => {
 		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
 			route.fulfill({
 				status: 200,
@@ -565,17 +437,19 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByRole('heading', { name: 'License management' })).toBeVisible();
 		await expect(page.getByTestId('licensing-overview-card')).toBeVisible();
 		await expect(page.getByTestId('licensing-status-badge')).toContainText('active');
-		await expect(page.getByTestId('licensing-credits-headline')).toContainText('Low credits: 8 / 100');
+		await expect(page.getByTestId('licensing-credits-headline')).toContainText(
+			'Low credits: 8 / 100'
+		);
 		await expect(page.getByTestId('licensing-credit-severity')).toContainText('Low');
 		await expect(page.getByTestId('licensing-reset-summary')).toContainText('Resets');
 		await expect(page.getByTestId('licensing-details-status')).toContainText('active');
 		await expect(page.getByText('Tier: Starter')).toBeVisible();
-			await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
-			await expect(page.getByTestId('licensing-quota-cta-button')).toBeEnabled();
-			await expect(page.getByTestId('licensing-quota-cta-reason')).toContainText(
-				'Jump to the billing section to buy top-up credits or review plan changes.'
-			);
-		});
+		await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
+		await expect(page.getByTestId('licensing-quota-cta-button')).toBeEnabled();
+		await expect(page.getByTestId('licensing-quota-cta-reason')).toContainText(
+			'Jump to the billing section to buy top-up credits or review plan changes.'
+		);
+	});
 
 	test('licensing inactive flow still presents activation form', async ({ page }) => {
 		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>

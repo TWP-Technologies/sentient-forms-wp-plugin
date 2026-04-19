@@ -2,18 +2,12 @@
 	import { onMount } from 'svelte';
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
 	import type {
-		LocalCustomActionRecord,
-		LocalFormMappingRecord,
 		LocalProviderCredential,
-		ModelSelection,
 		OpenRouterModelsResponse,
-		OpenRouterValidateResponse,
-		ResolvedModelSelection
+		OpenRouterValidateResponse
 	} from '$lib/api/types';
-	import { unwrapRestResponse, type RestEnvelope } from '$lib/api/response';
-	import ModelSelector from '$lib/components/ui/model-selector.svelte';
 	import { Badge, Button, Card, InputField, Section, StateTemplate } from '$lib/components/ui';
-	import { cloneDefaultModelSelection } from '$lib/utils/action-config';
+	import { navigateToAppPath } from '$lib/navigation';
 	import { formatTimestamp } from '$lib/utils/date-time';
 	import {
 		isReadyOpenRouterCredential,
@@ -24,13 +18,6 @@
 		providerStatusLabel,
 		providerStatusVariant
 	} from '$lib/utils/provider-health';
-	import { wpFetch } from '$lib/wp';
-
-	type LocalSubmissionSetupResult = {
-		action: LocalCustomActionRecord;
-		mapping: LocalFormMappingRecord;
-	};
-	type LocalSetupExecutionMode = 'sync' | 'async';
 
 	const client = createClientFromConfig();
 	const DISCLOSURE_VERSION = '2026-04-local-first-openrouter-v1';
@@ -46,17 +33,6 @@
 	let saveKey = $state(true);
 	let acceptedDisclosure = $state(false);
 	let validating = $state(false);
-	let selectedCredentialId = $state('');
-	let setupFormId = $state('');
-	let setupNameFieldId = $state('1');
-	let setupEmailFieldId = $state('2');
-	let setupResultMetaKey = $state('sentient_forms_summary');
-	let setupActionName = $state('Local OpenRouter summary');
-	let setupModelSelection = $state<ModelSelection>(cloneDefaultModelSelection());
-	let setupExecutionMode = $state<LocalSetupExecutionMode>('sync');
-	let localSetupError = $state<string | null>(null);
-	let localSetupResult = $state<LocalSubmissionSetupResult | null>(null);
-	let creatingLocalSetup = $state(false);
 	let modelCatalogLoading = $state(true);
 	let modelCatalogRefreshing = $state(false);
 
@@ -67,18 +43,8 @@
 		openRouterCredentials.filter((credential) => isReadyOpenRouterCredential(credential))
 	);
 	let primaryOpenRouterCredential = $derived(openRouterCredentials[0] ?? null);
-	let selectedOpenRouterCredential = $derived(
-		readyOpenRouterCredentials.find(
-			(credential) => String(credential.id) === selectedCredentialId
-		) ??
-			readyOpenRouterCredentials[0] ??
-			null
-	);
 	let readyCredentialCount = $derived(
 		openRouterCredentials.filter((credential) => credential.status === 'valid').length
-	);
-	let localSetupReady = $derived(
-		Boolean(selectedOpenRouterCredential) && String(setupFormId).trim().length > 0
 	);
 	let localSetupUnavailableTitle = $derived(
 		localOpenRouterSetupUnavailableTitle(openRouterCredentials)
@@ -89,21 +55,6 @@
 	let freeModelPreview = $derived(
 		(modelCatalog?.models ?? []).filter((model) => model.free).slice(0, 6)
 	);
-
-	$effect(() => {
-		const selectedStillAvailable = readyOpenRouterCredentials.some(
-			(credential) => String(credential.id) === selectedCredentialId
-		);
-
-		if (readyOpenRouterCredentials.length === 0) {
-			selectedCredentialId = '';
-			return;
-		}
-
-		if (!selectedCredentialId || !selectedStillAvailable) {
-			selectedCredentialId = String(readyOpenRouterCredentials[0].id);
-		}
-	});
 
 	function errorMessage(requestError: unknown): string {
 		if (requestError instanceof ApiClientError) {
@@ -210,142 +161,6 @@
 			error = errorMessage(requestError);
 		} finally {
 			validating = false;
-		}
-	}
-
-	function normalizeActionCode(value: string): string {
-		const normalized = value
-			.toLowerCase()
-			.replace(/[^a-z0-9]+/g, '_')
-			.replace(/^_+|_+$/g, '')
-			.slice(0, 48);
-
-		return normalized.length > 0 ? normalized : 'local_openrouter_summary';
-	}
-
-	function isSafeMetaKey(value: string): boolean {
-		return /^[A-Za-z0-9_:-]+$/.test(value);
-	}
-
-	async function resolveSetupModelSelection(): Promise<ResolvedModelSelection> {
-		const response = await wpFetch<ResolvedModelSelection | RestEnvelope<ResolvedModelSelection>>(
-			'models/resolve',
-			{
-				method: 'POST',
-				body: {
-					action_selection: setupModelSelection,
-					template_model_hint: 'openrouter/auto'
-				},
-				showNotifications: false
-			}
-		);
-		const resolved = unwrapRestResponse<ResolvedModelSelection>(response);
-
-		if (!resolved?.model_id) {
-			throw new Error('Local model policy did not return a usable OpenRouter model.');
-		}
-
-		return resolved;
-	}
-
-	function handleSetupModelSelectionChange(selection: ModelSelection) {
-		setupModelSelection = selection;
-	}
-
-	async function createLocalSubmissionSetup(event: SubmitEvent): Promise<void> {
-		event.preventDefault();
-
-		localSetupError = null;
-		localSetupResult = null;
-
-		const credential = selectedOpenRouterCredential;
-		const formId = String(setupFormId).trim();
-		const nameFieldId = String(setupNameFieldId).trim();
-		const emailFieldId = String(setupEmailFieldId).trim();
-		const resultMetaKey = String(setupResultMetaKey).trim();
-		const actionName = String(setupActionName).trim() || 'Local OpenRouter summary';
-
-		if (!credential) {
-			localSetupError = 'Save and validate an OpenRouter key before creating a local action.';
-			return;
-		}
-
-		if (!/^\d+$/.test(formId)) {
-			localSetupError = 'Enter the numeric Gravity Forms form ID.';
-			return;
-		}
-
-		if (nameFieldId.length === 0 || emailFieldId.length === 0) {
-			localSetupError = 'Enter the Gravity Forms field IDs for name and email.';
-			return;
-		}
-
-		if (!isSafeMetaKey(resultMetaKey)) {
-			localSetupError =
-				'Use letters, numbers, underscores, colons, or dashes for the result meta key.';
-			return;
-		}
-
-		creatingLocalSetup = true;
-
-		try {
-			const resolvedModel = await resolveSetupModelSelection();
-			const timestamp = Date.now();
-			const action = await client.createLocalCustomAction(
-				{
-					code: `${normalizeActionCode(actionName)}_${timestamp}`,
-					display_name: actionName,
-					definition_json: {
-						system_prompt:
-							'You summarize Gravity Forms submissions for a WordPress site owner. Return only compact JSON with a summary field.',
-						prompt_template:
-							'Form: {{form.title}}\nName: {{name}}\nEmail: {{email}}\n\nReturn JSON shaped as {"summary":"one concise sentence about this submission"}.',
-						response_format: { type: 'json_object' },
-						max_tokens: 250,
-						temperature: 0.2
-					},
-					model_selection_json: {
-						provider: 'openrouter',
-						model: resolvedModel.model_id,
-						credential_id: credential.id,
-						selection: setupModelSelection,
-						resolution_source: resolvedModel.resolution_source,
-						policy_hint: 'local_models_resolve'
-					},
-					status: 'active'
-				},
-				{ showNotifications: false }
-			);
-
-			const meta: Record<string, string> = {};
-			meta[resultMetaKey] = 'structured.summary';
-
-			const mapping = await client.createLocalFormMapping(
-				{
-					form_source: 'gravity_forms',
-					form_id: formId,
-					hook: 'gform_after_submission',
-					action_kind: 'custom_action',
-					action_id: action.id,
-					input_bindings_json: {
-						name: nameFieldId,
-						email: emailFieldId
-					},
-					execution_mode: setupExecutionMode,
-					effect_mapping_json: {
-						store_result: true,
-						meta
-					},
-					enabled: true
-				},
-				{ showNotifications: false }
-			);
-
-			localSetupResult = { action, mapping };
-		} catch (requestError) {
-			localSetupError = errorMessage(requestError);
-		} finally {
-			creatingLocalSetup = false;
 		}
 	}
 
@@ -648,161 +463,39 @@
 	</div>
 
 	<Card
-		title="Local Gravity Forms setup"
-		subtitle="Create a direct OpenRouter action and after-submission mapping from local WordPress tables."
-		data-testid="providers-local-submission-setup-card"
+		title="Local action builder"
+		subtitle="Create form-specific OpenRouter actions from the Actions screen."
+		data-testid="providers-actions-builder-redirect-card"
 	>
-		<form class="sf:space-y-5" onsubmit={createLocalSubmissionSetup}>
-			{#if readyOpenRouterCredentials.length === 0}
-				<StateTemplate
-					variant="empty"
-					title={localSetupUnavailableTitle}
-					message={localSetupUnavailableMessage}
-					dense
-					testId="local-setup-no-credential"
-				/>
-			{:else}
-				<div class="sf:grid sf:gap-4 sf:lg:grid-cols-2">
-					<div class="sf:space-y-1">
-						<label class="sf:text-sm sf:font-medium sf:text-slate-700" for="local-setup-credential">
-							OpenRouter key
-						</label>
-						<select
-							id="local-setup-credential"
-							class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-							bind:value={selectedCredentialId}
-							disabled={creatingLocalSetup}
-							data-testid="local-setup-credential"
+		{#if readyOpenRouterCredentials.length === 0}
+			<StateTemplate
+				variant="empty"
+				title={localSetupUnavailableTitle}
+				message={localSetupUnavailableMessage}
+				dense
+				testId="providers-actions-builder-no-credential"
+			/>
+		{:else}
+			<div
+				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-4 sf:lg:flex-row sf:lg:items-center"
+			>
+				<div class="sf:space-y-2">
+					<div class="sf:flex sf:flex-wrap sf:gap-2">
+						<Badge variant="success"
+							>{readyOpenRouterCredentials.length} ready key{readyOpenRouterCredentials.length === 1
+								? ''
+								: 's'}</Badge
 						>
-							{#each readyOpenRouterCredentials as credential}
-								<option value={String(credential.id)}>{credential.label} · #{credential.id}</option>
-							{/each}
-						</select>
+						<Badge variant="info">Actions owns setup</Badge>
 					</div>
-
-					<InputField
-						id="local-setup-action-name"
-						label="Action name"
-						placeholder="Local OpenRouter summary"
-						bind:value={setupActionName}
-						disabled={creatingLocalSetup}
-						data-testid="local-setup-action-name"
-					/>
-				</div>
-
-				<div class="sf:grid sf:gap-4 sf:lg:grid-cols-4">
-					<InputField
-						id="local-setup-form-id"
-						label="Form ID"
-						inputmode="numeric"
-						placeholder="1"
-						bind:value={setupFormId}
-						disabled={creatingLocalSetup}
-						required
-						data-testid="local-setup-form-id"
-					/>
-					<InputField
-						id="local-setup-name-field"
-						label="Name field ID"
-						placeholder="1"
-						bind:value={setupNameFieldId}
-						disabled={creatingLocalSetup}
-						required
-						data-testid="local-setup-name-field"
-					/>
-					<InputField
-						id="local-setup-email-field"
-						label="Email field ID"
-						placeholder="2"
-						bind:value={setupEmailFieldId}
-						disabled={creatingLocalSetup}
-						required
-						data-testid="local-setup-email-field"
-					/>
-					<InputField
-						id="local-setup-result-meta-key"
-						label="Result meta key"
-						placeholder="sentient_forms_summary"
-						bind:value={setupResultMetaKey}
-						disabled={creatingLocalSetup}
-						required
-						data-testid="local-setup-result-meta-key"
-					/>
-				</div>
-
-				<div class="sf:grid sf:gap-4 sf:lg:grid-cols-2">
-					<div class="sf:space-y-1">
-						<label
-							class="sf:text-sm sf:font-medium sf:text-slate-700"
-							for="local-setup-execution-mode"
-						>
-							Run mode
-						</label>
-						<select
-							id="local-setup-execution-mode"
-							class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-							bind:value={setupExecutionMode}
-							disabled={creatingLocalSetup}
-							data-testid="local-setup-execution-mode"
-						>
-							<option value="sync">Synchronous after submission</option>
-							<option value="async">Background after submission</option>
-						</select>
-					</div>
-				</div>
-
-				<div data-testid="local-setup-model-selector">
-					<ModelSelector
-						value={setupModelSelection}
-						label="Local model policy"
-						level="action"
-						templateModelHint="openrouter/auto"
-						onchange={handleSetupModelSelectionChange}
-					/>
-				</div>
-
-				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
-					<Button
-						type="submit"
-						loading={creatingLocalSetup}
-						disabled={creatingLocalSetup || !localSetupReady}
-						data-testid="local-setup-submit"
-					>
-						{creatingLocalSetup ? 'Creating setup...' : 'Create local setup'}
-					</Button>
-					<p class="sf:text-sm sf:text-slate-600">
-						{setupExecutionMode === 'async'
-							? 'Queues background work after Gravity Forms submission and stores the JSON summary in entry meta.'
-							: 'Runs synchronously on Gravity Forms after-submission and stores the JSON summary in entry meta.'}
+					<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
+						Choose a form in Actions, then use Direct OpenRouter to create a local action and
+						mapping from the same screen where you manage hooks, run mode, and mapping health.
 					</p>
 				</div>
-			{/if}
-		</form>
-
-		{#if localSetupError}
-			<div
-				class="sf:mt-4 sf:rounded sf:border sf:border-danger-200 sf:bg-danger-50 sf:p-4 sf:text-sm sf:text-danger-800"
-				role="alert"
-				data-testid="local-setup-error"
-			>
-				{localSetupError}
-			</div>
-		{/if}
-
-		{#if localSetupResult}
-			<div
-				class="sf:mt-4 sf:rounded sf:border sf:border-success-200 sf:bg-success-50 sf:p-4"
-				data-testid="local-setup-result"
-			>
-				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-					<Badge variant="success">Ready</Badge>
-					<p class="sf:text-sm sf:font-medium sf:text-success-900">
-						Action #{localSetupResult.action.id} mapped to form #{localSetupResult.mapping.form_id}.
-					</p>
-				</div>
-				<p class="sf:mt-2 sf:text-sm sf:text-success-800">
-					Submit the form once to confirm OpenRouter execution and entry-meta storage.
-				</p>
+				<Button onclick={() => navigateToAppPath('/actions')} data-testid="providers-open-actions">
+					Open Actions
+				</Button>
 			</div>
 		{/if}
 	</Card>

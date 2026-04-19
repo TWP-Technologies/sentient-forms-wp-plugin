@@ -304,21 +304,26 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		const seed = seedLocalOpenRouterProvider(`Browser smoke OpenRouter key ${token}`);
 
 		await loginToWpAdmin(page);
-		await ensureSentientFormsSpa(page, '/providers');
+		await ensureSentientFormsSpa(page, `/actions/gravity_forms/${formId}`);
 
-		await expect(page.getByTestId('providers-local-submission-setup-card')).toBeVisible();
-		await page.getByTestId('local-setup-credential').selectOption(String(seed.credential_id));
-		await page.getByTestId('local-setup-action-name').fill(`Browser OpenRouter summary ${token}`);
-		await page.getByTestId('local-setup-form-id').fill(String(formId));
-		await page.getByTestId('local-setup-name-field').fill('1');
-		await page.getByTestId('local-setup-email-field').fill('2');
-		await page.getByTestId('local-setup-result-meta-key').fill('sentient_forms_summary');
-		await page
-			.getByTestId('local-setup-execution-mode')
+		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await page.getByRole('button', { name: 'Direct OpenRouter' }).click();
+
+		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
+		await drawer.getByTestId('local-builder-credential').selectOption(String(seed.credential_id));
+		await drawer
+			.getByTestId('local-builder-action-name')
+			.fill(`Browser OpenRouter summary ${token}`);
+		await drawer.getByTestId('local-builder-result-meta-key').fill('sentient_forms_summary');
+		await drawer
+			.getByTestId('local-builder-execution-mode')
 			.selectOption(localOpenRouterBrowserExecutionMode);
-		await page.getByTestId('local-setup-submit').click();
+		await drawer.getByRole('button', { name: 'Create local action' }).click();
 
-		await expect(page.getByTestId('local-setup-result')).toContainText(`form #${formId}`);
+		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #');
 
 		const email = `browser-local-${token}@example.test`;
 		const baselineEntryId = getLatestEntryId(formId);
