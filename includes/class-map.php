@@ -79,6 +79,7 @@ return [
 	'Sentient_Forms_Local_Workspace_Controller' => __DIR__ . '/rest-api/controllers/class-local-workspace-controller.php',
 	'Sentient_Forms_Logger' => __DIR__ . '/logging/class-sentient-forms-logger.php',
 	'Sentient_Forms_Managed_Proxy_Client' => __DIR__ . '/providers/class-sentient-forms-managed-proxy-client.php',
+	'Sentient_Forms_Managed_Service_Client' => __DIR__ . '/api/class-sentient-forms-managed-service-client.php',
 	'Sentient_Forms_Mapping_Dependency_Planner' => __DIR__ . '/services/class-sentient-forms-mapping-dependency-planner.php',
 	'Sentient_Forms_Mappings_Controller' => __DIR__ . '/rest-api/controllers/class-mappings-controller.php',
 	'Sentient_Forms_Mappings_Migrate_CLI_Command' => __DIR__ . '/cli/class-sentient-forms-mappings-migrate-cli-command.php',
