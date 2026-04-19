@@ -1381,6 +1381,18 @@
 		return linkage.central_action_id ?? 'Unnamed action';
 	}
 
+	function actionTypeLabel(linkage: FormActionLinkage): string {
+		if (linkage.action_type_indicator === 'local_first') return 'Direct OpenRouter';
+		if (linkage.action_type_indicator === 'custom') return 'Custom';
+		return 'CPS template';
+	}
+
+	function actionTypeVariant(linkage: FormActionLinkage): 'neutral' | 'info' | 'success' {
+		if (linkage.action_type_indicator === 'local_first') return 'success';
+		if (linkage.action_type_indicator === 'custom') return 'info';
+		return 'neutral';
+	}
+
 	function dependencyBadgeLabel(mappingId: string): string {
 		const linked = actionsState.items.find((item) => item.local_mapping_id === mappingId);
 		if (!linked) return mappingId;
@@ -3526,9 +3538,7 @@
 									{/if}
 								</td>
 								<td class="sf:px-4 sf:py-3">
-									<Badge variant={linkage.action_type_indicator === 'custom' ? 'info' : 'neutral'}>
-										{linkage.action_type_indicator === 'custom' ? 'Custom' : 'CPS template'}
-									</Badge>
+									<Badge variant={actionTypeVariant(linkage)}>{actionTypeLabel(linkage)}</Badge>
 								</td>
 								<td class="sf:px-4 sf:py-3">
 									<Badge variant={statusVariant(linkage)}>{statusLabel(linkage)}</Badge>

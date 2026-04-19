@@ -85,6 +85,141 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
         return $row ? $this->decode_row( $row ) : null;
     }
 
+    public function update( int $id, array $data ): array | WP_Error
+    {
+        $id = absint( $id );
+        if ( $id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_invalid_mapping_id', __( 'Form mapping ID is invalid.', 'sentient-forms' ) );
+        }
+
+        $fields  = [];
+        $formats = [];
+
+        if ( array_key_exists( 'external_id', $data ) )
+        {
+            $fields['external_id'] = null === $data['external_id'] ? null : sanitize_text_field( (string) $data['external_id'] );
+            $formats[]             = '%s';
+        }
+
+        if ( array_key_exists( 'form_source', $data ) )
+        {
+            $fields['form_source'] = sanitize_key( (string) $data['form_source'] );
+            $formats[]             = '%s';
+        }
+
+        if ( array_key_exists( 'form_id', $data ) )
+        {
+            $fields['form_id'] = sanitize_text_field( (string) $data['form_id'] );
+            $formats[]         = '%s';
+        }
+
+        if ( array_key_exists( 'hook', $data ) )
+        {
+            $fields['hook'] = sanitize_key( (string) $data['hook'] );
+            $formats[]      = '%s';
+        }
+
+        if ( array_key_exists( 'action_kind', $data ) )
+        {
+            $fields['action_kind'] = sanitize_key( (string) $data['action_kind'] );
+            $formats[]             = '%s';
+        }
+
+        if ( array_key_exists( 'action_id', $data ) )
+        {
+            $fields['action_id'] = (int) $data['action_id'];
+            $formats[]           = '%d';
+        }
+
+        if ( array_key_exists( 'conditions_json', $data ) )
+        {
+            $conditions_json = $this->encode_json_field( $data['conditions_json'], 'conditions_json' );
+            if ( is_wp_error( $conditions_json ) )
+            {
+                return $conditions_json;
+            }
+
+            $fields['conditions_json'] = $conditions_json;
+            $formats[]                 = '%s';
+        }
+
+        if ( array_key_exists( 'input_bindings_json', $data ) )
+        {
+            $input_bindings_json = $this->encode_json_field( $data['input_bindings_json'], 'input_bindings_json', true );
+            if ( is_wp_error( $input_bindings_json ) )
+            {
+                return $input_bindings_json;
+            }
+
+            $fields['input_bindings_json'] = $input_bindings_json;
+            $formats[]                     = '%s';
+        }
+
+        if ( array_key_exists( 'execution_mode', $data ) )
+        {
+            $fields['execution_mode'] = sanitize_key( (string) $data['execution_mode'] );
+            $formats[]                = '%s';
+        }
+
+        if ( array_key_exists( 'effect_mapping_json', $data ) )
+        {
+            $effect_mapping_json = $this->encode_json_field( $data['effect_mapping_json'], 'effect_mapping_json' );
+            if ( is_wp_error( $effect_mapping_json ) )
+            {
+                return $effect_mapping_json;
+            }
+
+            $fields['effect_mapping_json'] = $effect_mapping_json;
+            $formats[]                     = '%s';
+        }
+
+        if ( array_key_exists( 'enabled', $data ) )
+        {
+            $fields['enabled'] = empty( $data['enabled'] ) ? 0 : 1;
+            $formats[]         = '%d';
+        }
+
+        $fields['updated_at'] = $this->now();
+        $formats[]            = '%s';
+
+        $updated = $this->wpdb->update(
+            $this->table_name(),
+            $fields,
+            [ 'id' => $id ],
+            $formats,
+            [ '%d' ]
+        );
+
+        if ( false === $updated )
+        {
+            return new WP_Error( 'sentient_forms_db_update_failed', __( 'Form mapping could not be updated.', 'sentient-forms' ) );
+        }
+
+        $row = $this->get( $id );
+        if ( null === $row )
+        {
+            return new WP_Error( 'sentient_forms_mapping_not_found', __( 'Form mapping could not be found after update.', 'sentient-forms' ) );
+        }
+
+        return $row;
+    }
+
+    public function delete( int $id ): bool
+    {
+        $id = absint( $id );
+        if ( $id <= 0 )
+        {
+            return false;
+        }
+
+        return false !== $this->wpdb->delete(
+            $this->table_name(),
+            [ 'id' => $id ],
+            [ '%d' ]
+        );
+    }
+
     private function decode_row( array $row ): array
     {
         $row['conditions_json']     = $this->decode_json_field( $row['conditions_json'] ?? null );

@@ -916,13 +916,15 @@ test.describe('Actions admin flows', () => {
 		const resolvePayloads: Record<string, unknown>[] = [];
 		let createdActionPayload: Record<string, unknown> | null = null;
 		let createdMappingPayload: Record<string, unknown> | null = null;
+		let updateMappingPayload: Record<string, unknown> | null = null;
+		const formActions: Record<string, unknown>[] = [];
 
 		await mockWpJson(page, {
 			actions: {
 				forms: { [formSource]: baseForms },
 				definitions: baseDefinitions,
 				status: statusUnknown,
-				formsActions: [],
+				formsActions: formActions,
 				creditBalance
 			},
 			customActions: { list: { actions: baseCustomActions, quota } },
@@ -1045,6 +1047,30 @@ test.describe('Actions admin flows', () => {
 		await page.route('**/wp-json/sentient-forms/v1/local/form-mappings', async (route) => {
 			const payload = route.request().postDataJSON() as Record<string, unknown>;
 			createdMappingPayload = payload;
+			const hook = String(payload.hook ?? 'gform_after_submission');
+			formActions.push({
+				local_mapping_id: 'local_first_91',
+				local_form_mapping_id: 91,
+				central_action_id: 'local_openrouter_summary_1',
+				action_type_indicator: 'local_first',
+				action_name_label:
+					(typeof createdActionPayload?.display_name === 'string'
+						? createdActionPayload.display_name
+						: null) ?? 'Local OpenRouter summary',
+				trigger_hooks: [hook],
+				is_action_enabled_for_form: true,
+				execution_priority: 91,
+				execution_mode: payload.execution_mode === 'sync' ? 'validation' : 'after_submission',
+				settings: {
+					local_form_mapping_id: 91,
+					execution_mode: payload.execution_mode === 'sync' ? 'validation' : 'after_submission',
+					input_mapping: (payload.input_bindings_json as Record<string, unknown>) ?? {},
+					effect_mapping_json: (payload.effect_mapping_json as Record<string, unknown>) ?? {},
+					trigger_sources: {
+						[hook]: { type: 'hook_root' }
+					}
+				}
+			});
 
 			return route.fulfill({
 				status: 201,
@@ -1135,6 +1161,34 @@ test.describe('Actions admin flows', () => {
 				}
 			}
 		});
+
+		const closeDrawer = drawer.getByRole('button', { name: 'Cancel' });
+		await closeDrawer.click();
+		await expect(drawer).toBeHidden();
+
+		const table = await openLinkedActionsTable(page);
+		await expect(table.getByText('Local drawer qualification')).toBeVisible();
+		await expect(table.getByText('Direct OpenRouter')).toBeVisible();
+		await expect(table.getByText('ID: local_openrouter_summary_1')).toBeVisible();
+
+		await table.getByRole('button', { name: 'Configure' }).click();
+		const modal = page.getByTestId('mapping-config-modal');
+		await expect(modal).toBeVisible();
+		await expect(modal.getByText('Local drawer qualification (local_first_91)')).toBeVisible();
+		await modal.getByTestId('mapping-config-close-header').click();
+		await expect(modal).toBeHidden();
+
+		const updateReq = page.waitForRequest((request) => {
+			if (!/forms\/123\/actions\/local_first_91$/.test(request.url())) return false;
+			updateMappingPayload = request.postDataJSON() as Record<string, unknown>;
+			return request.method() === 'PUT';
+		});
+		await table.getByRole('button', { name: 'Disable' }).click();
+		await updateReq;
+		expect(updateMappingPayload).toMatchObject({
+			is_action_enabled_for_form: false
+		});
+		await expect(table.getByText('Disabled')).toBeVisible();
 	});
 
 	test('creates a mapping with an upstream trigger source from the drawer', async ({ page }) => {

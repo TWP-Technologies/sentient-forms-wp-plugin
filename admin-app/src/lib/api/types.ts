@@ -582,7 +582,7 @@ export interface FormActionSettings {
 export interface FormActionLinkage {
 	local_mapping_id: string;
 	central_action_id: string;
-	action_type_indicator: 'master' | 'custom';
+	action_type_indicator: 'master' | 'custom' | 'local_first';
 	trigger_hooks: string[];
 	is_action_enabled_for_form?: boolean;
 	execution_priority?: number;
@@ -594,7 +594,7 @@ export interface FormActionLinkage {
 
 export interface FormActionMutationPayload {
 	central_action_id?: string;
-	action_type_indicator?: 'master' | 'custom';
+	action_type_indicator?: 'master' | 'custom' | 'local_first';
 	trigger_hooks?: string[];
 	is_action_enabled_for_form?: boolean;
 	execution_priority?: number;

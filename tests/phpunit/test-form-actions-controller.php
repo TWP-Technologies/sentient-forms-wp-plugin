@@ -157,6 +157,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     protected function setUp(): void {
         parent::setUp();
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_workspace_tables();
         $this->controller = new Sentient_Forms_Form_Actions_Controller();
         GFAPI::$entries = [];
         $this->reset_entry_meta_store();
@@ -1363,6 +1365,158 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( $option_key );
     }
 
+    public function test_get_form_actions_includes_local_first_custom_table_mappings(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+
+        $response = $this->controller->get_form_actions( $request );
+        $data     = $response->get_data();
+
+        $this->assertCount( 1, $data );
+        $this->assertSame( 'local_first_' . $record['mapping_id'], $data[0]['local_mapping_id'] ?? null );
+        $this->assertSame( 'local_drawer_qualification', $data[0]['central_action_id'] ?? null );
+        $this->assertSame( 'local_first', $data[0]['action_type_indicator'] ?? null );
+        $this->assertSame( 'Local drawer qualification', $data[0]['action_name_label'] ?? null );
+        $this->assertSame( [ 'gform_after_submission' ], $data[0]['trigger_hooks'] ?? null );
+        $this->assertTrue( $data[0]['is_action_enabled_for_form'] ?? false );
+        $this->assertSame( 'after_submission', $data[0]['settings']['execution_mode'] ?? null );
+        $this->assertSame( [ 'email' => '3' ], $data[0]['settings']['input_mapping'] ?? null );
+        $this->assertSame(
+            [ 'sentient_forms_qualification' => 'structured.qualification' ],
+            $data[0]['settings']['effect_mapping_json']['meta'] ?? null
+        );
+    }
+
+    public function test_validate_local_mapping_id_param_allows_local_first_custom_table_mapping(): void
+    {
+        $record     = $this->create_local_first_mapping_fixture( '1' );
+        $mapping_id = 'local_first_' . $record['mapping_id'];
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/' . $mapping_id );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', $mapping_id );
+
+        $this->assertTrue(
+            $this->controller->validate_local_mapping_id_param( $mapping_id, $request, 'local_mapping_id' )
+        );
+    }
+
+    public function test_validate_local_mapping_id_param_rejects_local_first_mapping_from_another_form(): void
+    {
+        $record     = $this->create_local_first_mapping_fixture( '1' );
+        $mapping_id = 'local_first_' . $record['mapping_id'];
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/2/actions/' . $mapping_id );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 2 );
+        $request->set_param( 'local_mapping_id', $mapping_id );
+
+        $result = $this->controller->validate_local_mapping_id_param( $mapping_id, $request, 'local_mapping_id' );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'rest_action_not_found', $result->get_error_code() );
+    }
+
+    public function test_update_form_action_item_updates_local_first_custom_table_mapping(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $request->set_param( 'trigger_hooks', [ 'gform_after_submission' ] );
+        $request->set_param( 'is_action_enabled_for_form', false );
+        $request->set_param(
+            'settings',
+            [
+                'execution_mode' => 'after_submission',
+                'input_mapping'  => [
+                    'name'    => '1',
+                    'message' => '2',
+                ],
+                'conditions'     => [
+                    'enabled' => true,
+                    'root'    => [
+                        'type'     => 'rule',
+                        'field_id' => '3',
+                        'operator' => 'contains',
+                        'value'    => 'enterprise',
+                    ],
+                ],
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+        $data     = $response->get_data();
+
+        global $wpdb;
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $stored   = $mappings->get( $record['mapping_id'] );
+
+        $this->assertSame( 'local_first_' . $record['mapping_id'], $data['local_mapping_id'] ?? null );
+        $this->assertFalse( $data['is_action_enabled_for_form'] ?? true );
+        $this->assertSame( [ 'name' => '1', 'message' => '2' ], $data['settings']['input_mapping'] ?? null );
+        $this->assertIsArray( $stored );
+        $this->assertFalse( $stored['enabled'] );
+        $this->assertSame( [ 'name' => '1', 'message' => '2' ], $stored['input_bindings_json'] ?? null );
+        $this->assertTrue( $stored['conditions_json']['enabled'] ?? false );
+        $this->assertSame( 'enterprise', $stored['conditions_json']['root']['value'] ?? null );
+    }
+
+    public function test_delete_form_action_item_deletes_local_first_mapping_and_unbinds_option_dependencies(): void
+    {
+        $record     = $this->create_local_first_mapping_fixture( '1' );
+        $mapping_id = 'local_first_' . $record['mapping_id'];
+        $option_key = 'sentient_forms_actions_gravity_forms_1';
+
+        update_option(
+            $option_key,
+            [
+                'map_downstream' => [
+                    'local_mapping_id'      => 'map_downstream',
+                    'central_action_id'     => 'entry_evaluation',
+                    'action_type_indicator' => 'master',
+                    'trigger_hooks'         => [ 'gform_after_submission' ],
+                    'settings'              => [
+                        'dependency_ids'  => [ $mapping_id ],
+                        'trigger_sources' => [
+                            'gform_after_submission' => [
+                                'type'       => 'mapping',
+                                'mapping_id' => $mapping_id,
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $request = new WP_REST_Request( 'DELETE', '/sentient-forms/v1/gravity_forms/forms/1/actions/' . $mapping_id );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', $mapping_id );
+
+        $response = $this->controller->delete_form_action_item( $request );
+        $data     = $response->get_data();
+        $stored   = get_option( $option_key, [] );
+
+        global $wpdb;
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+
+        $this->assertTrue( $data['deleted'] ?? false );
+        $this->assertNull( $mappings->get( $record['mapping_id'] ) );
+        $this->assertArrayNotHasKey( 'dependency_ids', $stored['map_downstream']['settings'] ?? [] );
+        $this->assertSame( 'unbound', $stored['map_downstream']['settings']['trigger_sources']['gform_after_submission']['type'] ?? null );
+
+        delete_option( $option_key );
+    }
+
     public function test_get_workflow_plan_falls_back_when_cps_plan_omits_local_mappings(): void
     {
         if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Empty_Workflow_Plan' ) ) {
@@ -1564,6 +1718,76 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         delete_option( $option_key );
         delete_option( 'sentient_forms_plugin_settings' );
+    }
+
+    private function create_local_first_mapping_fixture( string $form_id ): array
+    {
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'local_drawer_qualification',
+                'display_name'         => 'Local drawer qualification',
+                'definition_json'      => [
+                    'builder_template' => 'lead_qualification',
+                    'prompt_template'  => 'Qualify {{entry}}.',
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openai/gpt-oss-20b:free',
+                    'credential_id' => 42,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => $form_id,
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'email' => '3',
+                ],
+                'effect_mapping_json' => [
+                    'store_result' => true,
+                    'meta'         => [
+                        'sentient_forms_qualification' => 'structured.qualification',
+                    ],
+                ],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        return [
+            'action_id'  => $action_id,
+            'mapping_id' => $mapping_id,
+        ];
+    }
+
+    private function truncate_local_workspace_tables(): void
+    {
+        global $wpdb;
+
+        foreach (
+            [
+                'sentient_action_templates',
+                'sentient_custom_actions',
+                'sentient_form_mappings',
+                'sentient_execution_events',
+            ] as $table
+        )
+        {
+            $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
+        }
     }
 
     /**

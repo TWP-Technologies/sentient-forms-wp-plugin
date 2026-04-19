@@ -33,12 +33,16 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     /** @var Sentient_Forms_Mappings_Sync|null Phase 7 CSM: CPS sync service */
     private ?Sentient_Forms_Mappings_Sync $mappings_sync = null;
 
+    private ?Sentient_Forms_Form_Mappings_Repository $local_form_mappings = null;
+
+    private ?Sentient_Forms_Local_Custom_Actions_Repository $local_custom_actions = null;
+
     const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
 
     private const ACTION_LOG_OPTION_KEY = 'sentient_forms_action_log';
 
     /** Allowed values for action_type_indicator. */
-    private const ACTION_TYPE_INDICATORS = [ 'master', 'custom' ];
+    private const ACTION_TYPE_INDICATORS = [ 'master', 'custom', 'local_first' ];
 
     /** Allowed Gravity Forms hooks that can trigger Sentient Forms actions. */
     private const ALLOWED_TRIGGER_HOOKS = [
@@ -108,6 +112,17 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) ) {
             $this->mappings_sync = new Sentient_Forms_Mappings_Sync();
         }
+
+        global $wpdb;
+        if ( class_exists( 'Sentient_Forms_Form_Mappings_Repository' ) )
+        {
+            $this->local_form_mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        }
+
+        if ( class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
+        {
+            $this->local_custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        }
     }
 
     /**
@@ -116,6 +131,190 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     private function get_actions_option_key( string $form_source_slug, int $form_id ): string
     {
         return self::FORM_ACTIONS_OPTION_BASE . sanitize_key( $form_source_slug ) . '_' . absint( $form_id );
+    }
+
+    private function build_local_first_mapping_id( int $id ): string
+    {
+        return 'local_first_' . absint( $id );
+    }
+
+    private function parse_local_first_mapping_id( mixed $mapping_id ): int
+    {
+        if ( ! is_scalar( $mapping_id ) )
+        {
+            return 0;
+        }
+
+        $mapping_id = sanitize_text_field( (string) $mapping_id );
+        if ( ! str_starts_with( $mapping_id, 'local_first_' ) )
+        {
+            return 0;
+        }
+
+        return absint( substr( $mapping_id, strlen( 'local_first_' ) ) );
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_local_first_actions_for_form( string $form_source_slug, int $form_id ): array
+    {
+        if ( ! $this->local_form_mappings )
+        {
+            return [];
+        }
+
+        $rows = $this->local_form_mappings->list_for_form( $form_source_slug, (string) $form_id );
+        $actions = [];
+        foreach ( $rows as $row )
+        {
+            $linkage = $this->transform_local_first_mapping_to_linkage( $row );
+            if ( null !== $linkage )
+            {
+                $actions[] = $linkage;
+            }
+        }
+
+        return $actions;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $actions
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function merge_local_first_actions( array $actions, string $form_source_slug, int $form_id ): array
+    {
+        foreach ( $this->list_local_first_actions_for_form( $form_source_slug, $form_id ) as $local_first_action )
+        {
+            $mapping_id = isset( $local_first_action['local_mapping_id'] ) && is_scalar( $local_first_action['local_mapping_id'] )
+                ? sanitize_text_field( (string) $local_first_action['local_mapping_id'] )
+                : '';
+
+            if ( '' === $mapping_id )
+            {
+                continue;
+            }
+
+            $actions[ $mapping_id ] = $local_first_action;
+        }
+
+        return array_values( $actions );
+    }
+
+    /**
+     * Convert a custom-table mapping into the admin form-action shape.
+     *
+     * @param array<string, mixed> $row Local form mapping row.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function transform_local_first_mapping_to_linkage( array $row ): ?array
+    {
+        $id = absint( $row['id'] ?? 0 );
+        if ( $id <= 0 )
+        {
+            return null;
+        }
+
+        $hook = sanitize_key( (string) ( $row['hook'] ?? '' ) );
+        if ( ! in_array( $hook, self::ALLOWED_TRIGGER_HOOKS, true ) )
+        {
+            return null;
+        }
+
+        if ( 'custom_action' !== sanitize_key( (string) ( $row['action_kind'] ?? '' ) ) )
+        {
+            return null;
+        }
+
+        $custom_action = $this->local_custom_actions
+            ? $this->local_custom_actions->get( absint( $row['action_id'] ?? 0 ) )
+            : null;
+
+        $execution_mode = 'sync' === sanitize_key( (string) ( $row['execution_mode'] ?? '' ) )
+            ? 'validation'
+            : 'after_submission';
+
+        $settings = [
+            'local_form_mapping_id' => $id,
+            'execution_mode'        => $execution_mode,
+            'input_mapping'         => is_array( $row['input_bindings_json'] ?? null )
+                ? $row['input_bindings_json']
+                : [],
+            'effect_mapping_json'   => is_array( $row['effect_mapping_json'] ?? null )
+                ? $row['effect_mapping_json']
+                : null,
+            'trigger_sources'       => [
+                $hook => [ 'type' => 'hook_root' ],
+            ],
+        ];
+
+        if ( isset( $row['conditions_json'] ) && is_array( $row['conditions_json'] ) )
+        {
+            $settings['conditions'] = $row['conditions_json'];
+        }
+
+        $action_code = isset( $custom_action['code'] ) && is_scalar( $custom_action['code'] )
+            ? sanitize_key( (string) $custom_action['code'] )
+            : 'sentient_forms_local_custom_action';
+        $action_label = isset( $custom_action['display_name'] ) && is_scalar( $custom_action['display_name'] )
+            ? sanitize_text_field( (string) $custom_action['display_name'] )
+            : __( 'Local OpenRouter action', 'sentient-forms' );
+
+        return [
+            'local_mapping_id'           => $this->build_local_first_mapping_id( $id ),
+            'local_form_mapping_id'      => $id,
+            'central_action_id'          => $action_code,
+            'action_type_indicator'      => 'local_first',
+            'action_kind'                => 'custom_action',
+            'action_name_label'          => $action_label,
+            'is_action_enabled_for_form' => ! empty( $row['enabled'] ),
+            'trigger_hooks'              => [ $hook ],
+            'execution_priority'         => $id,
+            'execution_mode'             => $execution_mode,
+            'settings'                   => $settings,
+            'source'                     => 'local_first',
+        ];
+    }
+
+    private function get_local_first_mapping_row( mixed $mapping_id, string $form_source_slug, string $form_id ): ?array
+    {
+        if ( ! $this->local_form_mappings )
+        {
+            return null;
+        }
+
+        $id = $this->parse_local_first_mapping_id( $mapping_id );
+        if ( $id <= 0 )
+        {
+            return null;
+        }
+
+        $row = $this->local_form_mappings->get( $id );
+        if ( ! $row )
+        {
+            return null;
+        }
+
+        if (
+            sanitize_key( (string) ( $row['form_source'] ?? '' ) ) !== sanitize_key( $form_source_slug ) ||
+            sanitize_text_field( (string) ( $row['form_id'] ?? '' ) ) !== sanitize_text_field( $form_id )
+        )
+        {
+            return null;
+        }
+
+        return $row;
+    }
+
+    private function get_local_first_mapping_row_for_request( WP_REST_Request $request ): ?array
+    {
+        return $this->get_local_first_mapping_row(
+            $request->get_param( 'local_mapping_id' ),
+            sanitize_key( (string) $request->get_param( 'form_source_slug' ) ),
+            sanitize_text_field( (string) (int) $request->get_param( 'form_id' ) )
+        );
     }
 
     /**
@@ -487,9 +686,17 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $actions = [];
         }
 
-        if ( in_array( $request->get_method(), [ 'GET', 'POST', 'PUT', 'PATCH,', 'DELETE' ], true ) && !isset( $actions[ $value ] ) )
+        if ( in_array( $request->get_method(), [ 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) && !isset( $actions[ $value ] ) )
         {
-            return new WP_Error( 'rest_action_not_found', __( 'Action linkage not found.', 'sentient-forms' ), [ 'status' => 404 ] );
+            $local_first_row = $this->get_local_first_mapping_row(
+                $value,
+                sanitize_key( (string) $request->get_param( 'form_source_slug' ) ),
+                sanitize_text_field( (string) (int) $request->get_param( 'form_id' ) )
+            );
+            if ( ! $local_first_row )
+            {
+                return new WP_Error( 'rest_action_not_found', __( 'Action linkage not found.', 'sentient-forms' ), [ 'status' => 404 ] );
+            }
         }
 
         return true;
@@ -542,6 +749,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         $local_actions = $this->extract_action_linkages_from_option( $local_actions );
+        $local_actions = $this->merge_local_first_actions( $local_actions, $form_source_slug, $form_id );
 
         // Phase 7 CSM: Optionally merge CPS mappings
         $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
@@ -1698,6 +1906,16 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             return $this->prepare_item_for_response( $actions[ $id ] );
         }
 
+        $local_first_row = $this->get_local_first_mapping_row_for_request( $request );
+        if ( $local_first_row )
+        {
+            $linkage = $this->transform_local_first_mapping_to_linkage( $local_first_row );
+            if ( null !== $linkage )
+            {
+                return $this->prepare_item_for_response( $linkage );
+            }
+        }
+
         return $this->prepare_error_response( 'rest_action_not_found', __( 'Action linkage not found.', 'sentient-forms' ), 404 );
     }
 
@@ -1711,6 +1929,81 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $id         = $request->get_param( 'local_mapping_id' );
         if ( !isset( $actions[ $id ] ) )
         {
+            $local_first_row = $this->get_local_first_mapping_row_for_request( $request );
+            if ( $local_first_row && $this->local_form_mappings )
+            {
+                $update = [];
+
+                if ( $request->has_param( 'trigger_hooks' ) )
+                {
+                    $trigger_hooks = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
+                    if ( count( $trigger_hooks ) !== 1 )
+                    {
+                        return $this->prepare_error_response(
+                            'rest_invalid_local_first_trigger_hooks',
+                            __( 'Local-first custom table mappings currently support exactly one trigger hook per mapping.', 'sentient-forms' ),
+                            400
+                        );
+                    }
+
+                    $update['hook'] = $trigger_hooks[0];
+                }
+
+                if ( $request->has_param( 'is_action_enabled_for_form' ) )
+                {
+                    $update['enabled'] = rest_sanitize_boolean( $request->get_param( 'is_action_enabled_for_form' ) );
+                }
+
+                if ( $request->has_param( 'settings' ) )
+                {
+                    $settings = $this->sanitize_settings( $request->get_param( 'settings' ) );
+
+                    if ( isset( $settings['execution_mode'] ) && is_scalar( $settings['execution_mode'] ) )
+                    {
+                        $execution_mode = sanitize_key( (string) $settings['execution_mode'] );
+                        if ( 'validation' === $execution_mode )
+                        {
+                            $update['execution_mode'] = 'sync';
+                        }
+                        elseif ( 'after_submission' === $execution_mode )
+                        {
+                            $update['execution_mode'] = 'async';
+                        }
+                    }
+
+                    if ( array_key_exists( 'conditions', $settings ) && is_array( $settings['conditions'] ) )
+                    {
+                        $update['conditions_json'] = $settings['conditions'];
+                    }
+
+                    if ( array_key_exists( 'input_mapping', $settings ) && is_array( $settings['input_mapping'] ) )
+                    {
+                        $update['input_bindings_json'] = $settings['input_mapping'];
+                    }
+
+                    if ( array_key_exists( 'effect_mapping_json', $settings ) && is_array( $settings['effect_mapping_json'] ) )
+                    {
+                        $update['effect_mapping_json'] = $settings['effect_mapping_json'];
+                    }
+                }
+
+                $updated = $this->local_form_mappings->update(
+                    absint( $local_first_row['id'] ?? 0 ),
+                    $update
+                );
+
+                if ( is_wp_error( $updated ) )
+                {
+                    return $updated;
+                }
+
+                $linkage = $this->transform_local_first_mapping_to_linkage( $updated );
+                if ( null !== $linkage )
+                {
+                    return $this->prepare_item_for_response( $linkage );
+                }
+            }
+
             return $this->prepare_error_response( 'rest_action_not_found', __( 'Action linkage not found to update.', 'sentient-forms' ), 404 );
         }
 
@@ -1993,19 +2286,16 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         );
     }
 
-    /** Delete an action linkage. */
-    public function delete_form_action_item( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    /**
+     * Remove references to a deleted mapping from option-backed mappings.
+     *
+     * @param array<string, mixed> $actions Stored per-form option payload.
+     * @param string               $id      Deleted mapping id.
+     *
+     * @return array<string, mixed>
+     */
+    private function remove_dependency_references_from_actions( array $actions, string $id ): array
     {
-        $option_key = $this->get_actions_option_key( $request->get_param( 'form_source_slug' ), (int)$request->get_param( 'form_id' ) );
-        $actions    = get_option( $option_key, [] );
-        $id         = $request->get_param( 'local_mapping_id' );
-        if ( !isset( $actions[ $id ] ) )
-        {
-            return $this->prepare_error_response( 'rest_action_not_found', __( 'Action linkage not found to delete.', 'sentient-forms' ), 404 );
-        }
-
-        $deleted = $actions[ $id ];
-        unset( $actions[ $id ] );
         $planner = Sentient_Forms_Plugin::instance()->get_mapping_dependency_planner();
 
         foreach ( $actions as &$mapping )
@@ -2069,6 +2359,43 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             );
         }
         unset( $mapping );
+
+        return $actions;
+    }
+
+    /** Delete an action linkage. */
+    public function delete_form_action_item( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $option_key = $this->get_actions_option_key( $request->get_param( 'form_source_slug' ), (int)$request->get_param( 'form_id' ) );
+        $actions    = get_option( $option_key, [] );
+        $id         = $request->get_param( 'local_mapping_id' );
+        if ( !isset( $actions[ $id ] ) )
+        {
+            $local_first_row = $this->get_local_first_mapping_row_for_request( $request );
+            if ( $local_first_row && $this->local_form_mappings )
+            {
+                $previous = $this->transform_local_first_mapping_to_linkage( $local_first_row );
+                $deleted  = $this->local_form_mappings->delete( absint( $local_first_row['id'] ?? 0 ) );
+                if ( ! $deleted )
+                {
+                    return $this->prepare_error_response( 'rest_action_delete_failed', __( 'Action linkage could not be deleted.', 'sentient-forms' ), 500 );
+                }
+
+                if ( is_array( $actions ) )
+                {
+                    $actions = $this->remove_dependency_references_from_actions( $actions, sanitize_text_field( (string) $id ) );
+                    update_option( $option_key, $actions, false );
+                }
+
+                return $this->prepare_item_for_response( [ 'deleted' => true, 'previous' => $previous ] );
+            }
+
+            return $this->prepare_error_response( 'rest_action_not_found', __( 'Action linkage not found to delete.', 'sentient-forms' ), 404 );
+        }
+
+        $deleted = $actions[ $id ];
+        unset( $actions[ $id ] );
+        $actions = $this->remove_dependency_references_from_actions( $actions, sanitize_text_field( (string) $id ) );
 
         update_option( $option_key, $actions, false );
         $this->sync_form_mappings_after_local_change(
