@@ -68,6 +68,7 @@ return [
 	'Sentient_Forms_Llm_Status' => __DIR__ . '/enums/LLMs.php',
 	'Sentient_Forms_Local_Action_Execution_Service' => __DIR__ . '/services/class-sentient-forms-local-action-execution-service.php',
 	'Sentient_Forms_Local_Custom_Actions_Repository' => __DIR__ . '/repositories/class-sentient-forms-local-custom-actions-repository.php',
+	'Sentient_Forms_Local_Cutover_Service' => __DIR__ . '/services/class-sentient-forms-local-cutover-service.php',
 	'Sentient_Forms_Local_Data_Governance' => __DIR__ . '/services/class-sentient-forms-local-data-governance.php',
 	'Sentient_Forms_Local_Prompt_Renderer' => __DIR__ . '/services/class-sentient-forms-local-prompt-renderer.php',
 	'Sentient_Forms_Local_Providers_Controller' => __DIR__ . '/rest-api/controllers/class-local-providers-controller.php',

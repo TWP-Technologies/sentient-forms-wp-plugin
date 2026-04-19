@@ -49,6 +49,10 @@ import type {
 	LocalExecutionEvent,
 	LocalFormMappingCreatePayload,
 	LocalFormMappingRecord,
+	LocalMigrationApprovedResetRequest,
+	LocalMigrationApprovedResetResponse,
+	LocalMigrationDryRunResponse,
+	LocalMigrationReadinessReport,
 	LocalProviderCredential,
 	LocalSupportBundle,
 	OpenRouterModelsRefreshRequest,
@@ -410,14 +414,11 @@ export class SentientFormsApiClient {
 		payload: OpenRouterModelsRefreshRequest,
 		options: RequestOptions = {}
 	): Promise<OpenRouterModelsResponse> {
-		return this.request<OpenRouterModelsResponse>(
-			'local/providers/openrouter/models/refresh',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
+		return this.request<OpenRouterModelsResponse>('local/providers/openrouter/models/refresh', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
 	}
 
 	async getLocalActionTemplates(options: RequestOptions = {}): Promise<LocalActionTemplate[]> {
@@ -492,6 +493,35 @@ export class SentientFormsApiClient {
 	async getLocalSupportBundle(options: RequestOptions = {}): Promise<LocalSupportBundle> {
 		return this.request<LocalSupportBundle>('local/support-bundle', {
 			showNotifications: false,
+			...options
+		});
+	}
+
+	async getLocalMigrationReadiness(
+		options: RequestOptions = {}
+	): Promise<LocalMigrationReadinessReport> {
+		return this.request<LocalMigrationReadinessReport>('local/migration/readiness', {
+			showNotifications: false,
+			...options
+		});
+	}
+
+	async createLocalMigrationDryRun(
+		options: RequestOptions = {}
+	): Promise<LocalMigrationDryRunResponse> {
+		return this.request<LocalMigrationDryRunResponse>('local/migration/dry-run', {
+			method: 'POST',
+			...options
+		});
+	}
+
+	async runLocalMigrationApprovedReset(
+		payload: LocalMigrationApprovedResetRequest,
+		options: RequestOptions = {}
+	): Promise<LocalMigrationApprovedResetResponse> {
+		return this.request<LocalMigrationApprovedResetResponse>('local/migration/approved-reset', {
+			method: 'POST',
+			body: payload,
 			...options
 		});
 	}

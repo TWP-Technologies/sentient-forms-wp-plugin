@@ -10,7 +10,8 @@ export type NavigationLinkPath =
 	| '/actions'
 	| '/actions/log'
 	| '/actions/custom'
-	| '/settings';
+	| '/settings'
+	| '/settings/migration';
 
 export const resolveRouterType = (envValue?: string): RouterType => {
 	return envValue === 'pathname' ? 'pathname' : 'hash';
@@ -45,7 +46,14 @@ export const normalizeRoutePath = (path: string): string => {
 	return normalized;
 };
 
-const APP_ROUTE_PREFIXES = ['/', '/dashboard', '/providers', '/licensing', '/actions', '/settings'] as const;
+const APP_ROUTE_PREFIXES = [
+	'/',
+	'/dashboard',
+	'/providers',
+	'/licensing',
+	'/actions',
+	'/settings'
+] as const;
 const ABSOLUTE_OR_PROTOCOL_RELATIVE_URL = /^(?:[a-z][a-z0-9+.-]*:)?\/\//i;
 
 export const isInternalAppPath = (path: string): boolean => {
@@ -77,6 +85,10 @@ const NAV_MATCHERS: Array<{ path: NavigationLinkPath; matches: (value: string) =
 	{
 		path: '/actions',
 		matches: (value) => value === '/actions' || value.startsWith('/actions/')
+	},
+	{
+		path: '/settings/migration',
+		matches: (value) => value === '/settings/migration'
 	},
 	{
 		path: '/settings',

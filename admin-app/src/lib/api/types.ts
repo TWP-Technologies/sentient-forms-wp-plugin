@@ -146,17 +146,17 @@ export interface BillingStateResponse {
 
 export interface ApiErrorPayload {
 	error_code?: string;
-		error?: {
-			code?: string;
-			message?: string;
-			meta?: {
-				current_balance?: number;
-				required_credits?: number;
-				deficit_credits?: number;
-				balance_state?: 'negative_carry' | 'insufficient_estimate' | string;
-				provider_subscription_id?: string;
-				stripe_error?: {
-					status?: number;
+	error?: {
+		code?: string;
+		message?: string;
+		meta?: {
+			current_balance?: number;
+			required_credits?: number;
+			deficit_credits?: number;
+			balance_state?: 'negative_carry' | 'insufficient_estimate' | string;
+			provider_subscription_id?: string;
+			stripe_error?: {
+				status?: number;
 				code?: string;
 				decline_code?: string;
 				message?: string;
@@ -379,6 +379,67 @@ export interface LocalSupportBundle {
 	};
 	retention?: Record<string, unknown>;
 	[key: string]: unknown;
+}
+
+export interface LocalMigrationWarning {
+	code: string;
+	message: string;
+}
+
+export interface LocalMigrationOptionReport {
+	exists?: boolean;
+	will_delete?: boolean;
+	value_shape?: string;
+	value_length?: number | null;
+	count?: number;
+	sample?: string[];
+}
+
+export interface LocalMigrationReadinessReport {
+	generated_at: string;
+	source: string;
+	source_version: string | null;
+	confirmation_phrase: string;
+	ready_for_reset: boolean;
+	ready_for_local_execution: boolean;
+	local_tables: Record<string, number | null>;
+	runtime_tables: Record<string, number | null>;
+	legacy_options: {
+		exact_options: Record<string, LocalMigrationOptionReport>;
+		option_prefixes: Record<string, LocalMigrationOptionReport>;
+	};
+	settings: Record<string, unknown>;
+	reset_plan: {
+		tables_cleared: string[];
+		tables_preserved_by_default: string[];
+		exact_options_deleted: string[];
+		option_prefixes_deleted: string[];
+		settings_preserved: string[];
+	};
+	warnings: LocalMigrationWarning[];
+}
+
+export interface LocalMigrationDryRunResponse {
+	run_id: number;
+	status: 'dry_run_complete' | string;
+	report: LocalMigrationReadinessReport;
+}
+
+export interface LocalMigrationApprovedResetRequest {
+	confirmation_phrase: string;
+}
+
+export interface LocalMigrationApprovedResetResponse {
+	run_id: number;
+	status: 'completed' | string;
+	before: LocalMigrationReadinessReport;
+	after: LocalMigrationReadinessReport;
+	deleted_tables: Record<string, number | null>;
+	deleted_options: {
+		exact_options: Record<string, boolean>;
+		option_prefixes: Record<string, { count: number; sample: string[] }>;
+	};
+	preserved: string[];
 }
 
 /**

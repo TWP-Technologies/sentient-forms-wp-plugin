@@ -20,6 +20,7 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
     private Sentient_Forms_Execution_Events_Repository $events;
     private Sentient_Forms_Local_Action_Execution_Service $local_execution;
     private Sentient_Forms_Local_Support_Bundle_Service $support_bundle;
+    private Sentient_Forms_Local_Cutover_Service $cutover;
 
     public function __construct(
         ?Sentient_Forms_Action_Templates_Repository $templates = null,
@@ -27,7 +28,8 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
         ?Sentient_Forms_Form_Mappings_Repository $mappings = null,
         ?Sentient_Forms_Execution_Events_Repository $events = null,
         ?Sentient_Forms_Local_Action_Execution_Service $local_execution = null,
-        ?Sentient_Forms_Local_Support_Bundle_Service $support_bundle = null
+        ?Sentient_Forms_Local_Support_Bundle_Service $support_bundle = null,
+        ?Sentient_Forms_Local_Cutover_Service $cutover = null
     )
     {
         parent::__construct();
@@ -46,6 +48,7 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
             $this->events
         );
         $this->support_bundle = $support_bundle ?? new Sentient_Forms_Local_Support_Bundle_Service( $wpdb );
+        $this->cutover        = $cutover ?? new Sentient_Forms_Local_Cutover_Service( $wpdb );
     }
 
     public function register_routes(): void
@@ -54,6 +57,7 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
         $this->register_collection_route( 'custom-actions', [ $this, 'list_custom_actions' ], [ $this, 'create_custom_action' ] );
         $this->register_collection_route( 'form-mappings', [ $this, 'list_form_mappings' ], [ $this, 'create_form_mapping' ] );
         $this->register_collection_route( 'execution-events', [ $this, 'list_execution_events' ], [ $this, 'record_execution_event' ] );
+        $this->register_migration_routes();
 
         register_rest_route(
             $this->namespace,
@@ -312,6 +316,84 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
     public function get_support_bundle( WP_REST_Request $request ): WP_REST_Response
     {
         return $this->prepare_item_for_response( $this->support_bundle->build() );
+    }
+
+    public function get_migration_readiness( WP_REST_Request $request ): WP_REST_Response
+    {
+        return $this->prepare_item_for_response( $this->cutover->build_readiness_report() );
+    }
+
+    public function create_migration_dry_run( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
+        $result = $this->cutover->record_dry_run( get_current_user_id() ?: null );
+        if ( is_wp_error( $result ) )
+        {
+            return $result;
+        }
+
+        return $this->prepare_item_for_response( $result, 201 );
+    }
+
+    public function run_migration_approved_reset( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
+        $confirmation = $request->get_param( 'confirmation_phrase' );
+        $result       = $this->cutover->approved_reset(
+            is_scalar( $confirmation ) ? (string) $confirmation : '',
+            get_current_user_id() ?: null
+        );
+
+        if ( is_wp_error( $result ) )
+        {
+            return $result;
+        }
+
+        return $this->prepare_item_for_response( $result );
+    }
+
+    private function register_migration_routes(): void
+    {
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/migration/readiness',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_migration_readiness' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                ],
+            ]
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/migration/dry-run',
+            [
+                [
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => [ $this, 'create_migration_dry_run' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                ],
+            ]
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/migration/approved-reset',
+            [
+                [
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => [ $this, 'run_migration_approved_reset' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'confirmation_phrase' => [
+                            'type'              => 'string',
+                            'required'          => true,
+                            'sanitize_callback' => 'sanitize_text_field',
+                        ],
+                    ],
+                ],
+            ]
+        );
     }
 
     private function register_collection_route( string $path, callable $read_callback, callable $write_callback ): void

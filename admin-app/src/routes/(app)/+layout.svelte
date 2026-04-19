@@ -1,16 +1,16 @@
 <script lang="ts">
-		import { page } from '$app/state';
-		import { onMount } from 'svelte';
-		import {
-			appHref,
-			deriveActivePath,
-			navigateToAppPath,
-			readHashPathFromLocation,
-			resolveActiveNavPath,
-			routerType,
-			type NavigationLinkPath
-		} from '$lib/navigation';
-		import { Button } from '$lib/components/ui';
+	import { page } from '$app/state';
+	import { onMount } from 'svelte';
+	import {
+		appHref,
+		deriveActivePath,
+		navigateToAppPath,
+		readHashPathFromLocation,
+		resolveActiveNavPath,
+		routerType,
+		type NavigationLinkPath
+	} from '$lib/navigation';
+	import { Button } from '$lib/components/ui';
 
 	interface Props {
 		children?: import('svelte').Snippet;
@@ -25,7 +25,8 @@
 		{ path: '/actions/log', label: 'Action Log' },
 		{ path: '/actions/custom', label: 'Custom Actions' },
 		{ path: '/licensing', label: 'Managed Billing' },
-		{ path: '/settings', label: 'Settings' }
+		{ path: '/settings', label: 'Settings' },
+		{ path: '/settings/migration', label: 'Cutover' }
 	];
 
 	let renderedPath = $derived(deriveActivePath(page.url));
@@ -65,16 +66,16 @@
 			return;
 		}
 
-			if (!hardRepairAttempted) {
-				hardRepairAttempted = true;
-				window.location.replace(appHref(hashPath));
-			}
+		if (!hardRepairAttempted) {
+			hardRepairAttempted = true;
+			window.location.replace(appHref(hashPath));
+		}
 	});
 
-		onMount(() => {
-			if (routerType === 'hash' && typeof window !== 'undefined' && window.location.hash === '') {
-				void navigateToAppPath('/dashboard', { replaceState: true, noScroll: true, keepFocus: true });
-			}
+	onMount(() => {
+		if (routerType === 'hash' && typeof window !== 'undefined' && window.location.hash === '') {
+			void navigateToAppPath('/dashboard', { replaceState: true, noScroll: true, keepFocus: true });
+		}
 	});
 </script>
 
@@ -86,35 +87,35 @@
 				<p class="sf:text-sm sf:text-slate-500">Local-first AI form automation</p>
 			</div>
 			<nav class="sf:p-4 sf:flex sf:flex-col sf:gap-2">
-					{#each links as link}
-						<a
-							class="sf:rounded sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:transition-all sf:hover:bg-slate-100 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-slate-600 sf:focus-visible:ring-offset-2 sf:focus-visible:ring-offset-white"
-							class:sf-bg-slate-200={activePath === link.path}
-							class:sf-text-slate-900={activePath === link.path}
-							href={appHref(link.path)}
-							data-nav-path={link.path}
-							onclick={(event) => handleNavClick(event, link.path)}
-						>
-							{link.label}
-						</a>
-					{/each}
+				{#each links as link}
+					<a
+						class="sf:rounded sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:transition-all sf:hover:bg-slate-100 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-slate-600 sf:focus-visible:ring-offset-2 sf:focus-visible:ring-offset-white"
+						class:sf-bg-slate-200={activePath === link.path}
+						class:sf-text-slate-900={activePath === link.path}
+						href={appHref(link.path)}
+						data-nav-path={link.path}
+						onclick={(event) => handleNavClick(event, link.path)}
+					>
+						{link.label}
+					</a>
+				{/each}
 			</nav>
 		</aside>
-				<main class="sf:flex-1 sf:min-w-0 sf:p-4 sf:sm:p-6 sf:bg-white sf:shadow-inner">
-					<svelte:boundary>
-						{@render children?.()}
+		<main class="sf:flex-1 sf:min-w-0 sf:p-4 sf:sm:p-6 sf:bg-white sf:shadow-inner">
+			<svelte:boundary>
+				{@render children?.()}
 
-					{#snippet failed(error, reset)}
-						<section
-							class="sf:rounded sf:border sf:border-rose-300 sf:bg-rose-50 sf:p-4 sf:space-y-2 sf:break-words"
-							data-testid="route-boundary-error"
-						>
-							<h2 class="sf:text-base sf:font-semibold sf:text-rose-900">This view hit an error</h2>
-							<p class="sf:text-sm sf:text-rose-800">{String(error)}</p>
-							<Button type="button" variant="danger" size="sm" onclick={reset}>Retry view</Button>
-						</section>
-					{/snippet}
-				</svelte:boundary>
-			</main>
-		</div>
+				{#snippet failed(error, reset)}
+					<section
+						class="sf:rounded sf:border sf:border-rose-300 sf:bg-rose-50 sf:p-4 sf:space-y-2 sf:break-words"
+						data-testid="route-boundary-error"
+					>
+						<h2 class="sf:text-base sf:font-semibold sf:text-rose-900">This view hit an error</h2>
+						<p class="sf:text-sm sf:text-rose-800">{String(error)}</p>
+						<Button type="button" variant="danger" size="sm" onclick={reset}>Retry view</Button>
+					</section>
+				{/snippet}
+			</svelte:boundary>
+		</main>
 	</div>
+</div>

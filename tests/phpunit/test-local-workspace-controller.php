@@ -169,6 +169,103 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 400, $response->get_status() );
     }
 
+    public function test_migration_readiness_reports_local_and_legacy_cutover_state(): void
+    {
+        $this->seed_local_cutover_state();
+
+        $report = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/migration/readiness' );
+
+        $this->assertTrue( $report['ready_for_reset'] );
+        $this->assertTrue( $report['ready_for_local_execution'] );
+        $this->assertSame( Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE, $report['confirmation_phrase'] );
+        $this->assertSame( 1, $report['local_tables']['sentient_provider_credentials'] );
+        $this->assertSame( 1, $report['local_tables']['sentient_form_mappings'] );
+        $this->assertSame( 1, $report['runtime_tables']['sentient_async_requests'] );
+        $this->assertTrue( $report['legacy_options']['exact_options']['sentient_forms_action_log']['exists'] );
+        $this->assertSame( 1, $report['legacy_options']['option_prefixes']['sentient_forms_actions_']['count'] );
+        $this->assertContains(
+            'local_runtime_data_will_be_removed',
+            wp_list_pluck( $report['warnings'], 'code' )
+        );
+    }
+
+    public function test_migration_dry_run_records_audit_row_without_resetting_data(): void
+    {
+        $this->seed_local_cutover_state();
+
+        $result = $this->dispatch_json( 'POST', '/sentient-forms/v1/local/migration/dry-run', [], 201 );
+
+        $this->assertSame( 'dry_run_complete', $result['status'] );
+        $this->assertGreaterThan( 0, $result['run_id'] );
+        $this->assertSame( 1, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_execution_events' ) );
+        $this->assertIsArray( get_option( 'sentient_forms_action_log' ) );
+
+        global $wpdb;
+        $runs = new Sentient_Forms_Migration_Runs_Repository( $wpdb );
+        $row  = $runs->get( (int) $result['run_id'] );
+
+        $this->assertSame( 'dry_run_complete', $row['status'] );
+        $this->assertTrue( (bool) $row['dry_run'] );
+        $this->assertSame( 1, $row['summary_json']['local_tables']['sentient_form_mappings'] );
+    }
+
+    public function test_migration_approved_reset_requires_confirmation_phrase(): void
+    {
+        $this->seed_local_cutover_state();
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/migration/approved-reset' );
+        $request->set_body_params( [ 'confirmation_phrase' => 'reset now' ] );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 400, $response->get_status() );
+        $this->assertSame( 1, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertIsArray( get_option( 'sentient_forms_action_log' ) );
+    }
+
+    public function test_migration_approved_reset_clears_runtime_state_and_preserves_local_credentials(): void
+    {
+        $this->seed_local_cutover_state();
+
+        $result = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/approved-reset',
+            [
+                'confirmation_phrase' => Sentient_Forms_Local_Cutover_Service::CONFIRMATION_PHRASE,
+            ]
+        );
+
+        $this->assertSame( 'completed', $result['status'] );
+        $this->assertSame( 1, $result['deleted_tables']['sentient_action_templates'] );
+        $this->assertSame( 1, $result['deleted_tables']['sentient_custom_actions'] );
+        $this->assertSame( 1, $result['deleted_tables']['sentient_form_mappings'] );
+        $this->assertSame( 1, $result['deleted_tables']['sentient_execution_events'] );
+        $this->assertSame( 1, $result['deleted_tables']['sentient_async_requests'] );
+        $this->assertSame( 1, $result['deleted_options']['option_prefixes']['sentient_forms_actions_']['count'] );
+        $this->assertTrue( $result['deleted_options']['exact_options']['sentient_forms_action_log'] );
+
+        $this->assertSame( 0, $this->table_count( 'sentient_action_templates' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_custom_actions' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_execution_events' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_async_requests' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_provider_credentials' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_external_service_consents' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_model_cache' ) );
+        $this->assertFalse( get_option( 'sentient_forms_action_log' ) );
+        $this->assertFalse( get_option( 'sentient_forms_actions_gravity_forms_42' ) );
+        $this->assertIsArray( get_option( 'sentient_forms_settings' ) );
+
+        global $wpdb;
+        $runs = new Sentient_Forms_Migration_Runs_Repository( $wpdb );
+        $row  = $runs->get( (int) $result['run_id'] );
+
+        $this->assertSame( 'completed', $row['status'] );
+        $this->assertFalse( (bool) $row['dry_run'] );
+        $this->assertSame( 0, $row['summary_json']['after']['local_tables']['sentient_form_mappings'] );
+    }
+
     public function test_execute_form_mapping_delegates_to_local_execution_service(): void
     {
         $service    = new Sentient_Forms_Test_Local_Action_Execution_Service(
@@ -264,15 +361,184 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
 
         foreach (
             [
+                'sentient_provider_credentials',
+                'sentient_external_service_consents',
                 'sentient_action_templates',
                 'sentient_custom_actions',
                 'sentient_form_mappings',
                 'sentient_execution_events',
+                'sentient_migration_runs',
+                'sentient_model_cache',
+                'sentient_async_requests',
             ] as $table
         )
         {
             $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
         }
+
+        delete_option( 'sentient_forms_action_log' );
+        delete_option( 'sentient_forms_actions_gravity_forms_42' );
+        delete_option( 'sentient_forms_action_defaults_spam_detection_v1' );
+        delete_option( 'sentient_forms_proxy_api_key' );
+        delete_option( '_transient_sentient_forms_cps_version' );
+        delete_option( '_transient_timeout_sentient_forms_cps_version' );
+    }
+
+    private function seed_local_cutover_state(): void
+    {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $credential_id = $credentials->create(
+            [
+                'provider'      => 'openrouter',
+                'label'         => 'Owner key',
+                'auth_mode'     => 'constant',
+                'constant_name' => 'SENTIENT_FORMS_OPENROUTER_KEY',
+                'status'        => 'valid',
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+
+        $consents = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $consent_id = $consents->record( 'openrouter', '2026-04-16', self::$admin_id );
+        $this->assertIsInt( $consent_id );
+
+        $templates = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $template_id = $templates->upsert_by_code(
+            [
+                'source'          => 'bundled',
+                'code'            => 'spam_triage_v1',
+                'display_name'    => 'Spam Triage',
+                'prompt_template' => 'Classify {{entry}}.',
+                'version'         => '1.0.0',
+                'is_active'       => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $custom_action_id = $custom_actions->create(
+            [
+                'template_id'          => $template_id,
+                'code'                 => 'contact_spam_triage',
+                'display_name'         => 'Contact Spam Triage',
+                'definition_json'      => [
+                    'prompt' => 'Classify contact form entry.',
+                ],
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => 'openrouter/auto',
+                ],
+            ]
+        );
+        $this->assertIsInt( $custom_action_id );
+
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '42',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $custom_action_id,
+                'input_bindings_json' => [
+                    'email' => '3',
+                ],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event_id = $events->record(
+            [
+                'execution_request_id' => 'cutover-request-1',
+                'mapping_id'           => $mapping_id,
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '42',
+                'entry_id'             => '99',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+            ]
+        );
+        $this->assertIsInt( $event_id );
+
+        $models = new Sentient_Forms_Model_Cache_Repository( $wpdb );
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'openrouter/auto',
+                [
+                    'id'   => 'openrouter/auto',
+                    'free' => true,
+                ],
+                gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS )
+            )
+        );
+
+        $wpdb->insert(
+            $wpdb->prefix . 'sentient_async_requests',
+            [
+                'request_hash'      => str_repeat( 'a', 64 ),
+                'action_id'         => 'contact_spam_triage',
+                'adapter'           => 'gravity_forms',
+                'record_type'       => 'job',
+                'status'            => 'queued',
+                'first_seen_at'     => current_time( 'mysql' ),
+                'last_seen_at'      => current_time( 'mysql' ),
+                'last_error'        => null,
+                'payload_digest'    => str_repeat( 'b', 64 ),
+                'telemetry_payload' => null,
+            ],
+            [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+        );
+
+        update_option(
+            'sentient_forms_action_log',
+            [
+                [
+                    'request_id' => 'legacy-log-1',
+                ],
+            ]
+        );
+        update_option(
+            'sentient_forms_actions_gravity_forms_42',
+            [
+                'legacy_mapping' => [
+                    'central_action_id' => 'spam_detection_v1',
+                ],
+            ]
+        );
+        update_option(
+            'sentient_forms_action_defaults_spam_detection_v1',
+            [
+                'model_override' => 'openrouter/auto',
+            ]
+        );
+        update_option(
+            'sentient_forms_settings',
+            [
+                'enforce_nonce_verification' => false,
+                'license'                    => [
+                    'license_key'   => 'LIC-LOCAL-DEV',
+                    'proxy_api_key' => 'proxy-local-123',
+                    'site_id'       => 'site-local-123',
+                ],
+            ]
+        );
+        update_option( 'sentient_forms_proxy_api_key', 'old-proxy-key' );
+        update_option( '_transient_sentient_forms_cps_version', 'old-cps-version' );
+        update_option( '_transient_timeout_sentient_forms_cps_version', time() + HOUR_IN_SECONDS );
+    }
+
+    private function table_count( string $suffix ): int
+    {
+        global $wpdb;
+
+        return (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . esc_sql( $wpdb->prefix . $suffix ) );
     }
 }
 
