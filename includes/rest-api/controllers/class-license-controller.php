@@ -415,7 +415,7 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             return $proxy_key;
         }
 
-        $client   = $this->get_licensing_client();
+        $client   = $this->get_managed_service_client();
         $response = $client->get_billing_state( $proxy_key );
 
         if ( is_wp_error( $response ) )
@@ -706,6 +706,11 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         return new Sentient_Forms_Licensing_Api_Client( $base );
     }
 
+    private function get_managed_service_client(): Sentient_Forms_Managed_Service_Client
+    {
+        return new Sentient_Forms_Managed_Service_Client();
+    }
+
     private function format_license_response( array $license_data ): array
     {
         $license_key = $license_data['license_key'] ?? '';
@@ -762,14 +767,37 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
     {
         $updates = [];
 
-        if ( isset( $payload['license_status'] ) && is_string( $payload['license_status'] ) )
+        $license_status = $payload['license_status'] ?? $payload['status'] ?? null;
+        if (
+            ! is_string( $license_status ) &&
+            isset( $payload['account'] ) &&
+            is_array( $payload['account'] ) &&
+            isset( $payload['account']['license_status'] ) &&
+            is_string( $payload['account']['license_status'] )
+        )
         {
-            $updates['license_status'] = $payload['license_status'];
+            $license_status = $payload['account']['license_status'];
         }
 
-        if ( isset( $payload['tier'] ) && ( is_array( $payload['tier'] ) || is_string( $payload['tier'] ) ) )
+        if ( is_string( $license_status ) )
         {
-            $updates['tier'] = $payload['tier'];
+            $updates['license_status'] = $license_status;
+        }
+
+        $tier = $payload['tier'] ?? $payload['plan'] ?? null;
+        if (
+            null === $tier &&
+            isset( $payload['account'] ) &&
+            is_array( $payload['account'] ) &&
+            isset( $payload['account']['tier'] )
+        )
+        {
+            $tier = $payload['account']['tier'];
+        }
+
+        if ( is_array( $tier ) || is_string( $tier ) )
+        {
+            $updates['tier'] = $tier;
         }
 
         if ( empty( $updates ) )

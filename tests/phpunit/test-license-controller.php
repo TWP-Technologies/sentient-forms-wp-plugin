@@ -188,22 +188,27 @@ class LicenseControllerTest extends WP_UnitTestCase
         ] );
 
         $this->mock_http_response(
-            '/billing/state',
+            '/v2/billing/state',
             [
                 'success' => true,
                 'data'    => [
-                    'license_status' => 'trial',
-                    'tier'      => [
+                    'service' => 'sentient-managed',
+                    'status'  => 'trial',
+                    'plan'    => [
                         'code'                 => 'starter',
                         'display_name'         => 'Starter',
                         'site_limit'           => 1,
                         'monthly_credit_quota' => 1500,
                     ],
-                    'provider' => 'stripe',
-                    'credits'  => [
-                        'current_balance' => 100,
-                        'tier_quota'      => 100,
-                        'ledger_delta'    => 0,
+                    'billing' => [
+                        'provider'        => 'stripe',
+                        'managed_enabled' => true,
+                        'customer_id'     => 'cus_test_123',
+                        'subscription'    => [
+                            'provider_subscription_id' => 'sub_test_123',
+                            'status'                   => 'trialing',
+                            'quantity'                 => 1,
+                        ],
                     ],
                     'allocation' => [
                         'seat_quantity'            => 1,
@@ -215,14 +220,35 @@ class LicenseControllerTest extends WP_UnitTestCase
                         'grace_expires_at'         => null,
                         'capacity_policy'          => 'tier_x_quantity_v1',
                     ],
-                    'policy' => [
-                        'paid_trial_days'           => 14,
-                        'free_plan_monthly_credits' => 50,
-                        'free_plan_indefinite'      => true,
-                        'private_beta_trial_enabled' => true,
+                    'managed_usage' => [
+                        'execution_count' => 0,
+                        'succeeded_count' => 0,
+                        'failed_count'    => 0,
+                        'token_usage'     => [
+                            'input_tokens'  => 0,
+                            'output_tokens' => 0,
+                            'total_tokens'  => 0,
+                        ],
+                        'billing'         => [
+                            'billed_amount_microusd' => 0,
+                            'currency'               => 'USD',
+                        ],
+                    ],
+                    'billing_boundary' => [
+                        'direct_openrouter_billed_by_sentient' => false,
+                        'managed_proxy_billed_by_sentient'     => true,
                     ],
                 ],
-            ]
+            ],
+            function ( array $args ): void {
+                $this->assertSame( 'GET', $args['method'] ?? null );
+                $this->assertSame( 'Bearer proxy-key-123', $args['headers']['Authorization'] ?? null );
+                $this->assertArrayNotHasKey( 'X-API-Key', $args['headers'] ?? [] );
+                $this->assertTrue(
+                    ! isset( $args['body'] ) || null === $args['body'] || '' === $args['body'],
+                    'Managed billing state should not send a request body.'
+                );
+            }
         );
 
         $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/license/billing-state' );
@@ -231,16 +257,16 @@ class LicenseControllerTest extends WP_UnitTestCase
 
         $this->assertSame( 200, $response->get_status() );
         $data = $response->get_data();
-        $this->assertSame( 'stripe', $data['provider'] );
-        $this->assertSame( 100, $data['credits']['current_balance'] );
+        $this->assertSame( 'sentient-managed', $data['service'] );
+        $this->assertSame( 'stripe', $data['billing']['provider'] );
+        $this->assertTrue( $data['billing']['managed_enabled'] );
         $this->assertSame( 1, $data['allocation']['allowed_sites'] );
         $this->assertFalse( $data['allocation']['blocked_new_activations'] );
-        $this->assertSame( 'trial', $data['license_status'] );
-        $this->assertSame( 'starter', $data['tier']['code'] );
-        $this->assertSame( 14, $data['policy']['paid_trial_days'] );
-        $this->assertSame( 50, $data['policy']['free_plan_monthly_credits'] );
-        $this->assertTrue( $data['policy']['free_plan_indefinite'] );
-        $this->assertTrue( $data['policy']['private_beta_trial_enabled'] );
+        $this->assertSame( 'trial', $data['status'] );
+        $this->assertSame( 'starter', $data['plan']['code'] );
+        $this->assertSame( 0, $data['managed_usage']['execution_count'] );
+        $this->assertFalse( $data['billing_boundary']['direct_openrouter_billed_by_sentient'] );
+        $this->assertTrue( $data['billing_boundary']['managed_proxy_billed_by_sentient'] );
 
         $updated_license = $plugin->get_license_data();
         $this->assertSame( 'trial', $updated_license['license_status'] );
