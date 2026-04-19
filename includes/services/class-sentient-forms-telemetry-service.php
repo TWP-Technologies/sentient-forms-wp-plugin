@@ -56,11 +56,7 @@ class Sentient_Forms_Telemetry_Service
 
     private function log_debug( string $message, array $context = [] ): void
     {
-        if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
-        {
-            $suffix = $context ? ' ' . wp_json_encode( $context ) : '';
-            error_log( self::LOG_PREFIX . $message . $suffix );
-        }
+        sentient_forms_debug_log( self::LOG_PREFIX . $message, $context );
     }
 
     public function handle_job_success( array $context, array $result ): void

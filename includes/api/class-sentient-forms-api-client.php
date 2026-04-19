@@ -176,7 +176,11 @@ class Sentient_Forms_Api_Client
             $error_message = json_last_error_msg();
             return new WP_Error(
                 'cps_invalid_json',
-                sprintf( __( 'Invalid response from CPS service: %s', 'sentient-forms' ), $error_message ),
+                sprintf(
+                    /* translators: %s: response parsing error message. */
+                    __( 'Invalid response from CPS service: %s', 'sentient-forms' ),
+                    $error_message
+                ),
                 [
                     'status'  => $status_code,
                     'payload' => $body,

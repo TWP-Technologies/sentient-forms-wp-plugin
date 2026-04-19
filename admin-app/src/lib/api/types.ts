@@ -196,6 +196,191 @@ export interface PluginSettingsResponse {
 	execution_provider_disabled?: Record<string, boolean>;
 }
 
+export type LocalProvider = 'openrouter' | 'sentient_managed' | string;
+export type LocalProviderAuthMode = 'manual_key' | 'oauth_broker' | 'sentient_proxy' | string;
+export type LocalProviderStatus = 'unknown' | 'valid' | 'invalid' | 'limited' | 'disabled' | string;
+
+export interface LocalProviderCredential {
+	id: number;
+	provider: LocalProvider;
+	label: string;
+	auth_mode: LocalProviderAuthMode;
+	constant_name: string | null;
+	status: LocalProviderStatus;
+	status_json: Record<string, unknown> | null;
+	last_validated_at: string | null;
+	created_at: string | null;
+	updated_at: string | null;
+	secret_configured: boolean;
+}
+
+export interface OpenRouterKeyStatus {
+	label?: string;
+	usage?: number;
+	limit?: number | null;
+	limit_remaining?: number | null;
+	is_free_tier?: boolean;
+	[key: string]: unknown;
+}
+
+export interface OpenRouterValidateRequest {
+	api_key: string;
+	disclosure_version: string;
+	accepted_external_service_terms: boolean;
+	label?: string;
+	save?: boolean;
+}
+
+export interface OpenRouterValidateResponse {
+	provider: 'openrouter';
+	status: LocalProviderStatus;
+	credential_id: number | null;
+	key_status: OpenRouterKeyStatus;
+	consent_recorded: boolean;
+	consent_id: number;
+}
+
+export interface OpenRouterModelCacheItem {
+	id: string;
+	name: string;
+	free: boolean;
+	context_length: number | null;
+	input_modalities: string[];
+	output_modalities: string[];
+	supported_parameters: string[];
+	pricing: Record<string, string>;
+	fetched_at: string | null;
+	expires_at: string | null;
+	stale: boolean;
+}
+
+export interface OpenRouterModelsResponse {
+	provider: 'openrouter';
+	source: 'local_cache';
+	total_cached: number;
+	total_returned: number;
+	free_count: number;
+	stale_count: number;
+	models: OpenRouterModelCacheItem[];
+	consent_recorded?: boolean;
+	consent_id?: number;
+	stored?: number;
+}
+
+export interface OpenRouterModelsRefreshRequest {
+	disclosure_version: string;
+	accepted_external_service_terms: boolean;
+	output_modalities?: string;
+	supported_parameters?: string;
+}
+
+export interface LocalActionTemplate {
+	id: number;
+	source: string | null;
+	external_id: string | null;
+	code: string | null;
+	display_name: string | null;
+	description: string | null;
+	prompt_template: string | null;
+	default_model: string | null;
+	structured_output_schema: Record<string, unknown> | null;
+	override_schema: Record<string, unknown> | null;
+	version: string | null;
+	is_active: boolean;
+	created_at: string | null;
+	updated_at: string | null;
+}
+
+export interface LocalCustomActionRecord {
+	id: number;
+	external_id: string | null;
+	template_id: number | null;
+	code: string | null;
+	display_name: string | null;
+	definition_json: Record<string, unknown> | null;
+	model_selection_json: Record<string, unknown> | null;
+	status: string | null;
+	created_at: string | null;
+	updated_at: string | null;
+}
+
+export interface LocalCustomActionCreatePayload {
+	external_id?: string | null;
+	template_id?: number | null;
+	code: string;
+	display_name: string;
+	definition_json: Record<string, unknown>;
+	model_selection_json?: Record<string, unknown> | null;
+	status?: string;
+}
+
+export interface LocalFormMappingRecord {
+	id: number;
+	external_id: string | null;
+	form_source: string | null;
+	form_id: string | null;
+	hook: string | null;
+	action_kind: string | null;
+	action_id: number | null;
+	conditions_json: Record<string, unknown> | null;
+	input_bindings_json: Record<string, unknown> | null;
+	execution_mode: string | null;
+	effect_mapping_json: Record<string, unknown> | null;
+	enabled: boolean;
+	created_at: string | null;
+	updated_at: string | null;
+}
+
+export interface LocalFormMappingCreatePayload {
+	external_id?: string | null;
+	form_source: string;
+	form_id: string | number;
+	hook: string;
+	action_kind: string;
+	action_id: number;
+	conditions_json?: Record<string, unknown> | null;
+	input_bindings_json: Record<string, unknown>;
+	execution_mode?: string;
+	effect_mapping_json?: Record<string, unknown> | null;
+	enabled?: boolean;
+}
+
+export interface LocalExecutionEvent {
+	id: number;
+	execution_request_id: string | null;
+	mapping_id: number | null;
+	form_source: string | null;
+	form_id: string | null;
+	entry_id: string | null;
+	provider: LocalProvider | null;
+	model: string | null;
+	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | string | null;
+	token_usage_json: Record<string, unknown> | null;
+	cost_json: Record<string, unknown> | null;
+	result_json: Record<string, unknown> | null;
+	error_code: string | null;
+	error_message: string | null;
+	payload_digest: string | null;
+	created_at: string | null;
+	updated_at: string | null;
+	expires_at: string | null;
+}
+
+export interface LocalSupportBundle {
+	generated_at?: string;
+	plugin?: Record<string, unknown>;
+	wordpress?: Record<string, unknown>;
+	local_tables?: Record<string, number | null>;
+	providers?: Array<Record<string, unknown>>;
+	external_consents?: Record<string, Record<string, unknown> | null>;
+	execution_summary?: {
+		recent?: Array<Record<string, unknown>>;
+		[key: string]: unknown;
+	};
+	retention?: Record<string, unknown>;
+	[key: string]: unknown;
+}
+
 /**
  * Form field information from adapter (e.g., Gravity Forms)
  */

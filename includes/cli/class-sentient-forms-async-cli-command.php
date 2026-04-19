@@ -542,16 +542,16 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Async_CL
 		}
     }
 
-	$async_cli = new Sentient_Forms_Async_CLI_Command();
-	WP_CLI::add_command( 'sentient-forms async list', [ $async_cli, 'list_jobs' ] );
-	WP_CLI::add_command( 'sentient-forms async clear', [ $async_cli, 'clear' ] );
-	WP_CLI::add_command( 'sentient-forms async requeue', [ $async_cli, 'requeue' ] );
-	WP_CLI::add_command( 'sentient-forms async purge', [ $async_cli, 'purge' ] );
-	WP_CLI::add_command( 'sentient-forms async reconcile', [ $async_cli, 'reconcile' ] );
-	WP_CLI::add_command( 'sentient-forms async settings', [ $async_cli, 'settings' ] );
-	WP_CLI::add_command( 'sentient-forms async status', [ $async_cli, 'status' ] );
-    WP_CLI::add_command( 'sentient-forms async-requests list', [ $async_cli, 'list_requests' ] );
-    WP_CLI::add_command( 'sentient-forms async-requests purge', [ $async_cli, 'purge_requests' ] );
-	WP_CLI::add_command( 'sentient-forms logs tail', [ $async_cli, 'logs_tail' ] );
-	WP_CLI::add_command( 'sentient-forms logs bundle', [ $async_cli, 'logs_bundle' ] );
+	$sentient_forms_async_cli = new Sentient_Forms_Async_CLI_Command();
+	WP_CLI::add_command( 'sentient-forms async list', [ $sentient_forms_async_cli, 'list_jobs' ] );
+	WP_CLI::add_command( 'sentient-forms async clear', [ $sentient_forms_async_cli, 'clear' ] );
+	WP_CLI::add_command( 'sentient-forms async requeue', [ $sentient_forms_async_cli, 'requeue' ] );
+	WP_CLI::add_command( 'sentient-forms async purge', [ $sentient_forms_async_cli, 'purge' ] );
+	WP_CLI::add_command( 'sentient-forms async reconcile', [ $sentient_forms_async_cli, 'reconcile' ] );
+	WP_CLI::add_command( 'sentient-forms async settings', [ $sentient_forms_async_cli, 'settings' ] );
+	WP_CLI::add_command( 'sentient-forms async status', [ $sentient_forms_async_cli, 'status' ] );
+    WP_CLI::add_command( 'sentient-forms async-requests list', [ $sentient_forms_async_cli, 'list_requests' ] );
+    WP_CLI::add_command( 'sentient-forms async-requests purge', [ $sentient_forms_async_cli, 'purge_requests' ] );
+	WP_CLI::add_command( 'sentient-forms logs tail', [ $sentient_forms_async_cli, 'logs_tail' ] );
+	WP_CLI::add_command( 'sentient-forms logs bundle', [ $sentient_forms_async_cli, 'logs_bundle' ] );
 }

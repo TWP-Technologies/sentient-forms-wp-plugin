@@ -317,7 +317,7 @@ class Sentient_Forms_Admin
 	{
 		$initial_route = $this->determine_initial_route();
 		$admin_url     = admin_url( 'admin.php' );
-		$admin_path    = parse_url( $admin_url, PHP_URL_PATH ) ?: '/wp-admin/admin.php';
+		$admin_path    = wp_parse_url( $admin_url, PHP_URL_PATH ) ?: '/wp-admin/admin.php';
 		$admin_base    = rtrim( preg_replace( '#/admin\.php$#', '', $admin_path ), '/' ) . '/';
 
 		return [
@@ -395,47 +395,50 @@ class Sentient_Forms_Admin
 
 	private function build_hash_router_bootstrap_js(): string
 	{
-		return <<<'JS'
-(function () {
-	try {
-		var config = window.sentientFormsConfig || {};
-		var adminPhpPath = typeof config.adminPhpPath === 'string' && config.adminPhpPath.length ? config.adminPhpPath : '/wp-admin/admin.php';
-		var adminBasePath = typeof config.adminBasePath === 'string' && config.adminBasePath.length ? config.adminBasePath : '/wp-admin/';
-		var basePath = new URL(".", location).pathname;
-		if (!basePath.endsWith("/")) {
-			basePath = basePath + "/";
-		}
-		var searchParams = new URLSearchParams(window.location.search || "");
-		var pageParam = searchParams.get("page") || "";
-		if (pageParam && pageParam.indexOf("sentient-forms") === 0) {
-			var pathname = window.location.pathname || '';
-			var pathMatchesAdmin = pathname === adminPhpPath;
-			var pathMatchesBase = pathname === adminBasePath;
-			var pathMatchesIndex = pathname === adminBasePath + "index.php";
-			if (!pathMatchesAdmin && !pathMatchesBase && !pathMatchesIndex) {
-				var replacementUrl = adminPhpPath + (window.location.search || "") + (window.location.hash || "");
-				history.replaceState({}, document.title, replacementUrl);
-				pathname = adminPhpPath;
-			}
-		}
-		var existingHash = typeof window.location.hash === 'string' ? window.location.hash.trim() : '';
-		var hasExplicitHash = existingHash.length > 1 && existingHash !== '#/';
-		var route = hasExplicitHash ? existingHash : (typeof config.initialRoute === 'string' ? config.initialRoute : '/dashboard');
-		if (route.startsWith('#')) {
-			route = route.slice(1);
-		}
-		if (!route.startsWith('/')) {
-			route = '/' + route;
-		}
-		var targetHash = '#' + route;
-		if (!hasExplicitHash && window.location.hash !== targetHash) {
-			window.location.hash = targetHash;
-		}
-	} catch (error) {
-		console.error('Sentient Forms router bootstrap failed', error);
-	}
-})();
-JS;
+		return implode(
+			"\n",
+			[
+				'(function () {',
+				'	try {',
+				'		var config = window.sentientFormsConfig || {};',
+				"		var adminPhpPath = typeof config.adminPhpPath === 'string' && config.adminPhpPath.length ? config.adminPhpPath : '/wp-admin/admin.php';",
+				"		var adminBasePath = typeof config.adminBasePath === 'string' && config.adminBasePath.length ? config.adminBasePath : '/wp-admin/';",
+				'		var basePath = new URL(".", location).pathname;',
+				'		if (!basePath.endsWith("/")) {',
+				'			basePath = basePath + "/";',
+				'		}',
+				'		var searchParams = new URLSearchParams(window.location.search || "");',
+				'		var pageParam = searchParams.get("page") || "";',
+				'		if (pageParam && pageParam.indexOf("sentient-forms") === 0) {',
+				"			var pathname = window.location.pathname || '';",
+				'			var pathMatchesAdmin = pathname === adminPhpPath;',
+				'			var pathMatchesBase = pathname === adminBasePath;',
+				'			var pathMatchesIndex = pathname === adminBasePath + "index.php";',
+				'			if (!pathMatchesAdmin && !pathMatchesBase && !pathMatchesIndex) {',
+				'				var replacementUrl = adminPhpPath + (window.location.search || "") + (window.location.hash || "");',
+				'				history.replaceState({}, document.title, replacementUrl);',
+				'				pathname = adminPhpPath;',
+				'			}',
+				'		}',
+				"		var existingHash = typeof window.location.hash === 'string' ? window.location.hash.trim() : '';",
+				"		var hasExplicitHash = existingHash.length > 1 && existingHash !== '#/';",
+				"		var route = hasExplicitHash ? existingHash : (typeof config.initialRoute === 'string' ? config.initialRoute : '/dashboard');",
+				"		if (route.startsWith('#')) {",
+				'			route = route.slice(1);',
+				'		}',
+				"		if (!route.startsWith('/')) {",
+				"			route = '/' + route;",
+				'		}',
+				"		var targetHash = '#' + route;",
+				'		if (!hasExplicitHash && window.location.hash !== targetHash) {',
+				'			window.location.hash = targetHash;',
+				'		}',
+				'	} catch (error) {',
+				"		console.error('Sentient Forms router bootstrap failed', error);",
+				'	}',
+				'})();',
+			]
+		);
 	}
 
 	/**
@@ -487,6 +490,7 @@ JS;
 
 	private function determine_initial_route(): string
 	{
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only admin routing based on the current plugin page.
 		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( (string) $_GET['page'] ) ) : 'sentient-forms';
 
 		return match ( $page ) {
@@ -528,7 +532,13 @@ JS;
 
         printf(
             '<div class="notice notice-error"><p>%s</p></div>',
-            esc_html( sprintf( __( 'Sentient Forms admin assets are unavailable. %s', 'sentient-forms' ), $message ) )
+            esc_html(
+                sprintf(
+                    /* translators: %s: asset loading error message. */
+                    __( 'Sentient Forms admin assets are unavailable. %s', 'sentient-forms' ),
+                    $message
+                )
+            )
         );
     }
 
@@ -540,7 +550,13 @@ JS;
 
         printf(
             '<div class="notice notice-info is-dismissible"><p>%s</p></div>',
-            esc_html( sprintf( __( 'Sentient Forms dev server unavailable (%s). Falling back to built assets.', 'sentient-forms' ), $this->dev_notice ) )
+            esc_html(
+                sprintf(
+                    /* translators: %s: admin dev server error message. */
+                    __( 'Sentient Forms dev server unavailable (%s). Falling back to built assets.', 'sentient-forms' ),
+                    $this->dev_notice
+                )
+            )
         );
     }
 
@@ -551,7 +567,10 @@ JS;
             return;
         }
 
-        $content = '<p>' . esc_html__( 'Sentient Forms can send anonymized telemetry (action usage counts and CPS health signals) to Total Web Partners when administrators opt in via Settings → Telemetry. No form entries or visitor identifiers are transmitted, and consent can be revoked at any time.', 'sentient-forms' ) . '</p>';
+        $content  = '<p>' . esc_html__( 'Sentient Forms stores local AI action configuration, provider connection status, form mapping metadata, and execution logs in this WordPress database. Execution logs can include model outputs or error details created from submitted form data depending on the actions an administrator configures.', 'sentient-forms' ) . '</p>';
+        $content .= '<p>' . esc_html__( 'When an administrator enables OpenRouter direct execution, selected form data and prompts are sent from this site to OpenRouter for processing. When an administrator enables Sentient managed execution, selected form data and prompts are sent to the Sentient Forms managed service for paid proxy execution, metering, and billing. These external-service choices require administrator acceptance before calls are made.', 'sentient-forms' ) . '</p>';
+        $content .= '<p>' . esc_html__( 'Sentient Forms can send anonymized telemetry, such as action usage counts and service health signals, to Total Web Partners when administrators opt in. Telemetry does not include form entries or visitor identifiers by default, and consent can be revoked at any time.', 'sentient-forms' ) . '</p>';
+        $content .= '<p>' . esc_html__( 'Site owners can use WordPress personal data export and erase tools for local Sentient Forms execution records that directly contain a verified email address. Local execution logs are subject to the retention period configured by the site administrator.', 'sentient-forms' ) . '</p>';
 
         wp_add_privacy_policy_content( 'Sentient Forms', wp_kses_post( $content ) );
     }
@@ -628,9 +647,9 @@ JS;
             esc_attr( $view )
         );
 		if ( $this->spa_bootstrap_script && $this->spa_start_module_url && $this->spa_app_module_url ) {
-			printf(
-				'<script>
-%3$s
+			wp_print_inline_script_tag(
+				sprintf(
+					'%3$s
 const mount = document.currentScript.parentElement;
 if (!mount) {
 	throw new Error("Sentient Forms mount element missing");
@@ -648,13 +667,13 @@ Promise.all([
 }).catch(function (error) {
 	console.error("Sentient Forms SPA failed to start", error);
 	window.sentientFormsAppReady = "failed";
-});
-</script>',
-			wp_json_encode( $this->spa_start_module_url ),
-			wp_json_encode( $this->spa_app_module_url ),
-			$this->spa_bootstrap_script
-		);
-		}
+});',
+					wp_json_encode( $this->spa_start_module_url ),
+					wp_json_encode( $this->spa_app_module_url ),
+					$this->spa_bootstrap_script
+				)
+			);
+			}
 
 		echo '</div></div>';
     }
@@ -674,6 +693,7 @@ Promise.all([
                 <p>
                     <?php
                     printf(
+                        /* translators: %s: settings page URL. */
                         wp_kses_post( __( '<strong>Sentient Forms:</strong> Your Sentient Forms API Key is not set. Please <a href="%s">configure your API key</a> to enable LLM functionalities.', 'sentient-forms' ) ),
                         esc_url( $settings_url )
                     );
@@ -698,6 +718,7 @@ Promise.all([
                 <p>
                     <?php
                     printf(
+                        /* translators: %s: license page URL. */
                         wp_kses_post( __( '<strong>Sentient Forms:</strong> Your license is not active. Please <a href="%s">activate your license</a> to ensure access to all features and updates.', 'sentient-forms' ) ),
                         esc_url( $license_url )
                     );
@@ -720,20 +741,16 @@ Promise.all([
      */
     public function ajax_save_settings(): void
     {
-        $options       = get_option( 'sentient_forms_settings', [] );
-        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
-        if ( $enforce_nonce ) {
-            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
-        }
+	        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
 
         if ( !current_user_can( 'manage_options' ) )
         {
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
         }
 
-        $settings_data = isset( $_POST[ 'sentient_forms_settings' ] ) && is_array( $_POST[ 'sentient_forms_settings' ] )
-            ? $_POST[ 'sentient_forms_settings' ]
-            : [];
+	        $settings_data = isset( $_POST[ 'sentient_forms_settings' ] ) && is_array( $_POST[ 'sentient_forms_settings' ] )
+	            ? map_deep( wp_unslash( $_POST[ 'sentient_forms_settings' ] ), 'sanitize_text_field' )
+	            : [];
 
         // Sanitize settings data before saving
         $sanitized_settings = [];
@@ -773,11 +790,7 @@ Promise.all([
      */
     public function ajax_get_forms_for_provider(): void
     {
-        $options       = get_option( 'sentient_forms_settings', [] );
-        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
-        if ( $enforce_nonce ) {
-            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
-        }
+	        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
 
         if ( !current_user_can( 'manage_options' ) )
         {
@@ -811,11 +824,7 @@ Promise.all([
      */
     public function ajax_get_actions_for_form(): void
     {
-        $options       = get_option( 'sentient_forms_settings', [] );
-        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
-        if ( $enforce_nonce ) {
-            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
-        }
+	        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
         if ( !current_user_can( 'manage_options' ) )
         {
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
@@ -859,23 +868,16 @@ Promise.all([
      */
     public function ajax_save_form_settings(): void // Renamed from ajax_save_form_actions
     {
-        $options       = get_option( 'sentient_forms_settings', [] );
-        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
-        if ( $enforce_nonce ) {
-            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
-        }
+	        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
         if ( !current_user_can( 'manage_options' ) )
         {
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
             return;
         }
 
-        $form_id_raw     = isset( $_POST[ 'form_id' ] ) ? wp_unslash( $_POST[ 'form_id' ] ) : null;
-        $adapter_id_raw  = isset( $_POST[ 'adapter_id' ] ) ? wp_unslash( $_POST[ 'adapter_id' ] ) : null;
-        $settings_raw    = isset( $_POST[ 'settings' ] ) && is_array( $_POST[ 'settings' ] ) ? wp_unslash( $_POST[ 'settings' ] ) : [];
-
-        $form_id    = sanitize_text_field( $form_id_raw );
-        $adapter_id = sanitize_text_field( $adapter_id_raw );
+	        $form_id      = isset( $_POST[ 'form_id' ] ) ? sanitize_text_field( wp_unslash( $_POST[ 'form_id' ] ) ) : '';
+	        $adapter_id   = isset( $_POST[ 'adapter_id' ] ) ? sanitize_text_field( wp_unslash( $_POST[ 'adapter_id' ] ) ) : '';
+	        $settings_raw = isset( $_POST[ 'settings' ] ) && is_array( $_POST[ 'settings' ] ) ? map_deep( wp_unslash( $_POST[ 'settings' ] ), 'sanitize_text_field' ) : [];
 
 
         if ( empty( $adapter_id ) || empty( $form_id ) )
@@ -972,21 +974,15 @@ Promise.all([
      */
     public function ajax_get_action_settings_html(): void
     {
-        $options       = get_option( 'sentient_forms_settings', [] );
-        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
-        if ( $enforce_nonce ) {
-            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
-        }
+	        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
         if ( !current_user_can( 'manage_options' ) )
         {
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
             return;
         }
 
-        $action_id_param              = isset( $_POST[ 'action_id' ] ) ? wp_unslash( $_POST[ 'action_id' ] ) : null;
-        $action_settings_values_param = isset( $_POST[ 'action_settings' ] ) && is_array( $_POST[ 'action_settings' ] ) ? wp_unslash( $_POST[ 'action_settings' ] ) : [];
-
-        $action_id = sanitize_text_field($action_id_param);
+	        $action_id = isset( $_POST[ 'action_id' ] ) ? sanitize_text_field( wp_unslash( $_POST[ 'action_id' ] ) ) : '';
+	        $action_settings_values_param = isset( $_POST[ 'action_settings' ] ) && is_array( $_POST[ 'action_settings' ] ) ? map_deep( wp_unslash( $_POST[ 'action_settings' ] ), 'sanitize_text_field' ) : [];
 
         // Sanitize action_settings_values more carefully if needed, though they are mostly for pre-filling.
         // For this HTML generation, direct output of these values into form fields needs escaping.

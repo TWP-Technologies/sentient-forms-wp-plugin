@@ -130,6 +130,320 @@ describe('SentientFormsApiClient', () => {
 		});
 	});
 
+	it('reads local provider credentials from the local-first endpoint', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve([
+					{
+						id: 7,
+						provider: 'openrouter',
+						label: 'OpenRouter key',
+						auth_mode: 'manual_key',
+						constant_name: null,
+						status: 'valid',
+						status_json: { is_free_tier: true },
+						last_validated_at: '2026-04-17T10:00:00Z',
+						created_at: '2026-04-17T09:00:00Z',
+						updated_at: '2026-04-17T10:00:00Z',
+						secret_configured: true
+					}
+				])
+		});
+
+		const result = await client.getLocalProviderCredentials({ showNotifications: false });
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}local/providers/credentials`,
+			expect.objectContaining({
+				credentials: 'same-origin'
+			})
+		);
+		expect(result).toHaveLength(1);
+		expect(result[0]).toMatchObject({
+			provider: 'openrouter',
+			status: 'valid',
+			secret_configured: true
+		});
+	});
+
+	it('validates an OpenRouter key with disclosure acceptance', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					provider: 'openrouter',
+					status: 'valid',
+					credential_id: 9,
+					key_status: { label: 'test key', is_free_tier: true },
+					consent_recorded: true,
+					consent_id: 11
+				})
+		});
+
+		const result = await client.validateOpenRouterKey(
+			{
+				api_key: 'sk-or-test',
+				label: 'Test key',
+				save: true,
+				disclosure_version: '2026-04-local-first-openrouter-v1',
+				accepted_external_service_terms: true
+			},
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}local/providers/openrouter/validate`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({
+					api_key: 'sk-or-test',
+					label: 'Test key',
+					save: true,
+					disclosure_version: '2026-04-local-first-openrouter-v1',
+					accepted_external_service_terms: true
+				})
+			})
+		);
+		expect(result).toMatchObject({
+			status: 'valid',
+			credential_id: 9,
+			consent_recorded: true
+		});
+	});
+
+	it('reads cached OpenRouter model metadata from the local provider endpoint', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					provider: 'openrouter',
+					source: 'local_cache',
+					total_cached: 2,
+					total_returned: 1,
+					free_count: 1,
+					stale_count: 0,
+					models: [
+						{
+							id: 'openai/gpt-oss-20b:free',
+							name: 'OpenAI: GPT OSS 20B (free)',
+							free: true,
+							context_length: 131072,
+							input_modalities: ['text'],
+							output_modalities: ['text'],
+							supported_parameters: ['response_format'],
+							pricing: { prompt: '0', completion: '0', request: '0' },
+							fetched_at: '2026-04-18 12:00:00',
+							expires_at: '2026-04-19 12:00:00',
+							stale: false
+						}
+					]
+				})
+		});
+
+		const result = await client.getOpenRouterModels(
+			{ freeOnly: true, limit: 25 },
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}local/providers/openrouter/models?free_only=true&limit=25`,
+			expect.objectContaining({
+				credentials: 'same-origin'
+			})
+		);
+		expect(result.free_count).toBe(1);
+		expect(result.models[0].id).toBe('openai/gpt-oss-20b:free');
+	});
+
+	it('refreshes OpenRouter model metadata with disclosure acceptance', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					provider: 'openrouter',
+					source: 'local_cache',
+					total_cached: 2,
+					total_returned: 2,
+					free_count: 1,
+					stale_count: 0,
+					models: [],
+					consent_recorded: true,
+					consent_id: 12,
+					stored: 2
+				})
+		});
+
+		const result = await client.refreshOpenRouterModels(
+			{
+				disclosure_version: '2026-04-local-first-openrouter-v1',
+				accepted_external_service_terms: true,
+				output_modalities: 'text'
+			},
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}local/providers/openrouter/models/refresh`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({
+					disclosure_version: '2026-04-local-first-openrouter-v1',
+					accepted_external_service_terms: true,
+					output_modalities: 'text'
+				})
+			})
+		);
+		expect(result).toMatchObject({
+			consent_recorded: true,
+			stored: 2
+		});
+	});
+
+	it('creates a local custom action in WordPress-local tables', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 201,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					id: 17,
+					external_id: null,
+					template_id: null,
+					code: 'local_openrouter_summary',
+					display_name: 'Local OpenRouter summary',
+					definition_json: { prompt_template: 'Summarize {{name}}.' },
+					model_selection_json: {
+						provider: 'openrouter',
+						model: 'openrouter/auto',
+						credential_id: 9
+					},
+					status: 'active',
+					created_at: '2026-04-17T10:00:00Z',
+					updated_at: '2026-04-17T10:00:00Z'
+				})
+		});
+
+		const result = await client.createLocalCustomAction(
+			{
+				code: 'local_openrouter_summary',
+				display_name: 'Local OpenRouter summary',
+				definition_json: { prompt_template: 'Summarize {{name}}.' },
+				model_selection_json: {
+					provider: 'openrouter',
+					model: 'openrouter/auto',
+					credential_id: 9
+				},
+				status: 'active'
+			},
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}local/custom-actions`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({
+					code: 'local_openrouter_summary',
+					display_name: 'Local OpenRouter summary',
+					definition_json: { prompt_template: 'Summarize {{name}}.' },
+					model_selection_json: {
+						provider: 'openrouter',
+						model: 'openrouter/auto',
+						credential_id: 9
+					},
+					status: 'active'
+				})
+			})
+		);
+		expect(result).toMatchObject({
+			id: 17,
+			code: 'local_openrouter_summary',
+			status: 'active'
+		});
+	});
+
+	it('creates a local form mapping in WordPress-local tables', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 201,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					id: 23,
+					external_id: null,
+					form_source: 'gravity_forms',
+					form_id: '42',
+					hook: 'gform_after_submission',
+					action_kind: 'custom_action',
+					action_id: 17,
+					conditions_json: null,
+					input_bindings_json: { name: '1', email: '2' },
+					execution_mode: 'sync',
+					effect_mapping_json: {
+						store_result: true,
+						meta: { sentient_forms_summary: 'structured.summary' }
+					},
+					enabled: true,
+					created_at: '2026-04-17T10:00:00Z',
+					updated_at: '2026-04-17T10:00:00Z'
+				})
+		});
+
+		const result = await client.createLocalFormMapping(
+			{
+				form_source: 'gravity_forms',
+				form_id: 42,
+				hook: 'gform_after_submission',
+				action_kind: 'custom_action',
+				action_id: 17,
+				input_bindings_json: { name: '1', email: '2' },
+				execution_mode: 'sync',
+				effect_mapping_json: {
+					store_result: true,
+					meta: { sentient_forms_summary: 'structured.summary' }
+				},
+				enabled: true
+			},
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}local/form-mappings`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({
+					form_source: 'gravity_forms',
+					form_id: 42,
+					hook: 'gform_after_submission',
+					action_kind: 'custom_action',
+					action_id: 17,
+					input_bindings_json: { name: '1', email: '2' },
+					execution_mode: 'sync',
+					effect_mapping_json: {
+						store_result: true,
+						meta: { sentient_forms_summary: 'structured.summary' }
+					},
+					enabled: true
+				})
+			})
+		);
+		expect(result).toMatchObject({
+			id: 23,
+			form_source: 'gravity_forms',
+			action_id: 17,
+			enabled: true
+		});
+	});
+
 	it('surfaces ApiClientError with code and notification', async () => {
 		const notifySpy = vi.spyOn(notifications, 'error');
 

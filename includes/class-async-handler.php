@@ -1168,7 +1168,11 @@ class Sentient_Forms_Async_Handler
                     $job,
                     new WP_Error(
                         'sentient_forms_missing_action',
-                        sprintf( __( 'Action %s not found.', 'sentient-forms' ), $action_id ),
+                        sprintf(
+                            /* translators: %s: action id. */
+                            __( 'Action %s not found.', 'sentient-forms' ),
+                            $action_id
+                        ),
                     ),
                 );
                 return;
@@ -1217,10 +1221,15 @@ class Sentient_Forms_Async_Handler
                     );
                 } catch ( Throwable $throwable )
                 {
-                    if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
-                    {
-                        error_log( sprintf( '[sentient-forms][async] execute exception action=%s entry=%s form=%s error=%s', $action_id, $entry_id ?? 'n/a', $form_id ?? 'n/a', $throwable->getMessage() ) );
-                    }
+                    sentient_forms_debug_log(
+                        '[sentient-forms][async] execute exception.',
+                        [
+                            'action_id' => $action_id,
+                            'entry_id'  => $entry_id ?? 'n/a',
+                            'form_id'   => $form_id ?? 'n/a',
+                            'error'     => $throwable->getMessage(),
+                        ]
+                    );
                     $this->handle_failure(
                         $job,
                         new WP_Error(
@@ -1234,10 +1243,16 @@ class Sentient_Forms_Async_Handler
 
             if ( is_wp_error( $result ) )
             {
-                if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
-                {
-                    error_log( sprintf( '[sentient-forms][async] execute wp_error action=%s entry=%s form=%s code=%s message=%s', $action_id, $entry_id ?? 'n/a', $form_id ?? 'n/a', $result->get_error_code(), $result->get_error_message() ) );
-                }
+                sentient_forms_debug_log(
+                    '[sentient-forms][async] execute wp_error.',
+                    [
+                        'action_id'     => $action_id,
+                        'entry_id'      => $entry_id ?? 'n/a',
+                        'form_id'       => $form_id ?? 'n/a',
+                        'error_code'    => $result->get_error_code(),
+                        'error_message' => $result->get_error_message(),
+                    ]
+                );
                 $this->handle_failure( $job, $result );
                 return;
             }
@@ -1732,12 +1747,12 @@ class Sentient_Forms_Async_Handler
         // Log the result if debug mode is enabled
         if ( $debug_mode )
         {
-            error_log(
-                sprintf(
-                    __( 'Sentient Forms: Action %s processed successfully. Result: %s', 'sentient-forms' ),
-                    $action_id,
-                    wp_json_encode( $result ),
-                ),
+            sentient_forms_debug_log(
+                'Sentient Forms action processed successfully.',
+                [
+                    'action_id' => $action_id,
+                    'result'    => $result,
+                ]
             );
         }
 
@@ -1761,7 +1776,12 @@ class Sentient_Forms_Async_Handler
         // Log the error if debug mode is enabled
         if ( $debug_mode )
         {
-            error_log( sprintf( __( 'Sentient Forms Error: %s', 'sentient-forms' ), $message ) );
+            sentient_forms_debug_log(
+                'Sentient Forms action error.',
+                [
+                    'message' => $message,
+                ]
+            );
         }
     }
 

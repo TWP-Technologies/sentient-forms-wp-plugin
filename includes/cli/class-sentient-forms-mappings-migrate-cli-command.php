@@ -196,6 +196,6 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Mappings
         }
     }
 
-    $migrate_cli = new Sentient_Forms_Mappings_Migrate_CLI_Command();
-    WP_CLI::add_command( 'sentient-forms mappings migrate', [ $migrate_cli, 'migrate' ] );
+    $sentient_forms_migrate_cli = new Sentient_Forms_Mappings_Migrate_CLI_Command();
+    WP_CLI::add_command( 'sentient-forms mappings migrate', [ $sentient_forms_migrate_cli, 'migrate' ] );
 }

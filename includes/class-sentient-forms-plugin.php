@@ -222,16 +222,7 @@ final class Sentient_Forms_Plugin
      */
     private function init_hooks(): void
     {
-        // Load translations no earlier than init. WordPress 6.7+ warns when plugins
-        // trigger just-in-time translations before init.
-        if ( did_action( 'init' ) )
-        {
-            $this->load_plugin_textdomain();
-        }
-        else
-        {
-            add_action( 'init', [ $this, 'load_plugin_textdomain' ], 0 );
-        }
+        Sentient_Forms_Local_Data_Governance::register_hooks();
 
         // Add other core plugin hooks here. For example, hooks for processing form submissions
         // might be set up here or dynamically by the adapters/actions themselves.
@@ -255,26 +246,19 @@ final class Sentient_Forms_Plugin
 
                 $entry_id  = $job['context']['entry_id'] ?? 'unknown';
                 $action_id = $job['context']['action_id'] ?? 'unknown';
-                error_log( sprintf( 'Sentient Forms evaluation payload (entry %s, action %s): %s', $entry_id, $action_id, wp_json_encode( $payload ) ) );
+                sentient_forms_debug_log(
+                    'Sentient Forms evaluation payload prepared.',
+                    [
+                        'entry_id'  => $entry_id,
+                        'action_id' => $action_id,
+                        'payload'   => $payload,
+                        'result'    => $result,
+                    ]
+                );
             },
             10,
             3
         );
-    }
-
-    /**
-     * Load plugin textdomain for internationalization.
-     */
-    public function load_plugin_textdomain(): void
-    {
-        if ( defined( 'SENTIENT_FORMS_PLUGIN_FILE' ) )
-        {
-            load_plugin_textdomain(
-                'sentient-forms', // Unique text domain string.
-                false,            // Deprecated argument.
-                dirname( plugin_basename( SENTIENT_FORMS_PLUGIN_FILE ) ) . '/languages/', // Path to .mo files.
-            );
-        }
     }
 
     /**

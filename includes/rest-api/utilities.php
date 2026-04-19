@@ -50,7 +50,11 @@ class Sentient_Forms_REST_Argument_Utils
         {
             return new WP_Error(
                 'rest_invalid_type',
-                sprintf( esc_html__( '%s must be an array.', 'sentient-forms' ), $param ),
+                sprintf(
+                    /* translators: %s: REST parameter name. */
+                    esc_html__( '%s must be an array.', 'sentient-forms' ),
+                    $param
+                ),
                 [ 'status' => 400, 'param' => $param ],
             );
         }
@@ -60,6 +64,7 @@ class Sentient_Forms_REST_Argument_Utils
             if ( !is_string( $item ) )
             {
                 $message = sprintf(
+                    /* translators: 1: item index, 2: REST parameter name. */
                     esc_html__( 'Item at index %1$d in %2$s must be a string.', 'sentient-forms' ),
                     $index,
                     $param,

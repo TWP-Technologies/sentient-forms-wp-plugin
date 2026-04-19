@@ -43,11 +43,22 @@ import type {
 	LicenseActivationResponsePayload,
 	LicenseActivationResult,
 	LicenseInfoResponse,
+	LocalActionTemplate,
+	LocalCustomActionCreatePayload,
+	LocalCustomActionRecord,
+	LocalExecutionEvent,
+	LocalFormMappingCreatePayload,
+	LocalFormMappingRecord,
+	LocalProviderCredential,
+	LocalSupportBundle,
+	OpenRouterModelsRefreshRequest,
+	OpenRouterModelsResponse,
+	OpenRouterValidateRequest,
+	OpenRouterValidateResponse,
 	TelemetrySettingsResponse,
 	PluginSettingsResponse,
 	UpdateFormMappingRequest
 } from '$lib/api/types';
-import { MockSentientFormsApiClient } from './mock-client';
 
 export interface ClientConfig {
 	baseUrl: string;
@@ -350,6 +361,139 @@ export class SentientFormsApiClient {
 			options
 		);
 		return this.unwrap(response);
+	}
+
+	async getLocalProviderCredentials(
+		options: RequestOptions = {}
+	): Promise<LocalProviderCredential[]> {
+		return this.request<LocalProviderCredential[]>('local/providers/credentials', {
+			showNotifications: false,
+			...options
+		});
+	}
+
+	async validateOpenRouterKey(
+		payload: OpenRouterValidateRequest,
+		options: RequestOptions = {}
+	): Promise<OpenRouterValidateResponse> {
+		return this.request<OpenRouterValidateResponse>('local/providers/openrouter/validate', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+	}
+
+	async getOpenRouterModels(
+		params: { freeOnly?: boolean; limit?: number } = {},
+		options: RequestOptions = {}
+	): Promise<OpenRouterModelsResponse> {
+		const query = new URLSearchParams();
+		if (params.freeOnly !== undefined) {
+			query.set('free_only', String(params.freeOnly));
+		}
+		if (params.limit !== undefined) {
+			query.set('limit', String(params.limit));
+		}
+
+		const suffix = query.toString();
+		const path = suffix
+			? `local/providers/openrouter/models?${suffix}`
+			: 'local/providers/openrouter/models';
+
+		return this.request<OpenRouterModelsResponse>(path, {
+			showNotifications: false,
+			...options
+		});
+	}
+
+	async refreshOpenRouterModels(
+		payload: OpenRouterModelsRefreshRequest,
+		options: RequestOptions = {}
+	): Promise<OpenRouterModelsResponse> {
+		return this.request<OpenRouterModelsResponse>(
+			'local/providers/openrouter/models/refresh',
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+	}
+
+	async getLocalActionTemplates(options: RequestOptions = {}): Promise<LocalActionTemplate[]> {
+		return this.request<LocalActionTemplate[]>('local/action-templates', {
+			showNotifications: false,
+			...options
+		});
+	}
+
+	async getLocalCustomActions(
+		status = 'active',
+		options: RequestOptions = {}
+	): Promise<LocalCustomActionRecord[]> {
+		const params = new URLSearchParams({ status });
+
+		return this.request<LocalCustomActionRecord[]>(`local/custom-actions?${params}`, {
+			showNotifications: false,
+			...options
+		});
+	}
+
+	async createLocalCustomAction(
+		payload: LocalCustomActionCreatePayload,
+		options: RequestOptions = {}
+	): Promise<LocalCustomActionRecord> {
+		return this.request<LocalCustomActionRecord>('local/custom-actions', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+	}
+
+	async getLocalFormMappings(
+		formSource: string,
+		formId: string | number,
+		options: RequestOptions = {}
+	): Promise<LocalFormMappingRecord[]> {
+		const params = new URLSearchParams({
+			form_source: formSource,
+			form_id: String(formId)
+		});
+
+		return this.request<LocalFormMappingRecord[]>(`local/form-mappings?${params}`, {
+			showNotifications: false,
+			...options
+		});
+	}
+
+	async createLocalFormMapping(
+		payload: LocalFormMappingCreatePayload,
+		options: RequestOptions = {}
+	): Promise<LocalFormMappingRecord> {
+		return this.request<LocalFormMappingRecord>('local/form-mappings', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+	}
+
+	async getLocalExecutionEvents(
+		limit = 5,
+		options: RequestOptions = {}
+	): Promise<LocalExecutionEvent[]> {
+		const params = new URLSearchParams({ limit: String(limit) });
+
+		return this.request<LocalExecutionEvent[]>(`local/execution-events?${params}`, {
+			showNotifications: false,
+			...options
+		});
+	}
+
+	async getLocalSupportBundle(options: RequestOptions = {}): Promise<LocalSupportBundle> {
+		return this.request<LocalSupportBundle>('local/support-bundle', {
+			showNotifications: false,
+			...options
+		});
 	}
 
 	async getActionDefinitions(options: RequestOptions = {}): Promise<ActionDefinition[]> {
@@ -1048,24 +1192,10 @@ function coerceToApiClientError(original: unknown, parsed?: unknown): ApiClientE
 	return new ApiClientError('Unknown error', 500, parsed ?? null);
 }
 
-export const mockClient = new SentientFormsApiClient({
-	baseUrl: 'https://example.test/wp-json/sentient-forms/v1/'
-});
-
 export function createClientFromConfig(
 	overrides: Partial<ClientConfig> = {}
 ): SentientFormsApiClient {
 	const config = resolveRuntimeConfig();
-
-	if (
-		import.meta.env.SENTIENT_FORMS_DEMO === '1' ||
-		(import.meta.env.DEV && !config.apiBaseUrl) ||
-		config.demoMode
-	) {
-		// Use mock client for demo/dev without backend
-		// @ts-expect-error return compatible surface
-		return new MockSentientFormsApiClient() as SentientFormsApiClient;
-	}
 
 	return new SentientFormsApiClient({
 		baseUrl: config.apiBaseUrl,

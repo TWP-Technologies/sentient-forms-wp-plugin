@@ -135,7 +135,13 @@ class Sentient_Forms_Llm_Api_Client
             }
 
             return new WP_Error(
-                'api_error', sprintf( __( 'API error: %s', 'sentient-forms' ), $error_message ), [ 'status' => $response_code ],
+                'api_error',
+                sprintf(
+                    /* translators: %s: API error message. */
+                    __( 'API error: %s', 'sentient-forms' ),
+                    $error_message
+                ),
+                [ 'status' => $response_code ],
             );
         }
 
@@ -206,7 +212,11 @@ class Sentient_Forms_Llm_Api_Client
 
             return new WP_Error(
                 'license_validation_error',
-                sprintf( __( 'License validation error: %s', 'sentient-forms' ), $error_message ),
+                sprintf(
+                    /* translators: %s: license validation error message. */
+                    __( 'License validation error: %s', 'sentient-forms' ),
+                    $error_message
+                ),
                 [ 'status' => $response_code ],
             );
         }
@@ -276,7 +286,13 @@ class Sentient_Forms_Llm_Api_Client
             }
 
             return new WP_Error(
-                'credit_balance_error', sprintf( __( 'Credit balance error: %s', 'sentient-forms' ), $error_message ), [ 'status' => $response_code ],
+                'credit_balance_error',
+                sprintf(
+                    /* translators: %s: credit balance error message. */
+                    __( 'Credit balance error: %s', 'sentient-forms' ),
+                    $error_message
+                ),
+                [ 'status' => $response_code ],
             );
         }
 
@@ -345,7 +361,13 @@ class Sentient_Forms_Llm_Api_Client
             }
 
             return new WP_Error(
-                'models_error', sprintf( __( 'Models error: %s', 'sentient-forms' ), $error_message ), [ 'status' => $response_code ],
+                'models_error',
+                sprintf(
+                    /* translators: %s: models API error message. */
+                    __( 'Models error: %s', 'sentient-forms' ),
+                    $error_message
+                ),
+                [ 'status' => $response_code ],
             );
         }
 
@@ -413,7 +435,13 @@ class Sentient_Forms_Llm_Api_Client
             }
 
             return new WP_Error(
-                'estimate_error', sprintf( __( 'Estimate error: %s', 'sentient-forms' ), $error_message ), [ 'status' => $response_code ],
+                'estimate_error',
+                sprintf(
+                    /* translators: %s: estimate API error message. */
+                    __( 'Estimate error: %s', 'sentient-forms' ),
+                    $error_message
+                ),
+                [ 'status' => $response_code ],
             );
         }
 
@@ -623,4 +651,3 @@ class Sentient_Forms_Llm_Api_Client
         return $data;
     }
 }
-

@@ -64,7 +64,12 @@ class Sentient_Forms_Async_Health_Service
             $warnings[] = [
                 'code'    => 'queue_backlog',
                 'level'   => 'warning',
-                'message' => sprintf( __( 'Background queue backlog: %d jobs pending (threshold %d).', 'sentient-forms' ), $queue_depth, $queue_threshold ),
+                'message' => sprintf(
+                    /* translators: 1: pending job count, 2: configured queue threshold. */
+                    __( 'Background queue backlog: %1$d jobs pending (threshold %2$d).', 'sentient-forms' ),
+                    $queue_depth,
+                    $queue_threshold
+                ),
                 'data'    => [ 'queue_depth' => $queue_depth, 'threshold' => $queue_threshold, 'oldest_run_at' => $oldest_run ],
             ];
         }
@@ -77,7 +82,13 @@ class Sentient_Forms_Async_Health_Service
                 $warnings[] = [
                     'code'    => 'consecutive_failures',
                     'level'   => 'error',
-                    'message' => sprintf( __( 'Action %1$s (%2$s) failed %3$d times in the last hour.', 'sentient-forms' ), $action_id, $adapter, $count ),
+                    'message' => sprintf(
+                        /* translators: 1: action id, 2: form adapter id, 3: failure count. */
+                        __( 'Action %1$s (%2$s) failed %3$d times in the last hour.', 'sentient-forms' ),
+                        $action_id,
+                        $adapter,
+                        $count
+                    ),
                     'data'    => [ 'action_id' => $action_id, 'adapter' => $adapter, 'count' => $count, 'threshold' => $failure_threshold ],
                 ];
             }

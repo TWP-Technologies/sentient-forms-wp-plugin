@@ -21,10 +21,40 @@ if ( !defined( 'ABSPATH' ) )
 
 // Define plugin constants.
 const SENTIENT_FORMS_VERSION     = '0.1.0';
-const SENTIENT_FORMS_DB_VERSION  = '2025.11.17';
+const SENTIENT_FORMS_DB_VERSION  = '2026.04.16.local_first';
 const SENTIENT_FORMS_PLUGIN_FILE = __FILE__;
 define( 'SENTIENT_FORMS_PLUGIN_DIR', plugin_dir_path( SENTIENT_FORMS_PLUGIN_FILE ) );
 define( 'SENTIENT_FORMS_PLUGIN_URL', plugin_dir_url( SENTIENT_FORMS_PLUGIN_FILE ) );
+
+if ( ! function_exists( 'sentient_forms_debug_log' ) )
+{
+    /**
+     * Emit opt-in diagnostic information without writing directly to PHP logs.
+     *
+     * The plugin does not attach a default writer. Site owners or support tooling
+     * can opt in by filtering `sentient_forms_debug_log_enabled` and handling the
+     * `sentient_forms_debug_log` action.
+     *
+     * @param string $message Diagnostic message.
+     * @param array  $context Redacted contextual fields.
+     */
+    function sentient_forms_debug_log( string $message, array $context = [] ): void
+    {
+        $enabled = (bool) apply_filters(
+            'sentient_forms_debug_log_enabled',
+            defined( 'WP_DEBUG' ) && WP_DEBUG,
+            $message,
+            $context
+        );
+
+        if ( ! $enabled )
+        {
+            return;
+        }
+
+        do_action( 'sentient_forms_debug_log', $message, $context );
+    }
+}
 
 /**
  * The ID of the default "free tier" LLM model.
@@ -56,6 +86,8 @@ require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-sentient-forms-installe
 require_once SENTIENT_FORMS_PLUGIN_DIR . 'includes/class-sentient-forms-plugin.php';
 
 register_activation_hook( __FILE__, [ 'Sentient_Forms_Installer', 'activate' ] );
+register_deactivation_hook( __FILE__, [ 'Sentient_Forms_Installer', 'deactivate' ] );
+register_uninstall_hook( __FILE__, [ 'Sentient_Forms_Installer', 'uninstall' ] );
 
 // Include template functions if any.
 // require_once SENTIENT_FORMS_PLUGIN_PATH . 'includes/template-functions.php';
@@ -67,7 +99,7 @@ $sentient_forms_bootstrap = static function (): void {
         return;
     }
 
-    error_log( 'Sentient Forms: Main plugin function sentient_forms() not found.' );
+    sentient_forms_debug_log( 'Sentient Forms: Main plugin function Sentient_Forms_Plugin was not found.' );
 };
 
 if ( did_action( 'init' ) )

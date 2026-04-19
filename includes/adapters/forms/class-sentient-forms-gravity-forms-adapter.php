@@ -42,6 +42,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     private Sentient_Forms_Plugin $plugin;
 
     /**
+     * Local-first execution service, lazily initialized for direct provider runs.
+     */
+    private ?Sentient_Forms_Local_Action_Execution_Service $local_execution_service = null;
+
+    /**
      * Cache async spam notification mapping checks per form/entry.
      *
      * @var array<string, array<int, string>>
@@ -606,6 +611,40 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 'entry' => $entry,
             ];
 
+            if ( $this->is_local_first_mapping( $action_settings ) )
+            {
+                $result = $this->execute_local_first_after_submission_mapping(
+                    $form,
+                    $entry,
+                    $mapping_id,
+                    $action_settings,
+                    $execution_request_ids[ $mapping_id ] ?? null
+                );
+
+                $mapping_outcomes[ $mapping_id ] = is_wp_error( $result ) ? 'failed' : 'succeeded';
+
+                if ( is_wp_error( $result ) )
+                {
+                    $logger->error(
+                        'local-first after-submission action failed',
+                        [
+                            'hook'           => 'gform_after_submission',
+                            'mapping_id'     => $mapping_id,
+                            'form_id'        => $form_id,
+                            'entry_id'       => $entry['id'] ?? null,
+                            'correlation_id' => $correlation_id,
+                            'error_code'     => $result->get_error_code(),
+                        ]
+                    );
+                }
+                elseif ( is_array( $result ) )
+                {
+                    $this->record_mapping_spam_classification( $mapping_classifications, $mapping_id, $result );
+                }
+
+                continue;
+            }
+
             if ( $should_async )
             {
                 $dependency_ids                 = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
@@ -850,10 +889,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     {
         $entry = [];
 
-        // Get form data from $_POST
+        // Get form data from the Gravity Forms submission payload.
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification before this hook.
         if ( isset( $_POST[ 'gform_submit' ] ) )
         {
-            $form_id = absint( $_POST[ 'gform_submit' ] );
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification before this hook.
+            $form_id = absint( wp_unslash( $_POST[ 'gform_submit' ] ) );
             $form    = GFAPI::get_form( $form_id );
 
             if ( $form )
@@ -863,9 +904,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                     $field_id   = $field->id;
                     $input_name = 'input_' . str_replace( '.', '_', $field_id );
 
+                    // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification before this hook.
                     if ( isset( $_POST[ $input_name ] ) )
                     {
-                        $entry[ $field_id ] = sanitize_text_field( $_POST[ $input_name ] );
+                        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification before this hook.
+                        $entry[ $field_id ] = sanitize_text_field( wp_unslash( $_POST[ $input_name ] ) );
                     }
                 }
             }
@@ -1144,6 +1187,77 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     }
 
     /**
+     * Determine whether a runtime mapping is backed by local WordPress tables.
+     *
+     * @param array<string, mixed> $mapping Mapping settings.
+     *
+     * @return bool
+     */
+    private function is_local_first_mapping( array $mapping ): bool
+    {
+        $indicator = isset( $mapping['action_type_indicator'] ) && is_scalar( $mapping['action_type_indicator'] )
+            ? sanitize_key( (string) $mapping['action_type_indicator'] )
+            : '';
+
+        return 'local_first' === $indicator
+            && isset( $mapping['local_form_mapping_id'] )
+            && absint( $mapping['local_form_mapping_id'] ) > 0;
+    }
+
+    /**
+     * Execute a local-first mapping through the local provider engine.
+     *
+     * @param array<string, mixed> $form                 Gravity Forms form payload.
+     * @param array<string, mixed> $entry                Gravity Forms entry payload.
+     * @param string               $mapping_id           Runtime planner mapping id.
+     * @param array<string, mixed> $action_settings      Mapping settings.
+     * @param string|null          $execution_request_id Optional precomputed request id.
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function execute_local_first_after_submission_mapping(
+        array $form,
+        array $entry,
+        string $mapping_id,
+        array $action_settings,
+        ?string $execution_request_id = null
+    ): array | WP_Error
+    {
+        $local_mapping_id = absint( $action_settings['local_form_mapping_id'] ?? 0 );
+        if ( $local_mapping_id <= 0 )
+        {
+            return new WP_Error(
+                'sentient_forms_missing_local_mapping_id',
+                __( 'Local form mapping id is missing.', 'sentient-forms' )
+            );
+        }
+
+        $context = [
+            'hook'                    => 'gform_after_submission',
+            'form_source'             => $this->get_id(),
+            'mapping_id'              => $mapping_id,
+            'local_mapping_id'        => $mapping_id,
+            'local_form_mapping_id'   => $local_mapping_id,
+            'form_id'                 => $form['id'] ?? null,
+            'entry_id'                => $entry['id'] ?? null,
+            'action_name_label'       => $action_settings['action_name_label'] ?? __( 'Local OpenRouter action', 'sentient-forms' ),
+            'execution_request_id'    => $execution_request_id,
+        ];
+
+        return $this->get_local_execution_service()->execute_mapping( $local_mapping_id, $form, $entry, $context );
+    }
+
+    private function get_local_execution_service(): Sentient_Forms_Local_Action_Execution_Service
+    {
+        if ( null === $this->local_execution_service )
+        {
+            $this->local_execution_service = new Sentient_Forms_Local_Action_Execution_Service();
+        }
+
+        return $this->local_execution_service;
+    }
+
+    /**
      * Determine whether a mapping can execute directly through the CPS action executor.
      *
      * @param array<string, mixed> $mapping Mapping settings.
@@ -1242,14 +1356,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         {
             $fail_open = $action_settings['fail_open'] ?? true; // Default to fail-open
 
-            if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
-            {
-                error_log( sprintf(
-                    'Sentient Forms: CPS validation error (fail_open=%s): %s',
-                    $fail_open ? 'true' : 'false',
-                    $response->get_error_message()
-                ) );
-            }
+            sentient_forms_debug_log(
+                'Sentient Forms CPS validation error.',
+                [
+                    'fail_open'     => (bool) $fail_open,
+                    'error_code'    => $response->get_error_code(),
+                    'error_message' => $response->get_error_message(),
+                ]
+            );
 
             // If fail_open is enabled (default), don't block the submission
             if ( $fail_open )
@@ -1634,15 +1748,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         {
             $enable_sentient_forms = esc_html__( 'Enable Sentient Forms', 'sentient-forms' );
             $gform_tooltip         = gform_tooltip( 'sentient_forms_field_setting' );
-            echo <<<HTML
-            <li class='sentient_forms_setting field_setting' id='sentient_forms_field_setting'>
-                <input type='checkbox' id='sentient_forms_enabled' onclick="SetFieldProperty('sentientFormsEnabled', this.checked);"/>
-                <label for='sentient_forms_enabled' class='inline'>
-                    $enable_sentient_forms
-                    $gform_tooltip
-                </label>
-            </li>
-HTML;
+            printf(
+                '<li class="sentient_forms_setting field_setting" id="sentient_forms_field_setting"><input type="checkbox" id="sentient_forms_enabled" onclick="SetFieldProperty(\'sentientFormsEnabled\', this.checked);"/><label for="sentient_forms_enabled" class="inline">%s%s</label></li>',
+                esc_html( $enable_sentient_forms ),
+                wp_kses_post( $gform_tooltip )
+            );
         }
     }
 
@@ -2008,13 +2118,15 @@ HTML;
         $global_settings = $global_settings[ 'global_settings' ] ?? [];
 
         // Merge with global settings
-        return wp_parse_args(
+        $settings = wp_parse_args(
             $settings,
             [
                 'enabled' => $global_settings[ 'auto_apply_actions' ] ?? false,
                 'actions' => [],
             ],
         );
+
+        return $this->merge_local_first_form_mappings( $settings, $form_id );
     }
 
     /**
@@ -2041,6 +2153,11 @@ HTML;
      */
     private function resolve_mapping_runtime_settings( array $mapping, int $form_id ): array
     {
+        if ( $this->is_local_first_mapping( $mapping ) )
+        {
+            return $mapping;
+        }
+
         $action_id = isset( $mapping['central_action_id'] ) && is_scalar( $mapping['central_action_id'] )
             ? sanitize_key( (string) $mapping['central_action_id'] )
             : '';
@@ -2075,6 +2192,109 @@ HTML;
         $resolved['settings'] = $mapping_settings;
 
         return $resolved;
+    }
+
+    /**
+     * Merge local-first mapping table rows into the legacy form-settings shape used
+     * by the Gravity Forms planner while the admin UI is still being cut over.
+     *
+     * @param array<string, mixed> $settings Current form settings.
+     * @param mixed                $form_id  Gravity Forms form id.
+     *
+     * @return array<string, mixed>
+     */
+    private function merge_local_first_form_mappings( array $settings, mixed $form_id ): array
+    {
+        if ( ! class_exists( 'Sentient_Forms_Form_Mappings_Repository' ) )
+        {
+            return $settings;
+        }
+
+        $form_id_string = sanitize_text_field( (string) $form_id );
+        if ( '' === $form_id_string )
+        {
+            return $settings;
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $rows       = $repository->list_for_form( $this->get_id(), $form_id_string );
+        if ( empty( $rows ) )
+        {
+            return $settings;
+        }
+
+        if ( ! isset( $settings['actions'] ) || ! is_array( $settings['actions'] ) )
+        {
+            $settings['actions'] = [];
+        }
+
+        foreach ( $rows as $row )
+        {
+            $runtime_mapping = $this->normalize_local_first_form_mapping( $row );
+            if ( null === $runtime_mapping )
+            {
+                continue;
+            }
+
+            $mapping_id = (string) $runtime_mapping['local_mapping_id'];
+            $settings[ $mapping_id ] = $runtime_mapping;
+            $settings['actions'][ $mapping_id ] = $runtime_mapping;
+        }
+
+        return $settings;
+    }
+
+    /**
+     * Convert a local custom-table mapping row into the runtime mapping shape
+     * consumed by the existing Gravity Forms execution planner.
+     *
+     * @param array<string, mixed> $row Local mapping row.
+     *
+     * @return array<string, mixed>|null Runtime mapping or null when unsupported.
+     */
+    private function normalize_local_first_form_mapping( array $row ): ?array
+    {
+        $id = absint( $row['id'] ?? 0 );
+        if ( $id <= 0 )
+        {
+            return null;
+        }
+
+        $hook = sanitize_key( (string) ( $row['hook'] ?? '' ) );
+        if ( 'gform_after_submission' !== $hook )
+        {
+            return null;
+        }
+
+        if ( 'custom_action' !== sanitize_key( (string) ( $row['action_kind'] ?? '' ) ) )
+        {
+            return null;
+        }
+
+        $settings = [
+            'execution_mode' => 'sync' === sanitize_key( (string) ( $row['execution_mode'] ?? '' ) )
+                ? 'validation'
+                : 'after_submission',
+        ];
+
+        if ( isset( $row['conditions_json'] ) && is_array( $row['conditions_json'] ) )
+        {
+            $settings['conditions'] = $row['conditions_json'];
+        }
+
+        return [
+            'local_mapping_id'           => 'local_first_' . $id,
+            'local_form_mapping_id'      => $id,
+            'central_action_id'          => 'sentient_forms_local_custom_action',
+            'action_type_indicator'      => 'local_first',
+            'action_kind'                => 'custom_action',
+            'action_name_label'          => __( 'Local OpenRouter action', 'sentient-forms' ),
+            'is_action_enabled_for_form' => ! empty( $row['enabled'] ),
+            'trigger_hooks'              => [ $hook ],
+            'execution_priority'         => $id,
+            'settings'                   => $settings,
+        ];
     }
 
     /**
@@ -2363,7 +2583,14 @@ HTML;
             return gform_get_meta( $entry_id, $meta_key );
         } catch ( Exception $e )
         {
-            error_log( 'Sentient Forms: Error getting entry meta: ' . $e->getMessage() );
+            sentient_forms_debug_log(
+                'Sentient Forms could not get entry meta.',
+                [
+                    'entry_id'       => $entry_id,
+                    'entry_meta_key' => $meta_key,
+                    'error'          => $e->getMessage(),
+                ]
+            );
             return null;
         }
     }
@@ -2404,7 +2631,14 @@ HTML;
             return $result !== false;
         } catch ( Exception $e )
         {
-            error_log( 'Sentient Forms: Error updating entry meta: ' . $e->getMessage() );
+            sentient_forms_debug_log(
+                'Sentient Forms could not update entry meta.',
+                [
+                    'entry_id'       => $entry_id,
+                    'entry_meta_key' => $meta_key,
+                    'error'          => $e->getMessage(),
+                ]
+            );
             return false;
         }
     }
@@ -2436,7 +2670,14 @@ HTML;
             $entry = GFAPI::get_entry( $entry_id );
             if ( is_wp_error( $entry ) )
             {
-                error_log( 'Sentient Forms: Could not find entry ' . $entry_id . ': ' . $entry->get_error_message() );
+                sentient_forms_debug_log(
+                    'Sentient Forms could not find entry before marking spam.',
+                    [
+                        'entry_id'      => $entry_id,
+                        'error_code'    => $entry->get_error_code(),
+                        'error_message' => $entry->get_error_message(),
+                    ]
+                );
                 return false;
             }
 
@@ -2463,7 +2704,13 @@ HTML;
             return false;
         } catch ( Exception $e )
         {
-            error_log( 'Sentient Forms: Error marking entry as spam: ' . $e->getMessage() );
+            sentient_forms_debug_log(
+                'Sentient Forms could not mark entry as spam.',
+                [
+                    'entry_id' => $entry_id,
+                    'error'    => $e->getMessage(),
+                ]
+            );
             return false;
         }
     }
@@ -2496,7 +2743,14 @@ HTML;
             $entry = GFAPI::get_entry( $entry_id );
             if ( is_wp_error( $entry ) )
             {
-                error_log( 'Sentient Forms: Could not find entry ' . $entry_id . ': ' . $entry->get_error_message() );
+                sentient_forms_debug_log(
+                    'Sentient Forms could not find entry before rejecting submission.',
+                    [
+                        'entry_id'      => $entry_id,
+                        'error_code'    => $entry->get_error_code(),
+                        'error_message' => $entry->get_error_message(),
+                    ]
+                );
                 return false;
             }
 
@@ -2514,6 +2768,7 @@ HTML;
                     $entry_id,
                     'Sentient Forms AI',
                     sprintf(
+                        /* translators: %s: rejection reason. */
                         __( 'This submission was rejected by Sentient Forms AI for the following reason: %s', 'sentient-forms' ),
                         $message,
                     ),
@@ -2525,7 +2780,13 @@ HTML;
             return false;
         } catch ( Exception $e )
         {
-            error_log( 'Sentient Forms: Error rejecting submission: ' . $e->getMessage() );
+            sentient_forms_debug_log(
+                'Sentient Forms could not reject submission.',
+                [
+                    'entry_id' => $entry_id,
+                    'error'    => $e->getMessage(),
+                ]
+            );
             return false;
         }
     }
@@ -2554,11 +2815,24 @@ HTML;
                 $entry = GFAPI::get_entry( $entry_id );
                 if ( is_wp_error( $entry ) )
                 {
-                    error_log( 'Sentient Forms: Could not find entry ' . $entry_id . ': ' . $entry->get_error_message() );
+                    sentient_forms_debug_log(
+                        'Sentient Forms could not find entry before adding note.',
+                        [
+                            'entry_id'      => $entry_id,
+                            'error_code'    => $entry->get_error_code(),
+                            'error_message' => $entry->get_error_message(),
+                        ]
+                    );
                 }
             } catch ( Exception $e )
             {
-                error_log( 'Sentient Forms: Error getting entry: ' . $e->getMessage() );
+                sentient_forms_debug_log(
+                    'Sentient Forms could not get entry before adding note.',
+                    [
+                        'entry_id' => $entry_id,
+                        'error'    => $e->getMessage(),
+                    ]
+                );
             }
         }
 
@@ -2587,12 +2861,40 @@ HTML;
                 'system', // Note type
             );
 
+            if ( false !== $result )
+            {
+                $this->append_entry_note_fallback_meta( $entry_id, $note_author, $note_content );
+            }
+
             return $result !== false;
         } catch ( Exception $e )
         {
-            error_log( 'Sentient Forms: Error adding note: ' . $e->getMessage() );
+            sentient_forms_debug_log(
+                'Sentient Forms could not add entry note.',
+                [
+                    'entry_id' => $entry_id,
+                    'error'    => $e->getMessage(),
+                ]
+            );
             return false;
         }
+    }
+
+    private function append_entry_note_fallback_meta( mixed $entry_id, string $note_author, string $note_content ): void
+    {
+        $notes = $this->get_entry_meta( $entry_id, 'sentient_forms_notes' );
+        if ( ! is_array( $notes ) )
+        {
+            $notes = [];
+        }
+
+        $notes[] = [
+            'author'  => $note_author,
+            'content' => $note_content,
+            'date'    => current_time( 'mysql' ),
+        ];
+
+        $this->update_entry_meta( $entry_id, 'sentient_forms_notes', $notes );
     }
 
     private function add_entry_note_if_missing( mixed $entry_id, string $note_author, string $note_content ): bool
@@ -2748,7 +3050,13 @@ HTML;
             return $form;
         } catch ( Exception $e )
         {
-            error_log( 'Sentient Forms: Error retrieving form object: ' . $e->getMessage() );
+            sentient_forms_debug_log(
+                'Sentient Forms could not retrieve Gravity Forms form object.',
+                [
+                    'form_id' => $form_id,
+                    'error'   => $e->getMessage(),
+                ]
+            );
             return null;
         }
     }
@@ -2776,8 +3084,8 @@ HTML;
                 $entry_id,
                 'Sentient Forms AI',
                 sprintf(
-                    /* translators: %s is the action label */
-                    __( 'Sentient Forms finished %s. Result: %s', 'sentient-forms' ),
+                    /* translators: 1: action label, 2: result excerpt. */
+                    __( 'Sentient Forms finished %1$s. Result: %2$s', 'sentient-forms' ),
                     $this->get_async_action_label( $context ),
                     $excerpt,
                 ),
@@ -3097,6 +3405,7 @@ HTML;
             ];
         }
 
+        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- The hook name is an admin-configured local result effect and is sanitized before dispatch.
         do_action( $hook_name, $context, $result, $action, $entry_id );
 
         return [
@@ -3553,6 +3862,12 @@ HTML;
             return strtolower( (string) $result['result_data']['classification'] );
         }
 
+        // Check local-first OpenRouter structured result wrapper.
+        if ( isset( $result['result']['structured']['classification'] ) )
+        {
+            return strtolower( (string) $result['result']['structured']['classification'] );
+        }
+
         // Check top-level classification
         if ( isset( $result['classification'] ) )
         {
@@ -3911,16 +4226,14 @@ HTML;
     {
         if ( $this->should_suppress_notifications_for_entry( $entry ) )
         {
-            // Log suppression for debugging
-            if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
-            {
-                error_log( sprintf(
-                    'Sentient Forms: Suppressing notification "%s" for spam entry %d on form %d',
-                    $notification['name'] ?? 'unknown',
-                    $entry['id'] ?? 0,
-                    $form['id'] ?? 0
-                ) );
-            }
+            sentient_forms_debug_log(
+                'Sentient Forms suppressed notification for spam entry.',
+                [
+                    'notification_name' => $notification['name'] ?? 'unknown',
+                    'entry_id'          => $entry['id'] ?? 0,
+                    'form_id'           => $form['id'] ?? 0,
+                ]
+            );
 
             // Return false to suppress this notification entirely
             return false;
@@ -4030,7 +4343,12 @@ HTML;
         }
         else
         {
-            error_log( $message );
+            sentient_forms_debug_log(
+                'Sentient Forms async action failed without an entry context.',
+                [
+                    'message' => $message,
+                ]
+            );
         }
 
         // FR-008: Log failed action execution
@@ -4349,12 +4667,12 @@ HTML;
 
         if ( ! is_array( $form ) || ! is_array( $entry ) )
         {
-            error_log(
-                sprintf(
-                    'Sentient Forms: Unable to replay deferred notifications for entry %d on form %d.',
-                    $entry_id,
-                    $form_id,
-                )
+            sentient_forms_debug_log(
+                'Sentient Forms could not replay deferred notifications.',
+                [
+                    'entry_id' => $entry_id,
+                    'form_id'  => $form_id,
+                ]
             );
             return;
         }

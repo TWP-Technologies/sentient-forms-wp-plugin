@@ -1,225 +1,296 @@
 <script lang="ts">
-	import type { CreditBalanceResponse, LicenseInfoResponse } from '$lib/api/types';
-	import { Badge, Button, Card, QuotaCtaCallout, Section, StateTemplate } from '$lib/components/ui';
 	import { onMount } from 'svelte';
-	import {
-		buildCreditPresentation,
-		type CreditSeverity,
-		creditSeverityToBadgeVariant,
-		formatCreditSeverityLabel,
-		isConnectedLicenseStatus,
-		licenseStatusToBadgeVariant,
-		type QuotaCtaAction,
-		resolveTierDisplayName
-	} from '$lib/utils/license-health-presentation';
-	import { getNextCreditReset } from '$lib/utils/credits';
-	import { formatTimestamp } from '$lib/utils/date-time';
+	import { createClientFromConfig } from '$lib/api/client';
+	import type {
+		LocalActionTemplate,
+		LocalCustomActionRecord,
+		LocalExecutionEvent,
+		LocalProviderCredential,
+		LocalSupportBundle
+	} from '$lib/api/types';
+	import { Badge, Button, Card, Section, StateTemplate } from '$lib/components/ui';
 	import { navigateToAppPath } from '$lib/navigation';
-	import { loadLicenseInfoSnapshot } from '$lib/stores/license';
-	import { sessionStore, type LicenseStatus } from '$lib/stores/session';
-	import { wpFetch } from '$lib/wp';
+	import { formatTimestamp } from '$lib/utils/date-time';
+
+	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
+	type SettledResult<T> = PromiseSettledResult<T>;
+
+	const client = createClientFromConfig();
 
 	let loading = $state(true);
-	let error = $state<string | null>(null);
-	let licenseData = $state<LicenseInfoResponse | null>(null);
-	let creditData = $state<CreditBalanceResponse | null>(null);
+	let errors = $state<string[]>([]);
+	let providers = $state<LocalProviderCredential[]>([]);
+	let templates = $state<LocalActionTemplate[]>([]);
+	let customActions = $state<LocalCustomActionRecord[]>([]);
+	let recentEvents = $state<LocalExecutionEvent[]>([]);
+	let supportBundle = $state<LocalSupportBundle | null>(null);
 
-	let resetInfo = $derived(getNextCreditReset());
-	let creditPresentation = $derived(
-		buildCreditPresentation(creditData, resetInfo.summary, 'dashboard')
+	let openRouterCredential = $derived(
+		providers.find((credential) => credential.provider === 'openrouter' && credential.secret_configured)
 	);
-	let creditSeverityLabel = $derived(formatCreditSeverityLabel(creditPresentation.severity));
-	let creditSeverityVariant = $derived(creditSeverityToBadgeVariant(creditPresentation.severity));
-	let licenseStatusVariant = $derived(licenseStatusToBadgeVariant($sessionStore.licenseStatus));
-	let tierLabel = $derived(
-		resolveTierDisplayName(creditData?.tier ?? licenseData?.tier ?? null) ?? '—'
+	let openRouterStatus = $derived(openRouterCredential?.status ?? 'missing');
+	let successfulRuns = $derived(recentEvents.filter((event) => event.status === 'succeeded').length);
+	let failedRuns = $derived(recentEvents.filter((event) => event.status === 'failed').length);
+	let activeTemplates = $derived(templates.filter((template) => template.is_active).length);
+	let activeCustomActions = $derived(
+		customActions.filter((action) => action.status === 'active').length
 	);
-	let licenseSummaryText = $derived(
-		isConnectedLicenseStatus($sessionStore.licenseStatus)
-			? $sessionStore.proxyKeyPresent
-				? $sessionStore.licenseStatus === 'trial'
-					? 'Trial active'
-					: 'License active'
-				: $sessionStore.licenseStatus === 'trial'
-					? 'Trial active — proxy key missing'
-					: 'License active — proxy key missing'
-			: $sessionStore.licenseStatus === 'activating'
-				? 'Activating license…'
-				: $sessionStore.licenseStatus === 'error'
-					? 'Activation error'
-					: 'No active license'
+	let executionRetentionDays = $derived(
+		typeof supportBundle?.retention?.event_retention_days === 'number'
+			? supportBundle.retention.event_retention_days
+			: null
 	);
+	let latestEvent = $derived(recentEvents[0] ?? null);
 
-	async function fetchDashboardData() {
+	function rejectionMessage(result: SettledResult<unknown>, fallback: string): string | null {
+		if (result.status === 'fulfilled') {
+			return null;
+		}
+
+		return result.reason instanceof Error ? result.reason.message : fallback;
+	}
+
+	async function loadDashboardData(): Promise<void> {
 		loading = true;
-		error = null;
+		errors = [];
 
-		try {
-			licenseData = await loadLicenseInfoSnapshot();
+		const [
+			providerResult,
+			templateResult,
+			customActionResult,
+			eventResult,
+			supportBundleResult
+		] = await Promise.allSettled([
+			client.getLocalProviderCredentials({ showNotifications: false }),
+			client.getLocalActionTemplates({ showNotifications: false }),
+			client.getLocalCustomActions('active', { showNotifications: false }),
+			client.getLocalExecutionEvents(5, { showNotifications: false }),
+			client.getLocalSupportBundle({ showNotifications: false })
+		]);
 
-			if (isConnectedLicenseStatus(licenseData.status) && licenseData.proxy_key_present) {
-				try {
-					creditData = await wpFetch<CreditBalanceResponse>('credits/balance?force_refresh=1');
-				} catch (creditError) {
-					console.error('Failed to fetch dashboard credit balance', creditError);
-					creditData = null;
-					error = 'Credit details are temporarily unavailable.';
-				}
-			} else {
-				creditData = null;
-			}
+		if (providerResult.status === 'fulfilled') providers = providerResult.value;
+		if (templateResult.status === 'fulfilled') templates = templateResult.value;
+		if (customActionResult.status === 'fulfilled') customActions = customActionResult.value;
+		if (eventResult.status === 'fulfilled') recentEvents = eventResult.value;
+		if (supportBundleResult.status === 'fulfilled') supportBundle = supportBundleResult.value;
 
-			sessionStore.hydrate({
-				siteUrl: licenseData?.site_url ?? window.location.origin,
-				licenseStatus: (licenseData?.status as LicenseStatus) ?? 'inactive',
-				proxyKeyPresent: licenseData?.proxy_key_present ?? false,
-				creditsRemaining: creditData?.current_balance ?? null,
-				lastSync: licenseData?.last_synced ?? null
-			});
-		} catch (requestError) {
-			error =
-				requestError instanceof Error ? requestError.message : 'Failed to fetch dashboard data';
+		errors = [
+			rejectionMessage(providerResult, 'Provider health is unavailable.'),
+			rejectionMessage(templateResult, 'Template catalog is unavailable.'),
+			rejectionMessage(customActionResult, 'Custom actions are unavailable.'),
+			rejectionMessage(eventResult, 'Recent execution history is unavailable.'),
+			rejectionMessage(supportBundleResult, 'Local diagnostics are unavailable.')
+		].filter((message): message is string => Boolean(message));
 
-			sessionStore.hydrate({
-				siteUrl: window.location.origin,
-				licenseStatus: 'error',
-				proxyKeyPresent: false,
-				creditsRemaining: null,
-				lastSync: null
-			});
-		} finally {
-			loading = false;
+		loading = false;
+	}
+
+	function openRouterStatusLabel(status: string): string {
+		switch (status) {
+			case 'valid':
+				return 'OpenRouter ready';
+			case 'limited':
+				return 'OpenRouter limited';
+			case 'invalid':
+				return 'OpenRouter needs attention';
+			case 'disabled':
+				return 'OpenRouter disabled';
+			default:
+				return 'OpenRouter not connected';
 		}
 	}
 
-	function mapQuotaCalloutSeverity(severity: CreditSeverity): Exclude<CreditSeverity, 'normal'> {
-		return severity === 'normal' ? 'unknown' : severity;
+	function openRouterStatusVariant(status: string): BadgeVariant {
+		switch (status) {
+			case 'valid':
+				return 'success';
+			case 'limited':
+				return 'warning';
+			case 'invalid':
+			case 'disabled':
+				return 'danger';
+			default:
+				return 'neutral';
+		}
 	}
 
-	function resolveQuotaCalloutTitle(_severity: CreditSeverity): string {
-		return creditPresentation.calloutTitle;
-	}
-
-	function handleQuotaCtaAction(action: QuotaCtaAction) {
-		if (action === 'focus_licensing_billing') {
-			void navigateToAppPath('/licensing?focus=billing');
-			return;
-		}
-
-		if (action === 'navigate_licensing') {
-			void navigateToAppPath('/licensing');
-		}
+	function tableCount(tableSuffix: string): string {
+		const count = supportBundle?.local_tables?.[tableSuffix];
+		return typeof count === 'number' ? String(count) : '—';
 	}
 
 	onMount(() => {
-		void fetchDashboardData();
+		void loadDashboardData();
 	});
 </script>
 
 <Section
-	heading="Dashboard"
-	description="At-a-glance health for license status and credit availability."
+	heading="Local workspace"
+	description="Run AI actions from this WordPress site with your own provider key. Sentient billing stays optional."
 >
 	{#snippet actions()}
-		<Button variant="secondary" onclick={fetchDashboardData} disabled={loading}>
+		<Button variant="secondary" onclick={loadDashboardData} disabled={loading}>
 			{loading ? 'Refreshing...' : 'Refresh'}
 		</Button>
+		<Button onclick={() => navigateToAppPath('/providers')}>Connect OpenRouter</Button>
 	{/snippet}
 
-	{#if error}
+	{#if errors.length > 0}
 		<StateTemplate
 			variant="error"
-			title="Dashboard data is partially unavailable"
-			message={error}
+			title="Local workspace data is partially unavailable"
+			message={errors[0]}
 			actionLabel="Retry"
-			onAction={fetchDashboardData}
+			onAction={loadDashboardData}
 			testId="dashboard-error-state"
-		/>
+		>
+			{#if errors.length > 1}
+				<p class="sf:mt-2 sf:text-xs sf:text-danger-700">
+					{errors.length - 1} more local checks need attention.
+				</p>
+			{/if}
+		</StateTemplate>
 	{/if}
 
-	<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="dashboard-overview-card">
-		<div class="sf:grid sf:gap-6 sf:lg:grid-cols-2">
+	<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="dashboard-local-first-summary">
+		<div class="sf:grid sf:gap-6 sf:lg:grid-cols-[1.2fr_0.8fr]">
 			<div class="sf:space-y-3">
-				<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
-					License health
-				</p>
-				<p
-					class="sf:text-2xl sf:font-semibold sf:text-slate-900"
-					data-testid="dashboard-license-summary"
-				>
-					{licenseSummaryText}
-				</p>
 				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-					<span data-testid="dashboard-license-status">
-						<Badge variant={licenseStatusVariant}>
-							{$sessionStore.licenseStatus ?? 'unknown'}
-						</Badge>
-					</span>
-					<span class="sf:text-xs sf:text-slate-500">
-						Proxy key {$sessionStore.proxyKeyPresent ? 'present' : 'missing'}
-					</span>
+					<Badge variant={openRouterStatusVariant(openRouterStatus)}>
+						{openRouterStatusLabel(openRouterStatus)}
+					</Badge>
+					<Badge variant="info">Free path available</Badge>
+				</div>
+				<h3 class="sf:text-xl sf:font-semibold sf:text-slate-900">
+					{openRouterCredential?.label ?? 'Bring your own OpenRouter key'}
+				</h3>
+				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
+					OpenRouter direct mode keeps provider credentials and action data in WordPress. Sentient does not meter direct BYOK or free-model runs.
+				</p>
+				<div class="sf:flex sf:flex-wrap sf:gap-2">
+					<Button size="sm" onclick={() => navigateToAppPath('/providers')}>
+						{openRouterCredential ? 'Review provider' : 'Connect provider'}
+					</Button>
+					<Button size="sm" variant="secondary" onclick={() => navigateToAppPath('/actions')}>
+						Map a form
+					</Button>
 				</div>
 			</div>
 
-			<div class="sf:space-y-3">
-				<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
-					Credits
-				</p>
-				<p
-					class="sf:text-2xl sf:font-semibold sf:text-slate-900"
-					data-testid="dashboard-credits-headline"
-				>
-					{loading ? 'Loading credit balance…' : creditPresentation.headline}
-				</p>
-				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-					<span data-testid="dashboard-credits-severity">
-						<Badge variant={creditSeverityVariant}>
-							{creditSeverityLabel}
-						</Badge>
-					</span>
-					<span class="sf:text-xs sf:text-slate-500" data-testid="dashboard-reset-summary">
-						{resetInfo.summary}
-					</span>
+			<div class="sf:grid sf:grid-cols-2 sf:gap-x-6 sf:gap-y-4" data-testid="dashboard-local-counts">
+				<div class="sf:border-l sf:border-slate-300 sf:pl-3">
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Provider keys</p>
+					<p class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-provider-count">
+						{loading ? '...' : providers.length}
+					</p>
 				</div>
-				<p class="sf:text-sm sf:text-slate-600" data-testid="dashboard-credits-detail">
-					{loading ? 'Refreshing credit details…' : creditPresentation.detail}
-				</p>
-				{#if !loading && creditPresentation.quotaCta}
-					<QuotaCtaCallout
-						severity={mapQuotaCalloutSeverity(creditPresentation.severity)}
-						title={resolveQuotaCalloutTitle(creditPresentation.severity)}
-						message={creditPresentation.detail}
-						cta={creditPresentation.quotaCta}
-						onAction={handleQuotaCtaAction}
-						testId="dashboard-quota-cta-callout"
-						ctaTestId="dashboard-quota-cta-button"
-						reasonTestId="dashboard-quota-cta-reason"
-					/>
-				{/if}
+				<div class="sf:border-l sf:border-slate-300 sf:pl-3">
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Templates</p>
+					<p class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-template-count">
+						{loading ? '...' : activeTemplates}
+					</p>
+				</div>
+				<div class="sf:border-l sf:border-slate-300 sf:pl-3">
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Custom actions</p>
+					<p class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-custom-action-count">
+						{loading ? '...' : activeCustomActions}
+					</p>
+				</div>
+				<div class="sf:border-l sf:border-slate-300 sf:pl-3">
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Recent runs</p>
+					<p class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-execution-count">
+						{loading ? '...' : recentEvents.length}
+					</p>
+				</div>
 			</div>
 		</div>
 	</Card>
 
-	<div class="sf:grid sf:gap-4 sf:md:grid-cols-3">
-		<Card data-testid="dashboard-tier-card">
-			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Tier</h3>
-			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">
-				{loading ? 'Loading…' : tierLabel}
+	<div class="sf:grid sf:gap-4 sf:xl:grid-cols-3">
+		<Card data-testid="dashboard-openrouter-status">
+			<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
+				<div>
+					<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Direct provider</h3>
+					<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">
+						{openRouterStatusLabel(openRouterStatus)}
+					</p>
+				</div>
+				<Badge variant={openRouterStatusVariant(openRouterStatus)}>{openRouterStatus}</Badge>
+			</div>
+			<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
+				{openRouterCredential?.last_validated_at
+					? `Last checked ${formatTimestamp(openRouterCredential.last_validated_at)}`
+					: 'Validate a key before the first provider call.'}
 			</p>
 		</Card>
 
-		<Card data-testid="dashboard-last-sync-card">
-			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Last sync</h3>
-			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">
-				{loading ? 'Loading…' : formatTimestamp($sessionStore.lastSync)}
+		<Card data-testid="dashboard-free-path-card">
+			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Sentient charges</h3>
+			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">Direct OpenRouter: no</p>
+			<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
+				Managed billing belongs only to Sentient-hosted paid execution. BYOK and OpenRouter free models stay outside the Sentient meter.
 			</p>
 		</Card>
 
-		<Card data-testid="dashboard-site-card">
-			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Site</h3>
-			<p class="sf:mt-2 sf:text-sm sf:font-medium sf:text-slate-700 sf:break-all">
-				{$sessionStore.siteUrl || '—'}
+		<Card data-testid="dashboard-diagnostics-card">
+			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Local diagnostics</h3>
+			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">
+				{executionRetentionDays ? `${executionRetentionDays} day retention` : 'Retention not set'}
+			</p>
+			<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
+				Events table: {tableCount('sentient_execution_events')}. Providers table: {tableCount('sentient_provider_credentials')}.
 			</p>
 		</Card>
 	</div>
+
+	<Card title="Recent local runs" data-testid="dashboard-recent-runs-card">
+		{#if loading}
+			<StateTemplate variant="loading" title="Loading local runs" dense />
+		{:else if recentEvents.length === 0}
+			<StateTemplate
+				variant="empty"
+				title="No local runs yet"
+				message="Connect OpenRouter, map a form, then submit a test entry."
+				actionLabel="Open actions"
+				onAction={() => navigateToAppPath('/actions')}
+				dense
+			/>
+		{:else}
+			<div class="sf:space-y-3">
+				<div class="sf:flex sf:flex-wrap sf:gap-2">
+					<Badge variant="success">{successfulRuns} succeeded</Badge>
+					<Badge variant={failedRuns > 0 ? 'danger' : 'neutral'}>{failedRuns} failed</Badge>
+				</div>
+				<div class="sf:overflow-x-auto">
+					<table class="sf:min-w-full sf:divide-y sf:divide-slate-200 sf:text-sm">
+						<thead>
+							<tr class="sf:text-left sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-500">
+								<th class="sf:py-2 sf:pr-4">Status</th>
+								<th class="sf:py-2 sf:pr-4">Provider</th>
+								<th class="sf:py-2 sf:pr-4">Model</th>
+								<th class="sf:py-2">Created</th>
+							</tr>
+						</thead>
+						<tbody class="sf:divide-y sf:divide-slate-100">
+							{#each recentEvents as event}
+								<tr>
+									<td class="sf:py-2 sf:pr-4">
+										<Badge variant={event.status === 'failed' ? 'danger' : event.status === 'succeeded' ? 'success' : 'neutral'}>
+											{event.status ?? 'unknown'}
+										</Badge>
+									</td>
+									<td class="sf:py-2 sf:pr-4 sf:text-slate-700">{event.provider ?? '—'}</td>
+									<td class="sf:py-2 sf:pr-4 sf:text-slate-700">{event.model ?? '—'}</td>
+									<td class="sf:py-2 sf:text-slate-600">{formatTimestamp(event.created_at)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+				<p class="sf:text-xs sf:text-slate-500">
+					Latest request: {latestEvent?.execution_request_id ?? '—'}
+				</p>
+			</div>
+		{/if}
+	</Card>
 </Section>

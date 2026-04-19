@@ -140,8 +140,12 @@ class Sentient_Forms_Files_Controller extends Abstract_Sentient_Forms_Base_Contr
 			return true;
 		}
 
-		$handle = fopen( $path, 'rb' );
-		if ( false === $handle ) {
+		if ( ! function_exists( 'WP_Filesystem' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+		}
+
+		global $wp_filesystem;
+		if ( ! WP_Filesystem() || ! $wp_filesystem ) {
 			status_header( 500 );
 			echo wp_json_encode(
 				array(
@@ -152,10 +156,20 @@ class Sentient_Forms_Files_Controller extends Abstract_Sentient_Forms_Base_Contr
 			return true;
 		}
 
-		while ( ! feof( $handle ) ) {
-			echo fread( $handle, 8192 );
+		$content = $wp_filesystem->get_contents( $path );
+		if ( false === $content ) {
+			status_header( 500 );
+			echo wp_json_encode(
+				array(
+					'code'    => 'sf_pull_stream_failed',
+					'message' => __( 'Unable to stream the requested file.', 'sentient-forms' ),
+				)
+			);
+			return true;
 		}
-		fclose( $handle );
+
+		// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Authorized binary attachment content must be streamed as-is.
+		echo $content;
 
 		return true;
 	}

@@ -686,7 +686,12 @@ class Sentient_Forms_Entry_Evaluation_Action extends Sentient_Forms_Abstract_Act
 
         $form_title = $context_data['form_data']['form_title'] ?? (isset($context_data['form_id']) ? 'Form ID ' . $context_data['form_id'] : 'N/A');
 
-        $subject    = sprintf( __( '[%1$s] AI Evaluation for Submission to "%2$s"', 'sentient-forms' ), get_bloginfo( 'name' ), $form_title );
+        $subject    = sprintf(
+            /* translators: 1: site name, 2: form title. */
+            __( '[%1$s] AI Evaluation for Submission to "%2$s"', 'sentient-forms' ),
+            get_bloginfo( 'name' ),
+            $form_title
+        );
 
         $body       = $this->format_note_from_result( $result );
 

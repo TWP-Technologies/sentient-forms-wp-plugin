@@ -604,12 +604,28 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
     {
         if ( ! is_string( $value ) )
         {
-            return new WP_Error( 'rest_invalid_param', sprintf( __( '%s must be a string.', 'sentient-forms' ), $param ), [ 'status' => 400 ] );
+            return new WP_Error(
+                'rest_invalid_param',
+                sprintf(
+                    /* translators: %s: REST parameter name. */
+                    __( '%s must be a string.', 'sentient-forms' ),
+                    $param
+                ),
+                [ 'status' => 400 ]
+            );
         }
 
         if ( empty( $value ) || ! preg_match( self::LICENSE_KEY_REGEX_PATTERN, $value ) )
         {
-            return new WP_Error( 'rest_invalid_format', sprintf( __( '%s has an invalid format.', 'sentient-forms' ), $param ), [ 'status' => 400 ] );
+            return new WP_Error(
+                'rest_invalid_format',
+                sprintf(
+                    /* translators: %s: REST parameter name. */
+                    __( '%s has an invalid format.', 'sentient-forms' ),
+                    $param
+                ),
+                [ 'status' => 400 ]
+            );
         }
 
         return true;
@@ -684,6 +700,7 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
     private function get_licensing_client(): Sentient_Forms_Licensing_Api_Client
     {
         $default = 'https://api.sentientforms.com/v1';
+        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- The constant resolves to the static, prefixed sentient_forms_cps_api_base_url hook.
         $base    = apply_filters( self::CPS_BASE_URL_FILTER, $default );
 
         return new Sentient_Forms_Licensing_Api_Client( $base );

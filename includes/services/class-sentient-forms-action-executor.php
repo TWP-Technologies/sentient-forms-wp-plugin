@@ -110,7 +110,12 @@ class Sentient_Forms_Action_Executor {
 		);
 
 		if ( defined( 'SENTIENT_FORMS_DEBUG_CPS_PAYLOAD' ) && SENTIENT_FORMS_DEBUG_CPS_PAYLOAD ) {
-			error_log( '[sentient-forms] CPS payload: ' . wp_json_encode( $payload ) );
+			sentient_forms_debug_log(
+				'Sentient Forms CPS execution payload prepared.',
+				[
+					'payload' => $payload,
+				]
+			);
 		}
 
 		$response = $client->post(
@@ -207,7 +212,12 @@ class Sentient_Forms_Action_Executor {
 		);
 
 		if ( defined( 'SENTIENT_FORMS_DEBUG_CPS_PAYLOAD' ) && SENTIENT_FORMS_DEBUG_CPS_PAYLOAD ) {
-			error_log( '[sentient-forms] CPS async payload: ' . wp_json_encode( $payload ) );
+			sentient_forms_debug_log(
+				'Sentient Forms CPS async execution payload prepared.',
+				[
+					'payload' => $payload,
+				]
+			);
 		}
 
 		return $client->post(
@@ -277,7 +287,12 @@ class Sentient_Forms_Action_Executor {
 		);
 
 		if ( defined( 'SENTIENT_FORMS_DEBUG_CPS_PAYLOAD' ) && SENTIENT_FORMS_DEBUG_CPS_PAYLOAD ) {
-			error_log( '[sentient-forms] CPS suggest payload: ' . wp_json_encode( $payload ) );
+			sentient_forms_debug_log(
+				'Sentient Forms CPS suggest payload prepared.',
+				[
+					'payload' => $payload,
+				]
+			);
 		}
 
 		return $client->post(
@@ -918,7 +933,9 @@ class Sentient_Forms_Action_Executor {
 			return 'entry:' . (string) $entry['id'];
 		}
 
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification before this hook.
 		if ( isset( $_POST['gform_unique_id'] ) ) {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification before this hook.
 			$unique_id = sanitize_text_field( wp_unslash( (string) $_POST['gform_unique_id'] ) );
 			if ( ! empty( $unique_id ) ) {
 				return 'submission:' . $unique_id;

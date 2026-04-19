@@ -107,6 +107,7 @@ final class Sentient_Forms_Form_Sources
     {
         if ( !self::is_supported_source( $value ) )
         {
+            /* translators: 1: invalid form source slug, 2: comma-separated supported form source slugs. */
             $translated_text     = __( 'Invalid form source provided: "%1$s". Supported sources are: %2$s.', 'sentient-forms' );
             $invalid_form_source = esc_html( $value );
             $supported_sources   = implode( ', ', array_map( 'esc_html', self::get_supported_sources() ) );

@@ -174,7 +174,15 @@ class Sentient_Forms_Licensing_Api_Client
         if ( json_last_error() !== JSON_ERROR_NONE )
         {
             $error_message = json_last_error_msg();
-            return new WP_Error( 'license_invalid_json', sprintf( __( 'Invalid response from licensing service: %s', 'sentient-forms' ), $error_message ), [ 'status' => $status_code ] );
+            return new WP_Error(
+                'license_invalid_json',
+                sprintf(
+                    /* translators: %s: response parsing error message. */
+                    __( 'Invalid response from licensing service: %s', 'sentient-forms' ),
+                    $error_message
+                ),
+                [ 'status' => $status_code ]
+            );
         }
 
         if ( $status_code >= 200 && $status_code < 300 )

@@ -255,7 +255,7 @@ function runWpCli(args: string[], env: DockerEnv = {}): SpawnSyncReturns<string>
 	return runDocker(['exec', '-T', 'wordpress', 'wp', `--url=${wpBaseUrl}`, ...args], env);
 }
 
-function runWpEval(phpScript: string, env: DockerEnv = {}): string {
+export function runWpEval(phpScript: string, env: DockerEnv = {}): string {
 	const result = runWpCli(['eval', phpScript], env);
 	if (result.status !== 0) {
 		const message = stripCliNoise(result.stderr || result.stdout);

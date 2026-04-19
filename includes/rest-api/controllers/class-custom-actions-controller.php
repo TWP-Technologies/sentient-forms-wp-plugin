@@ -679,7 +679,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             {
                 return $this->prepare_error_response(
                     'rest_invalid_param',
-                    sprintf( __( 'definition.workflow.nodes[%d] must be an object.', 'sentient-forms' ), $index ),
+                    sprintf(
+                        /* translators: %d: workflow node index. */
+                        __( 'definition.workflow.nodes[%d] must be an object.', 'sentient-forms' ),
+                        $index
+                    ),
                     400,
                 );
             }
@@ -689,7 +693,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             {
                 return $this->prepare_error_response(
                     'rest_invalid_param',
-                    sprintf( __( 'definition.workflow.nodes[%d].node_id must be a non-empty string.', 'sentient-forms' ), $index ),
+                    sprintf(
+                        /* translators: %d: workflow node index. */
+                        __( 'definition.workflow.nodes[%d].node_id must be a non-empty string.', 'sentient-forms' ),
+                        $index
+                    ),
                     400,
                 );
             }
@@ -698,7 +706,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             {
                 return $this->prepare_error_response(
                     'rest_invalid_param',
-                    sprintf( __( "Duplicate workflow node_id '%s'.", 'sentient-forms' ), $node_id ),
+                    sprintf(
+                        /* translators: %s: workflow node id. */
+                        __( "Duplicate workflow node_id '%s'.", 'sentient-forms' ),
+                        $node_id
+                    ),
                     400,
                 );
             }
@@ -709,7 +721,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             {
                 return $this->prepare_error_response(
                     'rest_invalid_param',
-                    sprintf( __( 'definition.workflow.nodes[%d].kind must be llm_step, transform_step, or decision_step.', 'sentient-forms' ), $index ),
+                    sprintf(
+                        /* translators: %d: workflow node index. */
+                        __( 'definition.workflow.nodes[%d].kind must be llm_step, transform_step, or decision_step.', 'sentient-forms' ),
+                        $index
+                    ),
                     400,
                 );
             }
@@ -719,7 +735,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             {
                 return $this->prepare_error_response(
                     'rest_invalid_param',
-                    sprintf( __( 'definition.workflow.nodes[%d].output_key must be a non-empty string.', 'sentient-forms' ), $index ),
+                    sprintf(
+                        /* translators: %d: workflow node index. */
+                        __( 'definition.workflow.nodes[%d].output_key must be a non-empty string.', 'sentient-forms' ),
+                        $index
+                    ),
                     400,
                 );
             }
@@ -731,7 +751,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                 {
                     return $this->prepare_error_response(
                         'rest_invalid_param',
-                        sprintf( __( "definition.workflow.nodes[%d].prompt_template is required for kind='llm_step'.", 'sentient-forms' ), $index ),
+                        sprintf(
+                            /* translators: %d: workflow node index. */
+                            __( "definition.workflow.nodes[%d].prompt_template is required for kind='llm_step'.", 'sentient-forms' ),
+                            $index
+                        ),
                         400,
                     );
                 }
@@ -744,7 +768,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                 {
                     return $this->prepare_error_response(
                         'rest_invalid_param',
-                        sprintf( __( 'definition.workflow.nodes[%d].timeout_ms must be >= 1.', 'sentient-forms' ), $index ),
+                        sprintf(
+                            /* translators: %d: workflow node index. */
+                            __( 'definition.workflow.nodes[%d].timeout_ms must be >= 1.', 'sentient-forms' ),
+                            $index
+                        ),
                         400,
                     );
                 }
@@ -768,7 +796,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                 {
                     return $this->prepare_error_response(
                         'rest_invalid_param',
-                        sprintf( __( 'definition.workflow.edges[%d] must be an object.', 'sentient-forms' ), $index ),
+                        sprintf(
+                            /* translators: %d: workflow edge index. */
+                            __( 'definition.workflow.edges[%d] must be an object.', 'sentient-forms' ),
+                            $index
+                        ),
                         400,
                     );
                 }
@@ -780,7 +812,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                 {
                     return $this->prepare_error_response(
                         'rest_invalid_param',
-                        sprintf( __( 'definition.workflow.edges[%d].from and .to must be non-empty strings.', 'sentient-forms' ), $index ),
+                        sprintf(
+                            /* translators: %d: workflow edge index. */
+                            __( 'definition.workflow.edges[%d].from and .to must be non-empty strings.', 'sentient-forms' ),
+                            $index
+                        ),
                         400,
                     );
                 }
@@ -789,7 +825,12 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                 {
                     return $this->prepare_error_response(
                         'rest_invalid_param',
-                        sprintf( __( "definition.workflow.edges[%d] cannot be self-referential ('%s').", 'sentient-forms' ), $index, $from ),
+                        sprintf(
+                            /* translators: 1: workflow edge index, 2: workflow node id. */
+                            __( "definition.workflow.edges[%1\$d] cannot be self-referential ('%2\$s').", 'sentient-forms' ),
+                            $index,
+                            $from
+                        ),
                         400,
                     );
                 }
@@ -798,7 +839,12 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                 {
                     return $this->prepare_error_response(
                         'rest_invalid_param',
-                        sprintf( __( "definition.workflow.edges[%d].from references unknown node_id '%s'.", 'sentient-forms' ), $index, $from ),
+                        sprintf(
+                            /* translators: 1: workflow edge index, 2: workflow source node id. */
+                            __( "definition.workflow.edges[%1\$d].from references unknown node_id '%2\$s'.", 'sentient-forms' ),
+                            $index,
+                            $from
+                        ),
                         400,
                     );
                 }
@@ -807,7 +853,12 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                 {
                     return $this->prepare_error_response(
                         'rest_invalid_param',
-                        sprintf( __( "definition.workflow.edges[%d].to references unknown node_id '%s'.", 'sentient-forms' ), $index, $to ),
+                        sprintf(
+                            /* translators: 1: workflow edge index, 2: workflow target node id. */
+                            __( "definition.workflow.edges[%1\$d].to references unknown node_id '%2\$s'.", 'sentient-forms' ),
+                            $index,
+                            $to
+                        ),
                         400,
                     );
                 }
@@ -870,7 +921,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                     {
                         return $this->prepare_error_response(
                             'rest_invalid_param',
-                            sprintf( __( 'definition.workflow.retry_policy.backoff_ms[%d] must be >= 0.', 'sentient-forms' ), $index ),
+                            sprintf(
+                                /* translators: %d: retry backoff index. */
+                                __( 'definition.workflow.retry_policy.backoff_ms[%d] must be >= 0.', 'sentient-forms' ),
+                                $index
+                            ),
                             400,
                         );
                     }

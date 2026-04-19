@@ -32,6 +32,92 @@ const defaultCredits = {
 	}
 };
 
+const localProviderCredentials = [
+	{
+		id: 1,
+		provider: 'openrouter',
+		label: 'OpenRouter test key',
+		auth_mode: 'manual_key',
+		constant_name: null,
+		status: 'valid',
+		status_json: { is_free_tier: true },
+		last_validated_at: '2030-01-05T10:00:00Z',
+		created_at: '2030-01-05T09:00:00Z',
+		updated_at: '2030-01-05T10:00:00Z',
+		secret_configured: true
+	}
+];
+
+const localOpenRouterModelCatalog = {
+	provider: 'openrouter',
+	source: 'local_cache',
+	total_cached: 2,
+	total_returned: 2,
+	free_count: 1,
+	stale_count: 0,
+	models: [
+		{
+			id: 'openai/gpt-oss-20b:free',
+			name: 'OpenAI: GPT OSS 20B (free)',
+			free: true,
+			context_length: 131072,
+			input_modalities: ['text'],
+			output_modalities: ['text'],
+			supported_parameters: ['response_format', 'structured_outputs'],
+			pricing: { prompt: '0', completion: '0', request: '0' },
+			fetched_at: '2030-01-05T10:00:00Z',
+			expires_at: '2030-01-06T10:00:00Z',
+			stale: false
+		},
+		{
+			id: 'anthropic/claude-sonnet-4.5',
+			name: 'Anthropic: Claude Sonnet 4.5',
+			free: false,
+			context_length: 200000,
+			input_modalities: ['text', 'image'],
+			output_modalities: ['text'],
+			supported_parameters: ['tools'],
+			pricing: { prompt: '0.000003', completion: '0.000015' },
+			fetched_at: '2030-01-05T10:00:00Z',
+			expires_at: '2030-01-06T10:00:00Z',
+			stale: false
+		}
+	]
+};
+
+const localActionTemplates = [
+	{
+		id: 1,
+		source: 'bundled',
+		code: 'spam_detection',
+		display_name: 'Spam detection',
+		description: 'Detect unwanted submissions.',
+		prompt_template: 'Classify this entry.',
+		default_model: 'openrouter/free-model',
+		version: '1',
+		is_active: true
+	}
+];
+
+const localExecutionEvents = [
+	{
+		id: 1,
+		execution_request_id: 'run-responsive-1',
+		provider: 'openrouter',
+		model: 'openrouter/free-model',
+		status: 'succeeded',
+		created_at: '2030-01-05T10:00:00Z'
+	}
+];
+
+const localSupportBundle = {
+	retention: { event_retention_days: 90 },
+	local_tables: {
+		sentient_execution_events: 1,
+		sentient_provider_credentials: 1
+	}
+};
+
 const defaultBillingState = {
 	provider: 'stripe',
 	customer_id: 'cus_mock_123',
@@ -384,6 +470,50 @@ export async function mockResponsiveApi(
 
 		if (method === 'GET' && endpoint === 'credits/balance') {
 			return respondJson(route, defaultCredits);
+		}
+
+		if (method === 'GET' && endpoint === 'local/providers/credentials') {
+			return respondJson(route, localProviderCredentials);
+		}
+
+		if (method === 'POST' && endpoint === 'local/providers/openrouter/validate') {
+			return respondJson(route, {
+				provider: 'openrouter',
+				status: 'valid',
+				credential_id: 1,
+				key_status: { label: 'OpenRouter test key', is_free_tier: true },
+				consent_recorded: true,
+				consent_id: 1
+			});
+		}
+
+		if (method === 'GET' && endpoint === 'local/providers/openrouter/models') {
+			return respondJson(route, localOpenRouterModelCatalog);
+		}
+
+		if (method === 'POST' && endpoint === 'local/providers/openrouter/models/refresh') {
+			return respondJson(route, {
+				...localOpenRouterModelCatalog,
+				consent_recorded: true,
+				consent_id: 2,
+				stored: localOpenRouterModelCatalog.models.length
+			});
+		}
+
+		if (method === 'GET' && endpoint === 'local/action-templates') {
+			return respondJson(route, localActionTemplates);
+		}
+
+		if (method === 'GET' && endpoint === 'local/custom-actions') {
+			return respondJson(route, customActions);
+		}
+
+		if (method === 'GET' && endpoint === 'local/execution-events') {
+			return respondJson(route, localExecutionEvents);
+		}
+
+		if (method === 'GET' && endpoint === 'local/support-bundle') {
+			return respondJson(route, localSupportBundle);
 		}
 
 		if (method === 'GET' && endpoint === `${formSourceSlug}/forms`) {

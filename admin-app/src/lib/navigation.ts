@@ -5,6 +5,7 @@ import { browser } from '$app/environment';
 export type RouterType = 'hash' | 'pathname';
 export type NavigationLinkPath =
 	| '/dashboard'
+	| '/providers'
 	| '/licensing'
 	| '/actions'
 	| '/actions/log'
@@ -44,7 +45,7 @@ export const normalizeRoutePath = (path: string): string => {
 	return normalized;
 };
 
-const APP_ROUTE_PREFIXES = ['/', '/dashboard', '/licensing', '/actions', '/settings'] as const;
+const APP_ROUTE_PREFIXES = ['/', '/dashboard', '/providers', '/licensing', '/actions', '/settings'] as const;
 const ABSOLUTE_OR_PROTOCOL_RELATIVE_URL = /^(?:[a-z][a-z0-9+.-]*:)?\/\//i;
 
 export const isInternalAppPath = (path: string): boolean => {
@@ -61,6 +62,10 @@ export const isInternalAppPath = (path: string): boolean => {
 };
 
 const NAV_MATCHERS: Array<{ path: NavigationLinkPath; matches: (value: string) => boolean }> = [
+	{
+		path: '/providers',
+		matches: (value) => value === '/providers' || value.startsWith('/providers/')
+	},
 	{
 		path: '/actions/custom',
 		matches: (value) => value === '/actions/custom' || value.startsWith('/actions/custom/')

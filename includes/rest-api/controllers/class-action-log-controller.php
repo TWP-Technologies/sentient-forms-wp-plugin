@@ -566,11 +566,12 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
 
         if ( is_wp_error( $response ) && defined( 'WP_DEBUG' ) && WP_DEBUG )
         {
-            error_log(
-                sprintf(
-                    '[sentient-forms] failed to mirror execution audit to CPS: %s',
-                    $response->get_error_message()
-                )
+            sentient_forms_debug_log(
+                '[sentient-forms] failed to mirror execution audit to CPS.',
+                [
+                    'error_code'    => $response->get_error_code(),
+                    'error_message' => $response->get_error_message(),
+                ]
             );
         }
     }

@@ -8,6 +8,7 @@ if ( ! defined( 'ABSPATH' ) )
     exit;
 }
 
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Async idempotency records live in a plugin-owned custom table, not post/user/option metadata. WordPress core has no native CRUD/cache API for these rows; SQL is prepared and table names are escaped at each call site.
 class Sentient_Forms_Async_Request_Store
 {
     private const DEFAULT_TTL = DAY_IN_SECONDS;
@@ -29,8 +30,15 @@ class Sentient_Forms_Async_Request_Store
 
     public function get( string $request_hash, string $record_type = 'job' ): ?array
     {
-        $sql = $this->wpdb->prepare( "SELECT * FROM {$this->table()} WHERE request_hash = %s AND record_type = %s", $request_hash, $record_type );
-        $row = $this->wpdb->get_row( $sql, ARRAY_A );
+        $wpdb = $this->wpdb;
+        $row   = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT * FROM ' . esc_sql( $this->table() ) . ' WHERE request_hash = %s AND record_type = %s',
+                $request_hash,
+                $record_type
+            ),
+            ARRAY_A
+        );
         return $row ?: null;
     }
 
@@ -130,8 +138,13 @@ class Sentient_Forms_Async_Request_Store
     public function purge_older_than( int $timestamp ): int
     {
         $mysql = gmdate( 'Y-m-d H:i:s', $timestamp );
-        $sql   = $this->wpdb->prepare( "DELETE FROM {$this->table()} WHERE last_seen_at < %s", $mysql );
-        $this->wpdb->query( $sql );
+        $wpdb  = $this->wpdb;
+        $wpdb->query(
+            $wpdb->prepare(
+                'DELETE FROM ' . esc_sql( $this->table() ) . ' WHERE last_seen_at < %s',
+                $mysql
+            )
+        );
         return (int) $this->wpdb->rows_affected;
     }
 
@@ -141,18 +154,29 @@ class Sentient_Forms_Async_Request_Store
         $status = $args['status'] ?? null;
         $record_type = $args['record_type'] ?? 'job';
 
-        $where  = 'WHERE record_type = %s';
-        $params = [ $record_type ];
+        $wpdb = $this->wpdb;
+
         if ( $status )
         {
-            $where  .= ' AND status = %s';
-            $params[] = $status;
+            return $wpdb->get_results(
+                $wpdb->prepare(
+                    'SELECT * FROM ' . esc_sql( $this->table() ) . ' WHERE record_type = %s AND status = %s ORDER BY last_seen_at DESC LIMIT %d',
+                    $record_type,
+                    $status,
+                    $limit
+                ),
+                ARRAY_A
+            ) ?: [];
         }
 
-        $sql = "SELECT * FROM {$this->table()} {$where} ORDER BY last_seen_at DESC LIMIT %d";
-        $params[] = $limit;
-        $prepared = $this->wpdb->prepare( $sql, $params );
-        return $this->wpdb->get_results( $prepared, ARRAY_A ) ?: [];
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT * FROM ' . esc_sql( $this->table() ) . ' WHERE record_type = %s ORDER BY last_seen_at DESC LIMIT %d',
+                $record_type,
+                $limit
+            ),
+            ARRAY_A
+        ) ?: [];
     }
 
     public function enqueue_telemetry( string $event_type, array $payload ): string

@@ -2821,6 +2821,169 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         delete_option( $option_key );
     }
 
+    public function test_handle_after_submission_executes_local_openrouter_mapping_from_local_tables(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $vault          = new Sentient_Forms_Provider_Credential_Vault();
+        $secret         = 'sk-or-gf-local-submission-secret';
+        $encrypted      = $vault->encrypt( $secret );
+        $http_urls      = [];
+
+        $this->assertIsString( $encrypted );
+
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Submission smoke OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+
+        $consent_id = $consents->record( 'openrouter', '2026-04-17', 0 );
+        $this->assertIsInt( $consent_id );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'gf_local_openrouter_summary',
+                'display_name'         => 'GF Local OpenRouter Summary',
+                'definition_json'      => [
+                    'system_prompt'   => 'Summarize Gravity Forms entries.',
+                    'prompt_template' => 'Lead: {{name}} <{{email}}> on {{form.title}}',
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '321',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'name'  => '1',
+                    'email' => '2',
+                ],
+                'execution_mode'      => 'sync',
+                'effect_mapping_json' => [
+                    'store_result' => true,
+                    'meta'         => [
+                        'sentient_forms_summary' => 'structured.summary',
+                    ],
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $http_filter = static function ( $preempt, array $args, string $url ) use ( &$http_urls ): mixed {
+            $http_urls[] = $url;
+
+            if ( false !== strpos( $url, 'sentientforms.com' ) )
+            {
+                return new WP_Error( 'unexpected_sentient_request', 'Local-first submission tried to call Sentient.' );
+            }
+
+            if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+            {
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'chatcmpl-gf-local-submission',
+                            'model'   => 'openrouter/auto',
+                            'choices' => [
+                                [
+                                    'message'       => [
+                                        'role'    => 'assistant',
+                                        'content' => wp_json_encode(
+                                            [
+                                                'summary' => 'Local-first form submission completed.',
+                                            ]
+                                        ),
+                                    ],
+                                    'finish_reason' => 'stop',
+                                ],
+                            ],
+                            'usage'   => [
+                                'prompt_tokens'     => 11,
+                                'completion_tokens' => 6,
+                                'total_tokens'      => 17,
+                            ],
+                        ]
+                    ),
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'cookies'  => [],
+                ];
+            }
+
+            return $preempt;
+        };
+
+        add_filter( 'pre_http_request', $http_filter, 10, 3 );
+        $this->adapter->handle_after_submission_entry_post_save(
+            [
+                'id'      => 654,
+                'form_id' => 321,
+                '1'       => 'Local First Lead',
+                '2'       => 'local-first@example.test',
+            ],
+            [
+                'id'     => 321,
+                'title'  => 'Local First Proof Form',
+                'fields' => [],
+            ]
+        );
+        remove_filter( 'pre_http_request', $http_filter, 10 );
+
+        $this->assertSame( 'Local-first form submission completed.', gform_get_meta( 654, 'sentient_forms_summary' ) );
+        $this->assertIsArray( gform_get_meta( 654, '_sentient_forms_local_result' ) );
+
+        $recent_events = $events->list_recent( 1 );
+        $this->assertCount( 1, $recent_events );
+        $this->assertSame( 'succeeded', $recent_events[0]['status'] ?? null );
+        $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
+        $this->assertSame( '321', $recent_events[0]['form_id'] ?? null );
+        $this->assertSame( '654', $recent_events[0]['entry_id'] ?? null );
+        $this->assertSame( 'Local-first form submission completed.', $recent_events[0]['result_json']['structured']['summary'] ?? null );
+
+        $this->assertNotEmpty( $http_urls );
+        $this->assertContains(
+            true,
+            array_map(
+                static fn ( string $url ): bool => false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ),
+                $http_urls
+            )
+        );
+        foreach ( $http_urls as $url )
+        {
+            $this->assertStringNotContainsString( 'sentientforms.com', $url );
+        }
+    }
+
     // =========================================================================
     // CA-EXEC-001: Structured Output Tests
     // =========================================================================
@@ -2864,6 +3027,24 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         ];
         $excerpt_legacy = $method->invoke( $this->adapter, $result_legacy );
         $this->assertStringContainsString( 'Legacy output text', $excerpt_legacy );
+    }
+
+    private function truncate_local_first_runtime_tables(): void
+    {
+        global $wpdb;
+
+        foreach (
+            [
+                'sentient_provider_credentials',
+                'sentient_external_service_consents',
+                'sentient_custom_actions',
+                'sentient_form_mappings',
+                'sentient_execution_events',
+            ] as $table
+        )
+        {
+            $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
+        }
     }
 
 }

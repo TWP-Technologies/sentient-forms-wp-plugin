@@ -212,11 +212,13 @@ class Sentient_Forms_Llm_Controller extends Abstract_Sentient_Forms_Base_Control
             {
                 // Cache the API error for a short duration to prevent hammering the API
                 set_transient( self::API_ERROR_TRANSIENT_KEY, $response, self::API_ERROR_TRANSIENT_TTL );
-                // Log the API error for debugging if WP_DEBUG is on
-                if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
-                {
-                    error_log( 'Sentient Forms LLM API Error: ' . $response->get_error_message() );
-                }
+                sentient_forms_debug_log(
+                    'Sentient Forms LLM API returned an error.',
+                    [
+                        'error_code'    => $response->get_error_code(),
+                        'error_message' => $response->get_error_message(),
+                    ]
+                );
                 return $response;
             }
 
@@ -228,10 +230,12 @@ class Sentient_Forms_Llm_Controller extends Abstract_Sentient_Forms_Base_Control
                 // This indicates an unexpected response format from the API
                 $api_error = $this->prepare_error_response( 'invalid_response', __( 'Invalid data from CPS.', 'sentient-forms' ), 500 );
                 set_transient( self::API_ERROR_TRANSIENT_KEY, $api_error, self::API_ERROR_TRANSIENT_TTL );
-                if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
-                {
-                    error_log( 'Sentient Forms LLM API Invalid Response: ' . print_r( $response, true ) );
-                }
+                sentient_forms_debug_log(
+                    'Sentient Forms LLM API returned an invalid response.',
+                    [
+                        'response_type' => gettype( $response ),
+                    ]
+                );
                 return $api_error;
             }
 
@@ -241,18 +245,13 @@ class Sentient_Forms_Llm_Controller extends Abstract_Sentient_Forms_Base_Control
             // Cache the normalised data.
             set_transient( self::MODELS_TRANSIENT_KEY, $normalised_api_response, self::MODELS_TRANSIENT_TTL );
             $models_data = $normalised_api_response; // Ensure $models_data for subsequent filtering is the normalised data.
-            // Log cache miss and successful fetch if WP_DEBUG is on
-            if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
-            {
-                error_log( 'Sentient Forms LLM Cache: Miss. Fetched and cached new model data.' );
-            }
+            sentient_forms_debug_log( 'Sentient Forms LLM cache miss fetched fresh model data.' );
         }
         else
         {
-            // Log cache hit if WP_DEBUG is on
-            if ( defined( 'WP_DEBUG' ) && WP_DEBUG && !$force_refresh )
+            if ( !$force_refresh )
             {
-                error_log( 'Sentient Forms LLM Cache: Hit. Using cached model data.' );
+                sentient_forms_debug_log( 'Sentient Forms LLM cache hit used cached model data.' );
             }
         }
 
@@ -328,10 +327,12 @@ class Sentient_Forms_Llm_Controller extends Abstract_Sentient_Forms_Base_Control
         if ( !is_subclass_of( $enum_class, BackedEnum::class ) )
         {
             // This is a server-side configuration error.
-            if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
-            {
-                error_log( "Sentient Forms Developer Error: Invalid enum class provided to parse_enum_params: " . esc_html( $enum_class ) );
-            }
+            sentient_forms_debug_log(
+                'Sentient Forms invalid enum class provided to parse enum params.',
+                [
+                    'enum_class' => $enum_class,
+                ]
+            );
             return new WP_Error(
                 'rest_server_error', __( 'Server configuration error for parameter validation.', 'sentient-forms' ), [ 'status' => 500 ],
             );
@@ -363,8 +364,9 @@ class Sentient_Forms_Llm_Controller extends Abstract_Sentient_Forms_Base_Control
             $allowed_cases = array_map( fn( $case ) => $case->value, $enum_class::cases() );
             return new WP_Error(
                 'rest_invalid_param_value', sprintf(
+                /* translators: 1: invalid parameter values, 2: enum class name, 3: comma-separated allowed enum values. */
                 __(
-                    'Invalid value(s) for parameter: %s. Allowed values for %s are: %s.',
+                    'Invalid value(s) for parameter: %1$s. Allowed values for %2$s are: %3$s.',
                     'sentient-forms',
                 ),
                 implode( ', ', array_map( 'esc_html', $invalid_values ) ),

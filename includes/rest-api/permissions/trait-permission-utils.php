@@ -19,6 +19,7 @@ if ( !defined( 'ABSPATH' ) )
  * Trait Trait_Sentient_Forms_Permission_Utils
  * Contains common permission checking methods.
  */
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedTraitFound -- Legacy REST permission trait name is retained during the local-first cutover because existing controllers and tests import it directly.
 trait Trait_Sentient_Forms_Permission_Utils
 {
 
@@ -50,6 +51,7 @@ trait Trait_Sentient_Forms_Permission_Utils
     {
         if ( !current_user_can( $capability ) )
         {
+            /* translators: %s: required WordPress capability. */
             $default_message_format  = __( 'Sorry, you do not have permission to perform this action. Capability required: %s.', 'sentient-forms' );
             $message_capability_part = '`' . esc_html( $capability ) . '`';
             $final_message           = !empty( $context_message ) ? $context_message : sprintf( $default_message_format, $message_capability_part );

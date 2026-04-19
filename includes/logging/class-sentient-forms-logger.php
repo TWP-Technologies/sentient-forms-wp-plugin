@@ -153,7 +153,7 @@ class Sentient_Forms_Logger {
 		$max = max( 1, $this->max_files );
 		$oldest = $this->log_path . '.' . $max . '.gz';
 		if ( file_exists( $oldest ) ) {
-			@unlink( $oldest );
+			wp_delete_file( $oldest );
 		}
 
 		// Shift existing
@@ -161,7 +161,7 @@ class Sentient_Forms_Logger {
 			$src = $this->log_path . '.' . $i . '.gz';
 			$dst = $this->log_path . '.' . ( $i + 1 ) . '.gz';
 			if ( file_exists( $src ) ) {
-				@rename( $src, $dst );
+				$this->move_file( $src, $dst );
 			}
 		}
 
@@ -171,7 +171,18 @@ class Sentient_Forms_Logger {
 			if ( false !== $content ) {
 				file_put_contents( $this->log_path . '.1.gz', gzencode( $content, 6 ) );
 			}
-			@unlink( $this->log_path );
+			wp_delete_file( $this->log_path );
+		}
+	}
+
+	private function move_file( string $source, string $destination ): void {
+		if ( ! function_exists( 'WP_Filesystem' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+		}
+
+		global $wp_filesystem;
+		if ( WP_Filesystem() && $wp_filesystem ) {
+			$wp_filesystem->move( $source, $destination, true );
 		}
 	}
 }

@@ -10,6 +10,7 @@ if ( ! defined( 'ABSPATH' ) )
     exit;
 }
 
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- The one-time mapping migration discovers legacy plugin option keys directly from the options table. SQL is prepared and the table name is escaped at each call site.
 class Sentient_Forms_Mappings_Migration_Service
 {
     private const OPTION_PREFIX = 'sentient_forms_actions_';
@@ -243,12 +244,13 @@ class Sentient_Forms_Mappings_Migration_Service
             );
         }
 
-        $like  = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
-        $query = $wpdb->prepare(
-            "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s",
-            $like
+        $like = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
+        $keys = $wpdb->get_col(
+            $wpdb->prepare(
+                'SELECT option_name FROM ' . esc_sql( $wpdb->options ) . ' WHERE option_name LIKE %s',
+                $like
+            )
         );
-        $keys  = $wpdb->get_col( $query );
         if ( ! is_array( $keys ) )
         {
             return [];

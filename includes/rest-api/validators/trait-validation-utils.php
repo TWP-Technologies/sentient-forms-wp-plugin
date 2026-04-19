@@ -18,6 +18,7 @@ if ( !defined( 'ABSPATH' ) )
  * Trait Trait_Sentient_Forms_Validation_Utils
  * Contains common validation methods.
  */
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedTraitFound -- Legacy REST validation trait name is retained during the local-first cutover because existing validators and tests import it directly.
 trait Trait_Sentient_Forms_Validation_Utils
 {
 
@@ -38,6 +39,7 @@ trait Trait_Sentient_Forms_Validation_Utils
         string $error_code = 'rest_invalid_param',
         int    $status_code = 400,
     ): WP_Error {
+        /* translators: 1: parameter name, 2: validation error message. */
         $translated_text = __( 'Invalid parameter: %1$s. %2$s', 'sentient-forms' );
         $html            = esc_html( $param_name );
         $error_message   = sprintf( $translated_text, $html, $message );
@@ -216,6 +218,7 @@ trait Trait_Sentient_Forms_Validation_Utils
                 return $this->validation_error(
                     $param_name,
                     sprintf(
+                        /* translators: %s: comma-separated list of allowed protocols. */
                         __( 'URL must use one of the following protocols: %s.', 'sentient-forms' ),
                         implode( ', ', array_map( 'esc_html', $protocols ) ),
                     ),

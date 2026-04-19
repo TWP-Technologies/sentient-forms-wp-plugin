@@ -1,16 +1,25 @@
 {
     "name": "sentient/forms",
-  "require-dev": {
-    "phpunit/phpunit": "^9",
-    "wp-phpunit/wp-phpunit": "^6",
-    "yoast/phpunit-polyfills": "^4.0",
-    "squizlabs/php_codesniffer": "^3.10",
-    "wp-coding-standards/wpcs": "^3.0"
-  },
-  "scripts": {
-    "phpcs": "vendor/bin/phpcs --standard=phpcs-rulesets/SentientForms.xml",
-    "phpcbf": "vendor/bin/phpcbf --standard=phpcs-rulesets/SentientForms.xml"
-  },
+    "description": "WordPress plugin for local-first AI form automation.",
+    "license": "GPL-2.0-or-later",
+    "require-dev": {
+        "phpunit/phpunit": "^9",
+        "wp-phpunit/wp-phpunit": "^6",
+        "yoast/phpunit-polyfills": "^4.0",
+        "squizlabs/php_codesniffer": "^3.10",
+        "wp-coding-standards/wpcs": "^3.0"
+    },
+    "scripts": {
+        "phpcs": "vendor/bin/phpcs --standard=phpcs-rulesets/SentientForms.xml",
+        "phpcbf": "vendor/bin/phpcbf --standard=phpcs-rulesets/SentientForms.xml",
+        "wporg-build-package": "php scripts/build-wporg-package.php",
+        "wporg-license-audit": "php scripts/audit-wporg-licenses.php",
+        "wporg-license-audit-package": "php scripts/audit-wporg-licenses.php --package",
+        "wporg-readme-check": "php scripts/validate-wporg-readme.php --offline",
+        "wporg-readme-validate": "php scripts/validate-wporg-readme.php",
+        "wporg-scan": "php scripts/scan-wporg-package.php --source-tree",
+        "wporg-scan-package": "php scripts/scan-wporg-package.php"
+    },
     "config": {
         "allow-plugins": {
             "dealerdirect/phpcodesniffer-composer-installer": true

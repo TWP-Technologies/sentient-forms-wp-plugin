@@ -86,27 +86,32 @@ final class Sentient_Forms_Autoloader
             {
                 self::$class_map = $map_data;
 
-                // Optional: Log success or number of classes loaded for debugging.
-                if ( defined( 'WP_DEBUG' ) && WP_DEBUG )
-                {
-                    // Log the number of classes loaded for debugging.
-                    error_log( 'Sentient Forms Autoloader: Class map loaded successfully. ' . count( self::$class_map ) . ' classes mapped.' );
-                }
+                sentient_forms_debug_log(
+                    'Sentient Forms autoloader class map loaded.',
+                    [
+                        'class_count' => count( self::$class_map ),
+                    ]
+                );
             }
             else
             {
                 self::$class_map = []; // Initialize as empty array if map is invalid.
-                error_log(
-                    "Sentient Forms Autoloader Critical Error: Class map file at $this->class_map_file_path did not return an array. Autoloading will likely fail.",
+                sentient_forms_debug_log(
+                    'Sentient Forms autoloader class map did not return an array.',
+                    [
+                        'class_map_path' => $this->class_map_file_path,
+                    ]
                 );
             }
         }
         else
         {
             self::$class_map = []; // Initialize as empty array if map file doesn't exist.
-            // Log a critical error: class map file not found.
-            error_log(
-                "Sentient Forms Autoloader Critical Error: Class map file not found at $this->class_map_file_path. Please run the build script (e.g., php build/generate-classmap.php) to generate it. Autoloading will likely fail.",
+            sentient_forms_debug_log(
+                'Sentient Forms autoloader class map file was not found.',
+                [
+                    'class_map_path' => $this->class_map_file_path,
+                ]
             );
         }
     }
@@ -168,9 +173,12 @@ final class Sentient_Forms_Autoloader
         // so they should be absolute or correctly relative.
         if ( !file_exists( $file_path ) )
         {
-            // Log an error: class map points to a non-existent file.
-            error_log(
-                "Sentient Forms Autoloader Warning: Class map references a missing file for class $class_name at path: $file_path. The class map might be stale; try regenerating it.",
+            sentient_forms_debug_log(
+                'Sentient Forms autoloader class map references a missing file.',
+                [
+                    'class_name' => $class_name,
+                    'file_path'  => $file_path,
+                ]
             );
             return;
         }

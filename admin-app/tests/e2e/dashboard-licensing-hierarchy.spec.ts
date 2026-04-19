@@ -1,7 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
-import { expectAppUrl } from './utils/app-navigation';
 
 test.describe('Dashboard and Licensing hierarchy uplift', () => {
 	test.beforeEach(async ({ page }) => {
@@ -49,35 +48,97 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		);
 	});
 
-	test('dashboard emphasizes health and credits in the overview card', async ({ page }) => {
-		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
+	test('dashboard leads with local workspace and direct OpenRouter state', async ({ page }) => {
+		let licenseRequests = 0;
+		let creditRequests = 0;
+
+		await page.route('**/wp-json/sentient-forms/v1/license**', (route) => {
+			licenseRequests += 1;
+			return route.fulfill({
+				status: 418,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'dashboard should not require license state' })
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) => {
+			creditRequests += 1;
+			return route.fulfill({
+				status: 418,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'dashboard should not require credits' })
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
 			route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({
-					status: 'active',
-					license_key_masked: 'LIC-****-****-1234',
-					proxy_key_present: true,
-					tier: 'pro',
-					expires_at: '2030-01-01T00:00:00Z',
-					last_synced: '2030-01-05T10:00:00Z',
-					license_id: 'lic-1',
-					site_id: 'site-1',
-					site_url: 'https://example.test'
-				})
+				body: JSON.stringify([
+					{
+						id: 1,
+						provider: 'openrouter',
+						label: 'OpenRouter free key',
+						auth_mode: 'manual_key',
+						constant_name: null,
+						status: 'valid',
+						status_json: { is_free_tier: true },
+						last_validated_at: '2030-01-05T10:00:00Z',
+						created_at: '2030-01-05T09:00:00Z',
+						updated_at: '2030-01-05T10:00:00Z',
+						secret_configured: true
+					}
+				])
 			})
 		);
 
-		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
+		await page.route('**/wp-json/sentient-forms/v1/local/action-templates**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([
+					{ id: 1, code: 'spam_detection', display_name: 'Spam detection', is_active: true },
+					{ id: 2, code: 'entry_summary', display_name: 'Entry summary', is_active: true }
+				])
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/local/custom-actions**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([
+					{ id: 3, code: 'route_quote', display_name: 'Route quote', status: 'active' }
+				])
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/local/execution-events**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([
+					{
+						id: 4,
+						execution_request_id: 'run_1',
+						provider: 'openrouter',
+						model: 'openrouter/free-model',
+						status: 'succeeded',
+						created_at: '2030-01-05T10:00:00Z'
+					}
+				])
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/local/support-bundle**', (route) =>
 			route.fulfill({
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					current_balance: 875,
-					tier: {
-						code: 'pro',
-						display_name: 'Pro',
-						monthly_credit_quota: 1000
+					retention: { event_retention_days: 90 },
+					local_tables: {
+						sentient_execution_events: 1,
+						sentient_provider_credentials: 1
 					}
 				})
 			})
@@ -85,130 +146,50 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 
 		await page.goto('/#/dashboard', { waitUntil: 'networkidle' });
 
-		await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
-		await expect(page.getByTestId('dashboard-overview-card')).toBeVisible();
-		await expect(page.getByTestId('dashboard-license-summary')).toContainText('License active');
-		await expect(page.getByTestId('dashboard-license-status')).toContainText('active');
-		await expect(page.getByTestId('dashboard-credits-headline')).toContainText('875 / 1000 credits remaining');
-		await expect(page.getByTestId('dashboard-credits-severity')).toContainText('Healthy');
-		await expect(page.getByTestId('dashboard-reset-summary')).toContainText('Resets');
-		await expect(page.getByTestId('dashboard-quota-cta-callout')).toHaveCount(0);
+		await expect(page.getByRole('heading', { name: 'Local workspace' })).toBeVisible();
+		await expect(page.getByTestId('dashboard-local-first-summary')).toContainText(
+			'OpenRouter ready'
+		);
+		await expect(page.getByTestId('dashboard-provider-count')).toContainText('1');
+		await expect(page.getByTestId('dashboard-template-count')).toContainText('2');
+		await expect(page.getByTestId('dashboard-custom-action-count')).toContainText('1');
+		await expect(page.getByTestId('dashboard-execution-count')).toContainText('1');
+		await expect(page.getByTestId('dashboard-free-path-card')).toContainText('Direct OpenRouter: no');
+		await expect(page.getByText('License health')).toHaveCount(0);
+		await expect(page.getByText(/credits remaining/i)).toHaveCount(0);
+		expect(licenseRequests).toBe(0);
+		expect(creditRequests).toBe(0);
 	});
 
-		test('dashboard surfaces exhausted credits urgency in overview copy', async ({ page }) => {
-		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					status: 'active',
-					license_key_masked: 'LIC-****-****-1234',
-					proxy_key_present: true,
-					tier: 'starter',
-					expires_at: '2030-01-01T00:00:00Z',
-					last_synced: '2030-01-05T10:00:00Z',
-					license_id: 'lic-1',
-					site_id: 'site-1',
-					site_url: 'https://example.test'
-				})
-			})
-		);
-
-		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					current_balance: 0,
-					tier: {
-						code: 'starter',
-						display_name: 'Starter',
-						monthly_credit_quota: 100
-					}
-				})
-			})
-		);
-
-		await page.goto('/#/dashboard', { waitUntil: 'networkidle' });
-
-		await expect(page.getByTestId('dashboard-credits-headline')).toContainText('No credits remaining');
-		await expect(page.getByTestId('dashboard-credits-severity')).toContainText('Exhausted');
-		await expect(page.getByTestId('dashboard-credits-detail')).toContainText('Actions may pause');
-			await expect(page.getByTestId('dashboard-quota-cta-callout')).toBeVisible();
-			await expect(page.getByTestId('dashboard-quota-cta-reason')).toContainText(
-				'Open Licensing to review current credit status and buy top-up credits.'
-			);
-			await expect(page.getByTestId('dashboard-quota-cta-button')).toBeEnabled();
-
-		await page.getByTestId('dashboard-quota-cta-button').click();
-		await expectAppUrl(page, '/licensing');
-		await expect(page.getByRole('heading', { name: 'License management' })).toBeVisible();
-			await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
-			await expect(page.getByTestId('licensing-quota-cta-button')).toBeEnabled();
-		});
-
-		test('dashboard distinguishes negative carry debt from ordinary zero balance', async ({ page }) => {
-			await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
-				route.fulfill({
-					status: 200,
-					contentType: 'application/json',
-					body: JSON.stringify({
-						status: 'active',
-						license_key_masked: 'LIC-****-****-1234',
-						proxy_key_present: true,
-						tier: 'starter',
-						expires_at: '2030-01-01T00:00:00Z',
-						last_synced: '2030-01-05T10:00:00Z',
-						license_id: 'lic-1',
-						site_id: 'site-1',
-						site_url: 'https://example.test'
-					})
-				})
-			);
-
-			await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
-				route.fulfill({
-					status: 200,
-					contentType: 'application/json',
-					body: JSON.stringify({
-						current_balance: -4,
-						tier: {
-							code: 'starter',
-							display_name: 'Starter',
-							monthly_credit_quota: 100
-						}
-					})
-				})
-			);
-
-			await page.goto('/#/dashboard', { waitUntil: 'networkidle' });
-
-			await expect(page.getByTestId('dashboard-credits-headline')).toContainText(
-				'Negative balance: -4 credits'
-			);
-			await expect(page.getByTestId('dashboard-credits-detail')).toContainText(
-				'New runs are paused until the balance returns to zero or above.'
-			);
-			await expect(page.getByTestId('dashboard-quota-cta-callout')).toContainText(
-				'Negative credit balance'
-			);
-			await expect(page.getByTestId('dashboard-quota-cta-button')).toContainText('Resolve balance');
-		});
-
-	test('dashboard shows shared error state when both dashboard requests fail', async ({ page }) => {
-		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
+	test('dashboard surfaces local endpoint failures without reverting to license copy', async ({ page }) => {
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
 			route.fulfill({
 				status: 500,
 				contentType: 'application/json',
-				body: JSON.stringify({ success: false, message: 'license unavailable' })
+				body: JSON.stringify({ message: 'provider storage unavailable' })
 			})
 		);
 
-		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
+		for (const endpoint of [
+			'action-templates',
+			'custom-actions',
+			'execution-events',
+			'support-bundle'
+		]) {
+			await page.route(`**/wp-json/sentient-forms/v1/local/${endpoint}**`, (route) =>
+				route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: endpoint === 'support-bundle' ? JSON.stringify({}) : JSON.stringify([])
+				})
+			);
+		}
+
+		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
 			route.fulfill({
-				status: 500,
+				status: 418,
 				contentType: 'application/json',
-				body: JSON.stringify({ success: false, message: 'credits unavailable' })
+				body: JSON.stringify({ message: 'dashboard should not require license state' })
 			})
 		);
 
@@ -216,9 +197,71 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 
 		await expect(page.getByTestId('dashboard-error-state')).toBeVisible();
 		await expect(page.getByTestId('dashboard-error-state')).toContainText(
-			'Dashboard data is partially unavailable'
+			'Local workspace data is partially unavailable'
 		);
-		await expect(page.getByTestId('dashboard-error-state')).toContainText('Retry');
+		await expect(page.getByText('License health')).toHaveCount(0);
+	});
+
+	test('providers validates OpenRouter with disclosure acceptance', async ({ page }) => {
+		let validatePayload: Record<string, unknown> | null = null;
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([])
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/openrouter/models**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					provider: 'openrouter',
+					source: 'local_cache',
+					total_cached: 0,
+					total_returned: 0,
+					free_count: 0,
+					stale_count: 0,
+					models: []
+				})
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/openrouter/validate**', async (route) => {
+			validatePayload = route.request().postDataJSON() as Record<string, unknown>;
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					provider: 'openrouter',
+					status: 'valid',
+					credential_id: 12,
+					key_status: { label: 'test key', is_free_tier: true },
+					consent_recorded: true,
+					consent_id: 44
+				})
+			});
+		});
+
+		await page.goto('/#/providers', { waitUntil: 'networkidle' });
+
+		await expect(page.getByRole('heading', { name: 'Providers' })).toBeVisible();
+		await page.getByLabel('API key').fill('sk-or-test');
+		await page.getByLabel(/I understand OpenRouter receives/).check();
+		await page.getByRole('button', { name: 'Validate key' }).click();
+
+		await expect(page.getByTestId('providers-openrouter-validation-result')).toContainText('Ready');
+		await expect(page.getByTestId('providers-openrouter-validation-result')).toContainText(
+			'Saved credential #12'
+		);
+		expect(validatePayload).toMatchObject({
+			api_key: 'sk-or-test',
+			save: true,
+			disclosure_version: '2026-04-local-first-openrouter-v1',
+			accepted_external_service_terms: true
+		});
 	});
 
 	test('licensing active screen leads with status, tier, credits, and reset timing', async ({ page }) => {

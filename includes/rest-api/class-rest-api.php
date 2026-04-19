@@ -78,6 +78,8 @@ final class Sentient_Forms_REST_API
             Sentient_Forms_Form_Controller::class,
             Sentient_Forms_License_Controller::class,
             Sentient_Forms_Llm_Controller::class,
+            Sentient_Forms_Local_Providers_Controller::class,
+            Sentient_Forms_Local_Workspace_Controller::class,
             Sentient_Forms_Mappings_Controller::class,
             Sentient_Forms_Meta_Controller::class,
             Sentient_Forms_Settings_Controller::class,
@@ -91,7 +93,12 @@ final class Sentient_Forms_REST_API
             // Check if class exists before adding. Autoloader should attempt to load it here.
             if ( !class_exists( $class_name ) )
             {
-                error_log( "Sentient Forms REST API: Core controller class $class_name not found and will be skipped." );
+                sentient_forms_debug_log(
+                    'Sentient Forms REST API core controller class was not found.',
+                    [
+                        'class_name' => $class_name,
+                    ]
+                );
                 continue;
             }
 
@@ -126,15 +133,23 @@ final class Sentient_Forms_REST_API
         {
             if ( !is_string( $controller_class ) || !class_exists( $controller_class ) )
             {
-                error_log( "Sentient Forms REST API: Invalid or non-existent controller class provided: " . print_r( $controller_class, true ) );
+                sentient_forms_debug_log(
+                    'Sentient Forms REST API received an invalid controller class.',
+                    [
+                        'controller_type' => gettype( $controller_class ),
+                    ]
+                );
                 continue;
             }
 
             // Check if the class is a subclass of the abstract base controller.
             if ( !is_subclass_of( $controller_class, Abstract_Sentient_Forms_Base_Controller::class ) )
             {
-                error_log(
-                    "Sentient Forms REST API: Controller class $controller_class does not extend Abstract_Sentient_Forms_Base_Controller.",
+                sentient_forms_debug_log(
+                    'Sentient Forms REST API controller does not extend the base controller.',
+                    [
+                        'controller_class' => $controller_class,
+                    ]
                 );
                 continue;
             }
@@ -158,7 +173,12 @@ final class Sentient_Forms_REST_API
             // `register_routes` as abstract. However, it's a safe check.
             if ( !method_exists( $controller, 'register_routes' ) )
             {
-                error_log( sprintf( "Sentient Forms REST API: Controller %s does not have a register_routes method.", get_class( $controller ) ) );
+                sentient_forms_debug_log(
+                    'Sentient Forms REST API controller does not have a register_routes method.',
+                    [
+                        'controller_class' => get_class( $controller ),
+                    ]
+                );
                 continue;
             }
 

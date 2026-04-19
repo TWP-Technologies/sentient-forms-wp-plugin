@@ -18,6 +18,7 @@ if ( !defined( 'ABSPATH' ) )
  * Abstract Class Abstract_Sentient_Forms_Base_Controller
  * Base class for all Sentient Forms REST API controllers.
  */
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedClassFound -- Legacy abstract REST base name is retained during the local-first cutover because all existing controllers inherit it.
 abstract class Abstract_Sentient_Forms_Base_Controller
 {
 
