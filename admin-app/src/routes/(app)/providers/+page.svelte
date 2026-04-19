@@ -5,10 +5,15 @@
 		LocalCustomActionRecord,
 		LocalFormMappingRecord,
 		LocalProviderCredential,
+		ModelSelection,
 		OpenRouterModelsResponse,
-		OpenRouterValidateResponse
+		OpenRouterValidateResponse,
+		ResolvedModelSelection
 	} from '$lib/api/types';
+	import { unwrapRestResponse, type RestEnvelope } from '$lib/api/response';
+	import ModelSelector from '$lib/components/ui/model-selector.svelte';
 	import { Badge, Button, Card, InputField, Section, StateTemplate } from '$lib/components/ui';
+	import { cloneDefaultModelSelection } from '$lib/utils/action-config';
 	import { formatTimestamp } from '$lib/utils/date-time';
 	import {
 		isReadyOpenRouterCredential,
@@ -19,6 +24,7 @@
 		providerStatusLabel,
 		providerStatusVariant
 	} from '$lib/utils/provider-health';
+	import { wpFetch } from '$lib/wp';
 
 	type LocalSubmissionSetupResult = {
 		action: LocalCustomActionRecord;
@@ -46,6 +52,7 @@
 	let setupEmailFieldId = $state('2');
 	let setupResultMetaKey = $state('sentient_forms_summary');
 	let setupActionName = $state('Local OpenRouter summary');
+	let setupModelSelection = $state<ModelSelection>(cloneDefaultModelSelection());
 	let setupExecutionMode = $state<LocalSetupExecutionMode>('sync');
 	let localSetupError = $state<string | null>(null);
 	let localSetupResult = $state<LocalSubmissionSetupResult | null>(null);
@@ -220,6 +227,31 @@
 		return /^[A-Za-z0-9_:-]+$/.test(value);
 	}
 
+	async function resolveSetupModelSelection(): Promise<ResolvedModelSelection> {
+		const response = await wpFetch<ResolvedModelSelection | RestEnvelope<ResolvedModelSelection>>(
+			'models/resolve',
+			{
+				method: 'POST',
+				body: {
+					action_selection: setupModelSelection,
+					template_model_hint: 'openrouter/auto'
+				},
+				showNotifications: false
+			}
+		);
+		const resolved = unwrapRestResponse<ResolvedModelSelection>(response);
+
+		if (!resolved?.model_id) {
+			throw new Error('Local model policy did not return a usable OpenRouter model.');
+		}
+
+		return resolved;
+	}
+
+	function handleSetupModelSelectionChange(selection: ModelSelection) {
+		setupModelSelection = selection;
+	}
+
 	async function createLocalSubmissionSetup(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
 
@@ -257,6 +289,7 @@
 		creatingLocalSetup = true;
 
 		try {
+			const resolvedModel = await resolveSetupModelSelection();
 			const timestamp = Date.now();
 			const action = await client.createLocalCustomAction(
 				{
@@ -273,8 +306,11 @@
 					},
 					model_selection_json: {
 						provider: 'openrouter',
-						model: 'openrouter/auto',
-						credential_id: credential.id
+						model: resolvedModel.model_id,
+						credential_id: credential.id,
+						selection: setupModelSelection,
+						resolution_source: resolvedModel.resolution_source,
+						policy_hint: 'local_models_resolve'
 					},
 					status: 'active'
 				},
@@ -713,6 +749,16 @@
 							<option value="async">Background after submission</option>
 						</select>
 					</div>
+				</div>
+
+				<div data-testid="local-setup-model-selector">
+					<ModelSelector
+						value={setupModelSelection}
+						label="Local model policy"
+						level="action"
+						templateModelHint="openrouter/auto"
+						onchange={handleSetupModelSelectionChange}
+					/>
 				</div>
 
 				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">

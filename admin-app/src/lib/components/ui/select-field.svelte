@@ -3,6 +3,8 @@
 	import type { HTMLSelectAttributes } from 'svelte/elements';
 	import type { SelectOption } from './types';
 
+	type SelectFieldChangeEvent = Event & { currentTarget: HTMLSelectElement };
+
 	interface Props {
 		id: string;
 		label: string;
@@ -16,6 +18,7 @@
 		placeholder?: string | undefined;
 		value?: HTMLSelectAttributes['value'];
 		selectClass?: string;
+		onchange?: (event: SelectFieldChangeEvent) => void;
 		[key: string]: any;
 	}
 
@@ -32,6 +35,7 @@
 		placeholder = undefined,
 		value = $bindable(''),
 		selectClass = '',
+		onchange,
 		...rest
 	}: Props = $props();
 
@@ -43,12 +47,17 @@
 		]
 			.filter(Boolean)
 			.join(' ') || undefined;
+
+	function handleChange(event: SelectFieldChangeEvent) {
+		value = event.currentTarget.value;
+		onchange?.(event);
+	}
 </script>
 
 <FormField {id} {label} {description} {help} {error} {required}>
 	<select
 		{value}
-		onchange={(e) => (value = e.currentTarget.value)}
+		onchange={handleChange}
 		aria-describedby={describedBy}
 		aria-invalid={error ? true : undefined}
 		class={`sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:disabled:bg-muted-100 sf:disabled:text-muted-400 ${selectClass}`}

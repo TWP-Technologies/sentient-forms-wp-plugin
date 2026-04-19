@@ -264,6 +264,208 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		});
 	});
 
+	test('providers local setup resolves the selected local model policy', async ({ page }) => {
+		let resolvePayload: Record<string, unknown> | null = null;
+		let createdActionPayload: Record<string, unknown> | null = null;
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([
+					{
+						id: 42,
+						provider: 'openrouter',
+						label: 'OpenRouter ready key',
+						auth_mode: 'manual_key',
+						constant_name: null,
+						status: 'valid',
+						status_json: null,
+						last_validated_at: '2030-01-05T10:00:00Z',
+						created_at: '2030-01-05T09:00:00Z',
+						updated_at: '2030-01-05T10:00:00Z',
+						secret_configured: true
+					}
+				])
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/openrouter/models**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					provider: 'openrouter',
+					source: 'local_cache',
+					total_cached: 1,
+					total_returned: 1,
+					free_count: 1,
+					stale_count: 0,
+					models: [
+						{
+							id: 'openai/gpt-oss-20b:free',
+							name: 'OpenAI: GPT OSS 20B (free)',
+							free: true,
+							context_length: 131072,
+							input_modalities: ['text'],
+							output_modalities: ['text'],
+							supported_parameters: ['response_format'],
+							pricing: { prompt: '0', completion: '0' },
+							fetched_at: '2030-01-05T10:00:00Z',
+							expires_at: '2030-01-06T10:00:00Z',
+							stale: false
+						}
+					]
+				})
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/models', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					models: [
+						{
+							id: 'openai/gpt-oss-20b:free',
+							display_name: 'OpenAI GPT OSS 20B Free',
+							provider: 'openrouter',
+							speed_tier: 'fast',
+							cost_tier: 'free',
+							capabilities: {
+								reasoning: false,
+								code: false,
+								vision: false,
+								tools: false,
+								long_context: true
+							},
+							context_window: 131072,
+							is_preview: false,
+							tags: ['free'],
+							recommended_for: ['summary']
+						}
+					],
+					presets: [
+						{
+							code: 'sf_default',
+							display_name: 'Default',
+							description: 'Use the default local policy.',
+							category: 'general',
+							resolved_model_id: 'openrouter/auto',
+							auto_upgrade: true
+						},
+						{
+							code: 'sf_free',
+							display_name: 'Free OpenRouter',
+							description: 'Prefer a locally cached free OpenRouter model.',
+							category: 'cost',
+							resolved_model_id: 'openai/gpt-oss-20b:free',
+							auto_upgrade: false
+						}
+					],
+					pricing_policy_version: 'local-openrouter-v1'
+				})
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/models/resolve', async (route) => {
+			resolvePayload = route.request().postDataJSON() as Record<string, unknown>;
+
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					model_id: 'openai/gpt-oss-20b:free',
+					display_name: 'OpenAI GPT OSS 20B Free',
+					resolution_source: 'preset',
+					override_chain: [
+						{
+							level: 'action',
+							selection: 'sf_free',
+							applied: true,
+							reason: 'Selected local provider setup preset.'
+						}
+					],
+					backup_model_id: null
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/local/custom-actions', async (route) => {
+			createdActionPayload = route.request().postDataJSON() as Record<string, unknown>;
+
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					id: 81,
+					external_id: null,
+					template_id: null,
+					code: 'local_openrouter_summary_1',
+					display_name: 'Local OpenRouter summary',
+					definition_json: {},
+					model_selection_json:
+						(createdActionPayload?.model_selection_json as Record<string, unknown>) ?? null,
+					status: 'active',
+					created_at: '2030-01-05T10:00:00Z',
+					updated_at: '2030-01-05T10:00:00Z'
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/local/form-mappings', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					id: 91,
+					external_id: null,
+					form_source: 'gravity_forms',
+					form_id: '123',
+					hook: 'gform_after_submission',
+					action_kind: 'custom_action',
+					action_id: 81,
+					input_bindings_json: {},
+					condition_json: null,
+					execution_mode: 'sync',
+					effect_mapping_json: {},
+					enabled: true,
+					created_at: '2030-01-05T10:00:00Z',
+					updated_at: '2030-01-05T10:00:00Z'
+				})
+			})
+		);
+
+		await page.goto('/#/providers', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('local-setup-model-selector')).toBeVisible();
+		await page.getByLabel('Preset').selectOption('sf_free');
+		await page.getByTestId('local-setup-form-id').fill('123');
+		await page.getByTestId('local-setup-submit').click();
+
+		await expect(page.getByTestId('local-setup-result')).toContainText('Action #81');
+		expect(resolvePayload).toMatchObject({
+			action_selection: {
+				primary: 'sf_free',
+				is_preset: true
+			},
+			template_model_hint: 'openrouter/auto'
+		});
+		expect(createdActionPayload).toMatchObject({
+			model_selection_json: {
+				provider: 'openrouter',
+				model: 'openai/gpt-oss-20b:free',
+				credential_id: 42,
+				resolution_source: 'preset',
+				policy_hint: 'local_models_resolve',
+				selection: {
+					primary: 'sf_free',
+					is_preset: true
+				}
+			}
+		});
+	});
+
 	test('providers explains limited OpenRouter keys with remediation copy', async ({ page }) => {
 		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
 			route.fulfill({
