@@ -47,6 +47,19 @@ add_filter(
             return $preempt;
         }
 
+        $assistant_content = get_option( 'sentient_forms_local_openrouter_smoke_response_json', [] );
+        if ( ! is_array( $assistant_content ) )
+        {
+            $assistant_content = [];
+        }
+
+        if ( empty( $assistant_content ) )
+        {
+            $assistant_content = [
+                'summary' => 'Browser local-first submission completed.',
+            ];
+        }
+
         return [
             'headers'  => [],
             'body'     => wp_json_encode(
@@ -57,11 +70,7 @@ add_filter(
                         [
                             'message'       => [
                                 'role'    => 'assistant',
-                                'content' => wp_json_encode(
-                                    [
-                                        'summary' => 'Browser local-first submission completed.',
-                                    ]
-                                ),
+                                'content' => wp_json_encode( $assistant_content ),
                             ],
                             'finish_reason' => 'stop',
                         ],
