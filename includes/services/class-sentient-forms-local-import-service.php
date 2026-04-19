@@ -121,6 +121,146 @@ class Sentient_Forms_Local_Import_Service
     }
 
     /**
+     * Validate and apply a CPS export bundle into local-first tables.
+     *
+     * @param array<string, mixed> $bundle
+     * @return array<string, mixed>|WP_Error
+     */
+    public function apply( array $bundle, ?int $actor_user_id = null ): array | WP_Error
+    {
+        if ( self::SCHEMA_VERSION !== (string) ( $bundle['schema_version'] ?? '' ) )
+        {
+            return new WP_Error(
+                'sentient_forms_invalid_import_bundle_schema',
+                __( 'The import bundle schema version is not supported.', 'sentient-forms' ),
+                [
+                    'status'          => 400,
+                    'expected_schema' => self::SCHEMA_VERSION,
+                ]
+            );
+        }
+
+        $collections = $this->normalize_collections( $bundle );
+        if ( is_wp_error( $collections ) )
+        {
+            return $collections;
+        }
+
+        $report = $this->build_report( $bundle, $collections );
+        if ( ! $report['ready_to_import'] )
+        {
+            $run_id = $this->record_apply_run( $bundle, $report, $actor_user_id, 'import_blocked' );
+            if ( is_wp_error( $run_id ) )
+            {
+                return $run_id;
+            }
+
+            $this->migration_runs->mark_finished(
+                $run_id,
+                'import_blocked',
+                array_merge(
+                    $this->summarize_report( $report ),
+                    [
+                        'run_id' => $run_id,
+                    ]
+                ),
+                [
+                    'conflicts' => $report['conflicts'],
+                    'warnings'  => $report['warnings'],
+                ],
+                $report['mapping']
+            );
+
+            return new WP_Error(
+                'sentient_forms_import_bundle_not_ready',
+                __( 'The import bundle has conflicts or blocked records. Run a dry-run report and resolve them before importing.', 'sentient-forms' ),
+                [
+                    'status' => 409,
+                    'run_id' => $run_id,
+                    'report' => $report,
+                ]
+            );
+        }
+
+        $run_id = $this->record_apply_run( $bundle, $report, $actor_user_id, 'importing' );
+        if ( is_wp_error( $run_id ) )
+        {
+            return $run_id;
+        }
+
+        $applied = $this->apply_collections( $collections, $report );
+        if ( is_wp_error( $applied ) )
+        {
+            $this->migration_runs->mark_finished(
+                $run_id,
+                'failed',
+                array_merge(
+                    $this->summarize_report( $report ),
+                    [
+                        'run_id'     => $run_id,
+                        'error_code' => $applied->get_error_code(),
+                    ]
+                ),
+                [
+                    'conflicts' => $report['conflicts'],
+                    'warnings'  => $report['warnings'],
+                ],
+                $report['mapping']
+            );
+            $applied->add_data(
+                array_merge(
+                    is_array( $applied->get_error_data() ) ? $applied->get_error_data() : [],
+                    [
+                        'status' => 500,
+                        'run_id' => $run_id,
+                    ]
+                )
+            );
+            return $applied;
+        }
+
+        $summary = array_merge(
+            $this->summarize_report( $report ),
+            [
+                'run_id'  => $run_id,
+                'applied' => $applied,
+            ]
+        );
+        $finished = $this->migration_runs->mark_finished(
+            $run_id,
+            'completed',
+            $summary,
+            [
+                'conflicts' => $report['conflicts'],
+                'warnings'  => $report['warnings'],
+            ],
+            $report['mapping']
+        );
+
+        if ( is_wp_error( $finished ) )
+        {
+            return $finished;
+        }
+
+        if ( true !== $finished )
+        {
+            return new WP_Error(
+                'sentient_forms_migration_run_update_failed',
+                __( 'The import run could not be finalized.', 'sentient-forms' ),
+                [ 'status' => 500 ]
+            );
+        }
+
+        return [
+            'run_id'  => $run_id,
+            'status'  => 'completed',
+            'dry_run' => false,
+            'report'  => $report,
+            'applied' => $applied,
+        ];
+    }
+
+    /**
      * @param array<string, mixed> $bundle
      * @return array<string, array<int, array<string, mixed>>>|WP_Error
      */
@@ -171,7 +311,41 @@ class Sentient_Forms_Local_Import_Service
         $conflicts        = array_merge(
             $conflicts,
             $this->duplicate_conflicts( $template_indexes['codes'], 'action_template', 'code' ),
-            $this->duplicate_conflicts( $action_indexes['codes'], 'custom_action', 'code' )
+            $this->duplicate_conflicts( $action_indexes['codes'], 'custom_action', 'code' ),
+            $this->json_shape_conflicts(
+                $collections['action_templates'],
+                'action_template',
+                [
+                    'structured_output_schema' => false,
+                    'override_schema'          => false,
+                ]
+            ),
+            $this->json_shape_conflicts(
+                $collections['custom_actions'],
+                'custom_action',
+                [
+                    'definition_json'      => true,
+                    'model_selection_json' => false,
+                ]
+            ),
+            $this->json_shape_conflicts(
+                $collections['form_mappings'],
+                'form_mapping',
+                [
+                    'conditions_json'     => false,
+                    'input_bindings_json' => true,
+                    'effect_mapping_json' => false,
+                ]
+            ),
+            $this->json_shape_conflicts(
+                $collections['execution_events'],
+                'execution_event',
+                [
+                    'token_usage_json' => false,
+                    'cost_json'        => false,
+                    'result_json'      => false,
+                ]
+            )
         );
 
         $this->plan_templates( $collections['action_templates'], $template_indexes, $mapping, $changes, $warnings );
@@ -182,13 +356,15 @@ class Sentient_Forms_Local_Import_Service
 
         $changes['total_writes'] = $this->total_planned_writes( $changes );
 
+        $ready_to_import = [] === $conflicts && ! $this->has_blocked_changes( $changes );
+
         return [
             'schema_version'  => self::SCHEMA_VERSION,
             'source'          => self::SOURCE,
             'source_version'  => $this->source_version( $bundle ),
             'generated_at'    => gmdate( 'c' ),
             'exported_at'     => isset( $bundle['exported_at'] ) ? sanitize_text_field( (string) $bundle['exported_at'] ) : null,
-            'ready_to_import' => [] === $conflicts,
+            'ready_to_import' => $ready_to_import,
             'counts'          => [
                 'action_templates' => count( $collections['action_templates'] ),
                 'custom_actions'   => count( $collections['custom_actions'] ),
@@ -201,6 +377,84 @@ class Sentient_Forms_Local_Import_Service
             'warnings'        => $warnings,
             'mapping'         => $mapping,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $bundle
+     * @param array<string, mixed> $report
+     */
+    private function record_apply_run( array $bundle, array $report, ?int $actor_user_id, string $status ): int | WP_Error
+    {
+        return $this->migration_runs->create(
+            [
+                'source'         => self::SOURCE,
+                'source_version' => $this->source_version( $bundle ),
+                'status'         => $status,
+                'dry_run'        => false,
+                'summary_json'   => $this->summarize_report( $report ),
+                'conflicts_json' => [
+                    'conflicts' => $report['conflicts'],
+                    'warnings'  => $report['warnings'],
+                ],
+                'mapping_json'   => $report['mapping'],
+                'actor_user_id'  => $actor_user_id,
+            ]
+        );
+    }
+
+    /**
+     * @param array<string, array<int, array<string, mixed>>> $collections
+     * @param array<string, mixed>                            $report
+     * @return array<string, mixed>|WP_Error
+     */
+    private function apply_collections( array $collections, array &$report ): array | WP_Error
+    {
+        $applied = [
+            'action_templates' => 0,
+            'custom_actions'   => 0,
+            'form_mappings'    => 0,
+            'execution_events' => 0,
+            'settings'         => 0,
+            'total'            => 0,
+        ];
+
+        $template_ids = $this->apply_templates( $collections['action_templates'], $report );
+        if ( is_wp_error( $template_ids ) )
+        {
+            return $template_ids;
+        }
+        $applied['action_templates'] = count( $template_ids );
+
+        $custom_action_ids = $this->apply_custom_actions( $collections['custom_actions'], $template_ids, $report );
+        if ( is_wp_error( $custom_action_ids ) )
+        {
+            return $custom_action_ids;
+        }
+        $applied['custom_actions'] = count( $custom_action_ids );
+
+        $mapping_ids = $this->apply_form_mappings( $collections['form_mappings'], $custom_action_ids, $report );
+        if ( is_wp_error( $mapping_ids ) )
+        {
+            return $mapping_ids;
+        }
+        $applied['form_mappings'] = count( $mapping_ids );
+
+        $event_ids = $this->apply_execution_events( $collections['execution_events'], $mapping_ids, $report );
+        if ( is_wp_error( $event_ids ) )
+        {
+            return $event_ids;
+        }
+        $applied['execution_events'] = count( $event_ids );
+        $applied['total']            = array_sum(
+            [
+                $applied['action_templates'],
+                $applied['custom_actions'],
+                $applied['form_mappings'],
+                $applied['execution_events'],
+            ]
+        );
+
+        return $applied;
     }
 
     /**
@@ -332,6 +586,62 @@ class Sentient_Forms_Local_Import_Service
                         $value
                     ),
                 ];
+            }
+        }
+
+        return $conflicts;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $items
+     * @param array<string, bool>              $fields Required flags keyed by field name.
+     * @return array<int, array<string, mixed>>
+     */
+    private function json_shape_conflicts( array $items, string $entity, array $fields ): array
+    {
+        $conflicts = [];
+        foreach ( $items as $index => $item )
+        {
+            $item_id = $this->text( $item, 'external_id' ) ?: $this->code( $item, 'code' ) ?: $entity . ':' . (string) $index;
+            foreach ( $fields as $field => $required )
+            {
+                if ( ! array_key_exists( $field, $item ) || null === $item[ $field ] )
+                {
+                    if ( $required )
+                    {
+                        $conflicts[] = [
+                            'code'     => $entity . '_missing_' . $field,
+                            'entity'   => $entity,
+                            'field'    => $field,
+                            'value'    => $item_id,
+                            'severity' => 'error',
+                            'message'  => sprintf(
+                                /* translators: 1: Entity name. 2: JSON field name. */
+                                __( 'The imported %1$s is missing required JSON field %2$s.', 'sentient-forms' ),
+                                $entity,
+                                $field
+                            ),
+                        ];
+                    }
+                    continue;
+                }
+
+                if ( ! is_array( $item[ $field ] ) )
+                {
+                    $conflicts[] = [
+                        'code'     => $entity . '_invalid_' . $field,
+                        'entity'   => $entity,
+                        'field'    => $field,
+                        'value'    => $item_id,
+                        'severity' => 'error',
+                        'message'  => sprintf(
+                            /* translators: 1: Entity name. 2: JSON field name. */
+                            __( 'The imported %1$s field %2$s must be an object.', 'sentient-forms' ),
+                            $entity,
+                            $field
+                        ),
+                    ];
+                }
             }
         }
 
@@ -583,6 +893,235 @@ class Sentient_Forms_Local_Import_Service
     }
 
     /**
+     * @param array<int, array<string, mixed>> $templates
+     * @param array<string, mixed>             $report
+     * @return array<string, int>|WP_Error
+     */
+    private function apply_templates( array $templates, array &$report ): array | WP_Error
+    {
+        $ids_by_code = [];
+        foreach ( $templates as $index => $template )
+        {
+            $key = $this->mapping_key( $template, 'template', $index );
+            if ( 'blocked' === ( $report['mapping']['action_templates'][ $key ]['operation'] ?? '' ) )
+            {
+                continue;
+            }
+
+            $code = $this->code( $template, 'code' );
+            $id   = $this->templates->upsert_by_code(
+                [
+                    'source'                   => $this->code( $template, 'source', 'imported' ),
+                    'external_id'              => $this->text( $template, 'external_id' ),
+                    'code'                     => $code,
+                    'display_name'             => $this->text( $template, 'display_name' ) ?: $code,
+                    'description'              => $this->text_or_null( $template, 'description' ),
+                    'prompt_template'          => (string) ( $template['prompt_template'] ?? '' ),
+                    'default_model'            => $this->text_or_null( $template, 'default_model' ),
+                    'structured_output_schema' => $this->array_value( $template, 'structured_output_schema' ),
+                    'override_schema'          => $this->array_value( $template, 'override_schema' ),
+                    'version'                  => $this->text( $template, 'version' ) ?: '1',
+                    'is_active'                => $this->bool_value( $template, 'is_active', true ),
+                ]
+            );
+
+            if ( is_wp_error( $id ) )
+            {
+                return $id;
+            }
+
+            $ids_by_code[ $code ] = $id;
+            $report['mapping']['action_templates'][ $key ]['local_id'] = $id;
+        }
+
+        return $ids_by_code;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $actions
+     * @param array<string, int>               $template_ids
+     * @param array<string, mixed>             $report
+     * @return array<string, int>|WP_Error
+     */
+    private function apply_custom_actions( array $actions, array $template_ids, array &$report ): array | WP_Error
+    {
+        $ids_by_code = [];
+        foreach ( $actions as $index => $action )
+        {
+            $key = $this->mapping_key( $action, 'custom_action', $index );
+            if ( 'blocked' === ( $report['mapping']['custom_actions'][ $key ]['operation'] ?? '' ) )
+            {
+                continue;
+            }
+
+            $code          = $this->code( $action, 'code' );
+            $template_code = (string) ( $report['mapping']['custom_actions'][ $key ]['template_code'] ?? '' );
+            $template_id   = $template_ids[ $template_code ] ?? null;
+            if ( null === $template_id )
+            {
+                $template = $this->templates->get_by_code( $template_code );
+                $template_id = $template ? (int) $template['id'] : null;
+            }
+
+            if ( null === $template_id )
+            {
+                return new WP_Error(
+                    'sentient_forms_import_template_missing_during_apply',
+                    __( 'An imported custom action references a template that could not be resolved during apply.', 'sentient-forms' )
+                );
+            }
+
+            $id = $this->custom_actions->upsert_by_code(
+                [
+                    'external_id'          => $this->text( $action, 'external_id' ),
+                    'template_id'          => $template_id,
+                    'code'                 => $code,
+                    'display_name'         => $this->text( $action, 'display_name' ) ?: $code,
+                    'definition_json'      => $this->array_value( $action, 'definition_json' ) ?: [],
+                    'model_selection_json' => $this->array_value( $action, 'model_selection_json' ),
+                    'status'               => $this->code( $action, 'status', 'active' ),
+                ]
+            );
+
+            if ( is_wp_error( $id ) )
+            {
+                return $id;
+            }
+
+            $ids_by_code[ $code ] = $id;
+            $report['mapping']['custom_actions'][ $key ]['local_id'] = $id;
+        }
+
+        return $ids_by_code;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $form_mappings
+     * @param array<string, int>               $custom_action_ids
+     * @param array<string, mixed>             $report
+     * @return array<string, int>|WP_Error
+     */
+    private function apply_form_mappings( array $form_mappings, array $custom_action_ids, array &$report ): array | WP_Error
+    {
+        $ids_by_key = [];
+        foreach ( $form_mappings as $index => $form_mapping )
+        {
+            $key = $this->mapping_key( $form_mapping, 'form_mapping', $index );
+            if ( 'blocked' === ( $report['mapping']['form_mappings'][ $key ]['operation'] ?? '' ) )
+            {
+                continue;
+            }
+
+            $action_code = (string) ( $report['mapping']['form_mappings'][ $key ]['action_code'] ?? '' );
+            $action_id   = $custom_action_ids[ $action_code ] ?? null;
+            if ( null === $action_id )
+            {
+                $action = $this->custom_actions->get_by_code( $action_code );
+                $action_id = $action ? (int) $action['id'] : null;
+            }
+
+            if ( null === $action_id )
+            {
+                return new WP_Error(
+                    'sentient_forms_import_action_missing_during_apply',
+                    __( 'An imported form mapping references a custom action that could not be resolved during apply.', 'sentient-forms' )
+                );
+            }
+
+            $payload = [
+                'external_id'         => $this->text_or_null( $form_mapping, 'external_id' ),
+                'form_source'         => $this->code( $form_mapping, 'form_source', 'gravity_forms' ),
+                'form_id'             => $this->text( $form_mapping, 'form_id' ),
+                'hook'                => $this->code( $form_mapping, 'hook' ),
+                'action_kind'         => $this->code( $form_mapping, 'action_kind', 'custom_action' ),
+                'action_id'           => $action_id,
+                'conditions_json'     => $this->array_value( $form_mapping, 'conditions_json' ),
+                'input_bindings_json' => $this->array_value( $form_mapping, 'input_bindings_json' ) ?: [],
+                'execution_mode'      => $this->code( $form_mapping, 'execution_mode', 'async' ),
+                'effect_mapping_json' => $this->array_value( $form_mapping, 'effect_mapping_json' ),
+                'enabled'             => $this->bool_value( $form_mapping, 'enabled', true ),
+            ];
+            $existing = $this->existing_mapping(
+                $form_mapping,
+                [
+                    'operation' => 'applied',
+                    'code'      => $action_code,
+                    'local_id'  => $action_id,
+                ]
+            );
+
+            $id = $existing ? $this->mappings->update( (int) $existing['id'], $payload ) : $this->mappings->create( $payload );
+            if ( is_wp_error( $id ) )
+            {
+                return $id;
+            }
+
+            $local_id = is_array( $id ) ? (int) $id['id'] : (int) $id;
+            $ids_by_key[ $key ] = $local_id;
+            $external_id = $this->text( $form_mapping, 'external_id' );
+            if ( '' !== $external_id )
+            {
+                $ids_by_key[ $external_id ] = $local_id;
+            }
+            $report['mapping']['form_mappings'][ $key ]['local_id'] = $local_id;
+        }
+
+        return $ids_by_key;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $execution_events
+     * @param array<string, int>               $mapping_ids
+     * @param array<string, mixed>             $report
+     * @return array<string, int>|WP_Error
+     */
+    private function apply_execution_events( array $execution_events, array $mapping_ids, array &$report ): array | WP_Error
+    {
+        $ids_by_request = [];
+        foreach ( $execution_events as $index => $event )
+        {
+            $request_id = $this->text( $event, 'execution_request_id' );
+            $key        = '' !== $request_id ? $request_id : 'execution_event:' . (string) $index;
+            if ( 'blocked' === ( $report['mapping']['execution_events'][ $key ]['operation'] ?? '' ) )
+            {
+                continue;
+            }
+
+            $mapping_id = $this->resolve_event_mapping_id( $event, $mapping_ids );
+            $id         = $this->events->record(
+                [
+                    'execution_request_id' => $request_id,
+                    'mapping_id'           => $mapping_id,
+                    'form_source'          => $this->text_or_null( $event, 'form_source' ),
+                    'form_id'              => $this->text_or_null( $event, 'form_id' ),
+                    'entry_id'             => $this->text_or_null( $event, 'entry_id' ),
+                    'provider'             => $this->code( $event, 'provider', 'openrouter' ),
+                    'model'                => $this->text_or_null( $event, 'model' ),
+                    'status'               => $this->code( $event, 'status', 'succeeded' ),
+                    'token_usage_json'     => $this->array_value( $event, 'token_usage_json' ),
+                    'cost_json'            => $this->array_value( $event, 'cost_json' ),
+                    'result_json'          => $this->array_value( $event, 'result_json' ),
+                    'error_code'           => $this->text_or_null( $event, 'error_code' ),
+                    'error_message'        => $this->text_or_null( $event, 'error_message' ),
+                    'payload_digest'       => $this->text_or_null( $event, 'payload_digest' ),
+                    'expires_at'           => $this->text_or_null( $event, 'expires_at' ),
+                ]
+            );
+
+            if ( is_wp_error( $id ) )
+            {
+                return $id;
+            }
+
+            $ids_by_request[ $request_id ] = $id;
+            $report['mapping']['execution_events'][ $key ]['local_id']   = $id;
+            $report['mapping']['execution_events'][ $key ]['mapping_id'] = $mapping_id;
+        }
+
+        return $ids_by_request;
+    }
+
+    /**
      * @param array<string, mixed>                                    $action
      * @param array{codes: array<string, int>, external_ids: array<string, string>} $template_indexes
      * @return array{operation: string, code: string, local_id: int|null}|WP_Error
@@ -699,6 +1238,22 @@ class Sentient_Forms_Local_Import_Service
         return null;
     }
 
+    /**
+     * @param array<string, mixed> $event
+     * @param array<string, int>   $mapping_ids
+     */
+    private function resolve_event_mapping_id( array $event, array $mapping_ids ): ?int
+    {
+        $mapping_external_id = $this->text( $event, 'mapping_external_id' );
+        if ( '' !== $mapping_external_id && isset( $mapping_ids[ $mapping_external_id ] ) )
+        {
+            return (int) $mapping_ids[ $mapping_external_id ];
+        }
+
+        $mapping_id = isset( $event['mapping_id'] ) ? absint( $event['mapping_id'] ) : 0;
+        return $mapping_id > 0 ? $mapping_id : null;
+    }
+
     private function reference_conflict( string $code, string $entity, string $value, WP_Error $error ): array
     {
         return [
@@ -744,6 +1299,61 @@ class Sentient_Forms_Local_Import_Service
         }
 
         return sanitize_text_field( (string) $item[ $key ] );
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     */
+    private function text_or_null( array $item, string $key ): ?string
+    {
+        $value = $this->text( $item, $key );
+        return '' !== $value ? $value : null;
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     */
+    private function array_value( array $item, string $key ): ?array
+    {
+        return isset( $item[ $key ] ) && is_array( $item[ $key ] ) ? $item[ $key ] : null;
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     */
+    private function bool_value( array $item, string $key, bool $default ): bool
+    {
+        if ( ! array_key_exists( $key, $item ) )
+        {
+            return $default;
+        }
+
+        return rest_sanitize_boolean( $item[ $key ] );
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     */
+    private function mapping_key( array $item, string $fallback_prefix, int $index ): string
+    {
+        $external_id = $this->text( $item, 'external_id' );
+        return '' !== $external_id ? $external_id : $fallback_prefix . ':' . (string) $index;
+    }
+
+    /**
+     * @param array<string, mixed> $changes
+     */
+    private function has_blocked_changes( array $changes ): bool
+    {
+        foreach ( [ 'action_templates', 'custom_actions', 'form_mappings', 'execution_events', 'settings' ] as $key )
+        {
+            if ( (int) ( $changes[ $key ]['blocked'] ?? 0 ) > 0 )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

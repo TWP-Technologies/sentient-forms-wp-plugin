@@ -61,7 +61,7 @@ class Sentient_Forms_Migration_Runs_Repository extends Sentient_Forms_Local_Repo
         return (int) $this->wpdb->insert_id;
     }
 
-    public function mark_finished( int $id, string $status, ?array $summary = null ): bool | WP_Error
+    public function mark_finished( int $id, string $status, ?array $summary = null, ?array $conflicts = null, ?array $mapping = null ): bool | WP_Error
     {
         $data = [
             'status'      => sanitize_key( $status ),
@@ -77,6 +77,28 @@ class Sentient_Forms_Migration_Runs_Repository extends Sentient_Forms_Local_Repo
                 return $summary_json;
             }
             $data['summary_json'] = $summary_json;
+            $formats[] = '%s';
+        }
+
+        if ( null !== $conflicts )
+        {
+            $conflicts_json = $this->encode_json_field( $conflicts, 'conflicts_json' );
+            if ( is_wp_error( $conflicts_json ) )
+            {
+                return $conflicts_json;
+            }
+            $data['conflicts_json'] = $conflicts_json;
+            $formats[] = '%s';
+        }
+
+        if ( null !== $mapping )
+        {
+            $mapping_json = $this->encode_json_field( $mapping, 'mapping_json' );
+            if ( is_wp_error( $mapping_json ) )
+            {
+                return $mapping_json;
+            }
+            $data['mapping_json'] = $mapping_json;
             $formats[] = '%s';
         }
 

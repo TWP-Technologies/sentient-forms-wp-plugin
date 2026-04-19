@@ -372,6 +372,175 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 'blocked', $row['mapping_json']['form_mappings']['mapping-cps-missing-action']['operation'] );
     }
 
+    public function test_migration_import_apply_writes_bundle_and_is_idempotent(): void
+    {
+        $bundle = $this->sample_cps_export_bundle();
+
+        $result = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/import/apply',
+            [
+                'bundle' => $bundle,
+            ],
+            201
+        );
+
+        $this->assertSame( 'completed', $result['status'] );
+        $this->assertFalse( $result['dry_run'] );
+        $this->assertTrue( $result['report']['ready_to_import'] );
+        $this->assertSame( 1, $result['applied']['action_templates'] );
+        $this->assertSame( 1, $result['applied']['custom_actions'] );
+        $this->assertSame( 1, $result['applied']['form_mappings'] );
+        $this->assertSame( 1, $result['applied']['execution_events'] );
+
+        $this->assertSame( 1, $this->table_count( 'sentient_action_templates' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_custom_actions' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_execution_events' ) );
+
+        global $wpdb;
+        $templates = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $template  = $templates->get_by_code( 'remote_spam_triage_v1' );
+        $this->assertSame( 'imported', $template['source'] );
+        $this->assertSame( 'template-cps-1', $template['external_id'] );
+
+        $actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $action  = $actions->get_by_code( 'remote_contact_spam_triage' );
+        $this->assertSame( (int) $template['id'], (int) $action['template_id'] );
+        $this->assertSame( 'custom-cps-1', $action['external_id'] );
+
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $mapping_rows = $mappings->list_for_form( 'gravity_forms', '7' );
+        $this->assertCount( 1, $mapping_rows );
+        $this->assertSame( (int) $action['id'], (int) $mapping_rows[0]['action_id'] );
+        $this->assertSame( 'mapping-cps-1', $mapping_rows[0]['external_id'] );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event  = $events->get_by_request_id( 'remote-request-1' );
+        $this->assertSame( (int) $mapping_rows[0]['id'], (int) $event['mapping_id'] );
+        $this->assertSame( 'succeeded', $event['status'] );
+
+        $runs = new Sentient_Forms_Migration_Runs_Repository( $wpdb );
+        $row  = $runs->get( (int) $result['run_id'] );
+        $this->assertSame( 'completed', $row['status'] );
+        $this->assertFalse( (bool) $row['dry_run'] );
+        $this->assertSame( (int) $template['id'], (int) $row['mapping_json']['action_templates']['template-cps-1']['local_id'] );
+        $this->assertSame( (int) $mapping_rows[0]['id'], (int) $row['mapping_json']['execution_events']['remote-request-1']['mapping_id'] );
+
+        $second = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/import/apply',
+            [
+                'bundle' => $bundle,
+            ],
+            201
+        );
+
+        $this->assertSame( 'completed', $second['status'] );
+        $this->assertSame( 'update', $second['report']['mapping']['action_templates']['template-cps-1']['operation'] );
+        $this->assertSame( 'update', $second['report']['mapping']['custom_actions']['custom-cps-1']['operation'] );
+        $this->assertSame( 'update', $second['report']['mapping']['form_mappings']['mapping-cps-1']['operation'] );
+        $this->assertSame( 'update', $second['report']['mapping']['execution_events']['remote-request-1']['operation'] );
+        $this->assertSame( 1, $this->table_count( 'sentient_action_templates' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_custom_actions' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_execution_events' ) );
+    }
+
+    public function test_migration_import_apply_blocks_conflicts_without_mutating_local_tables(): void
+    {
+        $this->seed_local_cutover_state();
+        $bundle = $this->sample_cps_export_bundle(
+            [
+                'action_templates' => [
+                    [
+                        'external_id'     => 'template-cps-1',
+                        'code'            => 'duplicate_import_template',
+                        'display_name'    => 'Duplicate Import Template',
+                        'prompt_template' => 'First.',
+                        'version'         => '1.0.0',
+                        'is_active'       => true,
+                    ],
+                    [
+                        'external_id'     => 'template-cps-2',
+                        'code'            => 'duplicate_import_template',
+                        'display_name'    => 'Duplicate Import Template 2',
+                        'prompt_template' => 'Second.',
+                        'version'         => '1.0.0',
+                        'is_active'       => true,
+                    ],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/migration/import/apply' );
+        $request->set_body_params( [ 'bundle' => $bundle ] );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 409, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'sentient_forms_import_bundle_not_ready', $data['code'] );
+        $this->assertSame( 1, $this->table_count( 'sentient_action_templates' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_custom_actions' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertSame( 1, $this->table_count( 'sentient_execution_events' ) );
+
+        global $wpdb;
+        $runs = new Sentient_Forms_Migration_Runs_Repository( $wpdb );
+        $row  = $runs->get( (int) $data['data']['run_id'] );
+
+        $this->assertSame( 'import_blocked', $row['status'] );
+        $this->assertFalse( (bool) $row['dry_run'] );
+        $this->assertFalse( $row['summary_json']['ready_to_import'] );
+        $this->assertContains(
+            'duplicate_action_template_code',
+            wp_list_pluck( $row['conflicts_json']['conflicts'], 'code' )
+        );
+    }
+
+    public function test_migration_import_apply_blocks_invalid_json_shapes_before_any_writes(): void
+    {
+        $bundle = $this->sample_cps_export_bundle(
+            [
+                'custom_actions' => [
+                    [
+                        'external_id'          => 'custom-cps-1',
+                        'template_code'        => 'remote_spam_triage_v1',
+                        'code'                 => 'remote_contact_spam_triage',
+                        'display_name'         => 'Remote Contact Spam Triage',
+                        'definition_json'      => 'not-an-object',
+                        'model_selection_json' => [
+                            'provider' => 'openrouter',
+                            'model'    => 'openrouter/auto',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/migration/import/apply' );
+        $request->set_body_params( [ 'bundle' => $bundle ] );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 409, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'sentient_forms_import_bundle_not_ready', $data['code'] );
+        $this->assertSame( 0, $this->table_count( 'sentient_action_templates' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_custom_actions' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_execution_events' ) );
+
+        global $wpdb;
+        $runs = new Sentient_Forms_Migration_Runs_Repository( $wpdb );
+        $row  = $runs->get( (int) $data['data']['run_id'] );
+
+        $this->assertSame( 'import_blocked', $row['status'] );
+        $this->assertContains(
+            'custom_action_invalid_definition_json',
+            wp_list_pluck( $row['conflicts_json']['conflicts'], 'code' )
+        );
+    }
+
     public function test_migration_approved_reset_requires_confirmation_phrase(): void
     {
         $this->seed_local_cutover_state();

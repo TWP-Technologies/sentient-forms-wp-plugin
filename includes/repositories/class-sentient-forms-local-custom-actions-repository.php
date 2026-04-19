@@ -61,6 +61,72 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
         return (int) $this->wpdb->insert_id;
     }
 
+    public function upsert_by_code( array $data ): int | WP_Error
+    {
+        $code = sanitize_key( (string) ( $data['code'] ?? '' ) );
+        if ( '' === $code )
+        {
+            return new WP_Error( 'sentient_forms_missing_code', __( 'Custom action code is required.', 'sentient-forms' ) );
+        }
+
+        $definition_json = $this->encode_json_field( $data['definition_json'] ?? null, 'definition_json', true );
+        if ( is_wp_error( $definition_json ) )
+        {
+            return $definition_json;
+        }
+
+        $model_selection_json = $this->encode_json_field( $data['model_selection_json'] ?? null, 'model_selection_json' );
+        if ( is_wp_error( $model_selection_json ) )
+        {
+            return $model_selection_json;
+        }
+
+        $now = $this->now();
+        $row = [
+            'external_id'          => isset( $data['external_id'] ) ? sanitize_text_field( (string) $data['external_id'] ) : null,
+            'template_id'          => isset( $data['template_id'] ) ? (int) $data['template_id'] : null,
+            'code'                 => $code,
+            'display_name'         => sanitize_text_field( (string) ( $data['display_name'] ?? $code ) ),
+            'definition_json'      => $definition_json,
+            'model_selection_json' => $model_selection_json,
+            'status'               => sanitize_key( (string) ( $data['status'] ?? 'active' ) ),
+            'updated_at'           => $now,
+        ];
+
+        $existing = $this->get_by_code( $code );
+        if ( $existing )
+        {
+            $updated = $this->wpdb->update(
+                $this->table_name(),
+                $row,
+                [ 'id' => (int) $existing['id'] ],
+                [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s' ],
+                [ '%d' ]
+            );
+
+            if ( false === $updated )
+            {
+                return new WP_Error( 'sentient_forms_db_update_failed', __( 'Custom action could not be updated.', 'sentient-forms' ) );
+            }
+
+            return (int) $existing['id'];
+        }
+
+        $row['created_at'] = $now;
+        $inserted = $this->wpdb->insert(
+            $this->table_name(),
+            $row,
+            [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+        );
+
+        if ( false === $inserted )
+        {
+            return new WP_Error( 'sentient_forms_db_insert_failed', __( 'Custom action could not be created.', 'sentient-forms' ) );
+        }
+
+        return (int) $this->wpdb->insert_id;
+    }
+
     public function get_by_code( string $code ): ?array
     {
         $wpdb = $this->wpdb;

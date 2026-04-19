@@ -374,6 +374,27 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
         return $this->prepare_item_for_response( $result, 201 );
     }
 
+    public function run_migration_import_apply( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
+        $bundle = $request->get_param( 'bundle' );
+        if ( ! is_array( $bundle ) )
+        {
+            return new WP_Error(
+                'sentient_forms_missing_import_bundle',
+                __( 'A CPS export bundle object is required for import apply.', 'sentient-forms' ),
+                [ 'status' => 400 ]
+            );
+        }
+
+        $result = $this->import->apply( $bundle, get_current_user_id() ?: null );
+        if ( is_wp_error( $result ) )
+        {
+            return $result;
+        }
+
+        return $this->prepare_item_for_response( $result, 201 );
+    }
+
     private function register_migration_routes(): void
     {
         register_rest_route(
@@ -407,6 +428,25 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
                     'callback'            => [ $this, 'create_migration_import_dry_run' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'bundle' => [
+                            'type'              => 'object',
+                            'required'          => true,
+                            'validate_callback' => 'rest_validate_request_arg',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/migration/import/apply',
+            [
+                [
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => [ $this, 'run_migration_import_apply' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => [
                         'bundle' => [
