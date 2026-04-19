@@ -17,6 +17,7 @@
 		action: LocalCustomActionRecord;
 		mapping: LocalFormMappingRecord;
 	};
+	type LocalSetupExecutionMode = 'sync' | 'async';
 
 	const client = createClientFromConfig();
 	const DISCLOSURE_VERSION = '2026-04-local-first-openrouter-v1';
@@ -38,6 +39,7 @@
 	let setupEmailFieldId = $state('2');
 	let setupResultMetaKey = $state('sentient_forms_summary');
 	let setupActionName = $state('Local OpenRouter summary');
+	let setupExecutionMode = $state<LocalSetupExecutionMode>('sync');
 	let localSetupError = $state<string | null>(null);
 	let localSetupResult = $state<LocalSubmissionSetupResult | null>(null);
 	let creatingLocalSetup = $state(false);
@@ -56,7 +58,9 @@
 	let selectedOpenRouterCredential = $derived(
 		readyOpenRouterCredentials.find(
 			(credential) => String(credential.id) === selectedCredentialId
-		) ?? readyOpenRouterCredentials[0] ?? null
+		) ??
+			readyOpenRouterCredentials[0] ??
+			null
 	);
 	let readyCredentialCount = $derived(
 		openRouterCredentials.filter((credential) => credential.status === 'valid').length
@@ -144,10 +148,7 @@
 		modelCatalogError = null;
 
 		try {
-			modelCatalog = await client.getOpenRouterModels(
-				{ limit: 100 },
-				{ showNotifications: false }
-			);
+			modelCatalog = await client.getOpenRouterModels({ limit: 100 }, { showNotifications: false });
 		} catch (requestError) {
 			modelCatalogError = errorMessage(requestError);
 		} finally {
@@ -159,7 +160,8 @@
 		modelCatalogError = null;
 
 		if (!acceptedDisclosure) {
-			modelCatalogError = 'Accept the OpenRouter external-service disclosure before refreshing model metadata.';
+			modelCatalogError =
+				'Accept the OpenRouter external-service disclosure before refreshing model metadata.';
 			return;
 		}
 
@@ -265,7 +267,8 @@
 		}
 
 		if (!isSafeMetaKey(resultMetaKey)) {
-			localSetupError = 'Use letters, numbers, underscores, colons, or dashes for the result meta key.';
+			localSetupError =
+				'Use letters, numbers, underscores, colons, or dashes for the result meta key.';
 			return;
 		}
 
@@ -310,7 +313,7 @@
 						name: nameFieldId,
 						email: emailFieldId
 					},
-					execution_mode: 'sync',
+					execution_mode: setupExecutionMode,
 					effect_mapping_json: {
 						store_result: true,
 						meta
@@ -356,7 +359,9 @@
 	{/if}
 
 	<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="providers-openrouter-summary">
-		<div class="sf:flex sf:flex-col sf:gap-4 sf:lg:flex-row sf:lg:items-center sf:lg:justify-between">
+		<div
+			class="sf:flex sf:flex-col sf:gap-4 sf:lg:flex-row sf:lg:items-center sf:lg:justify-between"
+		>
 			<div class="sf:space-y-2">
 				<div class="sf:flex sf:flex-wrap sf:gap-2">
 					<Badge variant={statusVariant(primaryOpenRouterCredential?.status ?? 'missing')}>
@@ -368,19 +373,26 @@
 					{primaryOpenRouterCredential?.label ?? 'OpenRouter direct'}
 				</h3>
 				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
-					OpenRouter receives the prompts and form fields needed for direct model calls. Sentient does not receive those direct-call payloads.
+					OpenRouter receives the prompts and form fields needed for direct model calls. Sentient
+					does not receive those direct-call payloads.
 				</p>
 			</div>
 			<div class="sf:flex sf:gap-6">
 				<div>
 					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Saved keys</p>
-					<p class="sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="providers-openrouter-count">
+					<p
+						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+						data-testid="providers-openrouter-count"
+					>
 						{openRouterCredentials.length}
 					</p>
 				</div>
 				<div>
 					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Ready keys</p>
-					<p class="sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="providers-openrouter-ready-count">
+					<p
+						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+						data-testid="providers-openrouter-ready-count"
+					>
 						{readyCredentialCount}
 					</p>
 				</div>
@@ -389,7 +401,9 @@
 	</Card>
 
 	<Card title="OpenRouter model catalog" data-testid="providers-openrouter-model-catalog">
-		<div class="sf:flex sf:flex-col sf:gap-4 sf:lg:flex-row sf:lg:items-start sf:lg:justify-between">
+		<div
+			class="sf:flex sf:flex-col sf:gap-4 sf:lg:flex-row sf:lg:items-start sf:lg:justify-between"
+		>
 			<div class="sf:space-y-2">
 				<div class="sf:flex sf:flex-wrap sf:gap-2">
 					<Badge variant={modelCatalog && modelCatalog.total_cached > 0 ? 'success' : 'neutral'}>
@@ -400,10 +414,15 @@
 					{/if}
 				</div>
 				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
-					Refresh pulls model names, pricing, capabilities, and free-model flags from OpenRouter. No form data or prompts are sent.
+					Refresh pulls model names, pricing, capabilities, and free-model flags from OpenRouter. No
+					form data or prompts are sent.
 				</p>
 				{#if modelCatalogError}
-					<p class="sf:text-sm sf:text-danger-700" role="alert" data-testid="providers-model-catalog-error">
+					<p
+						class="sf:text-sm sf:text-danger-700"
+						role="alert"
+						data-testid="providers-model-catalog-error"
+					>
 						{modelCatalogError}
 					</p>
 				{/if}
@@ -412,13 +431,19 @@
 			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-6">
 				<div>
 					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Cached models</p>
-					<p class="sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="providers-openrouter-model-count">
+					<p
+						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+						data-testid="providers-openrouter-model-count"
+					>
 						{modelCatalogLoading ? '...' : (modelCatalog?.total_cached ?? 0)}
 					</p>
 				</div>
 				<div>
 					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Free models</p>
-					<p class="sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="providers-openrouter-free-model-count">
+					<p
+						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+						data-testid="providers-openrouter-free-model-count"
+					>
 						{modelCatalogLoading ? '...' : (modelCatalog?.free_count ?? 0)}
 					</p>
 				</div>
@@ -450,14 +475,22 @@
 		{:else if freeModelPreview.length > 0}
 			<div class="sf:mt-4 sf:grid sf:gap-3 sf:md:grid-cols-2 sf:xl:grid-cols-3">
 				{#each freeModelPreview as model}
-					<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3" data-testid="providers-openrouter-free-model">
+					<div
+						class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3"
+						data-testid="providers-openrouter-free-model"
+					>
 						<div class="sf:flex sf:items-start sf:justify-between sf:gap-2">
 							<p class="sf:text-sm sf:font-medium sf:text-slate-900">{model.name}</p>
-							<Badge variant={model.stale ? 'warning' : 'success'}>{model.stale ? 'Stale' : 'Free'}</Badge>
+							<Badge variant={model.stale ? 'warning' : 'success'}
+								>{model.stale ? 'Stale' : 'Free'}</Badge
+							>
 						</div>
 						<p class="sf:mt-1 sf:break-all sf:text-xs sf:text-slate-500">{model.id}</p>
 						<p class="sf:mt-2 sf:text-xs sf:text-slate-600">
-							Context {model.context_length ?? 'unknown'} tokens · refreshed {formatTimestamp(model.fetched_at, 'never')}
+							Context {model.context_length ?? 'unknown'} tokens · refreshed {formatTimestamp(
+								model.fetched_at,
+								'never'
+							)}
 						</p>
 					</div>
 				{/each}
@@ -510,15 +543,15 @@
 							class="sf:font-medium sf:text-slate-900 sf:underline"
 							href="https://openrouter.ai/terms"
 							target="_blank"
-							rel="noreferrer noopener"
-						>OpenRouter terms</a>
+							rel="noreferrer noopener">OpenRouter terms</a
+						>
 						and
 						<a
 							class="sf:font-medium sf:text-slate-900 sf:underline"
 							href="https://openrouter.ai/privacy"
 							target="_blank"
-							rel="noreferrer noopener"
-						>privacy policy</a>.
+							rel="noreferrer noopener">privacy policy</a
+						>.
 					</span>
 				</label>
 
@@ -528,7 +561,10 @@
 			</form>
 
 			{#if validationResult}
-				<div class="sf:mt-4 sf:rounded sf:border sf:border-success-200 sf:bg-success-50 sf:p-4" data-testid="providers-openrouter-validation-result">
+				<div
+					class="sf:mt-4 sf:rounded sf:border sf:border-success-200 sf:bg-success-50 sf:p-4"
+					data-testid="providers-openrouter-validation-result"
+				>
 					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 						<Badge variant={statusVariant(validationResult.status)}>
 							{statusLabel(validationResult.status)}
@@ -559,13 +595,20 @@
 			{:else}
 				<div class="sf:space-y-3">
 					{#each openRouterCredentials as credential}
-						<div class="sf:border-l sf:border-slate-300 sf:pl-3" data-testid="providers-openrouter-credential">
+						<div
+							class="sf:border-l sf:border-slate-300 sf:pl-3"
+							data-testid="providers-openrouter-credential"
+						>
 							<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
 								<p class="sf:font-medium sf:text-slate-900">{credential.label}</p>
-								<Badge variant={statusVariant(credential.status)}>{statusLabel(credential.status)}</Badge>
+								<Badge variant={statusVariant(credential.status)}
+									>{statusLabel(credential.status)}</Badge
+								>
 							</div>
 							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-								{credential.auth_mode} · secret {credential.secret_configured ? 'configured' : 'missing'}
+								{credential.auth_mode} · secret {credential.secret_configured
+									? 'configured'
+									: 'missing'}
 							</p>
 							<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
 								Last validated {formatTimestamp(credential.last_validated_at, 'never')}
@@ -660,6 +703,27 @@
 					/>
 				</div>
 
+				<div class="sf:grid sf:gap-4 sf:lg:grid-cols-2">
+					<div class="sf:space-y-1">
+						<label
+							class="sf:text-sm sf:font-medium sf:text-slate-700"
+							for="local-setup-execution-mode"
+						>
+							Run mode
+						</label>
+						<select
+							id="local-setup-execution-mode"
+							class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+							bind:value={setupExecutionMode}
+							disabled={creatingLocalSetup}
+							data-testid="local-setup-execution-mode"
+						>
+							<option value="sync">Synchronous after submission</option>
+							<option value="async">Background after submission</option>
+						</select>
+					</div>
+				</div>
+
 				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
 					<Button
 						type="submit"
@@ -670,7 +734,9 @@
 						{creatingLocalSetup ? 'Creating setup...' : 'Create local setup'}
 					</Button>
 					<p class="sf:text-sm sf:text-slate-600">
-						Runs synchronously on Gravity Forms after-submission and stores the JSON summary in entry meta.
+						{setupExecutionMode === 'async'
+							? 'Queues background work after Gravity Forms submission and stores the JSON summary in entry meta.'
+							: 'Runs synchronously on Gravity Forms after-submission and stores the JSON summary in entry meta.'}
 					</p>
 				</div>
 			{/if}

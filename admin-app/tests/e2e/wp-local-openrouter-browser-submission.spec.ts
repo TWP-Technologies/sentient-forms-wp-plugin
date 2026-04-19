@@ -5,6 +5,7 @@ import {
 	getEntryMeta,
 	getLatestEntryId,
 	requireWpRestHealthy,
+	runActionScheduler,
 	runWpEval
 } from './utils/wp-e2e-helpers';
 import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
@@ -12,6 +13,8 @@ import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
 const runLocalOpenRouterBrowserSmoke =
 	process.env.SENTIENT_RUN_WP_E2E === '1' &&
 	process.env.SENTIENT_RUN_LOCAL_OPENROUTER_BROWSER_SMOKE === '1';
+const localOpenRouterBrowserExecutionMode =
+	process.env.SENTIENT_FORMS_LOCAL_OPENROUTER_EXECUTION_MODE === 'async' ? 'async' : 'sync';
 
 type LocalProviderSeed = {
 	credential_id: number;
@@ -176,9 +179,18 @@ async function submitFrontEndGravityForm(
 	const submitButton = form.locator('input[type="submit"], button[type="submit"], button').first();
 
 	await expect(form, `Gravity Forms page should render form ${formId}`).toBeVisible();
-	await expect(nameInput, `Gravity Forms page should render input_1 for form ${formId}`).toBeVisible();
-	await expect(emailInput, `Gravity Forms page should render input_2 for form ${formId}`).toBeVisible();
-	await expect(submitButton, `Gravity Forms page should render a submit control for form ${formId}`).toBeVisible();
+	await expect(
+		nameInput,
+		`Gravity Forms page should render input_1 for form ${formId}`
+	).toBeVisible();
+	await expect(
+		emailInput,
+		`Gravity Forms page should render input_2 for form ${formId}`
+	).toBeVisible();
+	await expect(
+		submitButton,
+		`Gravity Forms page should render a submit control for form ${formId}`
+	).toBeVisible();
 
 	await nameInput.fill(name);
 	await emailInput.fill(email);
@@ -213,6 +225,10 @@ async function waitForSummaryMeta(page: Page, entryId: number): Promise<string> 
 	let lastValue: unknown = null;
 
 	for (let attempt = 0; attempt < 10; attempt += 1) {
+		if (localOpenRouterBrowserExecutionMode === 'async') {
+			runActionScheduler();
+		}
+
 		lastValue = getEntryMeta(entryId, 'sentient_forms_summary');
 		if (lastValue === 'Browser local-first submission completed.') {
 			return lastValue;
@@ -221,7 +237,9 @@ async function waitForSummaryMeta(page: Page, entryId: number): Promise<string> 
 		await page.waitForTimeout(500);
 	}
 
-	throw new Error(`Summary meta was not stored for entry ${entryId}. Last value: ${String(lastValue)}`);
+	throw new Error(
+		`Summary meta was not stored for entry ${entryId}. Last value: ${String(lastValue)}`
+	);
 }
 
 function getLatestLocalExecutionEvent(entryId: number): LocalExecutionEvent | null {
@@ -295,6 +313,9 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		await page.getByTestId('local-setup-name-field').fill('1');
 		await page.getByTestId('local-setup-email-field').fill('2');
 		await page.getByTestId('local-setup-result-meta-key').fill('sentient_forms_summary');
+		await page
+			.getByTestId('local-setup-execution-mode')
+			.selectOption(localOpenRouterBrowserExecutionMode);
 		await page.getByTestId('local-setup-submit').click();
 
 		await expect(page.getByTestId('local-setup-result')).toContainText(`form #${formId}`);
@@ -306,9 +327,15 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		const entryId = await waitForEntryId(page, formId, baselineEntryId, email);
 		expect(entryId).toBeGreaterThan(baselineEntryId);
 
-		await expect.poll(function () {
-			return getLatestLocalExecutionEvent(entryId)?.status ?? null;
-		}).toBe('succeeded');
+		await expect
+			.poll(function () {
+				if (localOpenRouterBrowserExecutionMode === 'async') {
+					runActionScheduler();
+				}
+
+				return getLatestLocalExecutionEvent(entryId)?.status ?? null;
+			})
+			.toBe('succeeded');
 
 		await expect(waitForSummaryMeta(page, entryId)).resolves.toBe(
 			'Browser local-first submission completed.'
