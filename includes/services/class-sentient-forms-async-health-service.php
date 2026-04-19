@@ -13,6 +13,7 @@ class Sentient_Forms_Async_Health_Service
     private const FAILURE_WINDOW = HOUR_IN_SECONDS;
     private const DEFAULT_QUEUE_THRESHOLD = 20;
     private const DEFAULT_FAILURE_THRESHOLD = 3;
+    private const DEFAULT_STALE_QUEUE_THRESHOLD = 900;
 
     public function __construct( private Sentient_Forms_Plugin $plugin )
     {
@@ -26,6 +27,7 @@ class Sentient_Forms_Async_Health_Service
         $queue_threshold   = (int) apply_filters( 'sentient_forms_async_queue_threshold', self::DEFAULT_QUEUE_THRESHOLD );
         $failure_threshold = (int) apply_filters( 'sentient_forms_async_failure_threshold', self::DEFAULT_FAILURE_THRESHOLD );
         $failure_window    = (int) apply_filters( 'sentient_forms_async_failure_window', self::FAILURE_WINDOW );
+        $stale_threshold   = (int) apply_filters( 'sentient_forms_async_stale_queue_threshold', self::DEFAULT_STALE_QUEUE_THRESHOLD );
 
         $queue_depth = 0;
         $oldest_run  = null;
@@ -74,6 +76,31 @@ class Sentient_Forms_Async_Health_Service
             ];
         }
 
+        $oldest_overdue_seconds = null;
+        if ( null !== $oldest_run )
+        {
+            $oldest_overdue_seconds = max( 0, $now - $oldest_run );
+        }
+
+        if ( null !== $oldest_overdue_seconds && $stale_threshold > 0 && $oldest_overdue_seconds >= $stale_threshold )
+        {
+            $warnings[] = [
+                'code'    => 'queue_stalled',
+                'level'   => 'warning',
+                'message' => sprintf(
+                    /* translators: 1: oldest job overdue seconds, 2: configured stale queue threshold. */
+                    __( 'Background queue may be stalled: oldest due job is %1$d seconds overdue (threshold %2$d).', 'sentient-forms' ),
+                    $oldest_overdue_seconds,
+                    $stale_threshold
+                ),
+                'data'    => [
+                    'oldest_run_at'  => $oldest_run,
+                    'overdue_seconds' => $oldest_overdue_seconds,
+                    'threshold'      => $stale_threshold,
+                ],
+            ];
+        }
+
         foreach ( $recent_failures as $key => $count )
         {
             if ( $count >= $failure_threshold )
@@ -105,10 +132,11 @@ class Sentient_Forms_Async_Health_Service
         }
 
         return [
-            'queue_depth'    => $queue_depth,
-            'oldest_run_at'  => $oldest_run,
-            'recent_failures'=> $recent_failures,
-            'warnings'       => $warnings,
+            'queue_depth'            => $queue_depth,
+            'oldest_run_at'          => $oldest_run,
+            'oldest_overdue_seconds' => $oldest_overdue_seconds,
+            'recent_failures'        => $recent_failures,
+            'warnings'               => $warnings,
         ];
     }
 }

@@ -266,6 +266,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
         GFAPI::$entries = [];
         GFAPI::$forms = [];
         remove_all_filters( 'pre_http_request' );
+        remove_all_filters( 'sentient_forms_async_queue_threshold' );
+        remove_all_filters( 'sentient_forms_async_stale_queue_threshold' );
         parent::tearDown();
     }
 
@@ -2154,6 +2156,69 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertSame( 'queued', $event['status'] ?? null );
 		$this->assertSame( 77, (int) ( $event['mapping_id'] ?? 0 ) );
 	}
+
+    public function test_bulk_local_mapping_scheduling_preserves_identifier_only_payloads_under_backlog(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+        add_filter( 'sentient_forms_async_queue_threshold', static fn () => 20 );
+        add_filter( 'sentient_forms_async_stale_queue_threshold', static fn () => 0 );
+
+        $handler = $this->plugin->get_async_handler();
+        for ( $index = 0; $index < 25; $index++ )
+        {
+            $entry_id  = 9000 + $index;
+            $scheduled = $handler->schedule_local_mapping(
+                77,
+                [
+                    'id'     => 900,
+                    'title'  => 'Bulk Local Async Form',
+                    'fields' => [ 'large form payload should not be queued' ],
+                ],
+                [
+                    'id'      => $entry_id,
+                    'raw_key' => 'private field value should not be queued',
+                ],
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => 900,
+                    'entry_id'             => $entry_id,
+                    'action_id'            => 'local_first_77',
+                    'execution_request_id' => 'bulk-local-' . $entry_id,
+                ]
+            );
+
+            $this->assertTrue( $scheduled, 'Bulk local mapping job should schedule.' );
+        }
+
+        $jobs = $GLOBALS['__sentient_forms_async_queue']['enqueued'] ?? [];
+        $this->assertCount( 25, $jobs );
+
+        foreach ( $jobs as $index => $job )
+        {
+            $entry_id = 9000 + $index;
+            $this->assertSame( 'sentient_forms_process_local_mapping', $job['hook'] );
+            $this->assertSame( 'sentient_forms_async', $job['group'] );
+
+            $payload = $job['args'][0] ?? [];
+            $this->assertSame( 77, $payload['local_mapping_id'] ?? null );
+            $this->assertSame( '900', $payload['form_id'] ?? null );
+            $this->assertSame( (string) $entry_id, $payload['entry_id'] ?? null );
+            $this->assertSame( 'bulk-local-' . $entry_id, $payload['execution_request_id'] ?? null );
+            $this->assertSame( 'bulk-local-' . $entry_id, $payload['context']['execution_request_id'] ?? null );
+            $this->assertSame( 'local_mapping', $payload['context']['job_type'] ?? null );
+            $this->assertArrayNotHasKey( 'form', $payload );
+            $this->assertArrayNotHasKey( 'entry', $payload );
+            $this->assertArrayNotHasKey( 'raw_key', $payload );
+        }
+
+        $health = ( new Sentient_Forms_Async_Health_Service( $this->plugin ) )->evaluate();
+        $codes  = wp_list_pluck( $health['warnings'], 'code' );
+
+        $this->assertSame( 25, $health['queue_depth'] );
+        $this->assertContains( 'queue_backlog', $codes );
+        $this->assertNotContains( 'queue_stalled', $codes );
+    }
 
 	public function test_process_local_mapping_executes_openrouter_mapping_from_identifiers(): void
 	{

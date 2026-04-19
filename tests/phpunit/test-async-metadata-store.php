@@ -115,4 +115,96 @@ class AsyncMetadataStoreTest extends WP_UnitTestCase
         $this->assertSame( 'failed', $failed_job['reconciled_as_status'] ?? null );
         $this->assertNotEmpty( $failed_job['last_error'] ?? '' );
     }
+
+    public function test_reconcile_with_action_scheduler_honors_processing_limit(): void
+    {
+        $job_ids = [];
+        $payload = [
+            'context' => [
+                'action_id'   => 'entry_evaluation',
+                'form_source' => 'gravity_forms',
+            ],
+        ];
+
+        for ( $index = 0; $index < 3; $index++ )
+        {
+            $job_id    = wp_generate_uuid4();
+            $job_ids[] = $job_id;
+            $this->store->record_job(
+                $job_id,
+                'sentient_forms_evaluate_action',
+                $payload,
+                time() - 900,
+                5100 + $index,
+                'sentient_forms_async'
+            );
+        }
+
+        add_filter( 'sentient_forms_async_metadata_action_scheduler_status', static fn () => 'complete' );
+
+        $report = $this->store->reconcile_with_action_scheduler(
+            [
+                'apply'      => true,
+                'limit'      => 2,
+                'older_than' => 0,
+            ]
+        );
+
+        $this->assertSame( 2, $report['scanned'] );
+        $this->assertSame( 2, $report['candidates'] );
+        $this->assertSame( 2, $report['updated'] );
+
+        $statuses = [];
+        foreach ( $job_ids as $job_id )
+        {
+            $job = $this->store->get( $job_id );
+            $statuses[] = $job['status'] ?? null;
+        }
+
+        $this->assertCount( 2, array_filter( $statuses, static fn ( $status ) => 'success' === $status ) );
+        $this->assertCount( 1, array_filter( $statuses, static fn ( $status ) => 'queued' === $status ) );
+    }
+
+    public function test_metadata_store_is_scoped_to_current_blog_in_multisite(): void
+    {
+        if ( ! is_multisite() )
+        {
+            $this->markTestSkipped( 'Multisite-only metadata isolation coverage.' );
+        }
+
+        $main_job_id = wp_generate_uuid4();
+        $this->store->record_job(
+            $main_job_id,
+            'sentient_forms_evaluate_action',
+            [ 'context' => [ 'action_id' => 'main_site_action', 'form_source' => 'gravity_forms' ] ],
+            time()
+        );
+
+        $second_blog_id = self::factory()->blog->create();
+        $second_job_id  = wp_generate_uuid4();
+
+        switch_to_blog( $second_blog_id );
+
+        try
+        {
+            $this->store->clear();
+            $this->assertNull( $this->store->get( $main_job_id ) );
+
+            $this->store->record_job(
+                $second_job_id,
+                'sentient_forms_evaluate_action',
+                [ 'context' => [ 'action_id' => 'second_site_action', 'form_source' => 'gravity_forms' ] ],
+                time()
+            );
+
+            $this->assertNotNull( $this->store->get( $second_job_id ) );
+        }
+        finally
+        {
+            restore_current_blog();
+        }
+
+        $this->assertNotNull( $this->store->get( $main_job_id ) );
+        $this->assertNull( $this->store->get( $second_job_id ) );
+    }
 }
