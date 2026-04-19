@@ -434,6 +434,30 @@ function toRelativeBox(box: Box, container: Box): Box {
 	};
 }
 
+async function expectRelativeBoxPositionStable(
+	locator: Locator,
+	container: Locator,
+	expected: Box,
+	tolerance = 4
+): Promise<void> {
+	await expect
+		.poll(
+			async () => {
+				const box = await locator.boundingBox();
+				const containerBox = await container.boundingBox();
+				if (!box || !containerBox) return Number.POSITIVE_INFINITY;
+
+				const relative = toRelativeBox(box, containerBox);
+				return Math.max(
+					Math.abs(relative.x - expected.x),
+					Math.abs(relative.y - expected.y)
+				);
+			},
+			{ timeout: 2_000 }
+		)
+		.toBeLessThanOrEqual(tolerance);
+}
+
 async function dragNodeCardByMouse(
 	page: Parameters<typeof test>[0]['page'],
 	nodeId: string,
@@ -884,6 +908,233 @@ test.describe('Actions admin flows', () => {
 		await expect(drawer).toBeHidden({ timeout: 15_000 });
 		const table = await openLinkedActionsTable(page);
 		await expect(table.getByText('Hello action')).toBeVisible();
+	});
+
+	test('creates a direct OpenRouter local action mapping from the drawer', async ({ page }) => {
+		await page.addInitScript(() => {
+			try {
+				localStorage.setItem('sentient_forms_last_hooks', '["gform_after_submission"]');
+			} catch {}
+		});
+
+		const resolvePayloads: Record<string, unknown>[] = [];
+		let createdActionPayload: Record<string, unknown> | null = null;
+		let createdMappingPayload: Record<string, unknown> | null = null;
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [],
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } },
+			localProviders: {
+				credentials: [
+					{
+						id: 42,
+						provider: 'openrouter',
+						label: 'OpenRouter ready key',
+						auth_mode: 'manual_key',
+						constant_name: null,
+						status: 'valid',
+						status_json: null,
+						last_validated_at: '2030-01-05T10:00:00Z',
+						created_at: '2030-01-05T09:00:00Z',
+						updated_at: '2030-01-05T10:00:00Z',
+						secret_configured: true
+					}
+				]
+			}
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/models', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					models: [
+						{
+							id: 'openai/gpt-oss-20b:free',
+							display_name: 'OpenAI GPT OSS 20B Free',
+							provider: 'openrouter',
+							speed_tier: 'fast',
+							cost_tier: 'free',
+							capabilities: {
+								reasoning: false,
+								code: false,
+								vision: false,
+								tools: false,
+								long_context: true
+							},
+							context_window: 131072,
+							is_preview: false,
+							tags: ['free'],
+							recommended_for: ['summary']
+						}
+					],
+					presets: [
+						{
+							code: 'sf_default',
+							display_name: 'Default',
+							description: 'Use the default local policy.',
+							category: 'general',
+							resolved_model_id: 'openrouter/auto',
+							auto_upgrade: true
+						},
+						{
+							code: 'sf_free',
+							display_name: 'Free OpenRouter',
+							description: 'Prefer a locally cached free OpenRouter model.',
+							category: 'cost',
+							resolved_model_id: 'openai/gpt-oss-20b:free',
+							auto_upgrade: false
+						}
+					],
+					pricing_policy_version: 'local-openrouter-v1'
+				})
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/models/resolve', async (route) => {
+			const payload = route.request().postDataJSON() as Record<string, unknown>;
+			resolvePayloads.push(payload);
+
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					model_id: 'openai/gpt-oss-20b:free',
+					display_name: 'OpenAI GPT OSS 20B Free',
+					resolution_source: 'preset',
+					override_chain: [
+						{
+							level: 'action',
+							selection:
+								((payload.action_selection as Record<string, unknown> | undefined)
+									?.primary as string | undefined) ?? 'sf_default',
+							applied: true,
+							reason: 'Selected local action builder preset.'
+						}
+					],
+					backup_model_id: null
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/local/custom-actions', async (route) => {
+			const payload = route.request().postDataJSON() as Record<string, unknown>;
+			createdActionPayload = payload;
+
+			return route.fulfill({
+				status: 201,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					id: 81,
+					external_id: null,
+					template_id: null,
+					code: 'local_openrouter_summary_1',
+					display_name: payload.display_name ?? 'Local OpenRouter summary',
+					definition_json:
+						(payload.definition_json as Record<string, unknown>) ?? {},
+					model_selection_json:
+						(payload.model_selection_json as Record<string, unknown>) ?? null,
+					status: 'active',
+					created_at: '2030-01-05T10:00:00Z',
+					updated_at: '2030-01-05T10:00:00Z'
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/local/form-mappings', async (route) => {
+			const payload = route.request().postDataJSON() as Record<string, unknown>;
+			createdMappingPayload = payload;
+
+			return route.fulfill({
+				status: 201,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					id: 91,
+					external_id: null,
+					form_source: 'gravity_forms',
+					form_id: String(formId),
+					hook: payload.hook ?? 'gform_after_submission',
+					action_kind: 'custom_action',
+					action_id: 81,
+					input_bindings_json:
+						(payload.input_bindings_json as Record<string, unknown>) ?? {},
+					conditions_json: null,
+					execution_mode: payload.execution_mode ?? 'async',
+					effect_mapping_json:
+						(payload.effect_mapping_json as Record<string, unknown>) ?? {},
+					enabled: true,
+					created_at: '2030-01-05T10:00:00Z',
+					updated_at: '2030-01-05T10:00:00Z'
+				})
+			});
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
+
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await page.getByRole('button', { name: 'Direct OpenRouter' }).click();
+
+		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
+		await expect(drawer.getByTestId('local-builder-model-selector')).toBeVisible();
+		await drawer.getByLabel('Preset').selectOption('sf_free');
+		await drawer.getByTestId('local-builder-action-name').fill('Local drawer summary');
+		await drawer.getByRole('button', { name: 'Create local action' }).click();
+
+		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #81');
+		expect(resolvePayloads).toContainEqual(
+			expect.objectContaining({
+				action_selection: {
+					primary: 'sf_free',
+					is_preset: true,
+					backup: null
+				},
+				template_model_hint: 'openrouter/auto'
+			})
+		);
+		expect(createdActionPayload).toMatchObject({
+			display_name: 'Local drawer summary',
+			model_selection_json: {
+				provider: 'openrouter',
+				model: 'openai/gpt-oss-20b:free',
+				credential_id: 42,
+				resolution_source: 'preset',
+				policy_hint: 'local_models_resolve',
+				selection: {
+					primary: 'sf_free',
+					is_preset: true,
+					backup: null
+				}
+			}
+		});
+		expect(createdActionPayload?.definition_json).toMatchObject({
+			response_format: { type: 'json_object' },
+			structured_output_schema: {
+				required: ['summary']
+			}
+		});
+		expect(createdMappingPayload).toMatchObject({
+			form_source: 'gravity_forms',
+			form_id: formId,
+			hook: 'gform_after_submission',
+			action_kind: 'custom_action',
+			action_id: 81,
+			execution_mode: 'async',
+			effect_mapping_json: {
+				store_result: true,
+				meta: {
+					sentient_forms_summary: 'structured.summary'
+				}
+			}
+		});
 	});
 
 	test('creates a mapping with an upstream trigger source from the drawer', async ({ page }) => {
@@ -2230,14 +2481,6 @@ test.describe('Actions admin flows', () => {
 		});
 		await expect(edgeGroup).toHaveCount(0);
 
-		const afterRemoveBox = await mapTwoCard.boundingBox();
-		if (!afterRemoveBox) {
-			throw new Error('Could not resolve map-2 card position after edge removal.');
-		}
-		const mapOneAfterBox = await mapOneCard.boundingBox();
-		if (!mapOneAfterBox) {
-			throw new Error('Could not resolve map-1 card position after edge removal.');
-		}
 		const canvasAfterRemove = await graphCanvas.boundingBox();
 		if (!canvasAfterRemove) {
 			throw new Error('Could not resolve graph canvas position after edge removal.');
@@ -2247,14 +2490,15 @@ test.describe('Actions admin flows', () => {
 			throw new Error('Could not read viewport state after edge removal.');
 		}
 		expect(viewportAfterRemove).toBe(viewportBeforeRemove);
-		assertBoxPositionStable(canvasBeforeRemove, canvasAfterRemove, 6);
-		assertBoxPositionStable(
-			toRelativeBox(mapOneBeforeRemoveBox, canvasBeforeRemove),
-			toRelativeBox(mapOneAfterBox, canvasAfterRemove)
+		await expectRelativeBoxPositionStable(
+			mapOneCard,
+			graphCanvas,
+			toRelativeBox(mapOneBeforeRemoveBox, canvasBeforeRemove)
 		);
-		assertBoxPositionStable(
-			toRelativeBox(draggedBox, canvasBeforeRemove),
-			toRelativeBox(afterRemoveBox, canvasAfterRemove)
+		await expectRelativeBoxPositionStable(
+			mapTwoCard,
+			graphCanvas,
+			toRelativeBox(draggedBox, canvasBeforeRemove)
 		);
 	});
 

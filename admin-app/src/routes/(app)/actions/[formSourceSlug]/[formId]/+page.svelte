@@ -11,11 +11,11 @@
 		FieldSelector,
 		ConditionBuilder,
 		TemplateLibrary,
-			ModelSelector,
-			Toggle,
-			MappingDependencyGraph,
-			StateTemplate
-		} from '$lib/components/ui';
+		ModelSelector,
+		Toggle,
+		MappingDependencyGraph,
+		StateTemplate
+	} from '$lib/components/ui';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { DEFAULT_BATCH_SETTINGS } from '$lib/utils/batch';
 	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
@@ -56,10 +56,14 @@
 		FormExecutionStatus,
 		FormFieldInfo,
 		InputMapping,
+		LocalCustomActionRecord,
+		LocalFormMappingRecord,
 		LocalProviderCredential,
 		ModelSelection,
+		ResolvedModelSelection,
 		WorkflowPlanResponse
 	} from '$lib/api/types';
+	import { unwrapRestResponse, type RestEnvelope } from '$lib/api/response';
 	import {
 		applyInheritableBooleanToConfig,
 		cloneDefaultModelSelection,
@@ -73,12 +77,20 @@
 		type InheritableBooleanMode
 	} from '$lib/utils/action-config';
 	import {
+		isReadyOpenRouterCredential,
 		openRouterActionHealth,
 		providerStatusLabel,
 		providerStatusVariant
 	} from '$lib/utils/provider-health';
+	import { wpFetch } from '$lib/wp';
 
 	type Props = { data: { formSourceSlug: string; formId: number } };
+	type CreateKind = 'template' | 'custom' | 'local_openrouter';
+	type LocalBuilderExecutionMode = 'sync' | 'async';
+	type LocalBuilderResult = {
+		action: LocalCustomActionRecord;
+		mappings: LocalFormMappingRecord[];
+	};
 	let { data }: Props = $props();
 
 	const FALLBACK_HOOK_LABELS: Record<string, string> = {
@@ -96,7 +108,7 @@
 	const customState = customActionsState;
 	const providerClient = createClientFromConfig();
 
-	let createKind = $state<'template' | 'custom'>('template');
+	let createKind = $state<CreateKind>('template');
 	let selectedTemplateId = $state('');
 	let selectedCustomId = $state('');
 	let selectedHooks = $state<Set<string>>(new Set());
@@ -106,6 +118,18 @@
 	let showTemplateLibrary = $state(false);
 	let searchTerm = $state('');
 	let selectedCreateDependencyIds = $state<Set<string>>(new Set());
+	let localBuilderCredentialId = $state('');
+	let localBuilderActionName = $state('Local OpenRouter summary');
+	let localBuilderSystemPrompt = $state(
+		'You summarize Gravity Forms submissions for a WordPress site owner. Return only compact JSON with a summary field.'
+	);
+	let localBuilderPromptTemplate = $state(
+		'Form: {{form.title}}\nEntry: {{entry}}\n\nReturn JSON shaped as {"summary":"one concise sentence about this submission"}.'
+	);
+	let localBuilderResultMetaKey = $state('sentient_forms_summary');
+	let localBuilderExecutionMode = $state<LocalBuilderExecutionMode>('async');
+	let localBuilderModelSelection = $state<ModelSelection>(cloneDefaultModelSelection());
+	let localBuilderResult = $state<LocalBuilderResult | null>(null);
 
 	let editingLinkageId = $state<string | null>(null);
 	let showMappingConfigModal = $state(false);
@@ -154,6 +178,18 @@
 	let providerCredentialsLoading = $state(false);
 	let providerCredentialsError = $state<string | null>(null);
 	const openRouterHealth = $derived(openRouterActionHealth(providerCredentials));
+	const readyOpenRouterCredentials = $derived(
+		providerCredentials
+			.filter((credential) => credential.provider === 'openrouter')
+			.filter((credential) => isReadyOpenRouterCredential(credential))
+	);
+	const selectedLocalBuilderCredential = $derived(
+		readyOpenRouterCredentials.find(
+			(credential) => String(credential.id) === localBuilderCredentialId
+		) ??
+			readyOpenRouterCredentials[0] ??
+			null
+	);
 
 	// CA-MAP-001: Field selection state (loaded from API)
 	let formFields = $state<FormFieldInfo[]>([]);
@@ -888,7 +924,13 @@
 		selectedCustomId ? (customLookupById[selectedCustomId] ?? null) : null
 	);
 	const selectedActionKey = $derived(
-		`${createKind}:${createKind === 'template' ? selectedTemplateId : selectedCustomId}`
+		`${createKind}:${
+			createKind === 'template'
+				? selectedTemplateId
+				: createKind === 'custom'
+					? selectedCustomId
+					: 'direct_openrouter'
+		}`
 	);
 
 	let lastPresetKey = $state<string | null>(null);
@@ -898,10 +940,27 @@
 		const presetHooks =
 			createKind === 'template'
 				? normalizeDefinitionHooks(selectedDefinition?.hooks)
-				: ['gform_validation'];
+				: createKind === 'local_openrouter'
+					? ['gform_after_submission']
+					: ['gform_validation'];
 		const normalized = presetHooks.length > 0 ? presetHooks : ['gform_validation'];
 		selectedHooks = new Set(normalized);
 		lastPresetKey = selectedActionKey;
+	});
+
+	$effect(() => {
+		const selectedStillAvailable = readyOpenRouterCredentials.some(
+			(credential) => String(credential.id) === localBuilderCredentialId
+		);
+
+		if (readyOpenRouterCredentials.length === 0) {
+			localBuilderCredentialId = '';
+			return;
+		}
+
+		if (!localBuilderCredentialId || !selectedStillAvailable) {
+			localBuilderCredentialId = String(readyOpenRouterCredentials[0].id);
+		}
 	});
 
 	$effect(() => {
@@ -1507,7 +1566,141 @@
 	function openAddActionPanel() {
 		selectedCreateDependencyIds = new Set();
 		createError = null;
+		localBuilderResult = null;
 		showAddPanel = true;
+	}
+
+	function normalizeLocalBuilderActionCode(value: string): string {
+		const normalized = value
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '_')
+			.replace(/^_+|_+$/g, '')
+			.slice(0, 48);
+
+		return normalized.length > 0 ? normalized : 'local_openrouter_action';
+	}
+
+	function isSafeLocalMetaKey(value: string): boolean {
+		return /^[A-Za-z0-9_:-]+$/.test(value);
+	}
+
+	function handleLocalBuilderModelSelectionChange(selection: ModelSelection) {
+		localBuilderModelSelection = selection;
+	}
+
+	function localBuilderStructuredOutputSchema(): Record<string, unknown> {
+		return {
+			type: 'object',
+			required: ['summary'],
+			additionalProperties: true,
+			properties: {
+				summary: {
+					type: 'string',
+					minLength: 1
+				}
+			}
+		};
+	}
+
+	async function resolveLocalBuilderModelSelection(): Promise<ResolvedModelSelection> {
+		const response = await wpFetch<ResolvedModelSelection | RestEnvelope<ResolvedModelSelection>>(
+			'models/resolve',
+			{
+				method: 'POST',
+				body: {
+					action_selection: localBuilderModelSelection,
+					template_model_hint: 'openrouter/auto'
+				},
+				showNotifications: false
+			}
+		);
+		const resolved = unwrapRestResponse<ResolvedModelSelection>(response);
+
+		if (!resolved?.model_id) {
+			throw new Error('Local model policy did not return a usable OpenRouter model.');
+		}
+
+		return resolved;
+	}
+
+	async function createDirectOpenRouterAction(hooks: string[]): Promise<void> {
+		const credential = selectedLocalBuilderCredential;
+		const actionName = localBuilderActionName.trim() || 'Local OpenRouter summary';
+		const promptTemplate = localBuilderPromptTemplate.trim();
+		const systemPrompt = localBuilderSystemPrompt.trim();
+		const resultMetaKey = localBuilderResultMetaKey.trim();
+
+		if (!credential) {
+			createError = 'Save and validate an OpenRouter key before creating a direct local action.';
+			return;
+		}
+
+		if (promptTemplate.length === 0) {
+			createError = 'Enter a prompt template for the local action.';
+			return;
+		}
+
+		if (!isSafeLocalMetaKey(resultMetaKey)) {
+			createError =
+				'Use letters, numbers, underscores, colons, or dashes for the result meta key.';
+			return;
+		}
+
+		const resolvedModel = await resolveLocalBuilderModelSelection();
+		const timestamp = Date.now();
+		const action = await providerClient.createLocalCustomAction(
+			{
+				code: `${normalizeLocalBuilderActionCode(actionName)}_${timestamp}`,
+				display_name: actionName,
+				definition_json: {
+					...(systemPrompt ? { system_prompt: systemPrompt } : {}),
+					prompt_template: promptTemplate,
+					response_format: { type: 'json_object' },
+					structured_output_schema: localBuilderStructuredOutputSchema(),
+					max_tokens: 250,
+					temperature: 0.2
+				},
+				model_selection_json: {
+					provider: 'openrouter',
+					model: resolvedModel.model_id,
+					credential_id: credential.id,
+					selection: localBuilderModelSelection,
+					resolution_source: resolvedModel.resolution_source,
+					policy_hint: 'local_models_resolve'
+				},
+				status: 'active'
+			},
+			{ showNotifications: false }
+		);
+
+		const meta: Record<string, string> = {};
+		meta[resultMetaKey] = 'structured.summary';
+
+		const mappings: LocalFormMappingRecord[] = [];
+		for (const hook of hooks) {
+			const mapping = await providerClient.createLocalFormMapping(
+				{
+					form_source: data.formSourceSlug,
+					form_id: data.formId,
+					hook,
+					action_kind: 'custom_action',
+					action_id: action.id,
+					input_bindings_json: {},
+					execution_mode: localBuilderExecutionMode,
+					effect_mapping_json: {
+						store_result: true,
+						meta
+					},
+					enabled: true
+				},
+				{ showNotifications: false }
+			);
+			mappings.push(mapping);
+		}
+
+		localBuilderResult = { action, mappings };
+		notifications.success('Local OpenRouter action and mapping created.');
+		await formActionsStore.load(data.formSourceSlug, data.formId);
 	}
 
 	function normalizeDraftHooks(hooks: Iterable<string>): string[] {
@@ -2267,6 +2460,23 @@
 			createError = 'Select at least one trigger hook.';
 			return;
 		}
+
+		if (createKind === 'local_openrouter') {
+			try {
+				creating = true;
+				await createDirectOpenRouterAction(hooks);
+				if (!createError) {
+					selectedCreateDependencyIds = new Set();
+				}
+			} catch (error) {
+				createError =
+					error instanceof Error ? error.message : 'Failed to create direct OpenRouter mapping';
+			} finally {
+				creating = false;
+			}
+			return;
+		}
+
 		const dependencyIds = normalizeDependencyIds(Array.from(selectedCreateDependencyIds));
 		const primaryDependencyId = dependencyIds[0] ?? null;
 		if (dependencyIds.length > 0) {
@@ -3983,7 +4193,9 @@
 					>
 						<div>
 							<p class="sf:text-sm sf:font-semibold sf:text-slate-800">Add action</p>
-							<p class="sf:text-xs sf:text-slate-500">Link a CPS template or custom action.</p>
+							<p class="sf:text-xs sf:text-slate-500">
+								Create a direct OpenRouter mapping or link an existing action.
+							</p>
 						</div>
 						<Button
 							variant="ghost"
@@ -3991,6 +4203,7 @@
 							onclick={() => {
 								selectedCreateDependencyIds = new Set();
 								createError = null;
+								localBuilderResult = null;
 								showAddPanel = false;
 							}}
 						>
@@ -4002,7 +4215,10 @@
 						<Button
 							size="sm"
 							variant={createKind === 'template' ? 'primary' : 'secondary'}
-							onclick={() => (createKind = 'template')}
+							onclick={() => {
+								createKind = 'template';
+								localBuilderResult = null;
+							}}
 							disabled={!hasDefinitions}
 						>
 							CPS templates
@@ -4010,19 +4226,35 @@
 						<Button
 							size="sm"
 							variant={createKind === 'custom' ? 'primary' : 'secondary'}
-							onclick={() => (createKind = 'custom')}
+							onclick={() => {
+								createKind = 'custom';
+								localBuilderResult = null;
+							}}
 							disabled={customActions.length === 0}
 						>
 							Custom actions
 						</Button>
-						<div class="sf:flex-1 sf:min-w-[200px]">
-							<InputField
-								id="action-search"
-								label="Search"
-								placeholder="Search by name or id"
-								bind:value={searchTerm}
-							/>
-						</div>
+						<Button
+							size="sm"
+							variant={createKind === 'local_openrouter' ? 'primary' : 'secondary'}
+							onclick={() => {
+								createKind = 'local_openrouter';
+								selectedCreateDependencyIds = new Set();
+								createError = null;
+							}}
+						>
+							Direct OpenRouter
+						</Button>
+						{#if createKind !== 'local_openrouter'}
+							<div class="sf:flex-1 sf:min-w-[200px]">
+								<InputField
+									id="action-search"
+									label="Search"
+									placeholder="Search by name or id"
+									bind:value={searchTerm}
+								/>
+							</div>
+						{/if}
 					</div>
 
 					<form
@@ -4068,40 +4300,172 @@
 									{/each}
 								</div>
 							{/if}
-						{:else if customActions.length === 0}
-							<Alert variant="info">No active custom actions. Create one first.</Alert>
-						{:else}
-							<div class="sf:space-y-2">
-								{#each customActions.filter((action) => {
-									const term = searchTerm.toLowerCase();
-									if (!term) return true;
-									return action.display_name.toLowerCase().includes(term) || action.code
-											.toLowerCase()
-											.includes(term) || action.id.toLowerCase().includes(term);
-								}) as action (action.id)}
-									<label
-										class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300"
-									>
-										<input
-											type="radio"
-											name="custom-choice"
-											class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											checked={selectedCustomId === action.id}
-											onchange={() => (selectedCustomId = action.id)}
-										/>
-										<div class="sf:flex sf:flex-col sf:gap-1">
-											<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
-												{action.display_name}
-											</p>
-											<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
-											{#if action.base_credit_cost !== null}
-												<p class="sf:text-xs sf:text-slate-500">
-													CPS base cost: {action.base_credit_cost} credits
+						{:else if createKind === 'custom'}
+							{#if customActions.length === 0}
+								<Alert variant="info">No active custom actions. Create one first.</Alert>
+							{:else}
+								<div class="sf:space-y-2">
+									{#each customActions.filter((action) => {
+										const term = searchTerm.toLowerCase();
+										if (!term) return true;
+										return action.display_name.toLowerCase().includes(term) || action.code
+												.toLowerCase()
+												.includes(term) || action.id.toLowerCase().includes(term);
+									}) as action (action.id)}
+										<label
+											class="sf:flex sf:items-start sf:gap-3 sf:border sf:border-slate-200 sf:rounded-md sf:p-3 sf:cursor-pointer sf:hover:border-primary-300"
+										>
+											<input
+												type="radio"
+												name="custom-choice"
+												class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+												checked={selectedCustomId === action.id}
+												onchange={() => (selectedCustomId = action.id)}
+											/>
+											<div class="sf:flex sf:flex-col sf:gap-1">
+												<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+													{action.display_name}
 												</p>
-											{/if}
+												<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
+												{#if action.base_credit_cost !== null}
+													<p class="sf:text-xs sf:text-slate-500">
+														CPS base cost: {action.base_credit_cost} credits
+													</p>
+												{/if}
+											</div>
+										</label>
+									{/each}
+								</div>
+							{/if}
+						{:else}
+							<div class="sf:space-y-4" data-testid="local-openrouter-builder">
+								<Alert variant={openRouterHealth.status === 'ready' ? 'info' : 'warning'}>
+									<div class="sf:flex sf:flex-col sf:gap-2">
+										<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+											<Badge variant={providerStatusVariant(openRouterHealth.badgeStatus)}>
+												{providerStatusLabel(openRouterHealth.badgeStatus)}
+											</Badge>
+											<p class="sf:text-sm sf:font-medium">{openRouterHealth.title}</p>
 										</div>
-									</label>
-								{/each}
+										<p class="sf:text-sm">{openRouterHealth.message}</p>
+									</div>
+								</Alert>
+
+								{#if readyOpenRouterCredentials.length === 0}
+									<Alert variant="warning">
+										Validate a ready OpenRouter key before creating direct local mappings.
+									</Alert>
+								{:else}
+									<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
+										<div class="sf:space-y-1">
+											<label
+												class="sf:text-sm sf:font-medium sf:text-slate-700"
+												for="local-builder-credential"
+											>
+												OpenRouter key
+											</label>
+											<select
+												id="local-builder-credential"
+												class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+												bind:value={localBuilderCredentialId}
+												disabled={creating}
+												data-testid="local-builder-credential"
+											>
+												{#each readyOpenRouterCredentials as credential}
+													<option value={String(credential.id)}
+														>{credential.label} · #{credential.id}</option
+													>
+												{/each}
+											</select>
+										</div>
+										<InputField
+											id="local-builder-action-name"
+											label="Action name"
+											placeholder="Local OpenRouter summary"
+											bind:value={localBuilderActionName}
+											disabled={creating}
+											data-testid="local-builder-action-name"
+										/>
+									</div>
+
+									<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
+										<InputField
+											id="local-builder-result-meta-key"
+											label="Result meta key"
+											placeholder="sentient_forms_summary"
+											bind:value={localBuilderResultMetaKey}
+											disabled={creating}
+											required
+											data-testid="local-builder-result-meta-key"
+										/>
+										<div class="sf:space-y-1">
+											<label
+												class="sf:text-sm sf:font-medium sf:text-slate-700"
+												for="local-builder-execution-mode"
+											>
+												Run mode
+											</label>
+											<select
+												id="local-builder-execution-mode"
+												class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+												bind:value={localBuilderExecutionMode}
+												disabled={creating}
+												data-testid="local-builder-execution-mode"
+											>
+												<option value="async">Background local run</option>
+												<option value="sync">Immediate local run</option>
+											</select>
+										</div>
+									</div>
+
+									<div class="sf:space-y-1">
+										<label
+											class="sf:text-sm sf:font-medium sf:text-slate-700"
+											for="local-builder-system-prompt"
+										>
+											System prompt
+										</label>
+										<textarea
+											id="local-builder-system-prompt"
+											class="sf:min-h-20 sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+											bind:value={localBuilderSystemPrompt}
+											disabled={creating}
+											data-testid="local-builder-system-prompt"
+										></textarea>
+									</div>
+
+									<div class="sf:space-y-1">
+										<label
+											class="sf:text-sm sf:font-medium sf:text-slate-700"
+											for="local-builder-prompt-template"
+										>
+											Prompt template
+										</label>
+										<textarea
+											id="local-builder-prompt-template"
+											class="sf:min-h-32 sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:font-mono sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+											bind:value={localBuilderPromptTemplate}
+											disabled={creating}
+											required
+											data-testid="local-builder-prompt-template"
+										></textarea>
+										<p class="sf:text-xs sf:text-slate-500">
+											Available placeholders include <code>{'{{form.title}}'}</code> and
+											<code>{'{{entry}}'}</code>. The result must include a JSON
+											<code>summary</code> field.
+										</p>
+									</div>
+
+									<div data-testid="local-builder-model-selector">
+										<ModelSelector
+											value={localBuilderModelSelection}
+											label="Local model policy"
+											level="action"
+											templateModelHint="openrouter/auto"
+											onchange={handleLocalBuilderModelSelectionChange}
+										/>
+									</div>
+								{/if}
 							</div>
 						{/if}
 
@@ -4145,58 +4509,68 @@
 							</div>
 						</div>
 
-						<div class="sf:border-t sf:border-slate-200 sf:pt-3 sf:space-y-2">
-							<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center">
-								<p class="sf:text-sm sf:font-medium sf:text-slate-700">
-									Triggered by action (optional)
+						{#if createKind !== 'local_openrouter'}
+							<div class="sf:border-t sf:border-slate-200 sf:pt-3 sf:space-y-2">
+								<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center">
+									<p class="sf:text-sm sf:font-medium sf:text-slate-700">
+										Triggered by action (optional)
+									</p>
+									{#if selectedCreateDependencyIds.size > 0}
+										<Badge variant="info">1 selected</Badge>
+									{/if}
+								</div>
+								<p class="sf:text-xs sf:text-slate-500">
+									Choose one mapped action as upstream trigger source, or leave empty for autonomous
+									hook roots.
 								</p>
-								{#if selectedCreateDependencyIds.size > 0}
-									<Badge variant="info">1 selected</Badge>
+								{#if selectedHooks.size === 0}
+									<p class="sf:text-xs sf:text-amber-700">
+										Choose trigger hooks first to see compatible upstream actions.
+									</p>
+								{:else if editableDependenciesForCreate.length === 0}
+									<p class="sf:text-xs sf:text-slate-500">
+										No compatible existing actions match the selected hooks.
+									</p>
+								{:else}
+									<div class="sf:grid sf:gap-2">
+										{#each editableDependenciesForCreate as linkage (linkage.local_mapping_id)}
+											<label
+												class="sf:flex sf:items-start sf:gap-2 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2 sf:cursor-pointer sf:hover:border-primary-300"
+											>
+												<input
+													type="radio"
+													name="create-dependency-trigger"
+													class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+													checked={selectedCreateDependencyIds.has(linkage.local_mapping_id)}
+													onchange={() => toggleCreateDependencySelection(linkage.local_mapping_id)}
+												/>
+												<div class="sf:min-w-0 sf:flex-1">
+													<p class="sf:text-sm sf:font-medium sf:text-slate-800">
+														{friendlyActionLabel(linkage)}
+													</p>
+													<p class="sf:text-xs sf:text-slate-500">
+														ID: {linkage.local_mapping_id}
+													</p>
+													<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1">
+														{#each getMappingTriggerHooks(linkage) as hook (hook)}
+															<Badge variant="info">{hookOptions[hook] ?? hook}</Badge>
+														{/each}
+													</div>
+												</div>
+											</label>
+										{/each}
+									</div>
 								{/if}
 							</div>
-							<p class="sf:text-xs sf:text-slate-500">
-								Choose one mapped action as upstream trigger source, or leave empty for autonomous
-								hook roots.
-							</p>
-							{#if selectedHooks.size === 0}
-								<p class="sf:text-xs sf:text-amber-700">
-									Choose trigger hooks first to see compatible upstream actions.
-								</p>
-							{:else if editableDependenciesForCreate.length === 0}
-								<p class="sf:text-xs sf:text-slate-500">
-									No compatible existing actions match the selected hooks.
-								</p>
-							{:else}
-								<div class="sf:grid sf:gap-2">
-									{#each editableDependenciesForCreate as linkage (linkage.local_mapping_id)}
-										<label
-											class="sf:flex sf:items-start sf:gap-2 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2 sf:cursor-pointer sf:hover:border-primary-300"
-										>
-											<input
-												type="radio"
-												name="create-dependency-trigger"
-												class="sf:mt-1 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-												checked={selectedCreateDependencyIds.has(linkage.local_mapping_id)}
-												onchange={() => toggleCreateDependencySelection(linkage.local_mapping_id)}
-											/>
-											<div class="sf:min-w-0 sf:flex-1">
-												<p class="sf:text-sm sf:font-medium sf:text-slate-800">
-													{friendlyActionLabel(linkage)}
-												</p>
-												<p class="sf:text-xs sf:text-slate-500">
-													ID: {linkage.local_mapping_id}
-												</p>
-												<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1">
-													{#each getMappingTriggerHooks(linkage) as hook (hook)}
-														<Badge variant="info">{hookOptions[hook] ?? hook}</Badge>
-													{/each}
-												</div>
-											</div>
-										</label>
-									{/each}
-								</div>
-							{/if}
-						</div>
+						{/if}
+
+						{#if localBuilderResult && createKind === 'local_openrouter'}
+							<Alert variant="success" data-testid="local-builder-result">
+								Action #{localBuilderResult.action.id} mapped to {localBuilderResult.mappings.length}
+								hook{localBuilderResult.mappings.length === 1 ? '' : 's'} from local WordPress
+								tables.
+							</Alert>
+						{/if}
 
 						{#if createError}
 							<Alert variant="danger">{createError}</Alert>
@@ -4209,6 +4583,7 @@
 								onclick={() => {
 									selectedCreateDependencyIds = new Set();
 									createError = null;
+									localBuilderResult = null;
 									showAddPanel = false;
 								}}
 							>
@@ -4219,9 +4594,17 @@
 								onclick={() => handleCreate(new Event('submit', { cancelable: true }))}
 								disabled={creating ||
 									selectedHooks.size === 0 ||
-									(!hasDefinitions && createKind === 'template')}
+									(!hasDefinitions && createKind === 'template') ||
+									(createKind === 'custom' && customActions.length === 0) ||
+									(createKind === 'local_openrouter' && !selectedLocalBuilderCredential)}
 							>
-								{creating ? 'Linking…' : 'Link action'}
+								{creating
+									? createKind === 'local_openrouter'
+										? 'Creating...'
+										: 'Linking...'
+									: createKind === 'local_openrouter'
+										? 'Create local action'
+										: 'Link action'}
 							</Button>
 						</div>
 					</form>
