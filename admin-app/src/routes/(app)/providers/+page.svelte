@@ -116,6 +116,63 @@
 		}
 	}
 
+	function credentialHttpStatus(credential: LocalProviderCredential): number | null {
+		const httpStatus = credential.status_json?.http_status;
+
+		if (typeof httpStatus === 'number' && Number.isFinite(httpStatus)) {
+			return httpStatus;
+		}
+
+		if (typeof httpStatus === 'string' && httpStatus.trim().length > 0) {
+			const parsedStatus = Number(httpStatus);
+			return Number.isFinite(parsedStatus) ? parsedStatus : null;
+		}
+
+		return null;
+	}
+
+	function credentialStatusDetail(credential: LocalProviderCredential): string | null {
+		const httpStatus = credentialHttpStatus(credential);
+
+		if (!credential.secret_configured) {
+			return 'The secret is missing. Save and validate this key before using it.';
+		}
+
+		if (credential.status === 'limited') {
+			if (httpStatus === 402) {
+				return 'OpenRouter reported insufficient credits. Add OpenRouter credits or switch this action to a free or available model before retrying.';
+			}
+
+			if (httpStatus === 429) {
+				return 'OpenRouter rate-limited this key. Wait for the provider limit to reset or use another OpenRouter key.';
+			}
+
+			return 'OpenRouter limited this key. Review your OpenRouter account limits before retrying.';
+		}
+
+		if (credential.status === 'invalid') {
+			return 'OpenRouter rejected this key. Validate a current key before running direct actions.';
+		}
+
+		if (credential.status === 'disabled') {
+			return 'This key is disabled locally and will not be used for direct actions.';
+		}
+
+		return null;
+	}
+
+	function credentialStatusDetailClass(credential: LocalProviderCredential): string {
+		if (credential.status === 'limited') {
+			return 'sf:text-warning-700';
+		}
+
+		if (credential.status === 'invalid' || credential.status === 'disabled') {
+			return 'sf:text-danger-700';
+		}
+
+		return 'sf:text-slate-500';
+	}
+
 	function errorMessage(requestError: unknown): string {
 		if (requestError instanceof ApiClientError) {
 			const payload = requestError.payload;
@@ -595,6 +652,7 @@
 			{:else}
 				<div class="sf:space-y-3">
 					{#each openRouterCredentials as credential}
+						{@const statusDetail = credentialStatusDetail(credential)}
 						<div
 							class="sf:border-l sf:border-slate-300 sf:pl-3"
 							data-testid="providers-openrouter-credential"
@@ -613,6 +671,14 @@
 							<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
 								Last validated {formatTimestamp(credential.last_validated_at, 'never')}
 							</p>
+							{#if statusDetail}
+								<p
+									class={`sf:mt-2 sf:text-xs ${credentialStatusDetailClass(credential)}`}
+									data-testid="providers-openrouter-credential-status-detail"
+								>
+									{statusDetail}
+								</p>
+							{/if}
 						</div>
 					{/each}
 				</div>

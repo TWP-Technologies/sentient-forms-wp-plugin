@@ -264,6 +264,63 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		});
 	});
 
+	test('providers explains limited OpenRouter keys with remediation copy', async ({ page }) => {
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([
+					{
+						id: 31,
+						provider: 'openrouter',
+						label: 'OpenRouter limited key',
+						auth_mode: 'manual_key',
+						constant_name: null,
+						status: 'limited',
+						status_json: {
+							last_error_code: 'openrouter_request_failed',
+							last_error_message: 'OpenRouter request failed with status 402.',
+							http_status: 402
+						},
+						last_validated_at: '2030-01-05T10:00:00Z',
+						created_at: '2030-01-05T09:00:00Z',
+						updated_at: '2030-01-05T10:00:00Z',
+						secret_configured: true
+					}
+				])
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/openrouter/models**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					provider: 'openrouter',
+					source: 'local_cache',
+					total_cached: 0,
+					total_returned: 0,
+					free_count: 0,
+					stale_count: 0,
+					models: []
+				})
+			})
+		);
+
+		await page.goto('/#/providers', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('providers-openrouter-credential')).toContainText('Limited');
+		await expect(page.getByTestId('providers-openrouter-credential-status-detail')).toContainText(
+			'OpenRouter reported insufficient credits'
+		);
+		await expect(page.getByTestId('providers-openrouter-credential-status-detail')).toContainText(
+			'free or available model'
+		);
+		await expect(page.getByTestId('local-setup-no-credential')).toContainText(
+			'No ready OpenRouter key'
+		);
+	});
+
 	test('licensing active screen leads with status, tier, credits, and reset timing', async ({ page }) => {
 		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
 			route.fulfill({
