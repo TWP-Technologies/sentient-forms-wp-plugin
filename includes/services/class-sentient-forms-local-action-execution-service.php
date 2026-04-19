@@ -748,7 +748,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             $status = 'invalid';
         }
-        elseif ( 429 === $status_code )
+        elseif ( in_array( $status_code, [ 402, 429 ], true ) )
         {
             $status = 'limited';
         }

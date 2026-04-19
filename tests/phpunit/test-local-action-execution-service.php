@@ -269,6 +269,35 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertStringNotContainsString( $fixture['secret'], wp_json_encode( $credential['status_json'] ) );
     }
 
+    public function test_openrouter_insufficient_credits_marks_credential_limited(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client(
+            new WP_Error( 'insufficient_credits', 'OpenRouter account has insufficient credits.', [ 'status' => 402 ] )
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'insufficient_credits', $result->get_error_code() );
+
+        $credential = $this->credentials->get( $fixture['credential_id'] );
+        $this->assertIsArray( $credential );
+        $this->assertSame( 'limited', $credential['status'] );
+        $this->assertSame( 402, $credential['status_json']['http_status'] );
+        $this->assertSame( 'insufficient_credits', $credential['status_json']['last_error_code'] );
+    }
+
     public function test_applies_gravity_forms_effects_from_structured_result(): void
     {
         $fixture = $this->create_local_openrouter_mapping(
