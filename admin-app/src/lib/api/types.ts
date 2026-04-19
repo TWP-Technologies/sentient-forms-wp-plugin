@@ -425,6 +425,48 @@ export interface LocalMigrationDryRunResponse {
 	report: LocalMigrationReadinessReport;
 }
 
+export interface LocalMigrationImportFinding {
+	code: string;
+	message: string;
+	severity?: 'error' | 'warning' | string;
+	entity?: string;
+	field?: string;
+	value?: string;
+}
+
+export interface LocalMigrationImportReport {
+	schema_version: string;
+	source: string;
+	source_version: string;
+	generated_at: string;
+	exported_at: string | null;
+	ready_to_import: boolean;
+	counts: Record<string, number>;
+	changes: Record<string, Record<string, number> | number>;
+	conflicts: LocalMigrationImportFinding[];
+	warnings: LocalMigrationImportFinding[];
+	mapping: Record<string, unknown>;
+}
+
+export interface LocalMigrationImportRequest {
+	bundle: Record<string, unknown>;
+}
+
+export interface LocalMigrationImportDryRunResponse {
+	run_id: number;
+	status: 'dry_run_complete' | string;
+	dry_run: true;
+	report: LocalMigrationImportReport;
+}
+
+export interface LocalMigrationImportApplyResponse {
+	run_id: number;
+	status: 'completed' | string;
+	dry_run: false;
+	report: LocalMigrationImportReport;
+	applied: Record<string, number>;
+}
+
 export interface LocalMigrationApprovedResetRequest {
 	confirmation_phrase: string;
 }

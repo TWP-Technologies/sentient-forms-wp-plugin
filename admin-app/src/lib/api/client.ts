@@ -52,6 +52,9 @@ import type {
 	LocalMigrationApprovedResetRequest,
 	LocalMigrationApprovedResetResponse,
 	LocalMigrationDryRunResponse,
+	LocalMigrationImportApplyResponse,
+	LocalMigrationImportDryRunResponse,
+	LocalMigrationImportRequest,
 	LocalMigrationReadinessReport,
 	LocalProviderCredential,
 	LocalSupportBundle,
@@ -511,6 +514,28 @@ export class SentientFormsApiClient {
 	): Promise<LocalMigrationDryRunResponse> {
 		return this.request<LocalMigrationDryRunResponse>('local/migration/dry-run', {
 			method: 'POST',
+			...options
+		});
+	}
+
+	async createLocalMigrationImportDryRun(
+		payload: LocalMigrationImportRequest,
+		options: RequestOptions = {}
+	): Promise<LocalMigrationImportDryRunResponse> {
+		return this.request<LocalMigrationImportDryRunResponse>('local/migration/import/dry-run', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+	}
+
+	async runLocalMigrationImportApply(
+		payload: LocalMigrationImportRequest,
+		options: RequestOptions = {}
+	): Promise<LocalMigrationImportApplyResponse> {
+		return this.request<LocalMigrationImportApplyResponse>('local/migration/import/apply', {
+			method: 'POST',
+			body: payload,
 			...options
 		});
 	}

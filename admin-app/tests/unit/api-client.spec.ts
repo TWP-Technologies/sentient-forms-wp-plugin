@@ -444,6 +444,104 @@ describe('SentientFormsApiClient', () => {
 		});
 	});
 
+	it('previews a local migration import bundle', async () => {
+		const bundle = {
+			schema_version: 'sentient_forms_cps_export_v1',
+			action_templates: []
+		};
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 201,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					run_id: 31,
+					status: 'dry_run_complete',
+					dry_run: true,
+					report: {
+						schema_version: 'sentient_forms_cps_export_v1',
+						source: 'cps_export',
+						source_version: 'cps-dev-export-1',
+						generated_at: '2026-04-19T21:00:00+00:00',
+						exported_at: '2026-04-19T20:00:00+00:00',
+						ready_to_import: true,
+						counts: { action_templates: 0 },
+						changes: { total_writes: 0 },
+						conflicts: [],
+						warnings: [],
+						mapping: {}
+					}
+				})
+		});
+
+		const result = await client.createLocalMigrationImportDryRun(
+			{ bundle },
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}local/migration/import/dry-run`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ bundle })
+			})
+		);
+		expect(result).toMatchObject({
+			run_id: 31,
+			dry_run: true
+		});
+	});
+
+	it('applies a local migration import bundle', async () => {
+		const bundle = {
+			schema_version: 'sentient_forms_cps_export_v1',
+			action_templates: []
+		};
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 201,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					run_id: 32,
+					status: 'completed',
+					dry_run: false,
+					report: {
+						schema_version: 'sentient_forms_cps_export_v1',
+						source: 'cps_export',
+						source_version: 'cps-dev-export-1',
+						generated_at: '2026-04-19T21:00:00+00:00',
+						exported_at: '2026-04-19T20:00:00+00:00',
+						ready_to_import: true,
+						counts: { action_templates: 0 },
+						changes: { total_writes: 0 },
+						conflicts: [],
+						warnings: [],
+						mapping: {}
+					},
+					applied: { total: 0 }
+				})
+		});
+
+		const result = await client.runLocalMigrationImportApply(
+			{ bundle },
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}local/migration/import/apply`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({ bundle })
+			})
+		);
+		expect(result).toMatchObject({
+			run_id: 32,
+			dry_run: false,
+			applied: { total: 0 }
+		});
+	});
+
 	it('surfaces ApiClientError with code and notification', async () => {
 		const notifySpy = vi.spyOn(notifications, 'error');
 
