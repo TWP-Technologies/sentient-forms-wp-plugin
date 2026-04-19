@@ -1,36 +1,46 @@
 <?php
 
-if ( ! class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) ) {
-    class Sentient_Forms_Test_Gf_Meta_Store {
+if ( ! class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) )
+{
+    class Sentient_Forms_Test_Gf_Meta_Store
+    {
         /** @var array<int,array<string,mixed>> */
         private static array $meta = [];
 
-        public static function reset(): void {
+        public static function reset(): void
+        {
             self::$meta = [];
         }
 
-        public static function set_meta( int $entry_id, string $key, mixed $value ): void {
-            if ( ! isset( self::$meta[ $entry_id ] ) ) {
+        public static function set_meta( int $entry_id, string $key, mixed $value ): void
+        {
+            if ( ! isset( self::$meta[ $entry_id ] ) )
+            {
                 self::$meta[ $entry_id ] = [];
             }
 
             self::$meta[ $entry_id ][ $key ] = $value;
         }
 
-        public static function get_meta( int $entry_id, string $key ): mixed {
+        public static function get_meta( int $entry_id, string $key ): mixed
+        {
             return self::$meta[ $entry_id ][ $key ] ?? null;
         }
     }
 }
 
-if ( ! function_exists( 'gform_get_meta' ) ) {
-    function gform_get_meta( $entry_id, $meta_key ) {
+if ( ! function_exists( 'gform_get_meta' ) )
+{
+    function gform_get_meta( $entry_id, $meta_key )
+    {
         return Sentient_Forms_Test_Gf_Meta_Store::get_meta( (int) $entry_id, (string) $meta_key );
     }
 }
 
-if ( ! function_exists( 'gform_update_meta' ) ) {
-    function gform_update_meta( $entry_id, $meta_key, $value ) {
+if ( ! function_exists( 'gform_update_meta' ) )
+{
+    function gform_update_meta( $entry_id, $meta_key, $value )
+    {
         Sentient_Forms_Test_Gf_Meta_Store::set_meta( (int) $entry_id, (string) $meta_key, $value );
 
         return true;
@@ -2971,6 +2981,328 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'Local-first form submission completed.', $recent_events[0]['result_json']['structured']['summary'] ?? null );
 
         $this->assertNotEmpty( $http_urls );
+        $this->assertContains(
+            true,
+            array_map(
+                static fn ( string $url ): bool => false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ),
+                $http_urls
+            )
+        );
+        foreach ( $http_urls as $url )
+        {
+            $this->assertStringNotContainsString( 'sentientforms.com', $url );
+        }
+    }
+
+    public function test_handle_validation_executes_local_openrouter_mapping_from_local_tables(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $vault          = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted      = $vault->encrypt( 'sk-or-gf-local-validation-secret' );
+        $http_urls      = [];
+
+        $this->assertIsString( $encrypted );
+
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Validation OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $this->assertIsInt( $consents->record( 'openrouter', '2026-04-19', 0 ) );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'gf_local_openrouter_validation',
+                'display_name'         => 'GF Local OpenRouter Validation',
+                'definition_json'      => [
+                    'prompt_template' => 'Validate this Gravity Forms submission.',
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '322',
+                'hook'                => 'gform_validation',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'effect_mapping_json' => [],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $http_filter = static function ( $preempt, array $args, string $url ) use ( &$http_urls ): mixed {
+            $http_urls[] = $url;
+
+            if ( false !== strpos( $url, 'sentientforms.com' ) )
+            {
+                return new WP_Error( 'unexpected_sentient_request', 'Local-first validation tried to call Sentient.' );
+            }
+
+            if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+            {
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'chatcmpl-gf-local-validation',
+                            'model'   => 'openrouter/auto',
+                            'choices' => [
+                                [
+                                    'message'       => [
+                                        'role'    => 'assistant',
+                                        'content' => wp_json_encode(
+                                            [
+                                                'is_valid' => false,
+                                                'message'  => 'Local validation blocked this submission.',
+                                                'fields'   => [
+                                                    [
+                                                        'field_id' => '3',
+                                                        'is_valid' => false,
+                                                        'message'  => 'Project details need more substance.',
+                                                    ],
+                                                ],
+                                            ]
+                                        ),
+                                    ],
+                                    'finish_reason' => 'stop',
+                                ],
+                            ],
+                            'usage'   => [
+                                'prompt_tokens'     => 9,
+                                'completion_tokens' => 8,
+                                'total_tokens'      => 17,
+                            ],
+                        ]
+                    ),
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'cookies'  => [],
+                ];
+            }
+
+            return $preempt;
+        };
+
+        $field = (object) [
+            'id'                 => 3,
+            'failed_validation'  => false,
+            'validation_message' => '',
+        ];
+
+        add_filter( 'pre_http_request', $http_filter, 10, 3 );
+        $result = $this->adapter->handle_validation(
+            [
+                'is_valid' => true,
+                'form'     => [
+                    'id'                => 322,
+                    'failed_validation' => false,
+                    'fields'            => [ $field ],
+                ],
+            ]
+        );
+        remove_filter( 'pre_http_request', $http_filter, 10 );
+
+        $this->assertFalse( $result['is_valid'] );
+        $this->assertTrue( $result['form']['failed_validation'] );
+        $this->assertStringContainsString(
+            'Local validation blocked this submission.',
+            (string) ( $result['form']['validation_message'] ?? '' )
+        );
+        $this->assertTrue( $result['form']['fields'][0]->failed_validation );
+        $this->assertSame( 'Project details need more substance.', $result['form']['fields'][0]->validation_message );
+
+        $recent_events = $events->list_recent( 1 );
+        $this->assertCount( 1, $recent_events );
+        $this->assertSame( 'succeeded', $recent_events[0]['status'] ?? null );
+        $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
+
+        $this->assertContains(
+            true,
+            array_map(
+                static fn ( string $url ): bool => false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ),
+                $http_urls
+            )
+        );
+        foreach ( $http_urls as $url )
+        {
+            $this->assertStringNotContainsString( 'sentientforms.com', $url );
+        }
+    }
+
+    public function test_handle_after_submission_local_spam_mapping_suppresses_notifications(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $vault          = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted      = $vault->encrypt( 'sk-or-gf-local-spam-secret' );
+        $http_urls      = [];
+
+        $this->assertIsString( $encrypted );
+
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Spam OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $this->assertIsInt( $consents->record( 'openrouter', '2026-04-19', 0 ) );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'gf_local_openrouter_spam',
+                'display_name'         => 'GF Local OpenRouter Spam',
+                'definition_json'      => [
+                    'prompt_template' => 'Classify this Gravity Forms submission for spam.',
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '323',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'effect_mapping_json' => [
+                    'spam' => [
+                        'enabled'                        => true,
+                        'classification_path'            => 'structured.classification',
+                        'confidence_path'                => 'structured.confidence',
+                        'min_confidence'                 => 0.8,
+                        'suppress_notifications_on_spam' => true,
+                    ],
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $http_filter = static function ( $preempt, array $args, string $url ) use ( &$http_urls ): mixed {
+            $http_urls[] = $url;
+
+            if ( false !== strpos( $url, 'sentientforms.com' ) )
+            {
+                return new WP_Error( 'unexpected_sentient_request', 'Local-first spam mapping tried to call Sentient.' );
+            }
+
+            if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+            {
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'chatcmpl-gf-local-spam',
+                            'model'   => 'openrouter/auto',
+                            'choices' => [
+                                [
+                                    'message'       => [
+                                        'role'    => 'assistant',
+                                        'content' => wp_json_encode(
+                                            [
+                                                'classification' => 'spam',
+                                                'confidence'     => 0.97,
+                                                'justification'  => 'Local OpenRouter spam classification.',
+                                            ]
+                                        ),
+                                    ],
+                                    'finish_reason' => 'stop',
+                                ],
+                            ],
+                            'usage'   => [
+                                'prompt_tokens'     => 7,
+                                'completion_tokens' => 6,
+                                'total_tokens'      => 13,
+                            ],
+                        ]
+                    ),
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'cookies'  => [],
+                ];
+            }
+
+            return $preempt;
+        };
+
+        $entry = [
+            'id'      => 656,
+            'form_id' => 323,
+            'status'  => 'active',
+        ];
+        $form = [
+            'id'     => 323,
+            'title'  => 'Local Spam Form',
+            'fields' => [],
+        ];
+
+        add_filter( 'pre_http_request', $http_filter, 10, 3 );
+        $this->adapter->handle_after_submission_entry_post_save( $entry, $form );
+        remove_filter( 'pre_http_request', $http_filter, 10 );
+
+        $notification = [
+            'id'    => 'notif_admin',
+            'event' => 'form_submission',
+            'name'  => 'Admin Notification',
+        ];
+
+        $result = $this->adapter->maybe_suppress_spam_notification( $notification, $form, $entry );
+
+        $this->assertSame( 'spam', gform_get_meta( 656, 'sentient_forms_spam_classification' ) );
+        $this->assertSame( 'suppress', gform_get_meta( 656, 'sentient_forms_spam_notification_preference' ) );
+        $this->assertFalse( $result );
         $this->assertContains(
             true,
             array_map(
