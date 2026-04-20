@@ -14,6 +14,18 @@ class Sentient_Forms_Managed_Proxy_Client
 {
     private const DEFAULT_BASE_URL = 'https://api.sentientforms.com/v2';
     private const MANAGED_PROVIDER = 'sentient_managed';
+    private const ALLOWED_EXECUTE_PAYLOAD_KEYS = [
+        'site_id'              => true,
+        'execution_request_id' => true,
+        'provider'             => true,
+        'model'                => true,
+        'action_code'          => true,
+        'prompt'               => true,
+        'output_contract'      => true,
+        'metadata'             => true,
+        'temperature'          => true,
+        'max_output_tokens'    => true,
+    ];
 
     private string $base_url;
 
@@ -127,6 +139,22 @@ class Sentient_Forms_Managed_Proxy_Client
      */
     private function normalize_execute_payload( array $payload ): array | WP_Error
     {
+        $unsupported_keys = array_values( array_diff( array_keys( $payload ), array_keys( self::ALLOWED_EXECUTE_PAYLOAD_KEYS ) ) );
+        if ( [] !== $unsupported_keys )
+        {
+            return new WP_Error(
+                'sentient_managed_unsupported_payload_field',
+                sprintf(
+                    /* translators: %s: comma-separated request field names. */
+                    __( 'Managed execution payload includes unsupported field(s): %s.', 'sentient-forms' ),
+                    implode( ', ', array_map( 'sanitize_key', $unsupported_keys ) )
+                ),
+                [
+                    'unsupported_fields' => $unsupported_keys,
+                ]
+            );
+        }
+
         foreach ( [ 'site_id', 'execution_request_id', 'model', 'prompt' ] as $required_key )
         {
             if ( ! isset( $payload[ $required_key ] ) || ! is_scalar( $payload[ $required_key ] ) )
@@ -236,6 +264,72 @@ class Sentient_Forms_Managed_Proxy_Client
             $normalized['temperature'] = (float) $payload['temperature'];
         }
 
+        if ( isset( $payload['metadata'] ) )
+        {
+            $metadata = $this->normalize_identifier_metadata( $payload['metadata'] );
+            if ( is_wp_error( $metadata ) )
+            {
+                return $metadata;
+            }
+
+            $normalized['metadata'] = $metadata;
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param mixed $metadata
+     *
+     * @return array<string, scalar|null>|WP_Error
+     */
+    private function normalize_identifier_metadata( mixed $metadata ): array | WP_Error
+    {
+        if ( ! is_array( $metadata ) || array_is_list( $metadata ) )
+        {
+            return new WP_Error(
+                'sentient_managed_metadata_not_identifier_only',
+                __( 'Managed execution metadata must be an object of identifier values.', 'sentient-forms' )
+            );
+        }
+
+        $normalized = [];
+        foreach ( $metadata as $key => $value )
+        {
+            $key = sanitize_key( (string) $key );
+            if ( '' === $key || strlen( $key ) > 64 )
+            {
+                return new WP_Error(
+                    'sentient_managed_invalid_metadata_key',
+                    __( 'Managed execution metadata keys must be non-empty identifiers of 64 characters or fewer.', 'sentient-forms' )
+                );
+            }
+
+            if ( is_array( $value ) || is_object( $value ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_metadata_not_identifier_only',
+                    __( 'Managed execution metadata must not include nested payloads or local action definitions.', 'sentient-forms' ),
+                    [
+                        'metadata_key' => $key,
+                    ]
+                );
+            }
+
+            if ( null !== $value && ! is_scalar( $value ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_metadata_not_identifier_only',
+                    __( 'Managed execution metadata values must be scalar identifiers.', 'sentient-forms' ),
+                    [
+                        'metadata_key' => $key,
+                    ]
+                );
+            }
+
+            $normalized[ $key ] = $value;
+        }
+
         return $normalized;
     }
 
@@ -272,4 +366,3 @@ class Sentient_Forms_Managed_Proxy_Client
         return $url;
     }
 }
-

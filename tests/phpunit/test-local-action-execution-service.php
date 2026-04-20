@@ -247,6 +247,8 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertStringContainsString( 'Ada Lovelace', $payload['prompt'] );
         $this->assertArrayNotHasKey( 'input', $payload );
         $this->assertSame( 99, (int) $payload['metadata']['entry_id'] );
+        $this->assertStringNotContainsString( 'Ada Lovelace', wp_json_encode( $payload['metadata'] ) );
+        $this->assertStringNotContainsString( 'ada@example.test', wp_json_encode( $payload['metadata'] ) );
 
         $event = $this->events->get_by_request_id( 'managed-local-req' );
         $this->assertIsArray( $event );

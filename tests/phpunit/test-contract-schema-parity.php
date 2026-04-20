@@ -14,6 +14,18 @@ class ContractSchemaParityTest extends WP_UnitTestCase
         }
     }
 
+    public function test_managed_v2_contract_schemas_are_in_sync_between_shared_and_cps(): void
+    {
+        $workspace_root = dirname( __DIR__, 3 );
+        foreach ( $this->managed_v2_contract_schema_filenames() as $filename ) {
+            $this->assert_schema_paths_in_sync(
+                $workspace_root . '/contracts/v2/managed/' . $filename,
+                $workspace_root . '/Sentient-Forms-Central-Proxy-Server/contracts/v2/managed/' . $filename,
+                'v2/managed/' . $filename
+            );
+        }
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -175,12 +187,28 @@ class ContractSchemaParityTest extends WP_UnitTestCase
         ];
     }
 
+    /**
+     * @return array<int, string>
+     */
+    private function managed_v2_contract_schema_filenames(): array
+    {
+        return [
+            'execute-request.schema.json',
+            'execute-success.schema.json',
+        ];
+    }
+
     private function assert_single_schema_in_sync( string $filename ): void
     {
         $workspace_root = dirname( __DIR__, 3 );
         $shared_path    = $workspace_root . '/contracts/v1/actions/' . $filename;
         $cps_path       = $workspace_root . '/Sentient-Forms-Central-Proxy-Server/contracts/v1/actions/' . $filename;
 
+        $this->assert_schema_paths_in_sync( $shared_path, $cps_path, $filename );
+    }
+
+    private function assert_schema_paths_in_sync( string $shared_path, string $cps_path, string $label ): void
+    {
         if ( ! file_exists( $shared_path ) || ! file_exists( $cps_path ) ) {
             $this->markTestSkipped(
                 sprintf(
@@ -212,7 +240,7 @@ class ContractSchemaParityTest extends WP_UnitTestCase
 
         $failure_message = sprintf(
             "Schema drift detected for %s.\nMissing required in shared: %s\nMissing required in cps: %s\nMissing top-level properties in shared: %s\nMissing top-level properties in cps: %s\nFirst diff: %s",
-            $filename,
+            $label,
             $this->format_key_list( $missing_required_in_shared ),
             $this->format_key_list( $missing_required_in_cps ),
             $this->format_key_list( $missing_properties_in_shared ),

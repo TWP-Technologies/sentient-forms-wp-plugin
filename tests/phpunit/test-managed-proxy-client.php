@@ -32,33 +32,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
                         'code'    => 200,
                         'message' => 'OK',
                     ],
-                    'body'     => wp_json_encode(
-                        [
-                            'success' => true,
-                            'data'    => [
-                                'execution_request_id' => 'managed-req-1',
-                                'provider'             => 'sentient_managed',
-                                'model'                => 'openai/gpt-4.1-mini',
-                                'status'               => 'succeeded',
-                                'output'               => [
-                                    'text' => '{"summary":"ok"}',
-                                ],
-                                'token_usage'          => [
-                                    'input_tokens'  => 12,
-                                    'output_tokens' => 7,
-                                    'total_tokens'  => 19,
-                                ],
-                                'metering'             => [
-                                    'event_id'                 => '11111111-1111-4111-8111-111111111111',
-                                    'billed_amount_microusd'   => 1000,
-                                    'currency'                 => 'USD',
-                                    'free_usage'               => false,
-                                    'pricing_policy_version'   => 'test-policy',
-                                    'debited_credits'          => 1,
-                                ],
-                            ],
-                        ]
-                    ),
+                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
                     'cookies'  => [],
                 ];
             }
@@ -73,11 +47,15 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
                 'model'                => 'openai/gpt-4.1-mini',
                 'action_code'          => 'entry_summary_v1',
                 'prompt'               => "Summarize this entry.\nKeep it short.",
-                'input'                => [
-                    'entry_id' => 99,
+                'output_contract'      => [
+                    'schema' => [
+                        'type' => 'object',
+                    ],
                 ],
                 'metadata'             => [
-                    'mapping_id' => 123,
+                    'mapping_id'     => 123,
+                    'entry_id'       => '99',
+                    'plugin_version' => '0.1.0-test',
                 ],
                 'temperature'          => '0.2',
                 'max_output_tokens'    => '512',
@@ -98,8 +76,67 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $this->assertSame( '22222222-2222-4222-8222-222222222222', $payload['site_id'] );
         $this->assertSame( 'managed-req-1', $payload['execution_request_id'] );
         $this->assertSame( "Summarize this entry.\nKeep it short.", $payload['prompt'] );
+        $this->assertArrayNotHasKey( 'input', $payload );
         $this->assertSame( 0.2, $payload['temperature'] );
         $this->assertSame( 512, $payload['max_output_tokens'] );
+        $this->assertSame( 123, $payload['metadata']['mapping_id'] );
+        $this->assertSame( '99', $payload['metadata']['entry_id'] );
+    }
+
+    public function test_execute_rejects_raw_input_field_before_http_request(): void
+    {
+        $this->mock_http(
+            static function (): WP_Error {
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->execute(
+            'proxy-secret',
+            [
+                'site_id'              => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id' => 'managed-req-1',
+                'model'                => 'openai/gpt-4.1-mini',
+                'prompt'               => 'Summarize this entry.',
+                'input'                => [
+                    'email' => 'ada@example.test',
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_unsupported_payload_field', $result->get_error_code() );
+        $this->assertSame( [ 'input' ], $result->get_error_data()['unsupported_fields'] );
+    }
+
+    public function test_execute_rejects_nested_metadata_before_http_request(): void
+    {
+        $this->mock_http(
+            static function (): WP_Error {
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->execute(
+            'proxy-secret',
+            [
+                'site_id'              => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id' => 'managed-req-1',
+                'model'                => 'openai/gpt-4.1-mini',
+                'prompt'               => 'Summarize this entry.',
+                'metadata'             => [
+                    'entry_payload' => [
+                        'email' => 'ada@example.test',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_metadata_not_identifier_only', $result->get_error_code() );
+        $this->assertSame( 'entry_payload', $result->get_error_data()['metadata_key'] );
     }
 
     public function test_execute_rejects_missing_proxy_key_before_http_request(): void
@@ -255,4 +292,3 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         add_filter( 'pre_http_request', $this->http_mock, 10, 3 );
     }
 }
-
