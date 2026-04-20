@@ -127,6 +127,33 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertStringNotContainsString( $secret, wp_json_encode( $list_data ) );
     }
 
+    public function test_list_credentials_redacts_secret_like_status_values(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $id          = $credentials->create(
+            [
+                'provider'    => 'openrouter',
+                'label'       => 'Status leak',
+                'auth_mode'   => 'constant',
+                'status'      => 'invalid',
+                'status_json' => [
+                    'diagnostic_hint' => 'provider echoed sk-or-status-leak-123456',
+                ],
+            ]
+        );
+
+        $this->assertIsInt( $id );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/local/providers/credentials' );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $json = (string) wp_json_encode( $response->get_data() );
+        $this->assertStringNotContainsString( 'sk-or-status-leak-123456', $json );
+        $this->assertStringContainsString( 'sk-or-[redacted]', $json );
+    }
+
     public function test_validate_openrouter_key_requires_consent_before_external_call(): void
     {
         $external_call_count = 0;

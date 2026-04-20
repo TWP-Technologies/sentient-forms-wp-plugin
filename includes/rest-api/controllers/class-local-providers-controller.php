@@ -535,7 +535,7 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
             'auth_mode'          => (string) $row['auth_mode'],
             'constant_name'      => isset( $row['constant_name'] ) ? (string) $row['constant_name'] : null,
             'status'             => (string) $row['status'],
-            'status_json'        => is_array( $row['status_json'] ?? null ) ? $row['status_json'] : null,
+            'status_json'        => is_array( $row['status_json'] ?? null ) ? $this->redact_sensitive_metadata( $row['status_json'] ) : null,
             'last_validated_at'  => $row['last_validated_at'] ?? null,
             'created_at'         => $row['created_at'] ?? null,
             'updated_at'         => $row['updated_at'] ?? null,
@@ -728,6 +728,11 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
 
     private function redact_sensitive_metadata( mixed $value ): mixed
     {
+        if ( is_string( $value ) )
+        {
+            return $this->redact_secret_patterns( $value );
+        }
+
         if ( ! is_array( $value ) )
         {
             return $value;
@@ -747,6 +752,13 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         }
 
         return $redacted;
+    }
+
+    private function redact_secret_patterns( string $value ): string
+    {
+        $redacted = preg_replace( '/sk-or-[A-Za-z0-9._:-]{4,}/', 'sk-or-[redacted]', $value );
+
+        return is_string( $redacted ) ? $redacted : $value;
     }
 
     private function request_ip_hash(): ?string

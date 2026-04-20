@@ -53,6 +53,11 @@ class Sentient_Forms_Local_Support_Bundle_Service
      */
     public static function redact( mixed $value ): mixed
     {
+        if ( is_string( $value ) )
+        {
+            return self::redact_secret_patterns( $value );
+        }
+
         if ( ! is_array( $value ) )
         {
             return $value;
@@ -72,6 +77,13 @@ class Sentient_Forms_Local_Support_Bundle_Service
         }
 
         return $redacted;
+    }
+
+    private static function redact_secret_patterns( string $value ): string
+    {
+        $redacted = preg_replace( '/sk-or-[A-Za-z0-9._:-]{4,}/', 'sk-or-[redacted]', $value );
+
+        return is_string( $redacted ) ? $redacted : $value;
     }
 
     /**

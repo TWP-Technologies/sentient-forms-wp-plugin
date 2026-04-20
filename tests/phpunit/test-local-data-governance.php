@@ -163,7 +163,8 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
                 'encrypted_secret' => 'sk-or-secret',
                 'status'           => 'valid',
                 'status_json'      => [
-                    'last_token' => 'also-secret',
+                    'last_token'      => 'also-secret',
+                    'diagnostic_hint' => 'provider returned sk-or-support-bundle-leak-123456',
                 ],
             ]
         );
@@ -187,6 +188,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
         $this->assertStringNotContainsString( 'sk-or-secret', $json );
         $this->assertStringNotContainsString( 'also-secret', $json );
+        $this->assertStringNotContainsString( 'sk-or-support-bundle-leak-123456', $json );
         $this->assertStringNotContainsString( 'bundle-person@example.test', $json );
         $this->assertTrue( $bundle['execution_summary']['recent'][0]['has_result'] );
         $this->assertTrue( $bundle['execution_summary']['recent'][0]['has_error_message'] );
