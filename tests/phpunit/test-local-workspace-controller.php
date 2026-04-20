@@ -183,6 +183,11 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 1, $report['runtime_tables']['sentient_async_requests'] );
         $this->assertTrue( $report['legacy_options']['exact_options']['sentient_forms_action_log']['exists'] );
         $this->assertSame( 1, $report['legacy_options']['option_prefixes']['sentient_forms_actions_']['count'] );
+        $this->assertTrue( $report['settings']['legacy_option_present'] );
+        $this->assertTrue( $report['settings']['plugin_settings_option_present'] );
+        $this->assertTrue( $report['settings']['execution_global_disabled'] );
+        $this->assertSame( 1, $report['settings']['execution_provider_disabled_count'] );
+        $this->assertContains( 'sentient_forms_plugin_settings', $report['reset_plan']['settings_preserved'] );
         $this->assertContains(
             'local_runtime_data_will_be_removed',
             wp_list_pluck( $report['warnings'], 'code' )
@@ -587,6 +592,10 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertFalse( get_option( 'sentient_forms_action_log' ) );
         $this->assertFalse( get_option( 'sentient_forms_actions_gravity_forms_42' ) );
         $this->assertIsArray( get_option( 'sentient_forms_settings' ) );
+        $plugin_settings = get_option( 'sentient_forms_plugin_settings' );
+        $this->assertIsArray( $plugin_settings );
+        $this->assertTrue( $plugin_settings['execution_global_disabled'] );
+        $this->assertTrue( $plugin_settings['execution_provider_disabled']['gravity_forms'] );
 
         global $wpdb;
         $runs = new Sentient_Forms_Migration_Runs_Repository( $wpdb );
@@ -857,6 +866,15 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
                     'license_key'   => 'LIC-LOCAL-DEV',
                     'proxy_api_key' => 'proxy-local-123',
                     'site_id'       => 'site-local-123',
+                ],
+            ]
+        );
+        update_option(
+            'sentient_forms_plugin_settings',
+            [
+                'execution_global_disabled'         => true,
+                'execution_provider_disabled'       => [
+                    'gravity_forms' => true,
                 ],
             ]
         );

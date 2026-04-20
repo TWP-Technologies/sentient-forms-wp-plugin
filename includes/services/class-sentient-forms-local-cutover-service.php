@@ -99,6 +99,7 @@ class Sentient_Forms_Local_Cutover_Service
                 'option_prefixes_deleted'     => self::LEGACY_OPTION_PREFIXES_TO_RESET,
                 'settings_preserved'          => [
                     'sentient_forms_settings',
+                    'sentient_forms_plugin_settings',
                     'license',
                     'telemetry',
                     'execution_controls',
@@ -316,39 +317,46 @@ class Sentient_Forms_Local_Cutover_Service
      */
     private function settings_summary(): array
     {
-        $options = get_option( 'sentient_forms_settings', [] );
-        $options = is_array( $options ) ? $options : [];
+        $legacy_options = get_option( 'sentient_forms_settings', [] );
+        $legacy_options = is_array( $legacy_options ) ? $legacy_options : [];
 
-        $license = isset( $options['license'] ) && is_array( $options['license'] )
-            ? $options['license']
+        $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+        $plugin_settings = is_array( $plugin_settings ) ? $plugin_settings : [];
+
+        $license = isset( $legacy_options['license'] ) && is_array( $legacy_options['license'] )
+            ? $legacy_options['license']
             : [];
 
         foreach ( [ 'license_key', 'license_status', 'proxy_api_key', 'site_id', 'license_id' ] as $legacy_license_key )
         {
-            if ( isset( $options[ $legacy_license_key ] ) )
+            if ( isset( $legacy_options[ $legacy_license_key ] ) )
             {
-                $license[ $legacy_license_key ] = $options[ $legacy_license_key ];
+                $license[ $legacy_license_key ] = $legacy_options[ $legacy_license_key ];
             }
         }
 
+        $execution_provider_disabled = isset( $plugin_settings['execution_provider_disabled'] ) && is_array( $plugin_settings['execution_provider_disabled'] )
+            ? $plugin_settings['execution_provider_disabled']
+            : [];
+
         return [
-            'option_present'                            => [] !== $options,
+            'option_present'                            => [] !== $legacy_options || [] !== $plugin_settings,
+            'legacy_option_present'                     => [] !== $legacy_options,
+            'plugin_settings_option_present'            => [] !== $plugin_settings,
             'top_level_legacy_license_fields_present'   => array_values(
                 array_filter(
                     [ 'license_key', 'license_status', 'proxy_api_key' ],
-                    static fn ( string $key ): bool => array_key_exists( $key, $options )
+                    static fn ( string $key ): bool => array_key_exists( $key, $legacy_options )
                 )
             ),
             'license_key_present'                       => ! empty( $license['license_key'] ),
             'proxy_key_present'                         => ! empty( $license['proxy_api_key'] ),
             'site_id_present'                           => ! empty( $license['site_id'] ),
-            'telemetry_opt_in'                          => ! empty( $options['telemetry']['telemetry_opt_in'] ),
-            'execution_global_disabled'                 => ! empty( $options['execution_global_disabled'] ),
-            'execution_provider_disabled_count'         => isset( $options['execution_provider_disabled'] ) && is_array( $options['execution_provider_disabled'] )
-                ? count( array_filter( $options['execution_provider_disabled'] ) )
-                : 0,
-            'cps_endpoint_override_present'             => ! empty( $options['cps_base_url'] ) || ! empty( $options['api_base_url'] ),
-            'enforce_nonce_verification_configured'     => array_key_exists( 'enforce_nonce_verification', $options ),
+            'telemetry_opt_in'                          => ! empty( $legacy_options['telemetry']['telemetry_opt_in'] ),
+            'execution_global_disabled'                 => ! empty( $plugin_settings['execution_global_disabled'] ),
+            'execution_provider_disabled_count'         => count( array_filter( $execution_provider_disabled ) ),
+            'cps_endpoint_override_present'             => ! empty( $legacy_options['cps_base_url'] ) || ! empty( $legacy_options['api_base_url'] ),
+            'enforce_nonce_verification_configured'     => array_key_exists( 'enforce_nonce_verification', $legacy_options ),
         ];
     }
 
