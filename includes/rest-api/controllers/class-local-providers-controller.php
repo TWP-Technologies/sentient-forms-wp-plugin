@@ -647,7 +647,7 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
             'pricing'              => isset( $metadata['pricing'] ) && is_array( $metadata['pricing'] ) ? $metadata['pricing'] : [],
             'fetched_at'           => $row['fetched_at'] ?? null,
             'expires_at'           => $row['expires_at'] ?? null,
-            'stale'                => isset( $row['expires_at'] ) && (string) $row['expires_at'] < current_time( 'mysql' ),
+            'stale'                => isset( $row['expires_at'] ) && (string) $row['expires_at'] < current_time( 'mysql', true ),
         ];
     }
 

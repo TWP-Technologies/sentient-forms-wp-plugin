@@ -282,7 +282,7 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
         $context_window       = isset( $metadata['context_length'] ) ? absint( $metadata['context_length'] ) : 0;
         $is_free              = ! empty( $metadata['free'] );
         $is_preview           = str_contains( strtolower( $model_id . ' ' . $name ), 'preview' );
-        $is_stale             = isset( $row['expires_at'] ) && (string) $row['expires_at'] < current_time( 'mysql' );
+        $is_stale             = isset( $row['expires_at'] ) && (string) $row['expires_at'] < current_time( 'mysql', true );
 
         $capabilities = [
             'reasoning'    => $this->model_has_reasoning( $model_id, $name, $supported_parameters ),

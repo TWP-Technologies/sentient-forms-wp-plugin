@@ -19,7 +19,7 @@ abstract class Sentient_Forms_Local_Repository
 
     protected function now(): string
     {
-        return current_time( 'mysql' );
+        return current_time( 'mysql', true );
     }
 
     protected function encode_json_field( mixed $value, string $field_name, bool $required = false ): string | null | WP_Error
