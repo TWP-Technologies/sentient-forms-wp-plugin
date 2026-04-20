@@ -6,11 +6,7 @@ import type {
 	BillingCheckoutSessionResponse,
 	BillingPortalSessionRequest,
 	BillingPortalSessionResponse,
-	BillingSubscriptionChangeRequest,
-	BillingSubscriptionChangeResponse,
 	BillingStateResponse,
-	BillingTopUpSessionRequest,
-	BillingTopUpSessionResponse,
 	CapabilitiesResponse,
 	CreditBalanceResponse,
 	CustomAction,
@@ -229,25 +225,6 @@ export class MockSentientFormsApiClient {
 		};
 	}
 
-	async changeSubscription(
-		payload: BillingSubscriptionChangeRequest
-	): Promise<BillingSubscriptionChangeResponse> {
-		const changeTiming = payload.change_timing ?? 'start_next_cycle';
-		return {
-			provider_subscription_id: 'sub_mock_123',
-			provider_price_id: `price_mock_${payload.plan_code}`,
-			plan_code: payload.plan_code,
-			change_timing: changeTiming,
-			effective_at:
-				changeTiming === 'start_next_cycle'
-					? new Date(Date.now() + 20 * 24 * 3600 * 1000).toISOString()
-					: null,
-			renewal_grant_applied: changeTiming === 'start_now',
-			carryover_grant_applied: changeTiming === 'start_now',
-			carryover_credits_granted: changeTiming === 'start_now' ? 240 : 0
-		};
-	}
-
 	async createPortalSession(
 		payload: BillingPortalSessionRequest
 	): Promise<BillingPortalSessionResponse> {
@@ -256,25 +233,6 @@ export class MockSentientFormsApiClient {
 			session_id: `bps_mock_${Date.now()}`,
 			portal_url: `https://billing.stripe.com/p/session/mock?return_url=${target}`,
 			customer_id: 'cus_mock_123'
-		};
-	}
-
-	async createTopUpCheckoutSession(
-		payload: BillingTopUpSessionRequest
-	): Promise<BillingTopUpSessionResponse> {
-		const packCode = payload.pack_code || 'top_up_small';
-		const creditsByPack: Record<string, number> = {
-			top_up_small: 5000,
-			top_up_medium: 10000,
-			top_up_large: 25000
-		};
-		const credits = (creditsByPack[packCode] ?? 5000) * (payload.quantity ?? 1);
-		return {
-			session_id: `cs_mock_topup_${Date.now()}`,
-			checkout_url: `https://checkout.stripe.com/c/pay/mock-${packCode}`,
-			customer_id: 'cus_mock_123',
-			top_up_credits: credits,
-			pack_code: packCode
 		};
 	}
 

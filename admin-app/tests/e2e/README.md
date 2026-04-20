@@ -51,7 +51,7 @@ When `SENTIENT_RUN_WP_E2E=1`, `playwright.config.ts` forces **`workers: 1`** (se
 | `ensureCpsSeeded()` | Seed CPS DB + activate license + configure WP (call first) |
 | `ensureGravityForm(title)` | Create or find a GF form by title |
 | `configureGravityActionMapping(opts)` | Set per-form action mapping in WP options |
-| `ensureCreditBalanceAtLeast(n)` | Top up credits if below threshold |
+| `ensureCreditBalanceAtLeast(n)` | Apply a test credit adjustment if below threshold |
 | `runActionScheduler()` | Trigger WP Action Scheduler queue processing |
 | `getEntrySpamStatus(id)` | Read entry status + spam classification meta |
 | `waitForEntryMeta(id, key, page, predicate)` | Poll until entry meta matches predicate |
@@ -90,7 +90,7 @@ The async finalization path writes these GF entry meta keys:
 
 - `CPS_FORCE_VALIDATION_CLASSIFICATION=spam` (in `dev.env`) — force spam classification for validation-block tests
 - `setExecutionRequestIdOverride(id)` — pin a specific execution request ID for replay testing
-- `resetE2eState()` — top up credits to 120 and clear execution_request_id override
+- `resetE2eState()` — apply a test credit adjustment to 120 and clear execution_request_id override
 
 ## Network Topology
 

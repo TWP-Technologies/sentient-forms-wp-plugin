@@ -9,7 +9,7 @@ export interface LicenseActivationResult {
 	message: string;
 	status: string;
 	proxyApiKey?: string;
-	tier?: string;
+	tier?: string | TierSummary;
 	expiryDate?: string | null;
 	licenseId?: string;
 	siteId?: string;
@@ -20,7 +20,7 @@ export interface LicenseActivationResponsePayload {
 	message?: string;
 	status?: string;
 	proxy_api_key?: string;
-	tier?: string;
+	tier?: string | TierSummary;
 	expiry_date?: string | null;
 	license_id?: string;
 	site_id?: string;
@@ -52,39 +52,6 @@ export interface BillingCheckoutSessionResponse {
 	checkout_url: string;
 	customer_id: string;
 	subscription_id?: string | null;
-}
-
-export interface BillingTopUpSessionRequest {
-	pack_code: string;
-	success_url: string;
-	cancel_url: string;
-	quantity?: number;
-}
-
-export interface BillingTopUpSessionResponse {
-	session_id: string;
-	checkout_url: string;
-	customer_id: string;
-	top_up_credits: number;
-	pack_code: string;
-}
-
-export interface BillingSubscriptionChangeRequest {
-	plan_code: string;
-	change_timing?: 'start_next_cycle' | 'start_now';
-	quantity?: number;
-	recovery_return_url?: string;
-}
-
-export interface BillingSubscriptionChangeResponse {
-	provider_subscription_id: string;
-	provider_price_id: string;
-	plan_code: string;
-	change_timing: string;
-	effective_at?: string | null;
-	renewal_grant_applied: boolean;
-	carryover_grant_applied: boolean;
-	carryover_credits_granted: number;
 }
 
 export interface BillingPortalSessionResponse {

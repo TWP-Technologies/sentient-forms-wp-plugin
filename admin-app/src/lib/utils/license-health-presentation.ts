@@ -142,22 +142,22 @@ function buildQuotaCtaState(
 
 	if (context === 'global' && (severity === 'warning' || severity === 'critical')) {
 		return {
-			label: hasNegativeBalance ? 'Resolve balance' : 'Top up credits',
+			label: hasNegativeBalance ? 'Resolve balance' : 'Review billing',
 			enabled: true,
 			reason: hasNegativeBalance
-				? 'Open Licensing to add credits and clear the negative balance before new runs resume.'
-				: 'Open Licensing to review current credit status and buy top-up credits.',
+				? 'Open Licensing to review billing and restore managed execution.'
+				: 'Open Licensing to review managed usage and plan options.',
 			action: 'focus_licensing_billing'
 		};
 	}
 
 	if (context === 'dashboard' && (severity === 'warning' || severity === 'critical')) {
 		return {
-			label: hasNegativeBalance ? 'Resolve balance' : 'Top up credits',
+			label: hasNegativeBalance ? 'Resolve balance' : 'Review billing',
 			enabled: true,
 			reason: hasNegativeBalance
-				? 'Open Licensing to add credits and clear the negative balance before new runs resume.'
-				: 'Open Licensing to review current credit status and buy top-up credits.',
+				? 'Open Licensing to review billing and restore managed execution.'
+				: 'Open Licensing to review managed usage and plan options.',
 			action: 'focus_licensing_billing'
 		};
 	}
@@ -173,11 +173,11 @@ function buildQuotaCtaState(
 
 	if (context === 'licensing' && (severity === 'warning' || severity === 'critical')) {
 		return {
-			label: hasNegativeBalance ? 'Resolve balance' : 'View top-up options',
+			label: hasNegativeBalance ? 'Resolve balance' : 'Review billing',
 			enabled: true,
 			reason: hasNegativeBalance
-				? 'Jump to the billing section to buy top-up credits and clear the negative balance.'
-				: 'Jump to the billing section to buy top-up credits or review plan changes.',
+				? 'Jump to the billing section to restore managed execution.'
+				: 'Jump to the billing section to review managed usage and plan options.',
 			action: 'focus_licensing_billing'
 		};
 	}

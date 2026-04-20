@@ -25,8 +25,6 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
 
     private const LICENSE_KEY_REGEX_PATTERN = '/^[0-7][0-9a-hA-Hj-kJ-Km-nM-Np-tP-Tv-zV-Z]{25}$/';
 
-    private const CPS_BASE_URL_FILTER = 'sentient_forms_cps_api_base_url';
-
     private Sentient_Forms_Admin_Permission $permission_checker;
 
     public function __construct()
@@ -286,11 +284,13 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         $site_url    = $request->get_param( 'site_url' );
         $site_url    = ! empty( $site_url ) ? esc_url_raw( $site_url ) : home_url();
 
-        $client   = $this->get_licensing_client();
-        $response = $client->activate_license(
-            $license_key,
-            $site_url,
-            $plugin->get_local_site_identifier(),
+        $client   = $this->get_managed_service_client();
+        $response = $client->activate_site(
+            [
+                'license_key'           => $license_key,
+                'site_url'              => $site_url,
+                'local_site_identifier' => $plugin->get_local_site_identifier(),
+            ]
         );
 
         if ( is_wp_error( $response ) )
@@ -299,19 +299,7 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         }
 
         $payload = $this->normalize_activation_payload( $response );
-
-        $plugin->set_license_data(
-            [
-                'license_key'    => $license_key,
-                'license_status' => $payload['status'] ?? 'active',
-                'license_id'     => $payload['license_id'] ?? '',
-                'site_id'        => $payload['site_id'] ?? '',
-                'proxy_api_key'  => $payload['proxy_api_key'] ?? '',
-                'tier'           => $payload['tier'] ?? '',
-                'expiry_date'    => $payload['expiry_date'] ?? null,
-                'last_synced'    => current_time( 'mysql' ),
-            ]
-        );
+        $this->store_managed_activation_payload( $license_key, $payload );
 
         return $this->prepare_item_for_response(
             $this->format_license_response( $plugin->get_license_data() ),
@@ -333,11 +321,16 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             );
         }
 
-        $client   = $this->get_licensing_client();
-        $response = $client->deactivate_license(
+        $site_id = $this->require_site_id();
+        if ( is_wp_error( $site_id ) )
+        {
+            return $site_id;
+        }
+
+        $client   = $this->get_managed_service_client();
+        $response = $client->deactivate_site(
             $license_data['proxy_api_key'],
-            $license_data['license_id'],
-            $license_data['site_id'],
+            $site_id,
         );
 
         if ( is_wp_error( $response ) )
@@ -372,13 +365,25 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             );
         }
 
+        $license_key = isset( $license_data['license_key'] ) ? trim( (string) $license_data['license_key'] ) : '';
+        if ( '' === $license_key )
+        {
+            return $this->prepare_item_for_response(
+                $this->format_license_response( $license_data ),
+                200
+            );
+        }
+
         $site_url = $request->get_param( 'site_url' );
         $site_url = ! empty( $site_url ) ? esc_url_raw( $site_url ) : home_url();
 
-        $client   = $this->get_licensing_client();
-        $response = $client->bootstrap_license(
-            $site_url,
-            $plugin->get_local_site_identifier(),
+        $client   = $this->get_managed_service_client();
+        $response = $client->activate_site(
+            [
+                'license_key'           => $license_key,
+                'site_url'              => $site_url,
+                'local_site_identifier' => $plugin->get_local_site_identifier(),
+            ]
         );
 
         if ( is_wp_error( $response ) )
@@ -387,19 +392,7 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         }
 
         $payload = $this->normalize_activation_payload( $response );
-
-        $plugin->set_license_data(
-            [
-                'license_key'    => $license_data['license_key'] ?? '',
-                'license_status' => $payload['status'] ?? 'active',
-                'license_id'     => $payload['license_id'] ?? '',
-                'site_id'        => $payload['site_id'] ?? '',
-                'proxy_api_key'  => $payload['proxy_api_key'] ?? '',
-                'tier'           => $payload['tier'] ?? '',
-                'expiry_date'    => $payload['expiry_date'] ?? null,
-                'last_synced'    => current_time( 'mysql' ),
-            ]
-        );
+        $this->store_managed_activation_payload( $license_key, $payload );
 
         return $this->prepare_item_for_response(
             $this->format_license_response( $plugin->get_license_data() ),
@@ -472,7 +465,7 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             $payload['trial_period_days'] = max( 0, (int) $trial_days );
         }
 
-        $client   = $this->get_licensing_client();
+        $client   = $this->get_managed_service_client();
         $response = $client->create_checkout_session( $proxy_key, $payload );
         if ( is_wp_error( $response ) )
         {
@@ -493,33 +486,10 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             return $proxy_key;
         }
 
-        $pack_code = sanitize_key( (string) $request->get_param( 'pack_code' ) );
-        if ( '' === $pack_code )
-        {
-            return $this->prepare_error_response(
-                'invalid_request',
-                __( 'pack_code is required.', 'sentient-forms' ),
-                400,
-            );
-        }
-
-        $payload = [
-            'pack_code'   => $pack_code,
-            'success_url' => (string) $request->get_param( 'success_url' ),
-            'cancel_url'  => (string) $request->get_param( 'cancel_url' ),
-            'quantity'    => max( 1, (int) $request->get_param( 'quantity' ) ),
-        ];
-
-        $client   = $this->get_licensing_client();
-        $response = $client->create_top_up_checkout_session( $proxy_key, $payload );
-        if ( is_wp_error( $response ) )
-        {
-            return $this->prepare_cps_error( $response );
-        }
-
-        return $this->prepare_item_for_response(
-            $this->normalize_activation_payload( $response ),
-            200
+        return $this->prepare_error_response(
+            'managed_top_up_unsupported',
+            __( 'Top-up credit packs are not available in the local-first managed service. Use plan billing or direct OpenRouter credentials instead.', 'sentient-forms' ),
+            410,
         );
     }
 
@@ -531,43 +501,10 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             return $proxy_key;
         }
 
-        $plan_code = sanitize_key( (string) $request->get_param( 'plan_code' ) );
-        if ( '' === $plan_code )
-        {
-            return $this->prepare_error_response(
-                'invalid_request',
-                __( 'plan_code is required.', 'sentient-forms' ),
-                400,
-            );
-        }
-
-        $change_timing = sanitize_key( (string) $request->get_param( 'change_timing' ) );
-        if ( '' === $change_timing )
-        {
-            $change_timing = 'start_next_cycle';
-        }
-
-        $payload = [
-            'plan_code'     => $plan_code,
-            'change_timing' => $change_timing,
-            'quantity'      => max( 1, (int) $request->get_param( 'quantity' ) ),
-        ];
-        $recovery_return_url = trim( (string) $request->get_param( 'recovery_return_url' ) );
-        if ( '' !== $recovery_return_url )
-        {
-            $payload['recovery_return_url'] = $recovery_return_url;
-        }
-
-        $client   = $this->get_licensing_client();
-        $response = $client->change_subscription( $proxy_key, $payload );
-        if ( is_wp_error( $response ) )
-        {
-            return $this->prepare_cps_error( $response );
-        }
-
-        return $this->prepare_item_for_response(
-            $this->normalize_activation_payload( $response ),
-            200
+        return $this->prepare_error_response(
+            'managed_subscription_change_uses_portal',
+            __( 'Plan changes are handled through the managed billing portal in the local-first service.', 'sentient-forms' ),
+            410,
         );
     }
 
@@ -582,7 +519,7 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         $return_url = (string) $request->get_param( 'return_url' );
         $flow_type  = trim( (string) $request->get_param( 'flow_type' ) );
         $subscription_id = trim( (string) $request->get_param( 'subscription_id' ) );
-        $client     = $this->get_licensing_client();
+        $client     = $this->get_managed_service_client();
         $response   = $client->create_portal_session(
             $proxy_key,
             $return_url,
@@ -697,15 +634,6 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         return $this->schema;
     }
 
-    private function get_licensing_client(): Sentient_Forms_Licensing_Api_Client
-    {
-        $default = 'https://api.sentientforms.com/v1';
-        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- The constant resolves to the static, prefixed sentient_forms_cps_api_base_url hook.
-        $base    = apply_filters( self::CPS_BASE_URL_FILTER, $default );
-
-        return new Sentient_Forms_Licensing_Api_Client( $base );
-    }
-
     private function get_managed_service_client(): Sentient_Forms_Managed_Service_Client
     {
         return new Sentient_Forms_Managed_Service_Client();
@@ -746,6 +674,22 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         return $payload;
     }
 
+    private function store_managed_activation_payload( string $license_key, array $payload ): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_key'    => $license_key,
+                'license_status' => $payload['status'] ?? 'active',
+                'license_id'     => $payload['license_id'] ?? '',
+                'site_id'        => $payload['site_id'] ?? '',
+                'proxy_api_key'  => $payload['proxy_api_key'] ?? '',
+                'tier'           => $payload['tier'] ?? '',
+                'expiry_date'    => $payload['expiry_date'] ?? $payload['expires_at'] ?? null,
+                'last_synced'    => current_time( 'mysql' ),
+            ]
+        );
+    }
+
     private function require_proxy_key(): WP_Error | string
     {
         $license_data = Sentient_Forms_Plugin::instance()->get_license_data();
@@ -761,6 +705,23 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         }
 
         return $proxy_key;
+    }
+
+    private function require_site_id(): WP_Error | string
+    {
+        $license_data = Sentient_Forms_Plugin::instance()->get_license_data();
+        $site_id      = isset( $license_data['site_id'] ) ? trim( (string) $license_data['site_id'] ) : '';
+
+        if ( '' === $site_id )
+        {
+            return $this->prepare_error_response(
+                'no_active_site',
+                __( 'No active managed site to deactivate.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        return $site_id;
     }
 
     private function sync_cached_license_from_billing_state( array $payload ): void

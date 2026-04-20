@@ -93,10 +93,10 @@ describe('formActionsStore', () => {
 		const state = snapshotState();
 
 		expect(state.error).toBe(
-			'Sentient Forms could not run because this license is out of credits. Visit the Licensing tab to add credits before retrying.'
+			'Sentient Forms could not run because this managed license is out of credits. Visit the Licensing tab to review billing before retrying.'
 		);
 		expect(notifyErrorSpy).toHaveBeenCalledWith(
-			'Sentient Forms could not run because this license is out of credits. Visit the Licensing tab to add credits before retrying.'
+			'Sentient Forms could not run because this managed license is out of credits. Visit the Licensing tab to review billing before retrying.'
 		);
 	});
 
@@ -127,10 +127,10 @@ describe('formActionsStore', () => {
 		const state = snapshotState();
 
 		expect(state.error).toBe(
-			'Sentient Forms paused new runs because this license has a negative balance of -4 credits. Visit the Licensing tab to add credits before retrying.'
+			'Sentient Forms paused new runs because this managed license has a negative balance of -4 credits. Visit the Licensing tab to review billing before retrying.'
 		);
 		expect(notifyErrorSpy).toHaveBeenCalledWith(
-			'Sentient Forms paused new runs because this license has a negative balance of -4 credits. Visit the Licensing tab to add credits before retrying.'
+			'Sentient Forms paused new runs because this managed license has a negative balance of -4 credits. Visit the Licensing tab to review billing before retrying.'
 		);
 	});
 

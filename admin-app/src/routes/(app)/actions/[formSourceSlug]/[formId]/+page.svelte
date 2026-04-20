@@ -1250,7 +1250,7 @@
 						variant: 'warning',
 						title: 'Out of credits',
 						description:
-							'Sentient Forms could not execute the last submission because this license is out of credits. Visit the Licensing tab to add credits before retrying.',
+							'Sentient Forms could not execute the last managed submission because this license is out of credits. Visit the Licensing tab to review billing before retrying.',
 						actions: [
 							{ id: 'licensing', label: 'Open Licensing', variant: 'primary' },
 							{ id: 'refresh', label: 'Refresh status' }

@@ -8,11 +8,7 @@ import type {
 	BillingCheckoutSessionResponse,
 	BillingPortalSessionRequest,
 	BillingPortalSessionResponse,
-	BillingSubscriptionChangeRequest,
-	BillingSubscriptionChangeResponse,
 	BillingStateResponse,
-	BillingTopUpSessionRequest,
-	BillingTopUpSessionResponse,
 	AsyncHealthResponse,
 	CloneTemplateMappingRequest,
 	CreateFormMappingRequest,
@@ -149,7 +145,10 @@ export class SentientFormsApiClient {
 			message: String(data.message ?? 'License activated successfully.'),
 			status: String(data.status ?? 'active'),
 			proxyApiKey: typeof data.proxy_api_key === 'string' ? data.proxy_api_key : undefined,
-			tier: typeof data.tier === 'string' ? data.tier : undefined,
+			tier:
+				typeof data.tier === 'string' || (data.tier && typeof data.tier === 'object')
+					? data.tier
+					: undefined,
 			expiryDate: typeof data.expiry_date === 'string' ? data.expiry_date : undefined,
 			licenseId: typeof data.license_id === 'string' ? data.license_id : undefined,
 			siteId: typeof data.site_id === 'string' ? data.site_id : undefined
@@ -196,42 +195,12 @@ export class SentientFormsApiClient {
 		return this.unwrap(response);
 	}
 
-	async changeSubscription(
-		payload: BillingSubscriptionChangeRequest,
-		options: RequestOptions = {}
-	): Promise<BillingSubscriptionChangeResponse> {
-		const response = await this.request<RestEnvelope<BillingSubscriptionChangeResponse>>(
-			'license/billing/subscription-change',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
-		return this.unwrap(response);
-	}
-
 	async createPortalSession(
 		payload: BillingPortalSessionRequest,
 		options: RequestOptions = {}
 	): Promise<BillingPortalSessionResponse> {
 		const response = await this.request<RestEnvelope<BillingPortalSessionResponse>>(
 			'license/billing/portal-session',
-			{
-				method: 'POST',
-				body: payload,
-				...options
-			}
-		);
-		return this.unwrap(response);
-	}
-
-	async createTopUpCheckoutSession(
-		payload: BillingTopUpSessionRequest,
-		options: RequestOptions = {}
-	): Promise<BillingTopUpSessionResponse> {
-		const response = await this.request<RestEnvelope<BillingTopUpSessionResponse>>(
-			'license/billing/top-up-session',
 			{
 				method: 'POST',
 				body: payload,

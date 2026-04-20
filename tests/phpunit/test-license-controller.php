@@ -106,18 +106,34 @@ class LicenseControllerTest extends WP_UnitTestCase
     public function test_activate_license_success(): void
     {
         $this->mock_http_response(
-            '/license/activate',
+            '/v2/account/sites/activate',
             [
                 'success' => true,
                 'data'    => [
+                    'service'       => 'sentient-managed',
                     'license_id'    => 'lic-uuid-123',
                     'site_id'       => 'site-uuid-456',
                     'proxy_api_key' => 'new-proxy-key-789',
                     'status'        => 'active',
-                    'tier'          => 'starter',
+                    'tier'          => [
+                        'code'                 => 'starter',
+                        'display_name'         => 'Starter',
+                        'site_limit'           => 1,
+                        'monthly_credit_quota' => 1500,
+                    ],
                     'expiry_date'   => '2025-12-31T23:59:59Z',
                 ],
-            ]
+            ],
+            function ( array $args ): void {
+                $this->assertSame( 'POST', $args['method'] ?? null );
+                $this->assertArrayNotHasKey( 'Authorization', $args['headers'] ?? [] );
+
+                $body = json_decode( (string) ( $args['body'] ?? '' ), true );
+                $this->assertIsArray( $body );
+                $this->assertSame( '0abcdefghjkmnpqrstvwxyz123', $body['license_key'] ?? null );
+                $this->assertSame( home_url(), $body['site_url'] ?? null );
+                $this->assertNotEmpty( $body['local_site_identifier'] ?? '' );
+            }
         );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/activate' );
@@ -133,6 +149,7 @@ class LicenseControllerTest extends WP_UnitTestCase
 
         $this->assertSame( 'active', $data['status'] );
         $this->assertTrue( $data['proxy_key_present'] );
+        $this->assertSame( 'starter', $data['tier']['code'] ?? null );
     }
 
     public function test_activate_license_invalid_format_is_rejected(): void
@@ -148,21 +165,66 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 400, $response->get_status() );
     }
 
-    public function test_bootstrap_license_success(): void
+    public function test_bootstrap_license_without_stored_key_returns_local_inactive_state(): void
     {
+        $guard = function ( $preempt, $args, $url ) {
+            $this->fail( 'Bootstrap without a stored license key should not call the remote service: ' . $url );
+            return $preempt;
+        };
+        add_filter(
+            'pre_http_request',
+            $guard,
+            1,
+            3
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/bootstrap' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+        remove_filter( 'pre_http_request', $guard, 1 );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+
+        $this->assertSame( 'inactive', $data['status'] );
+        $this->assertFalse( $data['proxy_key_present'] );
+        $this->assertNull( $data['tier'] );
+    }
+
+    public function test_bootstrap_license_with_stored_key_uses_v2_activation(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data( [
+            'license_key'    => '0abcdefghjkmnpqrstvwxyz123',
+            'license_status' => 'inactive',
+            'proxy_api_key'  => '',
+        ] );
+
         $this->mock_http_response(
-            '/license/bootstrap',
+            '/v2/account/sites/activate',
             [
                 'success' => true,
                 'data'    => [
+                    'service'       => 'sentient-managed',
                     'license_id'    => 'lic-free-123',
                     'site_id'       => 'site-free-456',
                     'proxy_api_key' => 'bootstrap-proxy-key',
                     'status'        => 'active',
-                    'tier'          => 'free',
+                    'tier'          => [
+                        'code'                 => 'starter',
+                        'display_name'         => 'Starter',
+                        'site_limit'           => 1,
+                        'monthly_credit_quota' => 1500,
+                    ],
                     'expiry_date'   => null,
                 ],
-            ]
+            ],
+            function ( array $args ): void {
+                $body = json_decode( (string) ( $args['body'] ?? '' ), true );
+                $this->assertIsArray( $body );
+                $this->assertSame( '0abcdefghjkmnpqrstvwxyz123', $body['license_key'] ?? null );
+                $this->assertSame( home_url(), $body['site_url'] ?? null );
+                $this->assertNotEmpty( $body['local_site_identifier'] ?? '' );
+            }
         );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/bootstrap' );
@@ -174,7 +236,7 @@ class LicenseControllerTest extends WP_UnitTestCase
 
         $this->assertSame( 'active', $data['status'] );
         $this->assertTrue( $data['proxy_key_present'] );
-        $this->assertSame( 'free', $data['tier'] );
+        $this->assertSame( 'starter', $data['tier']['code'] ?? null );
     }
 
     public function test_get_billing_state_success(): void
@@ -284,7 +346,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         ] );
 
         $this->mock_http_response(
-            '/billing/checkout/session',
+            '/v2/billing/checkout/session',
             [
                 'success' => true,
                 'data'    => [
@@ -294,6 +356,10 @@ class LicenseControllerTest extends WP_UnitTestCase
                 ],
             ],
             function ( array $args ): void {
+                $this->assertSame( 'POST', $args['method'] ?? null );
+                $this->assertSame( 'Bearer proxy-key-123', $args['headers']['Authorization'] ?? null );
+                $this->assertArrayNotHasKey( 'X-API-Key', $args['headers'] ?? [] );
+
                 $body = json_decode( (string) ( $args['body'] ?? '' ), true );
                 $this->assertIsArray( $body );
                 $this->assertSame( 'starter', $body['plan_code'] ?? null );
@@ -341,7 +407,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'invalid_request', $data['code'] ?? null );
     }
 
-    public function test_change_subscription_success(): void
+    public function test_change_subscription_returns_portal_required_error(): void
     {
         $plugin = Sentient_Forms_Plugin::instance();
         $plugin->set_license_data( [
@@ -351,22 +417,11 @@ class LicenseControllerTest extends WP_UnitTestCase
             'site_id'        => 'site-uuid-456',
         ] );
 
-        $this->mock_http_response(
-            '/billing/subscription/change',
-            [
-                'success' => true,
-                'data'    => [
-                    'provider_subscription_id'  => 'sub_test_123',
-                    'provider_price_id'         => 'price_business_monthly',
-                    'plan_code'                 => 'business',
-                    'change_timing'             => 'start_next_cycle',
-                    'effective_at'              => '2030-02-01T00:00:00Z',
-                    'renewal_grant_applied'     => false,
-                    'carryover_grant_applied'   => false,
-                    'carryover_credits_granted' => 0,
-                ],
-            ]
-        );
+        $guard = function ( $preempt, $args, $url ) {
+            $this->fail( 'Subscription-change should not call the legacy billing service: ' . $url );
+            return $preempt;
+        };
+        add_filter( 'pre_http_request', $guard, 1, 3 );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/subscription-change' );
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
@@ -377,92 +432,11 @@ class LicenseControllerTest extends WP_UnitTestCase
             'quantity'      => 1,
         ] ) );
         $response = rest_get_server()->dispatch( $request );
+        remove_filter( 'pre_http_request', $guard, 1 );
 
-        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 410, $response->get_status() );
         $data = $response->get_data();
-        $this->assertSame( 'business', $data['plan_code'] );
-        $this->assertSame( 'start_next_cycle', $data['change_timing'] );
-    }
-
-    public function test_change_subscription_passes_recovery_return_url(): void
-    {
-        $plugin = Sentient_Forms_Plugin::instance();
-        $plugin->set_license_data( [
-            'license_status' => 'active',
-            'proxy_api_key'  => 'proxy-key-123',
-            'license_id'     => 'lic-uuid-123',
-            'site_id'        => 'site-uuid-456',
-        ] );
-
-        $this->mock_http_response(
-            '/billing/subscription/change',
-            [
-                'success' => true,
-                'data'    => [
-                    'provider_subscription_id'  => 'sub_test_123',
-                    'provider_price_id'         => 'price_business_monthly',
-                    'plan_code'                 => 'business',
-                    'change_timing'             => 'start_now',
-                    'effective_at'              => null,
-                    'renewal_grant_applied'     => true,
-                    'carryover_grant_applied'   => true,
-                    'carryover_credits_granted' => 12000,
-                ],
-            ],
-            function ( array $args ): void {
-                $body = json_decode( (string) ( $args['body'] ?? '' ), true );
-                $this->assertIsArray( $body );
-                $this->assertSame( 'business', $body['plan_code'] ?? null );
-                $this->assertSame( 'start_now', $body['change_timing'] ?? null );
-                $this->assertSame( 'https://example.test/recovery', $body['recovery_return_url'] ?? null );
-            }
-        );
-
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/subscription-change' );
-        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
-        $request->add_header( 'Content-Type', 'application/json' );
-        $request->set_body( wp_json_encode( [
-            'plan_code'           => 'business',
-            'change_timing'       => 'start_now',
-            'quantity'            => 1,
-            'recovery_return_url' => 'https://example.test/recovery',
-        ] ) );
-        $response = rest_get_server()->dispatch( $request );
-
-        $this->assertSame( 200, $response->get_status() );
-    }
-
-    public function test_change_subscription_maps_upstream_non_json_failure(): void
-    {
-        $plugin = Sentient_Forms_Plugin::instance();
-        $plugin->set_license_data( [
-            'license_status' => 'active',
-            'proxy_api_key'  => 'proxy-key-123',
-            'license_id'     => 'lic-uuid-123',
-            'site_id'        => 'site-uuid-456',
-        ] );
-
-        $this->mock_http_response(
-            '/billing/subscription/change',
-            '<html><body>Bad gateway</body></html>',
-            null,
-            502
-        );
-
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/subscription-change' );
-        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
-        $request->add_header( 'Content-Type', 'application/json' );
-        $request->set_body( wp_json_encode( [
-            'plan_code'     => 'business',
-            'change_timing' => 'start_now',
-            'quantity'      => 1,
-        ] ) );
-        $response = rest_get_server()->dispatch( $request );
-
-        $this->assertSame( 502, $response->get_status() );
-        $data = $response->get_data();
-        $this->assertSame( 'license_invalid_json', $data['code'] ?? null );
-        $this->assertStringContainsString( 'Invalid response from licensing service', $data['message'] ?? '' );
+        $this->assertSame( 'managed_subscription_change_uses_portal', $data['code'] ?? null );
     }
 
     public function test_create_portal_session_success(): void
@@ -476,7 +450,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         ] );
 
         $this->mock_http_response(
-            '/billing/portal/session',
+            '/v2/billing/portal/session',
             [
                 'success' => true,
                 'data'    => [
@@ -484,7 +458,11 @@ class LicenseControllerTest extends WP_UnitTestCase
                     'portal_url' => 'https://billing.stripe.com/p/session/bps_test_123',
                     'customer_id' => 'cus_test_123',
                 ],
-            ]
+            ],
+            function ( array $args ): void {
+                $this->assertSame( 'Bearer proxy-key-123', $args['headers']['Authorization'] ?? null );
+                $this->assertArrayNotHasKey( 'X-API-Key', $args['headers'] ?? [] );
+            }
         );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/portal-session' );
@@ -512,7 +490,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         ] );
 
         $this->mock_http_response(
-            '/billing/portal/session',
+            '/v2/billing/portal/session',
             [
                 'success' => true,
                 'data'    => [
@@ -522,6 +500,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                 ],
             ],
             function ( array $args ): void {
+                $this->assertSame( 'Bearer proxy-key-123', $args['headers']['Authorization'] ?? null );
                 $body = json_decode( (string) ( $args['body'] ?? '' ), true );
                 $this->assertIsArray( $body );
                 $this->assertSame( 'https://example.test/licensing', $body['return_url'] ?? null );
@@ -545,7 +524,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'bps_test_456', $data['session_id'] );
     }
 
-    public function test_create_top_up_checkout_session_success(): void
+    public function test_create_top_up_checkout_session_returns_unsupported(): void
     {
         $plugin = Sentient_Forms_Plugin::instance();
         $plugin->set_license_data( [
@@ -555,19 +534,11 @@ class LicenseControllerTest extends WP_UnitTestCase
             'site_id'        => 'site-uuid-456',
         ] );
 
-        $this->mock_http_response(
-            '/billing/checkout/top-up-session',
-            [
-                'success' => true,
-                'data'    => [
-                    'session_id'      => 'cs_test_topup_123',
-                    'checkout_url'    => 'https://checkout.stripe.com/c/pay/cs_test_topup_123',
-                    'customer_id'     => 'cus_test_123',
-                    'top_up_credits'  => 5000,
-                    'pack_code'       => 'top_up_small',
-                ],
-            ]
-        );
+        $guard = function ( $preempt, $args, $url ) {
+            $this->fail( 'Top-up checkout should not call the legacy billing service: ' . $url );
+            return $preempt;
+        };
+        add_filter( 'pre_http_request', $guard, 1, 3 );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/top-up-session' );
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
@@ -579,11 +550,11 @@ class LicenseControllerTest extends WP_UnitTestCase
             'quantity'    => 1,
         ] ) );
         $response = rest_get_server()->dispatch( $request );
+        remove_filter( 'pre_http_request', $guard, 1 );
 
-        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 410, $response->get_status() );
         $data = $response->get_data();
-        $this->assertSame( 'cs_test_topup_123', $data['session_id'] );
-        $this->assertSame( 5000, $data['top_up_credits'] );
+        $this->assertSame( 'managed_top_up_unsupported', $data['code'] ?? null );
     }
 
     public function test_get_billing_state_requires_active_proxy_key(): void
@@ -611,11 +582,25 @@ class LicenseControllerTest extends WP_UnitTestCase
         ] );
 
         $this->mock_http_response(
-            '/license/deactivate',
+            '/v2/account/sites/deactivate',
             [
                 'success' => true,
-                'message' => 'License deactivated successfully.',
-            ]
+                'data'    => [
+                    'service'    => 'sentient-managed',
+                    'status'     => 'inactive',
+                    'license_id' => 'lic-uuid-123',
+                    'site_id'    => 'site-uuid-456',
+                    'message'    => 'Site deactivated successfully.',
+                ],
+            ],
+            function ( array $args ): void {
+                $this->assertSame( 'POST', $args['method'] ?? null );
+                $this->assertSame( 'Bearer proxy-key-to-deactivate', $args['headers']['Authorization'] ?? null );
+
+                $body = json_decode( (string) ( $args['body'] ?? '' ), true );
+                $this->assertIsArray( $body );
+                $this->assertSame( 'site-uuid-456', $body['site_id'] ?? null );
+            }
         );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/deactivate' );
@@ -626,6 +611,24 @@ class LicenseControllerTest extends WP_UnitTestCase
         $data = $response->get_data();
 
         $this->assertSame( 'inactive', $data['status'] );
+    }
+
+    public function test_deactivate_without_site_id_returns_error(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-to-deactivate',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => '',
+        ] );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/deactivate' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 400, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'no_active_site', $data['code'] ?? null );
     }
 
     public function test_deactivate_without_license_returns_error(): void

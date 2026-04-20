@@ -566,7 +566,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('licensing-quota-cta-callout')).toBeVisible();
 		await expect(page.getByTestId('licensing-quota-cta-button')).toBeEnabled();
 		await expect(page.getByTestId('licensing-quota-cta-reason')).toContainText(
-			'Jump to the billing section to buy top-up credits or review plan changes.'
+			'Jump to the billing section to review managed usage and plan options.'
 		);
 	});
 

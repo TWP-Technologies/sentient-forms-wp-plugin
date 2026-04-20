@@ -1813,8 +1813,8 @@ export function ensureCreditBalanceAtLeast(minBalance: number, licenseKey = 'LIC
 	const newLedger = insertCreditDelta({
 		delta: minBalance - currentTotal,
 		licenseKey,
-		reason: `top-up to ${minBalance}`,
-		requestId: `pw-topup-${Date.now()}`
+		reason: `test credit adjustment to ${minBalance}`,
+		requestId: `pw-credit-adjustment-${Date.now()}`
 	});
 
 	return tierQuota + newLedger;

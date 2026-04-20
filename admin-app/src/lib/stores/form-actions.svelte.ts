@@ -57,7 +57,7 @@ function initialState(): FormActionsState {
 
 const friendlyMessages: Record<string, string> = {
 	insufficient_credits:
-		'Sentient Forms could not run because this license is out of credits. Visit the Licensing tab to add credits before retrying.',
+		'Sentient Forms could not run because this managed license is out of credits. Visit the Licensing tab to review billing before retrying.',
 	rate_limited:
 		'Sentient Forms is temporarily rate limiting requests. Please wait a minute and try again.',
 	timeout:
@@ -91,11 +91,11 @@ function insufficientCreditsMessage(payload: ApiErrorPayload | null): string {
 			: null;
 
 	if (currentBalance !== null && currentBalance < 0) {
-		return `Sentient Forms paused new runs because this license has a negative balance of ${formatCreditCount(currentBalance)}. Visit the Licensing tab to add credits before retrying.`;
+		return `Sentient Forms paused new runs because this managed license has a negative balance of ${formatCreditCount(currentBalance)}. Visit the Licensing tab to review billing before retrying.`;
 	}
 
 	if (currentBalance !== null && requiredCredits !== null) {
-		return `Sentient Forms needs ${formatCreditCount(requiredCredits)} for this run, but only ${formatCreditCount(currentBalance)} remain. Visit the Licensing tab to add credits before retrying.`;
+		return `Sentient Forms needs ${formatCreditCount(requiredCredits)} for this managed run, but only ${formatCreditCount(currentBalance)} remain. Visit the Licensing tab to review billing before retrying.`;
 	}
 
 	return friendlyMessages.insufficient_credits;

@@ -41,9 +41,9 @@ describe('license-health-presentation', () => {
 		expect(presentation.headline).toBe('Low credits: 10 / 100');
 		expect(presentation.detail).toContain('Low balance');
 		expect(presentation.quotaCta).toEqual({
-			label: 'Top up credits',
+			label: 'Review billing',
 			enabled: true,
-			reason: 'Open Licensing to review current credit status and buy top-up credits.',
+			reason: 'Open Licensing to review managed usage and plan options.',
 			action: 'focus_licensing_billing'
 		});
 	});
@@ -95,15 +95,15 @@ describe('license-health-presentation', () => {
 		);
 
 		expect(warningPresentation.quotaCta).toEqual({
-			label: 'View top-up options',
+			label: 'Review billing',
 			enabled: true,
-			reason: 'Jump to the billing section to buy top-up credits or review plan changes.',
+			reason: 'Jump to the billing section to review managed usage and plan options.',
 			action: 'focus_licensing_billing'
 		});
 		expect(criticalPresentation.quotaCta).toEqual({
-			label: 'View top-up options',
+			label: 'Review billing',
 			enabled: true,
-			reason: 'Jump to the billing section to buy top-up credits or review plan changes.',
+			reason: 'Jump to the billing section to review managed usage and plan options.',
 			action: 'focus_licensing_billing'
 		});
 	});
@@ -123,7 +123,7 @@ describe('license-health-presentation', () => {
 		expect(presentation.quotaCta).toEqual({
 			label: 'Resolve balance',
 			enabled: true,
-			reason: 'Open Licensing to add credits and clear the negative balance before new runs resume.',
+			reason: 'Open Licensing to review billing and restore managed execution.',
 			action: 'focus_licensing_billing'
 		});
 	});

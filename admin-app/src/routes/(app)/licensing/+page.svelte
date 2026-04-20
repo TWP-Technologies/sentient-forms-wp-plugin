@@ -46,20 +46,7 @@
 		quantity?: number;
 	}
 
-	interface TopUpPackOption {
-		code: string;
-		label: string;
-		description: string;
-		ctaLabel: string;
-		credits: number;
-	}
-
-	type BillingActionContext =
-		| 'billing_state'
-		| 'checkout'
-		| 'subscription_change'
-		| 'top_up'
-		| 'portal';
+	type BillingActionContext = 'billing_state' | 'checkout' | 'portal';
 
 	interface BillingUiError {
 		title: string;
@@ -101,30 +88,6 @@
 			ctaLabel: 'Choose Business'
 		}
 	] as const;
-
-	const topUpPacks: TopUpPackOption[] = [
-		{
-			code: 'top_up_small',
-			label: 'Small top-up',
-			description: '5,000 credits for burst usage.',
-			ctaLabel: 'Buy $45 pack',
-			credits: 5000
-		},
-		{
-			code: 'top_up_medium',
-			label: 'Medium top-up',
-			description: '10,000 credits for sustained demand.',
-			ctaLabel: 'Buy $80 pack',
-			credits: 10000
-		},
-		{
-			code: 'top_up_large',
-			label: 'Large top-up',
-			description: '25,000 credits for agency-scale spikes.',
-			ctaLabel: 'Buy $175 pack',
-			credits: 25000
-		}
-	];
 
 	function buildEffectiveCreditSnapshot(
 		billingState: BillingStateResponse | null,
@@ -223,9 +186,6 @@
 	let billingLoading = $state(false);
 	let billingError = $state<BillingUiError | null>(null);
 	let checkoutPlanPending = $state<string | null>(null);
-	let topUpPackPending = $state<string | null>(null);
-	let subscriptionChangePending = $state<string | null>(null);
-	let subscriptionChangeTiming = $state<'start_next_cycle' | 'start_now'>('start_next_cycle');
 	let portalLoading = $state(false);
 	let billingControlsElement = $state<HTMLDivElement | null>(null);
 
@@ -258,9 +218,7 @@
 			'—'
 	);
 	let hasExistingSubscription = $derived(Boolean(billingSubscription?.provider_subscription_id));
-	let billingBusy = $derived(
-		Boolean(checkoutPlanPending || topUpPackPending || subscriptionChangePending || portalLoading)
-	);
+	let billingBusy = $derived(Boolean(checkoutPlanPending || portalLoading));
 	let hasConnectedLicense = $derived(
 		isConnectedLicenseStatus($licenseStore.status) && $licenseStore.proxyKeyPresent
 	);
@@ -336,10 +294,6 @@
 				return 'Unable to load billing state.';
 			case 'checkout':
 				return 'Unable to start checkout right now.';
-			case 'subscription_change':
-				return 'Unable to change subscription right now.';
-			case 'top_up':
-				return 'Unable to start top-up checkout right now.';
 			case 'portal':
 				return 'Unable to open billing portal right now.';
 		}
@@ -350,8 +304,6 @@
 			case 'portal':
 				return 'Billing portal unavailable';
 			case 'checkout':
-			case 'subscription_change':
-			case 'top_up':
 				return 'Billing action unavailable';
 			case 'billing_state':
 			default:
@@ -365,10 +317,6 @@
 				return 'Retry opening billing portal';
 			case 'checkout':
 				return 'Retry checkout';
-			case 'subscription_change':
-				return 'Retry plan change';
-			case 'top_up':
-				return 'Retry top-up checkout';
 			case 'billing_state':
 			default:
 				return 'Retry billing state';
@@ -404,16 +352,6 @@
 		}
 
 		return defaultBillingErrorMessage(context);
-	}
-
-	function resolvePortalRecoveryUrl(error: ApiClientError): string | null {
-		const payload = error.payload as ApiErrorPayload | undefined;
-		const portalUrl = payload?.error?.meta?.portal_recovery?.portal_url;
-		if (typeof portalUrl !== 'string') {
-			return null;
-		}
-		const normalized = portalUrl.trim();
-		return normalized.length > 0 ? normalized : null;
 	}
 
 	function buildPortalSessionRequest(): BillingPortalSessionRequest {
@@ -549,7 +487,7 @@
 
 	async function handleCheckout(plan: CheckoutPlanOption) {
 		if (hasExistingSubscription) {
-			await handleSubscriptionChange(plan);
+			await handleOpenBillingPortal();
 			return;
 		}
 
@@ -577,74 +515,6 @@
 			});
 		} finally {
 			checkoutPlanPending = null;
-		}
-	}
-
-	async function handleSubscriptionChange(plan: CheckoutPlanOption) {
-		subscriptionChangePending = plan.code;
-		billingError = null;
-
-		try {
-			const response = await client.changeSubscription(
-				{
-					plan_code: plan.code,
-					change_timing: subscriptionChangeTiming,
-					quantity: plan.quantity ?? 1,
-					recovery_return_url: currentRouteUrl()
-				},
-				{ showNotifications: false }
-			);
-			const modeLabel =
-				response.change_timing === 'start_now' ? 'started now' : 'scheduled for next cycle';
-			notifications.success(`Plan updated to ${plan.label} (${modeLabel}).`);
-			await refreshLicenseAndBilling();
-		} catch (error) {
-			console.error('Failed to change subscription plan', error);
-			if (
-				error instanceof ApiClientError &&
-				error.code === 'subscription_payment_action_required'
-			) {
-				const recoveryUrl = resolvePortalRecoveryUrl(error);
-				if (recoveryUrl && typeof window !== 'undefined') {
-					notifications.warning(
-						'Additional card authentication is required. Redirecting to Stripe billing portal…'
-					);
-					window.location.assign(recoveryUrl);
-					return;
-				}
-			}
-			setBillingError(error, 'subscription_change', async () => {
-				await handleSubscriptionChange(plan);
-			});
-		} finally {
-			subscriptionChangePending = null;
-		}
-	}
-
-	async function handleTopUpCheckout(pack: TopUpPackOption) {
-		topUpPackPending = pack.code;
-		billingError = null;
-
-		try {
-			const session = await client.createTopUpCheckoutSession(
-				{
-					pack_code: pack.code,
-					success_url: currentRouteUrl(),
-					cancel_url: currentRouteUrl(),
-					quantity: 1
-				},
-				{ showNotifications: false }
-			);
-			if (typeof window !== 'undefined') {
-				window.location.assign(session.checkout_url);
-			}
-		} catch (error) {
-			console.error('Failed to create top-up checkout session', error);
-			setBillingError(error, 'top_up', async () => {
-				await handleTopUpCheckout(pack);
-			});
-		} finally {
-			topUpPackPending = null;
 		}
 	}
 
@@ -867,11 +737,6 @@
 							</p>
 						{/if}
 						<p class="sf:text-xs sf:text-slate-500">Site capacity: {billingAllocationUsage}</p>
-						{#if typeof billing?.credits?.top_up_available === 'number'}
-							<p class="sf:text-xs sf:text-slate-500">
-								Top-up credits available: {billing.credits.top_up_available.toLocaleString()}
-							</p>
-						{/if}
 						{#if billingAllocation}
 							<p class="sf:text-xs sf:text-slate-500">
 								Tier site limit {billingAllocation.tier_site_limit} x seats {billingAllocation.seat_quantity}
@@ -956,37 +821,16 @@
 					{#if hasExistingSubscription}
 						<div
 							class="sf:md:col-span-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3 sf:space-y-2"
+							data-testid="licensing-managed-portal-note"
 						>
 							<p
 								class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500"
 							>
-								Plan change timing
+								Plan changes
 							</p>
-							<div class="sf:flex sf:flex-wrap sf:gap-2">
-								<Button
-									variant={subscriptionChangeTiming === 'start_next_cycle'
-										? 'primary'
-										: 'secondary'}
-									onclick={() => {
-										subscriptionChangeTiming = 'start_next_cycle';
-									}}
-									disabled={billingBusy}
-								>
-									Start next cycle
-								</Button>
-								<Button
-									variant={subscriptionChangeTiming === 'start_now' ? 'primary' : 'secondary'}
-									onclick={() => {
-										subscriptionChangeTiming = 'start_now';
-									}}
-									disabled={billingBusy}
-								>
-									Start now
-								</Button>
-							</div>
 							<p class="sf:text-xs sf:text-slate-500">
-								Start next cycle keeps your current plan until renewal. Start now attempts an
-								immediate charge and resets your billing anchor.
+								Use the Stripe billing portal to change, cancel, or authenticate this managed
+								subscription. Direct OpenRouter remains separate.
 							</p>
 						</div>
 					{/if}
@@ -1012,7 +856,7 @@
 								}}
 							>
 								{#if hasExistingSubscription}
-									{subscriptionChangePending === plan.code ? 'Saving…' : `Switch to ${plan.label}`}
+									{portalLoading ? 'Opening…' : 'Manage in billing portal'}
 								{:else}
 									{checkoutPlanPending === plan.code ? 'Redirecting…' : plan.ctaLabel}
 								{/if}
@@ -1021,34 +865,18 @@
 					{/each}
 				</div>
 
-				<div class="sf:space-y-2">
+				<div
+					class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:space-y-2"
+					data-testid="licensing-managed-top-up-note"
+				>
 					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
-						Top-up packs
+						Managed usage
 					</p>
 					<p class="sf:text-xs sf:text-slate-500">
-						Top-up credits roll forward for up to 12 months.
+						Managed proxy usage is governed by the active Sentient plan. Top-up credit packs are
+						retired for the local-first service; use direct OpenRouter credentials for non-Sentient
+						billed runs or manage the plan in Stripe.
 					</p>
-					<div class="sf:grid sf:gap-3 sf:md:grid-cols-3">
-						{#each topUpPacks as pack}
-							<div
-								class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:space-y-2"
-							>
-								<p class="sf:text-sm sf:font-semibold sf:text-slate-900">{pack.label}</p>
-								<p class="sf:text-xs sf:text-slate-600">{pack.description}</p>
-								<p class="sf:text-xs sf:text-slate-500">{pack.credits.toLocaleString()} credits</p>
-								<Button
-									variant="secondary"
-									class="sf:w-full"
-									disabled={billingBusy}
-									onclick={() => {
-										void handleTopUpCheckout(pack);
-									}}
-								>
-									{topUpPackPending === pack.code ? 'Redirecting…' : pack.ctaLabel}
-								</Button>
-							</div>
-						{/each}
-					</div>
 				</div>
 
 				{#if billingError}

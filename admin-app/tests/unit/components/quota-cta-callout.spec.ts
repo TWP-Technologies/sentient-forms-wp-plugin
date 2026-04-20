@@ -63,10 +63,10 @@ describe('QuotaCtaCallout', () => {
 			title: 'No credits remaining',
 			message: 'Actions may pause until credits reset.',
 			cta: {
-				label: 'Billing controls coming soon',
+				label: 'Review billing unavailable',
 				enabled: false,
 				reason:
-					'In-app billing, plan details, and auto top-up controls are not available in this build yet.',
+					'In-app plan management is not available in this build yet.',
 				action: 'none'
 			},
 			onAction: () => {
