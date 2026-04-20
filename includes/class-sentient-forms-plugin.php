@@ -224,6 +224,11 @@ final class Sentient_Forms_Plugin
     {
         Sentient_Forms_Local_Data_Governance::register_hooks();
 
+        if ( is_multisite() )
+        {
+            add_action( 'wp_initialize_site', [ Sentient_Forms_Installer::class, 'initialize_new_site' ] );
+        }
+
         // Add other core plugin hooks here. For example, hooks for processing form submissions
         // might be set up here or dynamically by the adapters/actions themselves.
     }

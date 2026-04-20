@@ -12,20 +12,47 @@ class Sentient_Forms_Installer
 {
     private const OPTION_DB_VERSION = 'sentient_forms_db_version';
 
-    public static function activate(): void
+    public static function activate( bool $network_wide = false ): void
     {
-        self::maybe_upgrade();
-        Sentient_Forms_Local_Data_Governance::schedule_retention_cleanup();
+        if ( $network_wide && is_multisite() )
+        {
+            self::run_for_each_site( [ self::class, 'activate_current_site' ] );
+            return;
+        }
+
+        self::activate_current_site();
     }
 
-    public static function deactivate(): void
+    public static function deactivate( bool $network_wide = false ): void
     {
-        Sentient_Forms_Local_Data_Governance::unschedule_retention_cleanup();
+        if ( $network_wide && is_multisite() )
+        {
+            self::run_for_each_site( [ self::class, 'deactivate_current_site' ] );
+            return;
+        }
+
+        self::deactivate_current_site();
     }
 
     public static function uninstall(): void
     {
+        if ( is_multisite() )
+        {
+            self::run_for_each_site( [ Sentient_Forms_Local_Data_Governance::class, 'uninstall' ] );
+            return;
+        }
+
         Sentient_Forms_Local_Data_Governance::uninstall();
+    }
+
+    public static function initialize_new_site( WP_Site $site ): void
+    {
+        if ( ! self::is_network_active() )
+        {
+            return;
+        }
+
+        self::run_for_site( (int) $site->blog_id, [ self::class, 'activate_current_site' ] );
     }
 
     public static function maybe_upgrade(): void
@@ -67,6 +94,83 @@ class Sentient_Forms_Installer
         ) {$charset_collate};";
 
         dbDelta( $sql );
+    }
+
+    private static function activate_current_site(): void
+    {
+        self::maybe_upgrade();
+        Sentient_Forms_Local_Data_Governance::schedule_retention_cleanup();
+    }
+
+    private static function deactivate_current_site(): void
+    {
+        Sentient_Forms_Local_Data_Governance::unschedule_retention_cleanup();
+    }
+
+    /**
+     * Run an installer callback for each site in a multisite network.
+     *
+     * @param callable(): void $callback Site-scoped installer callback.
+     */
+    private static function run_for_each_site( callable $callback ): void
+    {
+        if ( ! function_exists( 'get_sites' ) )
+        {
+            $callback();
+            return;
+        }
+
+        $site_ids = get_sites(
+            [
+                'fields' => 'ids',
+                'number' => 0,
+            ]
+        );
+
+        foreach ( $site_ids as $site_id )
+        {
+            self::run_for_site( (int) $site_id, $callback );
+        }
+    }
+
+    /**
+     * Run an installer callback after switching to a specific site.
+     *
+     * @param callable(): void $callback Site-scoped installer callback.
+     */
+    private static function run_for_site( int $site_id, callable $callback ): void
+    {
+        if ( $site_id <= 0 || ! function_exists( 'switch_to_blog' ) || ! function_exists( 'restore_current_blog' ) )
+        {
+            $callback();
+            return;
+        }
+
+        switch_to_blog( $site_id );
+
+        try
+        {
+            $callback();
+        }
+        finally
+        {
+            restore_current_blog();
+        }
+    }
+
+    private static function is_network_active(): bool
+    {
+        if ( ! is_multisite() || ! defined( 'SENTIENT_FORMS_PLUGIN_FILE' ) )
+        {
+            return false;
+        }
+
+        if ( ! function_exists( 'is_plugin_active_for_network' ) )
+        {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+
+        return is_plugin_active_for_network( plugin_basename( SENTIENT_FORMS_PLUGIN_FILE ) );
     }
 
     private static function create_local_first_tables(): void

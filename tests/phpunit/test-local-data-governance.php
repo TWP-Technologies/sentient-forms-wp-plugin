@@ -91,6 +91,40 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertNull( $this->events->get_by_request_id( 'retention-expired-1' ) );
     }
 
+    public function test_activation_lifecycle_schedules_and_unschedules_retention(): void
+    {
+        Sentient_Forms_Local_Data_Governance::unschedule_retention_cleanup();
+        $this->assertFalse( wp_next_scheduled( Sentient_Forms_Local_Data_Governance::RETENTION_HOOK ) );
+
+        try
+        {
+            Sentient_Forms_Installer::activate( false );
+            $this->assertNotFalse( wp_next_scheduled( Sentient_Forms_Local_Data_Governance::RETENTION_HOOK ) );
+
+            Sentient_Forms_Installer::deactivate( false );
+            $this->assertFalse( wp_next_scheduled( Sentient_Forms_Local_Data_Governance::RETENTION_HOOK ) );
+        }
+        finally
+        {
+            Sentient_Forms_Installer::activate( false );
+        }
+    }
+
+    public function test_maybe_upgrade_restores_execution_event_recent_read_index(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+
+        $this->assertSame( [ 'created_at', 'id' ], $this->execution_event_index_columns( $table, 'created_id_idx' ) );
+        $this->assertNotFalse( $this->wpdb->query( 'ALTER TABLE ' . esc_sql( $table ) . ' DROP INDEX created_id_idx' ) );
+        $this->assertSame( [], $this->execution_event_index_columns( $table, 'created_id_idx' ) );
+
+        update_option( 'sentient_forms_db_version', '2026.04.16.local_first' );
+        Sentient_Forms_Installer::maybe_upgrade();
+
+        $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
+        $this->assertSame( [ 'created_at', 'id' ], $this->execution_event_index_columns( $table, 'created_id_idx' ) );
+    }
+
     public function test_uninstall_preserves_data_by_default_and_deletes_when_configured(): void
     {
         $table = $this->wpdb->prefix . 'sentient_execution_events';
@@ -156,5 +190,28 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertStringNotContainsString( 'bundle-person@example.test', $json );
         $this->assertTrue( $bundle['execution_summary']['recent'][0]['has_result'] );
         $this->assertTrue( $bundle['execution_summary']['recent'][0]['has_error_message'] );
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function execution_event_index_columns( string $table, string $index_name ): array
+    {
+        $rows = $this->wpdb->get_results(
+            'SHOW INDEX FROM ' . esc_sql( $table ) . ' WHERE Key_name = \'' . esc_sql( $index_name ) . '\'',
+            ARRAY_A
+        );
+
+        if ( ! is_array( $rows ) )
+        {
+            return [];
+        }
+
+        usort(
+            $rows,
+            static fn ( array $left, array $right ): int => (int) $left['Seq_in_index'] <=> (int) $right['Seq_in_index']
+        );
+
+        return array_values( array_map( static fn ( array $row ): string => (string) $row['Column_name'], $rows ) );
     }
 }
