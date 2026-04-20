@@ -192,7 +192,8 @@ class Sentient_Forms_Installer
                 KEY form_entry_idx (form_source, form_id, entry_id),
                 KEY status_idx (status),
                 KEY expires_idx (expires_at),
-                KEY created_idx (created_at)
+                KEY created_idx (created_at),
+                KEY created_id_idx (created_at, id)
             ) {$charset_collate};",
             "CREATE TABLE {$wpdb->prefix}sentient_migration_runs (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,

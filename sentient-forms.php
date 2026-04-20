@@ -21,7 +21,7 @@ if ( !defined( 'ABSPATH' ) )
 
 // Define plugin constants.
 const SENTIENT_FORMS_VERSION     = '0.1.0';
-const SENTIENT_FORMS_DB_VERSION  = '2026.04.16.local_first';
+const SENTIENT_FORMS_DB_VERSION  = '2026.04.20.execution_event_perf';
 const SENTIENT_FORMS_PLUGIN_FILE = __FILE__;
 define( 'SENTIENT_FORMS_PLUGIN_DIR', plugin_dir_path( SENTIENT_FORMS_PLUGIN_FILE ) );
 define( 'SENTIENT_FORMS_PLUGIN_URL', plugin_dir_url( SENTIENT_FORMS_PLUGIN_FILE ) );

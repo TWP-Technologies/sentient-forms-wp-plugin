@@ -38,6 +38,18 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
         }
     }
 
+    public function test_execution_events_table_has_recent_read_index(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $index = $this->wpdb->get_results(
+            'SHOW INDEX FROM ' . esc_sql( $table ) . " WHERE Key_name = 'created_id_idx'",
+            ARRAY_A
+        );
+
+        $this->assertCount( 2, $index );
+        $this->assertSame( [ 'created_at', 'id' ], array_column( $index, 'Column_name' ) );
+    }
+
     public function test_provider_credentials_repository_records_local_openrouter_credentials(): void
     {
         $repository = new Sentient_Forms_Provider_Credentials_Repository( $this->wpdb );
