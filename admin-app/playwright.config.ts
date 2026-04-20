@@ -28,7 +28,7 @@ export default defineConfig({
 	expect: {
 		timeout: 5_000
 	},
-	// WP E2E tests share global state (CPS license, credits) and must run serially
+	// WP E2E tests share WordPress/Gravity Forms state; legacy CPS specs also share license and credit state.
 	workers: isWpE2E ? 1 : undefined,
 	fullyParallel: !isWpE2E,
 	reporter: [['list'], ['html', { open: 'never' }]],

@@ -19,7 +19,9 @@ import {
 } from './utils/wp-e2e-helpers';
 import { installSentientCorsProxy } from './utils/cors-proxy';
 
-const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
+const runLegacyCpsE2E =
+	process.env.SENTIENT_RUN_WP_E2E === '1' &&
+	process.env.SENTIENT_RUN_LEGACY_CPS_E2E === '1';
 
 async function waitForNewEntryId(
 	formId: number,
@@ -145,10 +147,13 @@ async function waitForSummaryText(entryId: number, page: Page): Promise<string> 
 }
 
 test.describe('After-submission entry summary @after-submission @summary-e2e', () => {
-	test.skip(!runWpE2E, 'Set SENTIENT_RUN_WP_E2E=1 to exercise Gravity Forms + CPS.');
+	test.skip(
+		!runLegacyCpsE2E,
+		'Set SENTIENT_RUN_WP_E2E=1 and SENTIENT_RUN_LEGACY_CPS_E2E=1 to exercise legacy Gravity Forms + CPS summary credit flows.'
+	);
 
 	test.beforeEach(async ({ page }) => {
-		if (runWpE2E) {
+		if (runLegacyCpsE2E) {
 			await installSentientCorsProxy(page);
 			await requireWpRestHealthy(page);
 		}

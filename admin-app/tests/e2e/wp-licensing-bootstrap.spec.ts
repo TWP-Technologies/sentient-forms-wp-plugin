@@ -7,10 +7,15 @@ import {
 } from './utils/wp-e2e-helpers';
 import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
 
-const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
+const runLegacyCpsE2E =
+	process.env.SENTIENT_RUN_WP_E2E === '1' &&
+	process.env.SENTIENT_RUN_LEGACY_CPS_E2E === '1';
 
 test.describe('Licensing bootstrap in real WP admin @licensing-wp', () => {
-	test.skip(!runWpE2E, 'Set SENTIENT_RUN_WP_E2E=1 to exercise WordPress admin SPA.');
+	test.skip(
+		!runLegacyCpsE2E,
+		'Set SENTIENT_RUN_WP_E2E=1 and SENTIENT_RUN_LEGACY_CPS_E2E=1 to exercise legacy CPS licensing bootstrap.'
+	);
 
 	test('dashboard auto-bootstraps the free license without visiting licensing first', async ({
 		page

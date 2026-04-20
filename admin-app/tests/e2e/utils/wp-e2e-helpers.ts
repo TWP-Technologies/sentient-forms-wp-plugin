@@ -343,6 +343,19 @@ function normalizeCpsHostUrl(cpsHostUrl: string): string {
 	return cpsHostUrl.replace(/\/+$/, '');
 }
 
+function ensureLegacyCpsE2EEnabled(helperName: string): void {
+	if (
+		process.env.SENTIENT_RUN_WP_E2E === '1' &&
+		process.env.SENTIENT_RUN_LEGACY_CPS_E2E === '1'
+	) {
+		return;
+	}
+
+	throw new Error(
+		`${helperName} is a legacy CPS/credit-ledger E2E helper. Set SENTIENT_RUN_WP_E2E=1 and SENTIENT_RUN_LEGACY_CPS_E2E=1 before using it.`
+	);
+}
+
 function isProxyKeyHealthy(proxyApiKey: string, cpsHostUrl: string): boolean {
 	if (!proxyApiKey.trim()) {
 		return false;
@@ -435,6 +448,8 @@ echo 'ok';
 }
 
 export function getLicenseIdByKey(licenseKey = 'LIC-LOCAL-DEV'): string {
+	ensureLegacyCpsE2EEnabled('getLicenseIdByKey');
+
 	const raw = runDbQuery(
 		`SELECT id FROM licenses WHERE license_key='${sanitizeSqlLiteral(licenseKey)}' LIMIT 1;`
 	);
@@ -470,6 +485,7 @@ export function ensureCpsSeeded(
 	siteUrl = `${wpBaseUrl}/`,
 	localSiteIdentifier = 'local-site'
 ): string {
+	ensureLegacyCpsE2EEnabled('ensureCpsSeeded');
 	ensureWpBaseUrlConfigured();
 
 	// 1. Ensure license exists in CPS DB
@@ -554,6 +570,8 @@ export function prepareFreeLicenseBootstrapState(
 	siteUrl = `${wpBaseUrl}/`,
 	cpsDockerUrl = 'http://cps-api:8080/v1'
 ): void {
+	ensureLegacyCpsE2EEnabled('prepareFreeLicenseBootstrapState');
+
 	const normalizedSiteUrl = siteUrl.endsWith('/') ? siteUrl : `${siteUrl}/`;
 	const archivedPrefix = `${normalizedSiteUrl}__archived_bootstrap__/`;
 
@@ -652,6 +670,8 @@ export function setTelemetryOptIn(
 	licenseKey = 'LIC-LOCAL-DEV',
 	cpsHostUrl = process.env.SENTIENT_FORMS_CPS_HOST_URL ?? defaultCpsHostUrl
 ): void {
+	ensureLegacyCpsE2EEnabled('setTelemetryOptIn');
+
 	const proxyKey = ensureCpsSeeded(licenseKey, cpsHostUrl);
 	const telemetryUrl = `${normalizeCpsHostUrl(cpsHostUrl)}/v1/telemetry`;
 	const payload = JSON.stringify({
@@ -698,6 +718,8 @@ export function setTelemetryOptIn(
 export function getLatestTelemetryEvent(
 	licenseKey = 'LIC-LOCAL-DEV'
 ): { event: string; payload: unknown } | null {
+	ensureLegacyCpsE2EEnabled('getLatestTelemetryEvent');
+
 	const licenseId = getLicenseIdByKey(licenseKey);
 	const raw = runTelemetryDbQuery(
 		`
@@ -719,6 +741,8 @@ LIMIT 1;
 }
 
 export function getActionTemplateBaseCreditCost(code: string): number {
+	ensureLegacyCpsE2EEnabled('getActionTemplateBaseCreditCost');
+
 	const raw = runDbQuery(
 		`
 SELECT base_credit_cost
@@ -736,6 +760,8 @@ LIMIT 1;
 }
 
 export function createCustomAction(code: string, displayName: string): string {
+	ensureLegacyCpsE2EEnabled('createCustomAction');
+
 	const licenseId = getLicenseIdByKey();
 	const templateId = getActionTemplateIdByCode('spam_detection_v1');
 	const sql = `
@@ -1089,6 +1115,8 @@ export function runActionScheduler(): void {
 }
 
 export function getProxyApiKey(): string {
+	ensureLegacyCpsE2EEnabled('getProxyApiKey');
+
 	const proxyKey = tryGetProxyApiKey();
 	if (proxyKey) {
 		return proxyKey;
@@ -1725,6 +1753,8 @@ export async function fetchCreditBalance(
 	apiKey: string,
 	baseUrl = process.env.SENTIENT_FORMS_CPS_HOST_URL ?? defaultCpsHostUrl
 ): Promise<number> {
+	ensureLegacyCpsE2EEnabled('fetchCreditBalance');
+
 	const response = await page.request.get(`${baseUrl}/v1/credits/balance`, {
 		headers: { 'x-api-key': apiKey }
 	});
@@ -1742,6 +1772,8 @@ function currentPeriodStartUtc(): string {
 }
 
 export function getCreditBalanceFromDb(licenseKey = 'LIC-LOCAL-DEV'): number {
+	ensureLegacyCpsE2EEnabled('getCreditBalanceFromDb');
+
 	const periodStart = currentPeriodStartUtc();
 	const sql = `
 SELECT COALESCE(SUM(credits_delta), 0)
@@ -1756,6 +1788,8 @@ WHERE license_id = (SELECT id FROM licenses WHERE license_key = '${sanitizeSqlLi
 }
 
 export function getTierMonthlyQuota(licenseKey = 'LIC-LOCAL-DEV'): number {
+	ensureLegacyCpsE2EEnabled('getTierMonthlyQuota');
+
 	const sql = `
 SELECT t.monthly_credit_quota
 FROM licenses l
@@ -1775,6 +1809,8 @@ export function insertCreditDelta({
 	reason = 'playwright adjustment',
 	requestId = `pw-${Date.now()}`
 }: CreditAdjustmentArgs): number {
+	ensureLegacyCpsE2EEnabled('insertCreditDelta');
+
 	const periodStart = currentPeriodStartUtc();
 	if (!Number.isFinite(delta) || delta === 0) {
 		return getCreditBalanceFromDb(licenseKey);
@@ -1803,6 +1839,8 @@ WHERE license_id = (SELECT id FROM target_license LIMIT 1)
 }
 
 export function ensureCreditBalanceAtLeast(minBalance: number, licenseKey = 'LIC-LOCAL-DEV'): number {
+	ensureLegacyCpsE2EEnabled('ensureCreditBalanceAtLeast');
+
 	const tierQuota = getTierMonthlyQuota(licenseKey);
 	const currentLedger = getCreditBalanceFromDb(licenseKey);
 	const currentTotal = tierQuota + currentLedger;
@@ -1821,6 +1859,8 @@ export function ensureCreditBalanceAtLeast(minBalance: number, licenseKey = 'LIC
 }
 
 export function setCreditBalance(targetBalance: number, licenseKey = 'LIC-LOCAL-DEV'): number {
+	ensureLegacyCpsE2EEnabled('setCreditBalance');
+
 	const tierQuota = getTierMonthlyQuota(licenseKey);
 	const currentLedger = getCreditBalanceFromDb(licenseKey);
 	const currentTotal = tierQuota + currentLedger;
@@ -1839,6 +1879,8 @@ export function countActionExecutionDebitsByRequestId(
 	executionRequestId: string,
 	licenseKey = 'LIC-LOCAL-DEV'
 ): number {
+	ensureLegacyCpsE2EEnabled('countActionExecutionDebitsByRequestId');
+
 	const sql = `
 SELECT COUNT(*)
 FROM credit_ledger_entries
@@ -1854,6 +1896,8 @@ WHERE license_id = (SELECT id FROM licenses WHERE license_key = '${sanitizeSqlLi
 }
 
 export function resetE2eState(): void {
+	ensureLegacyCpsE2EEnabled('resetE2eState');
+
 	// Standardize credits and clear deterministic overrides between suites.
 	ensureCreditBalanceAtLeast(120);
 	setExecutionRequestIdOverride(null);

@@ -11,13 +11,18 @@ import {
 import { installSentientCorsProxy } from './utils/cors-proxy';
 import { loginToWpAdmin, wpBaseUrl } from './utils/wp-admin';
 
-const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
+const runLegacyCpsE2E =
+	process.env.SENTIENT_RUN_WP_E2E === '1' &&
+	process.env.SENTIENT_RUN_LEGACY_CPS_E2E === '1';
 
 test.describe('Gravity Forms credits @credits-insufficient', () => {
-	test.skip(!runWpE2E, 'Set SENTIENT_RUN_WP_E2E=1 to exercise Gravity Forms + CPS.');
+	test.skip(
+		!runLegacyCpsE2E,
+		'Set SENTIENT_RUN_WP_E2E=1 and SENTIENT_RUN_LEGACY_CPS_E2E=1 to exercise legacy Gravity Forms + CPS credit flows.'
+	);
 
 	test.beforeEach(async ({ page }) => {
-		if (runWpE2E) {
+		if (runLegacyCpsE2E) {
 			await installSentientCorsProxy(page);
 			await requireWpRestHealthy(page);
 		}
@@ -47,7 +52,7 @@ test.describe('Gravity Forms credits @credits-insufficient', () => {
 
 		const email = `insufficient-${Date.now()}@example.test`;
 		await loginToWpAdmin(page);
-	await requireWpRestHealthy(page);
+		await requireWpRestHealthy(page);
 		await page.goto(`${wpBaseUrl}/?gf_page=preview&id=${formId}`, { waitUntil: 'networkidle' });
 		await page.fill('input[name="input_1"]', 'Playwright Bot');
 		await page.fill('input[name="input_2"]', email);

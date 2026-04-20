@@ -1,6 +1,10 @@
 import type { FullConfig } from '@playwright/test';
 
 function ensureCpsBaseUrl(): void {
+	if (process.env.SENTIENT_RUN_LEGACY_CPS_E2E !== '1') {
+		return;
+	}
+
 	const base = process.env.SENTIENT_FORMS_CPS_BASE_URL;
 	if (!base) return; // Defaulted inside specs; nothing to validate.
 
