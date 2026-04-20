@@ -224,7 +224,7 @@ final class Sentient_Forms_Plugin
     {
         Sentient_Forms_Local_Data_Governance::register_hooks();
 
-        if ( is_multisite() )
+        if ( Sentient_Forms_Installer::is_network_active() )
         {
             add_action( 'wp_initialize_site', [ Sentient_Forms_Installer::class, 'initialize_new_site' ] );
         }

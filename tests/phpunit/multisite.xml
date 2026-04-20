@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit bootstrap="../bootstrap.php" colors="true">
+    <php>
+        <const name="WP_TESTS_MULTISITE" value="1"/>
+    </php>
+    <testsuites>
+        <testsuite name="Sentient Forms Multisite">
+            <directory prefix="test-" suffix=".php">.</directory>
+        </testsuite>
+    </testsuites>
+</phpunit>

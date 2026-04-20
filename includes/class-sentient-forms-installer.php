@@ -47,18 +47,36 @@ class Sentient_Forms_Installer
 
     public static function initialize_new_site( WP_Site $site ): void
     {
-        if ( ! self::is_network_active() )
-        {
-            return;
-        }
-
         self::run_for_site( (int) $site->blog_id, [ self::class, 'activate_current_site' ] );
     }
 
-    public static function maybe_upgrade(): void
+    public static function is_network_active(): bool
+    {
+        if ( ! is_multisite() || ! defined( 'SENTIENT_FORMS_PLUGIN_FILE' ) )
+        {
+            return false;
+        }
+
+        $plugin_basename = plugin_basename( SENTIENT_FORMS_PLUGIN_FILE );
+        $network_plugins = (array) get_site_option( 'active_sitewide_plugins', [] );
+
+        if ( isset( $network_plugins[ $plugin_basename ] ) )
+        {
+            return true;
+        }
+
+        if ( ! function_exists( 'is_plugin_active_for_network' ) )
+        {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+
+        return is_plugin_active_for_network( $plugin_basename );
+    }
+
+    public static function maybe_upgrade( bool $repair_missing_tables = false ): void
     {
         $current = get_option( self::OPTION_DB_VERSION, '' );
-        if ( $current === SENTIENT_FORMS_DB_VERSION )
+        if ( $current === SENTIENT_FORMS_DB_VERSION && ( ! $repair_missing_tables || self::local_first_tables_exist() ) )
         {
             return;
         }
@@ -98,7 +116,7 @@ class Sentient_Forms_Installer
 
     private static function activate_current_site(): void
     {
-        self::maybe_upgrade();
+        self::maybe_upgrade( true );
         Sentient_Forms_Local_Data_Governance::schedule_retention_cleanup();
     }
 
@@ -148,6 +166,14 @@ class Sentient_Forms_Installer
 
         switch_to_blog( $site_id );
 
+        global $wpdb;
+        if ( method_exists( $wpdb, 'set_blog_id' ) )
+        {
+            $wpdb->set_blog_id( $site_id );
+            $GLOBALS['blog_id']      = $site_id;
+            $GLOBALS['table_prefix'] = $wpdb->get_blog_prefix( $site_id );
+        }
+
         try
         {
             $callback();
@@ -158,19 +184,21 @@ class Sentient_Forms_Installer
         }
     }
 
-    private static function is_network_active(): bool
+    private static function local_first_tables_exist(): bool
     {
-        if ( ! is_multisite() || ! defined( 'SENTIENT_FORMS_PLUGIN_FILE' ) )
+        global $wpdb;
+
+        foreach ( Sentient_Forms_Local_Data_Governance::local_table_suffixes() as $suffix )
         {
-            return false;
+            $table_name = $wpdb->prefix . $suffix;
+
+            if ( ! self::table_exists( $table_name ) )
+            {
+                return false;
+            }
         }
 
-        if ( ! function_exists( 'is_plugin_active_for_network' ) )
-        {
-            require_once ABSPATH . 'wp-admin/includes/plugin.php';
-        }
-
-        return is_plugin_active_for_network( plugin_basename( SENTIENT_FORMS_PLUGIN_FILE ) );
+        return true;
     }
 
     private static function create_local_first_tables(): void
@@ -333,5 +361,17 @@ class Sentient_Forms_Installer
         {
             dbDelta( $sql );
         }
+    }
+
+    private static function table_exists( string $table_name ): bool
+    {
+        global $wpdb;
+
+        $suppress = $wpdb->suppress_errors();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Installer schema probes must check the database directly and run only during activation/upgrade repair.
+        $found = $wpdb->get_results( $wpdb->prepare( 'DESCRIBE %i', $table_name ) );
+        $wpdb->suppress_errors( $suppress );
+
+        return ! empty( $found );
     }
 }
