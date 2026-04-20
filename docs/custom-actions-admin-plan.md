@@ -1,9 +1,9 @@
 # Custom Actions Admin & Proxy Plan
 
 ## Objectives
-- Surface CPS custom actions CRUD in WordPress via REST proxy + SvelteKit SPA.
-- Maintain parity with CPS envelopes and error semantics.
-- Provide administrators clear feedback on validation errors, quota limits, and audit state.
+- Preserve this document as historical context for the pre-local-first custom actions UI.
+- Prefer local WordPress custom action storage and admin REST routes over CPS CRUD proxies.
+- Provide administrators clear feedback on validation errors, managed billing limits, and local audit state.
 
 ## Work Breakdown
 1. **Contract Alignment**
@@ -45,6 +45,6 @@
 ## Action Mapping UX Snapshot (2025-11-13)
 - The **Actions** tab now reflects the selected form source (Gravity Forms initially) and lists every detected form with badges that summarize mapping counts and Sentient Forms enablement.
 - Each row links directly into `/actions/{sourceSlug}/{formId}` via hash-based routing so the SPA can operate safely inside the WordPress admin without rewriting the core URL.
-- The form-level detail view shows the current credit balance, execution status, and linked CPS actions. Administrators can enable/disable mappings, refresh execution metadata, and inspect entry-specific telemetry.
+- The form-level detail view now treats local mapping/execution status as the primary source of truth. Managed billing state is shown through Licensing rather than a form-level credit balance.
 - Trigger hook management is now interactive: clicking **Edit hooks** opens an inline editor with the allowed Gravity Forms hooks (validation vs. after submission). Changes persist via the Form Actions REST controller and mirror immediately in the status panel.
-- All new flows rely on the normalized REST payloads (`credits/balance`, action definitions, form actions) so the Vitest/unit suites can assert real API behavior.
+- New local-first flows should rely on local action definitions, form actions, and managed billing-state payloads; `credits/balance` is retired from customer-facing runtime and remains only as a 410 compatibility shim.

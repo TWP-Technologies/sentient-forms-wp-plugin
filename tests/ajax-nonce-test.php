@@ -16,10 +16,10 @@ class AjaxNonceIntegrationTest extends WP_Ajax_UnitTestCase {
         $admin  = new Sentient_Forms_Admin( $plugin );
         $admin->init();
         $this->http_mock = function ( $preempt, $args, $url ) {
-            if ( str_contains( $url, '/credits/balance' ) ) {
+            if ( str_ends_with( $url, '/models' ) ) {
                 return [
                     'headers'  => [],
-                    'body'     => wp_json_encode( [ 'balance' => 100 ] ),
+                    'body'     => wp_json_encode( [] ),
                     'response' => [ 'code' => 200, 'message' => 'OK' ],
                 ];
             }

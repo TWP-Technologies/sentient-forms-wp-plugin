@@ -70,22 +70,6 @@
     border-bottom: 1px solid #eee;
 }
 
-.sentient-forms-credit-balance {
-    text-align: center;
-    margin-bottom: 15px;
-}
-
-.sentient-forms-credit-amount {
-    font-size: 36px;
-    font-weight: bold;
-    color: #2271b1;
-}
-
-.sentient-forms-credit-label {
-    font-size: 16px;
-    color: #666;
-}
-
 .sentient-forms-license-status {
     display: flex;
     align-items: center;

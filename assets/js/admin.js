@@ -355,37 +355,7 @@
      * Initialize dashboard functionality
      */
     function initDashboard() {
-        // Refresh credit balance
-        $('.sentient-forms-refresh-balance').on('click', function() {
-            var $button = $(this);
-            var originalText = $button.text();
-            
-            $button.text(sentientFormsAdmin.i18n.loadingBalance);
-            $button.prop('disabled', true);
-            
-            $.ajax({
-                url: sentientFormsAdmin.ajaxUrl,
-                type: 'POST',
-                data: {
-                    action: 'sentient_forms_get_credit_balance',
-                    nonce: sentientFormsAdmin.ajax_nonce
-                },
-                success: function(response) {
-                    if (response.success) {
-                        $('.sentient-forms-credit-amount').text(response.data.balance.toLocaleString());
-                    } else {
-                        alert(response.data.message);
-                    }
-                },
-                error: function() {
-                    alert(sentientFormsAdmin.i18n.balanceError);
-                },
-                complete: function() {
-                    $button.text(originalText);
-                    $button.prop('disabled', false);
-                }
-            });
-        });
+        // Legacy PHP dashboard currently has no interactive local-first controls.
     }
 
     // Initialize when the DOM is ready
