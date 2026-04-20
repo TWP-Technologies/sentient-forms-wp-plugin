@@ -546,6 +546,134 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         );
     }
 
+    public function test_migration_import_blocks_duplicate_source_identifiers_before_any_writes(): void
+    {
+        $bundle = $this->sample_cps_export_bundle(
+            [
+                'action_templates' => [
+                    [
+                        'external_id'     => 'shared-template-id',
+                        'code'            => 'remote_spam_triage_v1',
+                        'display_name'    => 'Remote Spam Triage',
+                        'prompt_template' => 'Classify {{entry}}.',
+                        'version'         => '1.0.0',
+                        'is_active'       => true,
+                    ],
+                    [
+                        'external_id'     => 'shared-template-id',
+                        'code'            => 'remote_summary_v1',
+                        'display_name'    => 'Remote Summary',
+                        'prompt_template' => 'Summarize {{entry}}.',
+                        'version'         => '1.0.0',
+                        'is_active'       => true,
+                    ],
+                ],
+                'custom_actions'   => [
+                    [
+                        'external_id'          => 'shared-action-id',
+                        'template_code'        => 'remote_spam_triage_v1',
+                        'code'                 => 'remote_contact_spam_triage',
+                        'display_name'         => 'Remote Contact Spam Triage',
+                        'definition_json'      => [
+                            'prompt' => 'Classify contact form entry.',
+                        ],
+                        'model_selection_json' => [
+                            'provider' => 'openrouter',
+                            'model'    => 'openrouter/auto',
+                        ],
+                    ],
+                    [
+                        'external_id'          => 'shared-action-id',
+                        'template_code'        => 'remote_summary_v1',
+                        'code'                 => 'remote_contact_summary',
+                        'display_name'         => 'Remote Contact Summary',
+                        'definition_json'      => [
+                            'prompt' => 'Summarize contact form entry.',
+                        ],
+                        'model_selection_json' => [
+                            'provider' => 'openrouter',
+                            'model'    => 'openrouter/auto',
+                        ],
+                    ],
+                ],
+                'form_mappings'    => [
+                    [
+                        'external_id'         => 'shared-mapping-id',
+                        'form_source'         => 'gravity_forms',
+                        'form_id'             => '7',
+                        'hook'                => 'gform_after_submission',
+                        'action_kind'         => 'custom_action',
+                        'action_code'         => 'remote_contact_spam_triage',
+                        'input_bindings_json' => [
+                            'email' => '3',
+                        ],
+                        'execution_mode'      => 'async',
+                        'enabled'             => true,
+                    ],
+                    [
+                        'external_id'         => 'shared-mapping-id',
+                        'form_source'         => 'gravity_forms',
+                        'form_id'             => '8',
+                        'hook'                => 'gform_after_submission',
+                        'action_kind'         => 'custom_action',
+                        'action_code'         => 'remote_contact_summary',
+                        'input_bindings_json' => [
+                            'email' => '3',
+                        ],
+                        'execution_mode'      => 'async',
+                        'enabled'             => true,
+                    ],
+                ],
+                'execution_events' => [
+                    [
+                        'execution_request_id' => 'shared-request-id',
+                        'mapping_external_id'  => 'shared-mapping-id',
+                        'provider'             => 'openrouter',
+                        'model'                => 'openrouter/auto',
+                        'status'               => 'succeeded',
+                    ],
+                    [
+                        'execution_request_id' => 'shared-request-id',
+                        'mapping_external_id'  => 'shared-mapping-id',
+                        'provider'             => 'openrouter',
+                        'model'                => 'openrouter/auto',
+                        'status'               => 'failed',
+                    ],
+                ],
+            ]
+        );
+
+        $dry_run = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/migration/import/dry-run',
+            [
+                'bundle' => $bundle,
+            ],
+            201
+        );
+
+        $this->assertFalse( $dry_run['report']['ready_to_import'] );
+        $conflict_codes = wp_list_pluck( $dry_run['report']['conflicts'], 'code' );
+        $this->assertContains( 'duplicate_action_template_external_id', $conflict_codes );
+        $this->assertContains( 'duplicate_custom_action_external_id', $conflict_codes );
+        $this->assertContains( 'duplicate_form_mapping_external_id', $conflict_codes );
+        $this->assertContains( 'duplicate_execution_event_execution_request_id', $conflict_codes );
+        $this->assertSame( 0, $this->table_count( 'sentient_action_templates' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_custom_actions' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_execution_events' ) );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/migration/import/apply' );
+        $request->set_body_params( [ 'bundle' => $bundle ] );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 409, $response->get_status() );
+        $this->assertSame( 0, $this->table_count( 'sentient_action_templates' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_custom_actions' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_form_mappings' ) );
+        $this->assertSame( 0, $this->table_count( 'sentient_execution_events' ) );
+    }
+
     public function test_migration_approved_reset_requires_confirmation_phrase(): void
     {
         $this->seed_local_cutover_state();

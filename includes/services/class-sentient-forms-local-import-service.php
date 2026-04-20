@@ -311,7 +311,11 @@ class Sentient_Forms_Local_Import_Service
         $conflicts        = array_merge(
             $conflicts,
             $this->duplicate_conflicts( $template_indexes['codes'], 'action_template', 'code' ),
+            $this->duplicate_conflicts( $this->field_value_counts( $collections['action_templates'], 'external_id' ), 'action_template', 'external_id' ),
             $this->duplicate_conflicts( $action_indexes['codes'], 'custom_action', 'code' ),
+            $this->duplicate_conflicts( $this->field_value_counts( $collections['custom_actions'], 'external_id' ), 'custom_action', 'external_id' ),
+            $this->duplicate_conflicts( $this->field_value_counts( $collections['form_mappings'], 'external_id' ), 'form_mapping', 'external_id' ),
+            $this->duplicate_conflicts( $this->field_value_counts( $collections['execution_events'], 'execution_request_id' ), 'execution_event', 'execution_request_id' ),
             $this->json_shape_conflicts(
                 $collections['action_templates'],
                 'action_template',
@@ -590,6 +594,27 @@ class Sentient_Forms_Local_Import_Service
         }
 
         return $conflicts;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $items
+     * @return array<string, int>
+     */
+    private function field_value_counts( array $items, string $field ): array
+    {
+        $values = [];
+        foreach ( $items as $item )
+        {
+            $value = $this->text( $item, $field );
+            if ( '' === $value )
+            {
+                continue;
+            }
+
+            $values[ $value ] = ( $values[ $value ] ?? 0 ) + 1;
+        }
+
+        return $values;
     }
 
     /**
