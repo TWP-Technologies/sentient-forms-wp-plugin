@@ -20,7 +20,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         private ?Sentient_Forms_Provider_Client_Interface $openrouter = null,
         private ?Sentient_Forms_Local_Prompt_Renderer $renderer = null,
         private ?Sentient_Forms_Local_Result_Applier $result_applier = null,
-        private ?Sentient_Forms_Action_Templates_Repository $templates = null
+        private ?Sentient_Forms_Action_Templates_Repository $templates = null,
+        private ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null
     )
     {
         global $wpdb;
@@ -35,6 +36,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $this->renderer       = $this->renderer ?? new Sentient_Forms_Local_Prompt_Renderer();
         $this->result_applier = $this->result_applier ?? new Sentient_Forms_Local_Result_Applier();
         $this->templates      = $this->templates ?? new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $this->managed_proxy  = $this->managed_proxy ?? new Sentient_Forms_Managed_Proxy_Client();
     }
 
     /**
@@ -102,7 +104,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $provider        = sanitize_key( (string) ( $model_selection['provider'] ?? $definition['provider'] ?? 'openrouter' ) );
         $model           = sanitize_text_field( (string) ( $model_selection['model'] ?? $definition['model'] ?? 'openrouter/auto' ) );
 
-        if ( 'openrouter' !== $provider )
+        if ( ! in_array( $provider, [ 'openrouter', 'sentient_managed' ], true ) )
         {
             return new WP_Error(
                 'sentient_forms_provider_not_supported_locally',
@@ -142,10 +144,14 @@ class Sentient_Forms_Local_Action_Execution_Service
             );
         }
 
-        $api_key = $this->resolve_api_key( $credential );
-        if ( is_wp_error( $api_key ) )
+        $api_key = null;
+        if ( 'openrouter' === $provider )
         {
-            return $api_key;
+            $api_key = $this->resolve_api_key( $credential );
+            if ( is_wp_error( $api_key ) )
+            {
+                return $api_key;
+            }
         }
 
         $messages = $this->build_messages( $definition, $mapping, $form, $entry, $context );
@@ -154,8 +160,34 @@ class Sentient_Forms_Local_Action_Execution_Service
             return $messages;
         }
 
-        $payload = $this->build_provider_payload( $model, $messages, $definition, $model_selection );
+        $managed_context = null;
+        $payload         = $this->build_provider_payload( $model, $messages, $definition, $model_selection );
         $execution_request_id = $this->resolve_execution_request_id( $mapping, $action, $form, $entry, $context );
+
+        if ( 'sentient_managed' === $provider )
+        {
+            $managed_context = $this->resolve_managed_proxy_context( $credential );
+            if ( is_wp_error( $managed_context ) )
+            {
+                return $managed_context;
+            }
+
+            $payload = $this->build_managed_payload(
+                $model,
+                $messages,
+                $definition,
+                $model_selection,
+                $mapping,
+                $action,
+                $form,
+                $entry,
+                $context,
+                $managed_context['site_id'],
+                $execution_request_id,
+                $structured_output_contract
+            );
+        }
+
         $payload_digest       = hash( 'sha256', (string) wp_json_encode( $payload ) );
         $existing             = $this->events->get_by_request_id( $execution_request_id );
 
@@ -192,10 +224,20 @@ class Sentient_Forms_Local_Action_Execution_Service
             ]
         );
 
-        $response = $this->openrouter->chat_completion( $api_key, $payload );
+        if ( 'sentient_managed' === $provider )
+        {
+            $response              = $this->managed_proxy->execute( $managed_context['proxy_api_key'], $payload );
+            $secret_for_redaction  = $managed_context['proxy_api_key'];
+        }
+        else
+        {
+            $response             = $this->openrouter->chat_completion( $api_key, $payload );
+            $secret_for_redaction = $api_key;
+        }
+
         if ( is_wp_error( $response ) )
         {
-            $redacted_message = $this->redact_secret( $response->get_error_message(), $api_key );
+            $redacted_message = $this->redact_secret( $response->get_error_message(), $secret_for_redaction );
             $this->update_credential_status_after_error( (int) $credential['id'], $response, $redacted_message );
             $this->events->record(
                 [
@@ -216,7 +258,9 @@ class Sentient_Forms_Local_Action_Execution_Service
             return new WP_Error( $response->get_error_code(), $redacted_message, $response->get_error_data() );
         }
 
-        $result = $this->normalize_openrouter_response( $response );
+        $result = 'sentient_managed' === $provider
+            ? $this->normalize_managed_response( $response )
+            : $this->normalize_openrouter_response( $response );
         $result = $this->validate_structured_output( $result, $structured_output_contract );
         if ( is_wp_error( $result ) )
         {
@@ -364,6 +408,63 @@ class Sentient_Forms_Local_Action_Execution_Service
         );
     }
 
+    /**
+     * @return array{proxy_api_key: string, site_id: string}|WP_Error
+     */
+    private function resolve_managed_proxy_context( array $credential ): array | WP_Error
+    {
+        $auth_mode = sanitize_key( (string) ( $credential['auth_mode'] ?? '' ) );
+        if ( 'sentient_proxy' !== $auth_mode )
+        {
+            return new WP_Error(
+                'sentient_forms_sentient_managed_auth_mode_unsupported',
+                __( 'Sentient managed execution requires a managed proxy credential.', 'sentient-forms' )
+            );
+        }
+
+        if ( ! class_exists( 'Sentient_Forms_Plugin' ) )
+        {
+            return new WP_Error(
+                'sentient_forms_sentient_managed_plugin_unavailable',
+                __( 'Sentient managed execution could not read the site account state.', 'sentient-forms' )
+            );
+        }
+
+        $plugin         = Sentient_Forms_Plugin::instance();
+        $license        = $plugin->get_license_data();
+        $license_status = sanitize_key( (string) ( $license['license_status'] ?? '' ) );
+        if ( ! in_array( $license_status, [ 'active', 'trial', 'valid' ], true ) )
+        {
+            return new WP_Error(
+                'sentient_forms_sentient_managed_account_inactive',
+                __( 'Sentient managed execution requires an active managed account.', 'sentient-forms' )
+            );
+        }
+
+        $proxy_api_key = trim( (string) ( $license['proxy_api_key'] ?? $plugin->get_proxy_api_key() ) );
+        if ( '' === $proxy_api_key )
+        {
+            return new WP_Error(
+                'sentient_forms_sentient_managed_proxy_key_missing',
+                __( 'Sentient managed execution requires a site proxy key.', 'sentient-forms' )
+            );
+        }
+
+        $site_id = sanitize_text_field( (string) ( $license['site_id'] ?? '' ) );
+        if ( '' === trim( $site_id ) )
+        {
+            return new WP_Error(
+                'sentient_forms_sentient_managed_site_id_missing',
+                __( 'Sentient managed execution requires a managed site ID.', 'sentient-forms' )
+            );
+        }
+
+        return [
+            'proxy_api_key' => $proxy_api_key,
+            'site_id'       => $site_id,
+        ];
+    }
+
     private function build_messages( array $definition, array $mapping, array $form, array $entry, array $context ): array | WP_Error
     {
         $variables = $this->renderer->build_variables(
@@ -442,6 +543,96 @@ class Sentient_Forms_Local_Action_Execution_Service
         return $payload;
     }
 
+    /**
+     * @param array<int, array{role?: string, content?: mixed}>                 $messages
+     * @param array{schema: array<string, mixed>, source: string}|null|WP_Error $structured_output_contract
+     *
+     * @return array<string, mixed>
+     */
+    private function build_managed_payload(
+        string $model,
+        array $messages,
+        array $definition,
+        array $model_selection,
+        array $mapping,
+        array $action,
+        array $form,
+        array $entry,
+        array $context,
+        string $site_id,
+        string $execution_request_id,
+        array | WP_Error | null $structured_output_contract
+    ): array
+    {
+        $payload = [
+            'site_id'              => $site_id,
+            'execution_request_id' => $execution_request_id,
+            'provider'             => 'sentient_managed',
+            'model'                => $model,
+            'prompt'               => $this->messages_to_managed_prompt( $messages ),
+            'metadata'             => [
+                'mapping_id'  => (int) ( $mapping['id'] ?? 0 ),
+                'action_id'   => (int) ( $action['id'] ?? 0 ),
+                'action_code' => sanitize_text_field( (string) ( $action['code'] ?? '' ) ),
+                'form_source' => sanitize_key( (string) ( $mapping['form_source'] ?? 'gravity_forms' ) ),
+                'form_id'     => isset( $form['id'] ) && is_scalar( $form['id'] ) ? sanitize_text_field( (string) $form['id'] ) : null,
+                'entry_id'    => isset( $entry['id'] ) && is_scalar( $entry['id'] ) ? sanitize_text_field( (string) $entry['id'] ) : null,
+                'hook'        => isset( $context['hook'] ) && is_scalar( $context['hook'] ) ? sanitize_key( (string) $context['hook'] ) : null,
+            ],
+        ];
+
+        if ( '' !== $payload['metadata']['action_code'] )
+        {
+            $payload['action_code'] = $payload['metadata']['action_code'];
+        }
+
+        foreach ( [ 'temperature' ] as $float_field )
+        {
+            $value = $model_selection[ $float_field ] ?? $definition[ $float_field ] ?? null;
+            if ( is_numeric( $value ) )
+            {
+                $payload[ $float_field ] = (float) $value;
+            }
+        }
+
+        $max_output_tokens = $model_selection['max_output_tokens'] ?? $definition['max_output_tokens'] ?? $model_selection['max_tokens'] ?? $definition['max_tokens'] ?? null;
+        if ( is_numeric( $max_output_tokens ) )
+        {
+            $payload['max_output_tokens'] = (int) $max_output_tokens;
+        }
+
+        if ( is_array( $structured_output_contract ) )
+        {
+            $payload['output_contract'] = [
+                'schema' => $structured_output_contract['schema'],
+                'source' => $structured_output_contract['source'],
+            ];
+        }
+
+        return $payload;
+    }
+
+    /**
+     * @param array<int, array{role?: string, content?: mixed}> $messages
+     */
+    private function messages_to_managed_prompt( array $messages ): string
+    {
+        $parts = [];
+        foreach ( $messages as $message )
+        {
+            $role    = isset( $message['role'] ) && is_scalar( $message['role'] ) ? sanitize_key( (string) $message['role'] ) : 'user';
+            $content = isset( $message['content'] ) && is_scalar( $message['content'] ) ? trim( (string) $message['content'] ) : '';
+            if ( '' === $content )
+            {
+                continue;
+            }
+
+            $parts[] = strtoupper( $role ) . ":\n" . $content;
+        }
+
+        return trim( implode( "\n\n", $parts ) );
+    }
+
     private function resolve_execution_request_id( array $mapping, array $action, array $form, array $entry, array $context ): string
     {
         if ( isset( $context['execution_request_id'] ) && is_scalar( $context['execution_request_id'] ) )
@@ -489,6 +680,29 @@ class Sentient_Forms_Local_Action_Execution_Service
             'content'              => $content,
             'finish_reason'        => $finish_reason,
             'usage'                => is_array( $response['usage'] ?? null ) ? $response['usage'] : null,
+        ];
+
+        if ( null !== $structured )
+        {
+            $result['structured'] = $structured;
+        }
+
+        return $result;
+    }
+
+    private function normalize_managed_response( array $response ): array
+    {
+        $output        = is_array( $response['output'] ?? null ) ? $response['output'] : [];
+        $content       = is_scalar( $output['text'] ?? null ) ? (string) $output['text'] : '';
+        $structured    = $this->decode_structured_content( $content );
+
+        $result = [
+            'provider_response_id' => is_scalar( $response['execution_request_id'] ?? null ) ? (string) $response['execution_request_id'] : null,
+            'model'                => is_scalar( $response['model'] ?? null ) ? (string) $response['model'] : null,
+            'content'              => $content,
+            'finish_reason'        => null,
+            'usage'                => is_array( $response['token_usage'] ?? null ) ? $response['token_usage'] : null,
+            'metering'             => is_array( $response['metering'] ?? null ) ? $response['metering'] : null,
         ];
 
         if ( null !== $structured )

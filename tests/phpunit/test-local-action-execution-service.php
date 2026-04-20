@@ -104,6 +104,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
         $this->templates      = new Sentient_Forms_Action_Templates_Repository( $wpdb );
 
+        Sentient_Forms_Plugin::instance()->clear_license_data();
         delete_option( 'sentient_forms_forced_execution_request_id' );
         $GLOBALS['__sentient_forms_local_spam_updates'] = [];
         if ( class_exists( 'Sentient_Forms_Local_Result_Test_Gravity_Meta_Store' ) )
@@ -184,6 +185,112 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'Contact looks legitimate.', $event['result_json']['content'] );
         $this->assertNotEmpty( $event['payload_digest'] );
         $this->assertStringNotContainsString( $fixture['secret'], wp_json_encode( $event ) );
+    }
+
+    public function test_executes_sentient_managed_mapping_with_proxy_key_and_records_success(): void
+    {
+        $fixture       = $this->create_local_managed_mapping();
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            [
+                'execution_request_id' => 'managed-local-req',
+                'provider'             => 'sentient_managed',
+                'model'                => 'openai/gpt-4.1-mini',
+                'status'               => 'succeeded',
+                'output'               => [
+                    'text' => '{"summary":"Managed contact looks legitimate."}',
+                ],
+                'token_usage'          => [
+                    'input_tokens'  => 14,
+                    'output_tokens' => 9,
+                    'total_tokens'  => 23,
+                ],
+                'metering'             => [
+                    'event_id'               => '33333333-3333-4333-8333-333333333333',
+                    'billed_amount_microusd' => 1000,
+                    'currency'               => 'USD',
+                    'free_usage'             => false,
+                ],
+            ]
+        );
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'managed-local-req',
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'succeeded', $result['status'] );
+        $this->assertSame( 'sentient_managed', $result['provider'] );
+        $this->assertSame( 'openai/gpt-4.1-mini', $result['model'] );
+        $this->assertSame( 'Managed contact looks legitimate.', $result['result']['structured']['summary'] );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertSame( $fixture['proxy_api_key'], $managed_proxy->execute_calls[0]['proxy_api_key'] );
+
+        $payload = $managed_proxy->execute_calls[0]['payload'];
+        $this->assertSame( 'sentient_managed', $payload['provider'] );
+        $this->assertSame( $fixture['site_id'], $payload['site_id'] );
+        $this->assertSame( 'managed-local-req', $payload['execution_request_id'] );
+        $this->assertSame( 'contact_spam_triage', $payload['action_code'] );
+        $this->assertStringContainsString( "SYSTEM:\nClassify contact form submissions.", $payload['prompt'] );
+        $this->assertStringContainsString( 'Ada Lovelace', $payload['prompt'] );
+        $this->assertArrayNotHasKey( 'input', $payload );
+        $this->assertSame( 99, (int) $payload['metadata']['entry_id'] );
+
+        $event = $this->events->get_by_request_id( 'managed-local-req' );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'succeeded', $event['status'] );
+        $this->assertSame( 'sentient_managed', $event['provider'] );
+        $this->assertSame( 14, $event['token_usage_json']['input_tokens'] );
+        $this->assertSame( 1000, $event['result_json']['metering']['billed_amount_microusd'] );
+        $this->assertStringNotContainsString( $fixture['proxy_api_key'], wp_json_encode( $event ) );
+    }
+
+    public function test_sentient_managed_execution_requires_external_service_consent(): void
+    {
+        $fixture       = $this->create_local_managed_mapping( false );
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( new Sentient_Forms_Test_OpenRouter_Client(), $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_external_service_consent_required', $result->get_error_code() );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+        $this->assertSame( [], $this->events->list_recent() );
+    }
+
+    public function test_sentient_managed_execution_requires_proxy_key_before_remote_call(): void
+    {
+        $fixture       = $this->create_local_managed_mapping( true, [ 'proxy_api_key' => '' ] );
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client();
+        $service       = $this->create_service( new Sentient_Forms_Test_OpenRouter_Client(), $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_sentient_managed_proxy_key_missing', $result->get_error_code() );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+        $this->assertSame( [], $this->events->list_recent() );
     }
 
     public function test_successful_local_execution_is_idempotent_for_same_payload(): void
@@ -855,7 +962,92 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         ];
     }
 
-    private function create_service( Sentient_Forms_Test_OpenRouter_Client $client ): Sentient_Forms_Local_Action_Execution_Service
+    /**
+     * @param array<string, mixed> $license_overrides
+     * @return array{credential_id: int, mapping_id: int, proxy_api_key: string, site_id: string}
+     */
+    private function create_local_managed_mapping( bool $record_consent = true, array $license_overrides = [] ): array
+    {
+        $site_id       = '22222222-2222-4222-8222-222222222222';
+        $proxy_api_key = 'proxy-local-managed-secret';
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            array_merge(
+                [
+                    'license_status' => 'active',
+                    'license_id'     => 'license-managed-test',
+                    'site_id'        => $site_id,
+                    'proxy_api_key'  => $proxy_api_key,
+                    'tier'           => 'pro',
+                ],
+                $license_overrides
+            )
+        );
+
+        $credential_id = $this->credentials->create(
+            [
+                'provider'          => 'sentient_managed',
+                'label'             => 'Sentient managed proxy',
+                'auth_mode'         => 'sentient_proxy',
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+
+        if ( $record_consent )
+        {
+            $consent_id = $this->consents->record( 'sentient_managed', '2026-04-19', get_current_user_id() );
+            $this->assertIsInt( $consent_id );
+        }
+
+        $action_id = $this->custom_actions->create(
+            [
+                'code'                 => 'contact_spam_triage',
+                'display_name'         => 'Contact Spam Triage',
+                'definition_json'      => [
+                    'system_prompt'   => 'Classify contact form submissions.',
+                    'prompt_template' => 'Name: {{name}} Email: {{email}} Form: {{form.title}}',
+                    'max_tokens'      => 256,
+                    'temperature'     => 0.2,
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'sentient_managed',
+                    'model'         => 'openai/gpt-4.1-mini',
+                    'credential_id' => $credential_id,
+                ],
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $this->mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '7',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'name'  => '1',
+                    'email' => '2',
+                ],
+                'execution_mode'      => 'sync',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        return [
+            'credential_id'  => $credential_id,
+            'mapping_id'     => $mapping_id,
+            'proxy_api_key'  => (string) ( $license_overrides['proxy_api_key'] ?? $proxy_api_key ),
+            'site_id'        => (string) ( $license_overrides['site_id'] ?? $site_id ),
+        ];
+    }
+
+    private function create_service(
+        Sentient_Forms_Test_OpenRouter_Client $client,
+        ?Sentient_Forms_Test_Managed_Proxy_Client $managed_proxy = null
+    ): Sentient_Forms_Local_Action_Execution_Service
     {
         return new Sentient_Forms_Local_Action_Execution_Service(
             $this->mappings,
@@ -867,7 +1059,8 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             $client,
             new Sentient_Forms_Local_Prompt_Renderer(),
             new Sentient_Forms_Local_Result_Applier(),
-            $this->templates
+            $this->templates,
+            $managed_proxy ?? new Sentient_Forms_Test_Managed_Proxy_Client()
         );
     }
 
@@ -991,6 +1184,50 @@ class Sentient_Forms_Test_OpenRouter_Client implements Sentient_Forms_Provider_C
                 'prompt_tokens'     => 8,
                 'completion_tokens' => 5,
                 'total_tokens'      => 13,
+            ],
+        ];
+    }
+}
+
+class Sentient_Forms_Test_Managed_Proxy_Client extends Sentient_Forms_Managed_Proxy_Client
+{
+    /** @var array<int, array{proxy_api_key: string, payload: array<string, mixed>}> */
+    public array $execute_calls = [];
+
+    public function __construct( private WP_Error | array | null $execute_response = null )
+    {
+    }
+
+    public function execute( string $proxy_api_key, array $payload ): array | WP_Error
+    {
+        $this->execute_calls[] = [
+            'proxy_api_key' => $proxy_api_key,
+            'payload'       => $payload,
+        ];
+
+        if ( null !== $this->execute_response )
+        {
+            return $this->execute_response;
+        }
+
+        return [
+            'execution_request_id' => $payload['execution_request_id'] ?? 'managed-local-req',
+            'provider'             => 'sentient_managed',
+            'model'                => $payload['model'] ?? 'openai/gpt-4.1-mini',
+            'status'               => 'succeeded',
+            'output'               => [
+                'text' => 'Managed contact looks legitimate.',
+            ],
+            'token_usage'          => [
+                'input_tokens'  => 10,
+                'output_tokens' => 5,
+                'total_tokens'  => 15,
+            ],
+            'metering'             => [
+                'event_id'               => '33333333-3333-4333-8333-333333333333',
+                'billed_amount_microusd' => 1000,
+                'currency'               => 'USD',
+                'free_usage'             => false,
             ],
         ];
     }
