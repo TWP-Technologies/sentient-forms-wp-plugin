@@ -116,9 +116,19 @@ if ( ! defined( 'WP_TESTS_CONFIG_FILE_PATH' ) ) {
 require $includes_dir . '/functions.php';
 require_once __DIR__ . '/phpunit/helpers/async-fixtures.php';
 
+$sentient_forms_test_plugin_file = getenv( 'SENTIENT_FORMS_TEST_PLUGIN_FILE' );
+if ( ! is_string( $sentient_forms_test_plugin_file ) || '' === trim( $sentient_forms_test_plugin_file ) ) {
+    $sentient_forms_test_plugin_file = dirname( __DIR__ ) . '/sentient-forms.php';
+}
+
+$sentient_forms_test_plugin_file = realpath( $sentient_forms_test_plugin_file );
+if ( false === $sentient_forms_test_plugin_file || ! is_file( $sentient_forms_test_plugin_file ) ) {
+    throw new RuntimeException( 'Sentient Forms test plugin file was not found.' );
+}
+
 // Load the plugin.
-tests_add_filter( 'muplugins_loaded', function () {
-    require dirname( __DIR__ ) . '/sentient-forms.php';
+tests_add_filter( 'muplugins_loaded', function () use ( $sentient_forms_test_plugin_file ) {
+    require $sentient_forms_test_plugin_file;
 } );
 
 /**
