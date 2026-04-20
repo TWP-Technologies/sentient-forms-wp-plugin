@@ -13,6 +13,10 @@ class Sentient_Forms_Provider_Credential_Vault
     private const CIPHER = 'aes-256-gcm';
     private const VERSION = 1;
 
+    public function __construct( private ?string $key_material = null )
+    {
+    }
+
     public function encrypt( string $secret ): string | WP_Error
     {
         $secret = trim( $secret );
@@ -35,11 +39,17 @@ class Sentient_Forms_Provider_Credential_Vault
             return new WP_Error( 'sentient_forms_crypto_random_failed', __( 'Could not generate secure random bytes for provider secret storage.', 'sentient-forms' ) );
         }
 
+        $key = $this->encryption_key();
+        if ( is_wp_error( $key ) )
+        {
+            return $key;
+        }
+
         $tag        = '';
         $ciphertext = openssl_encrypt(
             $secret,
             self::CIPHER,
-            $this->encryption_key(),
+            $key,
             OPENSSL_RAW_DATA,
             $iv,
             $tag,
@@ -75,6 +85,12 @@ class Sentient_Forms_Provider_Credential_Vault
         if ( ! function_exists( 'openssl_decrypt' ) )
         {
             return new WP_Error( 'sentient_forms_crypto_unavailable', __( 'OpenSSL decryption is not available on this site.', 'sentient-forms' ) );
+        }
+
+        $key = $this->encryption_key();
+        if ( is_wp_error( $key ) )
+        {
+            return $key;
         }
 
         $decoded = json_decode( $payload, true );
@@ -113,7 +129,7 @@ class Sentient_Forms_Provider_Credential_Vault
         $secret = openssl_decrypt(
             $ciphertext,
             self::CIPHER,
-            $this->encryption_key(),
+            $key,
             OPENSSL_RAW_DATA,
             $iv,
             $tag
@@ -143,17 +159,22 @@ class Sentient_Forms_Provider_Credential_Vault
         return $decoded;
     }
 
-    private function encryption_key(): string
+    private function encryption_key(): string | WP_Error
     {
-        $salt = function_exists( 'wp_salt' ) ? wp_salt( 'auth' ) : '';
+        $salt = is_string( $this->key_material ) ? $this->key_material : '';
+        if ( '' === $salt && function_exists( 'wp_salt' ) )
+        {
+            $salt = wp_salt( 'auth' );
+        }
+
         if ( '' === $salt && defined( 'AUTH_KEY' ) )
         {
             $salt = (string) AUTH_KEY;
         }
 
-        if ( '' === $salt )
+        if ( '' === trim( $salt ) )
         {
-            $salt = 'sentient-forms-local-provider-vault';
+            return new WP_Error( 'sentient_forms_crypto_key_unavailable', __( 'Provider secret encryption key material is not available on this site.', 'sentient-forms' ) );
         }
 
         return hash( 'sha256', $salt, true );
