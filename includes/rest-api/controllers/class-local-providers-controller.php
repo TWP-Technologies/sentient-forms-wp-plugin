@@ -91,6 +91,19 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
                 ],
             ]
         );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/sentient-managed/setup',
+            [
+                [
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => [ $this, 'setup_sentient_managed_proxy' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => $this->get_sentient_managed_setup_args(),
+                ],
+            ]
+        );
     }
 
     public function list_credentials( WP_REST_Request $request ): WP_REST_Response
@@ -275,6 +288,113 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         return $this->prepare_item_for_response( $response );
     }
 
+    public function setup_sentient_managed_proxy( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
+        $accepted = rest_sanitize_boolean( $request->get_param( 'accepted_external_service_terms' ) );
+        if ( ! $accepted )
+        {
+            return new WP_Error(
+                'sentient_forms_external_service_consent_required',
+                __( 'You must accept the Sentient managed proxy disclosure before enabling managed execution.', 'sentient-forms' ),
+                [ 'status' => 400 ]
+            );
+        }
+
+        $license_data = Sentient_Forms_Plugin::instance()->get_license_data();
+        $account      = $this->resolve_managed_account_state( $license_data );
+        if ( is_wp_error( $account ) )
+        {
+            return $account;
+        }
+
+        $disclosure_version = sanitize_text_field( (string) $request->get_param( 'disclosure_version' ) );
+        $consent_id = $this->consents->record(
+            'sentient_managed',
+            $disclosure_version,
+            get_current_user_id() ?: null,
+            [
+                'action'                              => 'setup_managed_proxy',
+                'request_ip'                          => $this->request_ip_hash(),
+                'license_id'                          => $account['license_id'],
+                'site_id'                             => $account['site_id'],
+                'local_site_identifier'               => $account['local_site_identifier'],
+                'managed_proxy_selected'              => true,
+                'direct_openrouter_billed_by_sentient' => false,
+                'managed_proxy_billed_by_sentient'      => true,
+            ]
+        );
+
+        if ( is_wp_error( $consent_id ) )
+        {
+            return $consent_id;
+        }
+
+        $label = sanitize_text_field( (string) $request->get_param( 'label' ) );
+        if ( '' === $label )
+        {
+            $label = __( 'Sentient managed proxy', 'sentient-forms' );
+        }
+
+        $status_json = [
+            'license_id'        => $account['license_id'],
+            'site_id'           => $account['site_id'],
+            'license_status'    => $account['status'],
+            'proxy_key_present' => true,
+            'billing_boundary'  => [
+                'direct_openrouter_billed_by_sentient' => false,
+                'managed_proxy_billed_by_sentient'     => true,
+            ],
+        ];
+
+        $existing = $this->credentials->find_by_provider_auth_mode( 'sentient_managed', 'sentient_proxy' );
+        if ( is_array( $existing ) )
+        {
+            $updated = $this->credentials->update_status( (int) $existing['id'], 'valid', $status_json );
+            if ( is_wp_error( $updated ) )
+            {
+                return $updated;
+            }
+
+            $credential_id = (int) $existing['id'];
+        }
+        else
+        {
+            $credential_id = $this->credentials->create(
+                [
+                    'provider'          => 'sentient_managed',
+                    'label'             => $label,
+                    'auth_mode'         => 'sentient_proxy',
+                    'status'            => 'valid',
+                    'status_json'       => $status_json,
+                    'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+                ]
+            );
+
+            if ( is_wp_error( $credential_id ) )
+            {
+                return $credential_id;
+            }
+        }
+
+        $credential = $this->credentials->get( (int) $credential_id );
+
+        return $this->prepare_item_for_response(
+            [
+                'provider'         => 'sentient_managed',
+                'status'           => 'valid',
+                'credential_id'    => (int) $credential_id,
+                'credential'       => is_array( $credential ) ? $this->format_credential( $credential ) : null,
+                'consent_recorded' => true,
+                'consent_id'       => $consent_id,
+                'account'          => $account,
+                'billing_boundary' => [
+                    'direct_openrouter_billed_by_sentient' => false,
+                    'managed_proxy_billed_by_sentient'     => true,
+                ],
+            ]
+        );
+    }
+
     private function get_openrouter_validate_args(): array
     {
         return [
@@ -365,6 +485,30 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         ];
     }
 
+    private function get_sentient_managed_setup_args(): array
+    {
+        return [
+            'label' => [
+                'type'              => 'string',
+                'required'          => false,
+                'sanitize_callback' => 'sanitize_text_field',
+                'validate_callback' => 'rest_validate_request_arg',
+            ],
+            'disclosure_version' => [
+                'type'              => 'string',
+                'required'          => true,
+                'sanitize_callback' => 'sanitize_text_field',
+                'validate_callback' => [ $this, 'validate_non_empty_string' ],
+            ],
+            'accepted_external_service_terms' => [
+                'type'              => 'boolean',
+                'required'          => true,
+                'sanitize_callback' => 'rest_sanitize_boolean',
+                'validate_callback' => 'rest_validate_request_arg',
+            ],
+        ];
+    }
+
     public function sanitize_secret_param( mixed $value, ?WP_REST_Request $request = null, string $param = '' ): string
     {
         return trim( (string) $value );
@@ -377,6 +521,13 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
 
     private function format_credential( array $row ): array
     {
+        $secret_configured = ! empty( $row['encrypted_secret'] ) || ! empty( $row['constant_name'] );
+        if ( 'sentient_managed' === (string) ( $row['provider'] ?? '' ) && 'sentient_proxy' === (string) ( $row['auth_mode'] ?? '' ) )
+        {
+            $license_data      = Sentient_Forms_Plugin::instance()->get_license_data();
+            $secret_configured = '' !== trim( (string) ( $license_data['proxy_api_key'] ?? '' ) );
+        }
+
         return [
             'id'                 => (int) $row['id'],
             'provider'           => (string) $row['provider'],
@@ -388,7 +539,42 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
             'last_validated_at'  => $row['last_validated_at'] ?? null,
             'created_at'         => $row['created_at'] ?? null,
             'updated_at'         => $row['updated_at'] ?? null,
-            'secret_configured'  => ! empty( $row['encrypted_secret'] ) || ! empty( $row['constant_name'] ),
+            'secret_configured'  => $secret_configured,
+        ];
+    }
+
+    private function resolve_managed_account_state( array $license_data ): array | WP_Error
+    {
+        $status             = sanitize_key( (string) ( $license_data['license_status'] ?? '' ) );
+        $proxy_key_present  = '' !== trim( (string) ( $license_data['proxy_api_key'] ?? '' ) );
+        $site_id            = sanitize_text_field( (string) ( $license_data['site_id'] ?? '' ) );
+        $license_id         = sanitize_text_field( (string) ( $license_data['license_id'] ?? '' ) );
+        $local_identifier   = sanitize_text_field( (string) ( $license_data['local_site_identifier'] ?? '' ) );
+
+        if ( ! in_array( $status, [ 'active', 'trial', 'valid' ], true ) || ! $proxy_key_present || '' === $site_id || '' === $license_id )
+        {
+            return new WP_Error(
+                'sentient_forms_sentient_managed_account_required',
+                __( 'Activate a Sentient managed account before enabling managed proxy execution.', 'sentient-forms' ),
+                [
+                    'status' => 400,
+                    'account' => [
+                        'status'            => '' !== $status ? $status : 'inactive',
+                        'proxy_key_present' => $proxy_key_present,
+                        'site_id_present'   => '' !== $site_id,
+                        'license_id_present' => '' !== $license_id,
+                    ],
+                ]
+            );
+        }
+
+        return [
+            'status'                => $status,
+            'license_id'            => $license_id,
+            'site_id'               => $site_id,
+            'local_site_identifier' => $local_identifier,
+            'proxy_key_present'     => true,
+            'credential_ready'      => true,
         ];
     }
 

@@ -17,8 +17,9 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         parent::setUp();
 
         wp_set_current_user( self::$admin_id );
-        update_option( 'sentient_forms_settings', [ 'enforce_nonce_verification' => false ] );
+        Sentient_Forms_Plugin::instance()->clear_license_data();
 
+        update_option( 'sentient_forms_settings', [ 'enforce_nonce_verification' => false ] );
         Sentient_Forms_Installer::maybe_upgrade();
         $this->truncate_local_provider_tables();
 
@@ -37,6 +38,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         }
 
         $this->http_filters = [];
+        Sentient_Forms_Plugin::instance()->clear_license_data();
         parent::tearDown();
     }
 
@@ -289,6 +291,154 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertSame( '2026-04-18', $latest['disclosure_version'] );
     }
 
+    public function test_setup_sentient_managed_requires_consent_before_local_writes(): void
+    {
+        $this->set_active_managed_license();
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' );
+        $request->set_body_params(
+            [
+                'label'                           => 'Sentient managed proxy',
+                'disclosure_version'              => '2026-04-sentient-managed-proxy-v1',
+                'accepted_external_service_terms' => false,
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 400, $response->get_status() );
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $this->assertSame( [], $credentials->list() );
+
+        $consents = new Sentient_Forms_External_Service_Consent_Repository( $GLOBALS['wpdb'] );
+        $this->assertNull( $consents->latest_for_provider( 'sentient_managed' ) );
+    }
+
+    public function test_setup_sentient_managed_requires_active_managed_account(): void
+    {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' );
+        $request->set_body_params(
+            [
+                'label'                           => 'Sentient managed proxy',
+                'disclosure_version'              => '2026-04-sentient-managed-proxy-v1',
+                'accepted_external_service_terms' => true,
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 400, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'sentient_forms_sentient_managed_account_required', $data['code'] );
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $this->assertSame( [], $credentials->list() );
+
+        $consents = new Sentient_Forms_External_Service_Consent_Repository( $GLOBALS['wpdb'] );
+        $this->assertNull( $consents->latest_for_provider( 'sentient_managed' ) );
+    }
+
+    public function test_setup_sentient_managed_creates_proxy_credential_and_consent_without_key_leak(): void
+    {
+        $this->set_active_managed_license();
+        $secret = 'proxy-secret-managed';
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' );
+        $request->set_body_params(
+            [
+                'label'                           => 'Primary Sentient managed proxy',
+                'disclosure_version'              => '2026-04-sentient-managed-proxy-v1',
+                'accepted_external_service_terms' => true,
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+
+        $this->assertSame( 'sentient_managed', $data['provider'] );
+        $this->assertSame( 'valid', $data['status'] );
+        $this->assertIsInt( $data['credential_id'] );
+        $this->assertTrue( $data['consent_recorded'] );
+        $this->assertSame( 'license-managed-test', $data['account']['license_id'] );
+        $this->assertSame( '11111111-1111-4111-8111-111111111111', $data['account']['site_id'] );
+        $this->assertTrue( $data['account']['proxy_key_present'] );
+        $this->assertTrue( $data['billing_boundary']['managed_proxy_billed_by_sentient'] );
+        $this->assertFalse( $data['billing_boundary']['direct_openrouter_billed_by_sentient'] );
+        $this->assertStringNotContainsString( $secret, wp_json_encode( $data ) );
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $row         = $credentials->get( $data['credential_id'] );
+
+        $this->assertIsArray( $row );
+        $this->assertSame( 'sentient_managed', $row['provider'] );
+        $this->assertSame( 'sentient_proxy', $row['auth_mode'] );
+        $this->assertSame( 'valid', $row['status'] );
+        $this->assertEmpty( $row['encrypted_secret'] );
+        $this->assertSame( 'license-managed-test', $row['status_json']['license_id'] );
+        $this->assertSame( '11111111-1111-4111-8111-111111111111', $row['status_json']['site_id'] );
+        $this->assertTrue( $row['status_json']['proxy_key_present'] );
+
+        $list_request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/local/providers/credentials' );
+        $list_response = rest_get_server()->dispatch( $list_request );
+        $this->assertSame( 200, $list_response->get_status() );
+        $list_data = $list_response->get_data();
+        $this->assertCount( 1, $list_data );
+        $this->assertSame( 'sentient_managed', $list_data[0]['provider'] );
+        $this->assertSame( 'sentient_proxy', $list_data[0]['auth_mode'] );
+        $this->assertTrue( $list_data[0]['secret_configured'] );
+        $this->assertArrayNotHasKey( 'encrypted_secret', $list_data[0] );
+        $this->assertStringNotContainsString( $secret, wp_json_encode( $list_data ) );
+
+        $consents = new Sentient_Forms_External_Service_Consent_Repository( $GLOBALS['wpdb'] );
+        $latest   = $consents->latest_for_provider( 'sentient_managed' );
+        $this->assertIsArray( $latest );
+        $this->assertSame( '2026-04-sentient-managed-proxy-v1', $latest['disclosure_version'] );
+        $this->assertSame( 'setup_managed_proxy', $latest['metadata_json']['action'] );
+        $this->assertTrue( $latest['metadata_json']['managed_proxy_selected'] );
+    }
+
+    public function test_setup_sentient_managed_reuses_existing_proxy_credential(): void
+    {
+        $this->set_active_managed_license();
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+
+        $first_id = $credentials->create(
+            [
+                'provider'          => 'sentient_managed',
+                'label'             => 'Existing managed proxy',
+                'auth_mode'         => 'sentient_proxy',
+                'status'            => 'disabled',
+                'status_json'       => [ 'proxy_key_present' => false ],
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s', time() - HOUR_IN_SECONDS ),
+            ]
+        );
+        $this->assertIsInt( $first_id );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' );
+        $request->set_body_params(
+            [
+                'label'                           => 'Updated label is not needed for existing proxy',
+                'disclosure_version'              => '2026-04-sentient-managed-proxy-v1',
+                'accepted_external_service_terms' => true,
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( $first_id, $data['credential_id'] );
+
+        $rows = $credentials->list();
+        $this->assertCount( 1, $rows );
+        $this->assertSame( 'valid', $rows[0]['status'] );
+        $this->assertSame( 'license-managed-test', $rows[0]['status_json']['license_id'] );
+    }
+
     private function mock_openrouter_key_response( ?callable $on_request = null ): void
     {
         $callback = function ( $preempt, $args, $url ) use ( $on_request ) {
@@ -343,6 +493,30 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
 
         $this->http_filters[] = $callback;
         add_filter( 'pre_http_request', $callback, 10, 3 );
+    }
+
+    private function set_active_managed_license(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_key'           => 'LIC-MANAGED-TEST',
+                'license_status'        => 'active',
+                'license_id'            => 'license-managed-test',
+                'site_id'               => '11111111-1111-4111-8111-111111111111',
+                'proxy_api_key'         => 'proxy-secret-managed',
+                'tier'                  => 'starter',
+                'expiry_date'           => '2030-01-01',
+                'last_synced'           => current_time( 'mysql' ),
+                'local_site_identifier' => 'local-managed-test',
+            ]
+        );
+        update_option(
+            'sentient_forms_settings',
+            array_merge(
+                Sentient_Forms_Plugin::instance()->get_options(),
+                [ 'enforce_nonce_verification' => false ]
+            )
+        );
     }
 
     private function truncate_local_provider_tables(): void

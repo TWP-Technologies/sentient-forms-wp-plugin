@@ -216,6 +216,78 @@ describe('SentientFormsApiClient', () => {
 		});
 	});
 
+	it('sets up the Sentient managed proxy credential with disclosure acceptance', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					provider: 'sentient_managed',
+					status: 'valid',
+					credential_id: 77,
+					credential: {
+						id: 77,
+						provider: 'sentient_managed',
+						label: 'Sentient managed proxy',
+						auth_mode: 'sentient_proxy',
+						constant_name: null,
+						status: 'valid',
+						status_json: { proxy_key_present: true },
+						last_validated_at: '2026-04-19T10:00:00Z',
+						created_at: '2026-04-19T09:00:00Z',
+						updated_at: '2026-04-19T10:00:00Z',
+						secret_configured: true
+					},
+					consent_recorded: true,
+					consent_id: 31,
+					account: {
+						status: 'active',
+						license_id: 'license-managed-test',
+						site_id: 'site-managed-test',
+						local_site_identifier: 'local-managed-test',
+						proxy_key_present: true,
+						credential_ready: true
+					},
+					billing_boundary: {
+						direct_openrouter_billed_by_sentient: false,
+						managed_proxy_billed_by_sentient: true
+					}
+				})
+		});
+
+		const result = await client.setupSentientManagedProvider(
+			{
+				label: 'Sentient managed proxy',
+				disclosure_version: '2026-04-sentient-managed-proxy-v1',
+				accepted_external_service_terms: true
+			},
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}local/providers/sentient-managed/setup`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({
+					label: 'Sentient managed proxy',
+					disclosure_version: '2026-04-sentient-managed-proxy-v1',
+					accepted_external_service_terms: true
+				})
+			})
+		);
+		expect(result).toMatchObject({
+			provider: 'sentient_managed',
+			status: 'valid',
+			credential_id: 77,
+			consent_recorded: true,
+			billing_boundary: {
+				direct_openrouter_billed_by_sentient: false,
+				managed_proxy_billed_by_sentient: true
+			}
+		});
+	});
+
 	it('reads cached OpenRouter model metadata from the local provider endpoint', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,

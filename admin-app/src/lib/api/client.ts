@@ -62,6 +62,8 @@ import type {
 	OpenRouterModelsResponse,
 	OpenRouterValidateRequest,
 	OpenRouterValidateResponse,
+	SentientManagedSetupRequest,
+	SentientManagedSetupResponse,
 	TelemetrySettingsResponse,
 	PluginSettingsResponse,
 	UpdateFormMappingRequest
@@ -384,6 +386,17 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<OpenRouterValidateResponse> {
 		return this.request<OpenRouterValidateResponse>('local/providers/openrouter/validate', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+	}
+
+	async setupSentientManagedProvider(
+		payload: SentientManagedSetupRequest,
+		options: RequestOptions = {}
+	): Promise<SentientManagedSetupResponse> {
+		return this.request<SentientManagedSetupResponse>('local/providers/sentient-managed/setup', {
 			method: 'POST',
 			body: payload,
 			...options

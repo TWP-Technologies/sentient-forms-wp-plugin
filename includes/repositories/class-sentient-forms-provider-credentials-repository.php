@@ -107,6 +107,29 @@ class Sentient_Forms_Provider_Credentials_Repository extends Sentient_Forms_Loca
         return $rows;
     }
 
+    public function find_by_provider_auth_mode( string $provider, string $auth_mode ): ?array
+    {
+        $provider  = sanitize_key( $provider );
+        $auth_mode = sanitize_key( $auth_mode );
+
+        $row = $this->wpdb->get_row(
+            $this->wpdb->prepare(
+                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE provider = %s AND auth_mode = %s ORDER BY updated_at DESC, id DESC LIMIT 1',
+                $provider,
+                $auth_mode
+            ),
+            ARRAY_A
+        );
+
+        if ( ! $row )
+        {
+            return null;
+        }
+
+        $row['status_json'] = $this->decode_json_field( $row['status_json'] ?? null );
+        return $row;
+    }
+
     public function update_status( int $id, string $status, ?array $status_json = null ): bool | WP_Error
     {
         $status = sanitize_key( $status );

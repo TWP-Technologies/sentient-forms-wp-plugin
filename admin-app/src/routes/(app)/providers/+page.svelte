@@ -4,10 +4,12 @@
 	import type {
 		LocalProviderCredential,
 		OpenRouterModelsResponse,
-		OpenRouterValidateResponse
+		OpenRouterValidateResponse,
+		SentientManagedSetupResponse
 	} from '$lib/api/types';
 	import { Badge, Button, Card, InputField, Section, StateTemplate } from '$lib/components/ui';
 	import { navigateToAppPath } from '$lib/navigation';
+	import { licenseState } from '$lib/stores/license';
 	import { formatTimestamp } from '$lib/utils/date-time';
 	import {
 		isReadyOpenRouterCredential,
@@ -21,18 +23,24 @@
 
 	const client = createClientFromConfig();
 	const DISCLOSURE_VERSION = '2026-04-local-first-openrouter-v1';
+	const MANAGED_DISCLOSURE_VERSION = '2026-04-sentient-managed-proxy-v1';
 
 	let loading = $state(true);
 	let credentials = $state<LocalProviderCredential[]>([]);
 	let validationResult = $state<OpenRouterValidateResponse | null>(null);
+	let managedSetupResult = $state<SentientManagedSetupResponse | null>(null);
 	let modelCatalog = $state<OpenRouterModelsResponse | null>(null);
 	let error = $state<string | null>(null);
+	let managedSetupError = $state<string | null>(null);
 	let modelCatalogError = $state<string | null>(null);
 	let apiKey = $state('');
 	let label = $state('OpenRouter key');
+	let managedLabel = $state('Sentient managed proxy');
 	let saveKey = $state(true);
 	let acceptedDisclosure = $state(false);
+	let acceptedManagedDisclosure = $state(false);
 	let validating = $state(false);
+	let managedSetupLoading = $state(false);
 	let modelCatalogLoading = $state(true);
 	let modelCatalogRefreshing = $state(false);
 
@@ -42,15 +50,41 @@
 	let readyOpenRouterCredentials = $derived(
 		openRouterCredentials.filter((credential) => isReadyOpenRouterCredential(credential))
 	);
+	let managedCredentials = $derived(
+		credentials.filter((credential) => credential.provider === 'sentient_managed')
+	);
+	let readyManagedCredentials = $derived(
+		managedCredentials.filter(
+			(credential) =>
+				credential.auth_mode === 'sentient_proxy' &&
+				credential.status === 'valid' &&
+				credential.secret_configured
+		)
+	);
 	let primaryOpenRouterCredential = $derived(openRouterCredentials[0] ?? null);
+	let primaryManagedCredential = $derived(readyManagedCredentials[0] ?? managedCredentials[0] ?? null);
 	let readyCredentialCount = $derived(
 		openRouterCredentials.filter((credential) => credential.status === 'valid').length
 	);
+	let readyProviderCredentials = $derived([
+		...readyOpenRouterCredentials,
+		...readyManagedCredentials
+	]);
+	let managedAccountReady = $derived(
+		['active', 'trial', 'valid'].includes(licenseState.status) &&
+			licenseState.proxyKeyPresent &&
+			Boolean(licenseState.licenseId) &&
+			Boolean(licenseState.siteId)
+	);
 	let localSetupUnavailableTitle = $derived(
-		localOpenRouterSetupUnavailableTitle(openRouterCredentials)
+		managedAccountReady
+			? 'Connect a provider before building actions'
+			: localOpenRouterSetupUnavailableTitle(openRouterCredentials)
 	);
 	let localSetupUnavailableMessage = $derived(
-		localOpenRouterSetupUnavailableMessage(openRouterCredentials)
+		managedAccountReady
+			? 'Enable the Sentient managed proxy credential here or validate an OpenRouter key for direct local execution.'
+			: localOpenRouterSetupUnavailableMessage(openRouterCredentials)
 	);
 	let freeModelPreview = $derived(
 		(modelCatalog?.models ?? []).filter((model) => model.free).slice(0, 6)
@@ -164,6 +198,44 @@
 		}
 	}
 
+	async function setupSentientManagedProxy(event: SubmitEvent): Promise<void> {
+		event.preventDefault();
+
+		managedSetupError = null;
+		managedSetupResult = null;
+
+		if (!managedAccountReady) {
+			managedSetupError =
+				'Activate a Sentient managed account before enabling managed proxy execution.';
+			return;
+		}
+
+		if (!acceptedManagedDisclosure) {
+			managedSetupError =
+				'Accept the Sentient managed proxy disclosure before enabling managed execution.';
+			return;
+		}
+
+		managedSetupLoading = true;
+
+		try {
+			managedSetupResult = await client.setupSentientManagedProvider(
+				{
+					label: managedLabel.trim() || undefined,
+					disclosure_version: MANAGED_DISCLOSURE_VERSION,
+					accepted_external_service_terms: acceptedManagedDisclosure
+				},
+				{ showNotifications: false }
+			);
+
+			await loadCredentials();
+		} catch (requestError) {
+			managedSetupError = errorMessage(requestError);
+		} finally {
+			managedSetupLoading = false;
+		}
+	}
+
 	onMount(() => {
 		void loadCredentials();
 		void loadModelCatalog();
@@ -227,6 +299,49 @@
 						data-testid="providers-openrouter-ready-count"
 					>
 						{readyCredentialCount}
+					</p>
+				</div>
+			</div>
+		</div>
+	</Card>
+
+	<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="providers-managed-summary">
+		<div
+			class="sf:flex sf:flex-col sf:gap-4 sf:lg:flex-row sf:lg:items-center sf:lg:justify-between"
+		>
+			<div class="sf:space-y-2">
+				<div class="sf:flex sf:flex-wrap sf:gap-2">
+					<Badge variant={providerStatusVariant(primaryManagedCredential?.status ?? 'missing')}>
+						{providerStatusLabel(primaryManagedCredential?.status ?? 'missing')}
+					</Badge>
+					<Badge variant={managedAccountReady ? 'success' : 'warning'}>
+						{managedAccountReady ? 'Managed account ready' : 'Managed account inactive'}
+					</Badge>
+					<Badge variant="info">Sentient billed</Badge>
+				</div>
+				<h3 class="sf:text-xl sf:font-semibold sf:text-slate-900">Sentient managed proxy</h3>
+				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
+					Sentient receives the rendered prompt and required form fields only for managed proxy
+					runs. Direct OpenRouter runs stay outside Sentient billing.
+				</p>
+			</div>
+			<div class="sf:flex sf:gap-6">
+				<div>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Saved proxies</p>
+					<p
+						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+						data-testid="providers-managed-count"
+					>
+						{managedCredentials.length}
+					</p>
+				</div>
+				<div>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Ready proxies</p>
+					<p
+						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+						data-testid="providers-managed-ready-count"
+					>
+						{readyManagedCredentials.length}
 					</p>
 				</div>
 			</div>
@@ -462,12 +577,136 @@
 		</Card>
 	</div>
 
+	<div class="sf:grid sf:gap-4 sf:xl:grid-cols-[1fr_0.9fr]">
+		<Card title="Enable Sentient managed proxy" data-testid="providers-managed-setup-card">
+			{#if !managedAccountReady}
+				<StateTemplate
+					variant="empty"
+					title="Activate managed billing first"
+					message="Sentient managed proxy needs an active account and site proxy key. Direct OpenRouter remains available without Sentient billing."
+					actionLabel="Open Billing"
+					onAction={() => navigateToAppPath('/licensing')}
+					dense
+					testId="providers-managed-account-required"
+				/>
+			{:else}
+				<form class="sf:space-y-4" onsubmit={setupSentientManagedProxy}>
+					<InputField
+						id="sentient-managed-label"
+						label="Label"
+						placeholder="Sentient managed proxy"
+						bind:value={managedLabel}
+						disabled={managedSetupLoading}
+					/>
+
+					<label class="sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-700">
+						<input
+							class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+							type="checkbox"
+							bind:checked={acceptedManagedDisclosure}
+							disabled={managedSetupLoading}
+							required
+						/>
+						<span>
+							I understand Sentient receives the rendered prompt and required form fields for
+							managed proxy runs, meters usage, and bills through my Sentient plan.
+						</span>
+					</label>
+
+					<Button
+						type="submit"
+						loading={managedSetupLoading}
+						disabled={managedSetupLoading}
+						data-testid="providers-managed-setup-submit"
+					>
+						{managedSetupLoading ? 'Enabling...' : 'Enable managed proxy credential'}
+					</Button>
+				</form>
+			{/if}
+
+			{#if managedSetupError}
+				<p
+					class="sf:mt-4 sf:text-sm sf:text-danger-700"
+					role="alert"
+					data-testid="providers-managed-setup-error"
+				>
+					{managedSetupError}
+				</p>
+			{/if}
+
+			{#if managedSetupResult}
+				<div
+					class="sf:mt-4 sf:rounded sf:border sf:border-success-200 sf:bg-success-50 sf:p-4"
+					data-testid="providers-managed-setup-result"
+				>
+					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+						<Badge variant={providerStatusVariant(managedSetupResult.status)}>
+							{providerStatusLabel(managedSetupResult.status)}
+						</Badge>
+						<span class="sf:text-sm sf:text-success-800">
+							Consent #{managedSetupResult.consent_id} recorded.
+						</span>
+					</div>
+					<p class="sf:mt-2 sf:text-sm sf:text-success-800">
+						Managed credential #{managedSetupResult.credential_id} is ready.
+					</p>
+				</div>
+			{/if}
+		</Card>
+
+		<Card title="Sentient managed proxy credentials" data-testid="providers-managed-list-card">
+			{#if loading}
+				<StateTemplate variant="loading" title="Loading managed proxy credentials" dense />
+			{:else if managedCredentials.length === 0}
+				<StateTemplate
+					variant="empty"
+					title="No managed proxy credential"
+					message="Activate managed billing, accept the disclosure, then enable a local proxy credential."
+					dense
+				/>
+			{:else}
+				<div class="sf:space-y-3">
+					{#each managedCredentials as credential}
+						{@const statusDetail = providerCredentialStatusDetail(credential)}
+						<div
+							class="sf:border-l sf:border-slate-300 sf:pl-3"
+							data-testid="providers-managed-credential"
+						>
+							<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
+								<p class="sf:font-medium sf:text-slate-900">{credential.label}</p>
+								<Badge variant={providerStatusVariant(credential.status)}
+									>{providerStatusLabel(credential.status)}</Badge
+								>
+							</div>
+							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
+								{credential.auth_mode} · proxy key {credential.secret_configured
+									? 'available'
+									: 'missing'}
+							</p>
+							<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+								Last checked {formatTimestamp(credential.last_validated_at, 'never')}
+							</p>
+							{#if statusDetail}
+								<p
+									class={`sf:mt-2 sf:text-xs ${providerCredentialStatusDetailClass(credential)}`}
+									data-testid="providers-managed-credential-status-detail"
+								>
+									{statusDetail}
+								</p>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</Card>
+	</div>
+
 	<Card
 		title="Local action builder"
-		subtitle="Create form-specific OpenRouter actions from the Actions screen."
+		subtitle="Create form-specific provider actions from the Actions screen."
 		data-testid="providers-actions-builder-redirect-card"
 	>
-		{#if readyOpenRouterCredentials.length === 0}
+		{#if readyProviderCredentials.length === 0}
 			<StateTemplate
 				variant="empty"
 				title={localSetupUnavailableTitle}
@@ -486,11 +725,17 @@
 								? ''
 								: 's'}</Badge
 						>
+						<Badge variant={readyManagedCredentials.length > 0 ? 'success' : 'neutral'}
+							>{readyManagedCredentials.length} managed {readyManagedCredentials.length === 1
+								? 'proxy'
+								: 'proxies'}</Badge
+						>
 						<Badge variant="info">Actions owns setup</Badge>
 					</div>
 					<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
-						Choose a form in Actions, then use Direct OpenRouter to create a local action and
-						mapping from the same screen where you manage hooks, run mode, and mapping health.
+						Choose a form in Actions, then use Direct OpenRouter or Sentient managed proxy to
+						create a local action and mapping from the same screen where you manage hooks, run
+						mode, and mapping health.
 					</p>
 				</div>
 				<Button onclick={() => navigateToAppPath('/actions')} data-testid="providers-open-actions">

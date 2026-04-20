@@ -257,6 +257,32 @@ export interface LocalProviderCredential {
 	secret_configured: boolean;
 }
 
+export interface SentientManagedSetupRequest {
+	disclosure_version: string;
+	accepted_external_service_terms: boolean;
+	label?: string;
+}
+
+export interface SentientManagedAccountState {
+	status: string;
+	license_id: string;
+	site_id: string;
+	local_site_identifier: string;
+	proxy_key_present: boolean;
+	credential_ready: boolean;
+}
+
+export interface SentientManagedSetupResponse {
+	provider: 'sentient_managed';
+	status: LocalProviderStatus;
+	credential_id: number;
+	credential: LocalProviderCredential | null;
+	consent_recorded: boolean;
+	consent_id: number;
+	account: SentientManagedAccountState;
+	billing_boundary: BillingBoundaryState;
+}
+
 export interface OpenRouterKeyStatus {
 	label?: string;
 	usage?: number;
