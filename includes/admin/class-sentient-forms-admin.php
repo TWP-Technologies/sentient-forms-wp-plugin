@@ -1134,23 +1134,22 @@ Promise.all([
 
         // Use the provided API key for this test, not necessarily the saved one.
         $api_client = new Sentient_Forms_Llm_Api_Client( $api_key );
-        // A simple way to test is to try fetching available models or credit balance.
-        // Let's use get_credit_balance as it's a GET request and usually lightweight.
-        $response = $api_client->get_credit_balance();
+        $response = $api_client->get_available_models();
 
         if ( is_wp_error( $response ) ) {
             wp_send_json_error( [ 'message' => $response->get_error_message() ] );
-        } elseif ( isset( $response['balance'] ) ) {
-            wp_send_json_success( [ 'message' => __( 'Connection successful! Credit balance retrieved.', 'sentient-forms' ), 'balance' => $response['balance'] ] );
+        } elseif ( is_array( $response ) ) {
+            wp_send_json_success( [ 'message' => __( 'Connection successful.', 'sentient-forms' ) ] );
         } else {
             wp_send_json_error( [ 'message' => __( 'Connection test failed. The API responded, but the data format was unexpected.', 'sentient-forms' ), 'response' => $response ] );
         }
     }
 
     /**
-     * AJAX handler for fetching credit balance.
+     * AJAX compatibility handler for the retired credit balance action.
      */
-    public function ajax_get_credit_balance(): void {
+    public function ajax_get_credit_balance(): void
+    {
         $options       = get_option( 'sentient_forms_settings', [] );
         $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
         if ( $enforce_nonce ) {
@@ -1160,23 +1159,13 @@ Promise.all([
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
         }
 
-        $api_key = $this->plugin->get_proxy_api_key();
-        if ( empty( $api_key ) ) {
-            wp_send_json_error( [ 'message' => __( 'API Key is not configured.', 'sentient-forms' ) ], 400 );
-        }
-
-        $api_client = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $api_client->get_credit_balance();
-
-        if ( is_wp_error( $response ) ) {
-            wp_send_json_error( [ 'message' => $response->get_error_message() ] );
-        } elseif ( isset( $response['balance'] ) ) {
-            // Optionally update the stored credit balance
-            update_option('sentient_forms_credit_balance', $response['balance']);
-            wp_send_json_success( [ 'balance' => $response['balance'] ] );
-        } else {
-            wp_send_json_error( [ 'message' => __( 'Failed to retrieve credit balance. Unexpected API response.', 'sentient-forms' ), 'response' => $response ] );
-        }
+        wp_send_json_error(
+            [
+                'code'    => 'sentient_forms_credit_balance_retired',
+                'message' => __( 'The legacy Sentient credit balance route is retired in local-first mode. Use the Licensing billing-state view for managed plan allowance.', 'sentient-forms' ),
+            ],
+            410
+        );
     }
 
 }

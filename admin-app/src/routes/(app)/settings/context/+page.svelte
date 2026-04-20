@@ -3,7 +3,6 @@
 	import { Section, Card, Button, Alert, Toggle, StateTemplate } from '$lib/components/ui';
 	import { wpFetch } from '$lib/wp';
 	import { notifications } from '$lib/stores/notifications';
-	import type { CreditBalanceResponse } from '$lib/api/types';
 	import {
 		canConfirmSiteContextRegeneration,
 		resolveSiteContextRegenerationMode
@@ -14,9 +13,6 @@
 	 * Allows webmasters to generate, view, and edit their site context summary
 	 * for personalized spam detection.
 	 */
-
-	const SITE_CONTEXT_CREDIT_COST = 20;
-
 	// CB-SA-006: Context length guard thresholds
 	const CONTEXT_SOFT_LIMIT = 2000;
 	const CONTEXT_WARN_LIMIT = 4500;
@@ -53,8 +49,6 @@
 	let error = $state<string | null>(null);
 	let showPiiWarning = $state(false);
 	let showRegenConfirm = $state(false);
-	let creditBalance = $state<CreditBalanceResponse | null>(null);
-	let creditsLoading = $state(false);
 
 	function normalizeSiteContextResponse(response: SiteContextResponse): SiteContext | null {
 		if (!response) {
@@ -74,17 +68,6 @@
 		}
 
 		return null;
-	}
-
-	async function loadCredits() {
-		creditsLoading = true;
-		try {
-			creditBalance = await wpFetch<CreditBalanceResponse>('credits/balance');
-		} catch (e) {
-			console.error('Failed to fetch credit balance', e);
-		} finally {
-			creditsLoading = false;
-		}
 	}
 
 	async function loadContext() {
@@ -109,17 +92,13 @@
 		}
 	}
 
-	/** Prompt user for regeneration confirmation (shows cost + balance) */
+	/** Prompt user for regeneration confirmation. */
 	function promptRegenerate() {
 		if (!piiAck) {
 			showPiiWarning = true;
 			return;
 		}
 		showRegenConfirm = true;
-		// Refresh credit balance for paid refreshes only.
-		if (regenerationIsPaid) {
-			loadCredits();
-		}
 	}
 
 	async function generateContext() {
@@ -131,7 +110,6 @@
 		showRegenConfirm = false;
 		generating = true;
 		error = null;
-		const wasPaidRegeneration = regenerationIsPaid;
 		try {
 			const response = await wpFetch<SiteContext>('site-context', {
 				method: 'POST',
@@ -142,10 +120,6 @@
 				editedText = context.summary_text;
 				autoInclude = context.auto_include;
 				notifications.success('Site context generated');
-				if (wasPaidRegeneration) {
-					// Refresh credit balance only when credits were debited.
-					loadCredits();
-				}
 			}
 		} catch (e) {
 			console.error('Failed to generate site context', e);
@@ -231,14 +205,10 @@
 		return date.toLocaleDateString();
 	}
 
-	const hasInsufficientCredits = $derived(
-		creditBalance !== null && creditBalance.current_balance < SITE_CONTEXT_CREDIT_COST
-	);
 	const freeRefreshAvailable = $derived(context?.free_refresh_available ?? false);
 	const regenerationMode = $derived(resolveSiteContextRegenerationMode(context));
-	const regenerationIsPaid = $derived(regenerationMode === 'paid_refresh');
 	const canConfirmRegeneration = $derived(
-		canConfirmSiteContextRegeneration(regenerationMode, hasInsufficientCredits)
+		canConfirmSiteContextRegeneration(regenerationMode)
 	);
 	const nextFreeRefreshLabel = $derived(
 		context?.next_free_refresh_at ? formatDate(context.next_free_refresh_at) : null
@@ -246,7 +216,6 @@
 
 	onMount(() => {
 		loadContext();
-		loadCredits();
 	});
 </script>
 
@@ -375,21 +344,11 @@
 									</p>
 								{:else}
 									<p class="sf:text-sm">
-										Regenerating will use <strong>{SITE_CONTEXT_CREDIT_COST} credits</strong>.
+										This regeneration uses your configured site-context provider path.
 									</p>
-									<p class="sf:text-sm">
-										{#if creditsLoading}
-											Checking your balance…
-										{:else if creditBalance}
-											Current balance: <strong>{creditBalance.current_balance} credits</strong>
-											{#if hasInsufficientCredits}
-												<span class="sf:text-red-600 sf:font-medium sf:block sf:mt-1">
-													⚠ Insufficient credits. You need at least {SITE_CONTEXT_CREDIT_COST} credits.
-												</span>
-											{/if}
-										{:else}
-											<span class="sf:text-slate-500">Unable to check credit balance.</span>
-										{/if}
+									<p class="sf:text-sm sf:text-slate-600">
+										If this runs through Sentient managed proxy, usage is metered against your
+										managed plan. Direct OpenRouter runs remain outside Sentient billing.
 									</p>
 									{#if nextFreeRefreshLabel}
 										<p class="sf:text-xs sf:text-slate-500">
@@ -410,7 +369,7 @@
 										{:else if freeRefreshAvailable}
 											Confirm — Use Free Refresh
 										{:else}
-											{`Confirm — Use ${SITE_CONTEXT_CREDIT_COST} Credits`}
+											Confirm Regeneration
 										{/if}
 									</Button>
 									<Button size="sm" variant="secondary" onclick={() => (showRegenConfirm = false)}>

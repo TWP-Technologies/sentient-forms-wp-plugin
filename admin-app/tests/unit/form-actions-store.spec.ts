@@ -81,11 +81,6 @@ describe('formActionsStore', () => {
 		});
 
 		stubClient.getFormActions.mockRejectedValue(apiError);
-		stubClient.getCreditBalance.mockResolvedValue({
-			current_balance: 0,
-			ledger_delta: 0,
-			tier: null
-		});
 		stubClient.getActionDefinitions.mockResolvedValue([]);
 		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
 
@@ -115,11 +110,6 @@ describe('formActionsStore', () => {
 		});
 
 		stubClient.getFormActions.mockRejectedValue(apiError);
-		stubClient.getCreditBalance.mockResolvedValue({
-			current_balance: -4,
-			ledger_delta: -24,
-			tier: null
-		});
 		stubClient.getActionDefinitions.mockResolvedValue([]);
 		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
 
@@ -134,13 +124,8 @@ describe('formActionsStore', () => {
 		);
 	});
 
-	it('warns but keeps state when credit balance refresh times out', async () => {
+	it('refreshes execution status without requesting legacy credit balance', async () => {
 		stubClient.getFormActions.mockResolvedValue([]);
-		stubClient.getCreditBalance.mockResolvedValue({
-			current_balance: 100,
-			ledger_delta: 0,
-			tier: null
-		});
 		stubClient.getActionDefinitions.mockResolvedValue([]);
 		stubClient.getFormExecutionStatus.mockResolvedValue({
 			status: 'success',
@@ -153,11 +138,6 @@ describe('formActionsStore', () => {
 
 		await formActionsStore.load('gravity_forms', 1);
 
-		const timeoutError = new ApiClientError('Request failed', 504, {
-			error: { code: 'timeout', message: 'Timed out contacting CPS' }
-		});
-
-		stubClient.getCreditBalance.mockRejectedValue(timeoutError);
 		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
 
 		await formActionsStore.refresh('gravity_forms', 1);
@@ -165,14 +145,11 @@ describe('formActionsStore', () => {
 
 		expect(state.error).toBeNull();
 		expect(state.status).toEqual(noopStatus);
-		expect(notifyWarningSpy).toHaveBeenLastCalledWith(
-			'Sentient Forms timed out while contacting the CPS service. Retry the request shortly.'
-		);
+		expect(stubClient.getCreditBalance).not.toHaveBeenCalled();
+		expect(notifyWarningSpy).not.toHaveBeenCalled();
 	});
 
-	it('keeps actions usable when credit balance is missing', async () => {
-		const balanceError = new ApiClientError('Request failed', 404, { message: 'Not Found' });
-
+	it('keeps actions usable without a legacy credit balance request', async () => {
 		const linkage = {
 			local_mapping_id: 'map_1',
 			central_action_id: 'spam_detection_v1',
@@ -185,15 +162,14 @@ describe('formActionsStore', () => {
 		stubClient.getFormActions.mockResolvedValue([linkage]);
 		stubClient.getActionDefinitions.mockResolvedValue([]);
 		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
-		stubClient.getCreditBalance.mockRejectedValue(balanceError);
 
 		await formActionsStore.load('gravity_forms', 1);
 		const state = snapshotState();
 
 		expect(state.items).toHaveLength(1);
-		expect(state.balance).toBeNull();
 		expect(state.error).toBeNull();
-		expect(notifyWarningSpy).toHaveBeenCalledWith('Credit balance unavailable right now.');
+		expect(stubClient.getCreditBalance).not.toHaveBeenCalled();
+		expect(notifyWarningSpy).not.toHaveBeenCalled();
 	});
 
 	it('surfaces friendly message when execution status lookup fails', async () => {
@@ -223,11 +199,6 @@ describe('formActionsStore', () => {
 		};
 
 		stubClient.getFormActions.mockResolvedValue([linkage]);
-		stubClient.getCreditBalance.mockResolvedValue({
-			current_balance: 250,
-			ledger_delta: 0,
-			tier: null
-		});
 		stubClient.getActionDefinitions.mockResolvedValue([]);
 		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
 		stubClient.updateFormAction.mockResolvedValue({
@@ -260,7 +231,6 @@ describe('formActionsStore', () => {
 		};
 
 		stubClient.getFormActions.mockResolvedValue([linkage]);
-		stubClient.getCreditBalance.mockResolvedValue({ current_balance: 100, ledger_delta: 0, tier: null });
 		stubClient.getActionDefinitions.mockResolvedValue([]);
 		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
 		const apiError = new ApiClientError('Request failed', 500, { message: 'boom' });
@@ -284,7 +254,6 @@ describe('formActionsStore', () => {
 		};
 
 		stubClient.getFormActions.mockResolvedValue([linkage]);
-		stubClient.getCreditBalance.mockResolvedValue({ current_balance: 100, ledger_delta: 0, tier: null });
 		stubClient.getActionDefinitions.mockResolvedValue([]);
 		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
 		const apiError = new ApiClientError('Request failed', 400, { message: 'bad hooks' });
@@ -300,11 +269,6 @@ describe('formActionsStore', () => {
 
 	it('keeps per-form disabled state after successful toggle', async () => {
 		stubClient.getFormActions.mockResolvedValue([]);
-		stubClient.getCreditBalance.mockResolvedValue({
-			current_balance: 100,
-			ledger_delta: 0,
-			tier: null
-		});
 		stubClient.getActionDefinitions.mockResolvedValue([]);
 		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
 		stubClient.getFormDisabled.mockResolvedValue({ sf_disabled: false });
@@ -324,11 +288,6 @@ describe('formActionsStore', () => {
 
 	it('tracks effective disable flags from API response', async () => {
 		stubClient.getFormActions.mockResolvedValue([]);
-		stubClient.getCreditBalance.mockResolvedValue({
-			current_balance: 100,
-			ledger_delta: 0,
-			tier: null
-		});
 		stubClient.getActionDefinitions.mockResolvedValue([]);
 		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
 		stubClient.getFormDisabled.mockResolvedValue({

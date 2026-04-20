@@ -56,7 +56,7 @@ class MetaControllerTest extends WP_UnitTestCase
 
         $this->assertTrue( $data['supports_custom_actions'] );
         $this->assertTrue( $data['supports_status'] );
-        $this->assertTrue( $data['supports_credits'] );
+        $this->assertFalse( $data['supports_credits'] );
         $this->assertArrayHasKey( 'cps_version', $data );
     }
 

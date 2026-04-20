@@ -18,12 +18,11 @@ export function resolveSiteContextRegenerationMode(
 }
 
 export function canConfirmSiteContextRegeneration(
-    mode: SiteContextRegenerationMode,
-    hasInsufficientCredits: boolean
+    mode: SiteContextRegenerationMode
 ): boolean {
-    if (mode !== 'paid_refresh') {
-        return true;
-    }
-
-    return !hasInsufficientCredits;
+    return [
+        'first_generation_free',
+        'free_refresh',
+        'paid_refresh'
+    ].includes(mode);
 }

@@ -12,7 +12,6 @@ if ( !defined( 'ABSPATH' ) )
 }
 
 // Set default values for variables
-$credit_balance = $credit_balance ?? 0;
 $license_status = $license_status ?? '';
 $license_data   = $license_data ?? [];
 $form_count     = $form_count ?? 0;
@@ -35,16 +34,9 @@ $plugin = Sentient_Forms_Plugin::instance();
 
         <div class="sentient-forms-dashboard-widgets">
             <div class="sentient-forms-dashboard-widget">
-                <h3><?php _e( 'Credit Balance', 'sentient-forms' ); ?></h3>
+                <h3><?php _e( 'Billing Mode', 'sentient-forms' ); ?></h3>
                 <div class="sentient-forms-dashboard-widget-content">
-                    <div class="sentient-forms-credit-balance">
-                        <span class="sentient-forms-credit-amount"><?= number_format_i18n( $credit_balance, 3 ); ?></span>
-                        <span class="sentient-forms-credit-label"><?php _e( 'credits', 'sentient-forms' ); ?></span>
-                    </div>
-                    <p><?php _e( 'Credits are used when AI actions are performed on form submissions.', 'sentient-forms' ); ?></p>
-                    <button class="button button-secondary sentient-forms-refresh-balance">
-                        <?php _e( 'Refresh Balance', 'sentient-forms' ); ?>
-                    </button>
+                    <p><?php _e( 'Direct OpenRouter actions are billed by OpenRouter. Sentient-managed actions use your managed plan allowance in the Licensing screen.', 'sentient-forms' ); ?></p>
                     <?php if ( $license_status === 'valid' && isset( $license_data[ 'plan' ] ) ): ?>
                         <p class="sentient-forms-plan-info">
                             <?php printf( __( 'Current Plan: %s', 'sentient-forms' ), esc_html( $license_data[ 'plan' ] ) ); ?>
@@ -152,46 +144,3 @@ $plugin = Sentient_Forms_Plugin::instance();
         </div>
     </div>
 </div>
-
-<script type="text/javascript">
-    jQuery( document ).ready( function( $ )
-    {
-        // Refresh credit balance
-        $( '.sentient-forms-refresh-balance' ).on( 'click', function()
-        {
-            const $button      = $( this );
-            const originalText = $button.text();
-
-            $button.text( sentientFormsAdminData.i18n.loadingBalance );
-            $button.prop( 'disabled', true );
-
-            $.ajax( {
-                url      : sentientFormsAdminData.ajaxUrl,
-                type     : 'POST',
-                data     : {
-                    action : 'sentient_forms_get_credit_balance',
-                    nonce  : sentientFormsAdminData.nonce,
-                },
-                success  : function( response )
-                {
-                    if ( response.success )
-                    {
-                        $( '.sentient-forms-credit-amount' ).text( response.data.balance.toLocaleString() );
-                    } else
-                    {
-                        alert( response.data.message );
-                    }
-                },
-                error    : function()
-                {
-                    alert( 'An error occurred while fetching the credit balance.' );
-                },
-                complete : function()
-                {
-                    $button.text( originalText );
-                    $button.prop( 'disabled', false );
-                },
-            } );
-        } );
-    } );
-</script>

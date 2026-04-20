@@ -273,7 +273,7 @@ export class MockSentientFormsApiClient {
 		return {
 			supports_custom_actions: true,
 			supports_status: true,
-			supports_credits: true,
+			supports_credits: false,
 			cps_version: 'mock-1.0.0'
 		};
 	}
@@ -372,10 +372,6 @@ export class MockSentientFormsApiClient {
 			last_result: null,
 			updated_at: new Date().toISOString()
 		};
-	}
-
-	async getCreditBalance(): Promise<CreditBalanceResponse> {
-		return this.creditBalance;
 	}
 
 	async createFormAction(

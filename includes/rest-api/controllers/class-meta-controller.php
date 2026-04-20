@@ -68,11 +68,11 @@ class Sentient_Forms_Meta_Controller extends Abstract_Sentient_Forms_Base_Contro
         $license_data = $plugin->get_license_data();
         $has_license  = ! empty( $license_data['proxy_api_key'] );
 
-        // Determine capabilities based on license status and plugin state
+        // Determine capabilities based on license status and local-first route availability.
         $capabilities = [
             'supports_custom_actions' => $has_license,
             'supports_status'         => true,
-            'supports_credits'        => $has_license,
+            'supports_credits'        => false,
             'cps_version'             => $this->get_cps_version(),
         ];
 
@@ -121,7 +121,7 @@ class Sentient_Forms_Meta_Controller extends Abstract_Sentient_Forms_Base_Contro
                     'readonly'    => true,
                 ],
                 'supports_credits' => [
-                    'description' => __( 'Whether credit balance is available.', 'sentient-forms' ),
+                    'description' => __( 'Whether the legacy credit balance route is available.', 'sentient-forms' ),
                     'type'        => 'boolean',
                     'readonly'    => true,
                 ],

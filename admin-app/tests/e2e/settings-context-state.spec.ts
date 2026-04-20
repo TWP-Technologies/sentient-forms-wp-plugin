@@ -9,6 +9,10 @@ test.describe('Settings context state templates', () => {
 			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
 			siteUrl: previewHost
 		});
+
+		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) => {
+			throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
+		});
 	});
 
 	test('shows empty template when no context is configured', async ({ page }) => {
@@ -17,14 +21,6 @@ test.describe('Settings context state templates', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify(null)
-			})
-		);
-
-		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({ current_balance: 120, tier: null })
 			})
 		);
 
@@ -41,14 +37,6 @@ test.describe('Settings context state templates', () => {
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({ context: null })
-			})
-		);
-
-		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({ current_balance: 120, tier: null })
 			})
 		);
 
@@ -87,14 +75,6 @@ test.describe('Settings context state templates', () => {
 				})
 			});
 		});
-
-		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({ current_balance: 120, tier: null })
-			})
-		);
 
 		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
 		await expect(page.getByTestId('site-context-error-state')).toBeVisible();

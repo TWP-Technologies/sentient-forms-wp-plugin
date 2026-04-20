@@ -339,7 +339,7 @@ export async function mockResponsiveApi(
 
 	const capabilities = {
 		supports_custom_actions: true,
-		supports_credits: true,
+		supports_credits: false,
 		supports_status: true,
 		cps_version: '1.2.0',
 		features: [],

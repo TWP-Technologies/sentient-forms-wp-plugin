@@ -12,7 +12,6 @@ import type {
 	AsyncHealthResponse,
 	CloneTemplateMappingRequest,
 	CreateFormMappingRequest,
-	CreditBalanceResponse,
 	CustomAction,
 	CustomActionCreatePayload,
 	CustomActionFilters,
@@ -330,14 +329,6 @@ export class SentientFormsApiClient {
 			method: 'DELETE',
 			...requestOptions
 		});
-		return this.unwrap(response);
-	}
-
-	async getCreditBalance(options: RequestOptions = {}): Promise<CreditBalanceResponse> {
-		const response = await this.request<RestEnvelope<CreditBalanceResponse>>(
-			'credits/balance',
-			options
-		);
 		return this.unwrap(response);
 	}
 

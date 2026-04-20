@@ -4,7 +4,6 @@ import { notifications } from '$lib/stores/notifications';
 import type {
 	FormActionLinkage,
 	FormActionMutationPayload,
-	CreditBalanceResponse,
 	ActionDefinition,
 	ExecutionStatus,
 	FormExecutionStatus,
@@ -15,13 +14,10 @@ export interface FormActionsState {
 	loading: boolean;
 	error: string | null;
 	items: FormActionLinkage[];
-	balance: CreditBalanceResponse | null;
-	supportsCredits: boolean;
 	definitions: ActionDefinition[];
 	status: FormExecutionStatus | null;
 	supportsStatus: boolean;
 	cpsVersion: string | null;
-	requiredCreditsVersion?: string;
 	requiredStatusVersion?: string;
 	/** CB-FORMS-001: Per-form master disable */
 	sfDisabled: boolean;
@@ -40,13 +36,10 @@ function initialState(): FormActionsState {
 		loading: false,
 		error: null,
 		items: [],
-		balance: null,
-		supportsCredits: true,
 		definitions: [],
 		status: null,
 		supportsStatus: true,
 		cpsVersion: null,
-		requiredCreditsVersion: '1.0.0',
 		requiredStatusVersion: '1.0.0',
 		sfDisabled: false,
 		globalDisabled: false,
@@ -164,7 +157,6 @@ async function load(formSourceSlug: string, formId: number) {
 		try {
 			const caps = await client.getCapabilities({ showNotifications: false });
 			setState({
-				supportsCredits: caps.supports_credits ?? true,
 				supportsStatus: caps.supports_status ?? true,
 				cpsVersion: caps.cps_version ?? null
 			});
@@ -196,8 +188,6 @@ async function load(formSourceSlug: string, formId: number) {
 		} catch {
 			// Endpoint may not exist on older plugin versions; default false.
 		}
-
-		await refreshBalance();
 	} catch (error) {
 		const message = friendlyMessageFromError(error, 'Failed to load actions');
 		resetState();
@@ -363,7 +353,6 @@ async function refresh(formSourceSlug: string, formId: number) {
 		});
 
 		setState({ status, error: null, supportsStatus: true });
-		await refreshBalance();
 	} catch (error) {
 		if (error instanceof ApiClientError && error.status === 404) {
 			setState({ supportsStatus: false, error: null });
@@ -375,28 +364,6 @@ async function refresh(formSourceSlug: string, formId: number) {
 		setState({ error: message });
 	}
 	refreshInFlight = false;
-}
-
-async function refreshBalance() {
-	try {
-		const balance = await client.getCreditBalance({ showNotifications: false });
-		setState({ balance, error: null, supportsCredits: true });
-	} catch (error) {
-		const fallbackMessage = 'Credit balance unavailable right now.';
-		if (error instanceof ApiClientError && error.status === 404) {
-			setState({ balance: null, supportsCredits: false });
-			notifications.warning(fallbackMessage);
-			return;
-		}
-		const friendly = friendlyMessageFromError(error, fallbackMessage);
-		const message =
-			!friendly || friendly === 'Not Found' || friendly === 'Request failed'
-				? fallbackMessage
-				: friendly;
-		// Show a warning but do not fail the page.
-		notifications.warning(message);
-		setState({ balance: null });
-	}
 }
 
 async function fetchExecutionStatus(

@@ -1335,7 +1335,7 @@
 				title: 'Sentient Forms ran successfully',
 				description:
 					status.message ??
-					'The most recent submission completed successfully. You can refresh to see the latest credit balance or run another test.',
+					'The most recent submission completed successfully. You can refresh the status panel or run another test.',
 				actions: [{ id: 'refresh', label: 'Refresh status' }]
 			};
 		}
@@ -3239,19 +3239,6 @@
 					>
 				{/if}
 			</div>
-			{#if actionsState.supportsCredits === false}
-				<Alert variant="warning">
-					Credit balance is unavailable on this CPS backend
-					{#if actionsState.cpsVersion}(current {actionsState.cpsVersion}){/if}
-					{#if actionsState.requiredCreditsVersion}
-						(Requires CPS ≥ {actionsState.requiredCreditsVersion})
-					{/if}. Upgrade or enable credits support to see balance.
-				</Alert>
-			{:else if actionsState.balance}
-				<p class="sf:text-sm sf:text-slate-600">
-					Credit balance: <strong>{actionsState.balance.current_balance}</strong>
-				</p>
-			{/if}
 			{#if actionsState.supportsStatus === false}
 				<Alert variant="warning">
 					Execution status is unavailable on this CPS backend

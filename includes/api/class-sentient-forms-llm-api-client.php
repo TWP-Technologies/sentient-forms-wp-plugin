@@ -234,78 +234,17 @@ class Sentient_Forms_Llm_Api_Client
     }
 
     /**
-     * Get credit balance
+     * Legacy credit balance compatibility shim.
      *
      * @return array|WP_Error The response or error.
      */
     public function get_credit_balance(): WP_Error | array
     {
-        // Ensure we have an API key
-        if ( empty( $this->api_key ) )
-        {
-            return new WP_Error(
-                'missing_api_key', __( 'Missing proxy API key. Please enter your API key in the plugin settings.', 'sentient-forms' ),
-            );
-        }
-
-        // Prepare the request
-        $url  = $this->api_url . '/credits/balance';
-        $args = [
-            'method'      => 'GET',
-            'timeout'     => 45,
-            'redirection' => 5,
-            'httpversion' => '2.0',
-            'blocking'    => true,
-            'headers'     => [
-                'X-API-Key'  => $this->api_key,
-                'X-Site-URL' => home_url(),
-            ],
-            'cookies'     => [],
-        ];
-
-        // Send the request
-        $response = wp_remote_get( $url, $args );
-
-        // Check for errors
-        if ( is_wp_error( $response ) )
-        {
-            return $response;
-        }
-
-        // Get the response code
-        $response_code = wp_remote_retrieve_response_code( $response );
-        if ( $response_code !== 200 )
-        {
-            $error_message = wp_remote_retrieve_response_message( $response );
-            $body          = wp_remote_retrieve_body( $response );
-            $body_data     = json_decode( $body, true );
-
-            if ( isset( $body_data[ 'error' ] ) )
-            {
-                $error_message = $body_data[ 'error' ];
-            }
-
-            return new WP_Error(
-                'credit_balance_error',
-                sprintf(
-                    /* translators: %s: credit balance error message. */
-                    __( 'Credit balance error: %s', 'sentient-forms' ),
-                    $error_message
-                ),
-                [ 'status' => $response_code ],
-            );
-        }
-
-        // Parse the response
-        $body = wp_remote_retrieve_body( $response );
-        $data = json_decode( $body, true );
-
-        if ( json_last_error() !== JSON_ERROR_NONE )
-        {
-            return new WP_Error( 'json_parse_error', __( 'Error parsing credit balance response', 'sentient-forms' ) );
-        }
-
-        return $data;
+        return new WP_Error(
+            'sentient_forms_credit_balance_retired',
+            __( 'The legacy Sentient credit balance route is retired in local-first mode. Use managed billing state for Sentient-managed plan allowance; direct OpenRouter runs are billed by OpenRouter, not Sentient.', 'sentient-forms' ),
+            [ 'status' => 410 ],
+        );
     }
 
     /**
