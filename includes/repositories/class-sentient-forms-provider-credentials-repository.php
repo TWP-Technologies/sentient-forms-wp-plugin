@@ -111,9 +111,10 @@ class Sentient_Forms_Provider_Credentials_Repository extends Sentient_Forms_Loca
     {
         $provider  = sanitize_key( $provider );
         $auth_mode = sanitize_key( $auth_mode );
+        $wpdb      = $this->wpdb;
 
-        $row = $this->wpdb->get_row(
-            $this->wpdb->prepare(
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
                 'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE provider = %s AND auth_mode = %s ORDER BY updated_at DESC, id DESC LIMIT 1',
                 $provider,
                 $auth_mode
