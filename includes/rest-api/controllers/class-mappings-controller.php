@@ -1,7 +1,7 @@
 <?php
 /**
  * REST API Mappings Controller for the Sentient Forms plugin.
- * Proxies form mapping operations to/from CPS.
+     * Exposes legacy mapping routes without calling CPS by default.
  *
  * @package    SentientForms
  * @subpackage REST_API\Controllers
@@ -18,7 +18,8 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Handles REST API endpoints for form mappings (CSM Phase 7).
  * Enables "Import from Library" and "Save as Template" features.
  */
-class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Controller {
+class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Controller
+{
     use Trait_Sentient_Forms_Permission_Utils;
 
     /**
@@ -36,34 +37,35 @@ class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Co
     private Sentient_Forms_Admin_Permission $permission_checker;
 
     /**
-     * Mappings sync service.
+     * Optional legacy mappings sync service.
      *
-     * @var Sentient_Forms_Mappings_Sync
+     * @var Sentient_Forms_Mappings_Sync|null
      */
-    private Sentient_Forms_Mappings_Sync $mappings_sync;
+    private ?Sentient_Forms_Mappings_Sync $mappings_sync = null;
 
     /**
      * Constructor.
      */
-    public function __construct() {
+    public function __construct()
+    {
         parent::__construct();
 
-        if ( ! class_exists( 'Sentient_Forms_Admin_Permission' ) ) {
+        if ( ! class_exists( 'Sentient_Forms_Admin_Permission' ) )
+        {
             Sentient_Forms_Error_Utils::throw_or_die(
                 'Required dependency Sentient_Forms_Admin_Permission not found.',
                 Sentient_Forms_Error_Type::dependency,
             );
         }
 
-        if ( ! class_exists( 'Sentient_Forms_Mappings_Sync' ) ) {
-            Sentient_Forms_Error_Utils::throw_or_die(
-                'Required dependency Sentient_Forms_Mappings_Sync not found.',
-                Sentient_Forms_Error_Type::dependency,
-            );
-        }
-
         $this->permission_checker = new Sentient_Forms_Admin_Permission();
-        $this->mappings_sync      = new Sentient_Forms_Mappings_Sync();
+        if (
+            class_exists( 'Sentient_Forms_Mappings_Sync' ) &&
+            apply_filters( 'sentient_forms_enable_legacy_cps_mapping_sync', false )
+        )
+        {
+            $this->mappings_sync = new Sentient_Forms_Mappings_Sync();
+        }
     }
 
     /**
@@ -71,7 +73,8 @@ class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Co
      *
      * @return void
      */
-    public function register_routes(): void {
+    public function register_routes(): void
+    {
         // GET /mappings/templates - List available templates.
         register_rest_route(
             $this->namespace,
@@ -115,13 +118,14 @@ class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Co
     }
 
     /**
-     * Get available templates from CPS.
+     * Get available templates from the optional legacy CPS sync service.
      *
      * @param WP_REST_Request $request The REST request.
      * @return WP_REST_Response|WP_Error
      */
-    public function get_templates( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-        $templates = $this->mappings_sync->fetch_templates();
+    public function get_templates( WP_REST_Request $request ): WP_REST_Response|WP_Error
+    {
+        $templates = $this->mappings_sync ? $this->mappings_sync->fetch_templates() : [];
 
         return rest_ensure_response( [
             'success' => true,
@@ -130,12 +134,22 @@ class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Co
     }
 
     /**
-     * Create a new mapping in CPS.
+     * Create a new mapping through the optional legacy CPS sync service.
      *
      * @param WP_REST_Request $request The REST request.
      * @return WP_REST_Response|WP_Error
      */
-    public function create_mapping( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+    public function create_mapping( WP_REST_Request $request ): WP_REST_Response|WP_Error
+    {
+        if ( ! $this->mappings_sync )
+        {
+            return new WP_Error(
+                'sentient_forms_legacy_cps_mapping_sync_disabled',
+                __( 'Legacy CPS mapping sync is disabled for the local-first plugin.', 'sentient-forms' ),
+                [ 'status' => 410 ]
+            );
+        }
+
         $mapping_data = [
             'site_id'              => $request->get_param( 'site_id' ),
             'form_source'          => $request->get_param( 'form_source' ),
@@ -149,11 +163,12 @@ class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Co
         ];
 
         // Remove null values
-        $mapping_data = array_filter( $mapping_data, fn( $v ) => $v !== null );
+        $mapping_data = array_filter( $mapping_data, fn( $value ) => $value !== null );
 
         $result = $this->mappings_sync->create_mapping( $mapping_data );
 
-        if ( is_wp_error( $result ) ) {
+        if ( is_wp_error( $result ) )
+        {
             return $result;
         }
 
@@ -169,7 +184,17 @@ class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Co
      * @param WP_REST_Request $request The REST request.
      * @return WP_REST_Response|WP_Error
      */
-    public function clone_template( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+    public function clone_template( WP_REST_Request $request ): WP_REST_Response|WP_Error
+    {
+        if ( ! $this->mappings_sync )
+        {
+            return new WP_Error(
+                'sentient_forms_legacy_cps_mapping_sync_disabled',
+                __( 'Legacy CPS mapping sync is disabled for the local-first plugin.', 'sentient-forms' ),
+                [ 'status' => 410 ]
+            );
+        }
+
         $template_id = $request->get_param( 'id' );
         $clone_data  = [
             'form_source' => $request->get_param( 'form_source' ),
@@ -178,7 +203,8 @@ class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Co
 
         $result = $this->mappings_sync->clone_template( $template_id, $clone_data );
 
-        if ( is_wp_error( $result ) ) {
+        if ( is_wp_error( $result ) )
+        {
             return $result;
         }
 
@@ -193,7 +219,8 @@ class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Co
      *
      * @return array
      */
-    private function get_create_mapping_args(): array {
+    private function get_create_mapping_args(): array
+    {
         return [
             'site_id'            => [
                 'required'          => false,
@@ -247,7 +274,8 @@ class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Co
      *
      * @return array
      */
-    private function get_clone_template_args(): array {
+    private function get_clone_template_args(): array
+    {
         return [
             'form_source' => [
                 'required'          => true,

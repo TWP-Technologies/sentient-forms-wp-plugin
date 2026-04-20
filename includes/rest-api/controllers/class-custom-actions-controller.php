@@ -18,10 +18,17 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
     private Sentient_Forms_Custom_Actions_Service $service;
 
+    private ?Sentient_Forms_Local_Custom_Actions_Repository $local_custom_actions = null;
+
     public function __construct()
     {
         parent::__construct();
         $this->service = new Sentient_Forms_Custom_Actions_Service( Sentient_Forms_Plugin::instance() );
+        global $wpdb;
+        if ( class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
+        {
+            $this->local_custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        }
     }
 
     public function register_routes(): void
@@ -78,6 +85,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
     public function list_custom_actions( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
+        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
+        {
+            return $this->prepare_item_for_response( $this->list_local_custom_actions_for_legacy_route( $request ) );
+        }
+
         $query = [];
 
         if ( null !== $request->get_param( 'status' ) )
@@ -111,6 +123,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
     public function create_custom_action( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
+        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
+        {
+            return $this->legacy_cps_custom_actions_disabled_error();
+        }
+
         $payload = $this->build_create_payload( $request );
         if ( is_wp_error( $payload ) )
         {
@@ -128,6 +145,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
     public function update_custom_action( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
+        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
+        {
+            return $this->legacy_cps_custom_actions_disabled_error();
+        }
+
         $payload = $this->build_update_payload( $request );
         if ( is_wp_error( $payload ) )
         {
@@ -146,6 +168,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
     public function archive_custom_action( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
+        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
+        {
+            return $this->legacy_cps_custom_actions_disabled_error();
+        }
+
         $action_id = sanitize_text_field( (string) $request->get_param( 'id' ) );
         $result    = $this->service->archive( $action_id, $this->build_actor_hint() );
         if ( is_wp_error( $result ) )
@@ -158,6 +185,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
     public function reactivate_custom_action( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
+        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
+        {
+            return $this->legacy_cps_custom_actions_disabled_error();
+        }
+
         $action_id = sanitize_text_field( (string) $request->get_param( 'id' ) );
         $result    = $this->service->reactivate( $action_id, $this->build_actor_hint() );
         if ( is_wp_error( $result ) )
@@ -166,6 +198,77 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
         }
 
         return $this->prepare_item_for_response( $result->to_array() );
+    }
+
+    /**
+     * Return local custom actions through the legacy route shape so older admin screens do not call CPS.
+     *
+     * @return array{actions: array<int, array<string, mixed>>, quota: array<string, int>}
+     */
+    private function list_local_custom_actions_for_legacy_route( WP_REST_Request $request ): array
+    {
+        $status = strtolower( sanitize_text_field( (string) ( $request->get_param( 'status' ) ?? 'active' ) ) );
+        if ( ! in_array( $status, [ 'active', 'archived' ], true ) )
+        {
+            $status = 'active';
+        }
+
+        $rows = $this->local_custom_actions ? $this->local_custom_actions->list( $status ) : [];
+        $actions = array_map( [ $this, 'format_local_custom_action_for_legacy_route' ], $rows );
+
+        return [
+            'actions' => $actions,
+            'quota'   => [
+                'quota_max'       => 0,
+                'quota_used'      => count( $actions ),
+                'quota_remaining' => 0,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $row Local custom-action table row.
+     *
+     * @return array<string, mixed>
+     */
+    private function format_local_custom_action_for_legacy_route( array $row ): array
+    {
+        $definition = is_array( $row['definition_json'] ?? null ) ? $row['definition_json'] : [];
+
+        return [
+            'id'                        => (string) (int) ( $row['id'] ?? 0 ),
+            'template_id'               => isset( $row['template_id'] ) ? (string) (int) $row['template_id'] : '',
+            'code'                      => isset( $row['code'] ) ? sanitize_key( (string) $row['code'] ) : '',
+            'display_name'              => isset( $row['display_name'] ) ? sanitize_text_field( (string) $row['display_name'] ) : '',
+            'description'               => isset( $definition['description'] ) && is_scalar( $definition['description'] )
+                ? sanitize_text_field( (string) $definition['description'] )
+                : null,
+            'prompt_overrides'          => [],
+            'model_hint'                => isset( $row['model_selection_json']['model'] ) && is_scalar( $row['model_selection_json']['model'] )
+                ? sanitize_text_field( (string) $row['model_selection_json']['model'] )
+                : null,
+            'base_credit_cost'          => null,
+            'status'                    => isset( $row['status'] ) ? sanitize_key( (string) $row['status'] ) : 'active',
+            'archived_at'               => null,
+            'created_at'                => isset( $row['created_at'] ) ? sanitize_text_field( (string) $row['created_at'] ) : '',
+            'updated_at'                => isset( $row['updated_at'] ) ? sanitize_text_field( (string) $row['updated_at'] ) : '',
+            'action_kind'               => 'custom_definition',
+            'definition'                => $definition,
+            'definition_version'        => isset( $definition['version'] ) ? absint( $definition['version'] ) : 1,
+            'output_contract'           => isset( $definition['structured_output_schema'] ) && is_array( $definition['structured_output_schema'] )
+                ? [ 'schema' => $definition['structured_output_schema'] ]
+                : null,
+            'supported_execution_modes' => [ 'validation', 'after_submission' ],
+        ];
+    }
+
+    private function legacy_cps_custom_actions_disabled_error(): WP_Error
+    {
+        return new WP_Error(
+            'sentient_forms_legacy_cps_custom_actions_disabled',
+            __( 'Legacy CPS custom actions are disabled for the local-first plugin. Use local custom actions instead.', 'sentient-forms' ),
+            [ 'status' => 410 ]
+        );
     }
 
     /**

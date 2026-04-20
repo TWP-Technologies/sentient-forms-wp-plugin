@@ -108,8 +108,10 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
         $this->permission_checker = new Sentient_Forms_Admin_Permission();
 
-        // Phase 7 CSM: Initialize sync service if available
-        if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) ) {
+        if (
+            class_exists( 'Sentient_Forms_Mappings_Sync' ) &&
+            apply_filters( 'sentient_forms_enable_legacy_cps_mapping_sync', false )
+        ) {
             $this->mappings_sync = new Sentient_Forms_Mappings_Sync();
         }
 
@@ -786,6 +788,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $local_actions = [];
         }
         $local_actions = $this->extract_action_linkages_from_option( $local_actions );
+        $local_actions = $this->merge_local_first_actions( $local_actions, $form_source_slug, $form_id );
 
         $cps_error        = null;
         $cps_sync_error   = null;
@@ -1822,7 +1825,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 'id'         => (string) ( $field->id ?? '' ),
                 'label'      => $field->label ?? '',
                 'type'       => $field_type,
-                'adminLabel' => $field->adminLabel ?? null,
+                'adminLabel' => $field->{'adminLabel'} ?? null,
             ];
         }
 

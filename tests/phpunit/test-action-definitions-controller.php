@@ -50,6 +50,9 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
 
     public function test_definitions_from_cps_are_normalized(): void
     {
+        $enable_cps_templates = static fn() => true;
+        add_filter( 'sentient_forms_enable_legacy_cps_action_templates', $enable_cps_templates );
+
         $plugin = Sentient_Forms_Plugin::instance();
         $plugin->set_license_data(
             [
@@ -86,6 +89,8 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $this->assertArrayHasKey( '/sentient-forms/v1/actions/definitions', $routes, 'Action definitions route should be registered' );
         $response = rest_get_server()->dispatch( $request );
 
+        remove_filter( 'sentient_forms_enable_legacy_cps_action_templates', $enable_cps_templates );
+
         $this->assertSame( 200, $response->get_status() );
         $data = $response->get_data();
         $this->assertIsArray( $data );
@@ -104,8 +109,44 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $this->assertArrayHasKey( 'settingsFields', $definition );
     }
 
+    public function test_definitions_do_not_fetch_cps_by_default_even_with_proxy_key(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data(
+            [
+                'proxy_api_key' => 'proxy-key-789',
+            ]
+        );
+
+        $http_called = false;
+        $callback    = static function () use ( &$http_called ) {
+            $http_called = true;
+
+            return new WP_Error( 'unexpected_cps_call', 'Action definitions should not fetch CPS by default.' );
+        };
+
+        add_filter( 'pre_http_request', $callback, 10, 3 );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/definitions' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $routes = rest_get_server()->get_routes();
+        $this->assertArrayHasKey( '/sentient-forms/v1/actions/definitions', $routes, 'Action definitions route should be registered' );
+        $response = rest_get_server()->dispatch( $request );
+
+        remove_filter( 'pre_http_request', $callback, 10 );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertNotEmpty( $data );
+        $this->assertSame( 'local', $data[0]['source'] );
+        $this->assertFalse( $http_called, 'Proxy keys must not trigger CPS action definition fetches unless legacy CPS templates are explicitly enabled.' );
+    }
+
     public function test_definitions_fall_back_to_local_registry_when_cps_unavailable(): void
     {
+        $enable_cps_templates = static fn() => true;
+        add_filter( 'sentient_forms_enable_legacy_cps_action_templates', $enable_cps_templates );
+
         $callback = function () {
             return new WP_Error( 'cps_unreachable', 'CPS unreachable' );
         };
@@ -119,6 +160,7 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $response = rest_get_server()->dispatch( $request );
 
         remove_filter( 'pre_http_request', $callback, 10 );
+        remove_filter( 'sentient_forms_enable_legacy_cps_action_templates', $enable_cps_templates );
 
         $this->assertSame( 200, $response->get_status() );
         $data = $response->get_data();

@@ -189,6 +189,11 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
      */
     private function maybe_fetch_cps_templates(): array | WP_Error
     {
+        if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_action_templates', false ) )
+        {
+            return [];
+        }
+
         $plugin    = Sentient_Forms_Plugin::instance();
         $proxy_key = $plugin->get_proxy_api_key();
         if ( empty( $proxy_key ) )
