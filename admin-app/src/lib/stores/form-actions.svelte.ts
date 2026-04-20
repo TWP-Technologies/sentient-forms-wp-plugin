@@ -54,12 +54,12 @@ const friendlyMessages: Record<string, string> = {
 	rate_limited:
 		'Sentient Forms is temporarily rate limiting requests. Please wait a minute and try again.',
 	timeout:
-		'Sentient Forms timed out while contacting the CPS service. Retry the request shortly.',
+		'Sentient Forms timed out while contacting the execution service. Retry the request shortly.',
 	llm_error: 'Sentient Forms encountered an upstream LLM error. Try again in a few moments.',
 	invalid_action_id:
 		'This Sentient Forms action mapping is no longer valid. Reconfigure the action before retrying.',
 	invalid_request:
-		'Sentient Forms sent an invalid payload to CPS. Review your action configuration and try again.',
+		'Sentient Forms sent an invalid execution payload. Review your action configuration and try again.',
 	cps_missing_proxy_key:
 		'Sentient Forms proxy key is missing. Activate your license on the Licensing tab to resume execution.',
 	duplicate_execution:

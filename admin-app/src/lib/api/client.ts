@@ -1002,7 +1002,7 @@ export class SentientFormsApiClient {
 
 	/**
 	 * Get all form mappings for the current license.
-	 * CSM-001: CPS mapping storage
+	 * CSM-001: local mapping storage
 	 */
 	async getFormMappings(options: RequestOptions = {}): Promise<FormMapping[]> {
 		const response = await this.request<{ success: boolean; data: FormMapping[] }>('mappings', {
@@ -1037,7 +1037,7 @@ export class SentientFormsApiClient {
 
 	/**
 	 * Create a new form mapping.
-	 * CSM-001: CPS mapping storage
+	 * CSM-001: local mapping storage
 	 */
 	async createFormMapping(
 		payload: CreateFormMappingRequest,

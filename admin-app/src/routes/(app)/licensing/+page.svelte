@@ -886,9 +886,9 @@
 						Managed usage
 					</p>
 					<p class="sf:text-xs sf:text-slate-500">
-						Managed proxy usage is governed by the active Sentient plan. Top-up credit packs are
-						retired for the local-first service; use direct OpenRouter credentials for non-Sentient
-						billed runs or manage the plan in Stripe.
+						Managed proxy usage is governed by the active Sentient plan. Top-up packs are retired
+						for the local-first service; use direct OpenRouter credentials for non-Sentient billed
+						runs or manage the plan in Stripe.
 					</p>
 				</div>
 

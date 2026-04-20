@@ -1008,7 +1008,7 @@
 		hasDefinitions && definitions.some((definition) => (definition.source ?? 'local') !== 'cps')
 	);
 	const definitionsBadgeVariant = $derived(hasCpsDefinitions ? 'success' : 'warning');
-	const definitionsBadgeLabel = $derived(hasCpsDefinitions ? 'CPS templates' : 'Local fallback');
+	const definitionsBadgeLabel = $derived(hasCpsDefinitions ? 'Managed templates' : 'Local fallback');
 
 	const selectedDefinition = $derived(
 		selectedTemplateId ? definitionLookup[selectedTemplateId] : undefined
@@ -1270,17 +1270,17 @@
 				case 'timeout':
 					return {
 						variant: 'danger',
-						title: 'CPS timed out',
+						title: 'Execution timed out',
 						description:
-							'Sentient Forms timed out while contacting the CPS service. Retry the request shortly. If timeouts persist, inspect your network connectivity.',
+							'Sentient Forms timed out while contacting the execution service. Retry the request shortly. If timeouts persist, inspect your network connectivity.',
 						actions: [{ id: 'refresh', label: 'Retry now', variant: 'primary' }]
 					};
 				case 'rate_limited':
 					return {
 						variant: 'warning',
-						title: 'Rate limited by CPS',
+						title: 'Rate limited',
 						description:
-							'The CPS service temporarily rate limited this action. Wait about a minute before retrying.',
+							'The execution service temporarily rate limited this action. Wait about a minute before retrying.',
 						actions: [{ id: 'refresh', label: 'Refresh status' }]
 					};
 				case 'duplicate_execution':
@@ -1304,7 +1304,7 @@
 						variant: 'danger',
 						title: 'Action mapping is invalid',
 						description:
-							'The linked CPS action no longer exists or is misconfigured. Edit the action mapping to point at a valid CPS action before retrying.',
+							'The linked action no longer exists or is misconfigured. Edit the action mapping to point at a valid local or managed action before retrying.',
 						actions: [{ id: 'refresh', label: 'Refresh status' }]
 					};
 				default:
@@ -1384,7 +1384,7 @@
 	function actionTypeLabel(linkage: FormActionLinkage): string {
 		if (linkage.action_type_indicator === 'local_first') return 'Direct OpenRouter';
 		if (linkage.action_type_indicator === 'custom') return 'Custom';
-		return 'CPS template';
+		return 'Action template';
 	}
 
 	function actionTypeVariant(linkage: FormActionLinkage): 'neutral' | 'info' | 'success' {
@@ -2616,7 +2616,7 @@
 				: null;
 
 		if (createKind === 'template' && !chosenDefinition) {
-			createError = 'Select a CPS template to link.';
+			createError = 'Select an action template to link.';
 			return;
 		}
 
@@ -2715,8 +2715,8 @@
 		try {
 			const displayName = linkage.action_name_label ?? `Template from form ${data.formId}`;
 
-			// Create a new template mapping in CPS
-			// Note: CPS expects UUIDs for action_template_id field, but string codes for action_template_code.
+			// Create a portable template mapping through the current API contract.
+			// The API expects UUIDs for action_template_id, but string codes for action_template_code.
 			// For master templates (codes like 'spam_detection_v1'), we use action_template_code.
 			const isMasterTemplate = linkage.action_type_indicator === 'master';
 
@@ -2809,7 +2809,7 @@
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-<Section heading="Actions" description="Link CPS templates or custom actions to this form.">
+<Section heading="Actions" description="Link action templates or custom actions to this form.">
 	<!-- Form-Level Action Config Modal - Inside Section slot for Svelte 5 reactivity -->
 	{#if configuringActionId}
 		<div
@@ -3107,7 +3107,7 @@
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Action library</p>
 					<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
-						Browse CPS templates and custom actions you can map to this form.
+						Browse action templates and custom actions you can map to this form.
 					</p>
 				</div>
 				<Badge variant={definitionsBadgeVariant}>{definitionsBadgeLabel}</Badge>
@@ -3115,12 +3115,12 @@
 
 			{#if !hasDefinitions}
 				<Alert variant="warning" class="sf:mt-3">
-					CPS templates are unavailable right now. You can still link custom actions below.
+					Action templates are unavailable right now. You can still link custom actions below.
 				</Alert>
 			{:else if hasLocalDefinitions}
 				<Alert variant="info" class="sf:mt-3">
-					Some templates come from local extensions and may not exist in CPS. Confirm availability
-					before linking.
+					Some templates come from local extensions. Confirm the intended provider before
+					linking.
 				</Alert>
 			{/if}
 
@@ -3143,7 +3143,7 @@
 											Hooks: {summarizeDefinitionHooks(definition.hooks)}
 										</p>
 										<p class="sf:text-xs sf:text-slate-500">
-											CPS base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+											Managed base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
 												definition
 											)}
 										</p>
@@ -3158,7 +3158,7 @@
 											Defaults
 										</Button>
 										<Badge variant={definitionSourceBadgeVariant(definition)}>
-											{definition.source === 'cps' ? 'CPS' : 'Local'}
+											{definition.source === 'cps' ? 'Managed' : 'Local'}
 										</Badge>
 									</div>
 								</li>
@@ -3221,7 +3221,7 @@
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Link actions to this form</p>
 					<p class="sf:text-xs sf:text-slate-500">
-						Choose a CPS template or custom action, then select hooks.
+						Choose an action template or custom action, then select hooks.
 					</p>
 				</div>
 				<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
@@ -3241,11 +3241,11 @@
 			</div>
 			{#if actionsState.supportsStatus === false}
 				<Alert variant="warning">
-					Execution status is unavailable on this CPS backend
+					Execution status is unavailable in this plugin build
 					{#if actionsState.cpsVersion}(current {actionsState.cpsVersion}){/if}
 					{#if actionsState.requiredStatusVersion}
-						(Requires CPS ≥ {actionsState.requiredStatusVersion})
-					{/if}. Upgrade or enable the status endpoint to see run results.
+						(Requires status API ≥ {actionsState.requiredStatusVersion})
+					{/if}. Refresh the plugin or enable the status endpoint to see run results.
 				</Alert>
 			{:else if actionsState.status}
 				<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
@@ -4234,7 +4234,7 @@
 											/>
 										</div>
 										<p class="sf:text-xs sf:text-slate-500 sf:mb-3">
-											Delay execution to reduce peak load. Credit pricing is calculated by CPS at
+											Delay execution to reduce peak load. Managed credit pricing is calculated at
 											execution time.
 										</p>
 
@@ -4259,8 +4259,8 @@
 													bind:value={draftSettings.batch_settings.max_wait_seconds}
 												/>
 												<p class="sf:text-xs sf:text-slate-500">
-													If CPS batching cannot be queued immediately, Sentient Forms will fall
-													back to local scheduling by this deadline.
+													If managed batching cannot be queued immediately, Sentient Forms will
+													fall back to local scheduling by this deadline.
 												</p>
 											</div>
 										{/if}
@@ -4341,7 +4341,7 @@
 						}}
 						disabled={!hasDefinitions}
 					>
-						CPS templates
+						Action templates
 					</Button>
 					<Button
 						size="sm"
@@ -4383,7 +4383,7 @@
 				>
 					{#if createKind === 'template'}
 						{#if !hasDefinitions}
-							<Alert variant="warning">No CPS templates available right now.</Alert>
+							<Alert variant="warning">No action templates available right now.</Alert>
 						{:else}
 							<div class="sf:space-y-2">
 								{#each definitions.filter((definition) => {
@@ -4408,7 +4408,7 @@
 											</p>
 											<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
 											<p class="sf:text-xs sf:text-slate-500">
-												CPS base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+												Managed base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
 													definition
 												)}
 											</p>
@@ -4449,7 +4449,7 @@
 											<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
 											{#if action.base_credit_cost !== null}
 												<p class="sf:text-xs sf:text-slate-500">
-													CPS base cost: {action.base_credit_cost} credits
+													Managed base cost: {action.base_credit_cost} credits
 												</p>
 											{/if}
 										</div>

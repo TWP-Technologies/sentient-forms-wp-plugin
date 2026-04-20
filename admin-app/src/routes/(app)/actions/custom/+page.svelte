@@ -50,7 +50,7 @@
 
 <Section
 	heading="Custom Actions"
-	description="Create tenant-specific workflows backed by CPS custom actions."
+	description="Create site-owned workflows backed by local action templates."
 >
 	{#snippet actions()}
 		<div class="sf:flex sf:gap-2 sf:flex-wrap">
@@ -86,11 +86,11 @@
 		</Alert>
 	{:else if customState.supportsCustomActions === false}
 		<Alert variant="warning" class="sf:mb-4" data-testid="custom-actions-api-warning">
-			Custom Actions are disabled or not supported on this CPS backend
+			Custom Actions are disabled or not supported in this plugin build
 			{#if customState.cpsVersion}(current {customState.cpsVersion}){/if}
 			{#if customState.requiredCustomActionsVersion}
-				(Requires CPS ≥ {customState.requiredCustomActionsVersion})
-			{/if}. Deploy CPS with custom-actions enabled to manage them here.
+				(Requires custom-actions API ≥ {customState.requiredCustomActionsVersion})
+			{/if}. Refresh the plugin or enable local custom actions to manage them here.
 		</Alert>
 	{/if}
 

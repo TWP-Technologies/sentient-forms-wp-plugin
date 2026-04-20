@@ -19,7 +19,7 @@
 	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 
 	interface Props {
-		/** CPS mapping ID */
+		/** Form mapping ID */
 		mappingId: string;
 		/** WordPress entry ID */
 		entryId: number;

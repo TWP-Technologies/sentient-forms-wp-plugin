@@ -1,6 +1,6 @@
 <!--
   ModelSelect.svelte - Model selection dropdown with static options
-  TODO: Future enhancement - fetch from LLM_Registry CPS endpoint
+  TODO: Future enhancement - fetch from the local provider model registry
 -->
 <script lang="ts">
 	interface Props {
@@ -14,7 +14,7 @@
 
 	let { value = $bindable(null), onchange, id = 'model-select' }: Props = $props();
 
-	// Static model options - TODO: fetch from CPS LLM_Registry endpoint when available
+	// Static model options - TODO: fetch from the local provider model registry when available
 	const modelOptions = [
 		{ value: '', label: 'Default (template decides)' },
 		{ value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro (Preview)' },

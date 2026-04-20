@@ -618,7 +618,7 @@ export interface TemplateSchemaResponse {
 
 /**
  * Input mapping configuration for field selection (CA-MAP-001)
- * Controls which form fields are sent to CPS for action execution
+ * Controls which form fields are sent to the selected execution provider
  */
 export interface InputMapping {
 	/** Field selection mode */
@@ -1340,7 +1340,7 @@ export interface MappingSettings {
 }
 
 /**
- * Form mapping record from CPS (CSM-001)
+ * Portable form mapping record.
  */
 export interface FormMapping {
 	id: string;
@@ -1364,7 +1364,7 @@ export interface CreateFormMappingRequest {
 	site_id?: string | null;
 	form_source: string;
 	form_id?: number | null;
-	/** UUID-based template ID (for custom actions stored in CPS DB) */
+	/** UUID-based local action template ID. */
 	action_template_id?: string | null;
 	/** String-based template code (for master templates like "spam_detection_v1") */
 	action_template_code?: string | null;

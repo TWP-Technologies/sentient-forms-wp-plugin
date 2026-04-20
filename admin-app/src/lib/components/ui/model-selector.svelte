@@ -501,7 +501,7 @@
 						{pricingEstimate.pricing_policy_version}
 					</p>
 					<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-						Local OpenRouter runs do not spend Sentient credits. Provider charges are billed by
+						Local OpenRouter runs do not spend managed credits. Provider charges are billed by
 						OpenRouter according to the selected model and your OpenRouter account.
 					</p>
 				{/if}

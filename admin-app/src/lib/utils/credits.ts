@@ -2,8 +2,7 @@
  * Credit-related display utilities.
  *
  * Credit periods in Sentient Forms always reset on the 1st of each calendar
- * month (UTC).  The CPS function `current_period_start()` uses the same rule,
- * so the next reset is always the 1st of the following month.
+ * month (UTC), so the next reset is always the 1st of the following month.
  */
 
 export interface CreditResetInfo {

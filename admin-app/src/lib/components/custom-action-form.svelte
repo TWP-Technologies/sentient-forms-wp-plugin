@@ -1,6 +1,6 @@
 <!--
   CustomActionForm.svelte - guided form for creating/editing custom actions.
-  Template IDs and action codes are derived from CPS data so webmasters configure intent and effects.
+  Template IDs and action codes are derived from action definitions so webmasters configure intent and effects.
 -->
 <script lang="ts">
 	import {
@@ -32,7 +32,7 @@
 	interface Props {
 		/** Existing action data for edit mode */
 		initialData?: CustomAction | null;
-		/** Available action definitions with CPS template IDs */
+		/** Available action definitions with template IDs */
 		definitions?: ActionDefinition[];
 		/** Submit handler - returns void or throws */
 		onSubmit: (data: CustomActionCreateInput | CustomActionUpdateInput) => Promise<void>;
@@ -270,7 +270,7 @@
 				{
 					path: 'template_id',
 					message:
-						'CPS template IDs are unavailable. Sync the CPS templates before creating a custom action.'
+						'Action template IDs are unavailable. Refresh action templates before creating a custom action.'
 				}
 			];
 			return;
@@ -309,7 +309,7 @@
 	<p class="sf:text-sm sf:text-slate-500 sf:mb-4">
 		{isEditMode
 			? 'Update instructions and post-execution abilities for this custom action.'
-			: 'Choose the base CPS action, describe what should happen, and select concrete abilities.'}
+			: 'Choose the base action template, describe what should happen, and select concrete abilities.'}
 	</p>
 
 	<form
@@ -319,8 +319,8 @@
 	>
 		{#if baseTemplateUnavailable}
 			<Alert variant="warning">
-				CPS template IDs are not available in the current definitions response. Custom actions need a
-				CPS-backed base action, not a local fallback definition.
+				Action template IDs are not available in the current definitions response. Custom actions
+				need a local or managed base action template.
 			</Alert>
 		{/if}
 
@@ -332,8 +332,8 @@
 				options={baseActionOptions}
 				required
 				disabled={baseTemplateUnavailable}
-				placeholder="Select a CPS base action"
-				description="The CPS template this custom action extends. The technical template ID is handled automatically."
+				placeholder="Select a base action"
+				description="The action template this custom action extends. The technical template ID is handled automatically."
 			/>
 		{:else}
 			<div class="sf:flex sf:flex-col sf:gap-1">
@@ -341,7 +341,7 @@
 				<p
 					class="sf:text-sm sf:text-slate-600 sf:bg-slate-50 sf:px-3 sf:py-2 sf:rounded-md sf:border sf:border-slate-200"
 				>
-					{selectedDefinition ? definitionLabel(selectedDefinition) : 'Existing CPS template'}
+					{selectedDefinition ? definitionLabel(selectedDefinition) : 'Existing action template'}
 				</p>
 			</div>
 		{/if}
@@ -394,7 +394,7 @@
 			bind:value={customInstructions}
 			rows={5}
 			placeholder="Tell the AI exactly what to do, what tone to use, and what output you need."
-			description="These instructions are sent to CPS and appended to the base prompt for this action."
+			description="These instructions are stored locally and appended to the base prompt for this action."
 		/>
 
 		<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4 sf:space-y-4">
@@ -402,7 +402,7 @@
 				<div>
 					<h3 class="sf:text-sm sf:font-semibold sf:text-slate-800">Action Abilities</h3>
 					<p class="sf:text-xs sf:text-slate-500">
-						Choose what WordPress should do after CPS successfully returns a result.
+						Choose what WordPress should do after the provider returns a result.
 					</p>
 				</div>
 				<Badge variant="info">{buildPostExecutionActions().length} enabled</Badge>

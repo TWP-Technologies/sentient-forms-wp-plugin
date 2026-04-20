@@ -1,7 +1,7 @@
 /**
  * Phase 7: Form Mappings Store (CSM)
  * 
- * Manages CPS-backed form mappings for cross-site portability.
+ * Manages local form mappings for cross-site portability.
  * Provides template library functionality and local caching.
  */
 
@@ -25,7 +25,7 @@ function isCacheStale(): boolean {
 
 /**
  * Fetch all mappings for the current license.
- * CSM-002: Sync from CPS on page load.
+ * CSM-002: Refresh mappings on page load.
  */
 async function fetchMappings(force = false): Promise<void> {
     if (!force && !isCacheStale() && mappings.length > 0) {

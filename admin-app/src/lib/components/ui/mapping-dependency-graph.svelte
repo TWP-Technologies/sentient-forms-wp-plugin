@@ -489,9 +489,9 @@
 	});
 
 	const previewSourceLabel = $derived.by(() => {
-		if (useRemotePreview) return 'Preview source: CPS planner';
+		if (useRemotePreview) return 'Preview source: managed planner';
 		if (hasUnsavedChanges) return 'Preview source: local draft (unsaved edits)';
-		if (plannerAuthority === 'cps') return 'Preview source: local fallback (CPS mismatch)';
+		if (plannerAuthority === 'cps') return 'Preview source: local fallback (managed planner mismatch)';
 		return 'Preview source: local fallback';
 	});
 
@@ -545,7 +545,7 @@
 			return 'Unsaved edits detected. Execution preview is rendered from local draft state.';
 		}
 		if (plannerAuthorityReason === 'cps_mismatch') {
-			return 'CPS planner nodes do not match the current graph view. Showing local fallback preview.';
+			return 'Managed planner nodes do not match the current graph view. Showing local fallback preview.';
 		}
 		return null;
 	});
@@ -1810,7 +1810,7 @@
 		<div class="sf:flex sf:items-center sf:gap-2 sf:flex-wrap">
 			<Badge variant={plannerAuthority === 'cps' ? 'success' : 'warning'}>
 				{plannerAuthority === 'cps'
-					? 'Planner authority: CPS'
+					? 'Planner authority: managed'
 					: 'Planner authority: local fallback'}
 			</Badge>
 			{#if graph.cycleIds.length > 0}
@@ -1933,8 +1933,8 @@
 		<p
 			class="sf:text-xs sf:rounded-md sf:border sf:border-amber-300 sf:bg-amber-50 sf:px-3 sf:py-2 sf:text-amber-800"
 		>
-			CPS workflow planner is unavailable. Showing local fallback preview in read-only authority
-			mode.
+			Managed workflow planner is unavailable. Showing local fallback preview in read-only
+			authority mode.
 		</p>
 	{/if}
 

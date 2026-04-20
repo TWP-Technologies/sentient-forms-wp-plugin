@@ -166,7 +166,7 @@
 	);
 	const definitionsBadgeLabel = $derived(
 		definitions.some((definition) => definition.source === 'cps')
-			? 'CPS templates'
+			? 'Managed templates'
 			: 'Local templates'
 	);
 
@@ -384,7 +384,7 @@
 		try {
 			definitions = await client.getActionDefinitions({ showNotifications: false });
 		} catch (err) {
-			error = friendlyMessageFromError(err, 'Failed to load CPS templates');
+			error = friendlyMessageFromError(err, 'Failed to load action templates');
 			definitions = [];
 		} finally {
 			definitionsLoading = false;
@@ -613,7 +613,7 @@
 
 <Section
 	heading="Actions"
-	description="Pair CPS templates and custom actions with your active forms."
+	description="Pair action templates and custom actions with your active forms."
 >
 	{#snippet actions()}
 		<div class="sf:flex sf:flex-wrap sf:gap-2">
@@ -629,7 +629,7 @@
 			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Built-in actions</p>
-					<p class="sf:text-xs sf:text-slate-500">CPS templates available to map.</p>
+					<p class="sf:text-xs sf:text-slate-500">Action templates available to map.</p>
 				</div>
 				<Badge variant={definitionsBadgeVariant}>{definitionsBadgeLabel}</Badge>
 			</div>
@@ -638,7 +638,7 @@
 						<StateTemplate
 							variant="loading"
 							title="Loading built-in actions"
-							message="Fetching available CPS templates."
+							message="Fetching available action templates."
 							inline
 							dense
 							testId="actions-definitions-loading-state"
@@ -649,7 +649,7 @@
 						<StateTemplate
 							variant="empty"
 							title="No templates loaded yet"
-							message="Refresh or verify CPS connectivity, then try again."
+							message="Refresh or verify the local template source, then try again."
 							actionLabel="Refresh templates"
 							onAction={() => {
 								void loadDefinitions();
@@ -695,7 +695,7 @@
 														{formCount} form{formCount !== 1 ? 's' : ''}
 													</Badge>
 													<Badge variant={definition.source === 'cps' ? 'success' : 'warning'}>
-														{definition.source === 'cps' ? 'CPS' : 'Local'}
+														{definition.source === 'cps' ? 'Managed' : 'Local'}
 													</Badge>
 												</div>
 											</li>

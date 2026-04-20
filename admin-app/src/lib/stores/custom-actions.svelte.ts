@@ -119,7 +119,7 @@ async function load(filters: CustomActionFilters = customActionsState.filters): 
 			setState({
 				loading: false,
 				supportsCustomActions: false,
-				error: 'Custom Actions API is not available on this backend. Deploy or enable CPS custom actions to use this page.',
+				error: 'Custom Actions API is not available in this plugin build. Refresh the plugin or enable local custom actions to use this page.',
 				actions: [],
 				quota: null,
 				lastLoadedAt: Date.now()
