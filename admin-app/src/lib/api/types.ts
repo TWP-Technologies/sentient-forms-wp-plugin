@@ -102,15 +102,27 @@ export interface BillingAccountState {
 
 export interface ManagedUsageSummary {
 	site_id?: string | null;
-	total_events: number;
-	succeeded_events: number;
-	failed_events: number;
-	total_input_tokens: number;
-	total_output_tokens: number;
-	total_billed_micro_usd: number;
+	total_events?: number;
+	succeeded_events?: number;
+	failed_events?: number;
+	total_input_tokens?: number;
+	total_output_tokens?: number;
+	total_billed_micro_usd?: number;
 	free_usage_events?: number;
 	first_event_at?: string | null;
 	last_event_at?: string | null;
+	execution_count?: number;
+	succeeded_count?: number;
+	failed_count?: number;
+	token_usage?: {
+		input_tokens?: number;
+		output_tokens?: number;
+		total_tokens?: number;
+	};
+	billing?: {
+		billed_amount_microusd?: number;
+		currency?: string;
+	};
 }
 
 export interface BillingBoundaryState {

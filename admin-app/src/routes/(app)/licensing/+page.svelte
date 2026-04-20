@@ -34,7 +34,6 @@
 		licenseStatusToBadgeVariant,
 		resolveTierDisplayName
 	} from '$lib/utils/license-health-presentation';
-	import { wpFetch } from '$lib/wp';
 	import { onMount, tick } from 'svelte';
 
 	interface CheckoutPlanOption {
@@ -53,11 +52,6 @@
 		message: string;
 		actionLabel: string;
 		retry: () => Promise<void>;
-	}
-
-	interface RestEnvelope<T> {
-		success: boolean;
-		data: T;
 	}
 
 	const BUSINESS_PLAN_SITE_CAP = 200;
@@ -90,11 +84,10 @@
 	] as const;
 
 	function buildEffectiveCreditSnapshot(
-		billingState: BillingStateResponse | null,
-		fallbackCredits: CreditBalanceResponse | null
+		billingState: BillingStateResponse | null
 	): CreditBalanceResponse | null {
 		if (!billingState?.credits) {
-			return fallbackCredits;
+			return null;
 		}
 
 		return {
@@ -102,17 +95,11 @@
 			ledger_delta: billingState.credits.ledger_delta,
 			tier:
 				resolveBillingTier(billingState) ??
-				(fallbackCredits?.tier
-					? {
-							...fallbackCredits.tier,
-							monthly_credit_quota:
-								billingState.credits.tier_quota ?? fallbackCredits.tier.monthly_credit_quota
-						}
-					: {
-							code: 'unknown',
-							display_name: 'Unknown',
-							monthly_credit_quota: billingState.credits.tier_quota
-						}),
+				{
+					code: 'unknown',
+					display_name: 'Unknown',
+					monthly_credit_quota: billingState.credits.tier_quota
+				},
 			stale: false
 		};
 	}
@@ -167,21 +154,70 @@
 		return dollars >= 0.01 ? `$${dollars.toFixed(2)}` : `$${dollars.toFixed(4)}`;
 	}
 
-	function unwrapRestData<T>(payload: T | RestEnvelope<T>): T {
-		if (payload && typeof payload === 'object' && 'success' in payload && 'data' in payload) {
-			return (payload as RestEnvelope<T>).data;
+	function normalizeManagedUsageMetric(value: unknown): number {
+		return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+	}
+
+	function resolveManagedUsageMetrics(usage: BillingStateResponse['managed_usage'] | null) {
+		return {
+			totalEvents: normalizeManagedUsageMetric(usage?.total_events ?? usage?.execution_count),
+			succeededEvents: normalizeManagedUsageMetric(
+				usage?.succeeded_events ?? usage?.succeeded_count
+			),
+			failedEvents: normalizeManagedUsageMetric(usage?.failed_events ?? usage?.failed_count),
+			inputTokens: normalizeManagedUsageMetric(
+				usage?.total_input_tokens ?? usage?.token_usage?.input_tokens
+			),
+			outputTokens: normalizeManagedUsageMetric(
+				usage?.total_output_tokens ?? usage?.token_usage?.output_tokens
+			),
+			billedMicroUsd: normalizeManagedUsageMetric(
+				usage?.total_billed_micro_usd ?? usage?.billing?.billed_amount_microusd
+			)
+		};
+	}
+
+	function resolveMonthlyManagedCreditQuota(tier: TierSummary | null): number | null {
+		const quota = tier?.monthly_credit_quota;
+		return typeof quota === 'number' && Number.isFinite(quota) && quota > 0 ? quota : null;
+	}
+
+	function buildManagedCreditsHeadline(
+		creditSnapshot: CreditBalanceResponse | null,
+		monthlyQuota: number | null,
+		headline: string
+	): string {
+		if (creditSnapshot) {
+			return headline;
 		}
 
-		return payload as T;
+		if (monthlyQuota !== null) {
+			return `${monthlyQuota.toLocaleString()} monthly managed credits included`;
+		}
+
+		return headline;
+	}
+
+	function buildManagedCreditsDetail(
+		creditSnapshot: CreditBalanceResponse | null,
+		monthlyQuota: number | null,
+		detail: string
+	): string {
+		if (creditSnapshot) {
+			return detail;
+		}
+
+		if (monthlyQuota !== null) {
+			return `Managed proxy usage is metered by Sentient. This plan includes ${monthlyQuota.toLocaleString()} monthly managed credits; direct OpenRouter runs stay outside Sentient billing.`;
+		}
+
+		return detail;
 	}
 
 	const client = createClientFromConfig();
 
 	let licenseKey = $state('');
 	let issues: ValidationIssue[] = $state([]);
-	let credits = $state<CreditBalanceResponse | null>(null);
-	let creditsLoading = $state(false);
-	let creditsError = $state<string | null>(null);
 	let billing = $state<BillingStateResponse | null>(null);
 	let billingLoading = $state(false);
 	let billingError = $state<BillingUiError | null>(null);
@@ -190,19 +226,30 @@
 	let billingControlsElement = $state<HTMLDivElement | null>(null);
 
 	let resetInfo = $derived(getNextCreditReset());
-	let effectiveCredits = $derived(buildEffectiveCreditSnapshot(billing, credits));
+	let effectiveCredits = $derived(buildEffectiveCreditSnapshot(billing));
 	let creditPresentation = $derived(
 		buildCreditPresentation(effectiveCredits, resetInfo.summary, 'licensing')
 	);
 	let billingTier = $derived(resolveBillingTier(billing));
+	let managedCreditQuota = $derived(resolveMonthlyManagedCreditQuota(billingTier));
+	let managedCreditsHeadline = $derived(
+		buildManagedCreditsHeadline(effectiveCredits, managedCreditQuota, creditPresentation.headline)
+	);
+	let managedCreditsDetail = $derived(
+		buildManagedCreditsDetail(effectiveCredits, managedCreditQuota, creditPresentation.detail)
+	);
 	let billingStatus = $derived(resolveBillingStatus(billing));
 	let billingSubscription = $derived(resolveBillingSubscription(billing));
 	let billingProviderLabel = $derived(resolveBillingProvider(billing));
 	let billingBoundary = $derived(billing?.billing_boundary ?? null);
 	let managedUsage = $derived(billing?.managed_usage ?? null);
+	let managedUsageMetrics = $derived(resolveManagedUsageMetrics(managedUsage));
 	let billingPolicy = $derived(resolveBillingPolicy(billing?.policy));
 	let creditSeverityLabel = $derived(formatCreditSeverityLabel(creditPresentation.severity));
 	let creditSeverityVariant = $derived(creditSeverityToBadgeVariant(creditPresentation.severity));
+	let managedCreditBadgeLabel = $derived(
+		effectiveCredits || managedCreditQuota === null ? creditSeverityLabel : 'Plan allowance'
+	);
 	let licenseStatusVariant = $derived(licenseStatusToBadgeVariant($licenseStore.status));
 	let checkoutPlans = $derived.by(() =>
 		checkoutPlanCatalog.map((plan) => ({
@@ -239,14 +286,14 @@
 	);
 	let managedUsageSummary = $derived(
 		managedUsage
-			? `${managedUsage.total_events.toLocaleString()} managed run${
-					managedUsage.total_events === 1 ? '' : 's'
-				}, ${managedUsage.succeeded_events.toLocaleString()} succeeded, ${managedUsage.failed_events.toLocaleString()} failed.`
+			? `${managedUsageMetrics.totalEvents.toLocaleString()} managed run${
+					managedUsageMetrics.totalEvents === 1 ? '' : 's'
+				}, ${managedUsageMetrics.succeededEvents.toLocaleString()} succeeded, ${managedUsageMetrics.failedEvents.toLocaleString()} failed.`
 			: 'No managed proxy usage recorded yet.'
 	);
 	let managedUsageTokens = $derived(
 		managedUsage
-			? `${managedUsage.total_input_tokens.toLocaleString()} input tokens, ${managedUsage.total_output_tokens.toLocaleString()} output tokens, ${formatMicroUsd(managedUsage.total_billed_micro_usd)} billed.`
+			? `${managedUsageMetrics.inputTokens.toLocaleString()} input tokens, ${managedUsageMetrics.outputTokens.toLocaleString()} output tokens, ${formatMicroUsd(managedUsageMetrics.billedMicroUsd)} billed.`
 			: 'Sentient metering starts only after managed proxy execution is enabled.'
 	);
 
@@ -388,25 +435,6 @@
 		}
 	}
 
-	async function fetchCredits(forceRefresh = false) {
-		creditsLoading = true;
-		creditsError = null;
-
-		try {
-			credits = unwrapRestData(
-				await wpFetch<CreditBalanceResponse | RestEnvelope<CreditBalanceResponse>>(
-					forceRefresh ? 'credits/balance?force_refresh=1' : 'credits/balance'
-				)
-			);
-		} catch (error) {
-			console.error('Failed to fetch credits', error);
-			credits = null;
-			creditsError = 'Unable to load credit balance.';
-		} finally {
-			creditsLoading = false;
-		}
-	}
-
 	async function fetchBillingState() {
 		if (!hasConnectedLicense) {
 			billing = null;
@@ -431,15 +459,12 @@
 
 	async function refreshLicenseAndBilling() {
 		if (!hasConnectedLicense) {
-			credits = null;
-			creditsError = null;
 			billing = null;
 			billingError = null;
 			return;
 		}
 
 		await fetchBillingState();
-		await fetchCredits(true);
 		if ($licenseStore.proxyKeyPresent) {
 			await licenseStore.load();
 		}
@@ -640,21 +665,21 @@
 						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
 						data-testid="licensing-credits-headline"
 					>
-						{creditsLoading ? 'Loading credit balance…' : creditPresentation.headline}
+						{billingLoading ? 'Loading billing state…' : managedCreditsHeadline}
 					</p>
 					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 						<span data-testid="licensing-credit-severity">
-							<Badge variant={creditSeverityVariant}>{creditSeverityLabel}</Badge>
+							<Badge variant={creditSeverityVariant}>{managedCreditBadgeLabel}</Badge>
 						</span>
 						<span class="sf:text-xs sf:text-slate-500" data-testid="licensing-reset-summary">
 							{resetInfo.summary}
 						</span>
 					</div>
 					<p class="sf:text-sm sf:text-slate-600" data-testid="licensing-credits-detail">
-						{creditsLoading ? 'Refreshing credit details…' : creditPresentation.detail}
+						{billingLoading ? 'Refreshing billing details…' : managedCreditsDetail}
 					</p>
 
-					{#if creditPresentation.percentage !== null}
+					{#if effectiveCredits && creditPresentation.percentage !== null}
 						<div
 							class="sf:w-full sf:bg-slate-200 sf:rounded-full sf:h-2.5"
 							data-testid="licensing-credit-progress"
@@ -672,23 +697,11 @@
 				</div>
 			</div>
 
-			{#if creditsError}
-				<StateTemplate
-					variant="error"
-					title="Unable to load credit balance"
-					message={creditsError}
-					actionLabel="Retry credits"
-					onAction={() => {
-						void refreshLicenseAndBilling();
-					}}
-					inline
-					testId="licensing-credit-error-state"
-				/>
-			{:else if !creditsLoading && creditPresentation.quotaCta}
+			{#if effectiveCredits && !billingLoading && creditPresentation.quotaCta}
 				<QuotaCtaCallout
 					severity={mapQuotaCalloutSeverity(creditPresentation.severity)}
 					title={resolveQuotaCalloutTitle(creditPresentation.severity)}
-					message={creditPresentation.detail}
+					message={managedCreditsDetail}
 					cta={creditPresentation.quotaCta}
 					onAction={handleQuotaCtaAction}
 					testId="licensing-quota-cta-callout"

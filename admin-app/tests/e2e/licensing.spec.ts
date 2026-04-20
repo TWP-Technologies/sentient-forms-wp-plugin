@@ -14,7 +14,6 @@ test('licensing screen handles activation flow', async ({ page }) => {
 		site_url: 'https://example.test'
 	};
 	let checkoutRequests = 0;
-	let creditBalanceRequests: string[] = [];
 
 	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
@@ -76,23 +75,7 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	});
 
 	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) => {
-		creditBalanceRequests.push(route.request().url());
-		return route.fulfill({
-			status: 200,
-			body: JSON.stringify({
-				success: true,
-				data: {
-					current_balance: 50,
-					ledger_delta: 0,
-					tier: {
-						code: 'free',
-						display_name: 'Free',
-						monthly_credit_quota: 50
-					}
-				}
-			}),
-			headers: { 'content-type': 'application/json' }
-		});
+		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
 	});
 
 	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
@@ -180,7 +163,6 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	);
 	await page.getByRole('button', { name: 'Choose Starter' }).click();
 	await expect.poll(() => checkoutRequests).toBe(1);
-	expect(creditBalanceRequests.some((url) => url.includes('force_refresh=1'))).toBe(true);
 	await expect(page).toHaveURL(/checkout=starter/);
 
 	const deactivateButton = page.getByRole('button', { name: 'Deactivate license' });
@@ -190,7 +172,7 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	await expect(deactivateButton).not.toBeVisible();
 });
 
-test('licensing screen prefers billing-state tier and quota when credit refresh lags', async ({
+test('licensing screen uses billing-state credits without legacy credit refresh', async ({
 	page
 }) => {
 	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
@@ -217,24 +199,9 @@ test('licensing screen prefers billing-state tier and quota when credit refresh 
 		})
 	);
 
-	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
-		route.fulfill({
-			status: 200,
-			body: JSON.stringify({
-				success: true,
-				data: {
-					current_balance: 1500,
-					ledger_delta: 0,
-					tier: {
-						code: 'free',
-						display_name: 'Free',
-						monthly_credit_quota: 50
-					}
-				}
-			}),
-			headers: { 'content-type': 'application/json' }
-		})
-	);
+	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) => {
+		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
+	});
 
 	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
 		route.fulfill({
@@ -324,24 +291,9 @@ test('licensing screen explains the v2 managed billing boundary', async ({ page 
 		})
 	);
 
-	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
-		route.fulfill({
-			status: 200,
-			body: JSON.stringify({
-				success: true,
-				data: {
-					current_balance: 42,
-					ledger_delta: 0,
-					tier: {
-						code: 'free',
-						display_name: 'Free',
-						monthly_credit_quota: 50
-					}
-				}
-			}),
-			headers: { 'content-type': 'application/json' }
-		})
-	);
+	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) => {
+		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
+	});
 
 	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
 		route.fulfill({
@@ -394,16 +346,18 @@ test('licensing screen explains the v2 managed billing boundary', async ({ page 
 						capacity_policy: 'tier_x_quantity_v1'
 					},
 					managed_usage: {
-						site_id: 'site-v2-boundary',
-						total_events: 8,
-						succeeded_events: 7,
-						failed_events: 1,
-						total_input_tokens: 1234,
-						total_output_tokens: 567,
-						total_billed_micro_usd: 12500,
-						free_usage_events: 0,
-						first_event_at: '2030-01-01T00:00:00Z',
-						last_event_at: '2030-01-05T00:00:00Z'
+						execution_count: 8,
+						succeeded_count: 7,
+						failed_count: 1,
+						token_usage: {
+							input_tokens: 1234,
+							output_tokens: 567,
+							total_tokens: 1801
+						},
+						billing: {
+							billed_amount_microusd: 12500,
+							currency: 'USD'
+						}
 					},
 					billing_boundary: {
 						direct_openrouter_billed_by_sentient: false,
@@ -419,7 +373,7 @@ test('licensing screen explains the v2 managed billing boundary', async ({ page 
 
 	await expect(page.getByText('Tier: Pro')).toBeVisible();
 	await expect(page.getByTestId('licensing-credits-headline')).toContainText(
-		'42 / 50 credits remaining'
+		'4,000 monthly managed credits included'
 	);
 	await expect(page.getByText('Subscription status: active')).toBeVisible();
 	await expect(page.getByText('Site capacity: 3 / 10')).toBeVisible();
@@ -462,24 +416,9 @@ test('existing subscriptions use billing portal for plan management', async ({ p
 		})
 	);
 
-	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
-		route.fulfill({
-			status: 200,
-			body: JSON.stringify({
-				success: true,
-				data: {
-					current_balance: 1200,
-					ledger_delta: 0,
-					tier: {
-						code: 'starter',
-						display_name: 'Starter',
-						monthly_credit_quota: 1500
-					}
-				}
-			}),
-			headers: { 'content-type': 'application/json' }
-		})
-	);
+	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) => {
+		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
+	});
 
 	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
 		route.fulfill({
@@ -599,24 +538,9 @@ test('licensing billing error state maps portal failures to actionable copy', as
 		})
 	);
 
-	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
-		route.fulfill({
-			status: 200,
-			body: JSON.stringify({
-				success: true,
-				data: {
-					current_balance: 1500,
-					ledger_delta: 0,
-					tier: {
-						code: 'starter',
-						display_name: 'Starter',
-						monthly_credit_quota: 1500
-					}
-				}
-			}),
-			headers: { 'content-type': 'application/json' }
-		})
-	);
+	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) => {
+		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
+	});
 
 	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
 		route.fulfill({
