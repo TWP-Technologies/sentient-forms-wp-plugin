@@ -892,85 +892,21 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
 
     private function sample_cps_export_bundle( array $overrides = [] ): array
     {
-        return array_merge(
-            [
-                'schema_version'   => Sentient_Forms_Local_Import_Service::SCHEMA_VERSION,
-                'source_version'   => 'cps-dev-export-1',
-                'exported_at'      => '2026-04-19T20:00:00+00:00',
-                'action_templates' => [
-                    [
-                        'external_id'              => 'template-cps-1',
-                        'code'                     => 'remote_spam_triage_v1',
-                        'display_name'             => 'Remote Spam Triage',
-                        'description'              => 'Classifies incoming form entries.',
-                        'prompt_template'          => 'Classify {{entry}}.',
-                        'default_model'            => 'openrouter/auto',
-                        'structured_output_schema' => [
-                            'type' => 'object',
-                        ],
-                        'version'                  => '1.0.0',
-                        'is_active'                => true,
-                    ],
-                ],
-                'custom_actions'   => [
-                    [
-                        'external_id'          => 'custom-cps-1',
-                        'template_code'        => 'remote_spam_triage_v1',
-                        'code'                 => 'remote_contact_spam_triage',
-                        'display_name'         => 'Remote Contact Spam Triage',
-                        'definition_json'      => [
-                            'prompt' => 'Classify contact form entry.',
-                        ],
-                        'model_selection_json' => [
-                            'provider' => 'openrouter',
-                            'model'    => 'openrouter/auto',
-                        ],
-                        'status'               => 'active',
-                    ],
-                ],
-                'form_mappings'    => [
-                    [
-                        'external_id'         => 'mapping-cps-1',
-                        'form_source'         => 'gravity_forms',
-                        'form_id'             => '7',
-                        'hook'                => 'gform_after_submission',
-                        'action_kind'         => 'custom_action',
-                        'action_code'         => 'remote_contact_spam_triage',
-                        'input_bindings_json' => [
-                            'email' => '3',
-                        ],
-                        'conditions_json'     => [
-                            'all' => [],
-                        ],
-                        'effect_mapping_json' => [
-                            'entry_note' => true,
-                        ],
-                        'execution_mode'      => 'async',
-                        'enabled'             => true,
-                    ],
-                ],
-                'execution_events' => [
-                    [
-                        'execution_request_id' => 'remote-request-1',
-                        'mapping_external_id'  => 'mapping-cps-1',
-                        'form_source'          => 'gravity_forms',
-                        'form_id'              => '7',
-                        'entry_id'             => '99',
-                        'provider'             => 'openrouter',
-                        'model'                => 'openrouter/auto',
-                        'status'               => 'succeeded',
-                        'token_usage_json'     => [
-                            'prompt_tokens'     => 25,
-                            'completion_tokens' => 8,
-                        ],
-                    ],
-                ],
-                'settings'         => [
-                    'default_provider' => 'openrouter',
-                ],
-            ],
-            $overrides
-        );
+        $fixture_path = dirname( __DIR__ ) . '/fixtures/cps-export/minimal-local-first-export.json';
+        $fixture      = file_get_contents( $fixture_path );
+
+        if ( false === $fixture )
+        {
+            throw new RuntimeException( 'Unable to read CPS export fixture.' );
+        }
+
+        $bundle = json_decode( $fixture, true );
+        if ( ! is_array( $bundle ) )
+        {
+            throw new RuntimeException( 'CPS export fixture is not valid JSON.' );
+        }
+
+        return array_merge( $bundle, $overrides );
     }
 }
 
