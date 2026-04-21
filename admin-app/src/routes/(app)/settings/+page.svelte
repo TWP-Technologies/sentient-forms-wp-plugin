@@ -29,6 +29,17 @@
 	let executionSaving = $state(false);
 	let executionGlobalDisabled = $state(false);
 	let executionProviderDisabled = $state<Record<string, boolean>>({});
+	let retentionSaving = $state(false);
+	let executionEventRetentionDays = $state(90);
+	let deleteDataOnUninstall = $state(false);
+
+	const retentionOptions = [
+		{ value: 7, label: '7 days' },
+		{ value: 30, label: '30 days' },
+		{ value: 90, label: '90 days' },
+		{ value: 180, label: '180 days' },
+		{ value: 0, label: 'Manual cleanup only' }
+	];
 
 	onMount(() => {
 		telemetry.load();
@@ -69,6 +80,11 @@
 				settings.execution_provider_disabled,
 				formSources
 			);
+			executionEventRetentionDays =
+				typeof settings.execution_event_retention_days === 'number'
+					? settings.execution_event_retention_days
+					: 90;
+			deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
 		} catch {
 			notifications.warning('Failed to load execution control settings');
 		} finally {
@@ -93,6 +109,11 @@
 				settings.execution_provider_disabled,
 				formSources
 			);
+			executionEventRetentionDays =
+				typeof settings.execution_event_retention_days === 'number'
+					? settings.execution_event_retention_days
+					: executionEventRetentionDays;
+			deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
 			notifications.success(
 				executionGlobalDisabled ? 'Global execution paused' : 'Global execution resumed'
 			);
@@ -121,6 +142,11 @@
 				settings.execution_provider_disabled,
 				formSources
 			);
+			executionEventRetentionDays =
+				typeof settings.execution_event_retention_days === 'number'
+					? settings.execution_event_retention_days
+					: executionEventRetentionDays;
+			deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
 			notifications.success(
 				nextDisabled
 					? `Execution paused for ${providerSlug}`
@@ -131,6 +157,30 @@
 			notifications.error('Unable to update provider execution control');
 		} finally {
 			executionSaving = false;
+		}
+	}
+
+	async function saveRetentionSettings(event: SubmitEvent) {
+		event.preventDefault();
+		retentionSaving = true;
+		try {
+			const settings = await client.updateSettings(
+				{
+					execution_event_retention_days: executionEventRetentionDays,
+					delete_data_on_uninstall: deleteDataOnUninstall
+				},
+				{ showNotifications: false }
+			);
+			executionEventRetentionDays =
+				typeof settings.execution_event_retention_days === 'number'
+					? settings.execution_event_retention_days
+					: executionEventRetentionDays;
+			deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
+			notifications.success('Local data retention saved');
+		} catch {
+			notifications.error('Unable to update local data retention');
+		} finally {
+			retentionSaving = false;
 		}
 	}
 
@@ -338,6 +388,60 @@
 			/>
 		{/if}
 	</div>
+
+	<form
+		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"
+		onsubmit={saveRetentionSettings}
+	>
+		<div class="sf:space-y-1">
+			<p class="sf:font-medium sf:text-slate-900">Local data retention</p>
+			<p class="sf:text-sm sf:text-slate-600">
+				Choose how long on-site execution logs stay available for troubleshooting.
+			</p>
+		</div>
+
+		<div class="sf:grid sf:grid-cols-1 sf:gap-4 sf:md:grid-cols-2">
+			<label class="sf:flex sf:flex-col sf:gap-1">
+				<span class="sf:text-sm sf:font-medium sf:text-slate-900">Execution logs</span>
+				<select
+					class="sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
+					bind:value={executionEventRetentionDays}
+					disabled={retentionSaving || executionLoading}
+				>
+					{#each retentionOptions as option}
+						<option value={option.value}>{option.label}</option>
+					{/each}
+				</select>
+			</label>
+
+			<label class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3">
+				<input
+					type="checkbox"
+					class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+					bind:checked={deleteDataOnUninstall}
+					disabled={retentionSaving || executionLoading}
+				/>
+				<span class="sf:space-y-1">
+					<span class="sf:block sf:text-sm sf:font-medium sf:text-slate-900">
+						Delete local data on uninstall
+					</span>
+					<span class="sf:block sf:text-xs sf:text-slate-500">
+						Remove Sentient Forms tables and options when the plugin is uninstalled.
+					</span>
+				</span>
+			</label>
+		</div>
+
+		<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
+			<Button type="submit" disabled={retentionSaving || executionLoading}>
+				{retentionSaving ? 'Saving…' : 'Save retention'}
+			</Button>
+			<p class="sf:text-xs sf:text-slate-500">
+				Manual cleanup only keeps new execution logs until an administrator removes them or changes this
+				setting.
+			</p>
+		</div>
+	</form>
 
 	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4">
 		<div class="sf:space-y-1">

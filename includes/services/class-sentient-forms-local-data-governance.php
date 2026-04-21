@@ -16,6 +16,8 @@ class Sentient_Forms_Local_Data_Governance
     private const OPTION_RETENTION_DAYS = 'sentient_forms_execution_event_retention_days';
     private const OPTION_DELETE_ON_UNINSTALL = 'sentient_forms_delete_data_on_uninstall';
     private const DEFAULT_RETENTION_DAYS = 90;
+    private const MANUAL_RETENTION_DAYS = 0;
+    private const ALLOWED_RETENTION_DAYS = [ 7, 30, 90, 180, self::MANUAL_RETENTION_DAYS ];
 
     /**
      * Register runtime hooks for privacy tools and scheduled cleanup.
@@ -65,7 +67,7 @@ class Sentient_Forms_Local_Data_Governance
      */
     public static function default_execution_event_expires_at(): ?string
     {
-        $days = (int) get_option( self::OPTION_RETENTION_DAYS, self::DEFAULT_RETENTION_DAYS );
+        $days = self::current_execution_event_retention_days();
         $days = (int) apply_filters( 'sentient_forms_execution_event_retention_days', $days );
 
         if ( $days <= 0 )
@@ -74,6 +76,80 @@ class Sentient_Forms_Local_Data_Governance
         }
 
         return gmdate( 'Y-m-d H:i:s', time() + ( $days * DAY_IN_SECONDS ) );
+    }
+
+    /**
+     * Return the supported execution-event retention choices for the admin UI.
+     *
+     * @return array<int, int>
+     */
+    public static function execution_event_retention_choices(): array
+    {
+        return self::ALLOWED_RETENTION_DAYS;
+    }
+
+    /**
+     * Normalize administrator-configurable execution-event retention days.
+     *
+     * @param mixed $value Raw value from REST/options.
+     */
+    public static function sanitize_execution_event_retention_days( mixed $value ): int
+    {
+        if ( ! is_numeric( $value ) )
+        {
+            return self::DEFAULT_RETENTION_DAYS;
+        }
+
+        $days = (int) $value;
+
+        if ( in_array( $days, self::ALLOWED_RETENTION_DAYS, true ) )
+        {
+            return $days;
+        }
+
+        return self::DEFAULT_RETENTION_DAYS;
+    }
+
+    /**
+     * Read the current execution-event retention setting.
+     */
+    public static function current_execution_event_retention_days(): int
+    {
+        return self::sanitize_execution_event_retention_days(
+            get_option( self::OPTION_RETENTION_DAYS, self::DEFAULT_RETENTION_DAYS )
+        );
+    }
+
+    /**
+     * Persist the execution-event retention setting.
+     *
+     * @param mixed $value Raw value from REST/options.
+     */
+    public static function update_execution_event_retention_days( mixed $value ): int
+    {
+        $days = self::sanitize_execution_event_retention_days( $value );
+        update_option( self::OPTION_RETENTION_DAYS, $days );
+
+        return $days;
+    }
+
+    /**
+     * Read whether uninstall should delete local plugin-owned data.
+     */
+    public static function delete_data_on_uninstall_enabled(): bool
+    {
+        return rest_sanitize_boolean( get_option( self::OPTION_DELETE_ON_UNINSTALL, false ) );
+    }
+
+    /**
+     * Persist whether uninstall should delete local plugin-owned data.
+     */
+    public static function update_delete_data_on_uninstall( mixed $value ): bool
+    {
+        $delete_data = rest_sanitize_boolean( $value );
+        update_option( self::OPTION_DELETE_ON_UNINSTALL, $delete_data );
+
+        return $delete_data;
     }
 
     /**

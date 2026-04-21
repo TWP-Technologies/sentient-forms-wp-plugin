@@ -352,7 +352,9 @@ export async function mockResponsiveApi(
 		execution_global_disabled: false,
 		execution_provider_disabled: {
 			[formSourceSlug]: false
-		}
+		},
+		execution_event_retention_days: 90,
+		delete_data_on_uninstall: false
 	};
 
 	let telemetryState: JsonObject = { ...initialTelemetryState };

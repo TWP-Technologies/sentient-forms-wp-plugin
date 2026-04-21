@@ -91,6 +91,31 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertNull( $this->events->get_by_request_id( 'retention-expired-1' ) );
     }
 
+    public function test_execution_event_retention_manual_only_disables_new_expiry(): void
+    {
+        Sentient_Forms_Local_Data_Governance::update_execution_event_retention_days( 0 );
+
+        $this->events->record(
+            [
+                'execution_request_id' => 'retention-manual-only-1',
+                'provider'             => 'openrouter',
+                'status'               => 'succeeded',
+            ]
+        );
+
+        $event = $this->events->get_by_request_id( 'retention-manual-only-1' );
+        $this->assertNull( $event['expires_at'] );
+        $this->assertSame( 0, Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days() );
+    }
+
+    public function test_invalid_retention_option_falls_back_to_default(): void
+    {
+        update_option( 'sentient_forms_execution_event_retention_days', -14 );
+
+        $this->assertSame( 90, Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days() );
+        $this->assertNotEmpty( Sentient_Forms_Local_Data_Governance::default_execution_event_expires_at() );
+    }
+
     public function test_activation_lifecycle_schedules_and_unschedules_retention(): void
     {
         Sentient_Forms_Local_Data_Governance::unschedule_retention_cleanup();

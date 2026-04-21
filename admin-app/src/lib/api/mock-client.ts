@@ -95,7 +95,9 @@ export class MockSentientFormsApiClient {
 	private pluginSettings: PluginSettingsResponse = {
 		enable_logging: true,
 		execution_global_disabled: false,
-		execution_provider_disabled: {}
+		execution_provider_disabled: {},
+		execution_event_retention_days: 90,
+		delete_data_on_uninstall: false
 	};
 
 	private creditBalance: CreditBalanceResponse = {

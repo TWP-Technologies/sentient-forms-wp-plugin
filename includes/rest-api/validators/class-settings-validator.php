@@ -169,4 +169,34 @@ class Sentient_Forms_Settings_Validator
 
         return true;
     }
+
+    /**
+     * Validate administrator-configurable local execution-event retention days.
+     *
+     * @param mixed           $value   The value of the parameter.
+     * @param WP_REST_Request $request The current REST API request object.
+     * @param string          $param   The name of the parameter.
+     *
+     * @return true|WP_Error
+     */
+    public function validate_execution_event_retention_days_param( mixed $value, WP_REST_Request $request, string $param ): true | WP_Error
+    {
+        if ( ! is_numeric( $value ) )
+        {
+            return $this->validation_error(
+                $param,
+                __( 'Must be one of the supported local execution log retention values.', 'sentient-forms' ),
+            );
+        }
+
+        if ( ! in_array( (int) $value, Sentient_Forms_Local_Data_Governance::execution_event_retention_choices(), true ) )
+        {
+            return $this->validation_error(
+                $param,
+                __( 'Must be 7, 30, 90, 180, or 0 for manual cleanup only.', 'sentient-forms' ),
+            );
+        }
+
+        return true;
+    }
 }

@@ -133,8 +133,7 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
      */
     public function get_settings( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $settings = get_option( self::SETTINGS_OPTION_KEY, $this->get_default_settings() );
-        return $this->prepare_item_for_response( $settings );
+        return $this->prepare_item_for_response( $this->get_response_settings() );
     }
 
     /**
@@ -148,13 +147,19 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
     public function update_settings( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
         $params           = $request->get_params();
-        $current_settings = get_option( self::SETTINGS_OPTION_KEY, $this->get_default_settings() );
+        $current_settings = get_option( self::SETTINGS_OPTION_KEY, [] );
+        $current_settings = is_array( $current_settings ) ? $current_settings : [];
         $updated_settings = [];
 
         $endpoint_args = $this->get_endpoint_args_for_item_schema( WP_REST_Server::EDITABLE );
 
         foreach ( $endpoint_args as $key => $details )
         {
+            if ( in_array( $key, $this->get_data_governance_setting_keys(), true ) )
+            {
+                continue;
+            }
+
             if ( array_key_exists( $key, $params ) )
             {
                 // Value is present in the request.
@@ -173,15 +178,30 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
                 $updated_settings[ $key ] = $details[ 'default' ];
             }
         }
-        // Ensure all keys from default settings are present if they weren't updated or in request
-        $updated_settings = array_merge( $this->get_default_settings(), $current_settings, $updated_settings );
+
+        // Ensure all plugin-option keys from default settings are present if they weren't updated or in request.
+        $updated_settings = array_merge( $this->get_default_plugin_settings(), $current_settings, $updated_settings );
+        foreach ( $this->get_data_governance_setting_keys() as $data_governance_key )
+        {
+            unset( $updated_settings[ $data_governance_key ] );
+        }
 
         update_option( self::SETTINGS_OPTION_KEY, $updated_settings );
+
+        if ( array_key_exists( 'execution_event_retention_days', $params ) )
+        {
+            Sentient_Forms_Local_Data_Governance::update_execution_event_retention_days( $params['execution_event_retention_days'] );
+        }
+
+        if ( array_key_exists( 'delete_data_on_uninstall', $params ) )
+        {
+            Sentient_Forms_Local_Data_Governance::update_delete_data_on_uninstall( $params['delete_data_on_uninstall'] );
+        }
 
         $response_data = [
             'success'  => true,
             'message'  => __( 'Settings updated successfully.', 'sentient-forms' ),
-            'settings' => $updated_settings,
+            'settings' => $this->get_response_settings(),
         ];
 
         return $this->prepare_item_for_response( $response_data );
@@ -241,6 +261,23 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
                 'sanitize_callback' => [ $this, 'sanitize_provider_disabled_map' ],
                 'validate_callback' => [ $this->validator, 'validate_provider_disabled_map_param' ],
                 'default'           => [],
+            ];
+            $args[ 'execution_event_retention_days' ] = [
+                'description'       => __( 'Local execution log retention window in days. Use 0 for manual cleanup only.', 'sentient-forms' ),
+                'type'              => 'integer',
+                'required'          => false,
+                'sanitize_callback' => [ Sentient_Forms_Local_Data_Governance::class, 'sanitize_execution_event_retention_days' ],
+                'validate_callback' => [ $this->validator, 'validate_execution_event_retention_days_param' ],
+                'enum'              => Sentient_Forms_Local_Data_Governance::execution_event_retention_choices(),
+                'default'           => Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days(),
+            ];
+            $args[ 'delete_data_on_uninstall' ] = [
+                'description'       => __( 'Delete all plugin-owned local data when Sentient Forms is uninstalled.', 'sentient-forms' ),
+                'type'              => 'boolean',
+                'required'          => false,
+                'sanitize_callback' => 'wp_validate_boolean',
+                'validate_callback' => [ $this->validator, 'validate_boolean_param' ],
+                'default'           => false,
             ];
         }
         return $args;
@@ -330,5 +367,59 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
             }
         }
         return $defaults;
+    }
+
+    /**
+     * Build the full response settings payload across the legacy plugin option and local data-governance options.
+     *
+     * @return array<string, mixed>
+     */
+    private function get_response_settings(): array
+    {
+        $settings = get_option( self::SETTINGS_OPTION_KEY, [] );
+        $settings = is_array( $settings ) ? $settings : [];
+        $settings = array_merge( $this->get_default_plugin_settings(), $settings );
+
+        foreach ( $this->get_data_governance_setting_keys() as $data_governance_key )
+        {
+            unset( $settings[ $data_governance_key ] );
+        }
+
+        return array_merge(
+            $settings,
+            [
+                'execution_event_retention_days' => Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days(),
+                'delete_data_on_uninstall'       => Sentient_Forms_Local_Data_Governance::delete_data_on_uninstall_enabled(),
+            ]
+        );
+    }
+
+    /**
+     * Defaults stored inside the plugin settings option.
+     *
+     * @return array<string, mixed>
+     */
+    private function get_default_plugin_settings(): array
+    {
+        $defaults = $this->get_default_settings();
+        foreach ( $this->get_data_governance_setting_keys() as $data_governance_key )
+        {
+            unset( $defaults[ $data_governance_key ] );
+        }
+
+        return $defaults;
+    }
+
+    /**
+     * Settings owned by local data-governance options instead of the main plugin option.
+     *
+     * @return array<int, string>
+     */
+    private function get_data_governance_setting_keys(): array
+    {
+        return [
+            'execution_event_retention_days',
+            'delete_data_on_uninstall',
+        ];
     }
 }

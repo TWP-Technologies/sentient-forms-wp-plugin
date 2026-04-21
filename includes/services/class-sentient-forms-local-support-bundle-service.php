@@ -41,7 +41,8 @@ class Sentient_Forms_Local_Support_Bundle_Service
             'external_consents'  => $this->consent_summaries(),
             'execution_summary'  => $this->execution_summary(),
             'retention'          => [
-                'event_retention_days' => (int) get_option( 'sentient_forms_execution_event_retention_days', 90 ),
+                'event_retention_days'    => Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days(),
+                'delete_data_on_uninstall' => Sentient_Forms_Local_Data_Governance::delete_data_on_uninstall_enabled(),
             ],
         ];
 

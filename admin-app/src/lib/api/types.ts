@@ -216,6 +216,8 @@ export interface PluginSettingsResponse {
 	enable_logging?: boolean;
 	execution_global_disabled?: boolean;
 	execution_provider_disabled?: Record<string, boolean>;
+	execution_event_retention_days?: number;
+	delete_data_on_uninstall?: boolean;
 }
 
 export type LocalProvider = 'openrouter' | 'sentient_managed' | string;
