@@ -3488,7 +3488,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $classification = $this->extract_spam_classification( $result );
         $excerpt        = $classification ? '' : $this->format_async_result_excerpt( $result );
 
-        $this->update_entry_meta( $entry_id, 'sentient_forms_last_response', wp_json_encode( $result ) );
+        $this->update_entry_meta(
+            $entry_id,
+            'sentient_forms_last_response',
+            wp_json_encode( Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage( $result ) )
+        );
 
         // CA-EXEC-001: Store structured output validity for efficient querying.
         $structured_valid = ! empty( $result['result_data']['structured_output_valid'] );

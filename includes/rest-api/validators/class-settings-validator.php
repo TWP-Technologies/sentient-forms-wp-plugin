@@ -199,4 +199,34 @@ class Sentient_Forms_Settings_Validator
 
         return true;
     }
+
+    /**
+     * Validate the recorded privacy/visibility setup profile.
+     *
+     * @param mixed           $value   The value of the parameter.
+     * @param WP_REST_Request $request The current REST API request object.
+     * @param string          $param   The parameter name.
+     *
+     * @return true|WP_Error
+     */
+    public function validate_privacy_setup_profile_param( mixed $value, WP_REST_Request $request, string $param ): true | WP_Error
+    {
+        if ( ! is_string( $value ) || '' === trim( $value ) )
+        {
+            return $this->validation_error(
+                $param,
+                __( 'Must be one of the supported privacy setup profiles.', 'sentient-forms' ),
+            );
+        }
+
+        if ( ! in_array( sanitize_key( $value ), Sentient_Forms_Local_Data_Governance::privacy_setup_profile_choices(), true ) )
+        {
+            return $this->validation_error(
+                $param,
+                __( 'Must be balanced, privacy_focused, maximum_privacy, or maximum_visibility.', 'sentient-forms' ),
+            );
+        }
+
+        return true;
+    }
 }

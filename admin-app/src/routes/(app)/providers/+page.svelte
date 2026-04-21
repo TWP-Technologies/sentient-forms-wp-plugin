@@ -7,7 +7,7 @@
 		OpenRouterValidateResponse,
 		SentientManagedSetupResponse
 	} from '$lib/api/types';
-	import { Badge, Button, Card, InputField, Section, StateTemplate } from '$lib/components/ui';
+	import { Alert, Badge, Button, Card, InputField, Section, StateTemplate } from '$lib/components/ui';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { licenseState } from '$lib/stores/license';
 	import { notifications } from '$lib/stores/notifications';
@@ -300,44 +300,55 @@
 	{/if}
 
 	<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="providers-openrouter-summary">
-		<div
-			class="sf:flex sf:flex-col sf:gap-4 sf:lg:flex-row sf:lg:items-center sf:lg:justify-between"
-		>
-			<div class="sf:space-y-2">
-				<div class="sf:flex sf:flex-wrap sf:gap-2">
-					<Badge variant={providerStatusVariant(primaryOpenRouterCredential?.status ?? 'missing')}>
-						{providerStatusLabel(primaryOpenRouterCredential?.status ?? 'missing')}
-					</Badge>
-					<Badge variant="info">Local credential storage</Badge>
+		<div class="sf:space-y-4">
+			<div
+				class="sf:flex sf:flex-col sf:gap-4 sf:lg:flex-row sf:lg:items-center sf:lg:justify-between"
+			>
+				<div class="sf:space-y-2">
+					<div class="sf:flex sf:flex-wrap sf:gap-2">
+						<Badge variant={providerStatusVariant(primaryOpenRouterCredential?.status ?? 'missing')}>
+							{providerStatusLabel(primaryOpenRouterCredential?.status ?? 'missing')}
+						</Badge>
+						<Badge variant="info">Local credential storage</Badge>
+					</div>
+					<h3 class="sf:text-xl sf:font-semibold sf:text-slate-900">
+						{primaryOpenRouterCredential?.label ?? 'OpenRouter direct'}
+					</h3>
+					<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
+						OpenRouter receives the prompts and form fields needed for direct model calls. Sentient
+						does not receive those direct-call payloads.
+					</p>
 				</div>
-				<h3 class="sf:text-xl sf:font-semibold sf:text-slate-900">
-					{primaryOpenRouterCredential?.label ?? 'OpenRouter direct'}
-				</h3>
-				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
-					OpenRouter receives the prompts and form fields needed for direct model calls. Sentient
-					does not receive those direct-call payloads.
+				<div class="sf:flex sf:gap-6">
+					<div>
+						<p class="sf:text-xs sf:font-medium sf:text-slate-500">Saved keys</p>
+						<p
+							class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+							data-testid="providers-openrouter-count"
+						>
+							{openRouterCredentials.length}
+						</p>
+					</div>
+					<div>
+						<p class="sf:text-xs sf:font-medium sf:text-slate-500">Ready keys</p>
+						<p
+							class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+							data-testid="providers-openrouter-ready-count"
+						>
+							{readyCredentialCount}
+						</p>
+					</div>
+				</div>
+			</div>
+
+			<Alert variant="warning">
+				<p class="sf:font-semibold">Privacy depends on the route you choose</p>
+				<p class="sf:mt-1">
+					OpenRouter Zero Data Retention is only available on supported routes and upstream providers.
+					Many free routes have different retention or training policies, so review the provider privacy
+					posture before using them on sensitive forms.
 				</p>
-			</div>
-			<div class="sf:flex sf:gap-6">
-				<div>
-					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Saved keys</p>
-					<p
-						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
-						data-testid="providers-openrouter-count"
-					>
-						{openRouterCredentials.length}
-					</p>
-				</div>
-				<div>
-					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Ready keys</p>
-					<p
-						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
-						data-testid="providers-openrouter-ready-count"
-					>
-						{readyCredentialCount}
-					</p>
-				</div>
-			</div>
+			</Alert>
 		</div>
 	</Card>
 

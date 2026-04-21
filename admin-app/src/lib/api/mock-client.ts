@@ -97,7 +97,10 @@ export class MockSentientFormsApiClient {
 		execution_global_disabled: false,
 		execution_provider_disabled: {},
 		execution_event_retention_days: 90,
-		delete_data_on_uninstall: false
+		delete_data_on_uninstall: true,
+		store_full_ai_outputs: false,
+		privacy_setup_profile: 'balanced',
+		privacy_setup_completed_at: '2030-01-05T10:00:00Z'
 	};
 
 	private creditBalance: CreditBalanceResponse = {

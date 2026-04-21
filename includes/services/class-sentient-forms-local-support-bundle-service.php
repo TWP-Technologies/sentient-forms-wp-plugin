@@ -43,6 +43,9 @@ class Sentient_Forms_Local_Support_Bundle_Service
             'retention'          => [
                 'event_retention_days'    => Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days(),
                 'delete_data_on_uninstall' => Sentient_Forms_Local_Data_Governance::delete_data_on_uninstall_enabled(),
+                'store_full_ai_outputs'   => Sentient_Forms_Local_Data_Governance::store_full_ai_outputs_enabled(),
+                'privacy_setup_profile'   => Sentient_Forms_Local_Data_Governance::current_privacy_setup_profile(),
+                'privacy_setup_completed_at' => Sentient_Forms_Local_Data_Governance::privacy_setup_completed_at(),
             ],
         ];
 

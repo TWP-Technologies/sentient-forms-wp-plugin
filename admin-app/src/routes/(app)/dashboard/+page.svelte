@@ -121,6 +121,22 @@
 
 	onMount(() => {
 		void loadDashboardData();
+
+		function handleSettingsUpdated(): void {
+			void loadDashboardData();
+		}
+
+		window.addEventListener(
+			'sentient-forms:settings-updated',
+			handleSettingsUpdated as EventListener
+		);
+
+		return () => {
+			window.removeEventListener(
+				'sentient-forms:settings-updated',
+				handleSettingsUpdated as EventListener
+			);
+		};
 	});
 </script>
 

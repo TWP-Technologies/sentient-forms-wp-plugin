@@ -20,6 +20,9 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
     {
         delete_option( 'sentient_forms_execution_event_retention_days' );
         delete_option( 'sentient_forms_delete_data_on_uninstall' );
+        delete_option( 'sentient_forms_store_full_ai_outputs' );
+        delete_option( 'sentient_forms_privacy_setup_profile' );
+        delete_option( 'sentient_forms_privacy_setup_completed_at' );
         Sentient_Forms_Installer::maybe_upgrade();
 
         parent::tearDown();
@@ -150,7 +153,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertSame( [ 'created_at', 'id' ], $this->execution_event_index_columns( $table, 'created_id_idx' ) );
     }
 
-    public function test_uninstall_preserves_data_by_default_and_deletes_when_configured(): void
+    public function test_uninstall_deletes_data_by_default_and_can_be_disabled(): void
     {
         $table = $this->wpdb->prefix . 'sentient_execution_events';
 
@@ -175,6 +178,49 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
             add_filter( 'query', [ $this, '_create_temporary_tables' ] );
             add_filter( 'query', [ $this, '_drop_temporary_tables' ] );
         }
+    }
+
+    public function test_sanitize_execution_result_for_storage_strips_full_output_by_default(): void
+    {
+        $result = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage(
+            [
+                'content'                => 'Full AI reply that should not persist by default.',
+                'structured'             => [
+                    'classification' => 'spam',
+                    'summary'        => 'Derived spam summary.',
+                ],
+                'usage'                  => [ 'prompt_tokens' => 10 ],
+                'structured_output_valid' => true,
+            ]
+        );
+
+        $this->assertArrayNotHasKey( 'content', $result );
+        $this->assertSame( 'Derived spam summary.', $result['result_summary'] );
+        $this->assertSame( 'spam', $result['structured']['classification'] );
+    }
+
+    public function test_sanitize_execution_result_for_storage_keeps_full_output_when_enabled(): void
+    {
+        update_option( 'sentient_forms_store_full_ai_outputs', true );
+
+        $result = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage(
+            [
+                'content' => 'Full AI reply that should persist when enabled.',
+            ]
+        );
+
+        $this->assertSame( 'Full AI reply that should persist when enabled.', $result['content'] );
+    }
+
+    public function test_apply_privacy_preset_updates_defaults_and_marks_completion(): void
+    {
+        $applied = Sentient_Forms_Local_Data_Governance::apply_privacy_preset( 'maximum_privacy' );
+
+        $this->assertSame( 'maximum_privacy', $applied['privacy_setup_profile'] );
+        $this->assertSame( 7, $applied['execution_event_retention_days'] );
+        $this->assertTrue( $applied['delete_data_on_uninstall'] );
+        $this->assertFalse( $applied['store_full_ai_outputs'] );
+        $this->assertNotNull( $applied['privacy_setup_completed_at'] );
     }
 
     public function test_support_bundle_omits_secrets_results_and_error_messages(): void

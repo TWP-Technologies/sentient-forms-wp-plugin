@@ -218,6 +218,9 @@ export interface PluginSettingsResponse {
 	execution_provider_disabled?: Record<string, boolean>;
 	execution_event_retention_days?: number;
 	delete_data_on_uninstall?: boolean;
+	store_full_ai_outputs?: boolean;
+	privacy_setup_profile?: 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility' | string;
+	privacy_setup_completed_at?: string | null;
 }
 
 export type LocalProvider = 'openrouter' | 'sentient_managed' | string;

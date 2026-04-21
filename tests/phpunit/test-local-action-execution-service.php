@@ -182,9 +182,35 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( '99', $event['entry_id'] );
         $this->assertSame( 8, $event['token_usage_json']['prompt_tokens'] );
         $this->assertSame( 5, $event['token_usage_json']['completion_tokens'] );
-        $this->assertSame( 'Contact looks legitimate.', $event['result_json']['content'] );
+        $this->assertArrayNotHasKey( 'content', $event['result_json'] );
+        $this->assertSame( 'Contact looks legitimate.', $event['result_json']['result_summary'] );
         $this->assertNotEmpty( $event['payload_digest'] );
         $this->assertStringNotContainsString( $fixture['secret'], wp_json_encode( $event ) );
+    }
+
+    public function test_executes_local_mapping_and_persists_full_output_when_enabled(): void
+    {
+        update_option( 'sentient_forms_store_full_ai_outputs', true );
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $event = $this->events->get_by_request_id( $result['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'Contact looks legitimate.', $event['result_json']['content'] );
     }
 
     public function test_executes_sentient_managed_mapping_with_proxy_key_and_records_success(): void
@@ -316,7 +342,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertFalse( $first['cached'] );
         $this->assertTrue( $second['cached'] );
         $this->assertSame( $first['execution_request_id'], $second['execution_request_id'] );
-        $this->assertSame( 'Contact looks legitimate.', $second['result']['content'] );
+        $this->assertSame( 'Contact looks legitimate.', $second['result']['result_summary'] );
         $this->assertCount( 1, $client->chat_calls );
     }
 

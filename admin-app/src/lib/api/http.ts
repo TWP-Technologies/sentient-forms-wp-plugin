@@ -52,6 +52,10 @@ export interface SentientFormsConfig {
         recent_failures: Record<string, number>;
         warnings: Array<{ code: string; level: string; message: string }>;
     };
+    currentUser?: {
+        id: number;
+        canManage: boolean;
+    };
 }
 
 declare global {

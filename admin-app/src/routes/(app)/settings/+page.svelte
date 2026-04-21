@@ -8,8 +8,8 @@
 	import { loggingStore } from '$lib/stores/logging.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
-	import { Button, StateTemplate } from '$lib/components/ui';
-	import type { FormSourceSummary } from '$lib/api/types';
+	import { Alert, Badge, Button, StateTemplate } from '$lib/components/ui';
+	import type { FormSourceSummary, PluginSettingsResponse } from '$lib/api/types';
 
 	const telemetry = telemetryStore;
 	const asyncSettings = asyncSettingsStore;
@@ -31,7 +31,19 @@
 	let executionProviderDisabled = $state<Record<string, boolean>>({});
 	let retentionSaving = $state(false);
 	let executionEventRetentionDays = $state(90);
-	let deleteDataOnUninstall = $state(false);
+	let deleteDataOnUninstall = $state(true);
+	let storeFullAiOutputs = $state(false);
+	let privacySetupProfile = $state<NonNullable<PluginSettingsResponse['privacy_setup_profile']>>(
+		'balanced'
+	);
+	let privacySetupCompletedAt = $state<string | null>(null);
+
+	const privacyProfileLabels: Record<string, string> = {
+		balanced: 'Balanced',
+		privacy_focused: 'Privacy focused',
+		maximum_privacy: 'Maximum privacy',
+		maximum_visibility: 'Maximum visibility'
+	};
 
 	const retentionOptions = [
 		{ value: 7, label: '7 days' },
@@ -47,7 +59,43 @@
 		asyncHealth.refresh();
 		logging.load();
 		loadExecutionSettings();
+
+		const handleSettingsUpdate = (event: Event) => {
+			const customEvent = event as CustomEvent<PluginSettingsResponse>;
+			if (!customEvent.detail || typeof customEvent.detail !== 'object') return;
+			syncGovernanceSettings(customEvent.detail);
+			void logging.load();
+		};
+
+		window.addEventListener('sentient-forms:settings-updated', handleSettingsUpdate as EventListener);
+
+		return () => {
+			window.removeEventListener(
+				'sentient-forms:settings-updated',
+				handleSettingsUpdate as EventListener
+			);
+		};
 	});
+
+	function syncGovernanceSettings(settings: PluginSettingsResponse): void {
+		executionGlobalDisabled = Boolean(settings.execution_global_disabled);
+		executionProviderDisabled = normalizeProviderDisabledMap(
+			settings.execution_provider_disabled,
+			formSources
+		);
+		executionEventRetentionDays =
+			typeof settings.execution_event_retention_days === 'number'
+				? settings.execution_event_retention_days
+				: 90;
+		deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
+		storeFullAiOutputs = Boolean(settings.store_full_ai_outputs);
+		privacySetupProfile = (settings.privacy_setup_profile ??
+			'balanced') as NonNullable<PluginSettingsResponse['privacy_setup_profile']>;
+		privacySetupCompletedAt =
+			typeof settings.privacy_setup_completed_at === 'string'
+				? settings.privacy_setup_completed_at
+				: null;
+	}
 
 	function normalizeProviderDisabledMap(
 		value: unknown,
@@ -75,16 +123,7 @@
 		executionLoading = true;
 		try {
 			const settings = await client.getSettings({ showNotifications: false });
-			executionGlobalDisabled = Boolean(settings.execution_global_disabled);
-			executionProviderDisabled = normalizeProviderDisabledMap(
-				settings.execution_provider_disabled,
-				formSources
-			);
-			executionEventRetentionDays =
-				typeof settings.execution_event_retention_days === 'number'
-					? settings.execution_event_retention_days
-					: 90;
-			deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
+			syncGovernanceSettings(settings);
 		} catch {
 			notifications.warning('Failed to load execution control settings');
 		} finally {
@@ -104,16 +143,7 @@
 				},
 				{ showNotifications: false }
 			);
-			executionGlobalDisabled = Boolean(settings.execution_global_disabled);
-			executionProviderDisabled = normalizeProviderDisabledMap(
-				settings.execution_provider_disabled,
-				formSources
-			);
-			executionEventRetentionDays =
-				typeof settings.execution_event_retention_days === 'number'
-					? settings.execution_event_retention_days
-					: executionEventRetentionDays;
-			deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
+			syncGovernanceSettings(settings);
 			notifications.success(
 				executionGlobalDisabled ? 'Global execution paused' : 'Global execution resumed'
 			);
@@ -137,16 +167,7 @@
 				},
 				{ showNotifications: false }
 			);
-			executionGlobalDisabled = Boolean(settings.execution_global_disabled);
-			executionProviderDisabled = normalizeProviderDisabledMap(
-				settings.execution_provider_disabled,
-				formSources
-			);
-			executionEventRetentionDays =
-				typeof settings.execution_event_retention_days === 'number'
-					? settings.execution_event_retention_days
-					: executionEventRetentionDays;
-			deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
+			syncGovernanceSettings(settings);
 			notifications.success(
 				nextDisabled
 					? `Execution paused for ${providerSlug}`
@@ -167,15 +188,12 @@
 			const settings = await client.updateSettings(
 				{
 					execution_event_retention_days: executionEventRetentionDays,
-					delete_data_on_uninstall: deleteDataOnUninstall
+					delete_data_on_uninstall: deleteDataOnUninstall,
+					store_full_ai_outputs: storeFullAiOutputs
 				},
 				{ showNotifications: false }
 			);
-			executionEventRetentionDays =
-				typeof settings.execution_event_retention_days === 'number'
-					? settings.execution_event_retention_days
-					: executionEventRetentionDays;
-			deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
+			syncGovernanceSettings(settings);
 			notifications.success('Local data retention saved');
 		} catch {
 			notifications.error('Unable to update local data retention');
@@ -251,15 +269,87 @@
 		}
 		return 'Background processing settings are temporarily unavailable.';
 	}
+
+	function openPrivacySetupAssistant(): void {
+		window.dispatchEvent(new CustomEvent('sentient-forms:open-privacy-setup'));
+	}
 </script>
 
 <section class="sf:min-w-0 sf:space-y-6 sf:max-w-3xl">
 	<header class="sf:space-y-2">
 		<h1 class="sf:text-2xl sf:font-semibold sf:text-slate-900">Privacy &amp; Local Processing</h1>
 		<p class="sf:text-slate-600 sf:text-sm">
-			Control telemetry consent and tune the on-site processing queue for Sentient Forms.
+			Choose how much Sentient Forms keeps locally, how much visibility you want while tuning
+			actions, and how the plugin should behave when it is removed.
 		</p>
 	</header>
+
+	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4">
+		<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:lg:flex-row sf:lg:items-center">
+			<div class="sf:space-y-2">
+				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+					<p class="sf:text-base sf:font-semibold sf:text-slate-900">Privacy &amp; visibility profile</p>
+					<Badge variant={privacySetupProfile === 'maximum_visibility' ? 'warning' : 'info'}>
+						{privacyProfileLabels[privacySetupProfile] ?? 'Balanced'}
+					</Badge>
+					{#if privacySetupCompletedAt}
+						<Badge variant="neutral">Setup saved</Badge>
+					{:else}
+						<Badge variant="warning">Setup still needs review</Badge>
+					{/if}
+				</div>
+				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
+					Start with a preset when you want the plugin to feel obvious instead of technical. The
+					assistant changes retention, uninstall cleanup, local logging, and whether full AI
+					outputs are kept.
+				</p>
+			</div>
+			<Button type="button" variant="secondary" onclick={openPrivacySetupAssistant}>
+				{privacySetupCompletedAt ? 'Reopen setup assistant' : 'Finish guided setup'}
+			</Button>
+		</div>
+
+		<div class="sf:grid sf:gap-3 sf:sm:grid-cols-2 sf:xl:grid-cols-4">
+			<div
+				class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
+				data-testid="settings-profile-execution-history"
+			>
+				<p class="sf:text-xs sf:font-medium sf:text-slate-500">Execution history</p>
+				<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+					{executionEventRetentionDays === 0
+						? 'Manual cleanup only'
+						: `${executionEventRetentionDays} days`}
+				</p>
+			</div>
+			<div
+				class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
+				data-testid="settings-profile-full-outputs"
+			>
+				<p class="sf:text-xs sf:font-medium sf:text-slate-500">Full AI outputs</p>
+				<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+					{storeFullAiOutputs ? 'Stored locally' : 'Not stored by default'}
+				</p>
+			</div>
+			<div
+				class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
+				data-testid="settings-profile-uninstall"
+			>
+				<p class="sf:text-xs sf:font-medium sf:text-slate-500">Uninstall behavior</p>
+				<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+					{deleteDataOnUninstall ? 'Deletes plugin data' : 'Keeps plugin data'}
+				</p>
+			</div>
+			<div
+				class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
+				data-testid="settings-profile-diagnostics"
+			>
+				<p class="sf:text-xs sf:font-medium sf:text-slate-500">Local diagnostics</p>
+				<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+					{$logging.enabled ? 'On-site logging enabled' : 'On-site logging disabled'}
+				</p>
+			</div>
+		</div>
+	</div>
 
 	{#if $asyncHealth.warnings.length}
 		<div class="sf:rounded-xl sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4 sf:space-y-2">
@@ -396,7 +486,8 @@
 		<div class="sf:space-y-1">
 			<p class="sf:font-medium sf:text-slate-900">Local data retention</p>
 			<p class="sf:text-sm sf:text-slate-600">
-				Choose how long on-site execution logs stay available for troubleshooting.
+				Choose how long local execution history stays available and whether Sentient Forms should
+				keep full AI responses for inspection.
 			</p>
 		</div>
 
@@ -418,6 +509,25 @@
 				<input
 					type="checkbox"
 					class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+					bind:checked={storeFullAiOutputs}
+					disabled={retentionSaving || executionLoading}
+					data-testid="settings-store-full-ai-outputs"
+				/>
+				<span class="sf:space-y-1">
+					<span class="sf:block sf:text-sm sf:font-medium sf:text-slate-900">
+						Store full AI outputs locally
+					</span>
+					<span class="sf:block sf:text-xs sf:text-slate-500">
+						Off is the safer default. Turn this on when you need to inspect full model replies while
+						building or debugging actions.
+					</span>
+				</span>
+			</label>
+
+			<label class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3 sf:md:col-span-2">
+				<input
+					type="checkbox"
+					class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 					bind:checked={deleteDataOnUninstall}
 					disabled={retentionSaving || executionLoading}
 				/>
@@ -431,6 +541,26 @@
 				</span>
 			</label>
 		</div>
+
+		<Alert variant={storeFullAiOutputs ? 'warning' : 'info'}>
+			<p class="sf:font-semibold">
+				{storeFullAiOutputs ? 'Full replies will be stored locally' : 'Only derived action results are stored'}
+			</p>
+			<p class="sf:mt-1">
+				{storeFullAiOutputs
+					? 'Useful for tuning prompts and proving how an action behaved, but it keeps more model output on the site.'
+					: 'Recommended for routine production use. Structured classifications, summaries, and action effects still remain available for review.'}
+			</p>
+		</Alert>
+
+		<Alert variant="info">
+			<p class="sf:font-semibold">High-sensitivity secret option</p>
+			<p class="sf:mt-1">
+				The default vault encrypts saved provider keys locally. If your site has stricter operational
+				controls, switch to a WordPress constant or environment variable instead of storing the key in
+				the database.
+			</p>
+		</Alert>
 
 		<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
 			<Button type="submit" disabled={retentionSaving || executionLoading}>

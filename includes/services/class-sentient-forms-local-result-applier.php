@@ -73,8 +73,10 @@ class Sentient_Forms_Local_Result_Applier
         {
             if ( function_exists( 'gform_update_meta' ) )
             {
-                gform_update_meta( $entry_id, 'sentient_forms_last_response', wp_json_encode( $execution_result ) );
-                gform_update_meta( $entry_id, '_sentient_forms_local_result', $result );
+                $stored_execution_result = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage( $execution_result );
+                $stored_result           = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result );
+                gform_update_meta( $entry_id, 'sentient_forms_last_response', wp_json_encode( $stored_execution_result ) );
+                gform_update_meta( $entry_id, '_sentient_forms_local_result', $stored_result );
                 $applied[] = 'store_result';
             }
             else

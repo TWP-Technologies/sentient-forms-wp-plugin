@@ -15,9 +15,16 @@ class Sentient_Forms_Local_Data_Governance
 
     private const OPTION_RETENTION_DAYS = 'sentient_forms_execution_event_retention_days';
     private const OPTION_DELETE_ON_UNINSTALL = 'sentient_forms_delete_data_on_uninstall';
+    private const OPTION_STORE_FULL_AI_OUTPUTS = 'sentient_forms_store_full_ai_outputs';
+    private const OPTION_PRIVACY_SETUP_PROFILE = 'sentient_forms_privacy_setup_profile';
+    private const OPTION_PRIVACY_SETUP_COMPLETED_AT = 'sentient_forms_privacy_setup_completed_at';
     private const DEFAULT_RETENTION_DAYS = 90;
+    private const DEFAULT_DELETE_ON_UNINSTALL = true;
+    private const DEFAULT_STORE_FULL_AI_OUTPUTS = false;
+    private const DEFAULT_PRIVACY_SETUP_PROFILE = 'balanced';
     private const MANUAL_RETENTION_DAYS = 0;
     private const ALLOWED_RETENTION_DAYS = [ 7, 30, 90, 180, self::MANUAL_RETENTION_DAYS ];
+    private const ALLOWED_PRIVACY_SETUP_PROFILES = [ 'balanced', 'privacy_focused', 'maximum_privacy', 'maximum_visibility' ];
 
     /**
      * Register runtime hooks for privacy tools and scheduled cleanup.
@@ -138,7 +145,7 @@ class Sentient_Forms_Local_Data_Governance
      */
     public static function delete_data_on_uninstall_enabled(): bool
     {
-        return rest_sanitize_boolean( get_option( self::OPTION_DELETE_ON_UNINSTALL, false ) );
+        return rest_sanitize_boolean( get_option( self::OPTION_DELETE_ON_UNINSTALL, self::DEFAULT_DELETE_ON_UNINSTALL ) );
     }
 
     /**
@@ -150,6 +157,270 @@ class Sentient_Forms_Local_Data_Governance
         update_option( self::OPTION_DELETE_ON_UNINSTALL, $delete_data );
 
         return $delete_data;
+    }
+
+    /**
+     * Read whether full AI outputs may be persisted locally.
+     */
+    public static function store_full_ai_outputs_enabled(): bool
+    {
+        return rest_sanitize_boolean( get_option( self::OPTION_STORE_FULL_AI_OUTPUTS, self::DEFAULT_STORE_FULL_AI_OUTPUTS ) );
+    }
+
+    /**
+     * Persist whether full AI outputs may be stored locally.
+     */
+    public static function update_store_full_ai_outputs( mixed $value ): bool
+    {
+        $enabled = rest_sanitize_boolean( $value );
+        update_option( self::OPTION_STORE_FULL_AI_OUTPUTS, $enabled );
+
+        return $enabled;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public static function privacy_setup_profile_choices(): array
+    {
+        return self::ALLOWED_PRIVACY_SETUP_PROFILES;
+    }
+
+    /**
+     * Normalize the recorded privacy setup profile.
+     */
+    public static function sanitize_privacy_setup_profile( mixed $value ): string
+    {
+        $profile = sanitize_key( (string) $value );
+        if ( in_array( $profile, self::ALLOWED_PRIVACY_SETUP_PROFILES, true ) )
+        {
+            return $profile;
+        }
+
+        return self::DEFAULT_PRIVACY_SETUP_PROFILE;
+    }
+
+    /**
+     * Read the currently recorded privacy/visibility profile.
+     */
+    public static function current_privacy_setup_profile(): string
+    {
+        return self::sanitize_privacy_setup_profile(
+            get_option( self::OPTION_PRIVACY_SETUP_PROFILE, self::DEFAULT_PRIVACY_SETUP_PROFILE )
+        );
+    }
+
+    /**
+     * Persist the selected privacy/visibility profile.
+     */
+    public static function update_privacy_setup_profile( mixed $value ): string
+    {
+        $profile = self::sanitize_privacy_setup_profile( $value );
+        update_option( self::OPTION_PRIVACY_SETUP_PROFILE, $profile );
+
+        return $profile;
+    }
+
+    /**
+     * Read the completion timestamp for the first-run privacy setup assistant.
+     */
+    public static function privacy_setup_completed_at(): ?string
+    {
+        $completed_at = get_option( self::OPTION_PRIVACY_SETUP_COMPLETED_AT, null );
+        if ( ! is_string( $completed_at ) )
+        {
+            return null;
+        }
+
+        $completed_at = trim( $completed_at );
+        return '' !== $completed_at ? $completed_at : null;
+    }
+
+    /**
+     * Persist the completion timestamp for the first-run privacy setup assistant.
+     */
+    public static function update_privacy_setup_completed_at( mixed $value = null ): ?string
+    {
+        $completed_at = is_scalar( $value ) ? trim( (string) $value ) : '';
+        if ( '' === $completed_at )
+        {
+            $completed_at = gmdate( 'c' );
+        }
+
+        update_option( self::OPTION_PRIVACY_SETUP_COMPLETED_AT, $completed_at );
+        return $completed_at;
+    }
+
+    /**
+     * Clear the completion timestamp so the assistant can be shown again.
+     */
+    public static function clear_privacy_setup_completed_at(): void
+    {
+        delete_option( self::OPTION_PRIVACY_SETUP_COMPLETED_AT );
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    public static function privacy_preset_definitions(): array
+    {
+        return [
+            'balanced' => [
+                'label'                     => __( 'Balanced', 'sentient-forms' ),
+                'description'               => __( 'Keeps practical troubleshooting without storing full AI responses by default.', 'sentient-forms' ),
+                'execution_event_retention_days' => 90,
+                'delete_data_on_uninstall'  => true,
+                'store_full_ai_outputs'     => false,
+                'enable_logging'            => false,
+            ],
+            'privacy_focused' => [
+                'label'                     => __( 'Privacy focused', 'sentient-forms' ),
+                'description'               => __( 'Shorter retention and reduced local visibility for routine production sites.', 'sentient-forms' ),
+                'execution_event_retention_days' => 30,
+                'delete_data_on_uninstall'  => true,
+                'store_full_ai_outputs'     => false,
+                'enable_logging'            => false,
+            ],
+            'maximum_privacy' => [
+                'label'                     => __( 'Maximum privacy', 'sentient-forms' ),
+                'description'               => __( 'Minimizes what Sentient Forms keeps locally after an action runs.', 'sentient-forms' ),
+                'execution_event_retention_days' => 7,
+                'delete_data_on_uninstall'  => true,
+                'store_full_ai_outputs'     => false,
+                'enable_logging'            => false,
+            ],
+            'maximum_visibility' => [
+                'label'                     => __( 'Maximum visibility', 'sentient-forms' ),
+                'description'               => __( 'Keeps more local diagnostics for setup, tuning, and troubleshooting.', 'sentient-forms' ),
+                'execution_event_retention_days' => 180,
+                'delete_data_on_uninstall'  => true,
+                'store_full_ai_outputs'     => true,
+                'enable_logging'            => true,
+            ],
+        ];
+    }
+
+    /**
+     * Apply one of the supported privacy/visibility presets and mark the assistant complete.
+     *
+     * @return array<string, mixed>
+     */
+    public static function apply_privacy_preset( mixed $profile ): array
+    {
+        $profile = self::sanitize_privacy_setup_profile( $profile );
+        $preset  = self::privacy_preset_definitions()[ $profile ];
+
+        self::update_privacy_setup_profile( $profile );
+        self::update_execution_event_retention_days( $preset['execution_event_retention_days'] );
+        self::update_delete_data_on_uninstall( $preset['delete_data_on_uninstall'] );
+        self::update_store_full_ai_outputs( $preset['store_full_ai_outputs'] );
+        self::update_privacy_setup_completed_at();
+
+        return [
+            'privacy_setup_profile'      => $profile,
+            'privacy_setup_completed_at' => self::privacy_setup_completed_at(),
+            'execution_event_retention_days' => self::current_execution_event_retention_days(),
+            'delete_data_on_uninstall'   => self::delete_data_on_uninstall_enabled(),
+            'store_full_ai_outputs'      => self::store_full_ai_outputs_enabled(),
+            'enable_logging'             => rest_sanitize_boolean( $preset['enable_logging'] ),
+        ];
+    }
+
+    /**
+     * Strip raw full-output content from stored execution payloads unless the webmaster opted in.
+     *
+     * @param array<string, mixed> $result Raw execution result payload.
+     * @return array<string, mixed>
+     */
+    public static function sanitize_execution_result_for_storage( array $result ): array
+    {
+        if ( self::store_full_ai_outputs_enabled() )
+        {
+            return $result;
+        }
+
+        $filtered = [];
+        foreach ( [ 'provider_response_id', 'model', 'finish_reason', 'usage', 'metering', 'effects', 'structured_output_valid', 'structured_output_schema_source' ] as $key )
+        {
+            if ( array_key_exists( $key, $result ) )
+            {
+                $filtered[ $key ] = $result[ $key ];
+            }
+        }
+
+        if ( is_array( $result['structured'] ?? null ) )
+        {
+            $filtered['structured'] = $result['structured'];
+        }
+
+        foreach ( [ 'classification', 'confidence', 'summary', 'justification', 'reasoning' ] as $key )
+        {
+            if ( array_key_exists( $key, $result ) )
+            {
+                $filtered[ $key ] = $result[ $key ];
+            }
+        }
+
+        $summary = self::derive_result_summary( $result );
+        if ( '' !== $summary )
+        {
+            $filtered['result_summary'] = $summary;
+        }
+
+        return $filtered;
+    }
+
+    /**
+     * Strip raw full-output content from higher-level execution payloads before local persistence.
+     *
+     * @param array<string, mixed> $payload Raw execution payload.
+     * @return array<string, mixed>
+     */
+    public static function sanitize_execution_payload_for_storage( array $payload ): array
+    {
+        if ( self::store_full_ai_outputs_enabled() )
+        {
+            return $payload;
+        }
+
+        $filtered = $payload;
+
+        if ( is_array( $filtered['result'] ?? null ) )
+        {
+            $filtered['result'] = self::sanitize_execution_result_for_storage( $filtered['result'] );
+        }
+
+        if ( is_array( $filtered['result_data'] ?? null ) )
+        {
+            $filtered['result_data'] = self::sanitize_legacy_result_data_for_storage( $filtered['result_data'] );
+        }
+
+        if ( is_array( $filtered['structured_output'] ?? null ) )
+        {
+            $filtered['structured_output'] = $filtered['structured_output'];
+        }
+
+        if ( isset( $filtered['llm_output'] ) )
+        {
+            $summary = self::derive_result_summary( [ 'content' => $filtered['llm_output'] ] );
+            unset( $filtered['llm_output'] );
+            if ( '' !== $summary && empty( $filtered['result_summary'] ) )
+            {
+                $filtered['result_summary'] = $summary;
+            }
+        }
+
+        if ( isset( $filtered['content'] ) )
+        {
+            $summary = self::derive_result_summary( [ 'content' => $filtered['content'] ] );
+            unset( $filtered['content'] );
+            if ( '' !== $summary && empty( $filtered['result_summary'] ) )
+            {
+                $filtered['result_summary'] = $summary;
+            }
+        }
+
+        return $filtered;
     }
 
     /**
@@ -320,7 +591,7 @@ class Sentient_Forms_Local_Data_Governance
     {
         self::unschedule_retention_cleanup();
 
-        $delete_data = (bool) get_option( self::OPTION_DELETE_ON_UNINSTALL, false );
+        $delete_data = (bool) get_option( self::OPTION_DELETE_ON_UNINSTALL, self::DEFAULT_DELETE_ON_UNINSTALL );
         $delete_data = (bool) apply_filters( 'sentient_forms_delete_data_on_uninstall', $delete_data );
 
         if ( ! $delete_data )
@@ -339,6 +610,9 @@ class Sentient_Forms_Local_Data_Governance
         delete_option( 'sentient_forms_db_version' );
         delete_option( self::OPTION_RETENTION_DAYS );
         delete_option( self::OPTION_DELETE_ON_UNINSTALL );
+        delete_option( self::OPTION_STORE_FULL_AI_OUTPUTS );
+        delete_option( self::OPTION_PRIVACY_SETUP_PROFILE );
+        delete_option( self::OPTION_PRIVACY_SETUP_COMPLETED_AT );
     }
 
     /**
@@ -400,5 +674,53 @@ class Sentient_Forms_Local_Data_Governance
                 ],
             ],
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    private static function derive_result_summary( array $result ): string
+    {
+        $structured = is_array( $result['structured'] ?? null ) ? $result['structured'] : [];
+        foreach ( [ $structured['summary'] ?? null, $structured['justification'] ?? null, $result['summary'] ?? null, $result['justification'] ?? null, $result['reasoning'] ?? null, $result['content'] ?? null ] as $candidate )
+        {
+            if ( is_scalar( $candidate ) && '' !== trim( (string) $candidate ) )
+            {
+                return wp_trim_words( sanitize_textarea_field( (string) $candidate ), 50, '...' );
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * @param array<string, mixed> $result_data
+     * @return array<string, mixed>
+     */
+    private static function sanitize_legacy_result_data_for_storage( array $result_data ): array
+    {
+        $filtered = $result_data;
+
+        if ( isset( $filtered['llm_output'] ) )
+        {
+            $summary = self::derive_result_summary( [ 'content' => $filtered['llm_output'] ] );
+            unset( $filtered['llm_output'] );
+            if ( '' !== $summary && empty( $filtered['result_summary'] ) )
+            {
+                $filtered['result_summary'] = $summary;
+            }
+        }
+
+        if ( isset( $filtered['content'] ) )
+        {
+            $summary = self::derive_result_summary( [ 'content' => $filtered['content'] ] );
+            unset( $filtered['content'] );
+            if ( '' !== $summary && empty( $filtered['result_summary'] ) )
+            {
+                $filtered['result_summary'] = $summary;
+            }
+        }
+
+        return $filtered;
     }
 }

@@ -146,12 +146,25 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
      */
     public function update_settings( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $params           = $request->get_params();
         $current_settings = get_option( self::SETTINGS_OPTION_KEY, [] );
         $current_settings = is_array( $current_settings ) ? $current_settings : [];
         $updated_settings = [];
+        $applied_preset   = null;
 
         $endpoint_args = $this->get_endpoint_args_for_item_schema( WP_REST_Server::EDITABLE );
+        $params        = $this->get_update_request_params( $request );
+
+        if ( array_key_exists( 'privacy_setup_profile', $params ) )
+        {
+            $applied_preset = Sentient_Forms_Local_Data_Governance::apply_privacy_preset( $params['privacy_setup_profile'] );
+            if ( ! array_key_exists( 'enable_logging', $params ) )
+            {
+                $params['enable_logging'] = rest_sanitize_boolean( $applied_preset['enable_logging'] ?? false );
+            }
+            $params['execution_event_retention_days'] = $applied_preset['execution_event_retention_days'] ?? Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days();
+            $params['delete_data_on_uninstall']       = $applied_preset['delete_data_on_uninstall'] ?? Sentient_Forms_Local_Data_Governance::delete_data_on_uninstall_enabled();
+            $params['store_full_ai_outputs']          = $applied_preset['store_full_ai_outputs'] ?? Sentient_Forms_Local_Data_Governance::store_full_ai_outputs_enabled();
+        }
 
         foreach ( $endpoint_args as $key => $details )
         {
@@ -198,6 +211,17 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
             Sentient_Forms_Local_Data_Governance::update_delete_data_on_uninstall( $params['delete_data_on_uninstall'] );
         }
 
+        if ( array_key_exists( 'store_full_ai_outputs', $params ) )
+        {
+            Sentient_Forms_Local_Data_Governance::update_store_full_ai_outputs( $params['store_full_ai_outputs'] );
+        }
+
+        if ( array_key_exists( 'privacy_setup_profile', $params ) && null === $applied_preset )
+        {
+            Sentient_Forms_Local_Data_Governance::update_privacy_setup_profile( $params['privacy_setup_profile'] );
+            Sentient_Forms_Local_Data_Governance::update_privacy_setup_completed_at();
+        }
+
         $response_data = [
             'success'  => true,
             'message'  => __( 'Settings updated successfully.', 'sentient-forms' ),
@@ -205,6 +229,32 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
         ];
 
         return $this->prepare_item_for_response( $response_data );
+    }
+
+    /**
+     * WordPress REST requests can arrive as JSON or form-encoded payloads.
+     *
+     * The Svelte admin app sends JSON, while older tests and tools may still use body params.
+     *
+     * @return array<string, mixed>
+     */
+    private function get_update_request_params( WP_REST_Request $request ): array
+    {
+        $params = [];
+
+        $json_params = $request->get_json_params();
+        if ( is_array( $json_params ) )
+        {
+            $params = $json_params;
+        }
+
+        $body_params = $request->get_body_params();
+        if ( is_array( $body_params ) )
+        {
+            $params = array_merge( $params, $body_params );
+        }
+
+        return $params;
     }
 
     /**
@@ -277,7 +327,30 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
                 'required'          => false,
                 'sanitize_callback' => 'wp_validate_boolean',
                 'validate_callback' => [ $this->validator, 'validate_boolean_param' ],
-                'default'           => false,
+                'default'           => Sentient_Forms_Local_Data_Governance::delete_data_on_uninstall_enabled(),
+            ];
+            $args[ 'store_full_ai_outputs' ] = [
+                'description'       => __( 'Store full AI outputs locally for troubleshooting and action review.', 'sentient-forms' ),
+                'type'              => 'boolean',
+                'required'          => false,
+                'sanitize_callback' => 'wp_validate_boolean',
+                'validate_callback' => [ $this->validator, 'validate_boolean_param' ],
+                'default'           => Sentient_Forms_Local_Data_Governance::store_full_ai_outputs_enabled(),
+            ];
+            $args[ 'privacy_setup_profile' ] = [
+                'description'       => __( 'Recorded privacy and visibility preset chosen by the site administrator.', 'sentient-forms' ),
+                'type'              => 'string',
+                'required'          => false,
+                'sanitize_callback' => [ Sentient_Forms_Local_Data_Governance::class, 'sanitize_privacy_setup_profile' ],
+                'validate_callback' => [ $this->validator, 'validate_privacy_setup_profile_param' ],
+                'enum'              => Sentient_Forms_Local_Data_Governance::privacy_setup_profile_choices(),
+                'default'           => Sentient_Forms_Local_Data_Governance::current_privacy_setup_profile(),
+            ];
+            $args[ 'privacy_setup_completed_at' ] = [
+                'description'       => __( 'ISO8601 timestamp recording when the first-run privacy setup was completed.', 'sentient-forms' ),
+                'type'              => [ 'string', 'null' ],
+                'required'          => false,
+                'default'           => Sentient_Forms_Local_Data_Governance::privacy_setup_completed_at(),
             ];
         }
         return $args;
@@ -390,6 +463,9 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
             [
                 'execution_event_retention_days' => Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days(),
                 'delete_data_on_uninstall'       => Sentient_Forms_Local_Data_Governance::delete_data_on_uninstall_enabled(),
+                'store_full_ai_outputs'          => Sentient_Forms_Local_Data_Governance::store_full_ai_outputs_enabled(),
+                'privacy_setup_profile'          => Sentient_Forms_Local_Data_Governance::current_privacy_setup_profile(),
+                'privacy_setup_completed_at'     => Sentient_Forms_Local_Data_Governance::privacy_setup_completed_at(),
             ]
         );
     }
@@ -420,6 +496,9 @@ class Sentient_Forms_Settings_Controller extends Abstract_Sentient_Forms_Base_Co
         return [
             'execution_event_retention_days',
             'delete_data_on_uninstall',
+            'store_full_ai_outputs',
+            'privacy_setup_profile',
+            'privacy_setup_completed_at',
         ];
     }
 }

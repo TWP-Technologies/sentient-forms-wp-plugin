@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
+	import PrivacySetupAssistant from '$lib/components/privacy-setup-assistant.svelte';
+	import { createClientFromConfig } from '$lib/api/client';
+	import type { PluginSettingsResponse } from '$lib/api/types';
 	import {
 		appHref,
 		deriveActivePath,
@@ -11,12 +14,15 @@
 		type NavigationLinkPath
 	} from '$lib/navigation';
 	import { Button } from '$lib/components/ui';
+	import { notifications } from '$lib/stores/notifications';
 
 	interface Props {
 		children?: import('svelte').Snippet;
 	}
 
 	let { children }: Props = $props();
+	const client = createClientFromConfig();
+	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
 
 	const links: Array<{ path: NavigationLinkPath; label: string }> = [
 		{ path: '/dashboard', label: 'Dashboard' },
@@ -34,6 +40,9 @@
 	let mismatchKey = $state<string | null>(null);
 	let softRepairAttempted = $state(false);
 	let hardRepairAttempted = $state(false);
+	let privacySettings = $state<PluginSettingsResponse | null>(null);
+	let privacyAssistantOpen = $state(false);
+	let privacyAssistantSaving = $state(false);
 
 	function handleNavClick(event: MouseEvent, path: NavigationLinkPath): void {
 		if (event.defaultPrevented || event.button !== 0) return;
@@ -72,10 +81,71 @@
 		}
 	});
 
+	async function loadPrivacySettings(options: { openAssistantWhenIncomplete?: boolean } = {}) {
+		const openAssistantWhenIncomplete = options.openAssistantWhenIncomplete ?? true;
+		if (runtime?.currentUser && !runtime.currentUser.canManage) return;
+
+		try {
+			const settings = await client.getSettings({ showNotifications: false });
+			privacySettings = settings;
+			if (openAssistantWhenIncomplete && !settings.privacy_setup_completed_at) {
+				privacyAssistantOpen = true;
+			}
+		} catch (error) {
+			console.error('Failed to load Sentient Forms privacy settings', error);
+		}
+	}
+
+async function applyPrivacyPreset(profile: NonNullable<PluginSettingsResponse['privacy_setup_profile']>) {
+		privacyAssistantSaving = true;
+		try {
+			const settings = await client.updateSettings(
+				{ privacy_setup_profile: profile },
+				{ showNotifications: false }
+			);
+			privacySettings = settings;
+			privacyAssistantOpen = false;
+			window.dispatchEvent(
+				new CustomEvent('sentient-forms:settings-updated', {
+					detail: settings
+				})
+			);
+			const profileLabel =
+				settings.privacy_setup_profile === 'privacy_focused'
+					? 'Privacy focused'
+					: settings.privacy_setup_profile === 'maximum_privacy'
+						? 'Maximum privacy'
+						: settings.privacy_setup_profile === 'maximum_visibility'
+							? 'Maximum visibility'
+							: 'Balanced';
+			notifications.success(`${profileLabel} defaults saved`);
+		} catch (error) {
+			console.error('Failed to save privacy setup preset', error);
+			notifications.error('Unable to save privacy setup');
+		} finally {
+			privacyAssistantSaving = false;
+		}
+	}
+
 	onMount(() => {
 		if (routerType === 'hash' && typeof window !== 'undefined' && window.location.hash === '') {
 			void navigateToAppPath('/dashboard', { replaceState: true, noScroll: true, keepFocus: true });
 		}
+
+		void loadPrivacySettings();
+
+		const openAssistant = () => {
+			privacyAssistantOpen = true;
+			if (!privacySettings) {
+				void loadPrivacySettings({ openAssistantWhenIncomplete: false });
+			}
+		};
+
+		window.addEventListener('sentient-forms:open-privacy-setup', openAssistant);
+
+		return () => {
+			window.removeEventListener('sentient-forms:open-privacy-setup', openAssistant);
+		};
 	});
 </script>
 
@@ -122,3 +192,16 @@
 		</main>
 	</div>
 </div>
+
+<PrivacySetupAssistant
+	open={privacyAssistantOpen}
+	settings={privacySettings}
+	saving={privacyAssistantSaving}
+	dismissible={Boolean(privacySettings?.privacy_setup_completed_at)}
+	onapply={applyPrivacyPreset}
+	onclose={() => {
+		if (privacySettings?.privacy_setup_completed_at) {
+			privacyAssistantOpen = false;
+		}
+	}}
+/>

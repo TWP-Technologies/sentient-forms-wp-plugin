@@ -1423,7 +1423,12 @@ class Sentient_Forms_Async_Handler
 
         if ( is_array( $result ) )
         {
-            $event['result_json']      = $result['result'] ?? $result;
+            $stored_result             = $result['result'] ?? $result;
+            if ( is_array( $stored_result ) )
+            {
+                $stored_result = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $stored_result );
+            }
+            $event['result_json']      = $stored_result;
             $event['token_usage_json'] = is_array( $result['result']['usage'] ?? null ) ? $result['result']['usage'] : null;
         }
 

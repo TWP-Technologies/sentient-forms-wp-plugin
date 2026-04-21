@@ -307,6 +307,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $result['effects'] = $effects;
+        $stored_result     = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result );
         $this->events->record(
             [
                 'execution_request_id' => $execution_request_id,
@@ -318,7 +319,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'model'                => $model,
                 'status'               => 'succeeded',
                 'token_usage_json'     => $result['usage'] ?? null,
-                'result_json'          => $result,
+                'result_json'          => $stored_result,
                 'payload_digest'       => $payload_digest,
             ]
         );
