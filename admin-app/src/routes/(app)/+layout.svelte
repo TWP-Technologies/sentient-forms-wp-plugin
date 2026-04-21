@@ -96,7 +96,9 @@
 		}
 	}
 
-async function applyPrivacyPreset(profile: NonNullable<PluginSettingsResponse['privacy_setup_profile']>) {
+	async function applyPrivacyPreset(
+		profile: NonNullable<PluginSettingsResponse['privacy_setup_profile']>
+	) {
 		privacyAssistantSaving = true;
 		try {
 			const settings = await client.updateSettings(
@@ -174,21 +176,31 @@ async function applyPrivacyPreset(profile: NonNullable<PluginSettingsResponse['p
 				{/each}
 			</nav>
 		</aside>
-		<main class="sf:flex-1 sf:min-w-0 sf:p-4 sf:sm:p-6 sf:bg-white sf:shadow-inner">
-			<svelte:boundary>
-				{@render children?.()}
+		<main class="sf:flex-1 sf:min-w-0 sf:bg-slate-50 sf:p-4 sf:sm:p-6">
+			<div
+				data-sentient-admin-content
+				data-testid="app-content-frame"
+				class="sf:mx-auto sf:flex sf:w-full sf:min-w-0 sf:max-w-[112rem] sf:flex-col"
+			>
+				<svelte:boundary>
+					{@render children?.()}
 
-				{#snippet failed(error, reset)}
-					<section
-						class="sf:rounded sf:border sf:border-rose-300 sf:bg-rose-50 sf:p-4 sf:space-y-2 sf:break-words"
-						data-testid="route-boundary-error"
-					>
-						<h2 class="sf:text-base sf:font-semibold sf:text-rose-900">This view hit an error</h2>
-						<p class="sf:text-sm sf:text-rose-800">{String(error)}</p>
-						<Button type="button" variant="danger" size="sm" onclick={reset}>Retry view</Button>
-					</section>
-				{/snippet}
-			</svelte:boundary>
+					{#snippet failed(error, reset)}
+						<section
+							class="sf:rounded sf:border sf:border-rose-300 sf:bg-rose-50 sf:p-4 sf:space-y-2 sf:break-words"
+							data-testid="route-boundary-error"
+						>
+							<h2 class="sf:text-base sf:font-semibold sf:text-rose-900">
+								This view hit an error
+							</h2>
+							<p class="sf:text-sm sf:text-rose-800">{String(error)}</p>
+							<Button type="button" variant="danger" size="sm" onclick={reset}
+								>Retry view</Button
+							>
+						</section>
+					{/snippet}
+				</svelte:boundary>
+			</div>
 		</main>
 	</div>
 </div>

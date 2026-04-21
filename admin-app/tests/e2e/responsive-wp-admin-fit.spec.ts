@@ -19,11 +19,12 @@ const previewHost = getPreviewOrigin();
 const viewports: ViewportProfile[] = [
 	{ name: 'mobile-360', width: 360, height: 800 },
 	{ name: 'wp-collapse-782', width: 782, height: 900 },
-	{ name: 'desktop-1280', width: 1280, height: 900 }
+	{ name: 'desktop-1280', width: 1280, height: 900 },
+	{ name: 'ultrawide-2560', width: 2560, height: 1328 }
 ];
 
 const routeChecks: RouteCheck[] = [
-	{ path: '/#/dashboard', ready: (page) => page.getByRole('heading', { name: 'Dashboard' }) },
+	{ path: '/#/dashboard', ready: (page) => page.getByTestId('dashboard-local-first-summary') },
 	{ path: '/#/licensing', ready: (page) => page.getByRole('heading', { name: 'License management' }) },
 	{ path: '/#/actions', ready: (page) => page.getByRole('heading', { name: 'Actions' }) },
 	{ path: '/#/actions/log', ready: (page) => page.getByRole('heading', { name: 'Action Log' }) },
@@ -42,7 +43,7 @@ const routeChecks: RouteCheck[] = [
 	},
 	{
 		path: '/#/settings',
-		ready: (page) => page.getByRole('heading', { name: /Telemetry .* Background Processing/i })
+		ready: (page) => page.getByTestId('settings-profile-full-outputs')
 	},
 	{
 		path: '/#/settings/context',
@@ -100,6 +101,27 @@ async function assertElementWithinViewport(
 	expect(bounds.bottom, `${contextLabel} bottom bound`).toBeLessThanOrEqual(bounds.viewportHeight + 1);
 }
 
+async function assertContentFrameWidth(page: Page, contextLabel: string): Promise<void> {
+	const frame = page.getByTestId('app-content-frame');
+	await expect(frame, `${contextLabel} content frame`).toBeVisible();
+
+	const metrics = await frame.evaluate((element) => {
+		const rect = element.getBoundingClientRect();
+		const style = window.getComputedStyle(element);
+		return {
+			width: rect.width,
+			marginLeft: parseFloat(style.marginLeft || '0'),
+			marginRight: parseFloat(style.marginRight || '0'),
+			viewportWidth: window.innerWidth
+		};
+	});
+
+	expect(metrics.width, `${contextLabel} content width`).toBeLessThanOrEqual(1792);
+	expect(metrics.marginLeft, `${contextLabel} left gutter`).toBeGreaterThanOrEqual(40);
+	expect(metrics.marginRight, `${contextLabel} right gutter`).toBeGreaterThanOrEqual(40);
+	expect(metrics.viewportWidth, `${contextLabel} viewport width`).toBeGreaterThanOrEqual(1920);
+}
+
 test.describe('Responsive WP admin fit (FR-UI-015)', () => {
 	test.beforeEach(async ({ page }) => {
 		await seedRuntimeConfig(page, {
@@ -118,6 +140,9 @@ test.describe('Responsive WP admin fit (FR-UI-015)', () => {
 				await page.goto(route.path, { waitUntil: 'networkidle' });
 				await expect(route.ready(page), `${viewport.name} ${route.path} ready marker`).toBeVisible();
 				await assertNoPageOverflow(page, `${viewport.name} ${route.path}`);
+				if (viewport.width >= 1920) {
+					await assertContentFrameWidth(page, `${viewport.name} ${route.path}`);
+				}
 			}
 		});
 	}

@@ -15,7 +15,9 @@
 </script>
 
 <section class="sf:min-w-0 sf:space-y-4">
-	<header class="sf:flex sf:min-w-0 sf:flex-col sf:gap-3">
+	<header
+		class="sf:flex sf:min-w-0 sf:flex-col sf:gap-3 sf:md:flex-row sf:md:items-start sf:md:justify-between"
+	>
 		<div class="sf:min-w-0">
 			<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-900 sf:break-words">{heading}</h2>
 			{#if description}
@@ -23,7 +25,9 @@
 			{/if}
 		</div>
 		{#if actions}
-			<div class="sf:flex sf:w-full sf:min-w-0 sf:flex-wrap sf:gap-2 sf:sm:justify-end">
+			<div
+				class="sf:flex sf:w-full sf:min-w-0 sf:flex-wrap sf:gap-2 sf:sm:justify-end sf:md:w-auto"
+			>
 				{@render actions?.()}
 			</div>
 		{/if}
