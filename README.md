@@ -2,7 +2,7 @@
 
 Sentient Forms is migrating to a local-first WordPress plugin for AI-assisted form automation. Gravity Forms is the first supported adapter.
 
-The new product direction keeps site-owned configuration in WordPress: provider settings, consent records, action templates, custom actions, form mappings, execution events, selected results, migration runs, and model cache data. A reduced Sentient service remains only for optional managed execution, billing, metering, account state, optional OAuth brokering, optional managed manifests, and operational controls.
+The new product direction keeps site-owned configuration in WordPress: provider settings, consent records, action templates, custom actions, form mappings, execution events, selected results, migration runs, and model cache data. A reduced Sentient service remains only for optional managed execution, billing, metering, account state, and operational controls. OpenRouter OAuth and remote managed-template manifests are intentionally deferred from the first launch path.
 
 ## Current Local-First Slice
 
