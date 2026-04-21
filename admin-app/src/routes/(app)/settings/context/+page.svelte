@@ -247,9 +247,9 @@
 			<div class="sf:space-y-3">
 				<p class="sf:font-medium">⚠️ Privacy Notice</p>
 				<p>
-					By generating a site context, you acknowledge that information about your site (URL, meta
-					descriptions, and publicly available content) will be sent to external AI providers
-					(Google Gemini) for processing.
+					Sentient Forms will create the starter summary locally from this WordPress site's public
+					metadata. When auto-include is enabled, this context can be included in future provider
+					prompts for enabled actions.
 				</p>
 				<p class="sf:text-sm">
 					No personal customer data or form submissions are included in context generation.
@@ -299,7 +299,10 @@
 								bind:checked={piiAck}
 								class="sf:form-checkbox sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							/>
-							<span>I acknowledge this data will be processed by external AI providers</span>
+							<span>
+								I understand this local context can be included in future provider prompts for
+								enabled actions
+							</span>
 						</label>
 					</div>
 
@@ -307,7 +310,7 @@
 						{generating ? 'Generating...' : 'Generate Site Context'}
 					</Button>
 					<p class="sf:text-xs sf:text-green-700">
-						Initial generation is free and does not consume your yearly free refresh.
+						The starter summary is generated locally and does not call OpenRouter or Sentient.
 					</p>
 				</div>
 			</Card>
@@ -320,7 +323,7 @@
 							<p class="sf:text-xs sf:text-slate-500">
 								Source: {context.source} · Last updated: {formatDate(context.updated_at)}
 								{#if context.free_refresh_available}
-									· Yearly free refresh available
+									· Local refresh available
 								{:else if nextFreeRefreshLabel}
 									· Next free refresh: {nextFreeRefreshLabel}
 								{/if}
@@ -337,18 +340,18 @@
 								<p class="sf:font-medium">⚡ Confirm Regeneration</p>
 								{#if freeRefreshAvailable}
 									<p class="sf:text-sm">
-										This regeneration will use your <strong>yearly free refresh</strong>.
+										This regeneration will refresh the local starter summary.
 									</p>
 									<p class="sf:text-sm sf:text-slate-600">
-										After this run, your next free refresh will be available in 365 days.
+										Your saved edits will be replaced by the newly generated local summary.
 									</p>
 								{:else}
 									<p class="sf:text-sm">
-										This regeneration uses your configured site-context provider path.
+										This regeneration updates the local starter summary.
 									</p>
 									<p class="sf:text-sm sf:text-slate-600">
-										If this runs through Sentient managed proxy, usage is metered against your
-										managed plan. Direct OpenRouter runs remain outside Sentient billing.
+										Edit the saved text after regeneration when you want business-specific detail
+										that WordPress metadata cannot infer.
 									</p>
 									{#if nextFreeRefreshLabel}
 										<p class="sf:text-xs sf:text-slate-500">
@@ -367,7 +370,7 @@
 										{#if generating}
 											Regenerating…
 										{:else if freeRefreshAvailable}
-											Confirm — Use Free Refresh
+											Confirm Refresh
 										{:else}
 											Confirm Regeneration
 										{/if}

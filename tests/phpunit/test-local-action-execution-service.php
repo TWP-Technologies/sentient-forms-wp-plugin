@@ -793,6 +793,46 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'spam', $result['result']['structured']['classification'] );
     }
 
+    public function test_uses_template_prompt_when_custom_action_has_no_prompt_template(): void
+    {
+        $template_id = $this->templates->upsert_by_code(
+            [
+                'source'          => 'bundled',
+                'code'            => 'template_prompt_fallback',
+                'display_name'    => 'Template Prompt Fallback',
+                'prompt_template' => 'Fallback prompt for {{form.title}} from {{name}}.',
+                'version'         => '1',
+                'is_active'       => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [ 'prompt_template' => '' ],
+            [ 'template_id' => $template_id ]
+        );
+        $client = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $client->chat_calls );
+        $payload = $client->chat_calls[0]['payload'];
+        $this->assertStringContainsString( 'Fallback prompt for Contact Form from Ada Lovelace.', $payload['messages'][1]['content'] );
+    }
+
     public function test_fails_structured_result_when_schema_required_property_is_missing(): void
     {
         $fixture = $this->create_local_openrouter_mapping(

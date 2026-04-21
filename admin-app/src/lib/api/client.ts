@@ -52,6 +52,7 @@ import type {
 	LocalMigrationImportRequest,
 	LocalMigrationReadinessReport,
 	LocalProviderCredential,
+	LocalProviderCredentialDeleteResponse,
 	LocalSupportBundle,
 	OpenRouterModelsRefreshRequest,
 	OpenRouterModelsResponse,
@@ -339,6 +340,19 @@ export class SentientFormsApiClient {
 			showNotifications: false,
 			...options
 		});
+	}
+
+	async deleteLocalProviderCredential(
+		id: number,
+		options: RequestOptions = {}
+	): Promise<LocalProviderCredentialDeleteResponse> {
+		return this.request<LocalProviderCredentialDeleteResponse>(
+			`local/providers/credentials/${encodeURIComponent(String(id))}`,
+			{
+				method: 'DELETE',
+				...options
+			}
+		);
 	}
 
 	async validateOpenRouterKey(

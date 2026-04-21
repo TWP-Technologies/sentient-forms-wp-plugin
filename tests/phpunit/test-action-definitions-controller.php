@@ -15,6 +15,7 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         wp_set_current_user( self::$admin_id );
         remove_filter( 'sentient_forms_rest_api_controller_classes', '__return_empty_array' );
         Sentient_Forms_Plugin::instance();
+        Sentient_Forms_Installer::maybe_upgrade();
 
         if ( ! class_exists( 'Sentient_Forms_REST_API' ) )
         {
@@ -140,6 +141,63 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $this->assertNotEmpty( $data );
         $this->assertSame( 'local', $data[0]['source'] );
         $this->assertFalse( $http_called, 'Proxy keys must not trigger CPS action definition fetches unless legacy CPS templates are explicitly enabled.' );
+    }
+
+    public function test_local_action_templates_expose_template_ids_and_prompts(): void
+    {
+        global $wpdb;
+
+        $templates = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $template_id = $templates->upsert_by_code(
+            [
+                'source'                   => 'test',
+                'external_id'              => 'definition-route-local-template',
+                'code'                     => 'definition_route_summary_v1',
+                'display_name'             => 'Definition Route Summary',
+                'description'              => 'Summarize entries locally.',
+                'prompt_template'          => 'Summarize {{form.title}}: {{entry}}',
+                'default_model'            => 'openrouter/auto',
+                'structured_output_schema' => [
+                    'type'       => 'object',
+                    'properties' => [
+                        'summary' => [
+                            'type' => 'string',
+                        ],
+                    ],
+                ],
+                'override_schema'          => [
+                    'tone' => [
+                        'type' => 'string',
+                    ],
+                ],
+                'version'                  => 'test',
+                'is_active'                => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/definitions' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $definition = null;
+        foreach ( $response->get_data() as $candidate )
+        {
+            if ( 'definition_route_summary_v1' === (string) ( $candidate['id'] ?? '' ) )
+            {
+                $definition = $candidate;
+                break;
+            }
+        }
+
+        $this->assertIsArray( $definition );
+        $this->assertSame( (string) $template_id, $definition['templateId'] ?? null );
+        $this->assertSame( 'local', $definition['source'] ?? null );
+        $this->assertSame( 'Summarize {{form.title}}: {{entry}}', $definition['promptTemplate'] ?? null );
+        $this->assertSame( 'openrouter/auto', $definition['modelHint'] ?? null );
+        $this->assertSame( 'object', $definition['structuredOutputSchema']['type'] ?? null );
+        $this->assertArrayHasKey( 'tone', $definition['overrideSchema'] ?? [] );
     }
 
     public function test_definitions_fall_back_to_local_registry_when_cps_unavailable(): void

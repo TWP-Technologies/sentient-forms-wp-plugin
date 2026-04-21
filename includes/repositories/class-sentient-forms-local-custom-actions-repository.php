@@ -146,6 +146,102 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
         return $row ? $this->decode_row( $row ) : null;
     }
 
+    public function update( int $id, array $data ): array | WP_Error
+    {
+        $id = absint( $id );
+        if ( $id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_invalid_custom_action_id', __( 'Custom action ID is invalid.', 'sentient-forms' ) );
+        }
+
+        $fields  = [];
+        $formats = [];
+
+        if ( array_key_exists( 'external_id', $data ) )
+        {
+            $fields['external_id'] = null === $data['external_id'] ? null : sanitize_text_field( (string) $data['external_id'] );
+            $formats[]             = '%s';
+        }
+
+        if ( array_key_exists( 'template_id', $data ) )
+        {
+            $fields['template_id'] = null === $data['template_id'] ? null : (int) $data['template_id'];
+            $formats[]             = '%d';
+        }
+
+        if ( array_key_exists( 'code', $data ) )
+        {
+            $code = sanitize_key( (string) $data['code'] );
+            if ( '' === $code )
+            {
+                return new WP_Error( 'sentient_forms_missing_code', __( 'Custom action code is required.', 'sentient-forms' ) );
+            }
+
+            $fields['code'] = $code;
+            $formats[]      = '%s';
+        }
+
+        if ( array_key_exists( 'display_name', $data ) )
+        {
+            $fields['display_name'] = sanitize_text_field( (string) $data['display_name'] );
+            $formats[]              = '%s';
+        }
+
+        if ( array_key_exists( 'definition_json', $data ) )
+        {
+            $definition_json = $this->encode_json_field( $data['definition_json'], 'definition_json', true );
+            if ( is_wp_error( $definition_json ) )
+            {
+                return $definition_json;
+            }
+
+            $fields['definition_json'] = $definition_json;
+            $formats[]                 = '%s';
+        }
+
+        if ( array_key_exists( 'model_selection_json', $data ) )
+        {
+            $model_selection_json = $this->encode_json_field( $data['model_selection_json'], 'model_selection_json' );
+            if ( is_wp_error( $model_selection_json ) )
+            {
+                return $model_selection_json;
+            }
+
+            $fields['model_selection_json'] = $model_selection_json;
+            $formats[]                      = '%s';
+        }
+
+        if ( array_key_exists( 'status', $data ) )
+        {
+            $fields['status'] = sanitize_key( (string) $data['status'] );
+            $formats[]        = '%s';
+        }
+
+        $fields['updated_at'] = $this->now();
+        $formats[]            = '%s';
+
+        $updated = $this->wpdb->update(
+            $this->table_name(),
+            $fields,
+            [ 'id' => $id ],
+            $formats,
+            [ '%d' ]
+        );
+
+        if ( false === $updated )
+        {
+            return new WP_Error( 'sentient_forms_db_update_failed', __( 'Custom action could not be updated.', 'sentient-forms' ) );
+        }
+
+        $row = $this->get( $id );
+        if ( null === $row )
+        {
+            return new WP_Error( 'sentient_forms_custom_action_not_found', __( 'Custom action could not be found after update.', 'sentient-forms' ) );
+        }
+
+        return $row;
+    }
+
     public function list( string $status = 'active' ): array
     {
         $wpdb = $this->wpdb;

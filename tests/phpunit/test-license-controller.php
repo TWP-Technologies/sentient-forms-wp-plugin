@@ -191,6 +191,38 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertNull( $data['tier'] );
     }
 
+    public function test_bootstrap_license_with_invalid_stored_key_returns_local_inactive_state(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data( [
+            'license_key'    => 'preserve-license',
+            'license_status' => 'inactive',
+            'proxy_api_key'  => '',
+        ] );
+
+        $guard = function ( $preempt, $args, $url ) {
+            $this->fail( 'Bootstrap with an invalid stored license key should not call the remote service: ' . $url );
+            return $preempt;
+        };
+        add_filter(
+            'pre_http_request',
+            $guard,
+            1,
+            3
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/bootstrap' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+        remove_filter( 'pre_http_request', $guard, 1 );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+
+        $this->assertSame( 'inactive', $data['status'] );
+        $this->assertFalse( $data['proxy_key_present'] );
+        $this->assertNull( $data['tier'] );
+    }
+
     public function test_bootstrap_license_with_stored_key_uses_v2_activation(): void
     {
         Sentient_Forms_Plugin::instance()->set_license_data( [

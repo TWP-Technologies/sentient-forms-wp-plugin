@@ -158,4 +158,31 @@ class Sentient_Forms_Provider_Credentials_Repository extends Sentient_Forms_Loca
             [ '%d' ]
         );
     }
+
+    public function delete( int $id ): bool | WP_Error
+    {
+        $id = absint( $id );
+        if ( $id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_invalid_credential_id', __( 'Credential ID is invalid.', 'sentient-forms' ) );
+        }
+
+        if ( null === $this->get_by_id( $id ) )
+        {
+            return new WP_Error( 'sentient_forms_credential_not_found', __( 'Provider credential could not be found.', 'sentient-forms' ), [ 'status' => 404 ] );
+        }
+
+        $deleted = $this->wpdb->delete(
+            $this->table_name(),
+            [ 'id' => $id ],
+            [ '%d' ]
+        );
+
+        if ( false === $deleted )
+        {
+            return new WP_Error( 'sentient_forms_db_delete_failed', __( 'Provider credential could not be deleted.', 'sentient-forms' ) );
+        }
+
+        return 0 < (int) $deleted;
+    }
 }

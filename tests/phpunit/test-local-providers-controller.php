@@ -127,6 +127,50 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertStringNotContainsString( $secret, wp_json_encode( $list_data ) );
     }
 
+    public function test_delete_credential_removes_saved_openrouter_key_without_secret_leak(): void
+    {
+        $secret      = 'sk-or-delete-secret';
+        $vault       = new Sentient_Forms_Provider_Credential_Vault();
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+
+        $encrypted = $vault->encrypt( $secret );
+        $this->assertIsString( $encrypted );
+
+        $id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Delete Me',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'status_json'       => [ 'label' => 'delete me' ],
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $id );
+
+        $request  = new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertTrue( $data['deleted'] );
+        $this->assertSame( $id, $data['credential']['id'] );
+        $this->assertSame( 'Delete Me', $data['credential']['label'] );
+        $this->assertArrayNotHasKey( 'encrypted_secret', $data['credential'] );
+        $this->assertStringNotContainsString( $secret, wp_json_encode( $data ) );
+        $this->assertNull( $credentials->get( $id ) );
+    }
+
+    public function test_delete_credential_returns_not_found_for_missing_row(): void
+    {
+        $request  = new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/999999' );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 404, $response->get_status() );
+        $this->assertSame( 'sentient_forms_credential_not_found', $response->get_data()['code'] );
+    }
+
     public function test_list_credentials_redacts_secret_like_status_values(): void
     {
         $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );

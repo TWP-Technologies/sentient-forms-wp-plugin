@@ -79,8 +79,11 @@
 	});
 </script>
 
-<div class="sf:min-h-screen sf:min-w-0 sf:bg-slate-100 sf:text-slate-900 sf:font-sans">
-	<div class="sf:flex sf:min-h-screen sf:min-w-0 sf:flex-col sf:md:flex-row">
+<div
+	data-sentient-admin-shell
+	class="sf:min-w-0 sf:bg-slate-100 sf:text-slate-900 sf:font-sans"
+>
+	<div data-sentient-admin-frame class="sf:flex sf:min-w-0 sf:flex-col sf:md:flex-row">
 		<aside class="sf:w-full sf:shrink-0 sf:bg-white sf:md:w-64 sf:shadow-sm">
 			<div class="sf:p-4 sf:sm:p-6 sf:border-b sf:border-slate-200">
 				<h1 class="sf:text-lg sf:font-semibold">Sentient Forms</h1>

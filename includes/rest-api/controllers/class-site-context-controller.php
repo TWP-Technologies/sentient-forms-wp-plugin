@@ -21,6 +21,9 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
 {
     use Trait_Sentient_Forms_Permission_Utils;
 
+    private const OPTION_NAME = 'sentient_forms_site_context';
+    private const MAX_CONTEXT_LENGTH = 5000;
+
     /**
      * The base of this controller's routes.
      *
@@ -92,7 +95,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
     }
 
     /**
-     * Gets the current site context from CPS.
+     * Gets the current site context from local WordPress storage.
      *
      * @param WP_REST_Request $request Request object.
      *
@@ -100,36 +103,13 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
      */
     public function get_context( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $plugin  = Sentient_Forms_Plugin::instance();
-        $api_key = $plugin->get_proxy_api_key();
-
-        if ( empty( $api_key ) )
-        {
-            return $this->prepare_error_response(
-                'missing_api_key',
-                __( 'Proxy API key is not configured.', 'sentient-forms' ),
-                400,
-            );
-        }
-
-        $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $client->get_site_context();
-
-        if ( is_wp_error( $response ) )
-        {
-            return $this->prepare_error_response(
-                'cps_error',
-                $response->get_error_message(),
-                $this->resolve_cps_error_status( $response ),
-            );
-        }
-
-        if ( null === $response )
+        $context = $this->get_stored_context();
+        if ( null === $context )
         {
             return $this->prepare_item_for_response( [ 'context' => null ] );
         }
 
-        return $this->prepare_item_for_response( $response );
+        return $this->prepare_item_for_response( $context );
     }
 
     /**
@@ -141,34 +121,28 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
      */
     public function create_context( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $plugin  = Sentient_Forms_Plugin::instance();
-        $api_key = $plugin->get_proxy_api_key();
-
-        if ( empty( $api_key ) )
+        $site_url = $request->get_param( 'site_url' ) ?? get_site_url();
+        $pii_ack  = (bool) $request->get_param( 'pii_ack' );
+        if ( ! $pii_ack )
         {
             return $this->prepare_error_response(
-                'missing_api_key',
-                __( 'Proxy API key is not configured.', 'sentient-forms' ),
+                'site_context_privacy_ack_required',
+                __( 'Accept the site-context privacy acknowledgement before creating context.', 'sentient-forms' ),
                 400,
             );
         }
 
-        $site_url = $request->get_param( 'site_url' ) ?? get_site_url();
-        $pii_ack  = (bool) $request->get_param( 'pii_ack' );
+        $context = $this->build_context_record(
+            $this->generate_local_summary( is_scalar( $site_url ) ? (string) $site_url : get_site_url() ),
+            'local_starter',
+            true,
+            $pii_ack,
+            $this->get_stored_context()
+        );
 
-        $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $client->create_site_context( $site_url, $pii_ack );
+        update_option( self::OPTION_NAME, $context, false );
 
-        if ( is_wp_error( $response ) )
-        {
-            return $this->prepare_error_response(
-                'cps_error',
-                $response->get_error_message(),
-                $this->resolve_cps_error_status( $response ),
-            );
-        }
-
-        return $this->prepare_item_for_response( $response );
+        return $this->prepare_item_for_response( $context );
     }
 
     /**
@@ -180,25 +154,15 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
      */
     public function update_context( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $plugin  = Sentient_Forms_Plugin::instance();
-        $api_key = $plugin->get_proxy_api_key();
-
-        if ( empty( $api_key ) )
-        {
-            return $this->prepare_error_response(
-                'missing_api_key',
-                __( 'Proxy API key is not configured.', 'sentient-forms' ),
-                400,
-            );
-        }
-
-        $body = [];
+        $existing     = $this->get_stored_context();
+        $summary_text = is_array( $existing ) ? (string) ( $existing['summary_text'] ?? '' ) : '';
         if ( $request->has_param( 'summary_text' ) )
         {
             $summary_text = $request->get_param( 'summary_text' );
+            $summary_text = is_scalar( $summary_text ) ? sanitize_textarea_field( (string) $summary_text ) : '';
 
             // CB-SA-006: Server-side length guard (defense-in-depth).
-            if ( mb_strlen( $summary_text ) > 5000 )
+            if ( mb_strlen( $summary_text ) > self::MAX_CONTEXT_LENGTH )
             {
                 return $this->prepare_error_response(
                     'context_too_long',
@@ -206,31 +170,28 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
                     400,
                 );
             }
-
-            $body['summary_text'] = $summary_text;
-        }
-        if ( $request->has_param( 'auto_include' ) )
-        {
-            $body['auto_include'] = $request->get_param( 'auto_include' );
-        }
-        if ( $request->has_param( 'pii_ack' ) )
-        {
-            $body['pii_ack'] = $request->get_param( 'pii_ack' );
         }
 
-        $client   = new Sentient_Forms_Llm_Api_Client( $api_key );
-        $response = $client->update_site_context( $body );
+        $auto_include = $request->has_param( 'auto_include' )
+            ? (bool) $request->get_param( 'auto_include' )
+            : (bool) ( $existing['auto_include'] ?? true );
+        $pii_ack      = $request->has_param( 'pii_ack' )
+            ? (bool) $request->get_param( 'pii_ack' )
+            : (bool) ( $existing['pii_ack'] ?? false );
 
-        if ( is_wp_error( $response ) )
+        if ( '' === trim( $summary_text ) )
         {
             return $this->prepare_error_response(
-                'cps_error',
-                $response->get_error_message(),
-                $this->resolve_cps_error_status( $response ),
+                'context_empty',
+                __( 'Site context summary cannot be empty.', 'sentient-forms' ),
+                400,
             );
         }
 
-        return $this->prepare_item_for_response( $response );
+        $context = $this->build_context_record( $summary_text, 'manual', $auto_include, $pii_ack, $existing );
+        update_option( self::OPTION_NAME, $context, false );
+
+        return $this->prepare_item_for_response( $context );
     }
 
     /**
@@ -262,7 +223,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
                     'context'     => [ 'view', 'edit' ],
                 ],
                 'source' => [
-                    'description' => __( 'How context was created: llm_search, manual, import.', 'sentient-forms' ),
+                    'description' => __( 'How context was created: local_starter, manual, import.', 'sentient-forms' ),
                     'type'        => 'string',
                     'context'     => [ 'view' ],
                     'readonly'    => true,
@@ -295,14 +256,107 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         return $this->schema;
     }
 
-    private function resolve_cps_error_status( WP_Error $error ): int
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function get_stored_context(): ?array
     {
-        $error_data = $error->get_error_data();
-        if ( is_array( $error_data ) && isset( $error_data['status'] ) )
+        $context = get_option( self::OPTION_NAME, null );
+        if ( ! is_array( $context ) || empty( $context['summary_text'] ) || ! is_scalar( $context['summary_text'] ) )
         {
-            return (int) $error_data['status'];
+            return null;
         }
 
-        return 500;
+        return $this->normalize_context_record( $context );
+    }
+
+    private function generate_local_summary( string $site_url ): string
+    {
+        $site_name   = trim( (string) get_bloginfo( 'name' ) );
+        $tagline     = trim( (string) get_bloginfo( 'description' ) );
+        $description = trim( (string) get_option( 'blogdescription', '' ) );
+        $host        = wp_parse_url( esc_url_raw( $site_url ), PHP_URL_HOST );
+
+        $parts = [];
+        if ( '' !== $site_name )
+        {
+            $parts[] = sprintf(
+                /* translators: %s: Site name. */
+                __( 'Site name: %s.', 'sentient-forms' ),
+                $site_name
+            );
+        }
+        if ( '' !== $tagline && $tagline !== $description )
+        {
+            $parts[] = sprintf(
+                /* translators: %s: Site tagline. */
+                __( 'Tagline: %s.', 'sentient-forms' ),
+                $tagline
+            );
+        }
+        elseif ( '' !== $description )
+        {
+            $parts[] = sprintf(
+                /* translators: %s: Site description. */
+                __( 'Site description: %s.', 'sentient-forms' ),
+                $description
+            );
+        }
+        if ( is_string( $host ) && '' !== $host )
+        {
+            $parts[] = sprintf(
+                /* translators: %s: Site host. */
+                __( 'Public host: %s.', 'sentient-forms' ),
+                sanitize_text_field( $host )
+            );
+        }
+
+        $parts[] = __( 'Use this local context with the form title, field labels, and submitted values to decide whether each form submission looks legitimate for this WordPress site.', 'sentient-forms' );
+
+        return sanitize_textarea_field( implode( "\n", array_filter( $parts ) ) );
+    }
+
+    /**
+     * @param array<string, mixed>|null $existing
+     *
+     * @return array<string, mixed>
+     */
+    private function build_context_record( string $summary_text, string $source, bool $auto_include, bool $pii_ack, ?array $existing = null ): array
+    {
+        $now = current_time( 'mysql' );
+        return [
+            'id'                     => is_array( $existing ) && isset( $existing['id'] ) ? sanitize_text_field( (string) $existing['id'] ) : 'local-site-context',
+            'license_id'             => 'local',
+            'summary_text'           => sanitize_textarea_field( $summary_text ),
+            'source'                 => sanitize_key( $source ),
+            'auto_include'           => $auto_include,
+            'pii_ack'                => $pii_ack,
+            'free_refresh_available' => true,
+            'next_free_refresh_at'   => null,
+            'created_at'             => is_array( $existing ) && isset( $existing['created_at'] ) ? sanitize_text_field( (string) $existing['created_at'] ) : $now,
+            'updated_at'             => $now,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     *
+     * @return array<string, mixed>
+     */
+    private function normalize_context_record( array $context ): array
+    {
+        $normalized = $this->build_context_record(
+            (string) $context['summary_text'],
+            isset( $context['source'] ) ? (string) $context['source'] : 'manual',
+            (bool) ( $context['auto_include'] ?? true ),
+            (bool) ( $context['pii_ack'] ?? false ),
+            $context
+        );
+        if ( isset( $context['updated_at'] ) )
+        {
+            $normalized['updated_at'] = sanitize_text_field( (string) $context['updated_at'] );
+        }
+
+        return $normalized;
     }
 }

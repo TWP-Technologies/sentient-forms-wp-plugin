@@ -103,9 +103,24 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
             return $this->prepare_item_for_response( $cps_definitions );
         }
 
-        $definitions = [];
+        $definitions = $this->get_local_template_definitions();
+        $seen_ids    = [];
+        foreach ( $definitions as $definition )
+        {
+            if ( isset( $definition['id'] ) && is_scalar( $definition['id'] ) )
+            {
+                $seen_ids[ sanitize_key( (string) $definition['id'] ) ] = true;
+            }
+        }
+
         foreach ( $this->action_registry->get_all_actions() as $id => $action )
         {
+            $action_id = sanitize_key( (string) $id );
+            if ( isset( $seen_ids[ $action_id ] ) )
+            {
+                continue;
+            }
+
             $definitions[] = [
                 'id'             => $id,
                 'label'          => $action->get_name(),
@@ -176,10 +191,71 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
                     'context'              => [ 'view', 'edit' ],
                     'additionalProperties' => true,
                 ],
+                'templateId'     => [
+                    'description' => __( 'Local or managed action template identifier.', 'sentient-forms' ),
+                    'type'        => [ 'string', 'null' ],
+                    'context'     => [ 'view', 'edit' ],
+                ],
+                'promptTemplate' => [
+                    'description' => __( 'Prompt template used by local custom actions.', 'sentient-forms' ),
+                    'type'        => [ 'string', 'null' ],
+                    'context'     => [ 'view', 'edit' ],
+                ],
+                'structuredOutputSchema' => [
+                    'description'          => __( 'Structured output schema for the local action template.', 'sentient-forms' ),
+                    'type'                 => [ 'object', 'null' ],
+                    'context'              => [ 'view', 'edit' ],
+                    'additionalProperties' => true,
+                ],
             ],
         ];
 
         return $this->schema;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function get_local_template_definitions(): array
+    {
+        if ( ! class_exists( 'Sentient_Forms_Action_Templates_Repository' ) )
+        {
+            return [];
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $definitions = [];
+
+        foreach ( $repository->list_active() as $template )
+        {
+            $code = isset( $template['code'] ) && is_scalar( $template['code'] )
+                ? sanitize_key( (string) $template['code'] )
+                : '';
+            if ( '' === $code )
+            {
+                continue;
+            }
+
+            $definitions[] = [
+                'id'                     => $code,
+                'templateId'             => isset( $template['id'] ) ? (string) (int) $template['id'] : null,
+                'label'                  => isset( $template['display_name'] ) ? sanitize_text_field( (string) $template['display_name'] ) : $code,
+                'description'            => isset( $template['description'] ) && is_scalar( $template['description'] ) ? sanitize_textarea_field( (string) $template['description'] ) : '',
+                'settingsFields'         => [],
+                'icon'                   => '',
+                'hooks'                  => $this->resolve_template_hooks( $template ),
+                'compatibility'          => [],
+                'source'                 => 'local',
+                'baseCreditCost'         => null,
+                'modelHint'              => isset( $template['default_model'] ) && is_scalar( $template['default_model'] ) ? sanitize_text_field( (string) $template['default_model'] ) : null,
+                'overrideSchema'         => is_array( $template['override_schema'] ?? null ) ? $template['override_schema'] : [],
+                'promptTemplate'         => isset( $template['prompt_template'] ) && is_scalar( $template['prompt_template'] ) ? (string) $template['prompt_template'] : null,
+                'structuredOutputSchema' => is_array( $template['structured_output_schema'] ?? null ) ? $template['structured_output_schema'] : null,
+            ];
+        }
+
+        return $definitions;
     }
 
     /**

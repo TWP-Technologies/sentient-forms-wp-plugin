@@ -92,7 +92,7 @@ class Sentient_Forms_Admin
 
 
         // Display admin notices, e.g., for missing API keys or license issues.
-        if ( empty( $this->plugin->get_proxy_api_key() ) )
+        if ( empty( $this->plugin->get_proxy_api_key() ) && ! $this->has_ready_local_provider() )
         {
             add_action( 'admin_notices', [ $this, 'admin_notice_missing_api_key' ] );
         }
@@ -245,16 +245,8 @@ class Sentient_Forms_Admin
 			$svelte_runtime_key,
 			wp_json_encode( $asset_base )
 		);
-		$bootstrap_js .= "\n" . '(function(){ try { var NativeURL = URL; window.URL = function(input, base) {';
-		$bootstrap_js .= "\n" . 'var instance = base ? new NativeURL(input, base) : new NativeURL(input);';
-		$bootstrap_js .= "\n" . 'if (!base && typeof input === "string" && input.indexOf("/wp-admin/admin.php") !== -1) {';
-		$bootstrap_js .= "\n" . 'Object.defineProperty(instance, "pathname", { get: function() { return "/wp-admin/"; }, configurable: true });';
-		$bootstrap_js .= "\n" . '}';
-		$bootstrap_js .= "\n" . 'return instance;';
-		$bootstrap_js .= "\n" . '};';
-		$bootstrap_js .= "\n" . 'window.URL.prototype = NativeURL.prototype;';
-		$bootstrap_js .= "\n" . '} catch (error) { console.error("Sentient Forms URL override failed", error); } })();';
 		$bootstrap_js .= "\n" . 'window.sentientFormsAppReady = "bootstrapping";';
+		$bootstrap_js .= "\n" . '(function(){ ["#adminmenu", "#wpadminbar", "#screen-meta-links", "#wpfooter"].forEach(function(selector){ var node = document.querySelector(selector); if (node) { node.setAttribute("data-sveltekit-reload", ""); } }); })();';
 		$bootstrap_js .= "\n" . $this->build_hash_router_bootstrap_js();
 
 		$is_dev = ! empty( $config['devMode'] );
@@ -679,23 +671,45 @@ Promise.all([
     }
 
 
+    private function has_ready_local_provider(): bool
+    {
+        if ( ! class_exists( 'Sentient_Forms_Provider_Credentials_Repository' ) )
+        {
+            return false;
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        foreach ( $repository->list( [ 'limit' => 20 ] ) as $credential )
+        {
+            $provider = sanitize_key( (string) ( $credential['provider'] ?? '' ) );
+            $status   = sanitize_key( (string) ( $credential['status'] ?? '' ) );
+            if ( in_array( $provider, [ 'openrouter', 'sentient_managed' ], true ) && in_array( $status, [ 'valid', 'limited' ], true ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /**
-     * Admin notice for missing API key.
+     * Admin notice for missing local provider setup.
      */
     public function admin_notice_missing_api_key(): void
     {
         // Only show on Sentient Forms pages or if explicitly needed globally
         $current_screen = get_current_screen();
         if ( $current_screen && str_contains( $current_screen->id, 'sentient-forms' ) ) {
-            $settings_url = admin_url( 'admin.php?page=sentient-forms-settings' );
+            $providers_url = admin_url( 'admin.php?page=sentient-forms#/providers' );
             ?>
             <div class="notice notice-warning is-dismissible">
                 <p>
                     <?php
                     printf(
-                        /* translators: %s: settings page URL. */
-                        wp_kses_post( __( '<strong>Sentient Forms:</strong> Your Sentient Forms API Key is not set. Please <a href="%s">configure your API key</a> to enable LLM functionalities.', 'sentient-forms' ) ),
-                        esc_url( $settings_url )
+                        /* translators: %s: providers page URL. */
+                        wp_kses_post( __( '<strong>Sentient Forms:</strong> Connect OpenRouter or Sentient managed proxy on the <a href="%s">Providers</a> page before enabling AI actions.', 'sentient-forms' ) ),
+                        esc_url( $providers_url )
                     );
                     ?>
                 </p>

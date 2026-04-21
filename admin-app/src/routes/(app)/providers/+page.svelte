@@ -10,6 +10,7 @@
 	import { Badge, Button, Card, InputField, Section, StateTemplate } from '$lib/components/ui';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { licenseState } from '$lib/stores/license';
+	import { notifications } from '$lib/stores/notifications';
 	import { formatTimestamp } from '$lib/utils/date-time';
 	import {
 		isReadyOpenRouterCredential,
@@ -40,6 +41,8 @@
 	let acceptedDisclosure = $state(false);
 	let acceptedManagedDisclosure = $state(false);
 	let validating = $state(false);
+	let deletingCredentialId = $state<number | null>(null);
+	let pendingDeleteCredentialId = $state<number | null>(null);
 	let managedSetupLoading = $state(false);
 	let modelCatalogLoading = $state(true);
 	let modelCatalogRefreshing = $state(false);
@@ -88,6 +91,13 @@
 	);
 	let freeModelPreview = $derived(
 		(modelCatalog?.models ?? []).filter((model) => model.free).slice(0, 6)
+	);
+	let canRefreshOpenRouterModels = $derived(acceptedDisclosure && !modelCatalogRefreshing);
+	let canValidateOpenRouterKey = $derived(
+		acceptedDisclosure && apiKey.trim().length > 0 && !validating
+	);
+	let canEnableManagedProxy = $derived(
+		managedAccountReady && acceptedManagedDisclosure && !managedSetupLoading
 	);
 
 	function errorMessage(requestError: unknown): string {
@@ -195,6 +205,32 @@
 			error = errorMessage(requestError);
 		} finally {
 			validating = false;
+		}
+	}
+
+	function confirmCredentialDelete(credential: LocalProviderCredential): void {
+		pendingDeleteCredentialId = credential.id;
+	}
+
+	function cancelCredentialDelete(): void {
+		pendingDeleteCredentialId = null;
+	}
+
+	async function deleteProviderCredential(credential: LocalProviderCredential): Promise<void> {
+		error = null;
+		deletingCredentialId = credential.id;
+
+		try {
+			await client.deleteLocalProviderCredential(credential.id, { showNotifications: false });
+			credentials = credentials.filter((candidate) => candidate.id !== credential.id);
+			pendingDeleteCredentialId = null;
+			notifications.success(`${credential.label} deleted`);
+		} catch (requestError) {
+			const message = errorMessage(requestError);
+			error = message;
+			notifications.error(message);
+		} finally {
+			deletingCredentialId = null;
 		}
 	}
 
@@ -398,7 +434,7 @@
 				<Button
 					variant="secondary"
 					loading={modelCatalogRefreshing}
-					disabled={modelCatalogRefreshing}
+					disabled={!canRefreshOpenRouterModels}
 					onclick={refreshOpenRouterModels}
 					data-testid="providers-refresh-model-catalog"
 				>
@@ -503,7 +539,7 @@
 					</span>
 				</label>
 
-				<Button type="submit" loading={validating} disabled={validating}>
+				<Button type="submit" loading={validating} disabled={!canValidateOpenRouterKey}>
 					{validating ? 'Validating...' : 'Validate key'}
 				</Button>
 			</form>
@@ -550,9 +586,20 @@
 						>
 							<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
 								<p class="sf:font-medium sf:text-slate-900">{credential.label}</p>
-								<Badge variant={providerStatusVariant(credential.status)}
-									>{providerStatusLabel(credential.status)}</Badge
-								>
+								<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+									<Badge variant={providerStatusVariant(credential.status)}
+										>{providerStatusLabel(credential.status)}</Badge
+									>
+									<Button
+										size="sm"
+										variant="danger"
+										disabled={deletingCredentialId === credential.id}
+										onclick={() => confirmCredentialDelete(credential)}
+										data-testid={`providers-openrouter-delete-${credential.id}`}
+									>
+										Delete
+									</Button>
+								</div>
 							</div>
 							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
 								{credential.auth_mode} · secret {credential.secret_configured
@@ -569,6 +616,39 @@
 								>
 									{statusDetail}
 								</p>
+							{/if}
+							{#if pendingDeleteCredentialId === credential.id}
+								<div
+									class="sf:mt-3 sf:rounded sf:border sf:border-danger-500 sf:bg-danger-50 sf:p-3"
+									data-testid="providers-openrouter-delete-confirmation"
+								>
+									<p class="sf:text-sm sf:font-medium sf:text-danger-600">
+										Delete this saved OpenRouter key?
+									</p>
+									<p class="sf:mt-1 sf:text-xs sf:text-slate-700">
+										Actions using this key need another provider key before they can run.
+									</p>
+									<div class="sf:mt-3 sf:flex sf:flex-wrap sf:gap-2">
+										<Button
+											size="sm"
+											variant="danger"
+											loading={deletingCredentialId === credential.id}
+											onclick={() => deleteProviderCredential(credential)}
+											data-testid={`providers-openrouter-delete-confirm-${credential.id}`}
+										>
+											{deletingCredentialId === credential.id ? 'Deleting...' : 'Delete key'}
+										</Button>
+										<Button
+											size="sm"
+											variant="secondary"
+											disabled={deletingCredentialId === credential.id}
+											onclick={cancelCredentialDelete}
+											data-testid={`providers-openrouter-delete-cancel-${credential.id}`}
+										>
+											Cancel
+										</Button>
+									</div>
+								</div>
 							{/if}
 						</div>
 					{/each}
@@ -616,7 +696,7 @@
 					<Button
 						type="submit"
 						loading={managedSetupLoading}
-						disabled={managedSetupLoading}
+						disabled={!canEnableManagedProxy}
 						data-testid="providers-managed-setup-submit"
 					>
 						{managedSetupLoading ? 'Enabling...' : 'Enable managed proxy credential'}

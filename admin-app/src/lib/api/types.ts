@@ -238,6 +238,11 @@ export interface LocalProviderCredential {
 	secret_configured: boolean;
 }
 
+export interface LocalProviderCredentialDeleteResponse {
+	deleted: boolean;
+	credential: LocalProviderCredential;
+}
+
 export interface SentientManagedSetupRequest {
 	disclosure_version: string;
 	accepted_external_service_terms: boolean;
@@ -563,6 +568,8 @@ export interface ActionDefinition {
 	baseCreditCost?: number | null;
 	modelHint?: string | null;
 	overrideSchema?: TemplateOverrideSchema;
+	promptTemplate?: string | null;
+	structuredOutputSchema?: Record<string, unknown> | null;
 	category?: ActionCategory;
 }
 
@@ -1146,8 +1153,11 @@ export interface CustomActionPostExecutionActionPayload extends Record<string, u
  */
 export interface ActionDefinitionPayload extends Record<string, unknown> {
 	workflow?: WorkflowDefinitionPayload;
+	system_prompt?: string;
+	prompt_template?: string;
 	meta_prompt?: string;
 	goal?: string;
+	structured_output_schema?: Record<string, unknown>;
 	success_criteria?: string[];
 	failure_criteria?: string[];
 	examples?: Array<{

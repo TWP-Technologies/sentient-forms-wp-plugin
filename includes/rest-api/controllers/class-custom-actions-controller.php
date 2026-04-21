@@ -20,6 +20,8 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
     private ?Sentient_Forms_Local_Custom_Actions_Repository $local_custom_actions = null;
 
+    private ?Sentient_Forms_Provider_Credentials_Repository $local_provider_credentials = null;
+
     public function __construct()
     {
         parent::__construct();
@@ -28,6 +30,10 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
         if ( class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
         {
             $this->local_custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        }
+        if ( class_exists( 'Sentient_Forms_Provider_Credentials_Repository' ) )
+        {
+            $this->local_provider_credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
         }
     }
 
@@ -54,7 +60,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/(?P<id>[a-f0-9-]{8,})',
+            '/' . $this->rest_base . '/(?P<id>[A-Za-z0-9_-]+)',
             [
                 [
                     'methods'             => WP_REST_Server::EDITABLE,
@@ -72,7 +78,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/(?P<id>[a-f0-9-]{8,})/reactivate',
+            '/' . $this->rest_base . '/(?P<id>[A-Za-z0-9_-]+)/reactivate',
             [
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
@@ -125,7 +131,13 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
     {
         if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
         {
-            return $this->legacy_cps_custom_actions_disabled_error();
+            $payload = $this->build_create_payload( $request );
+            if ( is_wp_error( $payload ) )
+            {
+                return $payload;
+            }
+
+            return $this->create_local_custom_action_for_legacy_route( $payload );
         }
 
         $payload = $this->build_create_payload( $request );
@@ -147,7 +159,13 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
     {
         if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
         {
-            return $this->legacy_cps_custom_actions_disabled_error();
+            $payload = $this->build_update_payload( $request );
+            if ( is_wp_error( $payload ) )
+            {
+                return $payload;
+            }
+
+            return $this->update_local_custom_action_for_legacy_route( $request, $payload );
         }
 
         $payload = $this->build_update_payload( $request );
@@ -170,7 +188,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
     {
         if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
         {
-            return $this->legacy_cps_custom_actions_disabled_error();
+            return $this->archive_local_custom_action_for_legacy_route( $request );
         }
 
         $action_id = sanitize_text_field( (string) $request->get_param( 'id' ) );
@@ -187,7 +205,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
     {
         if ( ! apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false ) )
         {
-            return $this->legacy_cps_custom_actions_disabled_error();
+            return $this->reactivate_local_custom_action_for_legacy_route( $request );
         }
 
         $action_id = sanitize_text_field( (string) $request->get_param( 'id' ) );
@@ -218,11 +236,282 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
         return [
             'actions' => $actions,
-            'quota'   => [
-                'quota_max'       => 0,
-                'quota_used'      => count( $actions ),
-                'quota_remaining' => 0,
+            'quota'   => $this->local_custom_action_quota(),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function create_local_custom_action_for_legacy_route( array $payload ): WP_REST_Response | WP_Error
+    {
+        if ( ! $this->local_custom_actions )
+        {
+            return $this->local_custom_actions_unavailable_error();
+        }
+
+        $template_id = absint( $payload['template_id'] ?? 0 );
+        if ( $template_id <= 0 )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_param',
+                __( 'template_id must be a local action template ID.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        $id = $this->local_custom_actions->create(
+            $this->build_local_custom_action_row( $payload, null, $template_id )
+        );
+        if ( is_wp_error( $id ) )
+        {
+            return $id;
+        }
+
+        $row = $this->local_custom_actions->get( (int) $id );
+        if ( ! $row )
+        {
+            return $this->local_custom_action_not_found_error();
+        }
+
+        return $this->prepare_item_for_response(
+            [
+                'action' => $this->format_local_custom_action_for_legacy_route( $row ),
+                'quota'  => $this->local_custom_action_quota(),
             ],
+            201
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function update_local_custom_action_for_legacy_route( WP_REST_Request $request, array $payload ): WP_REST_Response | WP_Error
+    {
+        $existing = $this->get_local_custom_action_from_request( $request );
+        if ( is_wp_error( $existing ) )
+        {
+            return $existing;
+        }
+
+        $template_id = isset( $existing['template_id'] ) ? (int) $existing['template_id'] : null;
+        $updated = $this->local_custom_actions->update(
+            (int) $existing['id'],
+            $this->build_local_custom_action_row( $payload, $existing, $template_id )
+        );
+        if ( is_wp_error( $updated ) )
+        {
+            return $updated;
+        }
+
+        return $this->prepare_item_for_response(
+            [
+                'action' => $this->format_local_custom_action_for_legacy_route( $updated ),
+                'quota'  => $this->local_custom_action_quota(),
+            ]
+        );
+    }
+
+    private function archive_local_custom_action_for_legacy_route( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
+        $existing = $this->get_local_custom_action_from_request( $request );
+        if ( is_wp_error( $existing ) )
+        {
+            return $existing;
+        }
+
+        $updated = $this->local_custom_actions->update_status( (int) $existing['id'], 'archived' );
+        if ( ! $updated )
+        {
+            return new WP_Error(
+                'sentient_forms_db_update_failed',
+                __( 'Custom action could not be archived.', 'sentient-forms' ),
+                [ 'status' => 500 ]
+            );
+        }
+
+        $row = $this->local_custom_actions->get( (int) $existing['id'] );
+        if ( ! $row )
+        {
+            return $this->local_custom_action_not_found_error();
+        }
+
+        return $this->prepare_item_for_response(
+            [
+                'action' => $this->format_local_custom_action_for_legacy_route( $row ),
+                'quota'  => $this->local_custom_action_quota(),
+            ]
+        );
+    }
+
+    private function reactivate_local_custom_action_for_legacy_route( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
+        $existing = $this->get_local_custom_action_from_request( $request );
+        if ( is_wp_error( $existing ) )
+        {
+            return $existing;
+        }
+
+        $updated = $this->local_custom_actions->update_status( (int) $existing['id'], 'active' );
+        if ( ! $updated )
+        {
+            return new WP_Error(
+                'sentient_forms_db_update_failed',
+                __( 'Custom action could not be reactivated.', 'sentient-forms' ),
+                [ 'status' => 500 ]
+            );
+        }
+
+        $row = $this->local_custom_actions->get( (int) $existing['id'] );
+        if ( ! $row )
+        {
+            return $this->local_custom_action_not_found_error();
+        }
+
+        return $this->prepare_item_for_response(
+            [
+                'action' => $this->format_local_custom_action_for_legacy_route( $row ),
+                'quota'  => $this->local_custom_action_quota(),
+            ]
+        );
+    }
+
+    /**
+     * @return array<string, mixed>|WP_Error
+     */
+    private function get_local_custom_action_from_request( WP_REST_Request $request ): array | WP_Error
+    {
+        if ( ! $this->local_custom_actions )
+        {
+            return $this->local_custom_actions_unavailable_error();
+        }
+
+        $action_id = absint( $request->get_param( 'id' ) );
+        if ( $action_id <= 0 )
+        {
+            return $this->local_custom_action_not_found_error();
+        }
+
+        $row = $this->local_custom_actions->get( $action_id );
+        return $row ?: $this->local_custom_action_not_found_error();
+    }
+
+    /**
+     * @param array<string, mixed>      $payload
+     * @param array<string, mixed>|null $existing
+     *
+     * @return array<string, mixed>
+     */
+    private function build_local_custom_action_row( array $payload, ?array $existing = null, ?int $template_id = null ): array
+    {
+        $definition = $this->build_local_definition_json( $payload, $existing );
+
+        return [
+            'external_id'          => is_array( $existing ) ? ( $existing['external_id'] ?? null ) : null,
+            'template_id'          => $template_id,
+            'code'                 => is_array( $existing ) ? ( $existing['code'] ?? '' ) : ( $payload['code'] ?? '' ),
+            'display_name'         => $payload['display_name'] ?? ( $existing['display_name'] ?? '' ),
+            'definition_json'      => $definition,
+            'model_selection_json' => $this->build_local_model_selection_json( $payload, $definition, $existing ),
+            'status'               => $payload['status'] ?? ( $existing['status'] ?? 'active' ),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed>      $payload
+     * @param array<string, mixed>|null $existing
+     *
+     * @return array<string, mixed>
+     */
+    private function build_local_definition_json( array $payload, ?array $existing = null ): array
+    {
+        $definition = is_array( $payload['definition'] ?? null ) ? $payload['definition'] : [];
+        if ( [] === $definition && is_array( $existing['definition_json'] ?? null ) )
+        {
+            $definition = $existing['definition_json'];
+        }
+
+        if ( isset( $payload['description'] ) && null !== $payload['description'] )
+        {
+            $definition['description'] = sanitize_textarea_field( (string) $payload['description'] );
+        }
+
+        if ( ! empty( $payload['prompt_overrides'] ) && is_array( $payload['prompt_overrides'] ) )
+        {
+            $definition['prompt_overrides'] = $payload['prompt_overrides'];
+        }
+
+        $definition['action_kind']               = sanitize_key( (string) ( $payload['action_kind'] ?? ( $definition['action_kind'] ?? 'template_override' ) ) );
+        $definition['version']                   = absint( $payload['definition_version'] ?? ( $definition['version'] ?? 1 ) );
+        $definition['supported_execution_modes'] = is_array( $payload['supported_execution_modes'] ?? null )
+            ? array_values( array_map( 'sanitize_key', $payload['supported_execution_modes'] ) )
+            : ( $definition['supported_execution_modes'] ?? [ 'after_submission' ] );
+
+        $output_contract = is_array( $payload['output_contract'] ?? null ) ? $payload['output_contract'] : null;
+        if ( is_array( $output_contract['schema'] ?? null ) )
+        {
+            $definition['structured_output_schema'] = $output_contract['schema'];
+        }
+
+        return $definition;
+    }
+
+    /**
+     * @param array<string, mixed>      $payload
+     * @param array<string, mixed>      $definition
+     * @param array<string, mixed>|null $existing
+     *
+     * @return array<string, mixed>
+     */
+    private function build_local_model_selection_json( array $payload, array $definition, ?array $existing = null ): array
+    {
+        $existing_selection = is_array( $existing['model_selection_json'] ?? null ) ? $existing['model_selection_json'] : [];
+        $model              = isset( $payload['model_hint'] ) && null !== $payload['model_hint'] && '' !== trim( (string) $payload['model_hint'] )
+            ? sanitize_text_field( (string) $payload['model_hint'] )
+            : sanitize_text_field( (string) ( $existing_selection['model'] ?? $definition['model'] ?? 'openrouter/auto' ) );
+
+        $selection = [
+            'provider' => sanitize_key( (string) ( $existing_selection['provider'] ?? $definition['provider'] ?? 'openrouter' ) ),
+            'model'    => '' !== $model ? $model : 'openrouter/auto',
+        ];
+
+        $credential_id = isset( $existing_selection['credential_id'] ) ? absint( $existing_selection['credential_id'] ) : $this->find_default_local_openrouter_credential_id();
+        if ( $credential_id > 0 )
+        {
+            $selection['credential_id'] = $credential_id;
+        }
+
+        return $selection;
+    }
+
+    private function find_default_local_openrouter_credential_id(): int
+    {
+        if ( ! $this->local_provider_credentials )
+        {
+            return 0;
+        }
+
+        $credential = $this->local_provider_credentials->find_by_provider_auth_mode( 'openrouter', 'manual_key' );
+        if ( ! is_array( $credential ) || ! in_array( (string) ( $credential['status'] ?? '' ), [ 'valid', 'limited' ], true ) )
+        {
+            return 0;
+        }
+
+        return absint( $credential['id'] ?? 0 );
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function local_custom_action_quota(): array
+    {
+        $quota_max = max( 1, (int) apply_filters( 'sentient_forms_local_custom_action_quota_max', 999 ) );
+        $active    = $this->local_custom_actions ? count( $this->local_custom_actions->list( 'active' ) ) : 0;
+
+        return [
+            'quota_max'       => $quota_max,
+            'quota_used'      => $active,
+            'quota_remaining' => max( 0, $quota_max - $active ),
         ];
     }
 
@@ -234,6 +523,10 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
     private function format_local_custom_action_for_legacy_route( array $row ): array
     {
         $definition = is_array( $row['definition_json'] ?? null ) ? $row['definition_json'] : [];
+        $prompt_overrides = is_array( $definition['prompt_overrides'] ?? null ) ? $definition['prompt_overrides'] : [];
+        $supported_modes  = is_array( $definition['supported_execution_modes'] ?? null )
+            ? array_values( array_filter( array_map( 'sanitize_key', $definition['supported_execution_modes'] ) ) )
+            : [ 'validation', 'after_submission' ];
 
         return [
             'id'                        => (string) (int) ( $row['id'] ?? 0 ),
@@ -243,7 +536,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             'description'               => isset( $definition['description'] ) && is_scalar( $definition['description'] )
                 ? sanitize_text_field( (string) $definition['description'] )
                 : null,
-            'prompt_overrides'          => [],
+            'prompt_overrides'          => $prompt_overrides,
             'model_hint'                => isset( $row['model_selection_json']['model'] ) && is_scalar( $row['model_selection_json']['model'] )
                 ? sanitize_text_field( (string) $row['model_selection_json']['model'] )
                 : null,
@@ -252,22 +545,31 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             'archived_at'               => null,
             'created_at'                => isset( $row['created_at'] ) ? sanitize_text_field( (string) $row['created_at'] ) : '',
             'updated_at'                => isset( $row['updated_at'] ) ? sanitize_text_field( (string) $row['updated_at'] ) : '',
-            'action_kind'               => 'custom_definition',
+            'action_kind'               => isset( $definition['action_kind'] ) && is_scalar( $definition['action_kind'] ) ? sanitize_key( (string) $definition['action_kind'] ) : 'template_override',
             'definition'                => $definition,
             'definition_version'        => isset( $definition['version'] ) ? absint( $definition['version'] ) : 1,
             'output_contract'           => isset( $definition['structured_output_schema'] ) && is_array( $definition['structured_output_schema'] )
                 ? [ 'schema' => $definition['structured_output_schema'] ]
                 : null,
-            'supported_execution_modes' => [ 'validation', 'after_submission' ],
+            'supported_execution_modes' => ! empty( $supported_modes ) ? $supported_modes : [ 'after_submission' ],
         ];
     }
 
-    private function legacy_cps_custom_actions_disabled_error(): WP_Error
+    private function local_custom_actions_unavailable_error(): WP_Error
     {
         return new WP_Error(
-            'sentient_forms_legacy_cps_custom_actions_disabled',
-            __( 'Legacy CPS custom actions are disabled for the local-first plugin. Use local custom actions instead.', 'sentient-forms' ),
-            [ 'status' => 410 ]
+            'sentient_forms_local_custom_actions_unavailable',
+            __( 'Local custom actions are not available in this plugin build.', 'sentient-forms' ),
+            [ 'status' => 503 ]
+        );
+    }
+
+    private function local_custom_action_not_found_error(): WP_Error
+    {
+        return new WP_Error(
+            'sentient_forms_local_custom_action_not_found',
+            __( 'Local custom action could not be found.', 'sentient-forms' ),
+            [ 'status' => 404 ]
         );
     }
 

@@ -67,6 +67,26 @@
 	@apply sf:space-y-4;
 }
 
+@layer components {
+	#sentient-forms-admin-app {
+		--sentient-forms-wp-admin-offset: 32px;
+		min-height: calc(100vh - var(--sentient-forms-wp-admin-offset));
+		overflow: visible;
+	}
+
+	#sentient-forms-admin-app [data-sentient-admin-shell],
+	#sentient-forms-admin-app [data-sentient-admin-frame] {
+		min-height: inherit;
+		overflow: visible;
+	}
+
+	@media screen and (max-width: 782px) {
+		#sentient-forms-admin-app {
+			--sentient-forms-wp-admin-offset: 46px;
+		}
+	}
+}
+
 @layer base {
 	:root {
 		color-scheme: light;

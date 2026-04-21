@@ -45,6 +45,8 @@
 	const UUID_RE =
 		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+	const LOCAL_TEMPLATE_ID_RE = /^[1-9]\d*$/;
+
 	let {
 		initialData = null,
 		definitions = [],
@@ -61,7 +63,9 @@
 
 	function resolveTemplateId(definition: ActionDefinition): string | null {
 		const candidate = definition.templateId ?? definition.id;
-		return UUID_RE.test(candidate ?? '') ? (candidate as string) : null;
+		return UUID_RE.test(candidate ?? '') || LOCAL_TEMPLATE_ID_RE.test(candidate ?? '')
+			? (candidate as string)
+			: null;
 	}
 
 	function definitionLabel(definition: ActionDefinition): string {
@@ -159,6 +163,12 @@
 	const selectedDefinition = $derived(
 		selectableDefinitions.find((item) => item.templateId === templateId)?.definition ?? null
 	);
+	const selectedOutputContract = $derived(
+		initialData?.output_contract ??
+			(selectedDefinition?.structuredOutputSchema
+				? { schema: selectedDefinition.structuredOutputSchema }
+				: null)
+	);
 	const generatedCode = $derived(generateCustomActionCode(displayName));
 	const baseTemplateUnavailable = $derived(!isEditMode && selectableDefinitions.length === 0);
 
@@ -207,15 +217,40 @@
 		return actions;
 	}
 
+	function basePromptTemplate(): string {
+		if (
+			isRecord(initialData?.definition) &&
+			typeof initialData.definition.prompt_template === 'string' &&
+			initialData.definition.prompt_template.trim().length > 0
+		) {
+			return initialData.definition.prompt_template.trim();
+		}
+
+		if (typeof selectedDefinition?.promptTemplate === 'string') {
+			const prompt = selectedDefinition.promptTemplate.trim();
+			if (prompt.length > 0) return prompt;
+		}
+
+		return 'Review this WordPress form submission and return the requested structured output. Form: {{form.title}} Entry: {{entry}}';
+	}
+
 	function buildDefinition(): ActionDefinitionPayload {
 		const baseDefinition = isRecord(initialData?.definition) ? initialData.definition : {};
 		const executionDefaults = isRecord(baseDefinition.execution_defaults)
 			? baseDefinition.execution_defaults
 			: {};
 		const instructions = customInstructions.trim();
+		const promptTemplate = instructions
+			? `${basePromptTemplate()}\n\nCustom webmaster instructions:\n${instructions}`
+			: basePromptTemplate();
 
 		return {
 			...baseDefinition,
+			description: description.trim() || null,
+			prompt_template: promptTemplate,
+			...(selectedDefinition?.structuredOutputSchema
+				? { structured_output_schema: selectedDefinition.structuredOutputSchema }
+				: {}),
 			...(instructions ? { meta_prompt: instructions, goal: instructions } : {}),
 			execution_defaults: {
 				...executionDefaults,
@@ -246,7 +281,7 @@
 			action_kind: initialData?.action_kind ?? 'template_override',
 			definition: buildDefinition(),
 			definition_version: initialData?.definition_version ?? 1,
-			output_contract: initialData?.output_contract ?? null,
+			output_contract: selectedOutputContract,
 			supported_execution_modes: initialData?.supported_execution_modes ?? ['after_submission']
 		};
 

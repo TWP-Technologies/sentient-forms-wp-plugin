@@ -169,6 +169,49 @@ describe('SentientFormsApiClient', () => {
 		});
 	});
 
+	it('deletes a saved local provider credential', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					deleted: true,
+					credential: {
+						id: 7,
+						provider: 'openrouter',
+						label: 'OpenRouter key',
+						auth_mode: 'manual_key',
+						constant_name: null,
+						status: 'valid',
+						status_json: { is_free_tier: true },
+						last_validated_at: '2026-04-17T10:00:00Z',
+						created_at: '2026-04-17T09:00:00Z',
+						updated_at: '2026-04-17T10:00:00Z',
+						secret_configured: true
+					}
+				})
+		});
+
+		const result = await client.deleteLocalProviderCredential(7, { showNotifications: false });
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}local/providers/credentials/7`,
+			expect.objectContaining({
+				method: 'DELETE',
+				credentials: 'same-origin'
+			})
+		);
+		expect(result).toMatchObject({
+			deleted: true,
+			credential: {
+				id: 7,
+				provider: 'openrouter',
+				secret_configured: true
+			}
+		});
+	});
+
 	it('validates an OpenRouter key with disclosure acceptance', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,

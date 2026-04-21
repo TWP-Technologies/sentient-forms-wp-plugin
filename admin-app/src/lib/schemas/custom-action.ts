@@ -56,6 +56,7 @@ const STATUSES = new Set<CustomActionStatus>(['active', 'archived']);
 const WORKFLOW_NODE_KINDS = new Set(['llm_step', 'transform_step', 'decision_step']);
 const UUID_RE =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LOCAL_TEMPLATE_ID_RE = /^[1-9]\d*$/;
 const CODE_RE = /^[a-z0-9-]+$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -95,8 +96,8 @@ function validateTemplateId(value: unknown, issues: ValidationIssue[]): string {
 		return '';
 	}
 
-	if (!UUID_RE.test(value)) {
-		pushIssue(issues, ['template_id'], 'Template ID must be a valid UUID');
+	if (!UUID_RE.test(value) && !LOCAL_TEMPLATE_ID_RE.test(value)) {
+		pushIssue(issues, ['template_id'], 'Template ID must be a valid UUID or local numeric ID');
 	}
 
 	return value;

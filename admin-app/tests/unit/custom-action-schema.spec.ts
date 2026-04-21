@@ -50,6 +50,22 @@ describe('custom action schema pricing authority', () => {
 		}
 	});
 
+	it('accepts local numeric template IDs for local-first action templates', () => {
+		const result = validateCreatePayload({
+			template_id: '42',
+			code: 'local-template-id',
+			display_name: 'Local Template ID',
+			action_kind: 'template_override',
+			definition_version: 1,
+			supported_execution_modes: ['after_submission']
+		});
+
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.template_id).toBe('42');
+		}
+	});
+
 	it('validateUpdatePayload returns sanitized data without pricing override fields', () => {
 		const result = validateUpdatePayload({
 			display_name: 'Schema Guard Updated',

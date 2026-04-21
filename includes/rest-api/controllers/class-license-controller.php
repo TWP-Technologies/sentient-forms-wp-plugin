@@ -373,6 +373,13 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
                 200
             );
         }
+        if ( ! $this->has_managed_license_key_format( $license_key ) )
+        {
+            return $this->prepare_item_for_response(
+                $this->format_license_response( $license_data ),
+                200
+            );
+        }
 
         $site_url = $request->get_param( 'site_url' );
         $site_url = ! empty( $site_url ) ? esc_url_raw( $site_url ) : home_url();
@@ -552,7 +559,7 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             );
         }
 
-        if ( empty( $value ) || ! preg_match( self::LICENSE_KEY_REGEX_PATTERN, $value ) )
+        if ( empty( $value ) || ! $this->has_managed_license_key_format( $value ) )
         {
             return new WP_Error(
                 'rest_invalid_format',
@@ -566,6 +573,11 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         }
 
         return true;
+    }
+
+    private function has_managed_license_key_format( string $license_key ): bool
+    {
+        return 1 === preg_match( self::LICENSE_KEY_REGEX_PATTERN, $license_key );
     }
 
     public function get_item_schema(): ?array

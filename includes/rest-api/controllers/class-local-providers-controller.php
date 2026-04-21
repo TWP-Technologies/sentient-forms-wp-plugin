@@ -55,6 +55,19 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
 
         register_rest_route(
             $this->namespace,
+            '/' . $this->rest_base . '/credentials/(?P<id>[\d]+)',
+            [
+                [
+                    'methods'             => WP_REST_Server::DELETABLE,
+                    'callback'            => [ $this, 'delete_credential' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => $this->get_credential_delete_args(),
+                ],
+            ]
+        );
+
+        register_rest_route(
+            $this->namespace,
             '/' . $this->rest_base . '/openrouter/validate',
             [
                 [
@@ -111,6 +124,33 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         $rows = array_map( [ $this, 'format_credential' ], $this->credentials->list() );
 
         return $this->prepare_item_for_response( $rows );
+    }
+
+    public function delete_credential( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
+        $id         = absint( $request->get_param( 'id' ) );
+        $credential = $this->credentials->get( $id );
+        if ( null === $credential )
+        {
+            return new WP_Error(
+                'sentient_forms_credential_not_found',
+                __( 'Provider credential could not be found.', 'sentient-forms' ),
+                [ 'status' => 404 ]
+            );
+        }
+
+        $deleted = $this->credentials->delete( $id );
+        if ( is_wp_error( $deleted ) )
+        {
+            return $deleted;
+        }
+
+        return $this->prepare_item_for_response(
+            [
+                'deleted'    => true,
+                'credential' => $this->format_credential( $credential ),
+            ]
+        );
     }
 
     public function validate_openrouter_key( WP_REST_Request $request ): WP_REST_Response | WP_Error
@@ -393,6 +433,19 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
                 ],
             ]
         );
+    }
+
+    private function get_credential_delete_args(): array
+    {
+        return [
+            'id' => [
+                'type'              => 'integer',
+                'required'          => true,
+                'minimum'           => 1,
+                'sanitize_callback' => 'absint',
+                'validate_callback' => 'rest_validate_request_arg',
+            ],
+        ];
     }
 
     private function get_openrouter_validate_args(): array

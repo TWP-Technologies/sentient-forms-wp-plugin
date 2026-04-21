@@ -154,7 +154,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             }
         }
 
-        $messages = $this->build_messages( $definition, $mapping, $form, $entry, $context );
+        $messages = $this->build_messages( $action, $definition, $mapping, $form, $entry, $context );
         if ( is_wp_error( $messages ) )
         {
             return $messages;
@@ -465,7 +465,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         ];
     }
 
-    private function build_messages( array $definition, array $mapping, array $form, array $entry, array $context ): array | WP_Error
+    private function build_messages( array $action, array $definition, array $mapping, array $form, array $entry, array $context ): array | WP_Error
     {
         $variables = $this->renderer->build_variables(
             is_array( $mapping['input_bindings_json'] ?? null ) ? $mapping['input_bindings_json'] : [],
@@ -484,7 +484,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             return $this->renderer->render_messages( $definition['messages'], $variables );
         }
 
-        $prompt_template = (string) ( $definition['prompt_template'] ?? $definition['prompt'] ?? '' );
+        $prompt_template = $this->resolve_prompt_template( $action, $definition );
         if ( '' === trim( $prompt_template ) )
         {
             return new WP_Error(
@@ -508,6 +508,31 @@ class Sentient_Forms_Local_Action_Execution_Service
         ];
 
         return $this->renderer->render_messages( $messages, $variables );
+    }
+
+    private function resolve_prompt_template( array $action, array $definition ): string
+    {
+        foreach ( [ 'prompt_template', 'prompt' ] as $definition_key )
+        {
+            if ( isset( $definition[ $definition_key ] ) && is_scalar( $definition[ $definition_key ] ) && '' !== trim( (string) $definition[ $definition_key ] ) )
+            {
+                return (string) $definition[ $definition_key ];
+            }
+        }
+
+        $template_id = (int) ( $action['template_id'] ?? 0 );
+        if ( $template_id <= 0 )
+        {
+            return '';
+        }
+
+        $template = $this->templates->get( $template_id );
+        if ( ! is_array( $template ) || ! isset( $template['prompt_template'] ) || ! is_scalar( $template['prompt_template'] ) )
+        {
+            return '';
+        }
+
+        return (string) $template['prompt_template'];
     }
 
     private function build_provider_payload( string $model, array $messages, array $definition, array $model_selection ): array
