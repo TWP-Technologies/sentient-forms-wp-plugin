@@ -87,7 +87,7 @@
 	type Props = { data: { formSourceSlug: string; formId: number } };
 	type CreateKind = 'template' | 'custom' | 'local_openrouter';
 	type LocalBuilderExecutionMode = 'sync' | 'async';
-	type LocalBuilderTemplateKey = 'summary' | 'lead_qualification' | 'sentiment';
+	type LocalBuilderTemplateKey = 'spam_filter' | 'summary' | 'lead_qualification' | 'sentiment';
 	type LocalBuilderTemplate = {
 		key: LocalBuilderTemplateKey;
 		label: string;
@@ -100,6 +100,8 @@
 		structuredOutputSchema: Record<string, unknown>;
 		maxTokens: number;
 		temperature: number;
+		defaultExecutionMode?: LocalBuilderExecutionMode;
+		effectMapping?: Record<string, unknown>;
 	};
 	type LocalBuilderResult = {
 		action: LocalCustomActionRecord;
@@ -108,6 +110,60 @@
 	let { data }: Props = $props();
 
 	const LOCAL_BUILDER_TEMPLATES: Record<LocalBuilderTemplateKey, LocalBuilderTemplate> = {
+		spam_filter: {
+			key: 'spam_filter',
+			label: 'Spam filter (recommended)',
+			description:
+				'Classify submissions, mark likely spam in Gravity Forms, and hold spam notifications.',
+			actionName: 'Local OpenRouter spam filter',
+			systemPrompt:
+				'You are a careful spam filter for WordPress Gravity Forms submissions. Return only compact JSON with classification, confidence, and justification. Classify as ham unless the submission is clearly abusive, bot-like, promotional, phishing, or irrelevant.',
+			promptTemplate:
+				'Form: {{form.title}}\nEntry: {{entry}}\n\nReturn JSON shaped as {"classification":"ham|likely_spam|spam","confidence":0.0,"justification":"short reason"}. Use likely_spam or spam only when the evidence is strong.',
+			resultMetaKey: 'sentient_forms_spam_classification',
+			resultField: 'classification',
+			structuredOutputSchema: {
+				type: 'object',
+				required: ['classification', 'confidence', 'justification'],
+				additionalProperties: true,
+				properties: {
+					classification: {
+						type: 'string',
+						enum: ['ham', 'likely_spam', 'spam']
+					},
+					confidence: {
+						type: 'number',
+						minimum: 0,
+						maximum: 1
+					},
+					justification: {
+						type: 'string',
+						minLength: 1
+					}
+				}
+			},
+			maxTokens: 180,
+			temperature: 0,
+			defaultExecutionMode: 'sync',
+			effectMapping: {
+				store_result: true,
+				meta: {
+					sentient_forms_spam_classification: 'structured.classification',
+					sentient_forms_spam_confidence: 'structured.confidence'
+				},
+				entry_note: {
+					path: 'structured.justification',
+					prefix: 'Sentient Forms spam review:'
+				},
+				spam: {
+					enabled: true,
+					classification_path: 'structured.classification',
+					confidence_path: 'structured.confidence',
+					min_confidence: 0.8,
+					suppress_notifications_on_spam: true
+				}
+			}
+		},
 		summary: {
 			key: 'summary',
 			label: 'Entry summary',
@@ -212,12 +268,14 @@
 	let searchTerm = $state('');
 	let selectedCreateDependencyIds = $state<Set<string>>(new Set());
 	let localBuilderCredentialId = $state('');
-	let localBuilderTemplateKey = $state<LocalBuilderTemplateKey>('summary');
-	let localBuilderActionName = $state(LOCAL_BUILDER_TEMPLATES.summary.actionName);
-	let localBuilderSystemPrompt = $state(LOCAL_BUILDER_TEMPLATES.summary.systemPrompt);
-	let localBuilderPromptTemplate = $state(LOCAL_BUILDER_TEMPLATES.summary.promptTemplate);
-	let localBuilderResultMetaKey = $state(LOCAL_BUILDER_TEMPLATES.summary.resultMetaKey);
-	let localBuilderExecutionMode = $state<LocalBuilderExecutionMode>('async');
+	let localBuilderTemplateKey = $state<LocalBuilderTemplateKey>('spam_filter');
+	let localBuilderActionName = $state(LOCAL_BUILDER_TEMPLATES.spam_filter.actionName);
+	let localBuilderSystemPrompt = $state(LOCAL_BUILDER_TEMPLATES.spam_filter.systemPrompt);
+	let localBuilderPromptTemplate = $state(LOCAL_BUILDER_TEMPLATES.spam_filter.promptTemplate);
+	let localBuilderResultMetaKey = $state(LOCAL_BUILDER_TEMPLATES.spam_filter.resultMetaKey);
+	let localBuilderExecutionMode = $state<LocalBuilderExecutionMode>(
+		LOCAL_BUILDER_TEMPLATES.spam_filter.defaultExecutionMode ?? 'async'
+	);
 	let localBuilderModelSelection = $state<ModelSelection>(cloneDefaultModelSelection());
 	let localBuilderResult = $state<LocalBuilderResult | null>(null);
 
@@ -1703,6 +1761,7 @@
 		localBuilderSystemPrompt = template.systemPrompt;
 		localBuilderPromptTemplate = template.promptTemplate;
 		localBuilderResultMetaKey = template.resultMetaKey;
+		localBuilderExecutionMode = template.defaultExecutionMode ?? 'async';
 		localBuilderResult = null;
 	}
 
@@ -1781,8 +1840,19 @@
 			{ showNotifications: false }
 		);
 
-		const meta: Record<string, string> = {};
+		const templateEffectMapping = localBuilderTemplate.effectMapping
+			? structuredClone(localBuilderTemplate.effectMapping)
+			: null;
+		const meta =
+			templateEffectMapping && typeof templateEffectMapping.meta === 'object'
+				? (templateEffectMapping.meta as Record<string, string>)
+				: {};
 		meta[resultMetaKey] = `structured.${localBuilderTemplate.resultField}`;
+		const effectMapping = {
+			...(templateEffectMapping ?? {}),
+			store_result: true,
+			meta
+		};
 
 		const mappings: LocalFormMappingRecord[] = [];
 		for (const hook of hooks) {
@@ -1795,10 +1865,7 @@
 					action_id: action.id,
 					input_bindings_json: {},
 					execution_mode: localBuilderExecutionMode,
-					effect_mapping_json: {
-						store_result: true,
-						meta
-					},
+					effect_mapping_json: effectMapping,
 					enabled: true
 				},
 				{ showNotifications: false }
@@ -3100,7 +3167,7 @@
 	{/if}
 
 	<div class="sf:grid sf:gap-4 sf:xl:grid-cols-3">
-		<Card class="sf:xl:col-span-2" data-testid="action-definitions-card">
+		<Card class="sf:min-w-0 sf:xl:col-span-2" data-testid="action-definitions-card">
 			<div
 				class="sf:flex sf:flex-col sf:gap-3 sf:md:flex-row sf:md:items-center sf:md:justify-between"
 			>
@@ -3124,7 +3191,7 @@
 				</Alert>
 			{/if}
 
-			<div class="sf:mt-4 sf:grid sf:gap-3 sf:lg:grid-cols-2">
+			<div class="sf:mt-4 sf:grid sf:gap-3">
 				<Card class="sf:border-dashed">
 					<p class="sf:text-xs sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2">
 						Built-in templates
@@ -3134,21 +3201,21 @@
 					{:else}
 						<ul class="sf:space-y-2">
 							{#each definitions.slice(0, 5) as definition (definition.id)}
-								<li class="sf:flex sf:items-start sf:justify-between sf:gap-3">
-									<div class="sf:flex-1">
-										<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+								<li class="sf:flex sf:min-w-0 sf:items-start sf:justify-between sf:gap-3">
+									<div class="sf:min-w-0 sf:flex-1">
+										<p class="sf:break-words sf:text-sm sf:font-semibold sf:text-slate-800">
 											{definition.label ?? definition.id}
 										</p>
 										<p class="sf:text-xs sf:text-slate-500">
 											Hooks: {summarizeDefinitionHooks(definition.hooks)}
 										</p>
-										<p class="sf:text-xs sf:text-slate-500">
+										<p class="sf:break-words sf:text-xs sf:text-slate-500">
 											Managed base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
 												definition
 											)}
 										</p>
 									</div>
-									<div class="sf:flex sf:items-center sf:gap-2">
+									<div class="sf:flex sf:shrink-0 sf:items-center sf:gap-2">
 										<Button
 											size="sm"
 											variant="ghost"
@@ -3190,14 +3257,14 @@
 					{#if customActions.length > 0}
 						<ul class="sf:mt-3 sf:space-y-2">
 							{#each customActions.slice(0, 4) as action (action.id)}
-								<li class="sf:flex sf:items-start sf:justify-between sf:gap-3">
-									<div>
-										<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+								<li class="sf:flex sf:min-w-0 sf:items-start sf:justify-between sf:gap-3">
+									<div class="sf:min-w-0 sf:flex-1">
+										<p class="sf:break-words sf:text-sm sf:font-semibold sf:text-slate-800">
 											{action.display_name}
 										</p>
-										<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
+										<p class="sf:break-all sf:text-xs sf:text-slate-500">Code: {action.code}</p>
 									</div>
-									<div class="sf:flex sf:items-center sf:gap-2">
+									<div class="sf:flex sf:shrink-0 sf:items-center sf:gap-2">
 										<Button
 											size="sm"
 											variant="ghost"
@@ -3228,7 +3295,7 @@
 			</div>
 		</Card>
 
-		<Card class="sf:space-y-3">
+		<Card class="sf:min-w-0 sf:space-y-3">
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
 			>
@@ -3250,7 +3317,7 @@
 			{:else if actionsState.status}
 				<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
 				<p class="sf:text-sm sf:text-slate-600">{statusDescription(actionsState.status)}</p>
-				{#if actionsState.status.last_error_code || actionsState.status.message}
+				{#if actionsState.status.last_error_code || (actionsState.status.status === 'error' && actionsState.status.message)}
 					<p class="sf:text-xs sf:text-amber-700 sf:mt-1">
 						{actionsState.status.last_error_code
 							? `Last error: ${actionsState.status.last_error_code}`

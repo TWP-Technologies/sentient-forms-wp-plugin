@@ -37,6 +37,8 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
     private ?Sentient_Forms_Local_Custom_Actions_Repository $local_custom_actions = null;
 
+    private ?Sentient_Forms_Execution_Events_Repository $local_execution_events = null;
+
     const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
 
     private const ACTION_LOG_OPTION_KEY = 'sentient_forms_action_log';
@@ -124,6 +126,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         if ( class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
         {
             $this->local_custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        }
+
+        if ( class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
+        {
+            $this->local_execution_events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
         }
     }
 
@@ -2420,13 +2427,10 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             'form_source_slug'
         );
 
-        $form_id    = (int) $request->get_param( 'form_id' );
-        $option_key = $this->get_form_status_option_key( $form_source_slug, $form_id );
-        $status     = get_option( $option_key, null );
-
-        if ( ! is_array( $status ) )
-        {
-            $status = $this->get_form_execution_status_from_action_log( $form_source_slug, $form_id ) ?? [
+        $form_id = (int) $request->get_param( 'form_id' );
+        $status  = $this->get_form_execution_status_from_local_execution_event( $form_source_slug, $form_id )
+            ?? $this->get_form_execution_status_from_action_log( $form_source_slug, $form_id )
+            ?? [
                 'status'          => 'unknown',
                 'message'         => null,
                 'entry_id'        => null,
@@ -2434,9 +2438,68 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 'last_result'     => null,
                 'updated_at'      => null,
             ];
-        }
 
         return $this->prepare_item_for_response( $status );
+    }
+
+    private function get_form_execution_status_from_local_execution_event( string $form_source_slug, int $form_id ): ?array
+    {
+        if ( null === $this->local_execution_events )
+        {
+            return null;
+        }
+
+        $event = $this->local_execution_events->get_latest_for_form( $form_source_slug, $form_id );
+        if ( ! is_array( $event ) )
+        {
+            return null;
+        }
+
+        $raw_status = sanitize_key( (string) ( $event['status'] ?? 'unknown' ) );
+        $status     = match ( $raw_status ) {
+            'succeeded', 'success' => 'success',
+            'failed', 'error'      => 'error',
+            default                => 'unknown',
+        };
+
+        return [
+            'status'          => $status,
+            'message'         => $this->format_local_execution_event_message( $event, $raw_status, $status ),
+            'entry_id'        => isset( $event['entry_id'] ) ? absint( $event['entry_id'] ) : null,
+            'last_error_code' => isset( $event['error_code'] ) && is_scalar( $event['error_code'] )
+                ? sanitize_key( (string) $event['error_code'] )
+                : null,
+            'last_result'     => is_array( $event['result_json'] ?? null ) ? $event['result_json'] : null,
+            'updated_at'      => isset( $event['updated_at'] ) && is_scalar( $event['updated_at'] )
+                ? sanitize_text_field( (string) $event['updated_at'] )
+                : ( isset( $event['created_at'] ) && is_scalar( $event['created_at'] )
+                    ? sanitize_text_field( (string) $event['created_at'] )
+                    : null ),
+        ];
+    }
+
+    private function format_local_execution_event_message( array $event, string $raw_status, string $status ): ?string
+    {
+        if ( 'error' === $status )
+        {
+            return isset( $event['error_message'] ) && is_scalar( $event['error_message'] )
+                ? sanitize_textarea_field( (string) $event['error_message'] )
+                : __( 'Local action execution failed.', 'sentient-forms' );
+        }
+
+        if ( 'success' === $status )
+        {
+            return __( 'Local action completed.', 'sentient-forms' );
+        }
+
+        return match ( $raw_status ) {
+            'queued'  => __( 'Local action is queued.', 'sentient-forms' ),
+            'running' => __( 'Local action is running.', 'sentient-forms' ),
+            'pending' => __( 'Local action is pending.', 'sentient-forms' ),
+            'skipped' => __( 'Local action was skipped.', 'sentient-forms' ),
+            'blocked' => __( 'Local action was blocked.', 'sentient-forms' ),
+            default   => null,
+        };
     }
 
     private function get_form_execution_status_from_action_log( string $form_source_slug, int $form_id ): ?array
@@ -2460,6 +2523,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             }
 
             if ( absint( $entry['form_id'] ?? 0 ) !== $form_id )
+            {
+                continue;
+            }
+
+            if ( $this->is_retired_legacy_proxy_auth_log_entry( $entry ) )
             {
                 continue;
             }
@@ -2498,6 +2566,21 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return null;
+    }
+
+    private function is_retired_legacy_proxy_auth_log_entry( array $entry ): bool
+    {
+        $status        = sanitize_key( (string) ( $entry['status'] ?? '' ) );
+        $error_code    = isset( $entry['error_code'] ) && is_scalar( $entry['error_code'] )
+            ? sanitize_key( (string) $entry['error_code'] )
+            : '';
+        $error_message = isset( $entry['error_message'] ) && is_scalar( $entry['error_message'] )
+            ? trim( (string) $entry['error_message'] )
+            : '';
+
+        return 'error' === $status
+            && '401' === $error_code
+            && 'Missing Authentication header' === $error_message;
     }
 
     /**

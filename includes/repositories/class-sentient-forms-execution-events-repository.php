@@ -136,6 +136,21 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         return array_map( [ $this, 'decode_row' ], $rows );
     }
 
+    public function get_latest_for_form( string $form_source, int $form_id ): ?array
+    {
+        $wpdb = $this->wpdb;
+        $row  = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE form_source = %s AND form_id = %s ORDER BY created_at DESC, id DESC LIMIT 1',
+                sanitize_key( $form_source ),
+                (string) $form_id
+            ),
+            ARRAY_A
+        );
+
+        return $row ? $this->decode_row( $row ) : null;
+    }
+
     public function cleanup_expired( ?string $before = null ): int
     {
         $before = $before ?: $this->now();

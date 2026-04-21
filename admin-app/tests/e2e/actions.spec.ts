@@ -1103,13 +1103,14 @@ test.describe('Actions admin flows', () => {
 		await page.getByRole('button', { name: 'Direct OpenRouter' }).click();
 
 		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
-		await drawer.getByTestId('local-builder-template').selectOption('lead_qualification');
+		await expect(drawer.getByTestId('local-builder-template')).toHaveValue('spam_filter');
 		await expect(drawer.getByTestId('local-builder-model-selector')).toBeVisible();
 		await drawer.getByLabel('Preset').selectOption('sf_free');
 		await expect(drawer.getByTestId('local-builder-result-meta-key')).toHaveValue(
-			'sentient_forms_qualification'
+			'sentient_forms_spam_classification'
 		);
-		await drawer.getByTestId('local-builder-action-name').fill('Local drawer qualification');
+		await expect(drawer.getByTestId('local-builder-execution-mode')).toHaveValue('sync');
+		await drawer.getByTestId('local-builder-action-name').fill('Local drawer spam filter');
 		await drawer.getByRole('button', { name: 'Create local action' }).click();
 
 		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #81');
@@ -1124,9 +1125,9 @@ test.describe('Actions admin flows', () => {
 			})
 		);
 		expect(createdActionPayload).toMatchObject({
-			display_name: 'Local drawer qualification',
+			display_name: 'Local drawer spam filter',
 			definition_json: {
-				builder_template: 'lead_qualification'
+				builder_template: 'spam_filter'
 			},
 			model_selection_json: {
 				provider: 'openrouter',
@@ -1144,7 +1145,7 @@ test.describe('Actions admin flows', () => {
 		expect(createdActionPayload?.definition_json).toMatchObject({
 			response_format: { type: 'json_object' },
 			structured_output_schema: {
-				required: ['qualification']
+				required: ['classification', 'confidence', 'justification']
 			}
 		});
 		expect(createdMappingPayload).toMatchObject({
@@ -1153,11 +1154,19 @@ test.describe('Actions admin flows', () => {
 			hook: 'gform_after_submission',
 			action_kind: 'custom_action',
 			action_id: 81,
-			execution_mode: 'async',
+			execution_mode: 'sync',
 			effect_mapping_json: {
 				store_result: true,
 				meta: {
-					sentient_forms_qualification: 'structured.qualification'
+					sentient_forms_spam_classification: 'structured.classification',
+					sentient_forms_spam_confidence: 'structured.confidence'
+				},
+				spam: {
+					enabled: true,
+					classification_path: 'structured.classification',
+					confidence_path: 'structured.confidence',
+					min_confidence: 0.8,
+					suppress_notifications_on_spam: true
 				}
 			}
 		});
@@ -1167,14 +1176,14 @@ test.describe('Actions admin flows', () => {
 		await expect(drawer).toBeHidden();
 
 		const table = await openLinkedActionsTable(page);
-		await expect(table.getByText('Local drawer qualification')).toBeVisible();
+		await expect(table.getByText('Local drawer spam filter')).toBeVisible();
 		await expect(table.getByText('Direct OpenRouter')).toBeVisible();
 		await expect(table.getByText('ID: local_openrouter_summary_1')).toBeVisible();
 
 		await table.getByRole('button', { name: 'Configure' }).click();
 		const modal = page.getByTestId('mapping-config-modal');
 		await expect(modal).toBeVisible();
-		await expect(modal.getByText('Local drawer qualification (local_first_91)')).toBeVisible();
+		await expect(modal.getByText('Local drawer spam filter (local_first_91)')).toBeVisible();
 		await modal.getByTestId('mapping-config-close-header').click();
 		await expect(modal).toBeHidden();
 
