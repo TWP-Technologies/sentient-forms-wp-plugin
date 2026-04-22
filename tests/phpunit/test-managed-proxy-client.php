@@ -110,6 +110,25 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $this->assertSame( [ 'input' ], $result->get_error_data()['unsupported_fields'] );
     }
 
+    public function test_base_url_falls_back_to_cps_base_url_resolution(): void
+    {
+        $filter = static function (): string {
+            return 'https://staging-api.sentientforms.com/v1';
+        };
+
+        add_filter( 'sentient_forms_cps_base_url', $filter, 10, 2 );
+
+        try
+        {
+            $client = new Sentient_Forms_Managed_Proxy_Client();
+            $this->assertSame( 'https://staging-api.sentientforms.com/v2', $client->get_base_url() );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_cps_base_url', $filter, 10 );
+        }
+    }
+
     public function test_execute_rejects_nested_metadata_before_http_request(): void
     {
         $this->mock_http(

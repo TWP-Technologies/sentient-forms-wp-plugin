@@ -335,21 +335,25 @@ class Sentient_Forms_Managed_Proxy_Client
 
     private function resolve_base_url( ?string $base_url ): string
     {
-        $url = $base_url ?: self::DEFAULT_BASE_URL;
-
-        if ( defined( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' ) && is_string( constant( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' ) ) )
+        $url = $base_url;
+        if ( ! is_string( $url ) || '' === trim( $url ) )
         {
-            $url = constant( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
-        }
-        elseif ( getenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' ) )
-        {
-            $url = (string) getenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
+            $url = $this->resolve_managed_service_override();
         }
 
-        $filtered = apply_filters( 'sentient_forms_managed_service_url', $url );
-        if ( is_string( $filtered ) && '' !== trim( $filtered ) )
+        if ( ! is_string( $url ) || '' === trim( $url ) )
         {
-            $url = $filtered;
+            $url = $this->resolve_proxy_api_override();
+        }
+
+        if ( ! is_string( $url ) || '' === trim( $url ) )
+        {
+            $url = $this->resolve_cps_base_url_default();
+        }
+
+        if ( ! is_string( $url ) || '' === trim( $url ) )
+        {
+            $url = self::DEFAULT_BASE_URL;
         }
 
         $url = untrailingslashit( trim( $url ) );
@@ -364,5 +368,64 @@ class Sentient_Forms_Managed_Proxy_Client
         }
 
         return $url;
+    }
+
+    private function resolve_managed_service_override(): ?string
+    {
+        $url = null;
+
+        if ( defined( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' ) && is_string( constant( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' ) ) )
+        {
+            $url = constant( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
+        }
+        elseif ( getenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' ) )
+        {
+            $url = (string) getenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
+        }
+
+        $filtered = apply_filters( 'sentient_forms_managed_service_url', $url );
+        if ( is_string( $filtered ) && '' !== trim( $filtered ) )
+        {
+            return $filtered;
+        }
+
+        return is_string( $url ) && '' !== trim( $url ) ? $url : null;
+    }
+
+    private function resolve_proxy_api_override(): ?string
+    {
+        $url = null;
+
+        if ( defined( 'SENTIENT_FORMS_PROXY_API_URL' ) && is_string( constant( 'SENTIENT_FORMS_PROXY_API_URL' ) ) )
+        {
+            $url = constant( 'SENTIENT_FORMS_PROXY_API_URL' );
+        }
+        elseif ( getenv( 'SENTIENT_FORMS_PROXY_API_URL' ) )
+        {
+            $url = (string) getenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+        }
+
+        $filtered = apply_filters( 'sentient_forms_proxy_api_url', $url );
+        if ( is_string( $filtered ) && '' !== trim( $filtered ) )
+        {
+            return $filtered;
+        }
+
+        return is_string( $url ) && '' !== trim( $url ) ? $url : null;
+    }
+
+    private function resolve_cps_base_url_default(): string
+    {
+        $options  = get_option( 'sentient_forms_settings', [] );
+        $options  = is_array( $options ) ? $options : [];
+        $base_url = $options['cps_base_url'] ?? null;
+        $base_url = apply_filters( 'sentient_forms_cps_base_url', $base_url, $options );
+
+        if ( is_string( $base_url ) && '' !== trim( $base_url ) )
+        {
+            return $base_url;
+        }
+
+        return 'https://staging-api.sentientforms.com/v1';
     }
 }

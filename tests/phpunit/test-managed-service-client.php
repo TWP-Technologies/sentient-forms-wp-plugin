@@ -96,6 +96,25 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         );
     }
 
+    public function test_base_url_falls_back_to_cps_base_url_resolution(): void
+    {
+        $filter = static function (): string {
+            return 'https://staging-api.sentientforms.com/v1';
+        };
+
+        add_filter( 'sentient_forms_cps_base_url', $filter, 10, 2 );
+
+        try
+        {
+            $client = new Sentient_Forms_Managed_Service_Client();
+            $this->assertSame( 'https://staging-api.sentientforms.com/v2', $client->get_base_url() );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_cps_base_url', $filter, 10 );
+        }
+    }
+
     public function test_checkout_posts_sanitized_payload_to_v2_billing_route(): void
     {
         $calls = [];
