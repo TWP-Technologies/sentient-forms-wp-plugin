@@ -259,6 +259,54 @@ describe('SentientFormsApiClient', () => {
 		});
 	});
 
+	it('validates an OpenRouter server secret reference with disclosure acceptance', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					provider: 'openrouter',
+					status: 'valid',
+					credential_id: 12,
+					key_status: { label: 'server secret', is_free_tier: true },
+					consent_recorded: true,
+					consent_id: 18,
+					auth_mode: 'constant',
+					constant_name: 'SENTIENT_FORMS_OPENROUTER_KEY'
+				})
+		});
+
+		const result = await client.saveOpenRouterConstant(
+			{
+				constant_name: 'SENTIENT_FORMS_OPENROUTER_KEY',
+				label: 'OpenRouter server secret',
+				disclosure_version: '2026-04-local-first-openrouter-v1',
+				accepted_external_service_terms: true
+			},
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}local/providers/openrouter/constant`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({
+					constant_name: 'SENTIENT_FORMS_OPENROUTER_KEY',
+					label: 'OpenRouter server secret',
+					disclosure_version: '2026-04-local-first-openrouter-v1',
+					accepted_external_service_terms: true
+				})
+			})
+		);
+		expect(result).toMatchObject({
+			status: 'valid',
+			credential_id: 12,
+			auth_mode: 'constant',
+			constant_name: 'SENTIENT_FORMS_OPENROUTER_KEY'
+		});
+	});
+
 	it('sets up the Sentient managed proxy credential with disclosure acceptance', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,

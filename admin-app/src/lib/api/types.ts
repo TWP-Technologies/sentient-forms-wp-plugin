@@ -224,7 +224,12 @@ export interface PluginSettingsResponse {
 }
 
 export type LocalProvider = 'openrouter' | 'sentient_managed' | string;
-export type LocalProviderAuthMode = 'manual_key' | 'oauth_broker' | 'sentient_proxy' | string;
+export type LocalProviderAuthMode =
+	| 'manual_key'
+	| 'oauth_broker'
+	| 'sentient_proxy'
+	| 'constant'
+	| string;
 export type LocalProviderStatus = 'unknown' | 'valid' | 'invalid' | 'limited' | 'disabled' | string;
 
 export interface LocalProviderCredential {
@@ -289,6 +294,13 @@ export interface OpenRouterValidateRequest {
 	save?: boolean;
 }
 
+export interface OpenRouterConstantRequest {
+	constant_name: string;
+	disclosure_version: string;
+	accepted_external_service_terms: boolean;
+	label?: string;
+}
+
 export interface OpenRouterValidateResponse {
 	provider: 'openrouter';
 	status: LocalProviderStatus;
@@ -296,6 +308,8 @@ export interface OpenRouterValidateResponse {
 	key_status: OpenRouterKeyStatus;
 	consent_recorded: boolean;
 	consent_id: number;
+	auth_mode?: LocalProviderAuthMode;
+	constant_name?: string | null;
 }
 
 export interface OpenRouterModelCacheItem {

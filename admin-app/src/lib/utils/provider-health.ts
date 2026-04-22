@@ -61,7 +61,9 @@ export function providerCredentialStatusDetail(credential: LocalProviderCredenti
 	const httpStatus = providerCredentialHttpStatus(credential);
 
 	if (!credential.secret_configured) {
-		return 'The secret is missing. Save and validate this key before using it.';
+		return credential.auth_mode === 'constant'
+			? 'The server constant or environment variable could not be resolved. Define it on the WordPress host, then refresh Providers before using direct actions.'
+			: 'The secret is missing. Save and validate this key before using it.';
 	}
 
 	if (credential.status === 'limited') {
@@ -77,7 +79,9 @@ export function providerCredentialStatusDetail(credential: LocalProviderCredenti
 	}
 
 	if (credential.status === 'invalid') {
-		return 'OpenRouter rejected this key. Validate a current key before running direct actions.';
+		return credential.auth_mode === 'constant'
+			? 'OpenRouter rejected the server-backed key. Update the constant or environment variable, then validate it again before running direct actions.'
+			: 'OpenRouter rejected this key. Validate a current key before running direct actions.';
 	}
 
 	if (credential.status === 'disabled') {
@@ -138,14 +142,46 @@ export function localOpenRouterSetupUnavailableMessage(
 	const blockedCredential = pickBlockedOpenRouterCredential(credentials);
 
 	if (!blockedCredential) {
-		return 'Validate and save a key before creating a local action.';
+		return 'Validate and save a key, or connect a server-backed constant, before creating a local action.';
 	}
 
 	const detail = providerCredentialStatusDetail(blockedCredential);
 
 	return detail
-		? `${detail} Then validate a ready OpenRouter key before creating a local action.`
-		: 'Validate and save a key before creating a local action.';
+		? `${detail} Then validate a ready OpenRouter key or server-backed constant before creating a local action.`
+		: 'Validate and save a key, or connect a server-backed constant, before creating a local action.';
+}
+
+export function providerCredentialAuthModeLabel(credential: LocalProviderCredential): string {
+	switch (credential.auth_mode) {
+		case 'manual_key':
+			return 'Local vault';
+		case 'constant':
+			return 'Server secret';
+		case 'sentient_proxy':
+			return 'Managed proxy';
+		case 'oauth_broker':
+			return 'OAuth broker';
+		default:
+			return credential.auth_mode;
+	}
+}
+
+export function providerCredentialSecretSummary(credential: LocalProviderCredential): string {
+	if (credential.auth_mode === 'constant') {
+		const location = credential.constant_name?.trim();
+		return location
+			? `references ${location} on the server`
+			: credential.secret_configured
+				? 'resolved from the server'
+				: 'not found on the server';
+	}
+
+	if (credential.auth_mode === 'sentient_proxy') {
+		return credential.secret_configured ? 'proxy key available' : 'proxy key missing';
+	}
+
+	return credential.secret_configured ? 'secret configured' : 'secret missing';
 }
 
 export function openRouterActionHealth(

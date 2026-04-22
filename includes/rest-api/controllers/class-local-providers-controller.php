@@ -81,6 +81,19 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
 
         register_rest_route(
             $this->namespace,
+            '/' . $this->rest_base . '/openrouter/constant',
+            [
+                [
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => [ $this, 'save_openrouter_constant' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => $this->get_openrouter_constant_args(),
+                ],
+            ]
+        );
+
+        register_rest_route(
+            $this->namespace,
             '/' . $this->rest_base . '/openrouter/models',
             [
                 [
@@ -236,6 +249,116 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
                 'key_status'       => $key_status,
                 'consent_recorded' => true,
                 'consent_id'       => $consent_id,
+            ]
+        );
+    }
+
+    public function save_openrouter_constant( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
+        $accepted = rest_sanitize_boolean( $request->get_param( 'accepted_external_service_terms' ) );
+        if ( ! $accepted )
+        {
+            return new WP_Error(
+                'sentient_forms_external_service_consent_required',
+                __( 'You must accept the OpenRouter external-service disclosure before validating this server secret.', 'sentient-forms' ),
+                [ 'status' => 400 ]
+            );
+        }
+
+        $constant_name       = sanitize_text_field( (string) $request->get_param( 'constant_name' ) );
+        $disclosure_version  = sanitize_text_field( (string) $request->get_param( 'disclosure_version' ) );
+
+        $consent_id = $this->consents->record(
+            'openrouter',
+            $disclosure_version,
+            get_current_user_id() ?: null,
+            [
+                'action'        => 'validate_constant',
+                'request_ip'    => $this->request_ip_hash(),
+                'auth_mode'     => 'constant',
+                'constant_name' => $constant_name,
+                'save_enabled'  => true,
+            ]
+        );
+
+        if ( is_wp_error( $consent_id ) )
+        {
+            return $consent_id;
+        }
+
+        $api_key = Sentient_Forms_Provider_Secret_Resolver::resolve_constant_secret( $constant_name );
+        if ( is_wp_error( $api_key ) )
+        {
+            return $this->restify_secret_resolution_error( $api_key );
+        }
+
+        $validation = $this->openrouter->validate_key( $api_key );
+        if ( is_wp_error( $validation ) )
+        {
+            return $validation;
+        }
+
+        $key_status   = $this->format_openrouter_key_status( $validation );
+        $local_status = $this->credential_status_from_key_status( $key_status );
+        $label        = sanitize_text_field( (string) $request->get_param( 'label' ) );
+        if ( '' === $label )
+        {
+            $label = __( 'OpenRouter server secret', 'sentient-forms' );
+        }
+
+        $existing = $this->credentials->find_by_provider_auth_mode( 'openrouter', 'constant' );
+        if ( is_array( $existing ) )
+        {
+            $updated = $this->credentials->update(
+                (int) $existing['id'],
+                [
+                    'label'             => $label,
+                    'auth_mode'         => 'constant',
+                    'encrypted_secret'  => null,
+                    'constant_name'     => $constant_name,
+                    'status'            => $local_status,
+                    'status_json'       => $key_status,
+                    'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+                ]
+            );
+
+            if ( is_wp_error( $updated ) )
+            {
+                return $updated;
+            }
+
+            $credential_id = (int) $existing['id'];
+        }
+        else
+        {
+            $credential_id = $this->credentials->create(
+                [
+                    'provider'          => 'openrouter',
+                    'label'             => $label,
+                    'auth_mode'         => 'constant',
+                    'constant_name'     => $constant_name,
+                    'status'            => $local_status,
+                    'status_json'       => $key_status,
+                    'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+                ]
+            );
+
+            if ( is_wp_error( $credential_id ) )
+            {
+                return $credential_id;
+            }
+        }
+
+        return $this->prepare_item_for_response(
+            [
+                'provider'         => 'openrouter',
+                'status'           => $local_status,
+                'credential_id'    => $credential_id,
+                'key_status'       => $key_status,
+                'consent_recorded' => true,
+                'consent_id'       => $consent_id,
+                'auth_mode'        => 'constant',
+                'constant_name'    => $constant_name,
             ]
         );
     }
@@ -485,6 +608,36 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         ];
     }
 
+    private function get_openrouter_constant_args(): array
+    {
+        return [
+            'constant_name' => [
+                'type'              => 'string',
+                'required'          => true,
+                'sanitize_callback' => 'sanitize_text_field',
+                'validate_callback' => [ $this, 'validate_secret_constant_name' ],
+            ],
+            'label' => [
+                'type'              => 'string',
+                'required'          => false,
+                'sanitize_callback' => 'sanitize_text_field',
+                'validate_callback' => 'rest_validate_request_arg',
+            ],
+            'disclosure_version' => [
+                'type'              => 'string',
+                'required'          => true,
+                'sanitize_callback' => 'sanitize_text_field',
+                'validate_callback' => [ $this, 'validate_non_empty_string' ],
+            ],
+            'accepted_external_service_terms' => [
+                'type'              => 'boolean',
+                'required'          => true,
+                'sanitize_callback' => 'rest_sanitize_boolean',
+                'validate_callback' => 'rest_validate_request_arg',
+            ],
+        ];
+    }
+
     private function get_openrouter_models_args(): array
     {
         return [
@@ -572,9 +725,30 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         return is_string( $value ) && '' !== trim( $value );
     }
 
+    public function validate_secret_constant_name( mixed $value, ?WP_REST_Request $request = null, string $param = '' ): true | WP_Error
+    {
+        if ( ! is_string( $value ) || ! preg_match( '/^[A-Z][A-Z0-9_]+$/', trim( $value ) ) )
+        {
+            return new WP_Error(
+                'sentient_forms_invalid_secret_constant',
+                __( 'Constant or environment variable name must use uppercase letters, numbers, and underscores only.', 'sentient-forms' )
+            );
+        }
+
+        return true;
+    }
+
     private function format_credential( array $row ): array
     {
+        $auth_mode         = (string) ( $row['auth_mode'] ?? '' );
+        $constant_name     = isset( $row['constant_name'] ) ? (string) $row['constant_name'] : null;
         $secret_configured = ! empty( $row['encrypted_secret'] ) || ! empty( $row['constant_name'] );
+        if ( 'constant' === $auth_mode )
+        {
+            $secret_configured = null !== $constant_name
+                && Sentient_Forms_Provider_Secret_Resolver::is_constant_secret_configured( $constant_name );
+        }
+
         if ( 'sentient_managed' === (string) ( $row['provider'] ?? '' ) && 'sentient_proxy' === (string) ( $row['auth_mode'] ?? '' ) )
         {
             $license_data      = Sentient_Forms_Plugin::instance()->get_license_data();
@@ -585,8 +759,8 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
             'id'                 => (int) $row['id'],
             'provider'           => (string) $row['provider'],
             'label'              => (string) $row['label'],
-            'auth_mode'          => (string) $row['auth_mode'],
-            'constant_name'      => isset( $row['constant_name'] ) ? (string) $row['constant_name'] : null,
+            'auth_mode'          => $auth_mode,
+            'constant_name'      => $constant_name,
             'status'             => (string) $row['status'],
             'status_json'        => is_array( $row['status_json'] ?? null ) ? $this->redact_sensitive_metadata( $row['status_json'] ) : null,
             'last_validated_at'  => $row['last_validated_at'] ?? null,
@@ -645,6 +819,22 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         }
 
         return $this->redact_sensitive_metadata( $status );
+    }
+
+    private function restify_secret_resolution_error( WP_Error $error ): WP_Error
+    {
+        $code = $error->get_error_code();
+        $data = $error->get_error_data( $code );
+        if ( is_array( $data ) && isset( $data['status'] ) )
+        {
+            return $error;
+        }
+
+        return new WP_Error(
+            $code,
+            $error->get_error_message( $code ),
+            [ 'status' => 400 ]
+        );
     }
 
     private function format_model_catalog_response( array $rows, bool $free_only ): array

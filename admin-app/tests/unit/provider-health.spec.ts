@@ -2,7 +2,9 @@ import type { LocalProviderCredential } from '$lib/api/types';
 import {
 	localOpenRouterSetupUnavailableMessage,
 	openRouterActionHealth,
+	providerCredentialAuthModeLabel,
 	providerCredentialHttpStatus,
+	providerCredentialSecretSummary,
 	providerCredentialStatusDetail,
 	providerStatusLabel,
 	providerStatusVariant
@@ -81,5 +83,20 @@ describe('provider-health presentation', () => {
 		expect(health.status).toBe('missing');
 		expect(health.badgeStatus).toBe('missing');
 		expect(health.message).toContain('Connect and validate');
+	});
+
+	it('describes unresolved constant-backed credentials clearly', () => {
+		const unresolved = credential('invalid', {
+			auth_mode: 'constant',
+			constant_name: 'SENTIENT_FORMS_OPENROUTER_KEY',
+			secret_configured: false
+		});
+
+		expect(providerCredentialAuthModeLabel(unresolved)).toBe('Server secret');
+		expect(providerCredentialSecretSummary(unresolved)).toContain(
+			'SENTIENT_FORMS_OPENROUTER_KEY'
+		);
+		expect(providerCredentialStatusDetail(unresolved)).toContain('environment variable');
+		expect(localOpenRouterSetupUnavailableMessage([unresolved])).toContain('server-backed constant');
 	});
 });

@@ -94,6 +94,7 @@ return [
 	'Sentient_Forms_Provider_Client_Interface' => __DIR__ . '/interfaces/interface-sentient-forms-provider-client.php',
 	'Sentient_Forms_Provider_Credential_Vault' => __DIR__ . '/services/class-sentient-forms-provider-credential-vault.php',
 	'Sentient_Forms_Provider_Credentials_Repository' => __DIR__ . '/repositories/class-sentient-forms-provider-credentials-repository.php',
+	'Sentient_Forms_Provider_Secret_Resolver' => __DIR__ . '/services/class-sentient-forms-provider-secret-resolver.php',
 	'Sentient_Forms_Pull_Token_Service' => __DIR__ . '/services/class-sentient-forms-pull-token-service.php',
 	'Sentient_Forms_REST_API' => __DIR__ . '/rest-api/class-rest-api.php',
 	'Sentient_Forms_REST_Argument_Utils' => __DIR__ . '/rest-api/utilities.php',

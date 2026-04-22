@@ -54,6 +54,7 @@ import type {
 	LocalProviderCredential,
 	LocalProviderCredentialDeleteResponse,
 	LocalSupportBundle,
+	OpenRouterConstantRequest,
 	OpenRouterModelsRefreshRequest,
 	OpenRouterModelsResponse,
 	OpenRouterValidateRequest,
@@ -360,6 +361,17 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<OpenRouterValidateResponse> {
 		return this.request<OpenRouterValidateResponse>('local/providers/openrouter/validate', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+	}
+
+	async saveOpenRouterConstant(
+		payload: OpenRouterConstantRequest,
+		options: RequestOptions = {}
+	): Promise<OpenRouterValidateResponse> {
+		return this.request<OpenRouterValidateResponse>('local/providers/openrouter/constant', {
 			method: 'POST',
 			body: payload,
 			...options

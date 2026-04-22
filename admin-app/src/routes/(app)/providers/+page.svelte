@@ -16,6 +16,8 @@
 		isReadyOpenRouterCredential,
 		localOpenRouterSetupUnavailableMessage,
 		localOpenRouterSetupUnavailableTitle,
+		providerCredentialAuthModeLabel,
+		providerCredentialSecretSummary,
 		providerCredentialStatusDetail,
 		providerCredentialStatusDetailClass,
 		providerStatusLabel,
@@ -29,18 +31,23 @@
 	let loading = $state(true);
 	let credentials = $state<LocalProviderCredential[]>([]);
 	let validationResult = $state<OpenRouterValidateResponse | null>(null);
+	let validationResultSource = $state<'manual_key' | 'constant' | null>(null);
 	let managedSetupResult = $state<SentientManagedSetupResponse | null>(null);
 	let modelCatalog = $state<OpenRouterModelsResponse | null>(null);
 	let error = $state<string | null>(null);
+	let constantError = $state<string | null>(null);
 	let managedSetupError = $state<string | null>(null);
 	let modelCatalogError = $state<string | null>(null);
 	let apiKey = $state('');
 	let label = $state('OpenRouter key');
+	let constantLabel = $state('OpenRouter server secret');
+	let constantName = $state('SENTIENT_FORMS_OPENROUTER_KEY');
 	let managedLabel = $state('Sentient managed proxy');
 	let saveKey = $state(true);
 	let acceptedDisclosure = $state(false);
 	let acceptedManagedDisclosure = $state(false);
 	let validating = $state(false);
+	let validatingConstant = $state(false);
 	let deletingCredentialId = $state<number | null>(null);
 	let pendingDeleteCredentialId = $state<number | null>(null);
 	let managedSetupLoading = $state(false);
@@ -66,9 +73,7 @@
 	);
 	let primaryOpenRouterCredential = $derived(openRouterCredentials[0] ?? null);
 	let primaryManagedCredential = $derived(readyManagedCredentials[0] ?? managedCredentials[0] ?? null);
-	let readyCredentialCount = $derived(
-		openRouterCredentials.filter((credential) => credential.status === 'valid').length
-	);
+	let readyCredentialCount = $derived(readyOpenRouterCredentials.length);
 	let readyProviderCredentials = $derived([
 		...readyOpenRouterCredentials,
 		...readyManagedCredentials
@@ -86,7 +91,7 @@
 	);
 	let localSetupUnavailableMessage = $derived(
 		managedAccountReady
-			? 'Enable the Sentient managed proxy credential here or validate an OpenRouter key for direct local execution.'
+			? 'Enable the Sentient managed proxy credential here or validate an OpenRouter key or server secret for direct local execution.'
 			: localOpenRouterSetupUnavailableMessage(openRouterCredentials)
 	);
 	let freeModelPreview = $derived(
@@ -95,6 +100,9 @@
 	let canRefreshOpenRouterModels = $derived(acceptedDisclosure && !modelCatalogRefreshing);
 	let canValidateOpenRouterKey = $derived(
 		acceptedDisclosure && apiKey.trim().length > 0 && !validating
+	);
+	let canValidateOpenRouterConstant = $derived(
+		acceptedDisclosure && constantName.trim().length > 0 && !validatingConstant
 	);
 	let canEnableManagedProxy = $derived(
 		managedAccountReady && acceptedManagedDisclosure && !managedSetupLoading
@@ -171,7 +179,9 @@
 		event.preventDefault();
 
 		error = null;
+		constantError = null;
 		validationResult = null;
+		validationResultSource = null;
 
 		if (apiKey.trim().length === 0) {
 			error = 'Enter an OpenRouter API key before validating.';
@@ -201,10 +211,52 @@
 				apiKey = '';
 				await loadCredentials();
 			}
+			validationResultSource = 'manual_key';
 		} catch (requestError) {
 			error = errorMessage(requestError);
 		} finally {
 			validating = false;
+		}
+	}
+
+	async function saveOpenRouterConstant(event: SubmitEvent): Promise<void> {
+		event.preventDefault();
+
+		error = null;
+		constantError = null;
+		validationResult = null;
+		validationResultSource = null;
+
+		if (constantName.trim().length === 0) {
+			constantError = 'Enter the constant or environment variable name before validating.';
+			return;
+		}
+
+		if (!acceptedDisclosure) {
+			constantError =
+				'Accept the OpenRouter external-service disclosure before validating this server secret.';
+			return;
+		}
+
+		validatingConstant = true;
+
+		try {
+			validationResult = await client.saveOpenRouterConstant(
+				{
+					constant_name: constantName.trim(),
+					label: constantLabel.trim() || undefined,
+					disclosure_version: DISCLOSURE_VERSION,
+					accepted_external_service_terms: acceptedDisclosure
+				},
+				{ showNotifications: false }
+			);
+
+			await loadCredentials();
+			validationResultSource = 'constant';
+		} catch (requestError) {
+			constantError = errorMessage(requestError);
+		} finally {
+			validatingConstant = false;
 		}
 	}
 
@@ -310,13 +362,16 @@
 							{providerStatusLabel(primaryOpenRouterCredential?.status ?? 'missing')}
 						</Badge>
 						<Badge variant="info">Local credential storage</Badge>
+						<Badge variant="neutral">Server secret supported</Badge>
 					</div>
 					<h3 class="sf:text-xl sf:font-semibold sf:text-slate-900">
 						{primaryOpenRouterCredential?.label ?? 'OpenRouter direct'}
 					</h3>
 					<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
 						OpenRouter receives the prompts and form fields needed for direct model calls. Sentient
-						does not receive those direct-call payloads.
+						does not receive those direct-call payloads. Use the local vault for the fastest setup, or
+						use a server constant or environment variable when you want the key to stay out of the
+						plugin database.
 					</p>
 				</div>
 				<div class="sf:flex sf:gap-6">
@@ -494,88 +549,196 @@
 	</Card>
 
 	<div class="sf:grid sf:gap-4 sf:xl:grid-cols-[1fr_0.9fr]">
-		<Card title="Validate OpenRouter key" data-testid="providers-openrouter-form-card">
-			<form class="sf:space-y-4" onsubmit={validateOpenRouterKey}>
-				<InputField
-					id="openrouter-label"
-					label="Label"
-					placeholder="OpenRouter key"
-					bind:value={label}
-					disabled={validating}
-				/>
-				<InputField
-					id="openrouter-api-key"
-					label="API key"
-					type="password"
-					placeholder="sk-or-..."
-					autocomplete="off"
-					bind:value={apiKey}
-					disabled={validating}
-					required
-				/>
-
-				<label class="sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-700">
-					<input
-						class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
-						type="checkbox"
-						bind:checked={saveKey}
+		<div class="sf:space-y-4">
+			<Card title="Validate OpenRouter key" data-testid="providers-openrouter-form-card">
+				<form class="sf:space-y-4" onsubmit={validateOpenRouterKey}>
+					<InputField
+						id="openrouter-label"
+						label="Label"
+						placeholder="OpenRouter key"
+						bind:value={label}
 						disabled={validating}
 					/>
-					<span>Save the validated key in the local provider vault.</span>
-				</label>
-
-				<label class="sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-700">
-					<input
-						class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
-						type="checkbox"
-						bind:checked={acceptedDisclosure}
+					<InputField
+						id="openrouter-api-key"
+						label="API key"
+						type="password"
+						placeholder="sk-or-..."
+						autocomplete="off"
+						bind:value={apiKey}
 						disabled={validating}
 						required
 					/>
-					<span>
-						I understand OpenRouter receives request data for direct model calls and I accept the
-						<a
-							class="sf:font-medium sf:text-slate-900 sf:underline"
-							href="https://openrouter.ai/terms"
-							target="_blank"
-							rel="noreferrer noopener">OpenRouter terms</a
-						>
-						and
-						<a
-							class="sf:font-medium sf:text-slate-900 sf:underline"
-							href="https://openrouter.ai/privacy"
-							target="_blank"
-							rel="noreferrer noopener">privacy policy</a
-						>.
-					</span>
-				</label>
 
-				<Button type="submit" loading={validating} disabled={!canValidateOpenRouterKey}>
-					{validating ? 'Validating...' : 'Validate key'}
-				</Button>
-			</form>
+					<label class="sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-700">
+						<input
+							class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+							type="checkbox"
+							bind:checked={saveKey}
+							disabled={validating}
+						/>
+						<span>Save the validated key in the local provider vault.</span>
+					</label>
 
-			{#if validationResult}
-				<div
-					class="sf:mt-4 sf:rounded sf:border sf:border-success-200 sf:bg-success-50 sf:p-4"
-					data-testid="providers-openrouter-validation-result"
-				>
-					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-						<Badge variant={providerStatusVariant(validationResult.status)}>
-							{providerStatusLabel(validationResult.status)}
-						</Badge>
-						<span class="sf:text-sm sf:text-success-800">
-							Consent #{validationResult.consent_id} recorded.
+					<label class="sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-700">
+						<input
+							class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+							type="checkbox"
+							bind:checked={acceptedDisclosure}
+							disabled={validating}
+							required
+						/>
+						<span>
+							I understand OpenRouter receives request data for direct model calls and I accept the
+							<a
+								class="sf:font-medium sf:text-slate-900 sf:underline"
+								href="https://openrouter.ai/terms"
+								target="_blank"
+								rel="noreferrer noopener">OpenRouter terms</a
+							>
+							and
+							<a
+								class="sf:font-medium sf:text-slate-900 sf:underline"
+								href="https://openrouter.ai/privacy"
+								target="_blank"
+								rel="noreferrer noopener">privacy policy</a
+							>.
 						</span>
+					</label>
+
+					<Button type="submit" loading={validating} disabled={!canValidateOpenRouterKey}>
+						{validating ? 'Validating...' : 'Validate key'}
+					</Button>
+				</form>
+
+				{#if validationResult && validationResultSource === 'manual_key'}
+					<div
+						class="sf:mt-4 sf:rounded sf:border sf:border-success-200 sf:bg-success-50 sf:p-4"
+						data-testid="providers-openrouter-validation-result"
+					>
+						<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+							<Badge variant={providerStatusVariant(validationResult.status)}>
+								{providerStatusLabel(validationResult.status)}
+							</Badge>
+							<span class="sf:text-sm sf:text-success-800">
+								Consent #{validationResult.consent_id} recorded.
+							</span>
+						</div>
+						<p class="sf:mt-2 sf:text-sm sf:text-success-800">
+							{validationResult.credential_id
+								? `Saved credential #${validationResult.credential_id}.`
+								: 'Validated without saving the key.'}
+						</p>
 					</div>
-					<p class="sf:mt-2 sf:text-sm sf:text-success-800">
-						{validationResult.credential_id
-							? `Saved credential #${validationResult.credential_id}.`
-							: 'Validated without saving the key.'}
-					</p>
+				{/if}
+			</Card>
+
+			<Card
+				title="Use server constant or environment variable"
+				subtitle="Recommended for high-sensitivity sites."
+				data-testid="providers-openrouter-constant-card"
+			>
+				<div class="sf:space-y-4">
+					<Alert variant="info">
+						<p class="sf:font-semibold">No OpenRouter key is stored in the plugin database</p>
+						<p class="sf:mt-1">
+							Define a constant or environment variable on this WordPress host first, then validate
+							it here. Sentient Forms only stores the reference name and status metadata.
+						</p>
+					</Alert>
+
+					<form class="sf:space-y-4" onsubmit={saveOpenRouterConstant}>
+						<InputField
+							id="openrouter-constant-label"
+							label="Label"
+							placeholder="OpenRouter server secret"
+							bind:value={constantLabel}
+							disabled={validatingConstant}
+						/>
+						<InputField
+							id="openrouter-constant-name"
+							label="Constant or environment variable"
+							placeholder="SENTIENT_FORMS_OPENROUTER_KEY"
+							bind:value={constantName}
+							disabled={validatingConstant}
+							required
+						/>
+
+						<p class="sf:text-xs sf:text-slate-500">
+							Example: <code>SENTIENT_FORMS_OPENROUTER_KEY</code>. The name must already be defined
+							on the server before validation can succeed.
+						</p>
+
+						<label class="sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-700">
+							<input
+								class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+								type="checkbox"
+								bind:checked={acceptedDisclosure}
+								disabled={validatingConstant}
+								required
+							/>
+							<span>
+								I understand OpenRouter receives request data for direct model calls and I accept the
+								<a
+									class="sf:font-medium sf:text-slate-900 sf:underline"
+									href="https://openrouter.ai/terms"
+									target="_blank"
+									rel="noreferrer noopener">OpenRouter terms</a
+								>
+								and
+								<a
+									class="sf:font-medium sf:text-slate-900 sf:underline"
+									href="https://openrouter.ai/privacy"
+									target="_blank"
+									rel="noreferrer noopener">privacy policy</a
+								>.
+							</span>
+						</label>
+
+						<Button
+							type="submit"
+							variant="secondary"
+							loading={validatingConstant}
+							disabled={!canValidateOpenRouterConstant}
+							data-testid="providers-openrouter-constant-submit"
+						>
+							{validatingConstant ? 'Validating...' : 'Validate server secret'}
+						</Button>
+					</form>
+
+					{#if constantError}
+						<p
+							class="sf:text-sm sf:text-danger-700"
+							role="alert"
+							data-testid="providers-openrouter-constant-error"
+						>
+							{constantError}
+						</p>
+					{/if}
+
+					{#if validationResult && validationResultSource === 'constant'}
+						<div
+							class="sf:rounded sf:border sf:border-success-200 sf:bg-success-50 sf:p-4"
+							data-testid="providers-openrouter-constant-result"
+						>
+							<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+								<Badge variant={providerStatusVariant(validationResult.status)}>
+									{providerStatusLabel(validationResult.status)}
+								</Badge>
+								<span class="sf:text-sm sf:text-success-800">
+									Consent #{validationResult.consent_id} recorded.
+								</span>
+							</div>
+							<p class="sf:mt-2 sf:text-sm sf:text-success-800">
+								Server secret
+								<code>{validationResult.constant_name ?? constantName}</code> is now ready as
+								credential #{validationResult.credential_id}.
+							</p>
+						</div>
+					{/if}
 				</div>
-			{/if}
-		</Card>
+			</Card>
+		</div>
 
 		<Card title="Saved OpenRouter keys" data-testid="providers-openrouter-list-card">
 			{#if loading}
@@ -584,7 +747,7 @@
 				<StateTemplate
 					variant="empty"
 					title="No OpenRouter key saved"
-					message="Validate a key to unlock the direct free path."
+					message="Validate a key or server secret to unlock the direct free path."
 					dense
 				/>
 			{:else}
@@ -601,6 +764,9 @@
 									<Badge variant={providerStatusVariant(credential.status)}
 										>{providerStatusLabel(credential.status)}</Badge
 									>
+									{#if credential.auth_mode === 'constant'}
+										<Badge variant="neutral">Server secret</Badge>
+									{/if}
 									<Button
 										size="sm"
 										variant="danger"
@@ -613,10 +779,13 @@
 								</div>
 							</div>
 							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-								{credential.auth_mode} · secret {credential.secret_configured
-									? 'configured'
-									: 'missing'}
+								{providerCredentialAuthModeLabel(credential)} · {providerCredentialSecretSummary(credential)}
 							</p>
+							{#if credential.auth_mode === 'constant' && credential.constant_name}
+								<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+									Reference <code>{credential.constant_name}</code>
+								</p>
+							{/if}
 							<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
 								Last validated {formatTimestamp(credential.last_validated_at, 'never')}
 							</p>
@@ -770,9 +939,7 @@
 								>
 							</div>
 							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-								{credential.auth_mode} · proxy key {credential.secret_configured
-									? 'available'
-									: 'missing'}
+								{providerCredentialAuthModeLabel(credential)} · {providerCredentialSecretSummary(credential)}
 							</p>
 							<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
 								Last checked {formatTimestamp(credential.last_validated_at, 'never')}

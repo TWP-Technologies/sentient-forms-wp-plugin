@@ -159,6 +159,113 @@ class Sentient_Forms_Provider_Credentials_Repository extends Sentient_Forms_Loca
         );
     }
 
+    public function update( int $id, array $data ): bool | WP_Error
+    {
+        $id = absint( $id );
+        if ( $id <= 0 )
+        {
+            return new WP_Error( 'sentient_forms_invalid_credential_id', __( 'Credential ID is invalid.', 'sentient-forms' ) );
+        }
+
+        if ( null === $this->get_by_id( $id ) )
+        {
+            return new WP_Error(
+                'sentient_forms_credential_not_found',
+                __( 'Provider credential could not be found.', 'sentient-forms' ),
+                [ 'status' => 404 ]
+            );
+        }
+
+        $fields  = [];
+        $formats = [];
+
+        if ( array_key_exists( 'label', $data ) )
+        {
+            $label = sanitize_text_field( (string) $data['label'] );
+            if ( '' === $label )
+            {
+                return new WP_Error( 'sentient_forms_missing_label', __( 'Credential label is required.', 'sentient-forms' ) );
+            }
+
+            $fields['label'] = $label;
+            $formats[]       = '%s';
+        }
+
+        if ( array_key_exists( 'auth_mode', $data ) )
+        {
+            $auth_mode = sanitize_key( (string) $data['auth_mode'] );
+            if ( ! in_array( $auth_mode, [ 'manual_key', 'oauth_broker', 'sentient_proxy', 'constant' ], true ) )
+            {
+                return new WP_Error( 'sentient_forms_invalid_auth_mode', __( 'Authentication mode is not supported.', 'sentient-forms' ) );
+            }
+
+            $fields['auth_mode'] = $auth_mode;
+            $formats[]           = '%s';
+        }
+
+        if ( array_key_exists( 'encrypted_secret', $data ) )
+        {
+            $fields['encrypted_secret'] = null !== $data['encrypted_secret'] ? (string) $data['encrypted_secret'] : null;
+            $formats[]                  = '%s';
+        }
+
+        if ( array_key_exists( 'constant_name', $data ) )
+        {
+            $fields['constant_name'] = null !== $data['constant_name']
+                ? sanitize_text_field( (string) $data['constant_name'] )
+                : null;
+            $formats[] = '%s';
+        }
+
+        if ( array_key_exists( 'status', $data ) )
+        {
+            $status = sanitize_key( (string) $data['status'] );
+            if ( ! in_array( $status, [ 'unknown', 'valid', 'invalid', 'limited', 'disabled' ], true ) )
+            {
+                return new WP_Error( 'sentient_forms_invalid_status', __( 'Credential status is not supported.', 'sentient-forms' ) );
+            }
+
+            $fields['status'] = $status;
+            $formats[]        = '%s';
+        }
+
+        if ( array_key_exists( 'status_json', $data ) )
+        {
+            $encoded = $this->encode_json_field( $data['status_json'], 'status_json' );
+            if ( is_wp_error( $encoded ) )
+            {
+                return $encoded;
+            }
+
+            $fields['status_json'] = $encoded;
+            $formats[]             = '%s';
+        }
+
+        if ( array_key_exists( 'last_validated_at', $data ) )
+        {
+            $fields['last_validated_at'] = null !== $data['last_validated_at']
+                ? sanitize_text_field( (string) $data['last_validated_at'] )
+                : null;
+            $formats[] = '%s';
+        }
+
+        if ( empty( $fields ) )
+        {
+            return true;
+        }
+
+        $fields['updated_at'] = $this->now();
+        $formats[]            = '%s';
+
+        return false !== $this->wpdb->update(
+            $this->table_name(),
+            $fields,
+            [ 'id' => $id ],
+            $formats,
+            [ '%d' ]
+        );
+    }
+
     public function delete( int $id ): bool | WP_Error
     {
         $id = absint( $id );
