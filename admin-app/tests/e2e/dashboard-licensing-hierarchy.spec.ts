@@ -163,6 +163,75 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		expect(creditRequests).toBe(0);
 	});
 
+	test('dashboard excludes imported CPS history from local run summaries', async ({ page }) => {
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([])
+			})
+		);
+
+		for (const endpoint of ['action-templates', 'custom-actions']) {
+			await page.route(`**/wp-json/sentient-forms/v1/local/${endpoint}**`, (route) =>
+				route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify([])
+				})
+			);
+		}
+
+		await page.route('**/wp-json/sentient-forms/v1/local/execution-events**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([
+					{
+						id: 4,
+						execution_request_id: 'legacy_run_1',
+						provider: 'legacy_cps',
+						model: 'gemini-3-flash-preview',
+						status: 'succeeded',
+						created_at: '2030-01-05T10:00:00Z'
+					}
+				])
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/local/support-bundle**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					retention: { event_retention_days: 90 },
+					local_tables: {
+						sentient_execution_events: 1,
+						sentient_provider_credentials: 0
+					}
+				})
+			})
+		);
+
+		await page.goto('/#/dashboard', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('dashboard-openrouter-status')).toContainText(
+			'OpenRouter not connected'
+		);
+		await expect(page.getByTestId('dashboard-openrouter-status')).toContainText('Not connected');
+		await expect(page.getByTestId('dashboard-openrouter-status')).not.toContainText('missing');
+		await expect(page.getByTestId('dashboard-execution-count')).toContainText('0');
+		await expect(page.getByTestId('dashboard-recent-runs-card')).toContainText('No local runs yet');
+		await expect(page.getByTestId('dashboard-recent-runs-card')).toContainText(
+			'Imported CPS history is still available in Action Log'
+		);
+		await expect(
+			page.getByTestId('dashboard-recent-runs-card').getByRole('button', {
+				name: 'Open action log'
+			})
+		).toBeVisible();
+	});
+
 	test('dashboard surfaces local endpoint failures without reverting to license copy', async ({
 		page
 	}) => {
@@ -536,16 +605,33 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			})
 		);
 
-		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
+		await page.route('**/wp-json/sentient-forms/v1/license/billing-state**', (route) =>
 			route.fulfill({
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
-					current_balance: 8,
-					tier: {
+					status: 'active',
+					provider: 'stripe',
+					plan: {
 						code: 'starter',
 						display_name: 'Starter',
 						monthly_credit_quota: 100
+					},
+					credits: {
+						current_balance: 8,
+						tier_quota: 100,
+						ledger_delta: 0,
+						top_up_available: 0
+					},
+					allocation: {
+						seat_quantity: 1,
+						tier_site_limit: 1,
+						allowed_sites: 1,
+						active_sites: 1,
+						over_limit: false,
+						blocked_new_activations: false,
+						grace_expires_at: null,
+						capacity_policy: 'tier_x_quantity_v1'
 					}
 				})
 			})
@@ -557,7 +643,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('licensing-overview-card')).toBeVisible();
 		await expect(page.getByTestId('licensing-status-badge')).toContainText('active');
 		await expect(page.getByTestId('licensing-credits-headline')).toContainText(
-			'Low credits: 8 / 100'
+			'Low managed credits: 8 / 100'
 		);
 		await expect(page.getByTestId('licensing-credit-severity')).toContainText('Low');
 		await expect(page.getByTestId('licensing-reset-summary')).toContainText('Resets');
@@ -589,14 +675,11 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			})
 		);
 
-		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) =>
+		await page.route('**/wp-json/sentient-forms/v1/license/billing-state**', (route) =>
 			route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({
-					current_balance: 0,
-					tier: null
-				})
+				body: JSON.stringify({ status: 'inactive', credits: null, plan: null })
 			})
 		);
 

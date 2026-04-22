@@ -29,8 +29,12 @@
 		providers.find((credential) => credential.provider === 'openrouter' && credential.secret_configured)
 	);
 	let openRouterStatus = $derived(openRouterCredential?.status ?? 'missing');
-	let successfulRuns = $derived(recentEvents.filter((event) => event.status === 'succeeded').length);
-	let failedRuns = $derived(recentEvents.filter((event) => event.status === 'failed').length);
+	let recentLocalEvents = $derived(recentEvents.filter((event) => !isImportedHistoryEvent(event)));
+	let importedHistoryCount = $derived(recentEvents.length - recentLocalEvents.length);
+	let successfulRuns = $derived(
+		recentLocalEvents.filter((event) => event.status === 'succeeded').length
+	);
+	let failedRuns = $derived(recentLocalEvents.filter((event) => event.status === 'failed').length);
 	let activeTemplates = $derived(templates.filter((template) => template.is_active).length);
 	let activeCustomActions = $derived(
 		customActions.filter((action) => action.status === 'active').length
@@ -40,7 +44,7 @@
 			? supportBundle.retention.event_retention_days
 			: null
 	);
-	let latestEvent = $derived(recentEvents[0] ?? null);
+	let latestEvent = $derived(recentLocalEvents[0] ?? null);
 
 	function rejectionMessage(result: SettledResult<unknown>, fallback: string): string | null {
 		if (result.status === 'fulfilled') {
@@ -112,6 +116,26 @@
 			default:
 				return 'neutral';
 		}
+	}
+
+	function openRouterStatusBadgeLabel(status: string): string {
+		switch (status) {
+			case 'valid':
+				return 'Ready';
+			case 'limited':
+				return 'Limited';
+			case 'invalid':
+				return 'Needs attention';
+			case 'disabled':
+				return 'Disabled';
+			default:
+				return 'Not connected';
+		}
+	}
+
+	function isImportedHistoryEvent(event: LocalExecutionEvent): boolean {
+		const provider = typeof event.provider === 'string' ? event.provider.trim().toLowerCase() : '';
+		return provider === 'legacy_cps' || provider === 'cps';
 	}
 
 	function tableCount(tableSuffix: string): string {
@@ -215,7 +239,7 @@
 				<div class="sf:border-l sf:border-slate-300 sf:pl-3">
 					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Recent runs</p>
 					<p class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-execution-count">
-						{loading ? '...' : recentEvents.length}
+						{loading ? '...' : recentLocalEvents.length}
 					</p>
 				</div>
 			</div>
@@ -231,7 +255,9 @@
 						{openRouterStatusLabel(openRouterStatus)}
 					</p>
 				</div>
-				<Badge variant={openRouterStatusVariant(openRouterStatus)}>{openRouterStatus}</Badge>
+				<Badge variant={openRouterStatusVariant(openRouterStatus)}>
+					{openRouterStatusBadgeLabel(openRouterStatus)}
+				</Badge>
 			</div>
 			<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
 				{openRouterCredential?.last_validated_at
@@ -262,13 +288,17 @@
 	<Card title="Recent local runs" data-testid="dashboard-recent-runs-card">
 		{#if loading}
 			<StateTemplate variant="loading" title="Loading local runs" dense />
-		{:else if recentEvents.length === 0}
+		{:else if recentLocalEvents.length === 0}
 			<StateTemplate
 				variant="empty"
 				title="No local runs yet"
-				message="Connect OpenRouter, map a form, then submit a test entry."
-				actionLabel="Open actions"
-				onAction={() => navigateToAppPath('/actions')}
+				message={
+					importedHistoryCount > 0
+						? 'Imported CPS history is still available in Action Log, but this site has not run any local-first actions yet.'
+						: 'Connect OpenRouter, map a form, then submit a test entry.'
+				}
+				actionLabel={importedHistoryCount > 0 ? 'Open action log' : 'Open actions'}
+				onAction={() => navigateToAppPath(importedHistoryCount > 0 ? '/actions/log' : '/actions')}
 				dense
 			/>
 		{:else}
@@ -288,7 +318,7 @@
 							</tr>
 						</thead>
 						<tbody class="sf:divide-y sf:divide-slate-100">
-							{#each recentEvents as event}
+							{#each recentLocalEvents as event}
 								<tr>
 									<td class="sf:py-2 sf:pr-4">
 										<Badge variant={event.status === 'failed' ? 'danger' : event.status === 'succeeded' ? 'success' : 'neutral'}>
