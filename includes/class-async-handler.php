@@ -2396,6 +2396,7 @@ class Sentient_Forms_Async_Handler
     {
         // Get plugin options
         $options = $this->plugin->get_options();
+        $result  = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage( $result );
 
         // Initialize the results array if it doesn't exist
         if ( !isset( $options[ 'action_results' ] ) )

@@ -212,6 +212,27 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertSame( 'Full AI reply that should persist when enabled.', $result['content'] );
     }
 
+    public function test_sanitize_execution_payload_for_storage_strips_legacy_cached_outputs_by_default(): void
+    {
+        $payload = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage(
+            [
+                'cost'        => 12,
+                'content'     => 'Full raw reply that should not persist.',
+                'result_data' => [
+                    'llm_output'     => 'Legacy raw response should be removed.',
+                    'classification' => 'spam',
+                ],
+            ]
+        );
+
+        $this->assertSame( 12, $payload['cost'] );
+        $this->assertArrayNotHasKey( 'content', $payload );
+        $this->assertArrayNotHasKey( 'llm_output', $payload['result_data'] );
+        $this->assertSame( 'spam', $payload['result_data']['classification'] );
+        $this->assertNotEmpty( $payload['result_summary'] );
+        $this->assertNotEmpty( $payload['result_data']['result_summary'] );
+    }
+
     public function test_apply_privacy_preset_updates_defaults_and_marks_completion(): void
     {
         $applied = Sentient_Forms_Local_Data_Governance::apply_privacy_preset( 'maximum_privacy' );

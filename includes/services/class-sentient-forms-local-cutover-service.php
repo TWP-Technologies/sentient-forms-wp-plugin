@@ -57,6 +57,10 @@ class Sentient_Forms_Local_Cutover_Service
         'sentient_forms_action_defaults_',
     ];
 
+    private const LEGACY_SETTINGS_KEYS_TO_RESET = [
+        'action_results',
+    ];
+
     private wpdb $wpdb;
     private Sentient_Forms_Migration_Runs_Repository $migration_runs;
 
@@ -97,6 +101,7 @@ class Sentient_Forms_Local_Cutover_Service
                 'tables_preserved_by_default' => self::PRESERVED_TABLE_SUFFIXES,
                 'exact_options_deleted'       => self::LEGACY_EXACT_OPTIONS_TO_RESET,
                 'option_prefixes_deleted'     => self::LEGACY_OPTION_PREFIXES_TO_RESET,
+                'settings_keys_deleted'       => self::LEGACY_SETTINGS_KEYS_TO_RESET,
                 'settings_preserved'          => [
                     'sentient_forms_settings',
                     'sentient_forms_plugin_settings',
@@ -343,6 +348,7 @@ class Sentient_Forms_Local_Cutover_Service
             'option_present'                            => [] !== $legacy_options || [] !== $plugin_settings,
             'legacy_option_present'                     => [] !== $legacy_options,
             'plugin_settings_option_present'            => [] !== $plugin_settings,
+            'legacy_action_results_count'               => $this->count_legacy_action_results( $legacy_options ),
             'top_level_legacy_license_fields_present'   => array_values(
                 array_filter(
                     [ 'license_key', 'license_status', 'proxy_api_key' ],
@@ -409,6 +415,14 @@ class Sentient_Forms_Local_Cutover_Service
             $warnings[] = [
                 'code'    => 'legacy_options_will_be_removed',
                 'message' => __( 'Approved reset will delete legacy option-backed form action mappings, action defaults, action logs, and stale CPS transients.', 'sentient-forms' ),
+            ];
+        }
+
+        if ( ! empty( $settings['legacy_action_results_count'] ) )
+        {
+            $warnings[] = [
+                'code'    => 'legacy_cached_results_will_be_removed',
+                'message' => __( 'Approved reset will remove legacy cached action results from preserved settings so old AI output residue does not survive cutover.', 'sentient-forms' ),
             ];
         }
 
@@ -501,6 +515,7 @@ class Sentient_Forms_Local_Cutover_Service
         $deleted = [
             'exact_options'   => [],
             'option_prefixes' => [],
+            'settings_keys'   => [],
         ];
 
         foreach ( self::LEGACY_EXACT_OPTIONS_TO_RESET as $option_name )
@@ -523,6 +538,51 @@ class Sentient_Forms_Local_Cutover_Service
                 'sample' => array_slice( $option_names, 0, 10 ),
             ];
         }
+
+        $deleted['settings_keys'] = $this->delete_legacy_settings_keys();
+
+        return $deleted;
+    }
+
+    /**
+     * @param array<string, mixed> $legacy_options
+     */
+    private function count_legacy_action_results( array $legacy_options ): int
+    {
+        $results = $legacy_options['action_results'] ?? null;
+        if ( ! is_array( $results ) )
+        {
+            return 0;
+        }
+
+        $count = 0;
+        foreach ( $results as $entries )
+        {
+            if ( is_array( $entries ) )
+            {
+                $count += count( $entries );
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * @return array<string, bool>
+     */
+    private function delete_legacy_settings_keys(): array
+    {
+        $legacy_settings = get_option( 'sentient_forms_settings', [] );
+        $legacy_settings = is_array( $legacy_settings ) ? $legacy_settings : [];
+
+        $deleted = [];
+        foreach ( self::LEGACY_SETTINGS_KEYS_TO_RESET as $key )
+        {
+            $deleted[ $key ] = array_key_exists( $key, $legacy_settings );
+            unset( $legacy_settings[ $key ] );
+        }
+
+        update_option( 'sentient_forms_settings', $legacy_settings );
 
         return $deleted;
     }

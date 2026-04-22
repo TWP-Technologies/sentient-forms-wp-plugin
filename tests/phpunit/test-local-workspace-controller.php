@@ -719,7 +719,10 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 1, $this->table_count( 'sentient_model_cache' ) );
         $this->assertFalse( get_option( 'sentient_forms_action_log' ) );
         $this->assertFalse( get_option( 'sentient_forms_actions_gravity_forms_42' ) );
-        $this->assertIsArray( get_option( 'sentient_forms_settings' ) );
+        $settings = get_option( 'sentient_forms_settings' );
+        $this->assertIsArray( $settings );
+        $this->assertArrayNotHasKey( 'action_results', $settings );
+        $this->assertTrue( $result['deleted_options']['settings_keys']['action_results'] );
         $plugin_settings = get_option( 'sentient_forms_plugin_settings' );
         $this->assertIsArray( $plugin_settings );
         $this->assertTrue( $plugin_settings['execution_global_disabled'] );
@@ -990,6 +993,16 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
             'sentient_forms_settings',
             [
                 'enforce_nonce_verification' => false,
+                'action_results'             => [
+                    'spam_analysis' => [
+                        [
+                            'timestamp' => time(),
+                            'result'    => [
+                                'content' => 'Legacy full output that should be removed during reset.',
+                            ],
+                        ],
+                    ],
+                ],
                 'license'                    => [
                     'license_key'   => 'LIC-LOCAL-DEV',
                     'proxy_api_key' => 'proxy-local-123',
