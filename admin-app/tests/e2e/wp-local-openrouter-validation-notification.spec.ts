@@ -14,6 +14,20 @@ import {
 const runLocalOpenRouterValidationNotificationSmoke =
 	process.env.SENTIENT_RUN_WP_E2E === '1' &&
 	process.env.SENTIENT_RUN_LOCAL_OPENROUTER_VALIDATION_NOTIFICATION_SMOKE === '1';
+const localOpenRouterValidationSmokeCredentialLabel =
+	'Validation notification smoke OpenRouter key';
+const localOpenRouterValidationFormTitle = 'Local OpenRouter Validation Block';
+const localOpenRouterValidationPageTitle = 'Local OpenRouter Validation Block Page';
+const localOpenRouterValidationActionCode = 'local_validation_block_browser_smoke';
+const localOpenRouterValidationActionName = 'Local validation block';
+const localOpenRouterControlFormTitle = 'Local OpenRouter Notification Control';
+const localOpenRouterControlPageTitle = 'Local OpenRouter Notification Control Page';
+const localOpenRouterControlNotificationSubject = 'Local OpenRouter control notification';
+const localOpenRouterSpamFormTitle = 'Local OpenRouter Spam Suppression';
+const localOpenRouterSpamPageTitle = 'Local OpenRouter Spam Suppression Page';
+const localOpenRouterSpamActionCode = 'local_spam_suppress_browser_smoke';
+const localOpenRouterSpamActionName = 'Local spam suppress';
+const localOpenRouterSpamNotificationSubject = 'Local OpenRouter spam notification';
 
 type LocalProviderSeed = {
 	credential_id: number;
@@ -65,32 +79,91 @@ $vault       = new Sentient_Forms_Provider_Credential_Vault();
 $encrypted   = $vault->encrypt( $secret );
 $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
 $consents    = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+$table       = $wpdb->prefix . 'sentient_provider_credentials';
 
 if ( ! is_string( $encrypted ) ) {
     echo wp_json_encode([ 'error' => 'encrypt_failed' ]);
     return;
 }
 
-$credential_id = $credentials->create(
-    [
-        'provider'          => 'openrouter',
-        'label'             => $label,
-        'auth_mode'         => 'manual_key',
-        'encrypted_secret'  => $encrypted,
-        'status'            => 'valid',
-        'last_validated_at' => current_time( 'mysql' ),
-    ]
+$existing_rows = $wpdb->get_results(
+    $wpdb->prepare(
+        'SELECT id FROM ' . esc_sql( $table ) . ' WHERE provider = %s AND auth_mode = %s AND label = %s ORDER BY id ASC',
+        'openrouter',
+        'manual_key',
+        $label
+    ),
+    ARRAY_A
 );
+
+$existing_rows = is_array( $existing_rows ) ? $existing_rows : [];
+$primary_id    = 0;
+
+foreach ( $existing_rows as $index => $row ) {
+    $row_id = absint( $row['id'] ?? 0 );
+    if ( $row_id <= 0 ) {
+        continue;
+    }
+
+    if ( 0 === $index ) {
+        $primary_id = $row_id;
+        continue;
+    }
+
+    $credentials->delete( $row_id );
+}
+
+if ( $primary_id > 0 ) {
+    $updated = $wpdb->update(
+        $table,
+        [
+            'encrypted_secret'  => $encrypted,
+            'status'            => 'valid',
+            'status_json'       => null,
+            'last_validated_at' => current_time( 'mysql' ),
+            'updated_at'        => current_time( 'mysql' ),
+        ],
+        [ 'id' => $primary_id ],
+        [ '%s', '%s', '%s', '%s', '%s' ],
+        [ '%d' ]
+    );
+
+    if ( false === $updated ) {
+        echo wp_json_encode([ 'error' => 'credential_update_failed' ]);
+        return;
+    }
+
+    $credential_id = $primary_id;
+} else {
+    $credential_id = $credentials->create(
+        [
+            'provider'          => 'openrouter',
+            'label'             => $label,
+            'auth_mode'         => 'manual_key',
+            'encrypted_secret'  => $encrypted,
+            'status'            => 'valid',
+            'last_validated_at' => current_time( 'mysql' ),
+        ]
+    );
+}
 
 if ( is_wp_error( $credential_id ) ) {
     echo wp_json_encode([ 'error' => $credential_id->get_error_message() ]);
     return;
 }
 
-$consent_id = $consents->record( 'openrouter', '2026-04-local-first-openrouter-v1', 0 );
-if ( is_wp_error( $consent_id ) ) {
-    echo wp_json_encode([ 'error' => $consent_id->get_error_message() ]);
-    return;
+$latest_consent = $consents->latest_for_provider( 'openrouter' );
+if (
+    is_array( $latest_consent ) &&
+    '2026-04-local-first-openrouter-v1' === (string) ( $latest_consent['disclosure_version'] ?? '' )
+) {
+    $consent_id = absint( $latest_consent['id'] ?? 0 );
+} else {
+    $consent_id = $consents->record( 'openrouter', '2026-04-local-first-openrouter-v1', 0 );
+    if ( is_wp_error( $consent_id ) ) {
+        echo wp_json_encode([ 'error' => $consent_id->get_error_message() ]);
+        return;
+    }
 }
 
 update_option( 'sentient_forms_local_openrouter_smoke_mock_enabled', '1', false );
@@ -144,7 +217,7 @@ global $wpdb;
 $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
 $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
 
-$action_id = $custom_actions->create(
+$action_id = $custom_actions->upsert_by_code(
     [
         'code'                 => sanitize_key( (string) ( $payload['actionCode'] ?? '' ) ),
         'display_name'         => sanitize_text_field( (string) ( $payload['displayName'] ?? 'Local OpenRouter smoke action' ) ),
@@ -166,19 +239,44 @@ if ( is_wp_error( $action_id ) ) {
     return;
 }
 
-$mapping_id = $mappings->create(
-    [
-        'form_source'         => 'gravity_forms',
-        'form_id'             => (string) absint( $payload['formId'] ?? 0 ),
-        'hook'                => sanitize_key( (string) ( $payload['hook'] ?? '' ) ),
-        'action_kind'         => 'custom_action',
-        'action_id'           => (int) $action_id,
-        'input_bindings_json' => is_array( $payload['inputBindings'] ?? null ) ? $payload['inputBindings'] : [],
-        'execution_mode'      => 'sync',
-        'effect_mapping_json' => is_array( $payload['effectMapping'] ?? null ) ? $payload['effectMapping'] : [],
-        'enabled'             => true,
-    ]
-);
+$form_source  = 'gravity_forms';
+$form_id      = (string) absint( $payload['formId'] ?? 0 );
+$hook         = sanitize_key( (string) ( $payload['hook'] ?? '' ) );
+$mapping_data = [
+    'form_source'         => $form_source,
+    'form_id'             => $form_id,
+    'hook'                => $hook,
+    'action_kind'         => 'custom_action',
+    'action_id'           => (int) $action_id,
+    'input_bindings_json' => is_array( $payload['inputBindings'] ?? null ) ? $payload['inputBindings'] : [],
+    'execution_mode'      => 'sync',
+    'effect_mapping_json' => is_array( $payload['effectMapping'] ?? null ) ? $payload['effectMapping'] : [],
+    'enabled'             => true,
+];
+
+$existing_mapping = null;
+foreach ( $mappings->list_for_form( $form_source, $form_id ) as $candidate ) {
+    if (
+        'custom_action' === (string) ( $candidate['action_kind'] ?? '' ) &&
+        $hook === (string) ( $candidate['hook'] ?? '' ) &&
+        (int) $action_id === (int) ( $candidate['action_id'] ?? 0 )
+    ) {
+        $existing_mapping = $candidate;
+        break;
+    }
+}
+
+if ( is_array( $existing_mapping ) && absint( $existing_mapping['id'] ?? 0 ) > 0 ) {
+    $updated_mapping = $mappings->update( absint( $existing_mapping['id'] ), $mapping_data );
+    if ( is_wp_error( $updated_mapping ) ) {
+        echo wp_json_encode([ 'error' => $updated_mapping->get_error_message() ]);
+        return;
+    }
+
+    $mapping_id = absint( $updated_mapping['id'] ?? 0 );
+} else {
+    $mapping_id = $mappings->create( $mapping_data );
+}
 
 if ( is_wp_error( $mapping_id ) ) {
     echo wp_json_encode([ 'error' => $mapping_id->get_error_message() ]);
@@ -296,7 +394,12 @@ echo get_permalink( (int) $page_id );
 	return output;
 }
 
-async function fillGravityForm(page: Page, formUrl: string, formId: number, values: Record<string, string>) {
+async function fillGravityForm(
+	page: Page,
+	formUrl: string,
+	formId: number,
+	values: Record<string, string>
+) {
 	await page.goto(formUrl, { waitUntil: 'domcontentloaded' });
 
 	const form = page.locator('.gform_wrapper form').first();
@@ -324,7 +427,10 @@ async function submitGravityFormForConfirmation(
 		.first()
 		.locator('input[type="submit"], button[type="submit"], button')
 		.first();
-	await expect(submitButton, `Gravity Forms page should render a submit control for ${formId}`).toBeVisible();
+	await expect(
+		submitButton,
+		`Gravity Forms page should render a submit control for ${formId}`
+	).toBeVisible();
 
 	await Promise.all([
 		submitButton.click(),
@@ -348,12 +454,20 @@ async function submitGravityFormForValidationError(
 		.first()
 		.locator('input[type="submit"], button[type="submit"], button')
 		.first();
-	await expect(submitButton, `Gravity Forms page should render a submit control for ${formId}`).toBeVisible();
+	await expect(
+		submitButton,
+		`Gravity Forms page should render a submit control for ${formId}`
+	).toBeVisible();
 	await submitButton.click();
 	await expect(page.getByText(message, { exact: false })).toBeVisible({ timeout: 15000 });
 }
 
-async function waitForEntryId(page: Page, formId: number, baselineEntryId: number, email: string): Promise<number> {
+async function waitForEntryId(
+	page: Page,
+	formId: number,
+	baselineEntryId: number,
+	email: string
+): Promise<number> {
 	for (let attempt = 0; attempt < 10; attempt += 1) {
 		const entryId = findEntryIdByEmail(formId, email);
 		if (entryId > baselineEntryId) {
@@ -421,22 +535,22 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 		await requireWpRestHealthy(page);
 
 		const token = String(Date.now());
-		const seed = seedLocalOpenRouterProvider(`Validation notification smoke OpenRouter key ${token}`);
+		const seed = seedLocalOpenRouterProvider(localOpenRouterValidationSmokeCredentialLabel);
 
-		const validationFormId = ensureGravityForm(`Local OpenRouter Validation Block ${token}`, [
+		const validationFormId = ensureGravityForm(localOpenRouterValidationFormTitle, [
 			{ type: 'text', id: 1, label: 'Name', isRequired: true },
 			{ type: 'email', id: 2, label: 'Email', isRequired: true },
 			{ type: 'textarea', id: 3, label: 'Project Details', isRequired: true }
 		]);
 		const validationFormUrl = ensureGravityFormPage(
 			validationFormId,
-			`Local OpenRouter Validation Block Page ${token}`
+			localOpenRouterValidationPageTitle
 		);
 		const validationMapping = createLocalOpenRouterMapping({
 			formId: validationFormId,
 			hook: 'gform_validation',
-			actionCode: `local_validation_block_${token}`,
-			displayName: `Local validation block ${token}`,
+			actionCode: localOpenRouterValidationActionCode,
+			displayName: localOpenRouterValidationActionName,
 			credentialId: seed.credential_id,
 			promptTemplate: 'Block this submission when the project details are insufficient.',
 			inputBindings: {
@@ -480,11 +594,12 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 		expect(getLocalOpenRouterSmokeUrls()).toContainEqual(
 			expect.stringContaining('openrouter.ai/api/v1/chat/completions')
 		);
-		expect(getLocalOpenRouterSmokeUrls().filter((url) => url.includes('sentientforms.com'))).toHaveLength(0);
+		expect(
+			getLocalOpenRouterSmokeUrls().filter((url) => url.includes('sentientforms.com'))
+		).toHaveLength(0);
 
-		const notificationSubject = `Local OpenRouter control notification ${token}`;
 		const controlFormId = ensureGravityForm(
-			`Local OpenRouter Notification Control ${token}`,
+			localOpenRouterControlFormTitle,
 			[
 				{ type: 'text', id: 1, label: 'Name', isRequired: true },
 				{ type: 'email', id: 2, label: 'Email', isRequired: true },
@@ -497,16 +612,13 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 						name: 'Control Admin Notification',
 						event: 'form_submission',
 						to: 'admin@example.test',
-						subject: notificationSubject,
+						subject: localOpenRouterControlNotificationSubject,
 						message: 'Control notification should send.'
 					}
 				]
 			}
 		);
-		const controlFormUrl = ensureGravityFormPage(
-			controlFormId,
-			`Local OpenRouter Notification Control Page ${token}`
-		);
+		const controlFormUrl = ensureGravityFormPage(controlFormId, localOpenRouterControlPageTitle);
 
 		clearCapturedMail();
 		await submitGravityFormForConfirmation(page, controlFormUrl, controlFormId, {
@@ -517,14 +629,14 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 
 		await expect
 			.poll(function () {
-				return getCapturedMailRecords().filter((record) => record.subject === notificationSubject)
-					.length;
+				return getCapturedMailRecords().filter(
+					(record) => record.subject === localOpenRouterControlNotificationSubject
+				).length;
 			})
 			.toBeGreaterThan(0);
 
-		const spamSubject = `Local OpenRouter spam notification ${token}`;
 		const spamFormId = ensureGravityForm(
-			`Local OpenRouter Spam Suppression ${token}`,
+			localOpenRouterSpamFormTitle,
 			[
 				{ type: 'text', id: 1, label: 'Name', isRequired: true },
 				{ type: 'email', id: 2, label: 'Email', isRequired: true },
@@ -537,21 +649,18 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 						name: 'Spam Admin Notification',
 						event: 'form_submission',
 						to: 'admin@example.test',
-						subject: spamSubject,
+						subject: localOpenRouterSpamNotificationSubject,
 						message: 'Spam notification should be suppressed.'
 					}
 				]
 			}
 		);
-		const spamFormUrl = ensureGravityFormPage(
-			spamFormId,
-			`Local OpenRouter Spam Suppression Page ${token}`
-		);
+		const spamFormUrl = ensureGravityFormPage(spamFormId, localOpenRouterSpamPageTitle);
 		const spamMapping = createLocalOpenRouterMapping({
 			formId: spamFormId,
 			hook: 'gform_after_submission',
-			actionCode: `local_spam_suppress_${token}`,
-			displayName: `Local spam suppress ${token}`,
+			actionCode: localOpenRouterSpamActionCode,
+			displayName: localOpenRouterSpamActionName,
 			credentialId: seed.credential_id,
 			promptTemplate: 'Classify this submission for spam and suppress notifications when spam.',
 			inputBindings: {
@@ -605,7 +714,11 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 		expect(getEntryMeta(spamEntryId, 'sentient_forms_spam_notification_preference')).toBe(
 			'suppress'
 		);
-		expect(getCapturedMailRecords().filter((record) => record.subject === spamSubject)).toHaveLength(0);
+		expect(
+			getCapturedMailRecords().filter(
+				(record) => record.subject === localOpenRouterSpamNotificationSubject
+			)
+		).toHaveLength(0);
 
 		const urls = getLocalOpenRouterSmokeUrls();
 		expect(urls.some((url) => url.includes('openrouter.ai/api/v1/chat/completions'))).toBe(true);
