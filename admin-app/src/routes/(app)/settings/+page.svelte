@@ -11,6 +11,20 @@
 	import { Alert, Badge, Button, StateTemplate } from '$lib/components/ui';
 	import type { FormSourceSummary, PluginSettingsResponse } from '$lib/api/types';
 
+	type PrivacyPresetId =
+		| 'balanced'
+		| 'privacy_focused'
+		| 'maximum_privacy'
+		| 'maximum_visibility';
+
+	interface PrivacyPresetDefinition {
+		label: string;
+		executionEventRetentionDays: number;
+		deleteDataOnUninstall: boolean;
+		storeFullAiOutputs: boolean;
+		enableLogging: boolean;
+	}
+
 	const telemetry = telemetryStore;
 	const asyncSettings = asyncSettingsStore;
 	const asyncHealth = asyncHealthStore;
@@ -27,6 +41,9 @@
 	});
 	let executionLoading = $state(false);
 	let executionSaving = $state(false);
+	let governanceLoaded = $state(false);
+	let governanceLoadError = $state<string | null>(null);
+	let governanceLoggingEnabled = $state<boolean | null>(null);
 	let executionGlobalDisabled = $state(false);
 	let executionProviderDisabled = $state<Record<string, boolean>>({});
 	let retentionSaving = $state(false);
@@ -38,7 +55,38 @@
 	);
 	let privacySetupCompletedAt = $state<string | null>(null);
 
-	const privacyProfileLabels: Record<string, string> = {
+	const privacyPresetDefinitions: Record<PrivacyPresetId, PrivacyPresetDefinition> = {
+		balanced: {
+			label: 'Balanced',
+			executionEventRetentionDays: 90,
+			deleteDataOnUninstall: true,
+			storeFullAiOutputs: false,
+			enableLogging: false
+		},
+		privacy_focused: {
+			label: 'Privacy focused',
+			executionEventRetentionDays: 30,
+			deleteDataOnUninstall: true,
+			storeFullAiOutputs: false,
+			enableLogging: false
+		},
+		maximum_privacy: {
+			label: 'Maximum privacy',
+			executionEventRetentionDays: 7,
+			deleteDataOnUninstall: true,
+			storeFullAiOutputs: false,
+			enableLogging: false
+		},
+		maximum_visibility: {
+			label: 'Maximum visibility',
+			executionEventRetentionDays: 180,
+			deleteDataOnUninstall: true,
+			storeFullAiOutputs: true,
+			enableLogging: true
+		}
+	};
+
+	const privacyProfileLabels: Record<PrivacyPresetId, string> = {
 		balanced: 'Balanced',
 		privacy_focused: 'Privacy focused',
 		maximum_privacy: 'Maximum privacy',
@@ -52,6 +100,36 @@
 		{ value: 180, label: '180 days' },
 		{ value: 0, label: 'Manual cleanup only' }
 	];
+
+	function isKnownPrivacyProfile(
+		profile: PluginSettingsResponse['privacy_setup_profile']
+	): profile is PrivacyPresetId {
+		return (
+			typeof profile === 'string' &&
+			Object.prototype.hasOwnProperty.call(privacyPresetDefinitions, profile)
+		);
+	}
+
+	let effectiveLoggingEnabled = $derived(
+		($logging.loading || $logging.saving) && null !== governanceLoggingEnabled
+			? governanceLoggingEnabled
+			: $logging.enabled
+	);
+	let activePrivacyProfileLabel = $derived(
+		isKnownPrivacyProfile(privacySetupProfile)
+			? privacyProfileLabels[privacySetupProfile]
+			: 'Balanced'
+	);
+	let activePrivacyPreset = $derived(
+		isKnownPrivacyProfile(privacySetupProfile) ? privacyPresetDefinitions[privacySetupProfile] : null
+	);
+	let privacyProfileCustomized = $derived(
+		null !== activePrivacyPreset &&
+			(activePrivacyPreset.executionEventRetentionDays !== executionEventRetentionDays ||
+				activePrivacyPreset.deleteDataOnUninstall !== deleteDataOnUninstall ||
+				activePrivacyPreset.storeFullAiOutputs !== storeFullAiOutputs ||
+				activePrivacyPreset.enableLogging !== effectiveLoggingEnabled)
+	);
 
 	onMount(() => {
 		telemetry.load();
@@ -89,12 +167,16 @@
 				: 90;
 		deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
 		storeFullAiOutputs = Boolean(settings.store_full_ai_outputs);
+		governanceLoggingEnabled =
+			typeof settings.enable_logging === 'boolean' ? settings.enable_logging : null;
 		privacySetupProfile = (settings.privacy_setup_profile ??
 			'balanced') as NonNullable<PluginSettingsResponse['privacy_setup_profile']>;
 		privacySetupCompletedAt =
 			typeof settings.privacy_setup_completed_at === 'string'
 				? settings.privacy_setup_completed_at
 				: null;
+		governanceLoaded = true;
+		governanceLoadError = null;
 	}
 
 	function normalizeProviderDisabledMap(
@@ -121,14 +203,20 @@
 
 	async function loadExecutionSettings() {
 		executionLoading = true;
+		governanceLoadError = null;
 		try {
 			const settings = await client.getSettings({ showNotifications: false });
 			syncGovernanceSettings(settings);
 		} catch {
+			governanceLoadError = 'Local privacy and execution settings could not be loaded.';
 			notifications.warning('Failed to load execution control settings');
 		} finally {
 			executionLoading = false;
 		}
+	}
+
+	function retryGovernanceLoad(): void {
+		void loadExecutionSettings();
 	}
 
 	async function toggleExecutionGlobal(nextDisabled: boolean) {
@@ -285,70 +373,106 @@
 	</header>
 
 	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4">
-		<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:lg:flex-row sf:lg:items-center">
-			<div class="sf:space-y-2">
-				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-					<p class="sf:text-base sf:font-semibold sf:text-slate-900">Privacy &amp; visibility profile</p>
-					<Badge variant={privacySetupProfile === 'maximum_visibility' ? 'warning' : 'info'}>
-						{privacyProfileLabels[privacySetupProfile] ?? 'Balanced'}
-					</Badge>
-					{#if privacySetupCompletedAt}
-						<Badge variant="neutral">Setup saved</Badge>
-					{:else}
-						<Badge variant="warning">Setup still needs review</Badge>
-					{/if}
+		{#if !governanceLoaded && executionLoading}
+			<StateTemplate
+				variant="loading"
+				title="Loading local privacy settings"
+				message="Retrieving your saved profile, retention choices, and uninstall behavior."
+				inline
+				testId="settings-governance-loading-state"
+			/>
+		{:else if governanceLoadError}
+			<StateTemplate
+				variant="error"
+				title="Privacy settings unavailable"
+				message={governanceLoadError}
+				actionLabel="Retry"
+				onAction={retryGovernanceLoad}
+				inline
+				testId="settings-governance-error-state"
+			/>
+		{:else}
+			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:lg:flex-row sf:lg:items-center">
+				<div class="sf:space-y-2">
+					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+						<p class="sf:text-base sf:font-semibold sf:text-slate-900">Privacy &amp; visibility profile</p>
+						{#if privacyProfileCustomized}
+							<span data-testid="settings-profile-customized-badge">
+								<Badge variant="neutral">Custom settings</Badge>
+							</span>
+							<span data-testid="settings-profile-base-badge">
+								<Badge variant="info">{activePrivacyProfileLabel}</Badge>
+							</span>
+						{:else}
+							<span data-testid="settings-profile-base-badge">
+								<Badge variant={privacySetupProfile === 'maximum_visibility' ? 'warning' : 'info'}>
+									{activePrivacyProfileLabel}
+								</Badge>
+							</span>
+						{/if}
+						{#if privacySetupCompletedAt}
+							<Badge variant="neutral">Setup saved</Badge>
+						{:else}
+							<Badge variant="warning">Setup still needs review</Badge>
+						{/if}
+					</div>
+					<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
+						{#if privacyProfileCustomized}
+							Started from {activePrivacyProfileLabel}. One or more controls below now differ from
+							that preset, so this site is using a custom privacy configuration.
+						{:else}
+							Start with a preset when you want the plugin to feel obvious instead of technical.
+							The assistant changes retention, uninstall cleanup, local logging, and whether full AI
+							outputs are kept.
+						{/if}
+					</p>
 				</div>
-				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
-					Start with a preset when you want the plugin to feel obvious instead of technical. The
-					assistant changes retention, uninstall cleanup, local logging, and whether full AI
-					outputs are kept.
-				</p>
+				<Button type="button" variant="secondary" onclick={openPrivacySetupAssistant}>
+					{privacySetupCompletedAt ? 'Reopen setup assistant' : 'Finish guided setup'}
+				</Button>
 			</div>
-			<Button type="button" variant="secondary" onclick={openPrivacySetupAssistant}>
-				{privacySetupCompletedAt ? 'Reopen setup assistant' : 'Finish guided setup'}
-			</Button>
-		</div>
 
-		<div class="sf:grid sf:gap-3 sf:sm:grid-cols-2 sf:xl:grid-cols-4">
-			<div
-				class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
-				data-testid="settings-profile-execution-history"
-			>
-				<p class="sf:text-xs sf:font-medium sf:text-slate-500">Execution history</p>
-				<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
-					{executionEventRetentionDays === 0
-						? 'Manual cleanup only'
-						: `${executionEventRetentionDays} days`}
-				</p>
+			<div class="sf:grid sf:gap-3 sf:sm:grid-cols-2 sf:xl:grid-cols-4">
+				<div
+					class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
+					data-testid="settings-profile-execution-history"
+				>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Execution history</p>
+					<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+						{executionEventRetentionDays === 0
+							? 'Manual cleanup only'
+							: `${executionEventRetentionDays} days`}
+					</p>
+				</div>
+				<div
+					class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
+					data-testid="settings-profile-full-outputs"
+				>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Full AI outputs</p>
+					<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+						{storeFullAiOutputs ? 'Stored locally' : 'Not stored by default'}
+					</p>
+				</div>
+				<div
+					class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
+					data-testid="settings-profile-uninstall"
+				>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Uninstall behavior</p>
+					<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+						{deleteDataOnUninstall ? 'Deletes plugin data' : 'Keeps plugin data'}
+					</p>
+				</div>
+				<div
+					class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
+					data-testid="settings-profile-diagnostics"
+				>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Local diagnostics</p>
+					<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
+						{effectiveLoggingEnabled ? 'On-site logging enabled' : 'On-site logging disabled'}
+					</p>
+				</div>
 			</div>
-			<div
-				class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
-				data-testid="settings-profile-full-outputs"
-			>
-				<p class="sf:text-xs sf:font-medium sf:text-slate-500">Full AI outputs</p>
-				<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
-					{storeFullAiOutputs ? 'Stored locally' : 'Not stored by default'}
-				</p>
-			</div>
-			<div
-				class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
-				data-testid="settings-profile-uninstall"
-			>
-				<p class="sf:text-xs sf:font-medium sf:text-slate-500">Uninstall behavior</p>
-				<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
-					{deleteDataOnUninstall ? 'Deletes plugin data' : 'Keeps plugin data'}
-				</p>
-			</div>
-			<div
-				class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4"
-				data-testid="settings-profile-diagnostics"
-			>
-				<p class="sf:text-xs sf:font-medium sf:text-slate-500">Local diagnostics</p>
-				<p class="sf:mt-1 sf:text-sm sf:font-semibold sf:text-slate-900">
-					{$logging.enabled ? 'On-site logging enabled' : 'On-site logging disabled'}
-				</p>
-			</div>
-		</div>
+		{/if}
 	</div>
 
 	{#if $asyncHealth.warnings.length}
@@ -491,86 +615,106 @@
 			</p>
 		</div>
 
-		<div class="sf:grid sf:grid-cols-1 sf:gap-4 sf:md:grid-cols-2">
-			<label class="sf:flex sf:flex-col sf:gap-1">
-				<span class="sf:text-sm sf:font-medium sf:text-slate-900">Execution logs</span>
-				<select
-					class="sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
-					bind:value={executionEventRetentionDays}
-					disabled={retentionSaving || executionLoading}
-				>
-					{#each retentionOptions as option}
-						<option value={option.value}>{option.label}</option>
-					{/each}
-				</select>
-			</label>
+		{#if !governanceLoaded && executionLoading}
+			<StateTemplate
+				variant="loading"
+				title="Loading retention controls"
+				message="Retrieving the saved execution history and uninstall defaults before editing."
+				inline
+				testId="settings-retention-loading-state"
+			/>
+		{:else if governanceLoadError}
+			<StateTemplate
+				variant="error"
+				title="Retention controls unavailable"
+				message={governanceLoadError}
+				actionLabel="Retry"
+				onAction={retryGovernanceLoad}
+				inline
+				testId="settings-retention-error-state"
+			/>
+		{:else}
+			<div class="sf:grid sf:grid-cols-1 sf:gap-4 sf:md:grid-cols-2">
+				<label class="sf:flex sf:flex-col sf:gap-1">
+					<span class="sf:text-sm sf:font-medium sf:text-slate-900">Execution logs</span>
+					<select
+						class="sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
+						bind:value={executionEventRetentionDays}
+						disabled={retentionSaving || executionLoading}
+					>
+						{#each retentionOptions as option}
+							<option value={option.value}>{option.label}</option>
+						{/each}
+					</select>
+				</label>
 
-			<label class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3">
-				<input
-					type="checkbox"
-					class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-					bind:checked={storeFullAiOutputs}
-					disabled={retentionSaving || executionLoading}
-					data-testid="settings-store-full-ai-outputs"
-				/>
-				<span class="sf:space-y-1">
-					<span class="sf:block sf:text-sm sf:font-medium sf:text-slate-900">
-						Store full AI outputs locally
+				<label class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3">
+					<input
+						type="checkbox"
+						class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+						bind:checked={storeFullAiOutputs}
+						disabled={retentionSaving || executionLoading}
+						data-testid="settings-store-full-ai-outputs"
+					/>
+					<span class="sf:space-y-1">
+						<span class="sf:block sf:text-sm sf:font-medium sf:text-slate-900">
+							Store full AI outputs locally
+						</span>
+						<span class="sf:block sf:text-xs sf:text-slate-500">
+							Off is the safer default. Turn this on when you need to inspect full model replies while
+							building or debugging actions.
+						</span>
 					</span>
-					<span class="sf:block sf:text-xs sf:text-slate-500">
-						Off is the safer default. Turn this on when you need to inspect full model replies while
-						building or debugging actions.
+				</label>
+
+				<label class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3 sf:md:col-span-2">
+					<input
+						type="checkbox"
+						class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+						bind:checked={deleteDataOnUninstall}
+						disabled={retentionSaving || executionLoading}
+					/>
+					<span class="sf:space-y-1">
+						<span class="sf:block sf:text-sm sf:font-medium sf:text-slate-900">
+							Delete local data on uninstall
+						</span>
+						<span class="sf:block sf:text-xs sf:text-slate-500">
+							Remove Sentient Forms tables and options when the plugin is uninstalled.
+						</span>
 					</span>
-				</span>
-			</label>
+				</label>
+			</div>
 
-			<label class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3 sf:md:col-span-2">
-				<input
-					type="checkbox"
-					class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-					bind:checked={deleteDataOnUninstall}
-					disabled={retentionSaving || executionLoading}
-				/>
-				<span class="sf:space-y-1">
-					<span class="sf:block sf:text-sm sf:font-medium sf:text-slate-900">
-						Delete local data on uninstall
-					</span>
-					<span class="sf:block sf:text-xs sf:text-slate-500">
-						Remove Sentient Forms tables and options when the plugin is uninstalled.
-					</span>
-				</span>
-			</label>
-		</div>
+			<Alert variant={storeFullAiOutputs ? 'warning' : 'info'}>
+				<p class="sf:font-semibold">
+					{storeFullAiOutputs ? 'Full replies will be stored locally' : 'Only derived action results are stored'}
+				</p>
+				<p class="sf:mt-1">
+					{storeFullAiOutputs
+						? 'Useful for tuning prompts and proving how an action behaved, but it keeps more model output on the site.'
+						: 'Recommended for routine production use. Structured classifications, summaries, and action effects still remain available for review.'}
+				</p>
+			</Alert>
 
-		<Alert variant={storeFullAiOutputs ? 'warning' : 'info'}>
-			<p class="sf:font-semibold">
-				{storeFullAiOutputs ? 'Full replies will be stored locally' : 'Only derived action results are stored'}
-			</p>
-			<p class="sf:mt-1">
-				{storeFullAiOutputs
-					? 'Useful for tuning prompts and proving how an action behaved, but it keeps more model output on the site.'
-					: 'Recommended for routine production use. Structured classifications, summaries, and action effects still remain available for review.'}
-			</p>
-		</Alert>
+			<Alert variant="info">
+				<p class="sf:font-semibold">High-sensitivity secret option</p>
+				<p class="sf:mt-1">
+					The default vault encrypts saved provider keys locally. If your site has stricter operational
+					controls, switch to a WordPress constant or environment variable instead of storing the key in
+					the database.
+				</p>
+			</Alert>
 
-		<Alert variant="info">
-			<p class="sf:font-semibold">High-sensitivity secret option</p>
-			<p class="sf:mt-1">
-				The default vault encrypts saved provider keys locally. If your site has stricter operational
-				controls, switch to a WordPress constant or environment variable instead of storing the key in
-				the database.
-			</p>
-		</Alert>
-
-		<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
-			<Button type="submit" disabled={retentionSaving || executionLoading}>
-				{retentionSaving ? 'Saving…' : 'Save retention'}
-			</Button>
-			<p class="sf:text-xs sf:text-slate-500">
-				Manual cleanup only keeps new execution logs until an administrator removes them or changes this
-				setting.
-			</p>
-		</div>
+			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
+				<Button type="submit" disabled={retentionSaving || executionLoading}>
+					{retentionSaving ? 'Saving…' : 'Save retention'}
+				</Button>
+				<p class="sf:text-xs sf:text-slate-500">
+					Manual cleanup only keeps new execution logs until an administrator removes them or changes this
+					setting.
+				</p>
+			</div>
+		{/if}
 	</form>
 
 	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4">
