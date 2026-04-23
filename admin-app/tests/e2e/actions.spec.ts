@@ -808,7 +808,7 @@ test.describe('Actions admin flows', () => {
 			const title = card.getByText(form.title);
 			const titleBox = await title.boundingBox();
 
-			expect(titleBox?.height ?? 999).toBeLessThan(96);
+			expect(titleBox?.height ?? 999).toBeLessThan(56);
 		}
 	});
 
