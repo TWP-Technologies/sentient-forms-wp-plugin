@@ -100,7 +100,9 @@ async function coverProvidersDisclosures(page: Page): Promise<void> {
 
 	const openRouterCard = page.getByTestId('providers-openrouter-form-card');
 	await expect(openRouterCard).toBeVisible();
-	const openRouterDisclosure = openRouterCard.getByLabel(/I understand OpenRouter receives request data/i);
+	const openRouterDisclosure = openRouterCard.getByLabel(
+		/I understand OpenRouter receives request data/i
+	);
 	await expect(openRouterDisclosure).toBeVisible();
 	await openRouterDisclosure.check();
 	await expect(openRouterDisclosure).toBeChecked();
@@ -115,7 +117,9 @@ async function coverProvidersDisclosures(page: Page): Promise<void> {
 		return;
 	}
 
-	const managedDisclosure = managedCard.getByLabel(/I understand Sentient receives the rendered prompt/i);
+	const managedDisclosure = managedCard.getByLabel(
+		/I understand Sentient receives the rendered prompt/i
+	);
 	await expect(managedDisclosure).toBeVisible();
 	await managedDisclosure.check();
 	await expect(managedDisclosure).toBeChecked();
@@ -135,7 +139,9 @@ async function coverActionsOverviewDefaults(page: Page): Promise<void> {
 	await defaultsModal.getByTestId('action-defaults-close').click();
 	await expect(defaultsModal).toBeHidden();
 
-	const customDefaultsButton = page.getByTestId(`action-defaults-button-${modalCoverageCustomActionCode}`);
+	const customDefaultsButton = page.getByTestId(
+		`action-defaults-button-${modalCoverageCustomActionCode}`
+	);
 	await expect(customDefaultsButton).toBeVisible();
 	await customDefaultsButton.click();
 	await expect(defaultsModal).toBeVisible();
@@ -179,9 +185,7 @@ async function coverAddActionDrawer(page: Page): Promise<void> {
 	await expect(drawer.getByRole('radio').first()).toBeVisible();
 	await attachLocatorScreenshot(page, drawer, 'add-action-custom');
 
-	const directTab = page.getByRole('button', { name: /^Direct OpenRouter$/ });
-	await directTab.click();
-	await expect(page.getByTestId('local-openrouter-builder')).toBeVisible();
+	await ensureDirectOpenRouterBuilder(page, drawer);
 	await attachLocatorScreenshot(page, drawer, 'add-action-direct-openrouter');
 
 	await page.getByRole('button', { name: 'Close' }).click();
@@ -190,7 +194,9 @@ async function coverAddActionDrawer(page: Page): Promise<void> {
 
 async function coverTemplateLibrary(page: Page): Promise<void> {
 	await page.getByRole('button', { name: 'Import from Library' }).click();
-	const libraryDialog = page.getByRole('dialog').filter({ hasText: 'Import from Template Library' });
+	const libraryDialog = page
+		.getByRole('dialog')
+		.filter({ hasText: 'Import from Template Library' });
 	await expect(libraryDialog).toBeVisible();
 	await attachLocatorScreenshot(page, libraryDialog, 'template-library');
 	await libraryDialog.getByRole('button', { name: 'Close' }).click();
@@ -299,8 +305,7 @@ async function ensureAtLeastOneLinkedAction(page: Page): Promise<void> {
 	await page.locator('header').first().getByRole('button', { name: 'Add action' }).click();
 	const drawer = page.getByTestId('link-action-form');
 	await expect(drawer).toBeVisible();
-	await drawer.getByRole('button', { name: /^Direct OpenRouter$/ }).click();
-	await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
+	await ensureDirectOpenRouterBuilder(page, drawer);
 
 	const hookOption = drawer.locator('input[type="checkbox"]').first();
 	await expect(hookOption).toBeVisible();
@@ -310,11 +315,13 @@ async function ensureAtLeastOneLinkedAction(page: Page): Promise<void> {
 
 	const credentialSelect = drawer.getByTestId('local-builder-credential');
 	await expect(credentialSelect).toBeVisible();
-	const credentialOptions = await credentialSelect.locator('option').evaluateAll((options) =>
-		options
-			.map((option) => option.getAttribute('value') ?? '')
-			.filter((value) => value.length > 0)
-	);
+	const credentialOptions = await credentialSelect
+		.locator('option')
+		.evaluateAll((options) =>
+			options
+				.map((option) => option.getAttribute('value') ?? '')
+				.filter((value) => value.length > 0)
+		);
 	expect(credentialOptions.length).toBeGreaterThan(0);
 	const firstCredentialValue = credentialOptions[0];
 	if (firstCredentialValue) {
@@ -340,6 +347,14 @@ async function ensureAtLeastOneLinkedAction(page: Page): Promise<void> {
 	}
 
 	await expect(page.getByRole('button', { name: 'Configure' }).first()).toBeVisible();
+}
+
+async function ensureDirectOpenRouterBuilder(page: Page, drawer: Locator): Promise<void> {
+	const builder = drawer.getByTestId('local-openrouter-builder');
+	if (!(await builder.isVisible({ timeout: 1000 }).catch(() => false))) {
+		await page.getByTestId('create-kind-local-openrouter').click();
+	}
+	await expect(builder).toBeVisible();
 }
 
 async function expandVisibleMappingSections(mappingModal: Locator): Promise<void> {

@@ -28,6 +28,7 @@ return [
 	'Sentient_Forms_Async_Settings_Service' => __DIR__ . '/services/class-sentient-forms-async-settings-service.php',
 	'Sentient_Forms_Attachment_File_Ref_Builder' => __DIR__ . '/services/class-sentient-forms-attachment-file-ref-builder.php',
 	'Sentient_Forms_Autoloader' => __DIR__ . '/class-autoloader.php',
+	'Sentient_Forms_Bundled_Action_Templates' => __DIR__ . '/class-sentient-forms-bundled-action-templates.php',
 	'Sentient_Forms_Condition_Evaluator' => __DIR__ . '/services/class-sentient-forms-condition-evaluator.php',
 	'Sentient_Forms_Credit_Controller' => __DIR__ . '/rest-api/controllers/class-credit-controller.php',
 	'Sentient_Forms_Custom_Action_List_Response' => __DIR__ . '/api/dto/class-sentient-forms-custom-action-list-response.php',

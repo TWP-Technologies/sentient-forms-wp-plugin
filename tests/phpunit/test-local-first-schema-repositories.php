@@ -347,6 +347,94 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
         $this->assertSame( 'failed', $events->get_by_request_id( 'req-local-first-1' )['status'] );
     }
 
+    public function test_action_template_upsert_recovers_from_duplicate_insert_race(): void
+    {
+        $initial_repository = new Sentient_Forms_Action_Templates_Repository( $this->wpdb );
+        $template_id        = $initial_repository->upsert_by_code(
+            [
+                'source'          => 'bundled',
+                'code'            => 'race_template',
+                'display_name'    => 'Race Template',
+                'prompt_template' => 'Initial prompt.',
+            ]
+        );
+
+        $this->assertIsInt( $template_id );
+
+        $race_repository = new class( $this->wpdb ) extends Sentient_Forms_Action_Templates_Repository
+        {
+            private bool $first_lookup = true;
+
+            public function get_by_code( string $code ): ?array
+            {
+                if ( $this->first_lookup )
+                {
+                    $this->first_lookup = false;
+                    return null;
+                }
+
+                return parent::get_by_code( $code );
+            }
+        };
+
+        $upserted_id = $race_repository->upsert_by_code(
+            [
+                'source'          => 'bundled',
+                'code'            => 'race_template',
+                'display_name'    => 'Race Template Updated',
+                'prompt_template' => 'Recovered prompt.',
+            ]
+        );
+
+        $this->assertSame( $template_id, $upserted_id );
+        $this->assertSame( 'Race Template Updated', $initial_repository->get_by_code( 'race_template' )['display_name'] );
+    }
+
+    public function test_local_custom_action_upsert_recovers_from_duplicate_insert_race(): void
+    {
+        $initial_repository = new Sentient_Forms_Local_Custom_Actions_Repository( $this->wpdb );
+        $action_id          = $initial_repository->upsert_by_code(
+            [
+                'code'            => 'race_custom_action',
+                'display_name'    => 'Race Custom Action',
+                'definition_json' => [
+                    'prompt' => 'Initial custom prompt.',
+                ],
+            ]
+        );
+
+        $this->assertIsInt( $action_id );
+
+        $race_repository = new class( $this->wpdb ) extends Sentient_Forms_Local_Custom_Actions_Repository
+        {
+            private bool $first_lookup = true;
+
+            public function get_by_code( string $code ): ?array
+            {
+                if ( $this->first_lookup )
+                {
+                    $this->first_lookup = false;
+                    return null;
+                }
+
+                return parent::get_by_code( $code );
+            }
+        };
+
+        $upserted_id = $race_repository->upsert_by_code(
+            [
+                'code'            => 'race_custom_action',
+                'display_name'    => 'Race Custom Action Updated',
+                'definition_json' => [
+                    'prompt' => 'Recovered custom prompt.',
+                ],
+            ]
+        );
+
+        $this->assertSame( $action_id, $upserted_id );
+        $this->assertSame( 'Race Custom Action Updated', $initial_repository->get_by_code( 'race_custom_action' )['display_name'] );
+    }
+
     public function test_repository_json_fields_reject_non_array_values(): void
     {
         $custom = new Sentient_Forms_Local_Custom_Actions_Repository( $this->wpdb );

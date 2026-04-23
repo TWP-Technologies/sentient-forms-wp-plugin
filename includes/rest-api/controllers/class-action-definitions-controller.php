@@ -104,23 +104,13 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
         }
 
         $definitions = $this->get_local_template_definitions();
-        $seen_ids    = [];
-        foreach ( $definitions as $definition )
+        if ( ! empty( $definitions ) )
         {
-            if ( isset( $definition['id'] ) && is_scalar( $definition['id'] ) )
-            {
-                $seen_ids[ sanitize_key( (string) $definition['id'] ) ] = true;
-            }
+            return $this->prepare_item_for_response( $definitions );
         }
 
         foreach ( $this->action_registry->get_all_actions() as $id => $action )
         {
-            $action_id = sanitize_key( (string) $id );
-            if ( isset( $seen_ids[ $action_id ] ) )
-            {
-                continue;
-            }
-
             $definitions[] = [
                 'id'             => $id,
                 'label'          => $action->get_name(),
@@ -227,7 +217,13 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
         $repository = new Sentient_Forms_Action_Templates_Repository( $wpdb );
         $definitions = [];
 
-        foreach ( $repository->list_active() as $template )
+        $templates = $repository->list_by_source( 'bundled' );
+        if ( [] === $templates )
+        {
+            $templates = $repository->list_active();
+        }
+
+        foreach ( $templates as $template )
         {
             $code = isset( $template['code'] ) && is_scalar( $template['code'] )
                 ? sanitize_key( (string) $template['code'] )

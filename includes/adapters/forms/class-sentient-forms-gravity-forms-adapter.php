@@ -143,7 +143,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     public function handle_after_submission_entry_post_save( array $entry, array $form ): array
     {
+        $form_id                          = absint( $form['id'] ?? 0 );
+        $validation_execution_request_ids = $form_id > 0
+            ? ( $this->validation_execution_request_ids_by_form[ $form_id ] ?? [] )
+            : [];
+
         $this->backfill_validation_action_log_entry_ids( $entry, $form );
+        $this->apply_validation_local_execution_results_to_entry( $validation_execution_request_ids, $entry, $form );
         $this->handle_after_submission( $entry, $form );
 
         return $entry;
@@ -195,6 +201,147 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $this->validation_execution_request_ids_by_form[ $form_id ] = array_values(
             array_unique( $this->validation_execution_request_ids_by_form[ $form_id ] )
         );
+    }
+
+    /**
+     * Replay local validation effects once Gravity Forms has created an entry.
+     *
+     * Local validation actions run before an entry id exists. Their execution event can be
+     * recorded during validation, but entry meta, spam flags, and notes must wait until
+     * gform_entry_post_save provides the saved entry.
+     *
+     * @param array<int, string> $execution_request_ids Validation execution request ids.
+     * @param array              $entry                 Saved Gravity Forms entry.
+     * @param array              $form                  Gravity Forms form.
+     *
+     * @return void
+     */
+    private function apply_validation_local_execution_results_to_entry( array $execution_request_ids, array $entry, array $form ): void
+    {
+        $entry_id = absint( $entry['id'] ?? 0 );
+        $form_id  = absint( $form['id'] ?? 0 );
+        if ( $entry_id <= 0 || $form_id <= 0 || empty( $execution_request_ids ) )
+        {
+            return;
+        }
+
+        if (
+            ! class_exists( 'Sentient_Forms_Execution_Events_Repository' )
+            || ! class_exists( 'Sentient_Forms_Form_Mappings_Repository' )
+            || ! class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' )
+            || ! class_exists( 'Sentient_Forms_Local_Result_Applier' )
+        )
+        {
+            return;
+        }
+
+        global $wpdb;
+
+        $events        = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $mappings      = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $applier       = new Sentient_Forms_Local_Result_Applier();
+
+        foreach ( $this->normalize_validation_execution_request_ids( $execution_request_ids ) as $execution_request_id )
+        {
+            $event = $events->get_by_request_id( $execution_request_id );
+            if ( ! is_array( $event ) )
+            {
+                continue;
+            }
+
+            if ( ( $event['form_source'] ?? '' ) !== $this->get_id() || absint( $event['form_id'] ?? 0 ) !== $form_id )
+            {
+                continue;
+            }
+
+            $mapping_id = absint( $event['mapping_id'] ?? 0 );
+            if ( $mapping_id <= 0 )
+            {
+                continue;
+            }
+
+            $mapping = $mappings->get( $mapping_id );
+            if ( ! is_array( $mapping ) || 'gform_validation' !== (string) ( $mapping['hook'] ?? '' ) )
+            {
+                continue;
+            }
+
+            $event['entry_id'] = (string) $entry_id;
+
+            if ( 'succeeded' === sanitize_key( (string) ( $event['status'] ?? '' ) ) )
+            {
+                $action = [];
+                if ( 'custom_action' === sanitize_key( (string) ( $mapping['action_kind'] ?? '' ) ) )
+                {
+                    $action = $custom_actions->get( absint( $mapping['action_id'] ?? 0 ) ) ?? [];
+                }
+
+                $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
+                $execution_result = [
+                    'execution_request_id' => $execution_request_id,
+                    'status'               => 'succeeded',
+                    'provider'             => $event['provider'] ?? 'openrouter',
+                    'model'                => $event['model'] ?? null,
+                    'cached'               => false,
+                    'result'               => $result,
+                ];
+
+                $effects = $applier->apply( $mapping, $form, $entry, $execution_result, $action );
+                if ( ! is_wp_error( $effects ) )
+                {
+                    $result['effects']    = $effects;
+                    $event['result_json'] = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result );
+
+                    if ( $this->local_spam_effect_enabled( $mapping ) )
+                    {
+                        $this->record_blocking_spam_notification_state( $entry_id, $mapping, $execution_result );
+                    }
+                }
+
+                $events->record( $event );
+                continue;
+            }
+
+            if ( 'failed' === sanitize_key( (string) ( $event['status'] ?? '' ) ) )
+            {
+                $reason = isset( $event['error_message'] ) && '' !== trim( (string) $event['error_message'] )
+                    ? trim( (string) $event['error_message'] )
+                    : __( 'Unknown local provider error.', 'sentient-forms' );
+                $note = sprintf(
+                    /* translators: %s: local action failure reason */
+                    __( 'Sentient Forms could not complete Local OpenRouter action. Reason: %s', 'sentient-forms' ),
+                    $reason
+                );
+                $this->add_local_action_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $note );
+                $events->record( $event );
+            }
+        }
+    }
+
+    /**
+     * @param array<int, string> $execution_request_ids Raw request ids.
+     *
+     * @return array<int, string>
+     */
+    private function normalize_validation_execution_request_ids( array $execution_request_ids ): array
+    {
+        $normalized = [];
+        foreach ( $execution_request_ids as $execution_request_id )
+        {
+            if ( ! is_scalar( $execution_request_id ) )
+            {
+                continue;
+            }
+
+            $execution_request_id = sanitize_text_field( (string) $execution_request_id );
+            if ( '' !== $execution_request_id )
+            {
+                $normalized[ $execution_request_id ] = $execution_request_id;
+            }
+        }
+
+        return array_values( $normalized );
     }
 
     /**
@@ -1466,7 +1613,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $context,
         );
 
-        return $this->get_local_execution_service()->execute_mapping( $local_mapping_id, $form, $entry, $context );
+        $result = $this->get_local_execution_service()->execute_mapping( $local_mapping_id, $form, $entry, $context );
+        $this->remember_validation_execution_request_id( absint( $form['id'] ?? 0 ), $context['execution_request_id'] ?? null );
+
+        return $result;
     }
 
     /**
@@ -2552,11 +2702,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     private function resolve_mapping_runtime_settings( array $mapping, int $form_id ): array
     {
-        if ( $this->is_local_first_mapping( $mapping ) )
-        {
-            return $mapping;
-        }
-
         $action_id = isset( $mapping['central_action_id'] ) && is_scalar( $mapping['central_action_id'] )
             ? sanitize_key( (string) $mapping['central_action_id'] )
             : '';
@@ -2578,6 +2723,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         if ( $this->is_spam_action_id( $action_id ) )
         {
             foreach ( [ 'spam_positive_examples', 'spam_negative_examples' ] as $field )
+            {
+                $mapping_settings = $this->merge_inherited_field( $mapping_settings, $field, $form_config, $action_defaults );
+            }
+
+            foreach ( [ 'spam_result_display_mode', 'spam_indicators_display' ] as $field )
             {
                 $mapping_settings = $this->merge_inherited_field( $mapping_settings, $field, $form_config, $action_defaults );
             }
@@ -2671,6 +2821,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return null;
         }
 
+        $custom_action = $this->get_local_first_custom_action( absint( $row['action_id'] ?? 0 ) );
+        $identity      = $this->resolve_local_first_action_identity( $custom_action );
         $execution_mode = 'gform_validation' === $hook || 'sync' === sanitize_key( (string) ( $row['execution_mode'] ?? '' ) )
             ? 'validation'
             : 'after_submission';
@@ -2696,22 +2848,128 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $settings['effect_mapping_json'] = $row['effect_mapping_json'];
         }
 
+        $settings['linked_action_status'] = $identity['linked_action_status'];
+        $settings['repair_state']         = $identity['repair_state'];
+
         $mark_as_spam = $this->local_spam_effect_enabled( [ 'settings' => $settings ] );
 
         return [
             'local_mapping_id'           => 'local_first_' . $id,
             'local_form_mapping_id'      => $id,
-            'central_action_id'          => 'sentient_forms_local_custom_action',
+            'central_action_id'          => $identity['action_code'],
             'action_type_indicator'      => 'local_first',
             'action_kind'                => 'custom_action',
-            'action_name_label'          => __( 'Local OpenRouter action', 'sentient-forms' ),
+            'action_name_label'          => $identity['action_label'],
             'is_action_enabled_for_form' => ! empty( $row['enabled'] ),
             'trigger_hooks'              => [ $hook ],
             'execution_mode'             => $execution_mode,
             'execution_priority'         => $id,
             'mark_as_spam'               => $mark_as_spam,
+            'linked_action_status'       => $identity['linked_action_status'],
+            'repair_state'               => $identity['repair_state'],
             'settings'                   => $settings,
         ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function get_local_first_custom_action( int $action_id ): ?array
+    {
+        $action_id = absint( $action_id );
+        if ( $action_id <= 0 || ! class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
+        {
+            return null;
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        return $repository->get( $action_id );
+    }
+
+    /**
+     * @param array<string, mixed>|null $custom_action
+     *
+     * @return array{action_code: string, action_label: string, linked_action_status: string, repair_state: string}
+     */
+    private function resolve_local_first_action_identity( ?array $custom_action ): array
+    {
+        $linked_action_status = 'missing';
+        $repair_state         = 'needs_repair';
+        $action_code          = 'sentient_forms_local_custom_action';
+        $action_label         = __( 'Local OpenRouter action', 'sentient-forms' );
+
+        if ( is_array( $custom_action ) )
+        {
+            $linked_action_status = isset( $custom_action['status'] ) && is_scalar( $custom_action['status'] )
+                ? sanitize_key( (string) $custom_action['status'] )
+                : 'unknown';
+            $repair_state         = 'active' === $linked_action_status ? 'ok' : 'needs_repair';
+            $action_code          = isset( $custom_action['code'] ) && is_scalar( $custom_action['code'] )
+                ? sanitize_key( (string) $custom_action['code'] )
+                : $action_code;
+            $action_label         = isset( $custom_action['display_name'] ) && is_scalar( $custom_action['display_name'] )
+                ? sanitize_text_field( (string) $custom_action['display_name'] )
+                : $action_label;
+        }
+
+        $template = $this->get_local_first_template_for_custom_action( $custom_action );
+        if ( is_array( $template ) )
+        {
+            $template_code = isset( $template['code'] ) && is_scalar( $template['code'] )
+                ? sanitize_key( (string) $template['code'] )
+                : '';
+            if ( '' !== $template_code && Sentient_Forms_Bundled_Action_Templates::has( $template_code ) )
+            {
+                $action_code = $template_code;
+                $action_label = isset( $template['display_name'] ) && is_scalar( $template['display_name'] )
+                    ? sanitize_text_field( (string) $template['display_name'] )
+                    : $action_label;
+            }
+        }
+        elseif ( is_array( $custom_action ) )
+        {
+            $custom_code   = isset( $custom_action['code'] ) && is_scalar( $custom_action['code'] )
+                ? sanitize_key( (string) $custom_action['code'] )
+                : '';
+            $template_code = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $custom_code );
+            $definition    = '' !== $template_code ? Sentient_Forms_Bundled_Action_Templates::get( $template_code ) : null;
+            if ( is_array( $definition ) )
+            {
+                $action_code  = $template_code;
+                $action_label = sanitize_text_field( (string) ( $definition['display_name'] ?? $action_label ) );
+            }
+        }
+
+        return [
+            'action_code'          => $action_code,
+            'action_label'         => $action_label,
+            'linked_action_status' => $linked_action_status,
+            'repair_state'         => $repair_state,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed>|null $custom_action
+     *
+     * @return array<string, mixed>|null
+     */
+    private function get_local_first_template_for_custom_action( ?array $custom_action ): ?array
+    {
+        if ( ! is_array( $custom_action ) || ! class_exists( 'Sentient_Forms_Action_Templates_Repository' ) )
+        {
+            return null;
+        }
+
+        $template_id = absint( $custom_action['template_id'] ?? 0 );
+        if ( $template_id <= 0 )
+        {
+            return null;
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        return $repository->get( $template_id );
     }
 
     /**
@@ -2783,7 +3041,36 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             }
         }
 
+        if ( array_key_exists( 'spam_result_display_mode', $config ) )
+        {
+            $config['spam_result_display_mode'] = $this->normalize_spam_result_display_mode( $config['spam_result_display_mode'] );
+        }
+
+        if ( array_key_exists( 'spam_indicators_display', $config ) )
+        {
+            $config['spam_indicators_display'] = $this->normalize_spam_indicators_display( $config['spam_indicators_display'] );
+        }
+
         return $config;
+    }
+
+    private function normalize_spam_result_display_mode( mixed $value ): string
+    {
+        $value = sanitize_key( (string) $value );
+
+        return match ( $value ) {
+            'entry_note' => 'all_results',
+            'silent'     => 'none',
+            'none',
+            'spam_only',
+            'all_results' => $value,
+            default      => 'all_results',
+        };
+    }
+
+    private function normalize_spam_indicators_display( mixed $value ): string
+    {
+        return 'detailed' === sanitize_key( (string) $value ) ? 'detailed' : 'simple';
     }
 
     /**
@@ -4094,8 +4381,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     private function maybe_mark_entry_as_spam_from_result( int $entry_id, array $context, array $result ): void
     {
         $mark_as_spam = ! empty( $context['mark_as_spam'] );
-        $display_mode = $context['spam_result_display_mode'] ?? 'entry_note';
-        $should_note  = ! in_array( $display_mode, [ 'none', 'silent' ], true );
+        $display_mode = $this->normalize_spam_result_display_mode( $context['spam_result_display_mode'] ?? 'all_results' );
+        $should_note  = 'none' !== $display_mode;
 
         // Extract classification and confidence from result
         $classification = $this->extract_spam_classification( $result );
@@ -4111,8 +4398,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         // Check if classified as spam
         if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
-            // If ham/legitimate, add a review note but don't mark as spam
-            if ( $should_note && ( $classification === 'ham' || $classification === 'legitimate' ) )
+            // If ham/legitimate, add a review note only when explicitly requested.
+            if ( 'all_results' === $display_mode && ( $classification === 'ham' || $classification === 'legitimate' ) )
             {
                 $note = $this->format_spam_detection_note( $result, $context, false );
                 $this->add_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $note );

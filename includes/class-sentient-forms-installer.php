@@ -93,14 +93,23 @@ class Sentient_Forms_Installer
     public static function maybe_upgrade( bool $repair_missing_tables = false ): void
     {
         $current = get_option( self::OPTION_DB_VERSION, '' );
-        if ( $current === SENTIENT_FORMS_DB_VERSION && ( ! $repair_missing_tables || self::local_first_tables_exist() ) )
+        $tables_ready = self::local_first_tables_exist();
+
+        if ( $current !== SENTIENT_FORMS_DB_VERSION || ( $repair_missing_tables && ! $tables_ready ) )
+        {
+            self::create_async_requests_table();
+            self::create_local_first_tables();
+            update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
+            $tables_ready = self::local_first_tables_exist();
+        }
+
+        if ( ! $tables_ready )
         {
             return;
         }
 
-        self::create_async_requests_table();
-        self::create_local_first_tables();
-        update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
+        self::seed_bundled_action_templates();
+        self::repair_local_first_action_integrity();
     }
 
     private static function create_async_requests_table(): void
@@ -391,6 +400,98 @@ class Sentient_Forms_Installer
         foreach ( $tables as $sql )
         {
             dbDelta( $sql );
+        }
+    }
+
+    private static function seed_bundled_action_templates(): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Action_Templates_Repository' ) || ! class_exists( 'Sentient_Forms_Bundled_Action_Templates' ) )
+        {
+            return;
+        }
+
+        global $wpdb;
+        $repository = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+
+        foreach ( Sentient_Forms_Bundled_Action_Templates::definitions() as $definition )
+        {
+            $repository->upsert_by_code(
+                [
+                    'source'                   => $definition['source'] ?? 'bundled',
+                    'external_id'              => null,
+                    'code'                     => $definition['code'] ?? '',
+                    'display_name'             => $definition['display_name'] ?? '',
+                    'description'              => $definition['description'] ?? null,
+                    'prompt_template'          => $definition['prompt_template'] ?? '',
+                    'default_model'            => $definition['default_model'] ?? null,
+                    'structured_output_schema' => $definition['structured_output_schema'] ?? null,
+                    'override_schema'          => $definition['override_schema'] ?? null,
+                    'version'                  => $definition['version'] ?? '1',
+                    'is_active'                => array_key_exists( 'is_active', $definition ) ? $definition['is_active'] : true,
+                ]
+            );
+        }
+    }
+
+    private static function repair_local_first_action_integrity(): void
+    {
+        global $wpdb;
+
+        $mappings_table = $wpdb->prefix . 'sentient_form_mappings';
+        $actions_table  = $wpdb->prefix . 'sentient_custom_actions';
+
+        if ( ! self::table_exists( $mappings_table ) || ! self::table_exists( $actions_table ) )
+        {
+            return;
+        }
+
+        $rows = $wpdb->get_results(
+            "SELECT m.id AS mapping_id, m.action_id, a.id AS custom_action_id, a.status AS custom_action_status
+            FROM {$mappings_table} m
+            LEFT JOIN {$actions_table} a ON a.id = m.action_id
+            WHERE m.enabled = 1 AND m.action_kind = 'custom_action'",
+            ARRAY_A
+        ) ?: [];
+
+        foreach ( $rows as $row )
+        {
+            $mapping_id = absint( $row['mapping_id'] ?? 0 );
+            $action_id  = absint( $row['action_id'] ?? 0 );
+            if ( $mapping_id <= 0 || $action_id <= 0 )
+            {
+                continue;
+            }
+
+            $custom_action_id = absint( $row['custom_action_id'] ?? 0 );
+            if ( $custom_action_id <= 0 )
+            {
+                $wpdb->update(
+                    $mappings_table,
+                    [
+                        'enabled'    => 0,
+                        'updated_at' => current_time( 'mysql' ),
+                    ],
+                    [ 'id' => $mapping_id ],
+                    [ '%d', '%s' ],
+                    [ '%d' ]
+                );
+                continue;
+            }
+
+            $status = sanitize_key( (string) ( $row['custom_action_status'] ?? '' ) );
+            if ( 'archived' === $status )
+            {
+                $wpdb->update(
+                    $actions_table,
+                    [
+                        'status'     => 'active',
+                        'updated_at' => current_time( 'mysql' ),
+                    ],
+                    [ 'id' => $custom_action_id ],
+                    [ '%s', '%s' ],
+                    [ '%d' ]
+                );
+            }
         }
     }
 

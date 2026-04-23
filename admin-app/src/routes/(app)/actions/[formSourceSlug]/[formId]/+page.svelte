@@ -55,12 +55,16 @@
 		FormActionMutationPayload,
 		FormExecutionStatus,
 		FormFieldInfo,
+		LinkedActionStatus,
 		InputMapping,
 		LocalCustomActionRecord,
 		LocalFormMappingRecord,
 		LocalProviderCredential,
 		ModelSelection,
+		RepairState,
 		ResolvedModelSelection,
+		SpamIndicatorsDisplayMode,
+		SpamResultDisplayMode,
 		WorkflowPlanResponse
 	} from '$lib/api/types';
 	import { unwrapRestResponse, type RestEnvelope } from '$lib/api/response';
@@ -72,6 +76,8 @@
 		modeToOptionalBoolean,
 		normalizeFormActionConfig,
 		normalizeOptionalBoolean,
+		normalizeSpamIndicatorsDisplay,
+		normalizeSpamResultDisplayMode,
 		resolveInheritableBoolean,
 		resolveInheritableBooleanSource,
 		type InheritableBooleanMode
@@ -151,16 +157,16 @@
 					sentient_forms_spam_classification: 'structured.classification',
 					sentient_forms_spam_confidence: 'structured.confidence'
 				},
-				entry_note: {
-					path: 'structured.justification',
-					prefix: 'Sentient Forms spam review:'
-				},
 				spam: {
 					enabled: true,
 					classification_path: 'structured.classification',
 					confidence_path: 'structured.confidence',
 					min_confidence: 0.8,
-					suppress_notifications_on_spam: true
+					suppress_notifications_on_spam: true,
+					note: {
+						result_display_mode: 'spam_only',
+						indicators_display: 'simple'
+					}
 				}
 			}
 		},
@@ -241,6 +247,41 @@
 		}
 	};
 	const LOCAL_BUILDER_TEMPLATE_OPTIONS = Object.values(LOCAL_BUILDER_TEMPLATES);
+	const DOCUMENTED_BUILT_IN_DEFINITIONS: ActionDefinition[] = [
+		{
+			id: 'spam_detection_v1',
+			label: 'Spam Detection',
+			description: 'Classify submissions as spam or legitimate.',
+			source: 'bundled',
+			hooks: ['gform_validation', 'gform_after_submission'],
+			modelHint: 'openrouter/auto'
+		},
+		{
+			id: 'content_validation_v1',
+			label: 'Content Quality Validation',
+			description: 'Reject low-quality or placeholder submissions during validation.',
+			source: 'bundled',
+			hooks: ['gform_validation'],
+			modelHint: 'openrouter/auto'
+		},
+		{
+			id: 'entry_summary_v1',
+			label: 'Entry Summary',
+			description: 'Create a concise summary after submission.',
+			source: 'bundled',
+			hooks: ['gform_after_submission'],
+			modelHint: 'openrouter/auto'
+		}
+	];
+	const SPAM_RESULT_DISPLAY_OPTIONS = [
+		{ value: 'spam_only', label: 'Only when spam is detected' },
+		{ value: 'entry_note', label: 'For every classification' },
+		{ value: 'silent', label: 'Do not add spam notes' }
+	];
+	const SPAM_INDICATORS_DISPLAY_OPTIONS = [
+		{ value: 'simple', label: 'Simple (Summary only)' },
+		{ value: 'detailed', label: 'Detailed (List signals)' }
+	];
 
 	const FALLBACK_HOOK_LABELS: Record<string, string> = {
 		gform_validation: '🔄 During Validation (Blocking)',
@@ -277,6 +318,8 @@
 		LOCAL_BUILDER_TEMPLATES.spam_filter.defaultExecutionMode ?? 'async'
 	);
 	let localBuilderModelSelection = $state<ModelSelection>(cloneDefaultModelSelection());
+	let localBuilderSpamResultDisplayMode = $state<SpamResultDisplayMode>('spam_only');
+	let localBuilderSpamIndicatorsDisplay = $state<SpamIndicatorsDisplayMode>('simple');
 	let localBuilderResult = $state<LocalBuilderResult | null>(null);
 
 	let editingLinkageId = $state<string | null>(null);
@@ -346,6 +389,71 @@
 
 	function createBlankFormActionConfig(): FormActionConfig {
 		return normalizeFormActionConfig({});
+	}
+
+	function mergeDocumentedBuiltInDefinitions(items: ActionDefinition[]): ActionDefinition[] {
+		const byId = new Map(items.map((definition) => [definition.id, definition]));
+		const ordered: ActionDefinition[] = [];
+		const seen = new Set<string>();
+		const hasOfficialSpamDefinition = byId.has('spam_detection_v1');
+
+		for (const fallback of DOCUMENTED_BUILT_IN_DEFINITIONS) {
+			const definition = byId.get(fallback.id) ?? fallback;
+			ordered.push(definition);
+			seen.add(definition.id);
+		}
+
+		for (const definition of items) {
+			if (seen.has(definition.id)) {
+				continue;
+			}
+
+			if (definition.id === 'spam_analysis' && hasOfficialSpamDefinition) {
+				continue;
+			}
+
+			ordered.push(definition);
+			seen.add(definition.id);
+		}
+
+		return ordered;
+	}
+
+	function formatSpamResultDisplayMode(value: SpamResultDisplayMode): string {
+		switch (normalizeSpamResultDisplayMode(value)) {
+			case 'spam_only':
+				return 'notes on spam only';
+			case 'silent':
+				return 'no spam notes';
+			default:
+				return 'notes on all classifications';
+		}
+	}
+
+	function getLinkedActionStatus(linkage: FormActionLinkage): LinkedActionStatus {
+		const raw = linkage.linked_action_status ?? linkage.settings?.linked_action_status;
+		return typeof raw === 'string' && raw.trim().length > 0 ? raw : 'unknown';
+	}
+
+	function getRepairState(linkage: FormActionLinkage): RepairState {
+		const raw = linkage.repair_state ?? linkage.settings?.repair_state;
+		return typeof raw === 'string' && raw.trim().length > 0 ? raw : 'ok';
+	}
+
+	function linkageNeedsRepair(linkage: FormActionLinkage): boolean {
+		return getRepairState(linkage) !== 'ok';
+	}
+
+	function repairStateMessage(linkage: FormActionLinkage): string {
+		const linkedStatus = getLinkedActionStatus(linkage);
+		switch (linkedStatus) {
+			case 'archived':
+				return 'The linked local action is archived. Re-link or rebuild this mapping.';
+			case 'missing':
+				return 'The linked local action is missing. Re-link or rebuild this mapping.';
+			default:
+				return 'This local-first mapping needs repair before it can run reliably.';
+		}
 	}
 
 	function getActionDisplayName(actionId: string | null): string {
@@ -703,12 +811,14 @@
 		updateAttachmentMapping({ gf_upload_field_ids: Array.from(next) });
 	}
 
-	const definitions = $derived(actionsState.definitions ?? []);
+	const definitions = $derived.by(() =>
+		mergeDocumentedBuiltInDefinitions(actionsState.definitions ?? [])
+	);
 	const customActions = $derived(
 		customState.actions.filter((action) => action.status === 'active')
 	);
 	const definitionLookup = $derived.by(() =>
-		actionsState.definitions.reduce<Record<string, ActionDefinition>>((acc, definition) => {
+		definitions.reduce<Record<string, ActionDefinition>>((acc, definition) => {
 			acc[definition.id] = definition;
 			return acc;
 		}, {})
@@ -880,7 +990,7 @@
 			const triggerSource = triggerSources[hook];
 			if (triggerSource?.type !== 'mapping' || !triggerSource.mapping_id) continue;
 			const linkage = getLinkageById(triggerSource.mapping_id);
-			if (!linkage || linkage.central_action_id !== 'spam_detection_v1') continue;
+			if (!linkage || !isSpamActionCode(linkage.central_action_id)) continue;
 			const dependencyHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
 			if (!canDependencySatisfyHook(dependencyHooks, hook)) continue;
 			eligible.push({ hook, mapping: linkage });
@@ -940,17 +1050,15 @@
 				: 0.8;
 		const parsedThreshold = Number.parseFloat(String(thresholdRaw));
 		const threshold = Number.isFinite(parsedThreshold) ? parsedThreshold.toFixed(2) : '0.80';
-		const displayMode =
-			typeof draftSettings.spam_indicators_display === 'string'
-				? draftSettings.spam_indicators_display
-				: 'simple';
+		const noteDisplay = formatSpamResultDisplayMode(draftSettings.spam_result_display_mode);
+		const displayMode = normalizeSpamIndicatorsDisplay(draftSettings.spam_indicators_display);
 		const notificationPolicy = isBlockingSpamMapping
 			? effectiveSuppressNotificationsOnSpam
 				? 'suppress notifications'
 				: 'allow notifications'
 			: 'background notifications';
 		const downstreamPolicy = effectiveSkipDownstreamOnSpam ? 'skip downstream' : 'allow downstream';
-		return `Threshold ${threshold} · ${displayMode} · ${notificationPolicy} · ${downstreamPolicy}`;
+		return `Threshold ${threshold} · ${noteDisplay} · ${displayMode} indicators · ${notificationPolicy} · ${downstreamPolicy}`;
 	});
 	const inputMappingSummary = $derived.by(() => {
 		const mapping = (draftSettings.input_mapping ?? {
@@ -1058,10 +1166,10 @@
 		});
 	});
 
-	const hasDefinitions = $derived(definitions.length > 0);
 	const builtInDefinitions = $derived(
-		definitions.filter((definition) => (definition.source ?? 'bundled') !== 'imported')
+		definitions.filter((definition) => (definition.source ?? 'bundled') === 'bundled')
 	);
+	const hasDefinitions = $derived(builtInDefinitions.length > 0);
 	const hasBuiltInDefinitions = $derived(builtInDefinitions.length > 0);
 
 	const selectedDefinition = $derived(
@@ -1076,7 +1184,7 @@
 				? selectedTemplateId
 				: createKind === 'custom'
 					? selectedCustomId
-					: 'direct_openrouter'
+					: `${localBuilderTemplateKey}:${localBuilderExecutionMode}`
 		}`
 	);
 
@@ -1086,9 +1194,11 @@
 		if (!selectedActionKey || selectedActionKey === lastPresetKey) return;
 		const presetHooks =
 			createKind === 'template'
-				? normalizeDefinitionHooks(selectedDefinition?.hooks)
+				? defaultDefinitionHooks(selectedDefinition)
 				: createKind === 'local_openrouter'
-					? ['gform_after_submission']
+					? localBuilderTemplateKey === 'spam_filter' && localBuilderExecutionMode === 'sync'
+						? ['gform_validation']
+						: ['gform_after_submission']
 					: ['gform_validation'];
 		const normalized = presetHooks.length > 0 ? presetHooks : ['gform_validation'];
 		selectedHooks = new Set(normalized);
@@ -1111,8 +1221,12 @@
 	});
 
 	$effect(() => {
-		if (!selectedTemplateId && hasDefinitions) {
-			selectedTemplateId = definitions[0]?.id ?? '';
+		const selectedStillAvailable = builtInDefinitions.some(
+			(definition) => definition.id === selectedTemplateId
+		);
+
+		if ((!selectedTemplateId || !selectedStillAvailable) && hasDefinitions) {
+			selectedTemplateId = builtInDefinitions[0]?.id ?? '';
 		}
 	});
 
@@ -1251,6 +1365,17 @@
 	function normalizeDefinitionHooks(hooks?: Record<string, string> | string[]): string[] {
 		if (!hooks) return [];
 		return Array.isArray(hooks) ? hooks : Object.keys(hooks);
+	}
+
+	function defaultDefinitionHooks(definition?: ActionDefinition): string[] {
+		if (!definition) return [];
+		if (definition.id === 'spam_detection_v1' || definition.id === 'content_validation_v1') {
+			return ['gform_validation'];
+		}
+		if (definition.id === 'entry_summary_v1') {
+			return ['gform_after_submission'];
+		}
+		return normalizeDefinitionHooks(definition.hooks);
 	}
 
 	function summarizeDefinitionHooks(hooks?: Record<string, string> | string[]): string {
@@ -1413,12 +1538,13 @@
 	}
 
 	function statusVariant(linkage: FormActionLinkage) {
-		if (isLinkageInvalid(linkage)) return 'danger';
+		if (isLinkageInvalid(linkage) || linkageNeedsRepair(linkage)) return 'danger';
 		return linkage.is_action_enabled_for_form === false ? 'warning' : 'success';
 	}
 
 	function statusLabel(linkage: FormActionLinkage) {
 		if (isLinkageInvalid(linkage)) return 'Invalid';
+		if (linkageNeedsRepair(linkage)) return 'Needs repair';
 		return linkage.is_action_enabled_for_form === false ? 'Disabled' : 'Enabled';
 	}
 
@@ -1467,7 +1593,7 @@
 	}
 
 	function isSpamMappingLinkage(linkage: FormActionLinkage | null | undefined): boolean {
-		return linkage?.central_action_id === 'spam_detection_v1';
+		return isSpamActionCode(linkage?.central_action_id);
 	}
 
 	function resetMappingSectionExpansion(linkage: FormActionLinkage | null | undefined) {
@@ -1749,12 +1875,27 @@
 
 	function applyLocalBuilderTemplate(key: LocalBuilderTemplateKey) {
 		const template = LOCAL_BUILDER_TEMPLATES[key];
+		const templateSpamNote =
+			template.effectMapping &&
+			typeof template.effectMapping.spam === 'object' &&
+			template.effectMapping.spam &&
+			typeof (template.effectMapping.spam as Record<string, unknown>).note === 'object'
+				? ((template.effectMapping.spam as Record<string, unknown>).note as Record<string, unknown>)
+				: null;
 		localBuilderTemplateKey = key;
 		localBuilderActionName = template.actionName;
 		localBuilderSystemPrompt = template.systemPrompt;
 		localBuilderPromptTemplate = template.promptTemplate;
 		localBuilderResultMetaKey = template.resultMetaKey;
 		localBuilderExecutionMode = template.defaultExecutionMode ?? 'async';
+		localBuilderSpamResultDisplayMode = normalizeSpamResultDisplayMode(
+			templateSpamNote?.result_display_mode,
+			'spam_only'
+		);
+		localBuilderSpamIndicatorsDisplay = normalizeSpamIndicatorsDisplay(
+			templateSpamNote?.indicators_display,
+			'simple'
+		);
 		localBuilderResult = null;
 	}
 
@@ -1791,7 +1932,8 @@
 		const resultMetaKey = localBuilderResultMetaKey.trim();
 
 		if (!credential) {
-			createError = 'Save and validate an OpenRouter key before creating a Direct OpenRouter action.';
+			createError =
+				'Save and validate an OpenRouter key before creating a Direct OpenRouter action.';
 			return;
 		}
 
@@ -1841,11 +1983,30 @@
 				? (templateEffectMapping.meta as Record<string, string>)
 				: {};
 		meta[resultMetaKey] = `structured.${localBuilderTemplate.resultField}`;
-		const effectMapping = {
+		const effectMapping: Record<string, unknown> = {
 			...(templateEffectMapping ?? {}),
 			store_result: true,
 			meta
 		};
+		if (localBuilderTemplate.key === 'spam_filter') {
+			const spamConfig =
+				effectMapping.spam && typeof effectMapping.spam === 'object'
+					? { ...(effectMapping.spam as Record<string, unknown>) }
+					: {};
+			effectMapping.spam = {
+				...spamConfig,
+				note: {
+					result_display_mode: normalizeSpamResultDisplayMode(
+						localBuilderSpamResultDisplayMode,
+						'spam_only'
+					),
+					indicators_display: normalizeSpamIndicatorsDisplay(
+						localBuilderSpamIndicatorsDisplay,
+						'simple'
+					)
+				}
+			};
+		}
 
 		const mappings: LocalFormMappingRecord[] = [];
 		for (const hook of hooks) {
@@ -2083,10 +2244,24 @@
 		draftHooks = new Set(initialHooks);
 		// Clone settings with sensible defaults to avoid Svelte 5 $bindable() issues with undefined
 		const baseSettings = linkage.settings ?? {};
+		const inheritedFormConfig =
+			formLevelConfigByActionId[linkage.central_action_id] ?? createBlankFormActionConfig();
+		const inheritedActionConfig =
+			actionDefaultsByActionId[linkage.central_action_id] ?? createBlankFormActionConfig();
 		const nextDraftSettings = {
 			spam_confidence_threshold: baseSettings.spam_confidence_threshold ?? 0.8,
-			spam_result_display_mode: baseSettings.spam_result_display_mode ?? 'entry_note',
-			spam_indicators_display: baseSettings.spam_indicators_display ?? 'simple',
+			spam_result_display_mode: normalizeSpamResultDisplayMode(
+				baseSettings.spam_result_display_mode ??
+					inheritedFormConfig.spam_result_display_mode ??
+					inheritedActionConfig.spam_result_display_mode,
+				'entry_note'
+			),
+			spam_indicators_display: normalizeSpamIndicatorsDisplay(
+				baseSettings.spam_indicators_display ??
+					inheritedFormConfig.spam_indicators_display ??
+					inheritedActionConfig.spam_indicators_display,
+				'simple'
+			),
 			include_site_context: baseSettings.include_site_context ?? 'global',
 			spam_positive_examples: baseSettings.spam_positive_examples ?? [],
 			spam_negative_examples: baseSettings.spam_negative_examples ?? [],
@@ -2524,7 +2699,7 @@
 		}
 
 		// Ensure types are correct for spam settings
-		if (linkage.central_action_id === 'spam_detection_v1') {
+		if (isSpamActionCode(linkage.central_action_id)) {
 			if (draftSettings.spam_confidence_threshold) {
 				draftSettings.spam_confidence_threshold = parseFloat(
 					String(draftSettings.spam_confidence_threshold)
@@ -2666,7 +2841,9 @@
 
 		const chosenDefinition =
 			createKind === 'template'
-				? (selectedDefinition ?? definitions.find((def) => def.id === selectedTemplateId) ?? null)
+				? (selectedDefinition ??
+					builtInDefinitions.find((definition) => definition.id === selectedTemplateId) ??
+					null)
 				: null;
 		const chosenCustom =
 			createKind === 'custom'
@@ -2676,7 +2853,7 @@
 				: null;
 
 		if (createKind === 'template' && !chosenDefinition) {
-			createError = 'Select an action template to link.';
+			createError = 'Select a built-in action to link.';
 			return;
 		}
 
@@ -2869,7 +3046,10 @@
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-<Section heading="Actions" description="Link action templates or custom actions to this form.">
+<Section
+	heading="Actions"
+	description="Link built-in actions, direct OpenRouter actions, or custom actions to this form."
+>
 	<!-- Form-Level Action Config Modal - Inside Section slot for Svelte 5 reactivity -->
 	{#if configuringActionId}
 		<div
@@ -2966,6 +3146,24 @@
 									};
 								}}
 							/>
+
+							<div class="sf:grid sf:gap-4 sf:md:grid-cols-2">
+								<SelectField
+									id="form-level-spam-result-display"
+									label="Spam note visibility"
+									bind:value={formLevelConfig.spam_result_display_mode}
+									options={SPAM_RESULT_DISPLAY_OPTIONS}
+								/>
+								<SelectField
+									id="form-level-spam-indicators"
+									label="Spam note detail"
+									bind:value={formLevelConfig.spam_indicators_display}
+									options={SPAM_INDICATORS_DISPLAY_OPTIONS}
+									disabled={normalizeSpamResultDisplayMode(
+										formLevelConfig.spam_result_display_mode
+									) === 'silent'}
+								/>
+							</div>
 
 							<div class="sf:grid sf:gap-4 sf:md:grid-cols-2">
 								<SelectField
@@ -3174,7 +3372,7 @@
 
 			{#if !hasDefinitions}
 				<Alert variant="warning" class="sf:mt-3">
-					Action templates are unavailable right now. You can still link custom actions below.
+					Built-in actions are unavailable right now. You can still link custom actions below.
 				</Alert>
 			{/if}
 
@@ -3585,9 +3783,14 @@
 											Missing upstream source for {invalidHooksForLinkage(linkage).join(', ')}.
 										</p>
 									{/if}
+									{#if linkageNeedsRepair(linkage)}
+										<p class="sf:mt-2 sf:text-xs sf:text-rose-700">
+											{repairStateMessage(linkage)}
+										</p>
+									{/if}
 								</td>
 								<td class="sf:px-4 sf:py-3 sf:text-right sf:space-x-2">
-									{#if isLinkageInvalid(linkage)}
+									{#if isLinkageInvalid(linkage) || linkageNeedsRepair(linkage)}
 										<Button
 											size="sm"
 											variant="secondary"
@@ -3686,6 +3889,11 @@
 				{/if}
 
 				<div class="sf:p-4 sf:sm:p-6 sf:space-y-4">
+					{#if linkageNeedsRepair(editingLinkage)}
+						<Alert variant="warning">
+							<p class="sf:text-sm">{repairStateMessage(editingLinkage)}</p>
+						</Alert>
+					{/if}
 					<section class="sf:border sf:border-slate-200 sf:rounded-md">
 						<button
 							type="button"
@@ -3910,13 +4118,19 @@
 											placeholder="0.80"
 										/>
 										<SelectField
+											id="spam-result-display"
+											label="Spam note visibility"
+											bind:value={draftSettings.spam_result_display_mode}
+											options={SPAM_RESULT_DISPLAY_OPTIONS}
+										/>
+										<SelectField
 											id="spam-display"
-											label="Indicators Display"
+											label="Spam note detail"
 											bind:value={draftSettings.spam_indicators_display}
-											options={[
-												{ value: 'simple', label: 'Simple (Summary only)' },
-												{ value: 'detailed', label: 'Detailed (List signals)' }
-											]}
+											options={SPAM_INDICATORS_DISPLAY_OPTIONS}
+											disabled={normalizeSpamResultDisplayMode(
+												draftSettings.spam_result_display_mode
+											) === 'silent'}
 										/>
 										<SelectField
 											id="spam-context"
@@ -4310,8 +4524,8 @@
 													bind:value={draftSettings.batch_settings.max_wait_seconds}
 												/>
 												<p class="sf:text-xs sf:text-slate-500">
-													If managed batching cannot be queued immediately, Sentient Forms will
-													fall back to local scheduling by this deadline.
+													If managed batching cannot be queued immediately, Sentient Forms will fall
+													back to local scheduling by this deadline.
 												</p>
 											</div>
 										{/if}
@@ -4391,8 +4605,9 @@
 							localBuilderResult = null;
 						}}
 						disabled={!hasDefinitions}
+						data-testid="create-kind-template"
 					>
-						Action templates
+						Built-in actions
 					</Button>
 					<Button
 						size="sm"
@@ -4402,6 +4617,7 @@
 							localBuilderResult = null;
 						}}
 						disabled={customActions.length === 0}
+						data-testid="create-kind-custom"
 					>
 						Custom actions
 					</Button>
@@ -4413,6 +4629,7 @@
 							selectedCreateDependencyIds = new Set();
 							createError = null;
 						}}
+						data-testid="create-kind-local-openrouter"
 					>
 						Direct OpenRouter
 					</Button>
@@ -4434,10 +4651,10 @@
 				>
 					{#if createKind === 'template'}
 						{#if !hasDefinitions}
-							<Alert variant="warning">No action templates available right now.</Alert>
+							<Alert variant="warning">No built-in actions available right now.</Alert>
 						{:else}
 							<div class="sf:space-y-2">
-								{#each definitions.filter((definition) => {
+								{#each builtInDefinitions.filter((definition) => {
 									const term = searchTerm.toLowerCase();
 									if (!term) return true;
 									const label = (definition.label ?? '').toLowerCase();
@@ -4613,6 +4830,51 @@
 										</select>
 									</div>
 								</div>
+
+								{#if localBuilderTemplateKey === 'spam_filter'}
+									<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
+										<div class="sf:space-y-1">
+											<label
+												class="sf:text-sm sf:font-medium sf:text-slate-700"
+												for="local-builder-spam-result-display"
+											>
+												Spam note visibility
+											</label>
+											<select
+												id="local-builder-spam-result-display"
+												class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+												bind:value={localBuilderSpamResultDisplayMode}
+												disabled={creating}
+												data-testid="local-builder-spam-result-display"
+											>
+												{#each SPAM_RESULT_DISPLAY_OPTIONS as option (option.value)}
+													<option value={option.value}>{option.label}</option>
+												{/each}
+											</select>
+										</div>
+										<div class="sf:space-y-1">
+											<label
+												class="sf:text-sm sf:font-medium sf:text-slate-700"
+												for="local-builder-spam-indicators-display"
+											>
+												Spam note detail
+											</label>
+											<select
+												id="local-builder-spam-indicators-display"
+												class="sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+												bind:value={localBuilderSpamIndicatorsDisplay}
+												disabled={creating ||
+													normalizeSpamResultDisplayMode(localBuilderSpamResultDisplayMode) ===
+														'silent'}
+												data-testid="local-builder-spam-indicators-display"
+											>
+												{#each SPAM_INDICATORS_DISPLAY_OPTIONS as option (option.value)}
+													<option value={option.value}>{option.label}</option>
+												{/each}
+											</select>
+										</div>
+									</div>
+								{/if}
 
 								<div class="sf:space-y-1">
 									<label

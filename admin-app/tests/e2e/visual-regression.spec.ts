@@ -13,6 +13,7 @@ type RouteVisualAudit = {
 };
 
 const previewOrigin = getPreviewOrigin();
+const visualBaselineNow = new Date('2026-04-22T12:00:00Z');
 
 const routeVisualAudits: RouteVisualAudit[] = [
 	{
@@ -72,6 +73,7 @@ async function expectNoSeriousAxeViolations(page: Page, routeName: string): Prom
 
 test.describe('Preview visual regression and accessibility @visual @a11y', () => {
 	test.beforeEach(async ({ page }) => {
+		await page.clock.setFixedTime(visualBaselineNow);
 		await seedRuntimeConfig(page, {
 			apiBaseUrl: `${previewOrigin}/wp-json/sentient-forms/v1/`,
 			siteUrl: previewOrigin,

@@ -20,6 +20,8 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
     private ?Sentient_Forms_Local_Custom_Actions_Repository $local_custom_actions = null;
 
+    private ?Sentient_Forms_Form_Mappings_Repository $local_form_mappings = null;
+
     private ?Sentient_Forms_Provider_Credentials_Repository $local_provider_credentials = null;
 
     public function __construct()
@@ -30,6 +32,10 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
         if ( class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
         {
             $this->local_custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        }
+        if ( class_exists( 'Sentient_Forms_Form_Mappings_Repository' ) )
+        {
+            $this->local_form_mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
         }
         if ( class_exists( 'Sentient_Forms_Provider_Credentials_Repository' ) )
         {
@@ -231,7 +237,17 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             $status = 'active';
         }
 
-        $rows = $this->local_custom_actions ? $this->local_custom_actions->list( $status ) : [];
+        $rows = $this->local_custom_actions
+            ? $this->local_custom_actions->list_filtered(
+                [
+                    'status'           => $status,
+                    'include_archived' => rest_sanitize_boolean( $request->get_param( 'include_archived' ) ),
+                    'template_id'      => absint( $request->get_param( 'template_id' ) ),
+                ]
+            )
+            : [];
+        $rows = array_values( array_filter( $rows, [ $this, 'should_expose_custom_action_in_legacy_route' ] ) );
+
         $actions = array_map( [ $this, 'format_local_custom_action_for_legacy_route' ], $rows );
 
         return [
@@ -318,6 +334,20 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
         if ( is_wp_error( $existing ) )
         {
             return $existing;
+        }
+
+        $blocking_mappings = $this->list_enabled_local_form_mappings_for_action( absint( $existing['id'] ?? 0 ) );
+        if ( [] !== $blocking_mappings )
+        {
+            return new WP_Error(
+                'sentient_forms_local_custom_action_in_use',
+                sprintf(
+                    /* translators: %s: comma-separated form + hook list */
+                    __( 'Custom action cannot be archived while it is enabled on these form mappings: %s', 'sentient-forms' ),
+                    implode( ', ', $blocking_mappings )
+                ),
+                [ 'status' => 409 ]
+            );
         }
 
         $updated = $this->local_custom_actions->update_status( (int) $existing['id'], 'archived' );
@@ -491,13 +521,26 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             return 0;
         }
 
-        $credential = $this->local_provider_credentials->find_by_provider_auth_mode( 'openrouter', 'manual_key' );
-        if ( ! is_array( $credential ) || ! in_array( (string) ( $credential['status'] ?? '' ), [ 'valid', 'limited' ], true ) )
+        foreach ( $this->local_provider_credentials->list( [ 'limit' => 100 ] ) as $credential )
         {
-            return 0;
+            if ( 'openrouter' !== sanitize_key( (string) ( $credential['provider'] ?? '' ) ) )
+            {
+                continue;
+            }
+
+            if ( ! in_array( sanitize_key( (string) ( $credential['status'] ?? '' ) ), [ 'valid', 'limited' ], true ) )
+            {
+                continue;
+            }
+
+            $credential_id = absint( $credential['id'] ?? 0 );
+            if ( $credential_id > 0 )
+            {
+                return $credential_id;
+            }
         }
 
-        return absint( $credential['id'] ?? 0 );
+        return 0;
     }
 
     /**
@@ -506,7 +549,14 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
     private function local_custom_action_quota(): array
     {
         $quota_max = max( 1, (int) apply_filters( 'sentient_forms_local_custom_action_quota_max', 999 ) );
-        $active    = $this->local_custom_actions ? count( $this->local_custom_actions->list( 'active' ) ) : 0;
+        $active    = 0;
+
+        if ( $this->local_custom_actions )
+        {
+            $rows = $this->local_custom_actions->list( 'active' );
+            $rows = array_values( array_filter( $rows, [ $this, 'should_expose_custom_action_in_legacy_route' ] ) );
+            $active = count( $rows );
+        }
 
         return [
             'quota_max'       => $quota_max,
@@ -571,6 +621,47 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             __( 'Local custom action could not be found.', 'sentient-forms' ),
             [ 'status' => 404 ]
         );
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private function should_expose_custom_action_in_legacy_route( array $row ): bool
+    {
+        $code = isset( $row['code'] ) && is_scalar( $row['code'] )
+            ? sanitize_key( (string) $row['code'] )
+            : '';
+
+        return '' === $code || ! Sentient_Forms_Bundled_Action_Templates::is_managed_custom_action_code( $code );
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function list_enabled_local_form_mappings_for_action( int $action_id ): array
+    {
+        if ( ! $this->local_form_mappings || $action_id <= 0 )
+        {
+            return [];
+        }
+
+        $labels = [];
+        foreach ( $this->local_form_mappings->list_enabled_for_action( $action_id ) as $mapping )
+        {
+            $form_source = isset( $mapping['form_source'] ) && is_scalar( $mapping['form_source'] )
+                ? sanitize_key( (string) $mapping['form_source'] )
+                : 'unknown';
+            $form_id     = isset( $mapping['form_id'] ) && is_scalar( $mapping['form_id'] )
+                ? sanitize_text_field( (string) $mapping['form_id'] )
+                : 'unknown';
+            $hook        = isset( $mapping['hook'] ) && is_scalar( $mapping['hook'] )
+                ? sanitize_key( (string) $mapping['hook'] )
+                : 'unknown';
+
+            $labels[] = sprintf( '%s:%s@%s', $form_source, $form_id, $hook );
+        }
+
+        return $labels;
     }
 
     /**

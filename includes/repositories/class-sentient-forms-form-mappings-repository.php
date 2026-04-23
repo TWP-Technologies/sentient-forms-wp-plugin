@@ -85,6 +85,27 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
         return $row ? $this->decode_row( $row ) : null;
     }
 
+    public function list_enabled_for_action( int $action_id, string $action_kind = 'custom_action' ): array
+    {
+        $action_id = absint( $action_id );
+        if ( $action_id <= 0 )
+        {
+            return [];
+        }
+
+        $wpdb = $this->wpdb;
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE action_kind = %s AND action_id = %d AND enabled = 1 ORDER BY id ASC',
+                sanitize_key( $action_kind ),
+                $action_id
+            ),
+            ARRAY_A
+        ) ?: [];
+
+        return array_map( [ $this, 'decode_row' ], $rows );
+    }
+
     public function update( int $id, array $data ): array | WP_Error
     {
         $id = absint( $id );

@@ -190,6 +190,29 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 		$this->assertTrue( $data['config']['model_selection']['is_preset'] );
 	}
 
+	public function test_get_action_config_restores_canonical_spam_note_settings(): void {
+		update_option(
+			$this->option_key,
+			[
+				'spam_detection_v1' => [
+					'spam_result_display_mode' => 'entry_note',
+					'spam_indicators_display'  => 'verbose',
+				],
+			]
+		);
+
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/forms/gravity_forms/999/action-config/spam_detection_v1' );
+		$request->set_param( 'form_source', 'gravity_forms' );
+		$request->set_param( 'form_id', 999 );
+		$request->set_param( 'action_id', 'spam_detection_v1' );
+
+		$response = $this->controller->get_action_config( $request );
+		$data     = $response->get_data();
+
+		$this->assertSame( 'all_results', $data['config']['spam_result_display_mode'] ?? null );
+		$this->assertSame( 'simple', $data['config']['spam_indicators_display'] ?? null );
+	}
+
 	public function test_update_action_defaults_stores_spam_policy_booleans(): void {
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/actions/spam_detection_v1/defaults' );
 		$request->set_param( 'action_id', 'spam_detection_v1' );
@@ -204,6 +227,25 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 		$this->assertFalse( $data['config']['skip_downstream_on_spam'] ?? true );
 		$this->assertTrue( $stored['suppress_notifications_on_spam'] ?? false );
 		$this->assertFalse( $stored['skip_downstream_on_spam'] ?? true );
+	}
+
+	public function test_get_action_defaults_restores_canonical_spam_note_settings(): void {
+		update_option(
+			$this->action_defaults_option_key,
+			[
+				'spam_result_display_mode' => 'silent',
+				'spam_indicators_display'  => 'detailed',
+			]
+		);
+
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/spam_detection_v1/defaults' );
+		$request->set_param( 'action_id', 'spam_detection_v1' );
+
+		$response = $this->controller->get_action_defaults( $request );
+		$data     = $response->get_data();
+
+		$this->assertSame( 'none', $data['config']['spam_result_display_mode'] ?? null );
+		$this->assertSame( 'detailed', $data['config']['spam_indicators_display'] ?? null );
 	}
 
 	public function test_delete_action_config_removes_only_target_action(): void {

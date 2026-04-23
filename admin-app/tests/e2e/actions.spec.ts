@@ -593,7 +593,7 @@ test.describe('Actions admin flows', () => {
 		await expectAppUrl(page, '/actions/gravity_forms/123');
 		await expect(page.getByText('Action library')).toBeVisible();
 		const definitionsCard = page.getByTestId('action-definitions-card');
-		await expect(definitionsCard.getByText('Spam check', { exact: true })).toBeVisible();
+		await expect(definitionsCard.getByText('Spam Detection', { exact: true })).toBeVisible();
 	});
 
 	test('shows only built-in definitions in the overview card and hides source chips', async ({
@@ -857,10 +857,13 @@ test.describe('Actions admin flows', () => {
 		await expect(modal.locator('#action-level-context')).toHaveValue('always');
 	});
 
-	test('creates a CPS template mapping from the drawer', async ({ page }) => {
+	test('creates a built-in action mapping from the drawer', async ({ page }) => {
 		await page.addInitScript(() => {
 			try {
-				localStorage.setItem('sentient_forms_last_hooks', '["gform_validation"]');
+				localStorage.setItem(
+					'sentient_forms_last_hooks',
+					'["gform_validation","gform_after_submission"]'
+				);
 			} catch {}
 		});
 		const linkages: unknown[] = [];
@@ -868,7 +871,16 @@ test.describe('Actions admin flows', () => {
 		await mockWpJson(page, {
 			actions: {
 				forms: { [formSource]: baseForms },
-				definitions: baseDefinitions,
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam Detection',
+						source: 'bundled',
+						hooks: ['gform_validation', 'gform_after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
 				status: statusUnknown,
 				formsActions: linkages,
 				creditBalance
@@ -886,18 +898,22 @@ test.describe('Actions admin flows', () => {
 		await firstHook.check();
 		await expect(firstHook).toBeChecked();
 
-		// Template tab is default; wait for the spam-check template to be selected by the app.
-		const spamRadio = drawer.getByRole('radio', { name: /Spam check/i });
+		// Built-in actions tab is default; wait for Spam Detection to be selected by the app.
+		const spamRadio = drawer.getByRole('radio', { name: /Spam Detection/i });
 		await expect(spamRadio).toBeChecked();
 		const createReq = page.waitForRequest(/forms\/\d+\/actions$/);
 		const createRes = page.waitForResponse(/forms\/\d+\/actions$/);
 		await drawer.getByRole('button', { name: 'Link action' }).click();
-		await createReq;
+		const request = await createReq;
 		await createRes;
+		expect(request.postDataJSON()).toMatchObject({
+			central_action_id: 'spam_detection_v1',
+			trigger_hooks: ['gform_validation']
+		});
 
 		await expect(drawer).toBeHidden({ timeout: 15_000 });
 		const table = await openLinkedActionsTable(page);
-		await expect(table.getByText('Spam check')).toBeVisible();
+		await expect(table.getByText('Spam Detection')).toBeVisible();
 	});
 
 	test('creates a custom action mapping from the drawer', async ({ page }) => {
@@ -1136,7 +1152,7 @@ test.describe('Actions admin flows', () => {
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
 		const drawer = page.getByTestId('link-action-form');
 		await expect(drawer).toBeVisible();
-		await page.getByRole('button', { name: /^Direct OpenRouter$/ }).click();
+		await page.getByTestId('create-kind-local-openrouter').click();
 
 		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
 		await expect(drawer.getByTestId('local-builder-template')).toHaveValue('spam_filter');
@@ -1146,6 +1162,9 @@ test.describe('Actions admin flows', () => {
 			'sentient_forms_spam_classification'
 		);
 		await expect(drawer.getByTestId('local-builder-execution-mode')).toHaveValue('sync');
+		await expect(drawer.getByTestId('local-builder-spam-result-display')).toHaveValue('spam_only');
+		await drawer.getByTestId('local-builder-spam-result-display').selectOption('entry_note');
+		await drawer.getByTestId('local-builder-spam-indicators-display').selectOption('detailed');
 		await drawer.getByTestId('local-builder-action-name').fill('Local drawer spam filter');
 		await drawer.getByRole('button', { name: 'Create Direct OpenRouter action' }).click();
 
@@ -1187,7 +1206,7 @@ test.describe('Actions admin flows', () => {
 		expect(createdMappingPayload).toMatchObject({
 			form_source: 'gravity_forms',
 			form_id: formId,
-			hook: 'gform_after_submission',
+			hook: 'gform_validation',
 			action_kind: 'custom_action',
 			action_id: 81,
 			execution_mode: 'sync',
@@ -1202,7 +1221,11 @@ test.describe('Actions admin flows', () => {
 					classification_path: 'structured.classification',
 					confidence_path: 'structured.confidence',
 					min_confidence: 0.8,
-					suppress_notifications_on_spam: true
+					suppress_notifications_on_spam: true,
+					note: {
+						result_display_mode: 'entry_note',
+						indicators_display: 'detailed'
+					}
 				}
 			}
 		});
@@ -1234,6 +1257,110 @@ test.describe('Actions admin flows', () => {
 			is_action_enabled_for_form: false
 		});
 		await expect(table.getByText('Disabled')).toBeVisible();
+	});
+
+	test('surfaces only the documented bundled built-ins in the action library', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_analysis',
+						label: 'Spam Analysis',
+						source: 'cps',
+						hooks: ['gform_validation'],
+						base_credit_cost: 2,
+						model_hint: 'gemini-1.5-flash'
+					},
+					{
+						id: 'entry_evaluation',
+						label: 'Entry Evaluation',
+						source: 'cps',
+						hooks: ['gform_after_submission'],
+						base_credit_cost: 6,
+						model_hint: 'gemini-1.5-pro'
+					}
+				],
+				status: statusUnknown,
+				formsActions: [],
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+
+		const libraryCard = page.getByTestId('action-definitions-card');
+		await expect(libraryCard.getByText('Spam Detection')).toBeVisible();
+		await expect(libraryCard.getByText('Content Quality Validation')).toBeVisible();
+		await expect(libraryCard.getByText('Entry Summary')).toBeVisible();
+		await expect(libraryCard.getByText('Spam Analysis')).toHaveCount(0);
+		await expect(libraryCard.getByText('Entry Evaluation')).toHaveCount(0);
+
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await page.getByRole('button', { name: 'Built-in actions' }).click();
+		await expect(drawer.getByText('Spam Detection')).toBeVisible();
+		await expect(drawer.getByText('Content Quality Validation')).toBeVisible();
+		await expect(drawer.getByText('Entry Summary')).toBeVisible();
+		await expect(drawer.getByText('Spam Analysis')).toHaveCount(0);
+		await expect(drawer.getByText('Entry Evaluation')).toHaveCount(0);
+	});
+
+	test('surfaces repair-needed local-first mappings in the table and modal', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam Detection',
+						source: 'bundled',
+						hooks: ['gform_validation', 'gform_after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: [
+					{
+						local_mapping_id: 'local_first_repair',
+						central_action_id: 'spam_detection_v1',
+						action_type_indicator: 'master',
+						action_name_label: 'Spam Detection',
+						trigger_hooks: ['gform_validation'],
+						is_action_enabled_for_form: true,
+						linked_action_status: 'archived',
+						repair_state: 'needs_repair',
+						settings: {
+							linked_action_status: 'archived',
+							repair_state: 'needs_repair'
+						}
+					}
+				],
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+
+		const table = await openLinkedActionsTable(page);
+		const row = table.locator('tbody tr').filter({ hasText: 'Spam Detection' });
+		await expect(row.getByText('Needs repair')).toBeVisible();
+		await expect(
+			row.getByText('The linked local action is archived. Re-link or rebuild this mapping.')
+		).toBeVisible();
+		await row.getByRole('button', { name: 'Repair' }).click();
+
+		const modal = page.getByTestId('mapping-config-modal');
+		await expect(modal).toBeVisible();
+		await expect(
+			modal.getByText('The linked local action is archived. Re-link or rebuild this mapping.')
+		).toBeVisible();
 	});
 
 	test('creates a mapping with an upstream trigger source from the drawer', async ({ page }) => {
@@ -1382,7 +1509,7 @@ test.describe('Actions admin flows', () => {
 		const form = page.getByTestId('link-action-form');
 		await expect(form).toBeVisible({ timeout: 10_000 });
 		await expect(page.getByPlaceholder('Search by name or id')).toBeVisible();
-		await expect(form.getByText('Spam check', { exact: true })).toBeVisible();
+		await expect(form.getByText('Spam Detection', { exact: true })).toBeVisible();
 
 		// Switch to custom actions tab and ensure the sample action is shown
 		const customActionsTab = page.getByRole('button', { name: 'Custom actions' });

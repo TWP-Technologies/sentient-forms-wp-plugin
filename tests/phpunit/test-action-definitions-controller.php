@@ -143,100 +143,40 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $this->assertFalse( $http_called, 'Proxy keys must not trigger CPS action definition fetches unless legacy CPS templates are explicitly enabled.' );
     }
 
-    public function test_local_action_templates_expose_template_ids_and_prompts(): void
+    public function test_bundled_action_templates_expose_template_ids_and_prompts(): void
     {
-        global $wpdb;
-
-        $templates = new Sentient_Forms_Action_Templates_Repository( $wpdb );
-        $template_id = $templates->upsert_by_code(
-            [
-                'source'                   => 'test',
-                'external_id'              => 'definition-route-local-template',
-                'code'                     => 'definition_route_summary_v1',
-                'display_name'             => 'Definition Route Summary',
-                'description'              => 'Summarize entries locally.',
-                'prompt_template'          => 'Summarize {{form.title}}: {{entry}}',
-                'default_model'            => 'openrouter/auto',
-                'structured_output_schema' => [
-                    'type'       => 'object',
-                    'properties' => [
-                        'summary' => [
-                            'type' => 'string',
-                        ],
-                    ],
-                ],
-                'override_schema'          => [
-                    'tone' => [
-                        'type' => 'string',
-                    ],
-                ],
-                'version'                  => 'test',
-                'is_active'                => true,
-            ]
-        );
-        $this->assertIsInt( $template_id );
-
         $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/definitions' );
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 200, $response->get_status() );
-        $definition = null;
-        foreach ( $response->get_data() as $candidate )
-        {
-            if ( 'definition_route_summary_v1' === (string) ( $candidate['id'] ?? '' ) )
-            {
-                $definition = $candidate;
-                break;
-            }
-        }
+        $definition = $this->find_definition_by_id( $response->get_data(), 'spam_detection_v1' );
 
         $this->assertIsArray( $definition );
-        $this->assertSame( (string) $template_id, $definition['templateId'] ?? null );
+        $this->assertNotSame( '', (string) ( $definition['templateId'] ?? '' ) );
         $this->assertSame( 'bundled', $definition['source'] ?? null );
-        $this->assertSame( 'Summarize {{form.title}}: {{entry}}', $definition['promptTemplate'] ?? null );
+        $this->assertStringContainsString( 'spam classification system', (string) ( $definition['promptTemplate'] ?? '' ) );
         $this->assertSame( 'openrouter/auto', $definition['modelHint'] ?? null );
         $this->assertSame( 'object', $definition['structuredOutputSchema']['type'] ?? null );
-        $this->assertArrayHasKey( 'tone', $definition['overrideSchema'] ?? [] );
+        $this->assertArrayHasKey( 'strictness', $definition['overrideSchema'] ?? [] );
+        $this->assertContains( 'gform_validation', $definition['hooks'] ?? [] );
+        $this->assertContains( 'gform_after_submission', $definition['hooks'] ?? [] );
     }
 
-    public function test_imported_templates_remain_distinguishable_from_built_ins(): void
+    public function test_bundled_action_definitions_hide_legacy_registry_entries_when_seeded_templates_exist(): void
     {
-        global $wpdb;
-
-        $templates = new Sentient_Forms_Action_Templates_Repository( $wpdb );
-        $template_id = $templates->upsert_by_code(
-            [
-                'source'          => 'imported',
-                'external_id'     => 'definition-route-imported-template',
-                'code'            => 'definition_route_imported_v1',
-                'display_name'    => 'Imported Definition Route Template',
-                'description'     => 'Imported from prior CPS history.',
-                'prompt_template' => 'Imported prompt',
-                'version'         => 'imported-test',
-                'is_active'       => true,
-            ]
-        );
-        $this->assertIsInt( $template_id );
-
         $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/definitions' );
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 200, $response->get_status() );
-        $definition = null;
-        foreach ( $response->get_data() as $candidate )
-        {
-            if ( 'definition_route_imported_v1' === (string) ( $candidate['id'] ?? '' ) )
-            {
-                $definition = $candidate;
-                break;
-            }
-        }
+        $ids = array_column( $response->get_data(), 'id' );
 
-        $this->assertIsArray( $definition );
-        $this->assertSame( (string) $template_id, $definition['templateId'] ?? null );
-        $this->assertSame( 'imported', $definition['source'] ?? null );
+        $this->assertContains( 'spam_detection_v1', $ids );
+        $this->assertContains( 'content_validation_v1', $ids );
+        $this->assertContains( 'entry_summary_v1', $ids );
+        $this->assertNotContains( 'spam_analysis', $ids );
+        $this->assertNotContains( 'entry_evaluation', $ids );
     }
 
     public function test_definitions_fall_back_to_local_registry_when_cps_unavailable(): void
@@ -292,5 +232,21 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
             10,
             3
         );
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $definitions
+     */
+    private function find_definition_by_id( array $definitions, string $id ): ?array
+    {
+        foreach ( $definitions as $definition )
+        {
+            if ( $id === (string) ( $definition['id'] ?? '' ) )
+            {
+                return $definition;
+            }
+        }
+
+        return null;
     }
 }

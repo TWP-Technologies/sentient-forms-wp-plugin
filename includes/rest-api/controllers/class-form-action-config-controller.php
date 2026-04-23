@@ -216,6 +216,18 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
                 'type'              => 'boolean',
                 'sanitize_callback' => 'rest_sanitize_boolean',
             ],
+            'spam_result_display_mode' => [
+                'description'       => __( 'Whether spam analysis notes should be stored for none, spam-only, or all results.', 'sentient-forms' ),
+                'type'              => 'string',
+                'enum'              => [ 'none', 'spam_only', 'all_results', 'entry_note', 'silent' ],
+                'sanitize_callback' => [ $this, 'sanitize_spam_result_display_mode' ],
+            ],
+            'spam_indicators_display' => [
+                'description'       => __( 'How much spam-indicator detail to include in entry notes.', 'sentient-forms' ),
+                'type'              => 'string',
+                'enum'              => [ 'simple', 'detailed' ],
+                'sanitize_callback' => [ $this, 'sanitize_spam_indicators_display' ],
+            ],
         ];
     }
 
@@ -269,6 +281,31 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
     }
 
     /**
+     * @param mixed $value
+     */
+    public function sanitize_spam_result_display_mode( $value ): string
+    {
+        $value = sanitize_key( (string) $value );
+
+        return match ( $value ) {
+            'entry_note' => 'all_results',
+            'silent'     => 'none',
+            'none',
+            'spam_only',
+            'all_results' => $value,
+            default      => 'all_results',
+        };
+    }
+
+    /**
+     * @param mixed $value
+     */
+    public function sanitize_spam_indicators_display( $value ): string
+    {
+        return 'detailed' === sanitize_key( (string) $value ) ? 'detailed' : 'simple';
+    }
+
+    /**
      * Normalizes a config payload for API responses and legacy option reads.
      *
      * @param mixed $config Raw config value.
@@ -305,6 +342,16 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
             {
                 $config[ $field ] = rest_sanitize_boolean( $config[ $field ] );
             }
+        }
+
+        if ( array_key_exists( 'spam_result_display_mode', $config ) )
+        {
+            $config['spam_result_display_mode'] = $this->sanitize_spam_result_display_mode( $config['spam_result_display_mode'] );
+        }
+
+        if ( array_key_exists( 'spam_indicators_display', $config ) )
+        {
+            $config['spam_indicators_display'] = $this->sanitize_spam_indicators_display( $config['spam_indicators_display'] );
         }
 
         return $config;
@@ -428,6 +475,8 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
             'model_selection',
             'suppress_notifications_on_spam',
             'skip_downstream_on_spam',
+            'spam_result_display_mode',
+            'spam_indicators_display',
         ];
 
         foreach ( $updateable_fields as $field )

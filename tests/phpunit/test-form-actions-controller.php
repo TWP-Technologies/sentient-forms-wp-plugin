@@ -495,6 +495,72 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( [ 'gform_validation' ], $data['trigger_hooks'] );
     }
 
+    public function test_add_form_action_creates_local_first_bundled_mapping_with_canonical_identity(): void
+    {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/12/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 12 );
+        $request->set_param( 'central_action_id', 'spam_detection_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
+        $request->set_param( 'trigger_hooks', [ 'gform_validation', 'evil_hook', 'gform_after_submission' ] );
+        $request->set_param(
+            'settings',
+            [
+                'suppress_notifications_on_spam' => false,
+                'skip_downstream_on_spam'        => true,
+                'spam_result_display_mode'       => 'entry_note',
+                'spam_indicators_display'        => 'detailed',
+                'input_mapping'                  => [
+                    'email' => '3',
+                ],
+            ]
+        );
+
+        $response = $this->controller->add_form_action( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 201, $response->get_status() );
+        $this->assertSame( 'local_first', $data['action_type_indicator'] ?? null );
+        $this->assertSame( 'spam_detection_v1', $data['central_action_id'] ?? null );
+        $this->assertSame( 'Spam Detection', $data['action_name_label'] ?? null );
+        $this->assertSame( [ 'gform_validation' ], $data['trigger_hooks'] ?? null );
+        $this->assertSame( 'active', $data['linked_action_status'] ?? null );
+        $this->assertSame( 'ok', $data['repair_state'] ?? null );
+
+        global $wpdb;
+
+        $templates      = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+
+        $template = $templates->get_by_code( 'spam_detection_v1' );
+        $this->assertIsArray( $template );
+        $this->assertSame( 'bundled', $template['source'] ?? null );
+
+        $custom_action = $custom_actions->get_by_code(
+            Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'spam_detection_v1' )
+        );
+        $this->assertIsArray( $custom_action );
+        $this->assertSame( (int) ( $template['id'] ?? 0 ), (int) ( $custom_action['template_id'] ?? 0 ) );
+        $this->assertSame( 'active', $custom_action['status'] ?? null );
+
+        $stored_mappings = $mappings->list_for_form( 'gravity_forms', '12' );
+        $this->assertCount( 2, $stored_mappings );
+
+        $validation_mapping = $this->find_local_first_mapping_by_hook( $stored_mappings, 'gform_validation' );
+        $submission_mapping = $this->find_local_first_mapping_by_hook( $stored_mappings, 'gform_after_submission' );
+
+        $this->assertIsArray( $validation_mapping );
+        $this->assertIsArray( $submission_mapping );
+        $this->assertSame( 'sync', $validation_mapping['execution_mode'] ?? null );
+        $this->assertSame( 'sync', $submission_mapping['execution_mode'] ?? null );
+        $this->assertSame( [ 'email' => '3' ], $validation_mapping['input_bindings_json'] ?? null );
+        $this->assertFalse( $validation_mapping['effect_mapping_json']['spam']['suppress_notifications_on_spam'] ?? true );
+        $this->assertTrue( $validation_mapping['effect_mapping_json']['spam']['skip_downstream_on_spam'] ?? false );
+        $this->assertSame( 'all_results', $validation_mapping['effect_mapping_json']['spam']['note']['result_display_mode'] ?? null );
+        $this->assertSame( 'detailed', $validation_mapping['effect_mapping_json']['spam']['note']['indicators_display'] ?? null );
+    }
+
     public function test_sanitize_settings_drops_batch_discount_and_clamps_delay(): void
     {
         $settings = [
@@ -1540,6 +1606,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'local_drawer_qualification', $data[0]['central_action_id'] ?? null );
         $this->assertSame( 'local_first', $data[0]['action_type_indicator'] ?? null );
         $this->assertSame( 'Local drawer qualification', $data[0]['action_name_label'] ?? null );
+        $this->assertSame( 'active', $data[0]['linked_action_status'] ?? null );
+        $this->assertSame( 'ok', $data[0]['repair_state'] ?? null );
         $this->assertSame( [ 'gform_after_submission' ], $data[0]['trigger_hooks'] ?? null );
         $this->assertTrue( $data[0]['is_action_enabled_for_form'] ?? false );
         $this->assertSame( 'after_submission', $data[0]['settings']['execution_mode'] ?? null );
@@ -1548,6 +1616,31 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             [ 'sentient_forms_qualification' => 'structured.qualification' ],
             $data[0]['settings']['effect_mapping_json']['meta'] ?? null
         );
+    }
+
+    public function test_get_form_actions_marks_missing_local_first_custom_action_for_repair(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        global $wpdb;
+        $wpdb->delete(
+            $wpdb->prefix . 'sentient_custom_actions',
+            [ 'id' => $record['action_id'] ],
+            [ '%d' ]
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+
+        $response = $this->controller->get_form_actions( $request );
+        $data     = $response->get_data();
+
+        $this->assertCount( 1, $data );
+        $this->assertSame( 'sentient_forms_local_custom_action', $data[0]['central_action_id'] ?? null );
+        $this->assertSame( 'Local OpenRouter action', $data[0]['action_name_label'] ?? null );
+        $this->assertSame( 'missing', $data[0]['linked_action_status'] ?? null );
+        $this->assertSame( 'needs_repair', $data[0]['repair_state'] ?? null );
     }
 
     public function test_validate_local_mapping_id_param_allows_local_first_custom_table_mapping(): void
@@ -1626,6 +1719,46 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( [ 'name' => '1', 'message' => '2' ], $stored['input_bindings_json'] ?? null );
         $this->assertTrue( $stored['conditions_json']['enabled'] ?? false );
         $this->assertSame( 'enterprise', $stored['conditions_json']['root']['value'] ?? null );
+    }
+
+    public function test_update_form_action_item_syncs_local_first_spam_note_controls_to_effect_mapping(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $request->set_param(
+            'settings',
+            [
+                'suppress_notifications_on_spam' => true,
+                'skip_downstream_on_spam'        => false,
+                'spam_result_display_mode'       => 'silent',
+                'spam_indicators_display'        => 'detailed',
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+        $data     = $response->get_data();
+
+        global $wpdb;
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $stored   = $mappings->get( $record['mapping_id'] );
+
+        $this->assertSame( 'none', $data['settings']['spam_result_display_mode'] ?? null );
+        $this->assertSame( 'detailed', $data['settings']['spam_indicators_display'] ?? null );
+        $this->assertTrue( $data['settings']['suppress_notifications_on_spam'] ?? false );
+        $this->assertFalse( $data['settings']['skip_downstream_on_spam'] ?? true );
+        $this->assertIsArray( $stored );
+        $this->assertSame(
+            [ 'sentient_forms_qualification' => 'structured.qualification' ],
+            $stored['effect_mapping_json']['meta'] ?? null
+        );
+        $this->assertTrue( $stored['effect_mapping_json']['spam']['suppress_notifications_on_spam'] ?? false );
+        $this->assertFalse( $stored['effect_mapping_json']['spam']['skip_downstream_on_spam'] ?? true );
+        $this->assertSame( 'none', $stored['effect_mapping_json']['spam']['note']['result_display_mode'] ?? null );
+        $this->assertSame( 'detailed', $stored['effect_mapping_json']['spam']['note']['indicators_display'] ?? null );
     }
 
     public function test_delete_form_action_item_deletes_local_first_mapping_and_unbinds_option_dependencies(): void
@@ -1930,6 +2063,22 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             'action_id'  => $action_id,
             'mapping_id' => $mapping_id,
         ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $mappings
+     */
+    private function find_local_first_mapping_by_hook( array $mappings, string $hook ): ?array
+    {
+        foreach ( $mappings as $mapping )
+        {
+            if ( $hook === (string) ( $mapping['hook'] ?? '' ) )
+            {
+                return $mapping;
+            }
+        }
+
+        return null;
     }
 
     private function truncate_local_workspace_tables(): void

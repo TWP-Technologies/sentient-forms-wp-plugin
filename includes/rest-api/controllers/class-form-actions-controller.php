@@ -37,6 +37,10 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
     private ?Sentient_Forms_Local_Custom_Actions_Repository $local_custom_actions = null;
 
+    private ?Sentient_Forms_Action_Templates_Repository $local_action_templates = null;
+
+    private ?Sentient_Forms_Provider_Credentials_Repository $local_provider_credentials = null;
+
     private ?Sentient_Forms_Execution_Events_Repository $local_execution_events = null;
 
     const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
@@ -126,6 +130,16 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         if ( class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' ) )
         {
             $this->local_custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        }
+
+        if ( class_exists( 'Sentient_Forms_Action_Templates_Repository' ) )
+        {
+            $this->local_action_templates = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        }
+
+        if ( class_exists( 'Sentient_Forms_Provider_Credentials_Repository' ) )
+        {
+            $this->local_provider_credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
         }
 
         if ( class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
@@ -240,51 +254,138 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $custom_action = $this->local_custom_actions
             ? $this->local_custom_actions->get( absint( $row['action_id'] ?? 0 ) )
             : null;
+        $identity      = $this->resolve_local_first_action_identity( $custom_action );
 
         $execution_mode = 'sync' === sanitize_key( (string) ( $row['execution_mode'] ?? '' ) )
             ? 'validation'
             : 'after_submission';
 
-        $settings = [
+        $effect_mapping = is_array( $row['effect_mapping_json'] ?? null )
+            ? $row['effect_mapping_json']
+            : null;
+        $settings       = [
             'local_form_mapping_id' => $id,
             'execution_mode'        => $execution_mode,
             'input_mapping'         => is_array( $row['input_bindings_json'] ?? null )
                 ? $row['input_bindings_json']
                 : [],
-            'effect_mapping_json'   => is_array( $row['effect_mapping_json'] ?? null )
-                ? $row['effect_mapping_json']
-                : null,
+            'effect_mapping_json'   => $effect_mapping,
+            'linked_action_status'  => $identity['linked_action_status'],
+            'repair_state'          => $identity['repair_state'],
             'trigger_sources'       => [
                 $hook => [ 'type' => 'hook_root' ],
             ],
         ];
+
+        if ( is_array( $effect_mapping ) )
+        {
+            $settings = $this->hydrate_spam_settings_from_effect_mapping( $settings, $effect_mapping );
+        }
 
         if ( isset( $row['conditions_json'] ) && is_array( $row['conditions_json'] ) )
         {
             $settings['conditions'] = $row['conditions_json'];
         }
 
-        $action_code = isset( $custom_action['code'] ) && is_scalar( $custom_action['code'] )
-            ? sanitize_key( (string) $custom_action['code'] )
-            : 'sentient_forms_local_custom_action';
-        $action_label = isset( $custom_action['display_name'] ) && is_scalar( $custom_action['display_name'] )
-            ? sanitize_text_field( (string) $custom_action['display_name'] )
-            : __( 'Local OpenRouter action', 'sentient-forms' );
-
         return [
             'local_mapping_id'           => $this->build_local_first_mapping_id( $id ),
             'local_form_mapping_id'      => $id,
-            'central_action_id'          => $action_code,
+            'central_action_id'          => $identity['action_code'],
             'action_type_indicator'      => 'local_first',
             'action_kind'                => 'custom_action',
-            'action_name_label'          => $action_label,
+            'action_name_label'          => $identity['action_label'],
             'is_action_enabled_for_form' => ! empty( $row['enabled'] ),
             'trigger_hooks'              => [ $hook ],
             'execution_priority'         => $id,
             'execution_mode'             => $execution_mode,
             'settings'                   => $settings,
+            'linked_action_status'       => $identity['linked_action_status'],
+            'repair_state'               => $identity['repair_state'],
             'source'                     => 'local_first',
         ];
+    }
+
+    /**
+     * @param array<string, mixed>|null $custom_action
+     *
+     * @return array{action_code: string, action_label: string, linked_action_status: string, repair_state: string}
+     */
+    private function resolve_local_first_action_identity( ?array $custom_action ): array
+    {
+        $linked_action_status = 'missing';
+        $repair_state         = 'needs_repair';
+        $action_code          = 'sentient_forms_local_custom_action';
+        $action_label         = __( 'Local OpenRouter action', 'sentient-forms' );
+
+        if ( is_array( $custom_action ) )
+        {
+            $linked_action_status = isset( $custom_action['status'] ) && is_scalar( $custom_action['status'] )
+                ? sanitize_key( (string) $custom_action['status'] )
+                : 'unknown';
+            $repair_state         = 'active' === $linked_action_status ? 'ok' : 'needs_repair';
+            $action_code          = isset( $custom_action['code'] ) && is_scalar( $custom_action['code'] )
+                ? sanitize_key( (string) $custom_action['code'] )
+                : $action_code;
+            $action_label         = isset( $custom_action['display_name'] ) && is_scalar( $custom_action['display_name'] )
+                ? sanitize_text_field( (string) $custom_action['display_name'] )
+                : $action_label;
+        }
+
+        $template = $this->resolve_template_for_local_custom_action( $custom_action );
+        if ( is_array( $template ) )
+        {
+            $template_code = isset( $template['code'] ) && is_scalar( $template['code'] )
+                ? sanitize_key( (string) $template['code'] )
+                : '';
+            if ( '' !== $template_code && Sentient_Forms_Bundled_Action_Templates::has( $template_code ) )
+            {
+                $action_code = $template_code;
+                $action_label = isset( $template['display_name'] ) && is_scalar( $template['display_name'] )
+                    ? sanitize_text_field( (string) $template['display_name'] )
+                    : $action_label;
+            }
+        }
+        elseif ( is_array( $custom_action ) )
+        {
+            $custom_code   = isset( $custom_action['code'] ) && is_scalar( $custom_action['code'] )
+                ? sanitize_key( (string) $custom_action['code'] )
+                : '';
+            $template_code = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $custom_code );
+            $definition    = '' !== $template_code ? Sentient_Forms_Bundled_Action_Templates::get( $template_code ) : null;
+            if ( is_array( $definition ) )
+            {
+                $action_code  = $template_code;
+                $action_label = sanitize_text_field( (string) ( $definition['display_name'] ?? $action_label ) );
+            }
+        }
+
+        return [
+            'action_code'          => $action_code,
+            'action_label'         => $action_label,
+            'linked_action_status' => $linked_action_status,
+            'repair_state'         => $repair_state,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed>|null $custom_action
+     *
+     * @return array<string, mixed>|null
+     */
+    private function resolve_template_for_local_custom_action( ?array $custom_action ): ?array
+    {
+        if ( ! is_array( $custom_action ) || ! $this->local_action_templates )
+        {
+            return null;
+        }
+
+        $template_id = absint( $custom_action['template_id'] ?? 0 );
+        if ( $template_id <= 0 )
+        {
+            return null;
+        }
+
+        return $this->local_action_templates->get( $template_id );
     }
 
     private function get_local_first_mapping_row( mixed $mapping_id, string $form_source_slug, string $form_id ): ?array
@@ -1193,6 +1294,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $local_actions = [];
         }
         $local_actions = $this->extract_action_linkages_from_option( $local_actions );
+        $local_actions = $this->merge_local_first_actions( $local_actions, $form_source_slug, $form_id );
 
         $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
         $merged      = $this->merge_local_and_cps_actions( $local_actions, $cps_actions );
@@ -1847,6 +1949,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
      */
     public function add_form_action( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
+        if ( $this->should_create_bundled_local_first_action( $request ) )
+        {
+            return $this->create_bundled_local_first_action( $request );
+        }
+
         $option_key = $this->get_actions_option_key( $request->get_param( 'form_source_slug' ), (int)$request->get_param( 'form_id' ) );
         $actions    = get_option( $option_key, [] );
         if ( !is_array( $actions ) )
@@ -1901,6 +2008,542 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         );
 
         return $this->prepare_item_for_response( $action, 201 );
+    }
+
+    private function should_create_bundled_local_first_action( WP_REST_Request $request ): bool
+    {
+        if ( ! $this->local_form_mappings || ! $this->local_custom_actions || ! $this->local_action_templates )
+        {
+            return false;
+        }
+
+        $action_type_indicator = sanitize_key( (string) $request->get_param( 'action_type_indicator' ) );
+        if ( 'master' !== $action_type_indicator )
+        {
+            return false;
+        }
+
+        $central_action_id = sanitize_key( (string) $request->get_param( 'central_action_id' ) );
+        return Sentient_Forms_Bundled_Action_Templates::has( $central_action_id );
+    }
+
+    private function create_bundled_local_first_action( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $template_code = sanitize_key( (string) $request->get_param( 'central_action_id' ) );
+        $definition    = Sentient_Forms_Bundled_Action_Templates::get( $template_code );
+        if ( ! is_array( $definition ) )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_bundled_action',
+                __( 'Bundled action template could not be resolved.', 'sentient-forms' ),
+                400
+            );
+        }
+
+        $template_row = $this->ensure_bundled_action_template_row( $template_code, $definition );
+        if ( is_wp_error( $template_row ) )
+        {
+            return $template_row;
+        }
+
+        $custom_action = $this->ensure_bundled_local_custom_action( $template_row, $definition );
+        if ( is_wp_error( $custom_action ) )
+        {
+            return $custom_action;
+        }
+
+        $form_source  = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
+        $form_id      = sanitize_text_field( (string) (int) $request->get_param( 'form_id' ) );
+        $settings     = $request->has_param( 'settings' ) ? $this->sanitize_settings( $request->get_param( 'settings' ) ) : [];
+        $trigger_hooks = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
+        if ( [] === $trigger_hooks )
+        {
+            $trigger_hooks = array_values(
+                array_filter(
+                    array_map(
+                        'sanitize_key',
+                        is_array( $definition['hooks'] ?? null ) ? $definition['hooks'] : []
+                    )
+                )
+            );
+        }
+
+        if ( [] === $trigger_hooks )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_bundled_action_hooks',
+                __( 'Bundled action template does not expose any supported trigger hooks.', 'sentient-forms' ),
+                400
+            );
+        }
+
+        $enabled    = $request->has_param( 'is_action_enabled_for_form' )
+            ? rest_sanitize_boolean( $request->get_param( 'is_action_enabled_for_form' ) )
+            : true;
+        $first_row  = null;
+        $action_id  = absint( $custom_action['id'] ?? 0 );
+
+        foreach ( $trigger_hooks as $hook )
+        {
+            $payload = [
+                'form_source'         => $form_source,
+                'form_id'             => $form_id,
+                'hook'                => $hook,
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'conditions_json'     => isset( $settings['conditions'] ) && is_array( $settings['conditions'] )
+                    ? $settings['conditions']
+                    : null,
+                'input_bindings_json' => isset( $settings['input_mapping'] ) && is_array( $settings['input_mapping'] )
+                    ? $settings['input_mapping']
+                    : [],
+                'execution_mode'      => $this->resolve_local_first_execution_mode_for_hook( $hook, $settings, $definition ),
+                'effect_mapping_json' => $this->build_local_first_effect_mapping( $definition, $settings ),
+                'enabled'             => $enabled,
+            ];
+
+            $existing = $this->find_existing_local_first_mapping( $form_source, $form_id, $hook, $action_id );
+            $row      = $existing
+                ? $this->local_form_mappings->update( absint( $existing['id'] ?? 0 ), $payload )
+                : $this->local_form_mappings->create( $payload );
+
+            if ( is_wp_error( $row ) )
+            {
+                return $row;
+            }
+
+            if ( ! is_array( $row ) )
+            {
+                $row = $this->local_form_mappings->get( (int) $row );
+            }
+
+            if ( ! is_array( $row ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_local_first_mapping_not_found',
+                    __( 'Local form mapping could not be created.', 'sentient-forms' ),
+                    500
+                );
+            }
+
+            if ( null === $first_row )
+            {
+                $first_row = $row;
+            }
+        }
+
+        if ( ! is_array( $first_row ) )
+        {
+            return $this->prepare_error_response(
+                'rest_local_first_mapping_not_created',
+                __( 'Bundled action could not be linked to the form.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        $linkage = $this->transform_local_first_mapping_to_linkage( $first_row );
+        if ( null === $linkage )
+        {
+            return $this->prepare_error_response(
+                'rest_local_first_mapping_invalid',
+                __( 'Bundled action mapping could not be normalized.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        return $this->prepare_item_for_response( $linkage, 201 );
+    }
+
+    /**
+     * @param array<string, mixed> $definition
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function ensure_bundled_action_template_row( string $template_code, array $definition ): array | WP_Error
+    {
+        if ( ! $this->local_action_templates )
+        {
+            return $this->prepare_error_response(
+                'rest_local_templates_unavailable',
+                __( 'Local action templates are unavailable.', 'sentient-forms' ),
+                503
+            );
+        }
+
+        $template_row = $this->local_action_templates->get_by_code( $template_code );
+        if ( is_array( $template_row ) )
+        {
+            return $template_row;
+        }
+
+        $template_id = $this->local_action_templates->upsert_by_code(
+            [
+                'source'                   => $definition['source'] ?? 'bundled',
+                'code'                     => $template_code,
+                'display_name'             => $definition['display_name'] ?? $template_code,
+                'description'              => $definition['description'] ?? null,
+                'prompt_template'          => $definition['prompt_template'] ?? '',
+                'default_model'            => $definition['default_model'] ?? 'openrouter/auto',
+                'structured_output_schema' => $definition['structured_output_schema'] ?? null,
+                'override_schema'          => $definition['override_schema'] ?? null,
+                'version'                  => $definition['version'] ?? '1',
+                'is_active'                => ! empty( $definition['is_active'] ),
+            ]
+        );
+        if ( is_wp_error( $template_id ) )
+        {
+            return $template_id;
+        }
+
+        $template_row = $this->local_action_templates->get( (int) $template_id );
+        if ( ! is_array( $template_row ) )
+        {
+            return $this->prepare_error_response(
+                'rest_local_template_not_found',
+                __( 'Bundled action template could not be loaded after creation.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        return $template_row;
+    }
+
+    /**
+     * @param array<string, mixed> $template_row
+     * @param array<string, mixed> $definition
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function ensure_bundled_local_custom_action( array $template_row, array $definition ): array | WP_Error
+    {
+        if ( ! $this->local_custom_actions )
+        {
+            return $this->prepare_error_response(
+                'rest_local_custom_actions_unavailable',
+                __( 'Local custom actions are unavailable.', 'sentient-forms' ),
+                503
+            );
+        }
+
+        $template_code = isset( $template_row['code'] ) && is_scalar( $template_row['code'] )
+            ? sanitize_key( (string) $template_row['code'] )
+            : '';
+        if ( '' === $template_code )
+        {
+            return $this->prepare_error_response(
+                'rest_local_template_missing_code',
+                __( 'Bundled action template is missing its code.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        $managed_code = Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( $template_code );
+        $selection    = $this->build_default_model_selection_for_bundled_action( $definition );
+        $row_id       = $this->local_custom_actions->upsert_by_code(
+            [
+                'template_id'          => absint( $template_row['id'] ?? 0 ),
+                'code'                 => $managed_code,
+                'display_name'         => $definition['display_name'] ?? $template_code,
+                'definition_json'      => $this->build_bundled_local_custom_action_definition( $definition ),
+                'model_selection_json' => $selection,
+                'status'               => 'active',
+            ]
+        );
+        if ( is_wp_error( $row_id ) )
+        {
+            return $row_id;
+        }
+
+        $row = $this->local_custom_actions->get( (int) $row_id );
+        if ( ! is_array( $row ) )
+        {
+            return $this->prepare_error_response(
+                'rest_local_custom_action_not_found',
+                __( 'Bundled local action could not be loaded after creation.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        return $row;
+    }
+
+    /**
+     * @param array<string, mixed> $definition
+     *
+     * @return array<string, mixed>
+     */
+    private function build_bundled_local_custom_action_definition( array $definition ): array
+    {
+        $action_definition = is_array( $definition['definition_json'] ?? null ) ? $definition['definition_json'] : [];
+
+        if ( isset( $definition['description'] ) && is_scalar( $definition['description'] ) )
+        {
+            $action_definition['description'] = sanitize_textarea_field( (string) $definition['description'] );
+        }
+
+        return $action_definition;
+    }
+
+    /**
+     * @param array<string, mixed> $definition
+     *
+     * @return array<string, mixed>
+     */
+    private function build_default_model_selection_for_bundled_action( array $definition ): array
+    {
+        $selection = [
+            'provider' => 'openrouter',
+            'model'    => sanitize_text_field( (string) ( $definition['default_model'] ?? 'openrouter/auto' ) ),
+        ];
+
+        $credential_id = $this->find_default_openrouter_credential_id();
+        if ( $credential_id > 0 )
+        {
+            $selection['credential_id'] = $credential_id;
+        }
+
+        return $selection;
+    }
+
+    private function find_default_openrouter_credential_id(): int
+    {
+        if ( ! $this->local_provider_credentials )
+        {
+            return 0;
+        }
+
+        foreach ( $this->local_provider_credentials->list( [ 'limit' => 100 ] ) as $credential )
+        {
+            if ( 'openrouter' !== sanitize_key( (string) ( $credential['provider'] ?? '' ) ) )
+            {
+                continue;
+            }
+
+            if ( ! in_array( sanitize_key( (string) ( $credential['status'] ?? '' ) ), [ 'valid', 'limited' ], true ) )
+            {
+                continue;
+            }
+
+            $credential_id = absint( $credential['id'] ?? 0 );
+            if ( $credential_id > 0 )
+            {
+                return $credential_id;
+            }
+        }
+
+        return 0;
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $definition
+     *
+     * @return array<string, mixed>
+     */
+    private function build_local_first_effect_mapping( array $definition, array $settings ): array
+    {
+        $effect_mapping = is_array( $definition['effect_mapping_json'] ?? null ) ? $definition['effect_mapping_json'] : [];
+        if ( isset( $settings['effect_mapping_json'] ) && is_array( $settings['effect_mapping_json'] ) )
+        {
+            $effect_mapping = array_replace_recursive( $effect_mapping, $settings['effect_mapping_json'] );
+        }
+
+        $template_code = sanitize_key( (string) ( $definition['code'] ?? '' ) );
+        if ( 'spam_detection_v1' === $template_code )
+        {
+            if ( ! isset( $effect_mapping['spam'] ) || ! is_array( $effect_mapping['spam'] ) )
+            {
+                $effect_mapping['spam'] = [];
+            }
+
+            if ( array_key_exists( 'suppress_notifications_on_spam', $settings ) )
+            {
+                $effect_mapping['spam']['suppress_notifications_on_spam'] = rest_sanitize_boolean( $settings['suppress_notifications_on_spam'] );
+            }
+
+            if ( array_key_exists( 'skip_downstream_on_spam', $settings ) )
+            {
+                $effect_mapping['spam']['skip_downstream_on_spam'] = rest_sanitize_boolean( $settings['skip_downstream_on_spam'] );
+            }
+
+            $note = is_array( $effect_mapping['spam']['note'] ?? null ) ? $effect_mapping['spam']['note'] : [];
+            if ( array_key_exists( 'spam_result_display_mode', $settings ) )
+            {
+                $note['result_display_mode'] = $this->normalize_spam_result_display_mode( $settings['spam_result_display_mode'] );
+            }
+            if ( array_key_exists( 'spam_indicators_display', $settings ) )
+            {
+                $note['indicators_display'] = $this->normalize_spam_indicators_display( $settings['spam_indicators_display'] );
+            }
+            if ( [] !== $note )
+            {
+                $effect_mapping['spam']['note'] = $note;
+            }
+        }
+
+        return $effect_mapping;
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $effect_mapping
+     *
+     * @return array<string, mixed>
+     */
+    private function hydrate_spam_settings_from_effect_mapping( array $settings, array $effect_mapping ): array
+    {
+        $spam = is_array( $effect_mapping['spam'] ?? null ) ? $effect_mapping['spam'] : [];
+        if ( [] === $spam )
+        {
+            return $settings;
+        }
+
+        if ( array_key_exists( 'suppress_notifications_on_spam', $spam ) )
+        {
+            $settings['suppress_notifications_on_spam'] = rest_sanitize_boolean( $spam['suppress_notifications_on_spam'] );
+        }
+
+        if ( array_key_exists( 'skip_downstream_on_spam', $spam ) )
+        {
+            $settings['skip_downstream_on_spam'] = rest_sanitize_boolean( $spam['skip_downstream_on_spam'] );
+        }
+
+        $note = is_array( $spam['note'] ?? null ) ? $spam['note'] : [];
+        if ( array_key_exists( 'result_display_mode', $note ) )
+        {
+            $settings['spam_result_display_mode'] = $this->normalize_spam_result_display_mode( $note['result_display_mode'] );
+        }
+
+        if ( array_key_exists( 'indicators_display', $note ) )
+        {
+            $settings['spam_indicators_display'] = $this->normalize_spam_indicators_display( $note['indicators_display'] );
+        }
+
+        return $settings;
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     */
+    private function settings_include_spam_effect_fields( array $settings ): bool
+    {
+        foreach ( [ 'suppress_notifications_on_spam', 'skip_downstream_on_spam', 'spam_result_display_mode', 'spam_indicators_display' ] as $key )
+        {
+            if ( array_key_exists( $key, $settings ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array<string, mixed> $effect_mapping
+     * @param array<string, mixed> $settings
+     *
+     * @return array<string, mixed>
+     */
+    private function merge_spam_settings_into_effect_mapping( array $effect_mapping, array $settings ): array
+    {
+        if ( ! isset( $effect_mapping['spam'] ) || ! is_array( $effect_mapping['spam'] ) )
+        {
+            $effect_mapping['spam'] = [];
+        }
+
+        if ( array_key_exists( 'suppress_notifications_on_spam', $settings ) )
+        {
+            $effect_mapping['spam']['suppress_notifications_on_spam'] = rest_sanitize_boolean( $settings['suppress_notifications_on_spam'] );
+        }
+
+        if ( array_key_exists( 'skip_downstream_on_spam', $settings ) )
+        {
+            $effect_mapping['spam']['skip_downstream_on_spam'] = rest_sanitize_boolean( $settings['skip_downstream_on_spam'] );
+        }
+
+        $note = is_array( $effect_mapping['spam']['note'] ?? null ) ? $effect_mapping['spam']['note'] : [];
+        if ( array_key_exists( 'spam_result_display_mode', $settings ) )
+        {
+            $note['result_display_mode'] = $this->normalize_spam_result_display_mode( $settings['spam_result_display_mode'] );
+        }
+        if ( array_key_exists( 'spam_indicators_display', $settings ) )
+        {
+            $note['indicators_display'] = $this->normalize_spam_indicators_display( $settings['spam_indicators_display'] );
+        }
+        if ( [] !== $note )
+        {
+            $effect_mapping['spam']['note'] = $note;
+        }
+
+        return $effect_mapping;
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     * @param array<string, mixed> $definition
+     */
+    private function resolve_local_first_execution_mode_for_hook( string $hook, array $settings, array $definition ): string
+    {
+        $hook = sanitize_key( $hook );
+        if ( 'gform_validation' === $hook )
+        {
+            return 'sync';
+        }
+
+        $configured = isset( $settings['execution_mode'] ) && is_scalar( $settings['execution_mode'] )
+            ? sanitize_key( (string) $settings['execution_mode'] )
+            : sanitize_key( (string) ( $definition['default_execution_mode'] ?? 'async' ) );
+
+        return 'validation' === $configured || 'sync' === $configured ? 'sync' : 'async';
+    }
+
+    private function find_existing_local_first_mapping( string $form_source, string $form_id, string $hook, int $action_id ): ?array
+    {
+        if ( ! $this->local_form_mappings )
+        {
+            return null;
+        }
+
+        foreach ( $this->local_form_mappings->list_for_form( $form_source, $form_id ) as $candidate )
+        {
+            if ( 'custom_action' !== sanitize_key( (string) ( $candidate['action_kind'] ?? '' ) ) )
+            {
+                continue;
+            }
+
+            if ( absint( $candidate['action_id'] ?? 0 ) !== $action_id )
+            {
+                continue;
+            }
+
+            if ( sanitize_key( (string) ( $candidate['hook'] ?? '' ) ) !== sanitize_key( $hook ) )
+            {
+                continue;
+            }
+
+            return $candidate;
+        }
+
+        return null;
+    }
+
+    private function normalize_spam_result_display_mode( mixed $value ): string
+    {
+        $value = sanitize_key( (string) $value );
+
+        return match ( $value ) {
+            'entry_note' => 'all_results',
+            'silent'     => 'none',
+            'none',
+            'spam_only',
+            'all_results' => $value,
+            default      => 'all_results',
+        };
+    }
+
+    private function normalize_spam_indicators_display( mixed $value ): string
+    {
+        return 'detailed' === sanitize_key( (string) $value ) ? 'detailed' : 'simple';
     }
 
     /**
@@ -1991,9 +2634,19 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                         $update['input_bindings_json'] = $settings['input_mapping'];
                     }
 
-                    if ( array_key_exists( 'effect_mapping_json', $settings ) && is_array( $settings['effect_mapping_json'] ) )
+                    $has_effect_mapping_update = array_key_exists( 'effect_mapping_json', $settings ) && is_array( $settings['effect_mapping_json'] );
+                    if ( $has_effect_mapping_update || $this->settings_include_spam_effect_fields( $settings ) )
                     {
-                        $update['effect_mapping_json'] = $settings['effect_mapping_json'];
+                        $effect_mapping = $has_effect_mapping_update
+                            ? $settings['effect_mapping_json']
+                            : ( is_array( $local_first_row['effect_mapping_json'] ?? null ) ? $local_first_row['effect_mapping_json'] : [] );
+
+                        if ( $this->settings_include_spam_effect_fields( $settings ) )
+                        {
+                            $effect_mapping = $this->merge_spam_settings_into_effect_mapping( $effect_mapping, $settings );
+                        }
+
+                        $update['effect_mapping_json'] = $effect_mapping;
                     }
                 }
 
@@ -2428,8 +3081,10 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         );
 
         $form_id = (int) $request->get_param( 'form_id' );
-        $status  = $this->get_form_execution_status_from_local_execution_event( $form_source_slug, $form_id )
-            ?? $this->get_form_execution_status_from_action_log( $form_source_slug, $form_id )
+        $integrity_status = $this->get_local_mapping_integrity_status( $form_source_slug, $form_id );
+        $status  = $integrity_status
+            ?? $this->get_form_execution_status_from_local_execution_event( $form_source_slug, $form_id, true )
+            ?? $this->get_form_execution_status_from_action_log( $form_source_slug, $form_id, true )
             ?? [
                 'status'          => 'unknown',
                 'message'         => null,
@@ -2442,7 +3097,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         return $this->prepare_item_for_response( $status );
     }
 
-    private function get_form_execution_status_from_local_execution_event( string $form_source_slug, int $form_id ): ?array
+    private function get_form_execution_status_from_local_execution_event( string $form_source_slug, int $form_id, bool $ignore_stale_inactive_errors = false ): ?array
     {
         if ( null === $this->local_execution_events )
         {
@@ -2461,6 +3116,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             'failed', 'error'      => 'error',
             default                => 'unknown',
         };
+
+        if ( $ignore_stale_inactive_errors && $this->should_ignore_stale_local_action_inactive_event( $event ) )
+        {
+            return null;
+        }
 
         return [
             'status'          => $status,
@@ -2502,7 +3162,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         };
     }
 
-    private function get_form_execution_status_from_action_log( string $form_source_slug, int $form_id ): ?array
+    private function get_form_execution_status_from_action_log( string $form_source_slug, int $form_id, bool $ignore_stale_inactive_errors = false ): ?array
     {
         $entries = get_option( self::ACTION_LOG_OPTION_KEY, [] );
         if ( ! is_array( $entries ) )
@@ -2528,6 +3188,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             }
 
             if ( $this->is_retired_legacy_proxy_auth_log_entry( $entry ) )
+            {
+                continue;
+            }
+
+            if ( $ignore_stale_inactive_errors && $this->should_ignore_stale_local_action_inactive_log_entry( $entry ) )
             {
                 continue;
             }
@@ -2573,6 +3238,90 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return null;
+    }
+
+    private function get_local_mapping_integrity_status( string $form_source_slug, int $form_id ): ?array
+    {
+        if ( ! $this->local_form_mappings )
+        {
+            return null;
+        }
+
+        foreach ( $this->local_form_mappings->list_for_form( $form_source_slug, (string) $form_id ) as $mapping )
+        {
+            if ( empty( $mapping['enabled'] ) || 'custom_action' !== sanitize_key( (string) ( $mapping['action_kind'] ?? '' ) ) )
+            {
+                continue;
+            }
+
+            $custom_action = $this->local_custom_actions
+                ? $this->local_custom_actions->get( absint( $mapping['action_id'] ?? 0 ) )
+                : null;
+            $identity = $this->resolve_local_first_action_identity( $custom_action );
+
+            if ( 'ok' === $identity['repair_state'] )
+            {
+                continue;
+            }
+
+            $hook = isset( $mapping['hook'] ) && is_scalar( $mapping['hook'] )
+                ? sanitize_key( (string) $mapping['hook'] )
+                : 'unknown';
+
+            return [
+                'status'          => 'error',
+                'message'         => sprintf(
+                    /* translators: 1: action label, 2: hook */
+                    __( 'Local action "%1$s" needs repair before it can run on %2$s.', 'sentient-forms' ),
+                    $identity['action_label'],
+                    $hook
+                ),
+                'entry_id'        => null,
+                'last_error_code' => 'sentient_forms_local_mapping_needs_repair',
+                'last_result'     => null,
+                'updated_at'      => isset( $mapping['updated_at'] ) && is_scalar( $mapping['updated_at'] )
+                    ? sanitize_text_field( (string) $mapping['updated_at'] )
+                    : null,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $event
+     */
+    private function should_ignore_stale_local_action_inactive_event( array $event ): bool
+    {
+        $error_code = isset( $event['error_code'] ) && is_scalar( $event['error_code'] )
+            ? sanitize_key( (string) $event['error_code'] )
+            : '';
+        $message    = isset( $event['error_message'] ) && is_scalar( $event['error_message'] )
+            ? trim( (string) $event['error_message'] )
+            : '';
+
+        return 'sentient_forms_local_action_inactive' === $error_code
+            || 'Local action is not active.' === $message;
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     */
+    private function should_ignore_stale_local_action_inactive_log_entry( array $entry ): bool
+    {
+        $status        = sanitize_key( (string) ( $entry['status'] ?? '' ) );
+        $error_code    = isset( $entry['error_code'] ) && is_scalar( $entry['error_code'] )
+            ? sanitize_key( (string) $entry['error_code'] )
+            : '';
+        $error_message = isset( $entry['error_message'] ) && is_scalar( $entry['error_message'] )
+            ? trim( (string) $entry['error_message'] )
+            : '';
+
+        return 'error' === $status
+            && (
+                'sentient_forms_local_action_inactive' === $error_code
+                || 'Local action is not active.' === $error_message
+            );
     }
 
     private function can_action_log_entry_drive_success_status( array $entry, string $form_source_slug, int $form_id ): bool

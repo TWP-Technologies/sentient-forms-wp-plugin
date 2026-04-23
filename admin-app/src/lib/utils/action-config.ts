@@ -1,4 +1,9 @@
-import type { FormActionConfig, ModelSelection } from '$lib/api/types';
+import type {
+	FormActionConfig,
+	ModelSelection,
+	SpamIndicatorsDisplayMode,
+	SpamResultDisplayMode
+} from '$lib/api/types';
 
 export const DEFAULT_MODEL_SELECTION: ModelSelection = {
 	primary: 'sf_default',
@@ -7,6 +12,15 @@ export const DEFAULT_MODEL_SELECTION: ModelSelection = {
 };
 
 const VALID_SITE_CONTEXT_VALUES = new Set(['global', 'always', 'never']);
+const VALID_SPAM_RESULT_DISPLAY_MODES = new Set([
+	'none',
+	'spam_only',
+	'all_results',
+	'entry_note',
+	'silent'
+]);
+const VALID_SPAM_INDICATORS_DISPLAY = new Set(['simple', 'detailed']);
+const SPAM_ACTION_CODES = new Set(['spam_detection_v1', 'spam_analysis']);
 export const INHERITABLE_BOOLEAN_MODES = ['inherit', 'enabled', 'disabled'] as const;
 export type InheritableBooleanMode = (typeof INHERITABLE_BOOLEAN_MODES)[number];
 
@@ -15,7 +29,49 @@ export function cloneDefaultModelSelection(): ModelSelection {
 }
 
 export function isSpamActionCode(actionId: string | null | undefined): boolean {
-	return actionId === 'spam_detection_v1' || actionId === 'spam_analysis';
+	if (typeof actionId !== 'string') {
+		return false;
+	}
+
+	return SPAM_ACTION_CODES.has(actionId.trim());
+}
+
+export function normalizeSpamResultDisplayMode(
+	value: unknown,
+	fallback: SpamResultDisplayMode = 'entry_note'
+): SpamResultDisplayMode {
+	if (typeof value !== 'string') {
+		return fallback;
+	}
+
+	const normalized = value.trim().toLowerCase();
+	if (!VALID_SPAM_RESULT_DISPLAY_MODES.has(normalized)) {
+		return fallback;
+	}
+
+	if (normalized === 'all_results') {
+		return 'entry_note';
+	}
+
+	if (normalized === 'none') {
+		return 'silent';
+	}
+
+	return normalized as SpamResultDisplayMode;
+}
+
+export function normalizeSpamIndicatorsDisplay(
+	value: unknown,
+	fallback: SpamIndicatorsDisplayMode = 'simple'
+): SpamIndicatorsDisplayMode {
+	if (typeof value !== 'string') {
+		return fallback;
+	}
+
+	const normalized = value.trim().toLowerCase();
+	return VALID_SPAM_INDICATORS_DISPLAY.has(normalized)
+		? (normalized as SpamIndicatorsDisplayMode)
+		: fallback;
 }
 
 export function normalizeModelSelection(value: unknown): ModelSelection | undefined {
@@ -84,6 +140,8 @@ export function normalizeFormActionConfig(value: unknown): FormActionConfig {
 			candidate.suppress_notifications_on_spam
 		),
 		skip_downstream_on_spam: normalizeOptionalBoolean(candidate.skip_downstream_on_spam),
+		spam_result_display_mode: normalizeSpamResultDisplayMode(candidate.spam_result_display_mode),
+		spam_indicators_display: normalizeSpamIndicatorsDisplay(candidate.spam_indicators_display),
 		spam_positive_examples: Array.isArray(candidate.spam_positive_examples)
 			? candidate.spam_positive_examples
 					.map((entry) => entry?.toString().trim())

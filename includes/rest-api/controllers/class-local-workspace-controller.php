@@ -133,9 +133,13 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
     public function list_custom_actions( WP_REST_Request $request ): WP_REST_Response
     {
         $status = sanitize_key( (string) ( $request->get_param( 'status' ) ?? 'active' ) );
+        $args   = [
+            'status'           => $status,
+            'include_archived' => rest_sanitize_boolean( $request->get_param( 'include_archived' ) ),
+        ];
 
         return $this->prepare_item_for_response(
-            array_map( [ $this, 'format_custom_action' ], $this->custom_actions->list( $status ) )
+            array_map( [ $this, 'format_custom_action' ], $this->custom_actions->list_filtered( $args ) )
         );
     }
 
@@ -186,14 +190,39 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
     public function create_form_mapping( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
         $payload = $request->get_params();
+        $action_kind = sanitize_key( (string) ( $payload['action_kind'] ?? '' ) );
+        $action_id   = absint( $payload['action_id'] ?? 0 );
+
+        if ( 'custom_action' === $action_kind )
+        {
+            $action = $this->custom_actions->get( $action_id );
+            if ( ! is_array( $action ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_local_action_not_found',
+                    __( 'Local custom action could not be found.', 'sentient-forms' ),
+                    [ 'status' => 404 ]
+                );
+            }
+
+            if ( 'active' !== (string) ( $action['status'] ?? '' ) )
+            {
+                return new WP_Error(
+                    'sentient_forms_local_action_inactive',
+                    __( 'Local custom action must be active before it can be mapped.', 'sentient-forms' ),
+                    [ 'status' => 409 ]
+                );
+            }
+        }
+
         $id      = $this->mappings->create(
             [
                 'external_id'         => $payload['external_id'] ?? null,
                 'form_source'         => $payload['form_source'] ?? 'gravity_forms',
                 'form_id'             => $payload['form_id'] ?? '',
                 'hook'                => $payload['hook'] ?? '',
-                'action_kind'         => $payload['action_kind'] ?? '',
-                'action_id'           => $payload['action_id'] ?? 0,
+                'action_kind'         => $action_kind,
+                'action_id'           => $action_id,
                 'conditions_json'     => $this->array_param( $payload, 'conditions_json' ),
                 'input_bindings_json' => $this->array_param( $payload, 'input_bindings_json' ),
                 'execution_mode'      => $payload['execution_mode'] ?? 'async',

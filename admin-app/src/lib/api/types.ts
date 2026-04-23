@@ -219,7 +219,12 @@ export interface PluginSettingsResponse {
 	execution_event_retention_days?: number;
 	delete_data_on_uninstall?: boolean;
 	store_full_ai_outputs?: boolean;
-	privacy_setup_profile?: 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility' | string;
+	privacy_setup_profile?:
+		| 'balanced'
+		| 'privacy_focused'
+		| 'maximum_privacy'
+		| 'maximum_visibility'
+		| string;
 	privacy_setup_completed_at?: string | null;
 }
 
@@ -707,6 +712,17 @@ export interface MappingConditionsConfig {
 	root: ConditionGroup;
 }
 
+export type SpamResultDisplayMode =
+	| 'none'
+	| 'spam_only'
+	| 'all_results'
+	| 'entry_note'
+	| 'silent'
+	| string;
+export type SpamIndicatorsDisplayMode = 'simple' | 'detailed' | string;
+export type LinkedActionStatus = 'active' | 'archived' | 'missing' | 'unknown' | string;
+export type RepairState = 'ok' | 'needs_repair' | string;
+
 export interface TriggerSourceConfig {
 	type: 'hook_root' | 'mapping';
 	mapping_id?: string;
@@ -742,6 +758,10 @@ export interface FormActionSettings {
 	suppress_notifications_on_spam?: boolean;
 	/** Explicit mapping override for skipping downstream work when spam is confirmed */
 	skip_downstream_on_spam?: boolean;
+	/** Whether spam notes should be stored for none, spam-only, or all classifications */
+	spam_result_display_mode?: SpamResultDisplayMode;
+	/** How much spam-indicator detail to include in spam notes */
+	spam_indicators_display?: SpamIndicatorsDisplayMode;
 	/** Conditional run gates for this mapping (CB-FORMS-006) */
 	conditions?: MappingConditionsConfig;
 	/** Prompt overrides for this mapping */
@@ -752,6 +772,10 @@ export interface FormActionSettings {
 	execution_mode?: ExecutionMode;
 	/** Batch settings for after-submission execution (CB-EXEC-003/004) */
 	batch_settings?: BatchSettings;
+	/** Resolved status of the linked local-first custom action */
+	linked_action_status?: LinkedActionStatus;
+	/** Whether the linked local-first custom action needs repair */
+	repair_state?: RepairState;
 	/** Additional runtime settings */
 	[key: string]: unknown;
 }
@@ -766,6 +790,8 @@ export interface FormActionLinkage {
 	action_name_label?: string;
 	/** Execution mode: validation (sync) or after_submission (async) - CB-EXEC-001/002 */
 	execution_mode?: ExecutionMode;
+	linked_action_status?: LinkedActionStatus;
+	repair_state?: RepairState;
 	settings?: FormActionSettings;
 }
 
@@ -1072,6 +1098,10 @@ export interface FormActionConfig {
 	suppress_notifications_on_spam?: boolean;
 	/** Default policy for skipping downstream work when spam is confirmed */
 	skip_downstream_on_spam?: boolean;
+	/** Default policy for when to store spam notes for this action on this form */
+	spam_result_display_mode?: SpamResultDisplayMode;
+	/** Default policy for how much indicator detail spam notes should include */
+	spam_indicators_display?: SpamIndicatorsDisplayMode;
 	/** Site context inclusion: 'global' | 'always' | 'never' */
 	include_site_context?: 'global' | 'always' | 'never';
 	/** Structured model selection default for this action scope */

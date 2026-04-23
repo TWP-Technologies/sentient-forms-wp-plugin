@@ -72,14 +72,33 @@ class Sentient_Forms_Action_Templates_Repository extends Sentient_Forms_Local_Re
         }
 
         $row['created_at'] = $now;
+        $previous_suppress = $this->wpdb->suppress_errors( true );
         $inserted = $this->wpdb->insert(
             $this->table_name(),
             $row,
             [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ]
         );
+        $this->wpdb->suppress_errors( $previous_suppress );
 
         if ( false === $inserted )
         {
+            $existing_after_insert = $this->get_by_code( $code );
+            if ( $existing_after_insert )
+            {
+                $updated = $this->wpdb->update(
+                    $this->table_name(),
+                    $row,
+                    [ 'id' => (int) $existing_after_insert['id'] ],
+                    [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ],
+                    [ '%d' ]
+                );
+
+                if ( false !== $updated )
+                {
+                    return (int) $existing_after_insert['id'];
+                }
+            }
+
             return new WP_Error( 'sentient_forms_db_insert_failed', __( 'Template could not be created.', 'sentient-forms' ) );
         }
 
@@ -112,6 +131,27 @@ class Sentient_Forms_Action_Templates_Repository extends Sentient_Forms_Local_Re
             'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE is_active = 1 ORDER BY display_name ASC',
             ARRAY_A
         ) ?: [];
+        return array_map( [ $this, 'decode_row' ], $rows );
+    }
+
+    public function list_by_source( string $source, bool $active_only = true ): array
+    {
+        $source = sanitize_key( $source );
+        $wpdb   = $this->wpdb;
+        $sql    = 'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE source = %s';
+
+        if ( $active_only )
+        {
+            $sql .= ' AND is_active = 1';
+        }
+
+        $sql .= ' ORDER BY display_name ASC';
+
+        $rows = $wpdb->get_results(
+            $wpdb->prepare( $sql, $source ),
+            ARRAY_A
+        ) ?: [];
+
         return array_map( [ $this, 'decode_row' ], $rows );
     }
 

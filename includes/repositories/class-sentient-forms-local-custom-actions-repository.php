@@ -113,14 +113,33 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
         }
 
         $row['created_at'] = $now;
+        $previous_suppress = $this->wpdb->suppress_errors( true );
         $inserted = $this->wpdb->insert(
             $this->table_name(),
             $row,
             [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
         );
+        $this->wpdb->suppress_errors( $previous_suppress );
 
         if ( false === $inserted )
         {
+            $existing_after_insert = $this->get_by_code( $code );
+            if ( $existing_after_insert )
+            {
+                $updated = $this->wpdb->update(
+                    $this->table_name(),
+                    $row,
+                    [ 'id' => (int) $existing_after_insert['id'] ],
+                    [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ],
+                    [ '%d' ]
+                );
+
+                if ( false !== $updated )
+                {
+                    return (int) $existing_after_insert['id'];
+                }
+            }
+
             return new WP_Error( 'sentient_forms_db_insert_failed', __( 'Custom action could not be created.', 'sentient-forms' ) );
         }
 
@@ -244,14 +263,56 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
 
     public function list( string $status = 'active' ): array
     {
+        return $this->list_filtered(
+            [
+                'status' => $status,
+            ]
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $args
+     */
+    public function list_filtered( array $args = [] ): array
+    {
+        $status           = isset( $args['status'] ) ? sanitize_key( (string) $args['status'] ) : null;
+        $include_archived = ! empty( $args['include_archived'] );
+        $template_id      = isset( $args['template_id'] ) ? absint( $args['template_id'] ) : 0;
+
         $wpdb = $this->wpdb;
-        $rows = $wpdb->get_results(
-            $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE status = %s ORDER BY updated_at DESC',
-                sanitize_key( $status )
-            ),
-            ARRAY_A
-        ) ?: [];
+        $sql  = 'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE 1 = 1';
+        $params = [];
+
+        if ( null !== $status && '' !== $status )
+        {
+            $sql      .= ' AND status = %s';
+            $params[] = $status;
+        }
+        elseif ( ! $include_archived )
+        {
+            $sql .= " AND status = 'active'";
+        }
+
+        if ( $template_id > 0 )
+        {
+            $sql      .= ' AND template_id = %d';
+            $params[] = $template_id;
+        }
+
+        $sql .= ' ORDER BY updated_at DESC, id DESC';
+
+        if ( [] !== $params )
+        {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare( $sql, ...$params ),
+                ARRAY_A
+            ) ?: [];
+        }
+        else
+        {
+            $rows = $wpdb->get_results( $sql, ARRAY_A ) ?: [];
+        }
+
         return array_map( [ $this, 'decode_row' ], $rows );
     }
 
@@ -267,6 +328,35 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
             [ '%s', '%s' ],
             [ '%d' ]
         );
+    }
+
+    public function find_by_template_id( int $template_id, ?string $status = 'active' ): ?array
+    {
+        $template_id = absint( $template_id );
+        if ( $template_id <= 0 )
+        {
+            return null;
+        }
+
+        $status = null !== $status ? sanitize_key( $status ) : null;
+        $wpdb   = $this->wpdb;
+        $sql    = 'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE template_id = %d';
+        $params = [ $template_id ];
+
+        if ( null !== $status && '' !== $status )
+        {
+            $sql      .= ' AND status = %s';
+            $params[] = $status;
+        }
+
+        $sql .= ' ORDER BY updated_at DESC, id DESC LIMIT 1';
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare( $sql, ...$params ),
+            ARRAY_A
+        );
+
+        return $row ? $this->decode_row( $row ) : null;
     }
 
     private function decode_row( array $row ): array

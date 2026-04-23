@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
 	ensureGravityForm,
 	findEntryIdByEmail,
@@ -37,6 +37,14 @@ type LocalExecutionEvent = {
 	provider?: string;
 	model?: string;
 };
+
+async function ensureDirectOpenRouterBuilder(page: Page, drawer: Locator): Promise<void> {
+	const builder = drawer.getByTestId('local-openrouter-builder');
+	if (!(await builder.isVisible({ timeout: 1000 }).catch(() => false))) {
+		await page.getByTestId('create-kind-local-openrouter').click();
+	}
+	await expect(builder).toBeVisible();
+}
 
 function seedLocalOpenRouterProvider(label: string): LocalProviderSeed {
 	const output = runWpEval(
@@ -198,7 +206,9 @@ echo 'ok';
 	}
 }
 
-function setLocalOpenRouterMockMode(mode: 'success' | 'missing_auth_wp_error' | 'http_429' | 'malformed_json'): void {
+function setLocalOpenRouterMockMode(
+	mode: 'success' | 'missing_auth_wp_error' | 'http_429' | 'malformed_json'
+): void {
 	const output = runWpEval(
 		`
 $mode = getenv( 'MOCK_MODE' ) ?: 'success';
@@ -451,9 +461,7 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
 		const drawer = page.getByTestId('link-action-form');
 		await expect(drawer).toBeVisible();
-		await drawer.getByRole('button', { name: /^Direct OpenRouter$/ }).click();
-
-		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
+		await ensureDirectOpenRouterBuilder(page, drawer);
 		await expect(drawer.getByTestId('local-builder-template')).toHaveValue('spam_filter');
 		await drawer.getByTestId('local-builder-credential').selectOption(String(seed.credential_id));
 		await expect(drawer.getByTestId('local-builder-result-meta-key')).toHaveValue(
@@ -471,11 +479,15 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 
 		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #');
 		const mappings = getLocalFormMappings(formId);
+		const expectedHook =
+			localOpenRouterBrowserExecutionMode === 'sync'
+				? 'gform_validation'
+				: 'gform_after_submission';
 		expect(mappings).toHaveLength(1);
 		expect(mappings[0]).toMatchObject({
 			form_source: 'gravity_forms',
 			form_id: String(formId),
-			hook: 'gform_after_submission',
+			hook: expectedHook,
 			action_kind: 'custom_action',
 			execution_mode: localOpenRouterBrowserExecutionMode,
 			enabled: true
@@ -520,7 +532,7 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 						(note) =>
 							note.user_name === 'Sentient Forms AI' &&
 							note.note_type === 'sentient_forms_local_action' &&
-							note.value.includes('Sentient Forms spam review:') &&
+							note.value.includes('Sentient Forms AI classified this entry as SPAM') &&
 							note.value.includes('Browser local-first spam filter completed.')
 					),
 				{
@@ -532,7 +544,7 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 			(note) =>
 				note.user_name === 'Sentient Forms AI' &&
 				note.note_type === 'sentient_forms_local_action' &&
-				note.value.includes('Sentient Forms spam review:')
+				note.value.includes('Sentient Forms AI classified this entry as SPAM')
 		);
 		expect(localActionNotes).toHaveLength(1);
 		expect(localActionNotes[0]?.value).toContain('Browser local-first spam filter completed.');
@@ -573,8 +585,7 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
 		const drawer = page.getByTestId('link-action-form');
 		await expect(drawer).toBeVisible();
-		await drawer.getByRole('button', { name: /^Direct OpenRouter$/ }).click();
-		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
+		await ensureDirectOpenRouterBuilder(page, drawer);
 		await drawer.getByTestId('local-builder-credential').selectOption(String(seed.credential_id));
 		await drawer
 			.getByTestId('local-builder-action-name')
@@ -622,9 +633,9 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 				runScheduler: localOpenRouterBrowserExecutionMode === 'async'
 			}
 		);
-		expect(
-			failureNotes.some((note) => note.value.includes('Missing Authentication header'))
-		).toBe(true);
+		expect(failureNotes.some((note) => note.value.includes('Missing Authentication header'))).toBe(
+			true
+		);
 
 		await ensureSentientFormsSpa(page, `/actions/gravity_forms/${formId}`);
 		const executionStatusError = page

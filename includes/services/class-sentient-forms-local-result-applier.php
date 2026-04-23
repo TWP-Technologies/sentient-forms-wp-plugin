@@ -150,6 +150,19 @@ class Sentient_Forms_Local_Result_Applier
 
         if ( $this->spam_effect_enabled( $effects ) )
         {
+            $spam_note_result = $this->apply_spam_note( $entry_id, $effects, $result );
+            if ( true === $spam_note_result )
+            {
+                $applied[] = 'spam_note';
+            }
+            elseif ( 'not_configured' !== $spam_note_result && 'disabled' !== $spam_note_result && 'classification_hidden' !== $spam_note_result )
+            {
+                $skipped[] = [
+                    'effect' => 'spam_note',
+                    'reason' => $spam_note_result,
+                ];
+            }
+
             $spam_result = $this->apply_spam_status( $entry_id, $effects, $result );
             if ( true === $spam_result )
             {
@@ -234,6 +247,52 @@ class Sentient_Forms_Local_Result_Applier
         return true;
     }
 
+    private function apply_spam_note( int $entry_id, array $effects, array $result ): true | string
+    {
+        $config = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
+        $note   = is_array( $config['note'] ?? null ) ? $config['note'] : null;
+        if ( ! is_array( $note ) )
+        {
+            return 'not_configured';
+        }
+
+        if ( ! class_exists( 'GFFormsModel' ) || ! method_exists( 'GFFormsModel', 'add_note' ) )
+        {
+            return 'gf_notes_unavailable';
+        }
+
+        $display_mode = $this->normalize_spam_result_display_mode( $note['result_display_mode'] ?? 'all_results' );
+        if ( 'none' === $display_mode )
+        {
+            return 'disabled';
+        }
+
+        $classification = $this->extract_spam_classification( $result );
+        if ( '' === $classification )
+        {
+            return 'classification_not_found';
+        }
+
+        if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) && 'all_results' !== $display_mode )
+        {
+            return 'classification_hidden';
+        }
+
+        $note_body = $this->format_spam_note( $result, $classification, $note['indicators_display'] ?? 'simple' );
+        if ( '' === trim( $note_body ) )
+        {
+            return 'empty_note';
+        }
+
+        if ( $this->entry_note_exists( $entry_id, 'Sentient Forms AI', $note_body ) )
+        {
+            return true;
+        }
+
+        GFFormsModel::add_note( $entry_id, 0, 'Sentient Forms AI', sanitize_textarea_field( $note_body ), 'sentient_forms_local_action' );
+        return true;
+    }
+
     private function apply_spam_status( int $entry_id, array $effects, array $result ): true | string
     {
         $config              = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
@@ -253,6 +312,10 @@ class Sentient_Forms_Local_Result_Applier
 
         if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
+            if ( function_exists( 'gform_update_meta' ) && '' !== $classification )
+            {
+                gform_update_meta( $entry_id, 'sentient_forms_spam_classification', $classification );
+            }
             return 'classification_not_spam';
         }
 
@@ -306,6 +369,184 @@ class Sentient_Forms_Local_Result_Applier
         }
 
         return ! empty( $effects['mark_as_spam'] );
+    }
+
+    private function normalize_spam_result_display_mode( mixed $value ): string
+    {
+        $value = sanitize_key( (string) $value );
+
+        return match ( $value ) {
+            'entry_note' => 'all_results',
+            'silent'     => 'none',
+            'none',
+            'spam_only',
+            'all_results' => $value,
+            default      => 'all_results',
+        };
+    }
+
+    private function normalize_spam_indicators_display( mixed $value ): string
+    {
+        return 'detailed' === sanitize_key( (string) $value ) ? 'detailed' : 'simple';
+    }
+
+    private function extract_spam_classification( array $result ): string
+    {
+        $classification = strtolower(
+            sanitize_key(
+                (string) (
+                    $this->resolve_path( $result, 'structured.classification' )
+                    ?? $this->resolve_path( $result, 'classification' )
+                    ?? ''
+                )
+            )
+        );
+
+        if ( '' !== $classification )
+        {
+            return $classification;
+        }
+
+        $is_spam = $this->resolve_path( $result, 'structured.is_spam' );
+        if ( true === $is_spam || 'true' === strtolower( (string) $is_spam ) )
+        {
+            return 'spam';
+        }
+
+        return '';
+    }
+
+    private function extract_spam_confidence( array $result ): ?float
+    {
+        $confidence = $this->resolve_path( $result, 'structured.confidence' );
+        if ( is_numeric( $confidence ) )
+        {
+            return (float) $confidence;
+        }
+
+        $confidence = $this->resolve_path( $result, 'confidence' );
+        return is_numeric( $confidence ) ? (float) $confidence : null;
+    }
+
+    private function extract_spam_justification( array $result ): string
+    {
+        $justification = $this->resolve_path( $result, 'structured.justification' );
+        if ( is_scalar( $justification ) )
+        {
+            return sanitize_textarea_field( (string) $justification );
+        }
+
+        $justification = $this->resolve_path( $result, 'justification' );
+        return is_scalar( $justification ) ? sanitize_textarea_field( (string) $justification ) : '';
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function extract_spam_indicators( array $result ): array
+    {
+        $indicators = $this->resolve_path( $result, 'structured.indicators' );
+        if ( is_array( $indicators ) )
+        {
+            return $indicators;
+        }
+
+        $indicators = $this->resolve_path( $result, 'indicators' );
+        return is_array( $indicators ) ? $indicators : [];
+    }
+
+    private function format_spam_note( array $result, string $classification, mixed $indicators_display ): string
+    {
+        $confidence     = $this->extract_spam_confidence( $result );
+        $justification  = $this->extract_spam_justification( $result );
+        $indicators     = $this->extract_spam_indicators( $result );
+        $display_mode   = $this->normalize_spam_indicators_display( $indicators_display );
+        $confidence_pct = null !== $confidence ? round( $confidence * 100 ) . '%' : 'N/A';
+        $is_spam        = in_array( $classification, [ 'spam', 'likely_spam' ], true );
+        $status_label   = $is_spam ? __( 'SPAM', 'sentient-forms' ) : __( 'HAM', 'sentient-forms' );
+        $icon           = $is_spam ? '🚫' : '✅';
+
+        $note = sprintf(
+            /* translators: 1: icon, 2: classification label, 3: confidence percentage */
+            __( '%1$s Sentient Forms AI classified this entry as %2$s (%3$s confidence)', 'sentient-forms' ),
+            $icon,
+            $status_label,
+            $confidence_pct,
+        );
+
+        if ( '' !== $justification )
+        {
+            $note .= "\n\n" . $justification;
+        }
+
+        if ( 'detailed' === $display_mode && [] !== $indicators )
+        {
+            $note .= "\n\n" . __( 'Signals Detected:', 'sentient-forms' );
+            foreach ( $indicators as $indicator )
+            {
+                if ( ! is_array( $indicator ) )
+                {
+                    continue;
+                }
+
+                $type     = sanitize_text_field( (string) ( $indicator['type'] ?? __( 'Signal', 'sentient-forms' ) ) );
+                $evidence = sanitize_text_field( (string) ( $indicator['evidence'] ?? '' ) );
+                $weight   = sanitize_text_field( (string) ( $indicator['weight'] ?? '' ) );
+                $note    .= sprintf( "\n- %s%s%s",
+                    $type,
+                    '' !== $weight ? ' (' . $weight . ')' : '',
+                    '' !== $evidence ? ': ' . $evidence : ''
+                );
+            }
+        }
+
+        return $note;
+    }
+
+    private function entry_note_exists( int $entry_id, string $note_author, string $note_content ): bool
+    {
+        $notes = [];
+
+        if ( class_exists( 'GFFormsModel' ) && is_callable( [ 'GFFormsModel', 'get_lead_notes' ] ) )
+        {
+            try
+            {
+                $notes = GFFormsModel::get_lead_notes( $entry_id );
+            } catch ( Throwable $throwable )
+            {
+                $notes = [];
+            }
+        }
+
+        if ( ! is_array( $notes ) )
+        {
+            return false;
+        }
+
+        foreach ( $notes as $note )
+        {
+            if ( is_array( $note ) )
+            {
+                $stored_author = (string) ( $note['user_name'] ?? $note['note_author'] ?? $note['author'] ?? '' );
+                $stored_value  = (string) ( $note['value'] ?? $note['note'] ?? $note['content'] ?? '' );
+            }
+            elseif ( is_object( $note ) )
+            {
+                $stored_author = (string) ( $note->user_name ?? $note->note_author ?? $note->author ?? '' );
+                $stored_value  = (string) ( $note->value ?? $note->note ?? $note->content ?? '' );
+            }
+            else
+            {
+                continue;
+            }
+
+            if ( $stored_author === $note_author && $stored_value === $note_content )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

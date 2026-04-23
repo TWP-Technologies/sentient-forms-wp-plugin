@@ -1042,6 +1042,14 @@ class Sentient_Forms_Local_Import_Service
             if ( null === $action_id )
             {
                 $action = $this->custom_actions->get_by_code( $action_code );
+                if ( $action && 'active' !== (string) ( $action['status'] ?? '' ) )
+                {
+                    return new WP_Error(
+                        'sentient_forms_import_action_inactive',
+                        __( 'An imported form mapping references a custom action that is archived or inactive locally.', 'sentient-forms' )
+                    );
+                }
+
                 $action_id = $action ? (int) $action['id'] : null;
             }
 
@@ -1221,6 +1229,14 @@ class Sentient_Forms_Local_Import_Service
         if ( ! $existing )
         {
             return new WP_Error( 'sentient_forms_action_reference_not_found', __( 'The referenced custom action is not in the bundle or local table.', 'sentient-forms' ) );
+        }
+
+        if ( 'active' !== (string) ( $existing['status'] ?? '' ) )
+        {
+            return new WP_Error(
+                'sentient_forms_action_reference_inactive',
+                __( 'The referenced custom action exists locally but is archived or inactive.', 'sentient-forms' )
+            );
         }
 
         return [
