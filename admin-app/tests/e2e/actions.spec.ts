@@ -685,6 +685,52 @@ test.describe('Actions admin flows', () => {
 		await expect(card.getByText('No actions configured')).toHaveCount(0);
 	});
 
+	test('keeps overview form cards readable at constrained WordPress admin width', async ({
+		page
+	}) => {
+		await page.setViewportSize({ width: 780, height: 900 });
+		const readableForms = [
+			baseForms[0],
+			{
+				...baseForms[0],
+				id: 124,
+				title: 'Playwright QA Form Staging Notes'
+			},
+			{
+				...baseForms[0],
+				id: 125,
+				title: 'Test Force Form'
+			},
+			{
+				...baseForms[0],
+				id: 126,
+				title: 'Trust Form New'
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: readableForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		const card = page.getByTestId('actions-form-card-124');
+		await expect(card).toBeVisible();
+		const cardBox = await card.boundingBox();
+		expect(cardBox?.width ?? 0).toBeGreaterThan(300);
+
+		const title = card.getByText('Playwright QA Form Staging Notes');
+		const titleBox = await title.boundingBox();
+		expect(titleBox?.height ?? 999).toBeLessThan(72);
+	});
+
 	test('uses the runtime form disable flag for overview automation status', async ({ page }) => {
 		const runtimeEnabledForms = [
 			{

@@ -940,7 +940,7 @@
 						/>
 					</div>
 				{:else}
-				<div class="sf:mt-4 sf:grid sf:gap-4 sf:md:grid-cols-2 sf:xl:grid-cols-3">
+				<div class="sf:mt-4 sf:grid sf:gap-4 sf:lg:grid-cols-2 sf:xl:grid-cols-3">
 					{#each displayedForms as form (form.id)}
 						{@const actionCount = configuredActionCount(form)}
 						{@const enabled = isFormEnabled(form)}
