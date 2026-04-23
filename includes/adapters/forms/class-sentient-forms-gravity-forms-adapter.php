@@ -3786,7 +3786,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         );
 
         // CA-EXEC-001: Store structured output validity for efficient querying.
-        $structured_valid = ! empty( $result['result_data']['structured_output_valid'] );
+        $structured_valid = $this->extract_structured_output_valid( $result );
         $this->persist_entry_runtime_meta( $entry_id, 'sentient_forms_structured_output_valid', $structured_valid ? '1' : '0' );
 
         if ( empty( $classification ) )
@@ -4818,7 +4818,22 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
     private function extract_structured_output_valid( array $result ): bool
     {
+        if ( ! empty( $result['structured_output_valid'] ) )
+        {
+            return true;
+        }
+
+        if ( ! empty( $result['result']['structured_output_valid'] ) )
+        {
+            return true;
+        }
+
         if ( ! empty( $result['result_data']['structured_output_valid'] ) )
+        {
+            return true;
+        }
+
+        if ( ! empty( $result['evaluation_payload']['result']['structured_output_valid'] ) )
         {
             return true;
         }

@@ -611,6 +611,34 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'wp_hook', $audit[0]['results'][1]['type'] ?? null );
     }
 
+    public function test_finalize_async_success_persists_local_first_structured_output_validity(): void
+    {
+        $entry_id = 702;
+
+        $this->adapter->finalize_async_success(
+            [
+                'entry_id'          => $entry_id,
+                'form_id'           => 45,
+                'central_action_id' => 'spam_detection_v1',
+                'action_name_label' => 'Spam Detection',
+            ],
+            [
+                'execution_request_id' => 'req-local-structured-valid',
+                'status'               => 'succeeded',
+                'result'               => [
+                    'structured_output_valid' => true,
+                    'structured'              => [
+                        'classification' => 'ham',
+                        'confidence'     => 0.95,
+                        'justification'  => 'Legitimate inquiry.',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( '1', gform_get_meta( $entry_id, 'sentient_forms_structured_output_valid' ) );
+    }
+
     /**
      * T-PHP-001: Test that spam classification extracts correctly from CPS results.
      * Tests FR-001: Auto spam marking extracts classification from various result structures.

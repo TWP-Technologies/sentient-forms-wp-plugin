@@ -2054,18 +2054,34 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
         $form_source  = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
         $form_id      = sanitize_text_field( (string) (int) $request->get_param( 'form_id' ) );
-        $settings     = $request->has_param( 'settings' ) ? $this->sanitize_settings( $request->get_param( 'settings' ) ) : [];
-        $trigger_hooks = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
+        $settings        = $request->has_param( 'settings' ) ? $this->sanitize_settings( $request->get_param( 'settings' ) ) : [];
+        $definition_hooks = array_values(
+            array_filter(
+                array_map(
+                    'sanitize_key',
+                    is_array( $definition['hooks'] ?? null ) ? $definition['hooks'] : []
+                )
+            )
+        );
+        $requested_hooks  = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
+        $trigger_hooks    = $requested_hooks;
+
+        if ( [] !== $requested_hooks && [] !== $definition_hooks )
+        {
+            $trigger_hooks = array_values( array_intersect( $requested_hooks, $definition_hooks ) );
+            if ( [] === $trigger_hooks )
+            {
+                return $this->prepare_error_response(
+                    'rest_invalid_bundled_action_hooks',
+                    __( 'Selected trigger hooks are not supported by this bundled action template.', 'sentient-forms' ),
+                    400
+                );
+            }
+        }
+
         if ( [] === $trigger_hooks )
         {
-            $trigger_hooks = array_values(
-                array_filter(
-                    array_map(
-                        'sanitize_key',
-                        is_array( $definition['hooks'] ?? null ) ? $definition['hooks'] : []
-                    )
-                )
-            );
+            $trigger_hooks = $definition_hooks;
         }
 
         if ( [] === $trigger_hooks )

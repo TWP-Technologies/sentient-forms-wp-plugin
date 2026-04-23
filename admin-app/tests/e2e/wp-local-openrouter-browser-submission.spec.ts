@@ -597,6 +597,22 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		await expect(submitButton).toContainText('Create Direct OpenRouter action');
 		await submitButton.click();
 
+		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #');
+		const mappings = getLocalFormMappings(formId);
+		const expectedHook =
+			localOpenRouterBrowserExecutionMode === 'sync'
+				? 'gform_validation'
+				: 'gform_after_submission';
+		expect(mappings).toHaveLength(1);
+		expect(mappings[0]).toMatchObject({
+			form_source: 'gravity_forms',
+			form_id: String(formId),
+			hook: expectedHook,
+			action_kind: 'custom_action',
+			execution_mode: localOpenRouterBrowserExecutionMode,
+			enabled: true
+		});
+
 		const email = `${token}@example.test`;
 		const baselineEntryId = getLatestEntryId(formId);
 		await submitFrontEndGravityForm(page, formUrl, formId, {
