@@ -950,12 +950,12 @@
 						{@const providerActive = isProviderFormActive(form)}
 						{@const health = getHealthBadge(form)}
 						<Card data-testid={`actions-form-card-${form.id}`}>
-							<div class="sf:flex sf:flex-col sf:items-start sf:gap-3 sf:sm:flex-row sf:sm:justify-between">
+							<div class="sf:flex sf:flex-col sf:items-start sf:gap-3">
 								<div class="sf:min-w-0 sf:flex-1">
 									<p class="sf:font-semibold sf:text-slate-800 sf:break-words">{form.title}</p>
 									<p class="sf:text-xs sf:text-slate-600">ID: {form.id}</p>
 								</div>
-								<div class="sf:flex sf:flex-col sf:items-start sf:gap-1 sf:sm:items-end">
+								<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-1">
 									<Badge variant={providerActive ? 'success' : 'warning'}>
 										{providerActive ? 'Form active' : 'Form inactive'}
 									</Badge>

@@ -767,6 +767,51 @@ test.describe('Actions admin flows', () => {
 		expect(labelBox?.height ?? 999).toBeLessThan(80);
 	});
 
+	test('keeps overview form titles readable in desktop WordPress admin width', async ({ page }) => {
+		await page.setViewportSize({ width: 1280, height: 900 });
+
+		const readableForms = [
+			{
+				...baseForms[0],
+				id: 124,
+				title: 'Playwright QA Form Staging Test'
+			},
+			{
+				...baseForms[0],
+				id: 125,
+				title: 'Test for Fred'
+			},
+			{
+				...baseForms[0],
+				id: 126,
+				title: 'Test for Fred New'
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: readableForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		for (const form of readableForms) {
+			const card = page.getByTestId(`actions-form-card-${form.id}`);
+			await expect(card).toBeVisible();
+
+			const title = card.getByText(form.title);
+			const titleBox = await title.boundingBox();
+
+			expect(titleBox?.height ?? 999).toBeLessThan(96);
+		}
+	});
+
 	test('uses the runtime form disable flag for overview automation status', async ({ page }) => {
 		const runtimeEnabledForms = [
 			{
