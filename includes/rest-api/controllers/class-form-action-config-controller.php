@@ -628,6 +628,8 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
             'model_selection',
             'suppress_notifications_on_spam',
             'skip_downstream_on_spam',
+            'spam_result_display_mode',
+            'spam_indicators_display',
         ];
 
         foreach ( $updateable_fields as $field )

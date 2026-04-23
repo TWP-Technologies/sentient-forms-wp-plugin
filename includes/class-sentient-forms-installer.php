@@ -445,11 +445,18 @@ class Sentient_Forms_Installer
             return;
         }
 
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Installer repair inspects plugin-owned local-first custom tables during activation/upgrade only.
         $rows = $wpdb->get_results(
-            "SELECT m.id AS mapping_id, m.action_id, a.id AS custom_action_id, a.status AS custom_action_status
-            FROM {$mappings_table} m
-            LEFT JOIN {$actions_table} a ON a.id = m.action_id
-            WHERE m.enabled = 1 AND m.action_kind = 'custom_action'",
+            $wpdb->prepare(
+                'SELECT m.id AS mapping_id, m.action_id, a.id AS custom_action_id, a.status AS custom_action_status
+                FROM %i m
+                LEFT JOIN %i a ON a.id = m.action_id
+                WHERE m.enabled = %d AND m.action_kind = %s',
+                $mappings_table,
+                $actions_table,
+                1,
+                'custom_action'
+            ),
             ARRAY_A
         ) ?: [];
 
@@ -465,6 +472,7 @@ class Sentient_Forms_Installer
             $custom_action_id = absint( $row['custom_action_id'] ?? 0 );
             if ( $custom_action_id <= 0 )
             {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Installer repair updates a plugin-owned custom table whose name is derived from the trusted WordPress prefix.
                 $wpdb->update(
                     $mappings_table,
                     [
@@ -481,6 +489,7 @@ class Sentient_Forms_Installer
             $status = sanitize_key( (string) ( $row['custom_action_status'] ?? '' ) );
             if ( 'archived' === $status )
             {
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,PluginCheck.Security.DirectDB.UnescapedDBParameter -- Installer repair updates a plugin-owned custom table whose name is derived from the trusted WordPress prefix.
                 $wpdb->update(
                     $actions_table,
                     [

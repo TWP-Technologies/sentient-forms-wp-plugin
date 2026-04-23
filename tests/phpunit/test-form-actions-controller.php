@@ -1721,6 +1721,38 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'enterprise', $stored['conditions_json']['root']['value'] ?? null );
     }
 
+    public function test_update_form_action_item_reactivates_archived_local_action_when_enabled(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        global $wpdb;
+        $actions  = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+
+        $this->assertTrue( $actions->update_status( $record['action_id'], 'archived' ) );
+        $updated_mapping = $mappings->update( $record['mapping_id'], [ 'enabled' => false ] );
+        $this->assertIsArray( $updated_mapping );
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $request->set_param( 'is_action_enabled_for_form', true );
+
+        $response = $this->controller->update_form_action_item( $request );
+        $data     = $response->get_data();
+
+        $stored_action  = $actions->get( $record['action_id'] );
+        $stored_mapping = $mappings->get( $record['mapping_id'] );
+
+        $this->assertSame( 'local_first_' . $record['mapping_id'], $data['local_mapping_id'] ?? null );
+        $this->assertTrue( $data['is_action_enabled_for_form'] ?? false );
+        $this->assertSame( 'active', $data['linked_action_status'] ?? null );
+        $this->assertSame( 'ok', $data['repair_state'] ?? null );
+        $this->assertSame( 'active', $stored_action['status'] ?? null );
+        $this->assertTrue( $stored_mapping['enabled'] ?? false );
+    }
+
     public function test_update_form_action_item_syncs_local_first_spam_note_controls_to_effect_mapping(): void
     {
         $record = $this->create_local_first_mapping_fixture( '1' );

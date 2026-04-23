@@ -279,38 +279,61 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
         $include_archived = ! empty( $args['include_archived'] );
         $template_id      = isset( $args['template_id'] ) ? absint( $args['template_id'] ) : 0;
 
-        $wpdb = $this->wpdb;
-        $sql  = 'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE 1 = 1';
-        $params = [];
+        $wpdb         = $this->wpdb;
+        $status_filter = null;
 
         if ( null !== $status && '' !== $status )
         {
-            $sql      .= ' AND status = %s';
-            $params[] = $status;
+            $status_filter = $status;
         }
         elseif ( ! $include_archived )
         {
-            $sql .= " AND status = 'active'";
+            $status_filter = 'active';
         }
 
-        if ( $template_id > 0 )
-        {
-            $sql      .= ' AND template_id = %d';
-            $params[] = $template_id;
-        }
-
-        $sql .= ' ORDER BY updated_at DESC, id DESC';
-
-        if ( [] !== $params )
+        if ( $template_id > 0 && null !== $status_filter )
         {
             $rows = $wpdb->get_results(
-                $wpdb->prepare( $sql, ...$params ),
+                $wpdb->prepare(
+                    'SELECT * FROM %i WHERE status = %s AND template_id = %d ORDER BY updated_at DESC, id DESC',
+                    $this->table_name(),
+                    $status_filter,
+                    $template_id
+                ),
+                ARRAY_A
+            ) ?: [];
+        }
+        elseif ( $template_id > 0 )
+        {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    'SELECT * FROM %i WHERE template_id = %d ORDER BY updated_at DESC, id DESC',
+                    $this->table_name(),
+                    $template_id
+                ),
+                ARRAY_A
+            ) ?: [];
+        }
+        elseif ( null !== $status_filter )
+        {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    'SELECT * FROM %i WHERE status = %s ORDER BY updated_at DESC, id DESC',
+                    $this->table_name(),
+                    $status_filter
+                ),
                 ARRAY_A
             ) ?: [];
         }
         else
         {
-            $rows = $wpdb->get_results( $sql, ARRAY_A ) ?: [];
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    'SELECT * FROM %i ORDER BY updated_at DESC, id DESC',
+                    $this->table_name()
+                ),
+                ARRAY_A
+            ) ?: [];
         }
 
         return array_map( [ $this, 'decode_row' ], $rows );
@@ -339,20 +362,29 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
         }
 
         $status = null !== $status ? sanitize_key( $status ) : null;
-        $wpdb   = $this->wpdb;
-        $sql    = 'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE template_id = %d';
-        $params = [ $template_id ];
+        $wpdb = $this->wpdb;
 
-        if ( null !== $status && '' !== $status )
+        if ( null === $status || '' === $status )
         {
-            $sql      .= ' AND status = %s';
-            $params[] = $status;
+            $row = $wpdb->get_row(
+                $wpdb->prepare(
+                    'SELECT * FROM %i WHERE template_id = %d ORDER BY updated_at DESC, id DESC LIMIT 1',
+                    $this->table_name(),
+                    $template_id
+                ),
+                ARRAY_A
+            );
+
+            return $row ? $this->decode_row( $row ) : null;
         }
 
-        $sql .= ' ORDER BY updated_at DESC, id DESC LIMIT 1';
-
         $row = $wpdb->get_row(
-            $wpdb->prepare( $sql, ...$params ),
+            $wpdb->prepare(
+                'SELECT * FROM %i WHERE template_id = %d AND status = %s ORDER BY updated_at DESC, id DESC LIMIT 1',
+                $this->table_name(),
+                $template_id,
+                $status
+            ),
             ARRAY_A
         );
 

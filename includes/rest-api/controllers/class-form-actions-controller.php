@@ -2604,7 +2604,17 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
                 if ( $request->has_param( 'is_action_enabled_for_form' ) )
                 {
-                    $update['enabled'] = rest_sanitize_boolean( $request->get_param( 'is_action_enabled_for_form' ) );
+                    $enabled = rest_sanitize_boolean( $request->get_param( 'is_action_enabled_for_form' ) );
+                    if ( $enabled )
+                    {
+                        $repair = $this->repair_local_first_action_before_enable( $local_first_row );
+                        if ( is_wp_error( $repair ) )
+                        {
+                            return $repair;
+                        }
+                    }
+
+                    $update['enabled'] = $enabled;
                 }
 
                 if ( $request->has_param( 'settings' ) )
@@ -2723,6 +2733,62 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         );
 
         return $this->prepare_item_for_response( $linkage );
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     */
+    private function repair_local_first_action_before_enable( array $mapping ): true | WP_Error
+    {
+        if ( ! $this->local_custom_actions )
+        {
+            return $this->prepare_error_response(
+                'rest_local_custom_actions_unavailable',
+                __( 'Local custom actions are unavailable.', 'sentient-forms' ),
+                503
+            );
+        }
+
+        $action_id = absint( $mapping['action_id'] ?? 0 );
+        if ( $action_id <= 0 )
+        {
+            return $this->prepare_error_response(
+                'rest_local_first_mapping_needs_repair',
+                __( 'This local action mapping is missing its linked action and cannot be enabled until it is repaired.', 'sentient-forms' ),
+                409
+            );
+        }
+
+        $custom_action = $this->local_custom_actions->get( $action_id );
+        if ( ! is_array( $custom_action ) )
+        {
+            return $this->prepare_error_response(
+                'rest_local_first_mapping_needs_repair',
+                __( 'This local action mapping points to an action that no longer exists and cannot be enabled until it is repaired.', 'sentient-forms' ),
+                409
+            );
+        }
+
+        $status = isset( $custom_action['status'] ) && is_scalar( $custom_action['status'] )
+            ? sanitize_key( (string) $custom_action['status'] )
+            : '';
+
+        if ( 'active' === $status )
+        {
+            return true;
+        }
+
+        $updated = $this->local_custom_actions->update_status( $action_id, 'active' );
+        if ( ! $updated )
+        {
+            return $this->prepare_error_response(
+                'rest_local_first_action_reactivate_failed',
+                __( 'This local action could not be reactivated, so the mapping was not enabled.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        return true;
     }
 
     /**

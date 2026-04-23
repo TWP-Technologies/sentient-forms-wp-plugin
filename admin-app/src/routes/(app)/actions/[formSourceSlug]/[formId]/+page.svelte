@@ -1559,7 +1559,9 @@
 	}
 
 	function actionTypeLabel(linkage: FormActionLinkage): string {
-		if (linkage.action_type_indicator === 'local_first') return 'Direct OpenRouter';
+		if (linkage.action_type_indicator === 'local_first') {
+			return definitionLookup[linkage.central_action_id] ? 'Built-in action' : 'Direct OpenRouter';
+		}
 		if (linkage.action_type_indicator === 'custom') return 'Custom';
 		return 'Action template';
 	}

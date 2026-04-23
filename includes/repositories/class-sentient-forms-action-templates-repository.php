@@ -138,19 +138,27 @@ class Sentient_Forms_Action_Templates_Repository extends Sentient_Forms_Local_Re
     {
         $source = sanitize_key( $source );
         $wpdb   = $this->wpdb;
-        $sql    = 'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE source = %s';
 
         if ( $active_only )
         {
-            $sql .= ' AND is_active = 1';
+            $query = $wpdb->prepare(
+                'SELECT * FROM %i WHERE source = %s AND is_active = 1 ORDER BY display_name ASC',
+                $this->table_name(),
+                $source
+            );
+            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder and source placeholder.
+            $rows = $wpdb->get_results( $query, ARRAY_A ) ?: [];
+
+            return array_map( [ $this, 'decode_row' ], $rows );
         }
 
-        $sql .= ' ORDER BY display_name ASC';
-
-        $rows = $wpdb->get_results(
-            $wpdb->prepare( $sql, $source ),
-            ARRAY_A
-        ) ?: [];
+        $query = $wpdb->prepare(
+            'SELECT * FROM %i WHERE source = %s ORDER BY display_name ASC',
+            $this->table_name(),
+            $source
+        );
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with an identifier placeholder and source placeholder.
+        $rows  = $wpdb->get_results( $query, ARRAY_A ) ?: [];
 
         return array_map( [ $this, 'decode_row' ], $rows );
     }

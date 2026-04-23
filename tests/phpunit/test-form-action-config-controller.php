@@ -229,6 +229,22 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 		$this->assertFalse( $stored['skip_downstream_on_spam'] ?? true );
 	}
 
+	public function test_update_action_defaults_stores_spam_note_controls(): void {
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/actions/spam_detection_v1/defaults' );
+		$request->set_param( 'action_id', 'spam_detection_v1' );
+		$request->set_param( 'spam_result_display_mode', 'entry_note' );
+		$request->set_param( 'spam_indicators_display', 'detailed' );
+
+		$response = $this->controller->update_action_defaults( $request );
+		$data     = $response->get_data();
+		$stored   = get_option( $this->action_defaults_option_key, [] );
+
+		$this->assertSame( 'all_results', $data['config']['spam_result_display_mode'] ?? null );
+		$this->assertSame( 'detailed', $data['config']['spam_indicators_display'] ?? null );
+		$this->assertSame( 'entry_note', $stored['spam_result_display_mode'] ?? null );
+		$this->assertSame( 'detailed', $stored['spam_indicators_display'] ?? null );
+	}
+
 	public function test_get_action_defaults_restores_canonical_spam_note_settings(): void {
 		update_option(
 			$this->action_defaults_option_key,
