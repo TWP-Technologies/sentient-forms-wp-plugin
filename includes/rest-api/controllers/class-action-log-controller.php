@@ -441,9 +441,18 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             $legacy_entries = [];
         }
 
+        $local_execution_events = $this->get_local_execution_event_rows();
+
         return array_merge(
-            $this->get_local_execution_event_entries(),
-            $legacy_entries
+            array_values(
+                array_filter(
+                    array_map(
+                        [ $this, 'format_local_execution_event_for_log' ],
+                        $local_execution_events
+                    )
+                )
+            ),
+            $this->filter_legacy_entries_for_runtime_truth( $legacy_entries, $local_execution_events )
         );
     }
 
@@ -458,7 +467,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         return self::log_execution( $entry );
     }
 
-    private function get_local_execution_event_entries(): array
+    private function get_local_execution_event_rows(): array
     {
         if ( ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
         {
@@ -468,14 +477,95 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         global $wpdb;
 
         $repository = new Sentient_Forms_Execution_Events_Repository( $wpdb );
-        return array_values(
-            array_filter(
-                array_map(
-                    [ $this, 'format_local_execution_event_for_log' ],
-                    $repository->list_recent_for_action_log( self::MAX_LOG_ENTRIES )
-                )
-            )
-        );
+        return $repository->list_recent_for_action_log( self::MAX_LOG_ENTRIES );
+    }
+
+    private function filter_legacy_entries_for_runtime_truth( array $legacy_entries, array $local_execution_events ): array
+    {
+        if ( empty( $legacy_entries ) )
+        {
+            return [];
+        }
+
+        $events_by_request_id = [];
+        foreach ( $local_execution_events as $event )
+        {
+            if ( ! is_array( $event ) )
+            {
+                continue;
+            }
+
+            $execution_request_id = isset( $event['execution_request_id'] ) && is_scalar( $event['execution_request_id'] )
+                ? sanitize_text_field( (string) $event['execution_request_id'] )
+                : '';
+            if ( '' === $execution_request_id )
+            {
+                continue;
+            }
+
+            $events_by_request_id[ $execution_request_id ] = $event;
+        }
+
+        $filtered = [];
+        foreach ( $legacy_entries as $entry )
+        {
+            if ( ! is_array( $entry ) )
+            {
+                continue;
+            }
+
+            if ( $this->is_untrusted_local_first_success_legacy_entry( $entry, $events_by_request_id ) )
+            {
+                continue;
+            }
+
+            $filtered[] = $entry;
+        }
+
+        return $filtered;
+    }
+
+    private function is_untrusted_local_first_success_legacy_entry( array $entry, array $events_by_request_id ): bool
+    {
+        if ( 'success' !== sanitize_key( (string) ( $entry['status'] ?? '' ) ) )
+        {
+            return false;
+        }
+
+        if ( ! $this->is_local_first_legacy_entry( $entry ) )
+        {
+            return false;
+        }
+
+        $execution_request_id = isset( $entry['execution_request_id'] ) && is_scalar( $entry['execution_request_id'] )
+            ? sanitize_text_field( (string) $entry['execution_request_id'] )
+            : '';
+        if ( '' === $execution_request_id )
+        {
+            return true;
+        }
+
+        $event = $events_by_request_id[ $execution_request_id ] ?? null;
+        if ( ! is_array( $event ) )
+        {
+            return true;
+        }
+
+        return 'success' !== $this->normalize_local_execution_status( (string) ( $event['status'] ?? '' ) );
+    }
+
+    private function is_local_first_legacy_entry( array $entry ): bool
+    {
+        $mapping_id = isset( $entry['mapping_id'] ) && is_scalar( $entry['mapping_id'] )
+            ? sanitize_text_field( (string) $entry['mapping_id'] )
+            : '';
+        if ( '' !== $mapping_id && str_starts_with( $mapping_id, 'local_first_' ) )
+        {
+            return true;
+        }
+
+        $action_code = sanitize_key( (string) ( $entry['action_code'] ?? '' ) );
+        return 'sentient_forms_local_custom_action' === $action_code || str_starts_with( $action_code, 'local_first_' );
     }
 
     private function format_local_execution_event_for_log( array $event ): array

@@ -147,7 +147,7 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 
 		await expect(details).toContainText('Execution Request');
 		await expect(details).toContainText('req-uuid-1');
-		await expect(details).toContainText('Pricing Policy');
+		await expect(details).toContainText('Usage policy');
 		await expect(details).toContainText('2026-03-resolved-model-v1');
 		await expect(details).toContainText('High confidence ham based on message intent.');
 		await expect(details).toContainText('trusted sender');

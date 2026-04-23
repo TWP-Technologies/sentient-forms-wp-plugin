@@ -17,7 +17,7 @@ test.describe('Licensing bootstrap in real WP admin @licensing-wp', () => {
 		'Set SENTIENT_RUN_WP_E2E=1 and SENTIENT_RUN_LEGACY_CPS_E2E=1 to exercise legacy CPS licensing bootstrap.'
 	);
 
-	test('dashboard auto-bootstraps the free license without visiting licensing first', async ({
+	test('licensing bootstraps the free license on first open', async ({
 		page
 	}) => {
 		ensureWpBaseUrlConfigured();
@@ -25,12 +25,12 @@ test.describe('Licensing bootstrap in real WP admin @licensing-wp', () => {
 
 		await requireWpRestHealthy(page);
 		await loginToWpAdmin(page);
-		await ensureSentientFormsSpa(page, '/dashboard');
+		await ensureSentientFormsSpa(page, '/licensing');
 
-		await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
-		await expect(page.getByTestId('dashboard-license-summary')).toContainText('License active');
-		await expect(page.getByTestId('dashboard-license-status')).toContainText('active');
-		await expect(page.getByTestId('dashboard-tier-card')).toContainText('Free');
+		await expect(page.getByRole('heading', { name: 'License management' })).toBeVisible();
+		await expect(page.getByTestId('licensing-status-headline')).toContainText('Active and connected');
+		await expect(page.getByTestId('licensing-status-badge')).toContainText('active');
+		await expect(page.getByText('Tier: Free')).toBeVisible();
 
 		expect(getProxyApiKey().trim().length).toBeGreaterThan(0);
 	});

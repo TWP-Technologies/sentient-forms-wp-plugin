@@ -69,6 +69,12 @@ class Sentient_Forms_Local_Result_Applier
         $skipped = [];
         $result  = is_array( $execution_result['result'] ?? null ) ? $execution_result['result'] : [];
 
+        if ( function_exists( 'gform_update_meta' ) )
+        {
+            gform_update_meta( $entry_id, 'sentient_forms_last_error', '' );
+            gform_update_meta( $entry_id, 'sentient_forms_last_processed_at', current_time( 'mysql' ) );
+        }
+
         if ( $this->bool_effect( $effects, [ 'store_result', 'store_result_meta' ] ) )
         {
             if ( function_exists( 'gform_update_meta' ) )

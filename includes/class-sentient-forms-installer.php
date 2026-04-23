@@ -38,11 +38,28 @@ class Sentient_Forms_Installer
     {
         if ( is_multisite() )
         {
-            self::run_for_each_site( [ Sentient_Forms_Local_Data_Governance::class, 'uninstall' ] );
+            $site_ids = function_exists( 'get_sites' )
+                ? get_sites(
+                    [
+                        'fields' => 'ids',
+                        'number' => 0,
+                    ]
+                )
+                : [ get_current_blog_id() ];
+
+            foreach ( $site_ids as $site_id )
+            {
+                self::run_for_site(
+                    (int) $site_id,
+                    static function (): void {
+                        self::uninstall_current_site();
+                    }
+                );
+            }
             return;
         }
 
-        Sentient_Forms_Local_Data_Governance::uninstall();
+        self::uninstall_current_site();
     }
 
     public static function initialize_new_site( WP_Site $site ): void
@@ -123,6 +140,20 @@ class Sentient_Forms_Installer
     private static function deactivate_current_site(): void
     {
         Sentient_Forms_Local_Data_Governance::unschedule_retention_cleanup();
+    }
+
+    private static function uninstall_current_site(): void
+    {
+        $delete_data = Sentient_Forms_Local_Data_Governance::delete_data_on_uninstall_enabled();
+
+        if ( ! $delete_data && self::local_first_tables_exist() )
+        {
+            Sentient_Forms_Local_Data_Governance::unschedule_retention_cleanup();
+            update_option( self::OPTION_DB_VERSION, SENTIENT_FORMS_DB_VERSION );
+            return;
+        }
+
+        Sentient_Forms_Local_Data_Governance::uninstall();
     }
 
     /**

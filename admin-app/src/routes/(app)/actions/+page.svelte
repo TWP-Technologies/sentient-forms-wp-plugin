@@ -629,7 +629,7 @@
 			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Built-in actions</p>
-					<p class="sf:text-xs sf:text-slate-500">Action templates available to map.</p>
+					<p class="sf:text-xs sf:text-slate-600">Action templates available to map.</p>
 				</div>
 				<Badge variant={definitionsBadgeVariant}>{definitionsBadgeLabel}</Badge>
 			</div>
@@ -667,7 +667,7 @@
 							{@const meta = getCategoryMeta(category)}
 							<div>
 								<p
-									class="sf:text-xs sf:font-medium sf:text-slate-500 sf:uppercase sf:tracking-wide sf:mb-1"
+									class="sf:mb-1 sf:text-xs sf:font-medium sf:uppercase sf:tracking-wide sf:text-slate-600"
 								>
 									{meta.icon}
 									{meta.label}
@@ -675,13 +675,13 @@
 								<ul class="sf:space-y-1">
 										{#each items.slice(0, 3) as definition (definition.id)}
 											{@const formCount = formsPerAction.get(definition.id) ?? 0}
-											<li class="sf:flex sf:items-start sf:justify-between sf:gap-2">
-												<div>
-													<p class="sf:text-sm sf:font-semibold sf:text-slate-800">
+											<li class="sf:flex sf:flex-col sf:items-start sf:gap-2 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between">
+												<div class="sf:min-w-0 sf:flex-1">
+													<p class="sf:text-sm sf:font-semibold sf:text-slate-800 sf:break-words">
 														{definition.label ?? definition.id}
 													</p>
 												</div>
-												<div class="sf:flex sf:items-center sf:gap-2">
+												<div class="sf:flex sf:w-full sf:flex-wrap sf:items-center sf:gap-2 sf:sm:w-auto sf:sm:justify-end">
 													<Button
 														size="sm"
 														variant="ghost"
@@ -712,7 +712,7 @@
 			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Custom actions</p>
-					<p class="sf:text-xs sf:text-slate-500">Tenant-specific automations.</p>
+					<p class="sf:text-xs sf:text-slate-600">Tenant-specific automations.</p>
 				</div>
 				<Badge variant="info">{customActions.length} active</Badge>
 			</div>
@@ -735,12 +735,14 @@
 				<ul class="sf:mt-3 sf:space-y-2">
 					{#each customActions.slice(0, 4) as action (action.id)}
 						{@const customFormCount = formsPerAction.get(action.code) ?? 0}
-						<li class="sf:flex sf:items-center sf:justify-between sf:gap-2">
-							<div>
-								<p class="sf:text-sm sf:font-semibold sf:text-slate-800">{action.display_name}</p>
-								<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
+						<li class="sf:flex sf:flex-col sf:items-start sf:gap-2 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between">
+							<div class="sf:min-w-0 sf:flex-1">
+								<p class="sf:text-sm sf:font-semibold sf:text-slate-800 sf:break-words">
+									{action.display_name}
+								</p>
+								<p class="sf:text-xs sf:text-slate-600 sf:break-all">Code: {action.code}</p>
 							</div>
-							<div class="sf:flex sf:items-center sf:gap-2">
+							<div class="sf:flex sf:w-full sf:flex-wrap sf:items-center sf:gap-2 sf:sm:w-auto sf:sm:justify-end">
 								<Button
 									size="sm"
 									variant="ghost"
@@ -773,13 +775,13 @@
 					<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 						<div>
 							<p class="sf:text-sm sf:font-medium sf:text-slate-700">Global execution</p>
-							<p class="sf:text-xs sf:text-slate-500">
+							<p class="sf:text-xs sf:text-slate-600">
 								Pause all Sentient Forms runs without locking mapping edits.
 							</p>
 						</div>
 						<div class="sf:flex sf:items-center sf:gap-2">
 							<Badge variant={executionGlobalDisabled ? 'warning' : 'success'}>
-								{executionGlobalDisabled ? 'Paused' : 'Active'}
+								{executionGlobalDisabled ? 'Paused' : 'Running'}
 							</Badge>
 							<Toggle
 								checked={!executionGlobalDisabled}
@@ -839,7 +841,7 @@
 							</div>
 							<div class="sf:flex sf:items-center sf:gap-2">
 								<Badge variant={providerExecutionIsPaused(source.slug) ? 'warning' : 'success'}>
-									{providerExecutionIsPaused(source.slug) ? 'Execution paused' : 'Execution active'}
+									{providerExecutionIsPaused(source.slug) ? 'Execution paused' : 'Execution running'}
 								</Badge>
 								<Toggle
 									checked={!Boolean(executionProviderDisabled[source.slug])}
@@ -953,12 +955,12 @@
 						{@const providerActive = isProviderFormActive(form)}
 						{@const health = getHealthBadge(form)}
 						<Card data-testid={`actions-form-card-${form.id}`}>
-							<div class="sf:flex sf:justify-between sf:items-start sf:gap-3">
+							<div class="sf:flex sf:flex-col sf:items-start sf:gap-3 sf:sm:flex-row sf:sm:justify-between">
 								<div class="sf:min-w-0 sf:flex-1">
-									<p class="sf:font-semibold sf:text-slate-800 sf:truncate">{form.title}</p>
-									<p class="sf:text-xs sf:text-slate-500">ID: {form.id}</p>
+									<p class="sf:font-semibold sf:text-slate-800 sf:break-words">{form.title}</p>
+									<p class="sf:text-xs sf:text-slate-600">ID: {form.id}</p>
 								</div>
-								<div class="sf:flex sf:flex-col sf:items-end sf:gap-1">
+								<div class="sf:flex sf:flex-col sf:items-start sf:gap-1 sf:sm:items-end">
 									<Badge variant={providerActive ? 'success' : 'warning'}>
 										{providerActive ? 'Form active' : 'Form inactive'}
 									</Badge>
@@ -970,7 +972,7 @@
 										<Badge variant={health.variant}>{health.label}</Badge>
 									</span>
 									{#if actionCount === null}
-										<span class="sf:text-xs sf:text-slate-500">Checking actions…</span>
+										<span class="sf:text-xs sf:text-slate-600">Checking actions…</span>
 									{:else if actionCount > 0}
 										<span class="sf:text-xs sf:text-indigo-600 sf:font-medium">
 											{actionCount} action{actionCount !== 1 ? 's' : ''}
@@ -978,12 +980,12 @@
 									{/if}
 								</div>
 							</div>
-							<div class="sf:mt-3 sf:flex sf:items-center sf:gap-2">
-								<span class="sf:text-xs sf:text-slate-500">
+							<div class="sf:mt-3 sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+								<span class="sf:text-xs sf:text-slate-600">
 									{selectedSource?.label ?? form.adapter_name ?? form.adapter}
 								</span>
 								{#if actionCount === 0}
-									<span class="sf:text-xs sf:text-amber-600">No actions configured</span>
+									<span class="sf:text-xs sf:text-amber-700">No actions configured</span>
 								{/if}
 							</div>
 							{#if !providerActive}
@@ -999,7 +1001,7 @@
 								{#if form.provider_edit_url}
 									<a
 										href={form.provider_edit_url}
-										class="sf:mt-2 sf:block sf:text-center sf:text-xs sf:font-medium sf:text-slate-600 hover:sf:text-slate-900"
+											class="sf:mt-2 sf:block sf:text-center sf:text-xs sf:font-medium sf:text-slate-700 hover:sf:text-slate-900"
 										data-sveltekit-reload
 										rel="external"
 										data-testid={`actions-provider-edit-link-${form.id}`}
@@ -1062,7 +1064,7 @@
 					<h2 id="action-defaults-title" class="sf:text-lg sf:font-semibold sf:text-slate-800">
 						Global Action Defaults
 					</h2>
-					<p class="sf:text-sm sf:text-slate-500">
+					<p class="sf:text-sm sf:text-slate-600">
 						Configure defaults for <strong>{getActionDisplayName(configuringActionId)}</strong> across
 						all forms.
 					</p>
@@ -1082,7 +1084,7 @@
 
 			<div class="sf:p-4 sf:sm:p-6 sf:space-y-6">
 				{#if actionDefaultsLoading}
-					<p class="sf:text-sm sf:text-slate-500">Loading configuration...</p>
+						<p class="sf:text-sm sf:text-slate-600">Loading configuration...</p>
 				{:else}
 					<Alert variant="info">
 						<p class="sf:text-sm">
@@ -1095,9 +1097,9 @@
 						<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center">
 							<div>
 								<p class="sf:text-sm sf:font-medium sf:text-slate-800">Default model</p>
-								<p class="sf:text-xs sf:text-slate-500">
-									Set the default model selection for this action across all forms.
-								</p>
+									<p class="sf:text-xs sf:text-slate-600">
+										Set the default model selection for this action across all forms.
+									</p>
 							</div>
 							{#if actionDefaults.model_selection}
 								<Button size="sm" variant="ghost" onclick={clearActionModelSelection}>

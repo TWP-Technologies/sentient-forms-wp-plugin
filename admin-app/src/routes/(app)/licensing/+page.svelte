@@ -637,7 +637,7 @@
 		<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="licensing-overview-card">
 			<div class="sf:grid sf:gap-6 sf:lg:grid-cols-2 sf:items-start">
 				<div class="sf:space-y-3">
-					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
+					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
 						License
 					</p>
 					<p
@@ -650,7 +650,7 @@
 						<span data-testid="licensing-status-badge">
 							<Badge variant={licenseStatusVariant}>{$licenseStore.status}</Badge>
 						</span>
-						<span class="sf:text-xs sf:text-slate-500">Tier: {tierLabel}</span>
+						<span class="sf:text-xs sf:text-slate-600">Tier: {tierLabel}</span>
 					</div>
 					<p class="sf:text-sm sf:text-slate-600" data-testid="licensing-last-synced-summary">
 						Last synced: {formatTimestamp($licenseStore.lastSynced)}
@@ -658,7 +658,7 @@
 				</div>
 
 				<div class="sf:space-y-3">
-					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
+					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
 						Managed credits
 					</p>
 					<p
@@ -671,7 +671,7 @@
 						<span data-testid="licensing-credit-severity">
 							<Badge variant={creditSeverityVariant}>{managedCreditBadgeLabel}</Badge>
 						</span>
-						<span class="sf:text-xs sf:text-slate-500" data-testid="licensing-reset-summary">
+						<span class="sf:text-xs sf:text-slate-600" data-testid="licensing-reset-summary">
 							{resetInfo.summary}
 						</span>
 					</div>
@@ -718,21 +718,21 @@
 			>
 				<div class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-3">
 					<div>
-						<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
+						<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
 							Billing
 						</p>
 						<p class="sf:text-sm sf:text-slate-700">
 							Subscription status:
 							<span class="sf:font-semibold sf:text-slate-900">{billingSubscriptionStatus}</span>
 							{#if billingLoading}
-								<span class="sf:ml-2 sf:text-xs sf:text-slate-500">(refreshing…)</span>
+								<span class="sf:ml-2 sf:text-xs sf:text-slate-600">(refreshing…)</span>
 							{/if}
 						</p>
-						<p class="sf:text-xs sf:text-slate-500">
+						<p class="sf:text-xs sf:text-slate-600">
 							Billing provider: {billingProviderLabel}
 						</p>
 						{#if billingSubscription?.current_period_end}
-							<p class="sf:text-xs sf:text-slate-500">
+							<p class="sf:text-xs sf:text-slate-600">
 								Current period ends {formatTimestamp(billingSubscription.current_period_end)}
 							</p>
 						{/if}
@@ -749,9 +749,9 @@
 								One-time {billingPolicy.paid_trial_days}-day paid-plan trial.
 							</p>
 						{/if}
-						<p class="sf:text-xs sf:text-slate-500">Site capacity: {billingAllocationUsage}</p>
+						<p class="sf:text-xs sf:text-slate-600">Site capacity: {billingAllocationUsage}</p>
 						{#if billingAllocation}
-							<p class="sf:text-xs sf:text-slate-500">
+							<p class="sf:text-xs sf:text-slate-600">
 								Tier site limit {billingAllocation.tier_site_limit} x seats {billingAllocation.seat_quantity}
 							</p>
 							{#if billingAllocation.over_limit}
@@ -780,7 +780,7 @@
 					data-testid="licensing-billing-boundary"
 				>
 					<div>
-						<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
+						<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
 							Billing boundary
 						</p>
 						<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
@@ -821,7 +821,7 @@
 				<div class="sf:grid sf:gap-3 sf:md:grid-cols-3">
 					{#if !hasExistingSubscription}
 						<p
-							class="sf:md:col-span-3 sf:text-xs sf:text-slate-500"
+							class="sf:md:col-span-3 sf:text-xs sf:text-slate-600"
 							data-testid="licensing-trial-policy-note"
 						>
 							Eligible paid subscriptions start with a one-time {billingPolicy.paid_trial_days}-day
@@ -837,18 +837,18 @@
 							data-testid="licensing-managed-portal-note"
 						>
 							<p
-								class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500"
+								class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600"
 							>
 								Plan changes
 							</p>
-							<p class="sf:text-xs sf:text-slate-500">
+							<p class="sf:text-xs sf:text-slate-600">
 								Use the Stripe billing portal to change, cancel, or authenticate this managed
 								subscription. Direct OpenRouter remains separate.
 							</p>
 						</div>
 					{/if}
 					<p
-						class="sf:md:col-span-3 sf:text-xs sf:text-slate-500"
+						class="sf:md:col-span-3 sf:text-xs sf:text-slate-600"
 						data-testid="licensing-business-cap-note"
 					>
 						Business currently supports up to {BUSINESS_PLAN_SITE_CAP} sites during launch. Contact support
@@ -882,10 +882,10 @@
 					class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:space-y-2"
 					data-testid="licensing-managed-top-up-note"
 				>
-					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500">
+					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
 						Managed usage
 					</p>
-					<p class="sf:text-xs sf:text-slate-500">
+					<p class="sf:text-xs sf:text-slate-600">
 						Managed proxy usage is governed by the active Sentient plan. Top-up packs are retired
 						for the local-first service; use direct OpenRouter credentials for non-Sentient billed
 						runs or manage the plan in Stripe.
@@ -914,7 +914,7 @@
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">License status</span>
+				<span class="sf:font-medium sf:text-slate-700">License status</span>
 				<span data-testid="licensing-details-status">
 					<Badge variant={licenseStatusVariant}>{$licenseStore.status}</Badge>
 				</span>
@@ -922,7 +922,7 @@
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Proxy key stored</span>
+				<span class="sf:font-medium sf:text-slate-700">Proxy key stored</span>
 				<span class="sf:text-slate-900 sf:font-semibold">
 					{$licenseStore.proxyKeyPresent ? 'Yes' : 'No'}
 				</span>
@@ -930,25 +930,25 @@
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Tier</span>
+				<span class="sf:font-medium sf:text-slate-700">Tier</span>
 				<span class="sf:text-slate-900">{tierLabel}</span>
 			</div>
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Subscription status</span>
+				<span class="sf:font-medium sf:text-slate-700">Subscription status</span>
 				<span class="sf:text-slate-900">{billingSubscriptionStatus}</span>
 			</div>
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Site capacity</span>
+				<span class="sf:font-medium sf:text-slate-700">Site capacity</span>
 				<span class="sf:text-slate-900">{billingAllocationUsage}</span>
 			</div>
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Billing period end</span>
+				<span class="sf:font-medium sf:text-slate-700">Billing period end</span>
 				<span class="sf:text-slate-900">
 					{formatTimestamp(billingSubscription?.current_period_end ?? null)}
 				</span>
@@ -956,25 +956,25 @@
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Direct OpenRouter billing</span>
+				<span class="sf:font-medium sf:text-slate-700">Direct OpenRouter billing</span>
 				<span class="sf:text-slate-900">{directOpenRouterBoundaryLabel}</span>
 			</div>
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Managed proxy billing</span>
+				<span class="sf:font-medium sf:text-slate-700">Managed proxy billing</span>
 				<span class="sf:text-slate-900">{managedProxyBoundaryLabel}</span>
 			</div>
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Capacity policy</span>
+				<span class="sf:font-medium sf:text-slate-700">Capacity policy</span>
 				<span class="sf:text-slate-900">{billingAllocation?.capacity_policy ?? '—'}</span>
 			</div>
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Over-limit grace</span>
+				<span class="sf:font-medium sf:text-slate-700">Over-limit grace</span>
 				<span class="sf:text-slate-900">
 					{formatTimestamp(billingAllocation?.grace_expires_at ?? null)}
 				</span>
@@ -982,19 +982,19 @@
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Credits reset</span>
+				<span class="sf:font-medium sf:text-slate-700">Credits reset</span>
 				<span class="sf:text-slate-900">{resetInfo.nextResetLabel}</span>
 			</div>
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Expires</span>
+				<span class="sf:font-medium sf:text-slate-700">Expires</span>
 				<span class="sf:text-slate-900">{formatTimestamp($licenseStore.expiresAt)}</span>
 			</div>
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-600">Last synced</span>
+				<span class="sf:font-medium sf:text-slate-700">Last synced</span>
 				<span class="sf:text-slate-900">{formatTimestamp($licenseStore.lastSynced)}</span>
 			</div>
 		</div>

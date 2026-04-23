@@ -665,7 +665,10 @@
 						/>
 
 						<p class="sf:text-xs sf:text-slate-500">
-							Example: <code>SENTIENT_FORMS_OPENROUTER_KEY</code>. The name must already be defined
+							Example:
+							<code class="sf:rounded sf:bg-slate-200 sf:px-1.5 sf:py-0.5 sf:font-mono sf:text-[13px] sf:text-slate-800"
+								>SENTIENT_FORMS_OPENROUTER_KEY</code
+							>. The name must already be defined
 							on the server before validation can succeed.
 						</p>
 
@@ -731,7 +734,9 @@
 							</div>
 							<p class="sf:mt-2 sf:text-sm sf:text-success-800">
 								Server secret
-								<code>{validationResult.constant_name ?? constantName}</code> is now ready as
+								<code class="sf:rounded sf:bg-slate-200 sf:px-1.5 sf:py-0.5 sf:font-mono sf:text-[13px] sf:text-slate-800"
+									>{validationResult.constant_name ?? constantName}</code
+								> is now ready as
 								credential #{validationResult.credential_id}.
 							</p>
 						</div>
@@ -783,7 +788,10 @@
 							</p>
 							{#if credential.auth_mode === 'constant' && credential.constant_name}
 								<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-									Reference <code>{credential.constant_name}</code>
+									Reference
+									<code class="sf:rounded sf:bg-slate-200 sf:px-1.5 sf:py-0.5 sf:font-mono sf:text-[13px] sf:text-slate-800"
+										>{credential.constant_name}</code
+									>
 								</p>
 							{/if}
 							<p class="sf:mt-1 sf:text-xs sf:text-slate-500">

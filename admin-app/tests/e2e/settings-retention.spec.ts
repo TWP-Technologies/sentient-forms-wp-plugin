@@ -267,4 +267,78 @@ test.describe('Settings retention controls', () => {
 			'On-site logging disabled'
 		);
 	});
+
+	test('uses unambiguous running and pause copy in execution controls', async ({ page }) => {
+		const previewHost = getPreviewOrigin();
+		await seedRuntimeConfig(page, {
+			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
+			siteUrl: previewHost
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/settings', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					enable_logging: false,
+					execution_global_disabled: false,
+					execution_provider_disabled: { gravity_forms: false },
+					execution_event_retention_days: 90,
+					delete_data_on_uninstall: true,
+					store_full_ai_outputs: false,
+					privacy_setup_profile: 'balanced',
+					privacy_setup_completed_at: '2026-04-21T00:00:00Z'
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/telemetry', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					telemetry_opt_in: false,
+					updated_at: '2026-04-21T00:00:00Z',
+					synced_at: '2026-04-21T00:00:00Z',
+					remote_updated_at: '2026-04-21T00:00:00Z',
+					last_error: null
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/async-settings', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					max_attempts: 3,
+					base_delay_seconds: 60,
+					max_delay_seconds: 3600,
+					updated_at: '2026-04-21T00:00:00Z',
+					updated_by: 'retention-e2e'
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/async-health', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					queue_depth: 0,
+					oldest_run_at: null,
+					recent_failures: {},
+					warnings: []
+				})
+			});
+		});
+
+		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+
+		await expect(
+			page.getByText('Keep all providers running. Turn this off to pause everything.')
+		).toBeVisible();
+		await expect(page.getByText('Stops all providers when enabled.')).toHaveCount(0);
+		await expect(page.getByText('Running', { exact: true }).first()).toBeVisible();
+	});
 });

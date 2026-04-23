@@ -1,0 +1,44 @@
+- heading "Local workspace" [level=2]
+- paragraph: Run AI actions from this WordPress site with your own provider key. Sentient billing stays optional.
+- button "Refresh"
+- button "Connect OpenRouter"
+- text: OpenRouter ready Free path available
+- heading "OpenRouter test key" [level=3]
+- paragraph: OpenRouter direct mode keeps provider credentials and action data in WordPress. Sentient does not meter direct BYOK or free-model runs.
+- button "Review provider"
+- button "Map a form"
+- paragraph: Provider keys
+- paragraph: "1"
+- paragraph: Templates
+- paragraph: "1"
+- paragraph: Custom actions
+- paragraph: "1"
+- paragraph: Recent runs
+- paragraph: "1"
+- heading "Direct provider" [level=3]
+- paragraph: OpenRouter ready
+- text: Ready
+- paragraph: /Last checked Jan 5, \d+, 4:\d+ AM/
+- heading "Sentient charges" [level=3]
+- paragraph: "Direct OpenRouter: no"
+- paragraph: Managed billing belongs only to Sentient-hosted paid execution. BYOK and OpenRouter free models stay outside the Sentient meter.
+- heading "Local diagnostics" [level=3]
+- paragraph: /\d+ day retention/
+- paragraph: "Events table: 1. Providers table: 1."
+- heading "Recent local runs" [level=2]
+- text: 1 succeeded 0 failed
+- region "Recent local runs table":
+  - table:
+    - rowgroup:
+      - row "Status Provider Model Created":
+        - columnheader "Status"
+        - columnheader "Provider"
+        - columnheader "Model"
+        - columnheader "Created"
+    - rowgroup:
+      - row /succeeded openrouter openrouter\/free-model Jan 5, \d+, 4:\d+ AM/:
+        - cell "succeeded"
+        - cell "openrouter"
+        - cell "openrouter/free-model"
+        - cell /Jan 5, \d+, 4:\d+ AM/
+- paragraph: "Latest request: run-responsive-1"

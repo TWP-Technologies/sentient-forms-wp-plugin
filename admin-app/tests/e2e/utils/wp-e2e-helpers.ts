@@ -11,6 +11,8 @@ const dockerContainers: Record<string, string> = {
 	'cps-db': 'sentient_forms_cps_db',
 	'telemetry-db': 'sentient_forms_telemetry_db'
 };
+const sourcePluginSlug = 'sentient-forms';
+const packagePluginSlug = 'sentient-forms-wporg-check';
 
 type DockerEnv = NodeJS.ProcessEnv;
 
@@ -106,8 +108,13 @@ export type GravityEntryNoteRecord = {
 	sub_type: string | null;
 };
 
+function currentWpPluginMode(): 'source' | 'package' {
+	return process.env.SENTIENT_WP_PLUGIN_MODE === 'package' ? 'package' : 'source';
+}
+
 export async function requireWpRestHealthy(page: Page): Promise<void> {
 	ensureWpBaseUrlConfigured();
+	ensureExpectedPluginMode();
 	const res = await page.request.get(`${wpBaseUrl}/index.php?rest_route=/`, {
 		timeout: 5000
 	});
@@ -200,6 +207,23 @@ export type GravityActionSettingsRecord = Record<string, unknown> & {
 	actions?: Record<string, Record<string, unknown>>;
 };
 
+export type LocalFormMappingRecord = {
+	id: number;
+	form_source: string;
+	form_id: string;
+	hook: string;
+	action_kind: string;
+	action_id: number | null;
+	execution_mode: string | null;
+	enabled: boolean;
+};
+
+export type ResetLocalFormFixtureArgs = {
+	formId: number;
+	actionCodes?: string[];
+	actionNames?: string[];
+};
+
 type CreditAdjustmentArgs = {
 	delta: number;
 	licenseKey?: string;
@@ -255,6 +279,13 @@ function runWpCli(args: string[], env: DockerEnv = {}): SpawnSyncReturns<string>
 	return runDocker(['exec', '-T', 'wordpress', 'wp', `--url=${wpBaseUrl}`, ...args], env);
 }
 
+function runWpCliSkippingSentientPlugins(
+	args: string[],
+	env: DockerEnv = {}
+): SpawnSyncReturns<string> {
+	return runWpCli(['--skip-plugins=sentient-forms,sentient-forms-wporg-check', ...args], env);
+}
+
 export function runWpEval(phpScript: string, env: DockerEnv = {}): string {
 	const result = runWpCli(['eval', phpScript], env);
 	if (result.status !== 0) {
@@ -275,6 +306,146 @@ echo 'ok';
 	if (!output.includes('ok')) {
 		throw new Error(`Failed to align WordPress base URL: ${output}`);
 	}
+}
+
+function readActivePlugins(): string[] {
+	const result = runWpCli([
+		'plugin',
+		'list',
+		'--status=active',
+		'--format=json'
+	]);
+	if (result.status !== 0) {
+		const message = stripCliNoise(result.stderr || result.stdout);
+		throw new Error(`Failed to read active plugins: ${message}`);
+	}
+
+	const output = (result.stdout ?? '').trim();
+	if (!output) {
+		return [];
+	}
+
+	try {
+		const decoded = JSON.parse(output) as unknown;
+		if (Array.isArray(decoded)) {
+			return decoded
+				.map((item): string | null => {
+					if (typeof item === 'string') {
+						return item;
+					}
+					if (item && typeof item === 'object' && 'name' in item) {
+						const { name } = item as { name?: unknown };
+						return typeof name === 'string' ? name : null;
+					}
+					return null;
+				})
+				.filter((item): item is string => typeof item === 'string' && item.length > 0);
+		}
+		if (decoded && typeof decoded === 'object') {
+			return Object.values(decoded).filter((item): item is string => typeof item === 'string');
+		}
+		return [];
+	} catch (error) {
+		throw new Error(
+			`Failed to parse active_plugins payload: ${
+				error instanceof Error ? error.message : String(error)
+			}`
+		);
+	}
+}
+
+export function ensureExpectedPluginMode(): void {
+	const wpPluginMode = currentWpPluginMode();
+	const activePlugins = readActivePlugins();
+	const packageActive = activePlugins.includes(packagePluginSlug);
+	const sourceActive = activePlugins.includes(sourcePluginSlug);
+
+	if (wpPluginMode === 'package') {
+		if (!sourceActive && packageActive) {
+			return;
+		}
+
+		if (sourceActive) {
+			const deactivateResult = runWpCliSkippingSentientPlugins([
+				'plugin',
+				'deactivate',
+				'sentient-forms'
+			]);
+			if (deactivateResult.status !== 0) {
+				const message = stripCliNoise(deactivateResult.stderr || deactivateResult.stdout);
+				throw new Error(`Failed to deactivate sentient-forms: ${message}`);
+			}
+		}
+
+		if (!packageActive || sourceActive) {
+			const activateResult = runWpCliSkippingSentientPlugins([
+				'plugin',
+				'activate',
+				'sentient-forms-wporg-check'
+			]);
+			if (activateResult.status !== 0) {
+				const message = stripCliNoise(activateResult.stderr || activateResult.stdout);
+				throw new Error(`Failed to activate sentient-forms-wporg-check: ${message}`);
+			}
+		}
+
+		const normalizedActivePlugins = readActivePlugins();
+		if (
+			normalizedActivePlugins.includes(sourcePluginSlug) ||
+			!normalizedActivePlugins.includes(packagePluginSlug)
+		) {
+			throw new Error(
+				`WordPress plugin mode is not normalized for package E2E. Active plugins: ${normalizedActivePlugins.join(', ')}`
+			);
+		}
+
+		return;
+	}
+
+	if (!packageActive && sourceActive) {
+		return;
+	}
+
+	if (packageActive) {
+		const deactivateResult = runWpCliSkippingSentientPlugins([
+			'plugin',
+			'deactivate',
+			'sentient-forms-wporg-check'
+		]);
+		if (deactivateResult.status !== 0) {
+			const message = stripCliNoise(deactivateResult.stderr || deactivateResult.stdout);
+			throw new Error(`Failed to deactivate sentient-forms-wporg-check: ${message}`);
+		}
+	}
+
+	if (!sourceActive || packageActive) {
+		const activateResult = runWpCliSkippingSentientPlugins([
+			'plugin',
+			'activate',
+			'sentient-forms'
+		]);
+		if (activateResult.status !== 0) {
+			const message = stripCliNoise(activateResult.stderr || activateResult.stdout);
+			throw new Error(`Failed to activate sentient-forms: ${message}`);
+		}
+	}
+
+	runWpCliSkippingSentientPlugins(['transient', 'delete', 'sentient_forms_admin_dev_url']);
+
+	const normalizedActivePlugins = readActivePlugins();
+	if (
+		normalizedActivePlugins.includes(packagePluginSlug) ||
+		!normalizedActivePlugins.includes(sourcePluginSlug)
+	) {
+		throw new Error(
+			`WordPress plugin mode is not normalized for source E2E. Active plugins: ${normalizedActivePlugins.join(', ')}`
+		);
+	}
+}
+
+export function ensureSourcePluginMode(): void {
+	process.env.SENTIENT_WP_PLUGIN_MODE = 'source';
+	ensureExpectedPluginMode();
 }
 
 export function setExecutionRequestIdOverride(executionRequestId: string | null): void {
@@ -568,12 +739,35 @@ export function ensureCpsSeeded(
  */
 export function prepareFreeLicenseBootstrapState(
 	siteUrl = `${wpBaseUrl}/`,
-	cpsDockerUrl = 'http://cps-api:8080/v1'
+	cpsDockerUrl = 'http://cps-api:8080/v1',
+	licenseKey = '0abcdefghjkmnpqrstvwxyz123'
 ): void {
 	ensureLegacyCpsE2EEnabled('prepareFreeLicenseBootstrapState');
 
 	const normalizedSiteUrl = siteUrl.endsWith('/') ? siteUrl : `${siteUrl}/`;
 	const archivedPrefix = `${normalizedSiteUrl}__archived_bootstrap__/`;
+	let licenseId = tryGetLicenseId(licenseKey);
+	if (!licenseId) {
+		const tierRaw = runDbQuery(`SELECT id FROM tiers WHERE code='free' LIMIT 1;`);
+		if (!tierRaw?.trim()) {
+			throw new Error('No "free" tier found in CPS DB. Ensure CPS migrations have run.');
+		}
+		const tierId = tierRaw.trim();
+
+		runDbQuery(`
+			INSERT INTO licenses (license_key, tier_id, status, max_sites)
+			VALUES ('${sanitizeSqlLiteral(licenseKey)}', '${sanitizeSqlLiteral(tierId)}', 'active', 100)
+			ON CONFLICT (license_key) DO UPDATE
+			SET status = 'active',
+			    max_sites = GREATEST(licenses.max_sites, 100),
+			    updated_at = now();
+		`);
+
+		licenseId = tryGetLicenseId(licenseKey);
+		if (!licenseId) {
+			throw new Error(`Failed to create managed bootstrap license ${licenseKey}`);
+		}
+	}
 
 	runDbQuery(`
 UPDATE sites
@@ -583,7 +777,27 @@ WHERE site_url = '${sanitizeSqlLiteral(normalizedSiteUrl)}';
 `);
 
 	ensureWpCpsConfig('', cpsDockerUrl);
-	clearStoredLicenseState();
+	const output = runWpEval(
+		`
+$plugin = Sentient_Forms_Plugin::instance();
+$plugin->set_license_data(
+	[
+		'license_key' => '${sanitizeSqlLiteral(licenseKey)}',
+		'license_status' => 'inactive',
+		'license_id' => '${sanitizeSqlLiteral(licenseId ?? '')}',
+		'site_id' => '',
+		'proxy_api_key' => '',
+		'local_site_identifier' => $plugin->get_local_site_identifier(),
+		'last_synced' => current_time( 'mysql' ),
+	]
+);
+echo 'ok';
+`
+	);
+
+	if (!output.includes('ok')) {
+		throw new Error(`Failed to seed managed bootstrap license state: ${output}`);
+	}
 }
 
 /**
@@ -1107,6 +1321,205 @@ export function getGravityActionSettings(formId: number): GravityActionSettingsR
 	}
 }
 
+export function getLocalFormMappings(formId: number): LocalFormMappingRecord[] {
+	const payload = runWpEval(
+		`
+global $wpdb;
+$form_id        = sanitize_text_field( (string) absint( getenv( 'FORM_ID' ) ?: 0 ) );
+$mappings_table = $wpdb->prefix . 'sentient_form_mappings';
+$rows           = [];
+
+if ( '' !== $form_id && '0' !== $form_id ) {
+    $rows = $wpdb->get_results(
+        $wpdb->prepare(
+            'SELECT id, form_source, form_id, hook, action_kind, action_id, execution_mode, enabled FROM ' . esc_sql( $mappings_table ) . ' WHERE form_source = %s AND form_id = %s ORDER BY id ASC',
+            'gravity_forms',
+            $form_id
+        ),
+        ARRAY_A
+    );
+}
+
+$rows = is_array( $rows ) ? $rows : [];
+$normalized = array_map(
+    static function ( array $row ): array {
+        return [
+            'id'             => absint( $row['id'] ?? 0 ),
+            'form_source'    => isset( $row['form_source'] ) ? (string) $row['form_source'] : '',
+            'form_id'        => isset( $row['form_id'] ) ? (string) $row['form_id'] : '',
+            'hook'           => isset( $row['hook'] ) ? (string) $row['hook'] : '',
+            'action_kind'    => isset( $row['action_kind'] ) ? (string) $row['action_kind'] : '',
+            'action_id'      => isset( $row['action_id'] ) ? absint( $row['action_id'] ) : null,
+            'execution_mode' => isset( $row['execution_mode'] ) ? (string) $row['execution_mode'] : null,
+            'enabled'        => ! empty( $row['enabled'] ),
+        ];
+    },
+    $rows
+);
+
+echo wp_json_encode(
+    [
+        'mappings' => array_values( $normalized ),
+    ]
+);
+`,
+		{
+			FORM_ID: String(formId)
+		}
+	);
+
+	if (!payload) {
+		return [];
+	}
+
+	try {
+		const decoded = JSON.parse(payload) as { mappings?: LocalFormMappingRecord[] };
+		return Array.isArray(decoded.mappings) ? decoded.mappings : [];
+	} catch (_error) {
+		throw new Error(`Failed to parse local form mappings payload: ${payload}`);
+	}
+}
+
+export function resetLocalFormFixture(args: ResetLocalFormFixtureArgs): void {
+	const output = runWpEval(
+		`
+if ( ! class_exists( 'Sentient_Forms_Installer' ) ) {
+    echo wp_json_encode([ 'error' => 'sentient_forms_not_loaded' ]);
+    return;
+}
+
+Sentient_Forms_Installer::maybe_upgrade();
+
+$payload = json_decode( getenv( 'RESET_LOCAL_FORM_FIXTURE' ) ?: '{}', true );
+if ( ! is_array( $payload ) ) {
+    echo wp_json_encode([ 'error' => 'invalid_payload' ]);
+    return;
+}
+
+global $wpdb;
+$form_id        = sanitize_text_field( (string) absint( $payload['formId'] ?? 0 ) );
+$action_codes   = array_values(
+    array_filter(
+        array_map(
+            static fn( $value ): string => sanitize_key( (string) $value ),
+            is_array( $payload['actionCodes'] ?? null ) ? $payload['actionCodes'] : []
+        )
+    )
+);
+$action_names   = array_values(
+    array_filter(
+        array_map(
+            static fn( $value ): string => sanitize_text_field( (string) $value ),
+            is_array( $payload['actionNames'] ?? null ) ? $payload['actionNames'] : []
+        )
+    )
+);
+$mappings_table = $wpdb->prefix . 'sentient_form_mappings';
+$actions_table  = $wpdb->prefix . 'sentient_custom_actions';
+$action_ids     = [];
+$deleted_mappings = 0;
+
+if ( '' !== $form_id && '0' !== $form_id ) {
+    $mapping_rows = $wpdb->get_results(
+        $wpdb->prepare(
+            'SELECT id, action_id FROM ' . esc_sql( $mappings_table ) . ' WHERE form_source = %s AND form_id = %s AND action_kind = %s',
+            'gravity_forms',
+            $form_id,
+            'custom_action'
+        ),
+        ARRAY_A
+    );
+
+    $mapping_rows = is_array( $mapping_rows ) ? $mapping_rows : [];
+    foreach ( $mapping_rows as $row ) {
+        $action_id = absint( $row['action_id'] ?? 0 );
+        if ( $action_id > 0 ) {
+            $action_ids[] = $action_id;
+        }
+
+        $mapping_id = absint( $row['id'] ?? 0 );
+        if ( $mapping_id > 0 ) {
+            $deleted = $wpdb->delete( $mappings_table, [ 'id' => $mapping_id ], [ '%d' ] );
+            if ( false !== $deleted ) {
+                $deleted_mappings += (int) $deleted;
+            }
+        }
+    }
+}
+
+if ( ! empty( $action_codes ) ) {
+    $placeholders = implode( ', ', array_fill( 0, count( $action_codes ), '%s' ) );
+    $action_rows  = $wpdb->get_results(
+        $wpdb->prepare(
+            'SELECT id FROM ' . esc_sql( $actions_table ) . ' WHERE code IN (' . $placeholders . ')',
+            ...$action_codes
+        ),
+        ARRAY_A
+    );
+
+    $action_rows = is_array( $action_rows ) ? $action_rows : [];
+    foreach ( $action_rows as $row ) {
+        $action_id = absint( $row['id'] ?? 0 );
+        if ( $action_id > 0 ) {
+            $action_ids[] = $action_id;
+        }
+    }
+}
+
+if ( ! empty( $action_names ) ) {
+    $placeholders = implode( ', ', array_fill( 0, count( $action_names ), '%s' ) );
+    $action_rows  = $wpdb->get_results(
+        $wpdb->prepare(
+            'SELECT id FROM ' . esc_sql( $actions_table ) . ' WHERE display_name IN (' . $placeholders . ')',
+            ...$action_names
+        ),
+        ARRAY_A
+    );
+
+    $action_rows = is_array( $action_rows ) ? $action_rows : [];
+    foreach ( $action_rows as $row ) {
+        $action_id = absint( $row['id'] ?? 0 );
+        if ( $action_id > 0 ) {
+            $action_ids[] = $action_id;
+        }
+    }
+}
+
+$action_ids = array_values( array_unique( array_filter( array_map( 'absint', $action_ids ) ) ) );
+foreach ( $action_ids as $action_id ) {
+    $deleted = $wpdb->delete(
+        $mappings_table,
+        [
+            'action_kind' => 'custom_action',
+            'action_id'   => $action_id,
+        ],
+        [ '%s', '%d' ]
+    );
+    if ( false !== $deleted ) {
+        $deleted_mappings += (int) $deleted;
+    }
+
+    $wpdb->delete( $actions_table, [ 'id' => $action_id ], [ '%d' ] );
+}
+
+echo wp_json_encode(
+    [
+        'deleted_mapping_count' => $deleted_mappings,
+        'deleted_action_ids'    => $action_ids,
+    ]
+);
+`,
+		{
+			RESET_LOCAL_FORM_FIXTURE: JSON.stringify(args)
+		}
+	);
+
+	const parsed = JSON.parse(output) as { error?: string };
+	if (parsed.error) {
+		throw new Error(`Failed to reset local form fixture: ${parsed.error}`);
+	}
+}
+
 export function runActionScheduler(): void {
 	const result = runWpCli(['action-scheduler', 'run']);
 	if (result.status !== 0) {
@@ -1429,6 +1842,42 @@ echo wp_json_encode(
 	} catch (_error) {
 		throw new Error(`Failed to parse Gravity Forms entry notes payload: ${payload}`);
 	}
+}
+
+type WaitForGravityEntryNotesOptions = {
+	description?: string;
+	maxAttempts?: number;
+	intervalMs?: number;
+	runScheduler?: boolean;
+};
+
+export async function waitForGravityEntryNotes(
+	entryId: number,
+	page: Page,
+	predicate: (notes: GravityEntryNoteRecord[]) => boolean,
+	options: WaitForGravityEntryNotesOptions = {}
+): Promise<GravityEntryNoteRecord[]> {
+	const description = options.description ?? 'matching Gravity Forms entry notes';
+	const maxAttempts = options.maxAttempts ?? 10;
+	const intervalMs = options.intervalMs ?? 1000;
+	let notes: GravityEntryNoteRecord[] = [];
+
+	for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+		if (options.runScheduler) {
+			runActionScheduler();
+		}
+
+		notes = getGravityEntryNotes(entryId);
+		if (predicate(notes)) {
+			return notes;
+		}
+
+		await page.waitForTimeout(intervalMs);
+	}
+
+	throw new Error(
+		`Could not find ${description} for entry ${entryId}. Last notes: ${JSON.stringify(notes)}`
+	);
 }
 
 export function getLatestAsyncExecutionJobByEntryId(

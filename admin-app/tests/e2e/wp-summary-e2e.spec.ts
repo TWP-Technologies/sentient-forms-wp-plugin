@@ -113,6 +113,7 @@ function extractSummaryText(payload: unknown): string {
 		record.result_summary,
 		record.llm_output,
 		record.text,
+		resultData?.result_summary,
 		resultData?.summary,
 		resultData?.llm_output,
 		structuredOutput?.summary,

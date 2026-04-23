@@ -103,23 +103,40 @@ class Tests_Installer_Multisite extends WP_UnitTestCase
     {
         $main_blog_id   = get_current_blog_id();
         $second_blog_id = self::factory()->blog->create();
-
-        Sentient_Forms_Installer::activate( true );
-        $this->set_blog_option_value( $main_blog_id, 'sentient_forms_delete_data_on_uninstall', false );
-        $this->set_blog_option_value( (int) $second_blog_id, 'sentient_forms_delete_data_on_uninstall', true );
+        $blog_ids       = [ $main_blog_id, (int) $second_blog_id ];
 
         try
         {
-            Sentient_Forms_Installer::uninstall();
+            foreach ( $blog_ids as $blog_id )
+            {
+                $this->reset_blog_lifecycle_state( (int) $blog_id );
+            }
 
-            $this->assert_blog_tables_exist( $main_blog_id, true );
-            $this->assert_blog_tables_exist( (int) $second_blog_id, false );
-            $this->assertSame( SENTIENT_FORMS_DB_VERSION, $this->get_blog_option_value( $main_blog_id, 'sentient_forms_db_version' ) );
-            $this->assertFalse( $this->get_blog_option_value( (int) $second_blog_id, 'sentient_forms_db_version', false ) );
+            $this->without_temporary_table_filters(
+                function () use ( $main_blog_id, $second_blog_id ): void {
+                    Sentient_Forms_Installer::activate( true );
+                    $this->set_blog_option_value( $main_blog_id, 'sentient_forms_delete_data_on_uninstall', false );
+                    $this->set_blog_option_value( (int) $second_blog_id, 'sentient_forms_delete_data_on_uninstall', true );
+
+                    $this->assertFalse( $this->get_blog_option_value( $main_blog_id, 'sentient_forms_delete_data_on_uninstall', true ) );
+                    $this->assertTrue( $this->get_blog_option_value( (int) $second_blog_id, 'sentient_forms_delete_data_on_uninstall', false ) );
+
+                    Sentient_Forms_Installer::uninstall();
+
+                    $this->assert_blog_tables_exist( $main_blog_id, true );
+                    $this->assert_blog_tables_exist( (int) $second_blog_id, false );
+                    $this->assertSame( SENTIENT_FORMS_DB_VERSION, $this->get_blog_option_value( $main_blog_id, 'sentient_forms_db_version' ) );
+                    $this->assertFalse( $this->get_blog_option_value( (int) $second_blog_id, 'sentient_forms_db_version', false ) );
+                }
+            );
         }
         finally
         {
-            Sentient_Forms_Installer::activate( true );
+            $this->without_temporary_table_filters(
+                function (): void {
+                    Sentient_Forms_Installer::activate( true );
+                }
+            );
             $this->delete_blog( (int) $second_blog_id );
         }
     }
@@ -129,12 +146,16 @@ class Tests_Installer_Multisite extends WP_UnitTestCase
         $this->with_blog(
             $blog_id,
             function (): void {
-                global $wpdb;
+                $this->without_temporary_table_filters(
+                    function (): void {
+                        global $wpdb;
 
-                foreach ( Sentient_Forms_Local_Data_Governance::local_table_suffixes() as $suffix )
-                {
-                    $wpdb->query( 'DROP TABLE IF EXISTS ' . esc_sql( $wpdb->prefix . $suffix ) );
-                }
+                        foreach ( Sentient_Forms_Local_Data_Governance::local_table_suffixes() as $suffix )
+                        {
+                            $wpdb->query( 'DROP TABLE IF EXISTS ' . esc_sql( $wpdb->prefix . $suffix ) );
+                        }
+                    }
+                );
 
                 delete_option( 'sentient_forms_db_version' );
                 delete_option( 'sentient_forms_delete_data_on_uninstall' );
@@ -206,7 +227,8 @@ class Tests_Installer_Multisite extends WP_UnitTestCase
         $this->with_blog(
             $blog_id,
             static function () use ( $option, $value ): void {
-                update_option( $option, $value );
+                delete_option( $option );
+                add_option( $option, $value );
             }
         );
     }
@@ -247,6 +269,44 @@ class Tests_Installer_Multisite extends WP_UnitTestCase
         }
 
         $this->restore_main_blog_context();
+    }
+
+    /**
+     * Run a callback without the WordPress test-suite temporary-table query filters.
+     *
+     * @param callable(): void $callback Callback to execute with real table DDL.
+     */
+    private function without_temporary_table_filters( callable $callback ): void
+    {
+        $create_filter_active = false !== has_filter( 'query', [ $this, '_create_temporary_tables' ] );
+        $drop_filter_active   = false !== has_filter( 'query', [ $this, '_drop_temporary_tables' ] );
+
+        if ( $create_filter_active )
+        {
+            remove_filter( 'query', [ $this, '_create_temporary_tables' ] );
+        }
+
+        if ( $drop_filter_active )
+        {
+            remove_filter( 'query', [ $this, '_drop_temporary_tables' ] );
+        }
+
+        try
+        {
+            $callback();
+        }
+        finally
+        {
+            if ( $create_filter_active )
+            {
+                add_filter( 'query', [ $this, '_create_temporary_tables' ] );
+            }
+
+            if ( $drop_filter_active )
+            {
+                add_filter( 'query', [ $this, '_drop_temporary_tables' ] );
+            }
+        }
     }
 
     private function restore_main_blog_context(): void

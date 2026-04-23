@@ -324,9 +324,10 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await page.goto('/#/providers', { waitUntil: 'networkidle' });
 
 		await expect(page.getByRole('heading', { name: 'Providers' })).toBeVisible();
-		await page.getByLabel('API key').fill('sk-or-test');
-		await page.getByLabel(/I understand OpenRouter receives/).check();
-		await page.getByRole('button', { name: 'Validate key' }).click();
+		const openRouterCard = page.getByTestId('providers-openrouter-form-card');
+		await openRouterCard.getByLabel('API key').fill('sk-or-test');
+		await openRouterCard.getByLabel(/I understand OpenRouter receives/).check();
+		await openRouterCard.getByRole('button', { name: 'Validate key' }).click();
 
 		await expect(page.getByTestId('providers-openrouter-validation-result')).toContainText('Ready');
 		await expect(page.getByTestId('providers-openrouter-validation-result')).toContainText(

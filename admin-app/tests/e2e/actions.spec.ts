@@ -728,7 +728,7 @@ test.describe('Actions admin flows', () => {
 
 		await page.goto('/actions/custom/new', { waitUntil: 'networkidle' });
 		await expect(
-			page.locator('main > section > header h2', { hasText: 'Create Custom Action' })
+			page.locator('header').getByRole('heading', { name: 'Create Custom Action' })
 		).toBeVisible();
 		await expect(appNavLink(page, '/actions/custom')).toHaveClass(/sf-bg-slate-200/);
 		await expect(appNavLink(page, '/actions/custom')).toHaveClass(/sf-text-slate-900/);

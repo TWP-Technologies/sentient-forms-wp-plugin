@@ -1,0 +1,77 @@
+- heading "Privacy & Local Processing" [level=1]
+- paragraph: Choose how much Sentient Forms keeps locally, how much visibility you want while tuning actions, and how the plugin should behave when it is removed.
+- paragraph: Privacy & visibility profile
+- text: Custom settings Balanced Setup saved
+- paragraph: Started from Balanced. One or more controls below now differ from that preset, so this site is using a custom privacy configuration.
+- button "Reopen setup assistant"
+- paragraph: Execution history
+- paragraph: /\d+ days/
+- paragraph: Full AI outputs
+- paragraph: Not stored by default
+- paragraph: Uninstall behavior
+- paragraph: Deletes plugin data
+- paragraph: Local diagnostics
+- paragraph: On-site logging enabled
+- paragraph: Enable telemetry sharing
+- paragraph: Share aggregated action metrics and local reliability diagnostics to help Sentient Forms improve reliability.
+- text: "Off"
+- checkbox "Off"
+- paragraph: /Synced \d+-\d+-24T00:\d+:00Z/
+- paragraph: /Remote consent record updated \d+-\d+-24T00:\d+:00Z/
+- paragraph: Enable on-site logging
+- paragraph:
+  - text: Write masked diagnostic logs to
+  - code: wp-content/uploads/sentient-forms/logs
+  - text: for support.
+- text: "On"
+- checkbox "On" [checked]
+- paragraph: Local data retention
+- paragraph: Choose how long local execution history stays available and whether Sentient Forms should keep full AI responses for inspection.
+- text: Execution logs
+- combobox "Execution logs":
+  - option "7 days"
+  - option /\d+ days/
+  - option /\d+ days/ [selected]
+  - option /\d+ days/
+  - option "Manual cleanup only"
+- checkbox "Store full AI outputs locally Off is the safer default. Turn this on when you need to inspect full model replies while building or debugging actions."
+- text: Store full AI outputs locally Off is the safer default. Turn this on when you need to inspect full model replies while building or debugging actions.
+- checkbox "Delete local data on uninstall Remove Sentient Forms tables and options when the plugin is uninstalled." [checked]
+- text: Delete local data on uninstall Remove Sentient Forms tables and options when the plugin is uninstalled.
+- alert:
+  - paragraph: Only derived action results are stored
+  - paragraph: Recommended for routine production use. Structured classifications, summaries, and action effects still remain available for review.
+- alert:
+  - paragraph: High-sensitivity secret option
+  - paragraph: The default vault encrypts saved provider keys locally. If your site has stricter operational controls, switch to a WordPress constant or environment variable instead of storing the key in the database.
+- button "Save retention"
+- paragraph: Manual cleanup only keeps new execution logs until an administrator removes them or changes this setting.
+- paragraph: Execution controls
+- paragraph: Pause Sentient Forms execution globally or by form provider while keeping mappings editable.
+- paragraph: Global execution
+- paragraph: Keep all providers running. Turn this off to pause everything.
+- text: Running
+- checkbox "Running" [checked]
+- paragraph: Gravity Forms
+- text: Plugin active Running
+- checkbox "Running" [checked]
+- paragraph: Background retry policy
+- paragraph: Configure how many times Sentient Forms retries background jobs and how long it waits between attempts.
+- text: Max attempts
+- spinbutton "Max attempts"
+- text: Base delay (seconds)
+- spinbutton "Base delay (seconds)"
+- text: Max delay (seconds)
+- spinbutton "Max delay (seconds)"
+- button "Save settings"
+- paragraph: /Last updated \d+-\d+-24T00:\d+:00Z/
+- paragraph: Updated by responsive-test
+- paragraph: Queue maintenance
+- paragraph: Clear stale or stuck jobs from the background processing queue.
+- paragraph: Queue depth
+- paragraph: "2"
+- paragraph: Oldest job
+- paragraph: /\d+\/\d+\/\d+/
+- button "Purge stale jobs"
+- button "Clear all"
+- paragraph: "\"Purge stale jobs\" removes queued/failed jobs older than 1 week. \"Clear all\" removes all job metadata."

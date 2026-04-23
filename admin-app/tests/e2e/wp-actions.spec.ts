@@ -42,7 +42,8 @@ test.describe('Sentient Forms admin actions', () => {
 		expect(appReady).toBe('ready');
 		expect(Array.isArray(config?.formSources)).toBeTruthy();
 		expect(config?.license?.status).toBeDefined();
-		await expect(page.locator('main h2')).toHaveText('Dashboard');
+		await expect(page.getByRole('heading', { name: 'Local workspace' })).toBeVisible();
+		await expect(page.locator('nav a[data-nav-path="/dashboard"]')).toHaveClass(/sf-bg-slate-200/);
 
 		await page.evaluate(() => {
 			window.location.hash = '#/licensing';
@@ -93,7 +94,10 @@ test.describe('Sentient Forms admin actions', () => {
 		await page.waitForTimeout(1000);
 
 		const state = await page.evaluate(() => {
-			const heading = document.querySelector('main h2')?.textContent?.trim() ?? null;
+			const heading =
+				document.querySelector('main h2')?.textContent?.trim() ??
+				document.querySelector('main h1')?.textContent?.trim() ??
+				null;
 			const activeLinks = Array.from(document.querySelectorAll('nav a'))
 				.filter((link) => link.className.includes('sf-bg-slate-200'))
 				.map((link) => link.textContent?.trim() ?? '');
@@ -105,7 +109,7 @@ test.describe('Sentient Forms admin actions', () => {
 		});
 
 		expect(state.hash).toBe('#/dashboard');
-		expect(state.heading).toBe('Dashboard');
+		expect(state.heading).toBe('Local workspace');
 		expect(state.activeLinks).toEqual(['Dashboard']);
 	});
 

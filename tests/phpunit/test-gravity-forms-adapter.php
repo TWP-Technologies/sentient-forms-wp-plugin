@@ -2994,6 +2994,155 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         }
     }
 
+    public function test_handle_after_submission_records_local_openrouter_failure_note_and_error_meta(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $vault          = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted      = $vault->encrypt( 'sk-or-gf-local-failure-secret' );
+        $http_urls      = [];
+
+        $this->assertIsString( $encrypted );
+
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Submission failure OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $this->assertIsInt( $consents->record( 'openrouter', '2026-04-22', 0 ) );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'gf_local_openrouter_failure',
+                'display_name'         => 'GF Local OpenRouter Failure',
+                'definition_json'      => [
+                    'prompt_template' => 'Summarize Gravity Forms entries.',
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '324',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'effect_mapping_json' => [
+                    'store_result' => true,
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $http_filter = static function ( $preempt, array $args, string $url ) use ( &$http_urls ): mixed {
+            $http_urls[] = $url;
+
+            if ( false !== strpos( $url, 'sentientforms.com' ) )
+            {
+                return new WP_Error( 'unexpected_sentient_request', 'Local-first failure mapping tried to call Sentient.' );
+            }
+
+            if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+            {
+                return new WP_Error( 'openrouter_http_error', 'Missing Authentication header', [ 'status' => 401 ] );
+            }
+
+            return $preempt;
+        };
+
+        $entry = [
+            'id'      => 657,
+            'form_id' => 324,
+            'status'  => 'active',
+        ];
+        $form = [
+            'id'     => 324,
+            'title'  => 'Local Failure Form',
+            'fields' => [],
+        ];
+
+        add_filter( 'pre_http_request', $http_filter, 10, 3 );
+        $returned_entry = $this->adapter->handle_after_submission_entry_post_save( $entry, $form );
+        remove_filter( 'pre_http_request', $http_filter, 10 );
+
+        $this->assertSame( $entry, $returned_entry );
+        $this->assertSame( 'Missing Authentication header', gform_get_meta( 657, 'sentient_forms_last_error' ) );
+        $this->assertNotEmpty( gform_get_meta( 657, 'sentient_forms_last_processed_at' ) );
+
+        $notes = gform_get_meta( 657, 'sentient_forms_notes' );
+        $this->assertIsArray( $notes );
+        $this->assertCount( 1, $notes );
+        $this->assertSame( 'Sentient Forms AI', $notes[0]['author'] ?? null );
+        $this->assertStringContainsString( 'Sentient Forms could not complete', (string) ( $notes[0]['content'] ?? '' ) );
+        $this->assertStringContainsString( 'Missing Authentication header', (string) ( $notes[0]['content'] ?? '' ) );
+
+        $recent_events = $events->list_recent( 1 );
+        $this->assertCount( 1, $recent_events );
+        $this->assertSame( 'failed', $recent_events[0]['status'] ?? null );
+        $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
+        $this->assertSame( 'openrouter_http_error', $recent_events[0]['error_code'] ?? null );
+        $this->assertSame( 'Missing Authentication header', $recent_events[0]['error_message'] ?? null );
+        $this->assertNull( gform_get_meta( 657, 'sentient_forms_last_response' ) );
+
+        $this->assertContains(
+            true,
+            array_map(
+                static fn ( string $url ): bool => false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ),
+                $http_urls
+            )
+        );
+        foreach ( $http_urls as $url )
+        {
+            $this->assertStringNotContainsString( 'sentientforms.com', $url );
+        }
+    }
+
+    public function test_finalize_async_error_records_local_action_note_and_error_meta(): void
+    {
+        $context = [
+            'entry_id'           => 812,
+            'action_name_label'  => 'Async local failure action',
+            'central_action_id'  => 'sentient_forms_local_custom_action',
+        ];
+        $error = new WP_Error( 'openrouter_http_error', 'Missing Authentication header', [ 'status' => 401 ] );
+
+        $this->adapter->finalize_async_error( $context, $error );
+
+        $this->assertSame( 'Missing Authentication header', gform_get_meta( 812, 'sentient_forms_last_error' ) );
+        $this->assertNotEmpty( gform_get_meta( 812, 'sentient_forms_last_processed_at' ) );
+
+        $notes = gform_get_meta( 812, 'sentient_forms_notes' );
+        $this->assertIsArray( $notes );
+        $this->assertCount( 1, $notes );
+        $this->assertStringContainsString( 'Async local failure action', (string) ( $notes[0]['content'] ?? '' ) );
+        $this->assertStringContainsString( 'Missing Authentication header', (string) ( $notes[0]['content'] ?? '' ) );
+    }
+
     public function test_handle_validation_executes_local_openrouter_mapping_from_local_tables(): void
     {
         Sentient_Forms_Installer::maybe_upgrade();

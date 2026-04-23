@@ -738,10 +738,12 @@
 		<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:p-3 sf:bg-slate-50 sf:rounded-lg">
 			<div>
 				<p class="sf:text-sm sf:font-medium sf:text-slate-700">Global execution</p>
-				<p class="sf:text-xs sf:text-slate-500">Stops all providers when enabled.</p>
+				<p class="sf:text-xs sf:text-slate-500">
+					Keep all providers running. Turn this off to pause everything.
+				</p>
 			</div>
 			<label class="sf:flex sf:items-center sf:gap-3">
-				<span class="sf:text-sm sf:font-semibold">{executionGlobalDisabled ? 'Paused' : 'Active'}</span>
+				<span class="sf:text-sm sf:font-semibold">{executionGlobalDisabled ? 'Paused' : 'Running'}</span>
 				<input
 					type="checkbox"
 					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
@@ -765,7 +767,7 @@
 						</div>
 						<label class="sf:flex sf:items-center sf:gap-3">
 							<span class="sf:text-sm sf:font-semibold">
-								{executionProviderDisabled[source.slug] ? 'Paused' : 'Active'}
+								{executionProviderDisabled[source.slug] ? 'Paused' : 'Running'}
 							</span>
 							<input
 								type="checkbox"

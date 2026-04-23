@@ -320,7 +320,7 @@
 					<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 						<div>
 							<p class="sf:font-medium sf:text-slate-800">Site Context Summary</p>
-							<p class="sf:text-xs sf:text-slate-500">
+							<p class="sf:text-xs sf:text-slate-600">
 								Source: {context.source} · Last updated: {formatDate(context.updated_at)}
 								{#if context.free_refresh_available}
 									· Local refresh available
@@ -342,24 +342,24 @@
 									<p class="sf:text-sm">
 										This regeneration will refresh the local starter summary.
 									</p>
-									<p class="sf:text-sm sf:text-slate-600">
-										Your saved edits will be replaced by the newly generated local summary.
-									</p>
+										<p class="sf:text-sm sf:text-slate-700">
+											Your saved edits will be replaced by the newly generated local summary.
+										</p>
 								{:else}
 									<p class="sf:text-sm">
 										This regeneration updates the local starter summary.
 									</p>
-									<p class="sf:text-sm sf:text-slate-600">
-										Edit the saved text after regeneration when you want business-specific detail
-										that WordPress metadata cannot infer.
-									</p>
-									{#if nextFreeRefreshLabel}
-										<p class="sf:text-xs sf:text-slate-500">
-											Next free refresh: {nextFreeRefreshLabel}
+										<p class="sf:text-sm sf:text-slate-700">
+											Edit the saved text after regeneration when you want business-specific detail
+											that WordPress metadata cannot infer.
 										</p>
-									{:else}
-										<p class="sf:text-xs sf:text-slate-500">Free refresh status unavailable.</p>
-									{/if}
+									{#if nextFreeRefreshLabel}
+											<p class="sf:text-xs sf:text-slate-600">
+												Next free refresh: {nextFreeRefreshLabel}
+											</p>
+										{:else}
+											<p class="sf:text-xs sf:text-slate-600">Free refresh status unavailable.</p>
+										{/if}
 								{/if}
 								<div class="sf:flex sf:flex-wrap sf:gap-2">
 									<Button
@@ -406,7 +406,7 @@
 							></div>
 						</div>
 						<!-- CB-SA-006: Escalating character count warnings -->
-						<p class="sf:text-xs sf:mt-1 {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:text-red-600 sf:font-medium' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:text-amber-600' : 'sf:text-slate-500'}">
+							<p class="sf:mt-1 sf:text-xs {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:text-red-600 sf:font-medium' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:text-amber-700' : 'sf:text-slate-600'}">
 							{characterCount} / {CONTEXT_HARD_LIMIT} characters
 							{#if characterCount >= CONTEXT_HARD_LIMIT}
 								— <strong>Maximum limit reached</strong>
@@ -429,7 +429,7 @@
 					<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:pt-2">
 						<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 							{#if context.pii_ack}
-								<span class="sf:text-xs sf:text-green-600">✓ PII acknowledgment on file</span>
+									<span class="sf:text-xs sf:text-green-700">✓ PII acknowledgment on file</span>
 							{/if}
 						</div>
 						<Button onclick={saveContext} disabled={saving || !hasChanges || isOverLimit}>

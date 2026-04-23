@@ -21,7 +21,7 @@
 		<div class="sf:min-w-0">
 			<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-900 sf:break-words">{heading}</h2>
 			{#if description}
-				<p class="sf:text-sm sf:text-slate-500 sf:mt-1">{description}</p>
+				<p class="sf:mt-1 sf:text-sm sf:text-slate-600">{description}</p>
 			{/if}
 		</div>
 		{#if actions}

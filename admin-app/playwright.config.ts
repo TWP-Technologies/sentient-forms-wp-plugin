@@ -6,6 +6,7 @@ const PREVIEW_PORT = getPreviewPort();
 const PREVIEW_ORIGIN = getPreviewOrigin();
 
 const isWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
+const configuredWorkers = Number(process.env.SENTIENT_FORMS_PLAYWRIGHT_WORKERS ?? '1');
 
 const previewWebServer = isWpE2E
 	? undefined
@@ -36,6 +37,10 @@ export default defineConfig({
 		baseURL: PREVIEW_ORIGIN,
 		trace: 'on-first-retry'
 	},
+	// The admin preview suite exercises a single mocked frontend surface and has proven
+	// flaky under high local parallelism. Default to deterministic workers unless an
+	// explicit override is provided.
+	workers: isWpE2E ? 1 : configuredWorkers,
 	projects: [
 		{
 			name: 'chromium',

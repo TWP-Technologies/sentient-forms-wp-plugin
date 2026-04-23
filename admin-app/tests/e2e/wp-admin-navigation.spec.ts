@@ -67,6 +67,15 @@ test.describe('WordPress admin navigation escapes the Sentient SPA', () => {
 		]);
 
 		await expect(page).toHaveTitle(/Plugins/i);
+		await expect(page.locator('body')).not.toContainText(
+			'The plugin sentient-forms/sentient-forms.php has been deactivated due to an error: Plugin file does not exist.'
+		);
+
+		const sentientRows = page
+			.locator('#the-list tr')
+			.filter({ has: page.locator('strong', { hasText: 'Sentient Forms' }) });
+
+		await expect(sentientRows).toHaveCount(1);
 	});
 
 	test('providers view does not lock or compress document scrolling', async ({ page }) => {

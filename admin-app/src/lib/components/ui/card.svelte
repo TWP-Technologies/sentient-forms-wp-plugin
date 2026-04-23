@@ -24,7 +24,7 @@
 			<div>
 				<h2 class="sf:text-lg sf:font-semibold sf:text-slate-900 sf:break-words">{title}</h2>
 				{#if subtitle}
-					<p class="sf:text-sm sf:text-slate-500 sf:mt-1">{subtitle}</p>
+						<p class="sf:mt-1 sf:text-sm sf:text-slate-600">{subtitle}</p>
 				{/if}
 			</div>
 			{#if action}

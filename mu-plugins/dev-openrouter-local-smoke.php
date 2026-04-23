@@ -47,6 +47,52 @@ add_filter(
             return $preempt;
         }
 
+        $mode = (string) get_option( 'sentient_forms_local_openrouter_smoke_mode', 'success' );
+
+        if ( 'missing_auth_wp_error' === $mode )
+        {
+            return new WP_Error(
+                'http_request_failed',
+                'Missing Authentication header',
+                [
+                    'status' => 401,
+                ]
+            );
+        }
+
+        if ( 'http_429' === $mode )
+        {
+            return [
+                'headers'  => [],
+                'body'     => wp_json_encode(
+                    [
+                        'error' => [
+                            'code'    => 'rate_limited',
+                            'message' => 'OpenRouter rate limit reached for the smoke harness.',
+                        ],
+                    ]
+                ),
+                'response' => [
+                    'code'    => 429,
+                    'message' => 'Too Many Requests',
+                ],
+                'cookies'  => [],
+            ];
+        }
+
+        if ( 'malformed_json' === $mode )
+        {
+            return [
+                'headers'  => [],
+                'body'     => '{not-valid-json',
+                'response' => [
+                    'code'    => 200,
+                    'message' => 'OK',
+                ],
+                'cookies'  => [],
+            ];
+        }
+
         $assistant_content = get_option( 'sentient_forms_local_openrouter_smoke_response_json', [] );
         if ( ! is_array( $assistant_content ) )
         {

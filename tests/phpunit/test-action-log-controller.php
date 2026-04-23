@@ -317,6 +317,36 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 0, $data['entries'][0]['pricing']['debited_credits'] );
     }
 
+    public function test_get_log_entries_filters_unbacked_local_first_legacy_success_rows(): void
+    {
+        update_option(
+            self::OPTION_KEY,
+            [
+                [
+                    'id'                   => 'legacy-local-success',
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => 42,
+                    'entry_id'             => 113,
+                    'action_code'          => 'sentient_forms_local_custom_action',
+                    'action_label'         => 'Local OpenRouter action',
+                    'status'               => 'success',
+                    'result_summary'       => 'Synthetic imported success.',
+                    'execution_request_id' => 'req-synthetic-local-success',
+                    'mapping_id'           => 'local_first_12',
+                    'created_at'           => '2026-04-21T11:00:00+00:00',
+                ],
+            ],
+            false
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 0, $data['total'] );
+        $this->assertSame( [], $data['entries'] );
+    }
+
     public function test_log_execution_stays_local_when_proxy_key_present(): void
     {
         Sentient_Forms_Plugin::instance()->set_license_data(

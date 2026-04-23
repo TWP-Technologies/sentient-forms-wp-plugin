@@ -3,11 +3,14 @@ import {
 	ensureGravityForm,
 	findEntryIdByEmail,
 	getEntryMeta,
+	getLocalFormMappings,
 	getEntrySpamStatus,
 	getLatestEntryId,
 	requireWpRestHealthy,
+	resetLocalFormFixture,
 	runActionScheduler,
-	runWpEval
+	runWpEval,
+	waitForGravityEntryNotes
 } from './utils/wp-e2e-helpers';
 import { ensureSentientFormsSpa, loginToWpAdmin } from './utils/wp-admin';
 
@@ -180,6 +183,7 @@ if ( ! is_array( $payload ) ) {
 }
 
 update_option( 'sentient_forms_local_openrouter_smoke_mock_enabled', '1', false );
+update_option( 'sentient_forms_local_openrouter_smoke_mode', 'success', false );
 update_option( 'sentient_forms_local_openrouter_smoke_response_json', $payload, false );
 update_option( 'sentient_forms_local_openrouter_smoke_http_urls', [], false );
 echo 'ok';
@@ -194,101 +198,36 @@ echo 'ok';
 	}
 }
 
+function setLocalOpenRouterMockMode(mode: 'success' | 'missing_auth_wp_error' | 'http_429' | 'malformed_json'): void {
+	const output = runWpEval(
+		`
+$mode = getenv( 'MOCK_MODE' ) ?: 'success';
+update_option( 'sentient_forms_local_openrouter_smoke_mock_enabled', '1', false );
+update_option( 'sentient_forms_local_openrouter_smoke_mode', $mode, false );
+update_option( 'sentient_forms_local_openrouter_smoke_http_urls', [], false );
+delete_option( 'sentient_forms_local_openrouter_smoke_response_json' );
+echo 'ok';
+`,
+		{
+			MOCK_MODE: mode
+		}
+	);
+
+	if (!output.includes('ok')) {
+		throw new Error(`Failed to set local OpenRouter mock mode: ${output}`);
+	}
+}
+
 function disableLocalOpenRouterMock(): void {
 	runWpEval(
 		`
 delete_option( 'sentient_forms_local_openrouter_smoke_mock_enabled' );
+delete_option( 'sentient_forms_local_openrouter_smoke_mode' );
 delete_option( 'sentient_forms_local_openrouter_smoke_http_urls' );
 delete_option( 'sentient_forms_local_openrouter_smoke_response_json' );
 echo 'ok';
 `
 	);
-}
-
-function resetLocalOpenRouterBrowserFixture(formId: number, actionName: string): void {
-	const output = runWpEval(
-		`
-if ( ! class_exists( 'Sentient_Forms_Installer' ) ) {
-    echo 'sentient_forms_not_loaded';
-    return;
-}
-
-Sentient_Forms_Installer::maybe_upgrade();
-
-global $wpdb;
-$form_id       = sanitize_text_field( (string) absint( getenv( 'FORM_ID' ) ?: 0 ) );
-$action_name   = getenv( 'ACTION_NAME' ) ?: 'Local OpenRouter spam filter';
-$mappings_table = $wpdb->prefix . 'sentient_form_mappings';
-$actions_table  = $wpdb->prefix . 'sentient_custom_actions';
-$action_ids     = [];
-
-if ( '' !== $form_id && '0' !== $form_id ) {
-    $mapping_rows = $wpdb->get_results(
-        $wpdb->prepare(
-            'SELECT id, action_id FROM ' . esc_sql( $mappings_table ) . ' WHERE form_source = %s AND form_id = %s AND action_kind = %s',
-            'gravity_forms',
-            $form_id,
-            'custom_action'
-        ),
-        ARRAY_A
-    );
-
-    $mapping_rows = is_array( $mapping_rows ) ? $mapping_rows : [];
-    foreach ( $mapping_rows as $row ) {
-        $action_id = absint( $row['action_id'] ?? 0 );
-        if ( $action_id > 0 ) {
-            $action_ids[] = $action_id;
-        }
-
-        $mapping_id = absint( $row['id'] ?? 0 );
-        if ( $mapping_id > 0 ) {
-            $wpdb->delete( $mappings_table, [ 'id' => $mapping_id ], [ '%d' ] );
-        }
-    }
-}
-
-if ( '' !== $action_name ) {
-    $action_rows = $wpdb->get_results(
-        $wpdb->prepare(
-            'SELECT id FROM ' . esc_sql( $actions_table ) . ' WHERE display_name = %s',
-            $action_name
-        ),
-        ARRAY_A
-    );
-
-    $action_rows = is_array( $action_rows ) ? $action_rows : [];
-    foreach ( $action_rows as $row ) {
-        $action_id = absint( $row['id'] ?? 0 );
-        if ( $action_id > 0 ) {
-            $action_ids[] = $action_id;
-        }
-    }
-}
-
-$action_ids = array_values( array_unique( array_filter( array_map( 'absint', $action_ids ) ) ) );
-foreach ( $action_ids as $action_id ) {
-    $wpdb->delete(
-        $mappings_table,
-        [
-            'action_kind' => 'custom_action',
-            'action_id'   => $action_id,
-        ],
-        [ '%s', '%d' ]
-    );
-    $wpdb->delete( $actions_table, [ 'id' => $action_id ], [ '%d' ] );
-}
-
-echo 'ok';
-`,
-		{
-			FORM_ID: String(formId),
-			ACTION_NAME: actionName
-		}
-	);
-
-	if (!output.includes('ok')) {
-		throw new Error(`Failed to reset browser smoke fixture: ${output}`);
-	}
 }
 
 function ensureGravityFormPage(formId: number, pageTitle: string): string {
@@ -491,7 +430,11 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 			{ type: 'email', id: 2, label: 'Email', isRequired: true },
 			{ type: 'textarea', id: 3, label: 'Message', isRequired: true }
 		]);
-		resetLocalOpenRouterBrowserFixture(formId, localOpenRouterBrowserSmokeActionName);
+		resetLocalFormFixture({
+			formId,
+			actionNames: [localOpenRouterBrowserSmokeActionName]
+		});
+		expect(getLocalFormMappings(formId)).toEqual([]);
 		const formUrl = ensureGravityFormPage(formId, localOpenRouterBrowserSmokePageTitle);
 		const seed = seedLocalOpenRouterProvider(localOpenRouterBrowserSmokeCredentialLabel);
 
@@ -525,6 +468,16 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		await drawer.getByRole('button', { name: 'Create local action' }).click();
 
 		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #');
+		const mappings = getLocalFormMappings(formId);
+		expect(mappings).toHaveLength(1);
+		expect(mappings[0]).toMatchObject({
+			form_source: 'gravity_forms',
+			form_id: String(formId),
+			hook: 'gform_after_submission',
+			action_kind: 'custom_action',
+			execution_mode: localOpenRouterBrowserExecutionMode,
+			enabled: true
+		});
 
 		const email = `browser-local-${token}@example.test`;
 		const baselineEntryId = getLatestEntryId(formId);
@@ -556,6 +509,127 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		const localResult = getEntryMeta(entryId, '_sentient_forms_local_result');
 		expect(localResult && typeof localResult === 'object').toBeTruthy();
 		expect(getEntryMeta(entryId, 'sentient_forms_spam_classification')).toBe('spam');
+		const localActionNotes = (
+			await waitForGravityEntryNotes(
+				entryId,
+				page,
+				(notes) =>
+					notes.some(
+						(note) =>
+							note.user_name === 'Sentient Forms AI' &&
+							note.note_type === 'sentient_forms_local_action' &&
+							note.value.includes('Sentient Forms spam review:') &&
+							note.value.includes('Browser local-first spam filter completed.')
+					),
+				{
+					description: 'the local OpenRouter browser spam note',
+					runScheduler: localOpenRouterBrowserExecutionMode === 'async'
+				}
+			)
+		).filter(
+			(note) =>
+				note.user_name === 'Sentient Forms AI' &&
+				note.note_type === 'sentient_forms_local_action' &&
+				note.value.includes('Sentient Forms spam review:')
+		);
+		expect(localActionNotes).toHaveLength(1);
+		expect(localActionNotes[0]?.value).toContain('Browser local-first spam filter completed.');
+		expect(
+			localActionNotes.some((note) => note.value.includes('Missing Authentication header'))
+		).toBe(false);
+
+		const urls = getLocalOpenRouterSmokeUrls();
+		expect(urls.some((url) => url.includes('openrouter.ai/api/v1/chat/completions'))).toBe(true);
+		expect(urls.filter((url) => url.includes('sentientforms.com'))).toHaveLength(0);
+	});
+
+	test('surfaces a local provider transport failure without falling back to stale success state', async function ({
+		page
+	}) {
+		await requireWpRestHealthy(page);
+
+		const token = `failure-${Date.now()}`;
+		const formId = ensureGravityForm(localOpenRouterBrowserSmokeFormTitle, [
+			{ type: 'text', id: 1, label: 'Name', isRequired: true },
+			{ type: 'email', id: 2, label: 'Email', isRequired: true },
+			{ type: 'textarea', id: 3, label: 'Message', isRequired: true }
+		]);
+		resetLocalFormFixture({
+			formId,
+			actionNames: [localOpenRouterBrowserSmokeActionName]
+		});
+		expect(getLocalFormMappings(formId)).toEqual([]);
+		const formUrl = ensureGravityFormPage(formId, localOpenRouterBrowserSmokePageTitle);
+		const seed = seedLocalOpenRouterProvider(localOpenRouterBrowserSmokeCredentialLabel);
+
+		setLocalOpenRouterMockMode('missing_auth_wp_error');
+
+		await loginToWpAdmin(page);
+		await ensureSentientFormsSpa(page, `/actions/gravity_forms/${formId}`);
+
+		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await page.getByRole('button', { name: 'Direct OpenRouter' }).click();
+		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
+		await drawer.getByTestId('local-builder-credential').selectOption(String(seed.credential_id));
+		await drawer
+			.getByTestId('local-builder-action-name')
+			.fill(localOpenRouterBrowserSmokeActionName);
+		await drawer
+			.getByTestId('local-builder-execution-mode')
+			.selectOption(localOpenRouterBrowserExecutionMode);
+		await drawer.getByRole('button', { name: 'Create local action' }).click();
+
+		const email = `${token}@example.test`;
+		const baselineEntryId = getLatestEntryId(formId);
+		await submitFrontEndGravityForm(page, formUrl, formId, {
+			name: 'Browser Local Failure',
+			email,
+			message: 'This submission should record the local provider transport error.'
+		});
+
+		const entryId = await waitForEntryId(page, formId, baselineEntryId, email);
+		expect(entryId).toBeGreaterThan(baselineEntryId);
+
+		await expect
+			.poll(function () {
+				if (localOpenRouterBrowserExecutionMode === 'async') {
+					runActionScheduler();
+				}
+
+				return getLatestLocalExecutionEvent(entryId)?.status ?? null;
+			})
+			.toBe('failed');
+
+		const failureNotes = await waitForGravityEntryNotes(
+			entryId,
+			page,
+			(notes) =>
+				notes.some(
+					(note) =>
+						note.user_name === 'Sentient Forms AI' &&
+						note.note_type === 'sentient_forms_local_action' &&
+						note.value.includes('Missing Authentication header')
+				),
+			{
+				description: 'the local OpenRouter failure note',
+				runScheduler: localOpenRouterBrowserExecutionMode === 'async'
+			}
+		);
+		expect(
+			failureNotes.some((note) => note.value.includes('Missing Authentication header'))
+		).toBe(true);
+
+		await ensureSentientFormsSpa(page, `/actions/gravity_forms/${formId}`);
+		const executionStatusError = page
+			.locator('p')
+			.filter({ hasText: /Last error: openrouter_http_error/i })
+			.first();
+		await expect(executionStatusError).toBeVisible();
+		await expect(executionStatusError).toContainText('Missing Authentication header');
+		await expect(page.getByText('success', { exact: true })).toHaveCount(0);
 
 		const urls = getLocalOpenRouterSmokeUrls();
 		expect(urls.some((url) => url.includes('openrouter.ai/api/v1/chat/completions'))).toBe(true);

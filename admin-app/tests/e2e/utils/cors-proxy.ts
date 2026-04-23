@@ -10,6 +10,40 @@ const defaultWpOrigin = existsSync('/.dockerenv')
 	? 'http://host.docker.internal:8080'
 	: 'http://localhost:8080';
 const wpOrigin = new URL(process.env.SENTIENT_WP_BASE_URL ?? defaultWpOrigin);
+const transientUpstreamErrorPattern =
+	/(socket hang up|ECONNRESET|ECONNREFUSED|EPIPE|network error|fetch failed)/i;
+
+function isTransientUpstreamError(error: unknown): boolean {
+	if (!(error instanceof Error)) {
+		return false;
+	}
+
+	return transientUpstreamErrorPattern.test(error.message);
+}
+
+async function fetchUpstreamWithRetry(route: Route, targetUrl: string) {
+	const headers = {
+		...route.request().headers(),
+		host: wpOrigin.host
+	};
+
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		try {
+			return await route.fetch({
+				url: targetUrl,
+				headers
+			});
+		} catch (error) {
+			if (!isTransientUpstreamError(error) || attempt === 2) {
+				throw error;
+			}
+
+			await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+		}
+	}
+
+	throw new Error(`Failed to proxy request to ${targetUrl}`);
+}
 
 async function fulfillWithCors(route: Route, origin: string | undefined): Promise<void> {
 	const req = route.request();
@@ -38,13 +72,7 @@ async function fulfillWithCors(route: Route, origin: string | undefined): Promis
 	}
 
 	try {
-		const upstream = await route.fetch({
-			url: target.toString(),
-			headers: {
-				...req.headers(),
-				host: wpOrigin.host
-			}
-		});
+		const upstream = await fetchUpstreamWithRetry(route, target.toString());
 		const body = await upstream.text();
 		const headers: Record<string, string> = { ...upstream.headers() } as Record<string, string>;
 		headers['access-control-allow-origin'] = origin ?? '*';

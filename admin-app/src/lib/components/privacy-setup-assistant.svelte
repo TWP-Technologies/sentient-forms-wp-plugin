@@ -165,35 +165,38 @@
 			</div>
 
 			<div class="sf:space-y-6 sf:p-5 sf:sm:p-6">
-				<div class="sf:grid sf:gap-3 sf:lg:grid-cols-4">
-					{#each presetDefinitions as preset}
-						<button
-							type="button"
-							class={`sf:flex sf:h-full sf:flex-col sf:rounded-lg sf:border sf:p-4 sf:text-left sf:transition ${
-								selectedPreset === preset.id
-									? 'sf:border-primary-500 sf:bg-primary-50 sf:shadow-sm'
-									: 'sf:border-slate-200 sf:bg-white sf:hover:border-slate-300 sf:hover:bg-slate-50'
-							}`}
-							onclick={() => {
-								selectedPreset = preset.id;
-							}}
-							data-testid={`privacy-setup-preset-${preset.id}`}
-						>
-							<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-								<p class="sf:text-base sf:font-semibold sf:text-slate-900">{preset.label}</p>
-								<Badge variant={preset.id === 'balanced' ? 'success' : 'neutral'}>
-									{preset.kicker}
-								</Badge>
+					<div class="sf:grid sf:gap-3 sf:lg:grid-cols-4">
+						{#each presetDefinitions as preset}
+							<Button
+								type="button"
+								variant="secondary"
+								size="md"
+								class={`sf:h-full sf:w-full sf:flex-col sf:items-start sf:rounded-lg sf:p-4 sf:text-left ${
+									selectedPreset === preset.id
+										? 'sf:border-primary-500 sf:bg-primary-50 sf:shadow-sm sf:hover:border-primary-500 sf:hover:bg-primary-50'
+										: 'sf:border-slate-200 sf:bg-white sf:hover:border-slate-300 sf:hover:bg-slate-50'
+								}`}
+								aria-pressed={selectedPreset === preset.id}
+								onclick={() => {
+									selectedPreset = preset.id;
+								}}
+								data-testid={`privacy-setup-preset-${preset.id}`}
+							>
+								<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+									<p class="sf:text-base sf:font-semibold sf:text-slate-900">{preset.label}</p>
+									<Badge variant={preset.id === 'balanced' ? 'success' : 'neutral'}>
+										{preset.kicker}
+									</Badge>
 							</div>
 							<p class="sf:mt-2 sf:text-sm sf:text-slate-600">{preset.description}</p>
-							<ul class="sf:mt-4 sf:space-y-2 sf:text-xs sf:text-slate-500">
-								<li>{preset.retentionLabel}</li>
-								<li>{preset.fullOutputLabel}</li>
-								<li>{preset.loggingLabel}</li>
-							</ul>
-						</button>
-					{/each}
-				</div>
+								<ul class="sf:mt-4 sf:space-y-2 sf:text-xs sf:text-slate-500">
+									<li>{preset.retentionLabel}</li>
+									<li>{preset.fullOutputLabel}</li>
+									<li>{preset.loggingLabel}</li>
+								</ul>
+							</Button>
+						{/each}
+					</div>
 
 				<div class="sf:grid sf:gap-4 sf:xl:grid-cols-[1.2fr_0.8fr]">
 					<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4 sf:space-y-4">

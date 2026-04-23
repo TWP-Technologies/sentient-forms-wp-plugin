@@ -3055,10 +3055,10 @@
 				class="sf:flex sf:items-center sf:gap-2 sf:mr-3 sf:pr-3 sf:border-r sf:border-slate-300"
 				title={actionsState.effectiveDisabled
 					? 'Sentient Forms execution is paused for this form'
-					: 'Sentient Forms is active for this form'}
+					: 'Sentient Forms execution is running for this form'}
 			>
 				<span class="sf:text-xs sf:font-medium sf:text-slate-600"
-					>{actionsState.effectiveDisabled ? 'Paused' : 'Active'}</span
+					>{actionsState.effectiveDisabled ? 'Paused' : 'Running'}</span
 				>
 				{#if actionsState.globalDisabled}
 					<Badge variant="warning">Global pause</Badge>
@@ -3295,7 +3295,7 @@
 			</div>
 		</Card>
 
-		<Card class="sf:min-w-0 sf:space-y-3">
+		<Card class="sf:min-w-0 sf:space-y-3" data-testid="form-execution-status">
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
 			>
@@ -3318,7 +3318,7 @@
 				<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
 				<p class="sf:text-sm sf:text-slate-600">{statusDescription(actionsState.status)}</p>
 				{#if actionsState.status.last_error_code || (actionsState.status.status === 'error' && actionsState.status.message)}
-					<p class="sf:text-xs sf:text-amber-700 sf:mt-1">
+					<p class="sf:text-xs sf:text-amber-700 sf:mt-1" data-testid="form-execution-status-error">
 						{actionsState.status.last_error_code
 							? `Last error: ${actionsState.status.last_error_code}`
 							: ''}

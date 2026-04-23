@@ -13,6 +13,40 @@ const wpAdminPass = process.env.SENTIENT_WP_ADMIN_PASS ?? 'password';
 type SentientWindow = Window & { sentientFormsConfig?: unknown };
 type SentientAppStatus = 'bootstrapping' | 'ready' | 'failed';
 
+function currentWpPluginMode(): 'source' | 'package' {
+	return process.env.SENTIENT_WP_PLUGIN_MODE === 'package' ? 'package' : 'source';
+}
+
+async function assertExpectedPluginAssets(page: Page): Promise<void> {
+	const assetBaseUrl = await page.evaluate(() => {
+		const config = (window as Window & {
+			sentientFormsConfig?: { assetBaseUrl?: unknown };
+		}).sentientFormsConfig;
+
+		if (!config || typeof config !== 'object') {
+			return null;
+		}
+
+		const { assetBaseUrl: runtimeAssetBaseUrl } = config as { assetBaseUrl?: unknown };
+		return typeof runtimeAssetBaseUrl === 'string' ? runtimeAssetBaseUrl : null;
+	});
+
+	if (currentWpPluginMode() === 'package') {
+		if (!assetBaseUrl?.includes('/sentient-forms-wporg-check/')) {
+			throw new Error(
+				`Package WP E2E expected sentient-forms-wporg-check assets, but runtime assetBaseUrl was ${assetBaseUrl}`
+			);
+		}
+		return;
+	}
+
+	if (assetBaseUrl?.includes('/sentient-forms-wporg-check/')) {
+		throw new Error(
+			`Source WP E2E expected sentient-forms assets, but runtime assetBaseUrl was ${assetBaseUrl}`
+		);
+	}
+}
+
 async function maybeHandleAdminVerification(page: Page): Promise<void> {
 	const confirmButton = page.locator('button', { hasText: 'The email is correct' });
 	const remindLink = page.locator('a', { hasText: 'Remind me later' });
@@ -30,6 +64,21 @@ async function maybeHandleAdminVerification(page: Page): Promise<void> {
 			page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
 			remindLink.click()
 		]);
+	}
+}
+
+async function maybeCompletePrivacySetupAssistant(page: Page): Promise<void> {
+	const assistant = page.getByTestId('privacy-setup-assistant');
+	const deadline = Date.now() + 5000;
+
+	while (Date.now() < deadline) {
+		if (await assistant.isVisible().catch(() => false)) {
+			await assistant.getByRole('button', { name: 'Skip Customized Setup' }).click();
+			await expect(assistant).toBeHidden();
+			return;
+		}
+
+		await page.waitForTimeout(100);
 	}
 }
 
@@ -111,11 +160,13 @@ export async function ensureSentientFormsSpa(page: Page, hash = '/dashboard'): P
 			`Sentient Forms SPA did not reach ready state within 15s (appReady=${appReady}, hasContent=${hasContent})`
 		);
 	}
+	await assertExpectedPluginAssets(page);
 	await page.evaluate((desiredHash) => {
 		if (typeof window !== 'undefined' && window.location.hash !== desiredHash) {
 			window.location.hash = desiredHash;
 		}
 	}, target);
+	await maybeCompletePrivacySetupAssistant(page);
 }
 
 export async function waitForSentientConfig(page: Page): Promise<void> {

@@ -50,7 +50,7 @@
 			return 'sf:inline-flex sf:items-center sf:rounded-full sf:border sf:border-rose-200 sf:bg-rose-50 sf:px-2.5 sf:py-0.5 sf:text-xs sf:font-medium sf:text-rose-700';
 		}
 		if (isNodeEnabled()) {
-			return 'sf:inline-flex sf:items-center sf:cursor-pointer sf:rounded-full sf:border sf:border-success-200 sf:bg-success-50 sf:px-2.5 sf:py-0.5 sf:text-xs sf:font-medium sf:text-success-600 sf:shadow-sm sf:hover:bg-success-100 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-success-600 sf:focus-visible:ring-offset-1';
+			return 'sf:inline-flex sf:items-center sf:cursor-pointer sf:rounded-full sf:border sf:border-success-200 sf:bg-success-50 sf:px-2.5 sf:py-0.5 sf:text-xs sf:font-medium sf:text-success-700 sf:shadow-sm sf:hover:bg-success-100 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-success-700 sf:focus-visible:ring-offset-1';
 		}
 		return 'sf:inline-flex sf:items-center sf:cursor-pointer sf:rounded-full sf:border sf:border-warning-200 sf:bg-warning-50 sf:px-2.5 sf:py-0.5 sf:text-xs sf:font-medium sf:text-warning-700 sf:shadow-sm sf:hover:bg-warning-100 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-warning-600 sf:focus-visible:ring-offset-1';
 	}

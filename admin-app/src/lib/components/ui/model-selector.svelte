@@ -383,7 +383,7 @@
 					<ul class="sf:mt-2 sf:space-y-1 sf:text-xs sf:text-slate-500">
 						{#each resolved.override_chain as step}
 							<li class="sf:flex sf:items-center sf:gap-2">
-								<span class={step.applied ? 'sf:text-green-600' : 'sf:text-slate-400'}>
+								<span class={step.applied ? 'sf:text-green-700' : 'sf:text-slate-400'}>
 									{step.applied ? '✓' : '○'}
 								</span>
 								<span class="sf:font-medium">{step.level}:</span>
@@ -512,7 +512,7 @@
 						<ul class="sf:mt-2 sf:space-y-1 sf:text-xs sf:text-slate-500">
 							{#each resolved.override_chain as step}
 								<li class="sf:flex sf:items-center sf:gap-2">
-									<span class={step.applied ? 'sf:text-green-600' : 'sf:text-slate-400'}>
+									<span class={step.applied ? 'sf:text-green-700' : 'sf:text-slate-400'}>
 										{step.applied ? '✓' : '○'}
 									</span>
 									<span class="sf:font-medium">{step.level}:</span>

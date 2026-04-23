@@ -259,7 +259,7 @@ test('licensing screen uses billing-state credits without legacy credit refresh'
 	await expect(page.getByRole('button', { name: 'Activate', exact: true })).not.toBeVisible();
 	await expect(page.getByText('Tier: Starter')).toBeVisible();
 	await expect(page.getByTestId('licensing-credits-headline')).toContainText(
-		'1500 / 1500 credits remaining'
+		'1500 / 1500 managed credits remaining'
 	);
 	await expect(page.getByTestId('licensing-trial-status-note')).toContainText(
 		'One-time 14-day paid-plan trial.'

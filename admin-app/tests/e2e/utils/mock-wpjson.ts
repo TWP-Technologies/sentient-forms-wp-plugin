@@ -57,6 +57,11 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 
 	const settingsState: Record<string, unknown> = {
 		enable_logging: true,
+		execution_event_retention_days: 90,
+		delete_data_on_uninstall: true,
+		store_full_ai_outputs: false,
+		privacy_setup_profile: 'balanced',
+		privacy_setup_completed_at: '2026-04-21T00:00:00Z',
 		execution_global_disabled: false,
 		execution_provider_disabled: {},
 		...(routes.actions?.settings ?? {})
@@ -101,6 +106,50 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
+		if (urlWithoutQuery.endsWith('/local/action-templates') && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ success: true, data: [] })
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/local/custom-actions') && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ success: true, data: [] })
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/local/execution-events') && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ success: true, data: [] })
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/local/support-bundle') && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					success: true,
+					data: {
+						generated_at: '2026-04-22T00:00:00Z',
+						plugin: {},
+						wordpress: {},
+						local_tables: {},
+						providers: [],
+						external_consents: [],
+						execution_summary: {},
+						retention: {}
+					}
+				})
+			});
+		}
+
 		const formsMatch = url.match(/\/([^/]+)\/forms$/);
 		if (routes.actions?.forms && formsMatch && method === 'GET') {
 			const slug = formsMatch[1];
@@ -112,7 +161,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (routes.actions?.definitions && url.endsWith('/actions/definitions')) {
+		if (routes.actions?.definitions && urlWithoutQuery.endsWith('/actions/definitions')) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -120,7 +169,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (url.endsWith('/settings') && method === 'GET') {
+		if (urlWithoutQuery.endsWith('/settings') && method === 'GET') {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -128,7 +177,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-			if (url.endsWith('/settings') && method === 'PUT') {
+			if (urlWithoutQuery.endsWith('/settings') && method === 'PUT') {
 				const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 				Object.assign(settingsState, body);
 				return route.fulfill({
@@ -138,7 +187,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				});
 			}
 
-			const actionDefaultsMatch = url.match(/\/actions\/([^/]+)\/defaults$/);
+			const actionDefaultsMatch = urlWithoutQuery.match(/\/actions\/([^/]+)\/defaults$/);
 			if (actionDefaultsMatch && method === 'GET') {
 				const actionId = decodeURIComponent(actionDefaultsMatch[1]);
 				const config = actionDefaultsState[actionId] ?? {};
@@ -179,7 +228,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				});
 			}
 
-		if (url.endsWith('/meta/capabilities')) {
+		if (urlWithoutQuery.endsWith('/meta/capabilities')) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -206,6 +255,27 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
+		if (urlWithoutQuery.endsWith('/models') && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope([])
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/models/resolve') && method === 'POST') {
+			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope({
+					id: payload.model ?? 'openrouter/auto',
+					label: 'Resolved model',
+					provider: 'openrouter'
+				})
+			});
+		}
+
 		if (urlWithoutQuery.endsWith('/credits/balance') && method === 'GET') {
 			return route.fulfill({
 				status: 200,
@@ -214,7 +284,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (routes.actions?.status && url.endsWith('/actions/status')) {
+		if (routes.actions?.status && /\/actions\/status$/.test(urlWithoutQuery)) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -246,7 +316,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (/forms\/\d+\/actions\/disable$/.test(url) && method === 'GET') {
+		if (/forms\/\d+\/actions\/disable$/.test(urlWithoutQuery) && method === 'GET') {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -254,7 +324,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (/forms\/\d+\/actions\/disable$/.test(url) && method === 'PUT') {
+		if (/forms\/\d+\/actions\/disable$/.test(urlWithoutQuery) && method === 'PUT') {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			disableState.sf_disabled = Boolean(payload.sf_disabled);
 			disableState.effective_disabled = Boolean(
@@ -269,7 +339,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (/forms\/\d+\/actions\/workflow-plan(\?|$)/.test(url) && method === 'GET') {
+		if (/forms\/\d+\/actions\/workflow-plan$/.test(urlWithoutQuery) && method === 'GET') {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -349,6 +419,23 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				status: 201,
 				headers: { 'content-type': 'application/json' },
 				body: envelope(newLinkage)
+			});
+		}
+
+		const actionConfigMatch = urlWithoutQuery.match(/\/forms\/[^/]+\/(\d+)\/action-config\/([^/]+)$/);
+		if (actionConfigMatch && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					success: true,
+					data: {
+						form_source_slug: 'gravity_forms',
+						form_id: Number(actionConfigMatch[1]),
+						action_id: decodeURIComponent(actionConfigMatch[2]),
+						config: {}
+					}
+				})
 			});
 		}
 

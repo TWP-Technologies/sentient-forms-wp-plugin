@@ -5,10 +5,13 @@ import {
 	findEntryIdByEmail,
 	getCapturedMailRecords,
 	getEntryMeta,
+	getLocalFormMappings,
 	getEntrySpamStatus,
 	getLatestEntryId,
 	requireWpRestHealthy,
-	runWpEval
+	resetLocalFormFixture,
+	runWpEval,
+	waitForGravityEntryNotes
 } from './utils/wp-e2e-helpers';
 
 const runLocalOpenRouterValidationNotificationSmoke =
@@ -542,6 +545,12 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 			{ type: 'email', id: 2, label: 'Email', isRequired: true },
 			{ type: 'textarea', id: 3, label: 'Project Details', isRequired: true }
 		]);
+		resetLocalFormFixture({
+			formId: validationFormId,
+			actionCodes: [localOpenRouterValidationActionCode],
+			actionNames: [localOpenRouterValidationActionName]
+		});
+		expect(getLocalFormMappings(validationFormId)).toEqual([]);
 		const validationFormUrl = ensureGravityFormPage(
 			validationFormId,
 			localOpenRouterValidationPageTitle
@@ -558,6 +567,17 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 				email: '2',
 				details: '3'
 			}
+		});
+		const validationMappings = getLocalFormMappings(validationFormId);
+		expect(validationMappings).toHaveLength(1);
+		expect(validationMappings[0]?.id).toBe(validationMapping.mapping_id);
+		expect(validationMappings[0]).toMatchObject({
+			form_source: 'gravity_forms',
+			form_id: String(validationFormId),
+			hook: 'gform_validation',
+			action_kind: 'custom_action',
+			execution_mode: 'sync',
+			enabled: true
 		});
 
 		setLocalOpenRouterMockResponse({
@@ -655,6 +675,12 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 				]
 			}
 		);
+		resetLocalFormFixture({
+			formId: spamFormId,
+			actionCodes: [localOpenRouterSpamActionCode],
+			actionNames: [localOpenRouterSpamActionName]
+		});
+		expect(getLocalFormMappings(spamFormId)).toEqual([]);
 		const spamFormUrl = ensureGravityFormPage(spamFormId, localOpenRouterSpamPageTitle);
 		const spamMapping = createLocalOpenRouterMapping({
 			formId: spamFormId,
@@ -670,6 +696,10 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 			},
 			effectMapping: {
 				store_result: true,
+				entry_note: {
+					path: 'structured.summary',
+					prefix: 'Local spam suppression:'
+				},
 				spam: {
 					enabled: true,
 					classification_path: 'structured.classification',
@@ -681,6 +711,17 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 					sentient_forms_spam_summary: 'structured.summary'
 				}
 			}
+		});
+		const spamMappings = getLocalFormMappings(spamFormId);
+		expect(spamMappings).toHaveLength(1);
+		expect(spamMappings[0]?.id).toBe(spamMapping.mapping_id);
+		expect(spamMappings[0]).toMatchObject({
+			form_source: 'gravity_forms',
+			form_id: String(spamFormId),
+			hook: 'gform_after_submission',
+			action_kind: 'custom_action',
+			execution_mode: 'sync',
+			enabled: true
 		});
 
 		setLocalOpenRouterMockResponse({
@@ -711,6 +752,30 @@ test.describe('Local OpenRouter validation and notification package smoke @local
 		expect(getEntryMeta(spamEntryId, 'sentient_forms_spam_summary')).toBe(
 			'Exact-package local spam suppression completed.'
 		);
+		const localSpamNotes = (
+			await waitForGravityEntryNotes(
+				spamEntryId,
+				page,
+				(notes) =>
+					notes.some(
+						(note) =>
+							note.user_name === 'Sentient Forms AI' &&
+							note.note_type === 'sentient_forms_local_action' &&
+							note.value.includes('Local spam suppression:') &&
+							note.value.includes('Exact-package local spam suppression completed.')
+					),
+				{
+					description: 'the local spam suppression note'
+				}
+			)
+		).filter(
+			(note) =>
+				note.user_name === 'Sentient Forms AI' &&
+				note.note_type === 'sentient_forms_local_action' &&
+				note.value.includes('Local spam suppression:')
+		);
+		expect(localSpamNotes).toHaveLength(1);
+		expect(localSpamNotes[0]?.value).toContain('Exact-package local spam suppression completed.');
 		expect(getEntryMeta(spamEntryId, 'sentient_forms_spam_notification_preference')).toBe(
 			'suppress'
 		);

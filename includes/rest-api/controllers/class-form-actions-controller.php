@@ -2538,6 +2538,13 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 $status = 'error';
             }
 
+            if (
+                'success' === $status &&
+                ! $this->can_action_log_entry_drive_success_status( $entry, $form_source_slug, $form_id )
+            ) {
+                continue;
+            }
+
             $message = null;
             if ( 'error' === $status )
             {
@@ -2566,6 +2573,64 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return null;
+    }
+
+    private function can_action_log_entry_drive_success_status( array $entry, string $form_source_slug, int $form_id ): bool
+    {
+        if ( ! $this->is_local_first_action_log_entry( $entry ) )
+        {
+            return true;
+        }
+
+        if ( null === $this->local_execution_events )
+        {
+            return false;
+        }
+
+        $execution_request_id = isset( $entry['execution_request_id'] ) && is_scalar( $entry['execution_request_id'] )
+            ? sanitize_text_field( (string) $entry['execution_request_id'] )
+            : '';
+
+        if ( '' === $execution_request_id )
+        {
+            return false;
+        }
+
+        $event = $this->local_execution_events->get_by_request_id( $execution_request_id );
+        if ( ! is_array( $event ) )
+        {
+            return false;
+        }
+
+        if ( sanitize_key( (string) ( $event['form_source'] ?? '' ) ) !== $form_source_slug )
+        {
+            return false;
+        }
+
+        if ( absint( $event['form_id'] ?? 0 ) !== $form_id )
+        {
+            return false;
+        }
+
+        return in_array(
+            sanitize_key( (string) ( $event['status'] ?? '' ) ),
+            [ 'success', 'succeeded' ],
+            true
+        );
+    }
+
+    private function is_local_first_action_log_entry( array $entry ): bool
+    {
+        $mapping_id = isset( $entry['mapping_id'] ) && is_scalar( $entry['mapping_id'] )
+            ? sanitize_text_field( (string) $entry['mapping_id'] )
+            : '';
+        if ( '' !== $mapping_id && str_starts_with( $mapping_id, 'local_first_' ) )
+        {
+            return true;
+        }
+
+        $action_code = sanitize_key( (string) ( $entry['action_code'] ?? '' ) );
+        return 'sentient_forms_local_custom_action' === $action_code || str_starts_with( $action_code, 'local_first_' );
     }
 
     private function is_retired_legacy_proxy_auth_log_entry( array $entry ): bool

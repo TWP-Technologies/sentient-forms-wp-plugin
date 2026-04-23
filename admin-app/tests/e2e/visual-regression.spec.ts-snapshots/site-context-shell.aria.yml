@@ -1,0 +1,20 @@
+- heading "Site Context" [level=2]
+- paragraph: Configure your site's context to improve spam detection accuracy. This summary helps the AI understand your business and typical form submissions.
+- button "Refresh"
+- paragraph: Site Context Summary
+- paragraph: "/Source: manual · Last updated: 2\\/\\d+\\/\\d+ · Local refresh available/"
+- button "Regenerate"
+- text: Context Text
+- textbox "Context Text":
+  - /placeholder: Describe your business, services, and typical customer inquiries...
+  - text: Sentient Forms demo context for responsive layout validation.
+- paragraph: /\d+ \/ \d+ characters/
+- switch "Auto-include in spam detection" [checked]
+- text: Auto-include in spam detection When enabled, this context will be automatically included in spam analysis prompts. ✓ PII acknowledgment on file
+- button "Save Changes" [disabled]
+- paragraph: Usage Tips
+- list:
+  - listitem: • Include your business industry and primary services
+  - listitem: • Mention typical customer types (B2B, B2C, etc.)
+  - listitem: • Describe common legitimate form submissions
+  - listitem: • Note any specific keywords that are always legitimate

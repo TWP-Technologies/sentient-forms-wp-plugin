@@ -738,6 +738,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
                 if ( is_wp_error( $result ) )
                 {
+                    $this->record_local_action_failure( $entry, $action_settings, $result );
                     $logger->error(
                         'local-first after-submission action failed',
                         [
@@ -3485,10 +3486,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return;
         }
 
+        $this->persist_entry_runtime_meta( $entry_id, 'sentient_forms_last_error', '' );
+        $this->persist_entry_runtime_meta( $entry_id, 'sentient_forms_last_processed_at', current_time( 'mysql' ) );
+
         $classification = $this->extract_spam_classification( $result );
         $excerpt        = $classification ? '' : $this->format_async_result_excerpt( $result );
 
-        $this->update_entry_meta(
+        $this->persist_entry_runtime_meta(
             $entry_id,
             'sentient_forms_last_response',
             wp_json_encode( Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage( $result ) )
@@ -3496,7 +3500,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         // CA-EXEC-001: Store structured output validity for efficient querying.
         $structured_valid = ! empty( $result['result_data']['structured_output_valid'] );
-        $this->update_entry_meta( $entry_id, 'sentient_forms_structured_output_valid', $structured_valid ? '1' : '0' );
+        $this->persist_entry_runtime_meta( $entry_id, 'sentient_forms_structured_output_valid', $structured_valid ? '1' : '0' );
 
         if ( empty( $classification ) )
         {
@@ -4761,27 +4765,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
     public function finalize_async_error( array $context, WP_Error $error ): void
     {
-        $entry_id = isset( $context['entry_id'] ) ? absint( $context['entry_id'] ) : 0;
-        $message  = sprintf(
-            /* translators: 1: action label, 2: error reason */
-            __( 'Sentient Forms could not complete %1$s. Reason: %2$s', 'sentient-forms' ),
-            $this->get_async_action_label( $context ),
-            $error->get_error_message(),
-        );
-
-        if ( $entry_id > 0 )
-        {
-            $this->add_entry_note( $entry_id, 'Sentient Forms AI', $message );
-        }
-        else
-        {
-            sentient_forms_debug_log(
-                'Sentient Forms async action failed without an entry context.',
-                [
-                    'message' => $message,
-                ]
-            );
-        }
+        $this->record_local_action_failure( $context, [], $error );
 
         // FR-008: Log failed action execution
         $this->log_action_execution( $context, [], 'error', $error );
@@ -4792,6 +4776,157 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     public function finalize_async_evaluation( array $context, array $result ): void
     {
         $this->finalize_async_success( $context, $result );
+    }
+
+    /**
+     * Persist entry-facing failure state for a local action execution.
+     *
+     * @param array<string, mixed> $context         Runtime context.
+     * @param array<string, mixed> $action_settings Mapping settings.
+     */
+    private function record_local_action_failure( array $context, array $action_settings, WP_Error $error ): void
+    {
+        $entry_id = 0;
+        foreach ( [ $context['entry_id'] ?? null, $context['id'] ?? null ] as $candidate )
+        {
+            if ( is_scalar( $candidate ) )
+            {
+                $entry_id = absint( $candidate );
+                if ( $entry_id > 0 )
+                {
+                    break;
+                }
+            }
+        }
+
+        $message  = $this->format_local_action_failure_message( $context, $action_settings, $error );
+
+        if ( $entry_id <= 0 )
+        {
+            sentient_forms_debug_log(
+                'Sentient Forms local action failed without an entry context.',
+                [
+                    'message' => $message,
+                ]
+            );
+            return;
+        }
+
+        $this->record_local_action_failure_meta( $entry_id, $error->get_error_message() );
+        $this->add_local_action_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $message );
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     * @param array<string, mixed> $action_settings
+     */
+    private function format_local_action_failure_message( array $context, array $action_settings, WP_Error $error ): string
+    {
+        return sprintf(
+            /* translators: 1: action label, 2: error reason */
+            __( 'Sentient Forms could not complete %1$s. Reason: %2$s', 'sentient-forms' ),
+            $this->resolve_local_action_label( $context, $action_settings ),
+            $error->get_error_message(),
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     * @param array<string, mixed> $action_settings
+     */
+    private function resolve_local_action_label( array $context, array $action_settings ): string
+    {
+        foreach ( [ $context['action_name_label'] ?? null, $action_settings['action_name_label'] ?? null ] as $candidate )
+        {
+            if ( is_scalar( $candidate ) && '' !== trim( (string) $candidate ) )
+            {
+                return sanitize_text_field( (string) $candidate );
+            }
+        }
+
+        return $this->get_async_action_label( $context );
+    }
+
+    private function record_local_action_failure_meta( int $entry_id, string $message ): void
+    {
+        if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        $this->persist_entry_runtime_meta( $entry_id, 'sentient_forms_last_error', sanitize_textarea_field( $message ) );
+        $this->persist_entry_runtime_meta( $entry_id, 'sentient_forms_last_processed_at', current_time( 'mysql' ) );
+    }
+
+    private function persist_entry_runtime_meta( int $entry_id, string $meta_key, mixed $meta_value ): bool
+    {
+        if ( $entry_id <= 0 )
+        {
+            return false;
+        }
+
+        if ( ! str_starts_with( $meta_key, 'sentient_forms_' ) )
+        {
+            $meta_key = 'sentient_forms_' . $meta_key;
+        }
+
+        if ( function_exists( 'gform_update_meta' ) )
+        {
+            return gform_update_meta( $entry_id, $meta_key, $meta_value ) !== false;
+        }
+
+        return $this->update_entry_meta( $entry_id, $meta_key, $meta_value );
+    }
+
+    private function add_local_action_entry_note( mixed $entry_id, string $note_author, string $note_content ): bool
+    {
+        if ( ! $this->is_active() )
+        {
+            return false;
+        }
+
+        if ( ! class_exists( 'GFFormsModel' ) || ! is_callable( [ 'GFFormsModel', 'add_note' ] ) )
+        {
+            return $this->add_entry_note( $entry_id, $note_author, $note_content );
+        }
+
+        try
+        {
+            $result = GFFormsModel::add_note(
+                $entry_id,
+                0,
+                $note_author,
+                $note_content,
+                'sentient_forms_local_action',
+            );
+
+            if ( false !== $result )
+            {
+                $this->append_entry_note_fallback_meta( $entry_id, $note_author, $note_content );
+            }
+
+            return $result !== false;
+        } catch ( Exception $e )
+        {
+            sentient_forms_debug_log(
+                'Sentient Forms could not add local action entry note.',
+                [
+                    'entry_id' => $entry_id,
+                    'error'    => $e->getMessage(),
+                ]
+            );
+            return false;
+        }
+    }
+
+    private function add_local_action_entry_note_if_missing( mixed $entry_id, string $note_author, string $note_content ): bool
+    {
+        if ( $this->entry_note_exists( $entry_id, $note_author, $note_content ) )
+        {
+            return true;
+        }
+
+        return $this->add_local_action_entry_note( $entry_id, $note_author, $note_content );
     }
 
     private function get_async_action_label( array $context ): string

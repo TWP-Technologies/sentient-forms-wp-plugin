@@ -340,6 +340,41 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertNull( $data['last_result'] ?? null );
     }
 
+    public function test_get_form_execution_status_ignores_unbacked_local_first_success_action_log(): void
+    {
+        update_option(
+            'sentient_forms_action_log',
+            [
+                [
+                    'form_source'          => 'gravity_forms',
+                    'form_id'              => 42,
+                    'entry_id'             => 113,
+                    'action_code'          => 'sentient_forms_local_custom_action',
+                    'action_label'         => 'Local OpenRouter action',
+                    'status'               => 'success',
+                    'result_summary'       => 'Synthetic imported success.',
+                    'execution_request_id' => 'req-synthetic-local-success',
+                    'mapping_id'           => 'local_first_12',
+                    'created_at'           => '2026-04-21T11:00:00+00:00',
+                ],
+            ],
+            false
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/42/actions/status' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 42 );
+
+        $response = $this->controller->get_form_execution_status( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data = $response->get_data();
+        $this->assertSame( 'unknown', $data['status'] ?? null );
+        $this->assertNull( $data['message'] ?? null );
+        $this->assertNull( $data['last_error_code'] ?? null );
+        $this->assertNull( $data['last_result'] ?? null );
+    }
+
     public function test_get_entry_execution_status_includes_metering_summary_for_workflow_meta(): void
     {
         GFAPI::$entries[123] = [

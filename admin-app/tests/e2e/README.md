@@ -38,6 +38,8 @@ SENTIENT_RUN_WP_E2E=1 SENTIENT_RUN_LEGACY_CPS_E2E=1 bunx playwright test --grep 
 
 Current local-first tests should run with only `SENTIENT_RUN_WP_E2E=1` plus any narrow smoke flag they document. They should use plugin-local providers, mocked OpenRouter/Sentient paths, or local REST/admin flows. They MUST NOT call legacy CPS seeding, credit-balance, or direct `/v1` telemetry helpers.
 
+When a local-first test creates reusable Gravity Forms fixtures, it should also clear its local mapping rows first and assert the resulting Gravity Forms truth directly. In practice that means checking the form’s local mapping table state and any entry notes or notification outcomes, not just execution events, meta blobs, or recorded outbound URLs.
+
 Examples:
 
 ```bash
@@ -67,9 +69,12 @@ When `SENTIENT_RUN_WP_E2E=1`, `playwright.config.ts` forces **`workers: 1`** (se
 | `ensureCpsSeeded()` | Legacy only: seed CPS DB + activate license + configure WP (call first after setting `SENTIENT_RUN_LEGACY_CPS_E2E=1`) |
 | `ensureGravityForm(title)` | Create or find a GF form by title |
 | `configureGravityActionMapping(opts)` | Set per-form action mapping in WP options |
+| `getLocalFormMappings(formId)` | Read local custom-table mappings for a dedicated GF form |
+| `resetLocalFormFixture({ formId, actionCodes?, actionNames? })` | Clear local custom mappings/actions for deterministic reruns |
 | `ensureCreditBalanceAtLeast(n)` | Legacy only: apply a test credit adjustment if below threshold |
 | `runActionScheduler()` | Trigger WP Action Scheduler queue processing |
 | `getEntrySpamStatus(id)` | Read entry status + spam classification meta |
+| `waitForGravityEntryNotes(entryId, page, predicate, options?)` | Poll GF notes until the user-visible entry note state matches expectations |
 | `waitForEntryMeta(id, key, page, predicate)` | Poll until entry meta matches predicate |
 | `fetchCreditBalance(page, apiKey)` | Legacy only: GET credit balance from CPS API |
 | `submitGravityForm(page, formId, name, email)` | Fill and submit a GF form via Playwright |

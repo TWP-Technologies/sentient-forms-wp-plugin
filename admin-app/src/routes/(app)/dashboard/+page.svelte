@@ -219,25 +219,25 @@
 
 			<div class="sf:grid sf:grid-cols-2 sf:gap-x-6 sf:gap-y-4" data-testid="dashboard-local-counts">
 				<div class="sf:border-l sf:border-slate-300 sf:pl-3">
-					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Provider keys</p>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-600">Provider keys</p>
 					<p class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-provider-count">
 						{loading ? '...' : providers.length}
 					</p>
 				</div>
 				<div class="sf:border-l sf:border-slate-300 sf:pl-3">
-					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Templates</p>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-600">Templates</p>
 					<p class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-template-count">
 						{loading ? '...' : activeTemplates}
 					</p>
 				</div>
 				<div class="sf:border-l sf:border-slate-300 sf:pl-3">
-					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Custom actions</p>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-600">Custom actions</p>
 					<p class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-custom-action-count">
 						{loading ? '...' : activeCustomActions}
 					</p>
 				</div>
 				<div class="sf:border-l sf:border-slate-300 sf:pl-3">
-					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Recent runs</p>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-600">Recent runs</p>
 					<p class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-900" data-testid="dashboard-execution-count">
 						{loading ? '...' : recentLocalEvents.length}
 					</p>
@@ -250,7 +250,7 @@
 		<Card data-testid="dashboard-openrouter-status">
 			<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
 				<div>
-					<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Direct provider</h3>
+					<h3 class="sf:text-sm sf:font-medium sf:text-slate-600">Direct provider</h3>
 					<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">
 						{openRouterStatusLabel(openRouterStatus)}
 					</p>
@@ -267,7 +267,7 @@
 		</Card>
 
 		<Card data-testid="dashboard-free-path-card">
-			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Sentient charges</h3>
+			<h3 class="sf:text-sm sf:font-medium sf:text-slate-600">Sentient charges</h3>
 			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">Direct OpenRouter: no</p>
 			<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
 				Managed billing belongs only to Sentient-hosted paid execution. BYOK and OpenRouter free models stay outside the Sentient meter.
@@ -275,7 +275,7 @@
 		</Card>
 
 		<Card data-testid="dashboard-diagnostics-card">
-			<h3 class="sf:text-sm sf:font-medium sf:text-slate-500">Local diagnostics</h3>
+			<h3 class="sf:text-sm sf:font-medium sf:text-slate-600">Local diagnostics</h3>
 			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">
 				{executionRetentionDays ? `${executionRetentionDays} day retention` : 'Retention not set'}
 			</p>
@@ -307,10 +307,16 @@
 					<Badge variant="success">{successfulRuns} succeeded</Badge>
 					<Badge variant={failedRuns > 0 ? 'danger' : 'neutral'}>{failedRuns} failed</Badge>
 				</div>
-				<div class="sf:overflow-x-auto">
+					<!-- svelte-ignore a11y_no_noninteractive_tabindex because keyboard users need to reach this scroll region -->
+					<div
+						class="sf:overflow-x-auto"
+						role="region"
+						tabindex="0"
+						aria-label="Recent local runs table"
+					>
 					<table class="sf:min-w-full sf:divide-y sf:divide-slate-200 sf:text-sm">
 						<thead>
-							<tr class="sf:text-left sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-500">
+								<tr class="sf:text-left sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-600">
 								<th class="sf:py-2 sf:pr-4">Status</th>
 								<th class="sf:py-2 sf:pr-4">Provider</th>
 								<th class="sf:py-2 sf:pr-4">Model</th>
@@ -333,9 +339,9 @@
 						</tbody>
 					</table>
 				</div>
-				<p class="sf:text-xs sf:text-slate-500">
-					Latest request: {latestEvent?.execution_request_id ?? '—'}
-				</p>
+					<p class="sf:text-xs sf:text-slate-600">
+						Latest request: {latestEvent?.execution_request_id ?? '—'}
+					</p>
 			</div>
 		{/if}
 	</Card>

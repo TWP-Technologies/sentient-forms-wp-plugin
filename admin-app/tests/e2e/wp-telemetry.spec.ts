@@ -62,10 +62,10 @@ test.describe('WordPress telemetry settings', () => {
 		});
 
 		await loginToWpAdmin(page);
-	await requireWpRestHealthy(page);
+		await requireWpRestHealthy(page);
 		await ensureSentientFormsSpa(page, '/settings');
 		const spaRoot = page.locator('#sentient-forms-admin-app');
-		await expect(page.getByRole('heading', { name: /Telemetry/ })).toBeVisible();
+		await expect(spaRoot.getByText('Enable telemetry sharing')).toBeVisible();
 
 		const toggle = spaRoot.locator('input[type="checkbox"]').first();
 		if (await toggle.isChecked()) {

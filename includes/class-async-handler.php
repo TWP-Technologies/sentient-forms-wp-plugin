@@ -1344,8 +1344,15 @@ class Sentient_Forms_Async_Handler
 
     private function is_local_mapping_retryable_error( WP_Error $error ): bool
     {
-        $data   = $error->get_error_data();
-        $status = is_array( $data ) && isset( $data['status'] ) ? (int) $data['status'] : 0;
+        $data    = $error->get_error_data();
+        $status  = is_array( $data ) && isset( $data['status'] ) ? (int) $data['status'] : 0;
+        $code    = sanitize_key( (string) $error->get_error_code() );
+        $message = strtolower( trim( $error->get_error_message() ) );
+
+        if ( $this->is_local_mapping_permanent_provider_error( $status, $code, $message ) )
+        {
+            return false;
+        }
 
         if ( 429 === $status || $status >= 500 )
         {
@@ -1353,7 +1360,7 @@ class Sentient_Forms_Async_Handler
         }
 
         return in_array(
-            $error->get_error_code(),
+            $code,
             [
                 'http_request_failed',
                 'openrouter_http_error',
@@ -1361,6 +1368,50 @@ class Sentient_Forms_Async_Handler
             ],
             true
         );
+    }
+
+    private function is_local_mapping_permanent_provider_error( int $status, string $code, string $message ): bool
+    {
+        if ( in_array( $status, [ 400, 401, 403, 404, 422 ], true ) )
+        {
+            return true;
+        }
+
+        if (
+            in_array(
+                $code,
+                [
+                    'openrouter_missing_api_key',
+                    'sentient_forms_invalid_secret_constant',
+                    'sentient_forms_empty_secret_constant',
+                    'sentient_forms_secret_constant_not_found',
+                ],
+                true
+            )
+        )
+        {
+            return true;
+        }
+
+        foreach (
+            [
+                'missing authentication header',
+                'openrouter api key is required',
+                'invalid api key',
+                'unauthorized',
+                'forbidden',
+                'authentication failed',
+                'provider credential constant',
+            ] as $fragment
+        )
+        {
+            if ( str_contains( $message, $fragment ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function generate_local_mapping_request_id( int $local_mapping_id, string $form_source, string $form_id, string $entry_id, array $context ): string

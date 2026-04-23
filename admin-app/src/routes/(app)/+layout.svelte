@@ -159,7 +159,7 @@
 		<aside class="sf:w-full sf:shrink-0 sf:bg-white sf:md:w-64 sf:shadow-sm">
 			<div class="sf:p-4 sf:sm:p-6 sf:border-b sf:border-slate-200">
 				<h1 class="sf:text-lg sf:font-semibold">Sentient Forms</h1>
-				<p class="sf:text-sm sf:text-slate-500">Local-first AI form automation</p>
+				<p class="sf:text-sm sf:text-slate-600">Local-first AI form automation</p>
 			</div>
 			<nav class="sf:p-4 sf:flex sf:flex-col sf:gap-2">
 				{#each links as link}
