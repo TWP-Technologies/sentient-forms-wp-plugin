@@ -23,6 +23,7 @@ const VALID_SPAM_INDICATORS_DISPLAY = new Set(['simple', 'detailed']);
 const SPAM_ACTION_CODES = new Set(['spam_detection_v1', 'spam_analysis']);
 export const INHERITABLE_BOOLEAN_MODES = ['inherit', 'enabled', 'disabled'] as const;
 export type InheritableBooleanMode = (typeof INHERITABLE_BOOLEAN_MODES)[number];
+export type DraftExecutionKind = 'blocking' | 'background' | 'mixed';
 
 export function cloneDefaultModelSelection(): ModelSelection {
 	return { ...DEFAULT_MODEL_SELECTION };
@@ -34,6 +35,27 @@ export function isSpamActionCode(actionId: string | null | undefined): boolean {
 	}
 
 	return SPAM_ACTION_CODES.has(actionId.trim());
+}
+
+export function deriveDraftExecutionKind(
+	hooks: Iterable<unknown>,
+	executionMode: unknown
+): DraftExecutionKind {
+	const normalizedHooks = new Set(
+		Array.from(hooks)
+			.map((hook) => hook?.toString().trim())
+			.filter((hook): hook is string => Boolean(hook))
+	);
+	const hasBlockingHook = normalizedHooks.has('gform_validation');
+	const hasBackgroundHook = normalizedHooks.has('gform_after_submission');
+	if (hasBlockingHook && hasBackgroundHook) return 'mixed';
+	if (hasBlockingHook) return 'blocking';
+	if (hasBackgroundHook) return 'background';
+
+	const normalizedMode = executionMode?.toString().trim();
+	return normalizedMode === 'after_submission' || normalizedMode === 'async'
+		? 'background'
+		: 'blocking';
 }
 
 export function normalizeSpamResultDisplayMode(

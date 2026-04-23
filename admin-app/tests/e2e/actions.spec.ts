@@ -3386,6 +3386,7 @@ test.describe('Actions admin flows', () => {
 				trigger_hooks: ['gform_validation'],
 				is_action_enabled_for_form: true,
 				settings: {
+					execution_mode: 'after_submission',
 					spam_positive_examples: ['Known customer request']
 				}
 			}
@@ -3436,6 +3437,20 @@ test.describe('Actions admin flows', () => {
 			'aria-expanded',
 			'false'
 		);
+		await expect(modal.getByTestId('mapping-section-toggle-model_execution')).toContainText(
+			'Blocking · sf_default'
+		);
+		await modal.getByTestId('mapping-section-toggle-spam_advanced').click();
+		await expect(modal.getByTestId('mapping-section-toggle-spam_advanced')).toContainText(
+			'suppress notifications'
+		);
+		await expect(modal.getByLabel('Notification policy on spam')).toBeEnabled();
+		await expect(
+			modal.getByText('Current effective value: Suppress notifications (blocking default).')
+		).toBeVisible();
+		await expect(
+			modal.getByText('Background spam mappings do not hold notifications')
+		).toHaveCount(0);
 		await expect(modal.getByText('1 custom example')).toBeVisible();
 	});
 

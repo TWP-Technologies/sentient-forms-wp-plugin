@@ -71,6 +71,7 @@
 	import {
 		applyInheritableBooleanToConfig,
 		cloneDefaultModelSelection,
+		deriveDraftExecutionKind,
 		getInheritableBooleanMode,
 		isSpamActionCode,
 		modeToOptionalBoolean,
@@ -922,8 +923,12 @@
 		}
 		return 'system';
 	});
-	const isBlockingSpamMapping = $derived.by(
-		() => isSpamMapping && draftSettings.execution_mode !== 'after_submission'
+	const effectiveDraftExecutionKind = $derived(
+		deriveDraftExecutionKind(draftHooks, draftSettings.execution_mode)
+	);
+	const isDraftAfterSubmissionOnly = $derived(effectiveDraftExecutionKind === 'background');
+	const isBlockingSpamMapping = $derived(
+		isSpamMapping && effectiveDraftExecutionKind !== 'background'
 	);
 	const effectiveSuppressNotificationsOnSpam = $derived.by(() => {
 		if (!isSpamMapping) return false;
@@ -933,7 +938,7 @@
 				currentFormActionConfig.suppress_notifications_on_spam,
 				currentActionDefaults.suppress_notifications_on_spam
 			],
-			draftSettings.execution_mode !== 'after_submission'
+			!isDraftAfterSubmissionOnly
 		);
 	});
 	const effectiveSuppressNotificationsOnSpamSource = $derived.by(() =>
@@ -946,9 +951,7 @@
 				{ level: 'form', value: currentFormActionConfig.suppress_notifications_on_spam },
 				{ level: 'action', value: currentActionDefaults.suppress_notifications_on_spam }
 			],
-			draftSettings.execution_mode !== 'after_submission'
-				? 'blocking default'
-				: 'background inactive'
+			isDraftAfterSubmissionOnly ? 'background inactive' : 'blocking default'
 		)
 	);
 	const effectiveSkipDownstreamOnSpam = $derived.by(() => {
@@ -1111,7 +1114,11 @@
 	const modelExecutionSummary = $derived.by(() => {
 		const selection = effectiveMappingModelSelection;
 		const executionMode =
-			draftSettings.execution_mode === 'after_submission' ? 'Background' : 'Blocking';
+			effectiveDraftExecutionKind === 'background'
+				? 'Background'
+				: effectiveDraftExecutionKind === 'mixed'
+					? 'Mixed hooks'
+					: 'Blocking';
 		const model = selection.primary?.toString().trim() || 'sf_default';
 		return `${executionMode} · ${model}`;
 	});
@@ -4477,7 +4484,7 @@
 									onchange={handleMappingModelSelectionChange}
 								/>
 
-								{#if draftSettings.execution_mode === 'after_submission'}
+								{#if isDraftAfterSubmissionOnly}
 									<div class="sf:border-t sf:border-slate-200 sf:pt-4">
 										<div
 											class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:mb-2"

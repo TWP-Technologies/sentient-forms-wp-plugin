@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	deriveDraftExecutionKind,
 	isSpamActionCode,
 	normalizeFormActionConfig,
 	normalizeSpamIndicatorsDisplay,
@@ -23,6 +24,16 @@ describe('action config helpers', () => {
 	it('normalizes spam indicator display modes', () => {
 		expect(normalizeSpamIndicatorsDisplay('detailed')).toBe('detailed');
 		expect(normalizeSpamIndicatorsDisplay('unexpected')).toBe('simple');
+	});
+
+	it('derives execution kind from hooks before stale mapping settings', () => {
+		expect(deriveDraftExecutionKind(['gform_validation'], 'after_submission')).toBe('blocking');
+		expect(deriveDraftExecutionKind(['gform_after_submission'], 'sync')).toBe('background');
+		expect(deriveDraftExecutionKind(['gform_validation', 'gform_after_submission'], 'async')).toBe(
+			'mixed'
+		);
+		expect(deriveDraftExecutionKind([], 'after_submission')).toBe('background');
+		expect(deriveDraftExecutionKind([], 'validation')).toBe('blocking');
 	});
 
 	it('preserves restored spam note defaults in normalized form configs', () => {
