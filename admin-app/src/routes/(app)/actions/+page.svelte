@@ -670,13 +670,13 @@
 								<ul class="sf:space-y-1">
 										{#each items.slice(0, 3) as definition (definition.id)}
 											{@const formCount = formsPerAction.get(definition.id) ?? 0}
-											<li class="sf:flex sf:flex-col sf:items-start sf:gap-2 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between">
+											<li class="sf:flex sf:flex-col sf:items-start sf:gap-2">
 												<div class="sf:min-w-0 sf:flex-1">
 													<p class="sf:text-sm sf:font-semibold sf:text-slate-800 sf:break-words">
 														{definition.label ?? definition.id}
 													</p>
 												</div>
-												<div class="sf:flex sf:w-full sf:flex-wrap sf:items-center sf:gap-2 sf:sm:w-auto sf:sm:justify-end">
+												<div class="sf:flex sf:w-full sf:flex-wrap sf:items-center sf:gap-2">
 													<Button
 														size="sm"
 														variant="ghost"
@@ -727,14 +727,17 @@
 				<ul class="sf:mt-3 sf:space-y-2">
 					{#each customActions.slice(0, 4) as action (action.id)}
 						{@const customFormCount = formsPerAction.get(action.code) ?? 0}
-						<li class="sf:flex sf:flex-col sf:items-start sf:gap-2 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between">
+						<li
+							class="sf:flex sf:flex-col sf:items-start sf:gap-2"
+							data-testid={`actions-custom-action-${action.id}`}
+						>
 							<div class="sf:min-w-0 sf:flex-1">
 								<p class="sf:text-sm sf:font-semibold sf:text-slate-800 sf:break-words">
 									{action.display_name}
 								</p>
 								<p class="sf:text-xs sf:text-slate-600 sf:break-all">Code: {action.code}</p>
 							</div>
-							<div class="sf:flex sf:w-full sf:flex-wrap sf:items-center sf:gap-2 sf:sm:w-auto sf:sm:justify-end">
+							<div class="sf:flex sf:w-full sf:flex-wrap sf:items-center sf:gap-2">
 								<Button
 									size="sm"
 									variant="ghost"

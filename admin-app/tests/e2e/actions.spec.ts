@@ -731,6 +731,42 @@ test.describe('Actions admin flows', () => {
 		expect(titleBox?.height ?? 999).toBeLessThan(72);
 	});
 
+	test('keeps overview custom action names readable in WordPress admin width', async ({ page }) => {
+		await page.setViewportSize({ width: 1280, height: 900 });
+
+		const longNamedCustomActions = [
+			{
+				...baseCustomActions[0],
+				id: 'recommended-contact-follow-up',
+				code: 'recommended_contact_follow_up',
+				display_name: 'Recommended Contact Follow Up and Classification Action'
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance
+			},
+			customActions: { list: { actions: longNamedCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		const actionCard = page.getByTestId('actions-custom-action-recommended-contact-follow-up');
+		await expect(actionCard).toBeVisible();
+
+		const label = actionCard.getByText('Recommended Contact Follow Up and Classification Action');
+		const labelBox = await label.boundingBox();
+		const cardBox = await actionCard.boundingBox();
+
+		expect(cardBox?.width ?? 0).toBeGreaterThan(240);
+		expect(labelBox?.height ?? 999).toBeLessThan(80);
+	});
+
 	test('uses the runtime form disable flag for overview automation status', async ({ page }) => {
 		const runtimeEnabledForms = [
 			{
