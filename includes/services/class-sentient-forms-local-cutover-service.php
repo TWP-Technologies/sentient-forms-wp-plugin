@@ -406,7 +406,7 @@ class Sentient_Forms_Local_Cutover_Service
         {
             $warnings[] = [
                 'code'    => 'local_runtime_data_will_be_removed',
-                'message' => __( 'Approved reset will remove local action templates, custom actions, mappings, execution events, and queued runtime metadata.', 'sentient-forms' ),
+                'message' => __( 'Approved reset will remove saved action templates, custom actions, mappings, execution events, and queued runtime metadata.', 'sentient-forms' ),
             ];
         }
 

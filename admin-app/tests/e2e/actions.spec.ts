@@ -19,7 +19,7 @@ const baseDefinitions = [
 	{
 		id: 'summarize',
 		label: 'Summarize',
-		source: 'local',
+		source: 'bundled',
 		hooks: ['gform_after_submission'],
 		base_credit_cost: 6,
 		model_hint: 'gemini-1.5-pro'
@@ -596,6 +596,42 @@ test.describe('Actions admin flows', () => {
 		await expect(definitionsCard.getByText('Spam check', { exact: true })).toBeVisible();
 	});
 
+	test('shows only built-in definitions in the overview card and hides source chips', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					...baseDefinitions,
+					{
+						id: 'imported-history-template',
+						label: 'Imported CPS history template',
+						source: 'imported',
+						hooks: ['gform_after_submission'],
+						base_credit_cost: 4,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		const builtInCard = page.getByTestId('actions-built-in-card');
+		await expect(builtInCard.getByText('Spam check', { exact: true })).toBeVisible();
+		await expect(builtInCard.getByText('Summarize', { exact: true })).toBeVisible();
+		await expect(builtInCard.getByText('Imported CPS history template')).toHaveCount(0);
+		await expect(builtInCard.getByText('Local templates')).toHaveCount(0);
+		await expect(builtInCard.getByText('Managed templates')).toHaveCount(0);
+		await expect(builtInCard.getByText(/^Local$/)).toHaveCount(0);
+		await expect(builtInCard.getByText(/^Managed$/)).toHaveCount(0);
+	});
+
 	test('surfaces degraded OpenRouter health on overview and form mapping views', async ({
 		page
 	}) => {
@@ -1100,7 +1136,7 @@ test.describe('Actions admin flows', () => {
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
 		const drawer = page.getByTestId('link-action-form');
 		await expect(drawer).toBeVisible();
-		await page.getByRole('button', { name: 'Direct OpenRouter' }).click();
+		await page.getByRole('button', { name: /^Direct OpenRouter$/ }).click();
 
 		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
 		await expect(drawer.getByTestId('local-builder-template')).toHaveValue('spam_filter');
@@ -1111,7 +1147,7 @@ test.describe('Actions admin flows', () => {
 		);
 		await expect(drawer.getByTestId('local-builder-execution-mode')).toHaveValue('sync');
 		await drawer.getByTestId('local-builder-action-name').fill('Local drawer spam filter');
-		await drawer.getByRole('button', { name: 'Create local action' }).click();
+		await drawer.getByRole('button', { name: 'Create Direct OpenRouter action' }).click();
 
 		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #81');
 		expect(resolvePayloads).toContainEqual(

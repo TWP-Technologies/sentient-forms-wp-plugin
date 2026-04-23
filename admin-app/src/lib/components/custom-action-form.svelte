@@ -355,7 +355,7 @@
 		{#if baseTemplateUnavailable}
 			<Alert variant="warning">
 				Action template IDs are not available in the current definitions response. Custom actions
-				need a local or managed base action template.
+				need a base action template.
 			</Alert>
 		{/if}
 

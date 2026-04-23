@@ -581,7 +581,7 @@ export interface ActionDefinition {
 	label?: string;
 	description?: string;
 	hooks?: Record<string, string> | string[];
-	source?: 'cps' | 'local';
+	source?: 'cps' | 'bundled' | 'imported';
 	baseCreditCost?: number | null;
 	modelHint?: string | null;
 	overrideSchema?: TemplateOverrideSchema;
@@ -1393,7 +1393,7 @@ export interface CreateFormMappingRequest {
 	site_id?: string | null;
 	form_source: string;
 	form_id?: number | null;
-	/** UUID-based local action template ID. */
+	/** Action template ID. */
 	action_template_id?: string | null;
 	/** String-based template code (for master templates like "spam_detection_v1") */
 	action_template_code?: string | null;

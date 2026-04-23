@@ -129,7 +129,7 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
                 'icon'           => method_exists( $action, 'get_icon' ) ? $action->get_icon() : '',
                 'hooks'          => method_exists( $action, 'get_hooks' ) ? $action->get_hooks() : [],
                 'compatibility'  => method_exists( $action, 'get_compatibility' ) ? $action->get_compatibility() : [],
-                'source'         => 'local',
+                'source'         => 'bundled',
                 'baseCreditCost' => null,
                 'modelHint'      => method_exists( $action, 'get_model_hint' ) ? $action->get_model_hint() : null,
             ];
@@ -192,17 +192,17 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
                     'additionalProperties' => true,
                 ],
                 'templateId'     => [
-                    'description' => __( 'Local or managed action template identifier.', 'sentient-forms' ),
+                    'description' => __( 'Action template identifier.', 'sentient-forms' ),
                     'type'        => [ 'string', 'null' ],
                     'context'     => [ 'view', 'edit' ],
                 ],
                 'promptTemplate' => [
-                    'description' => __( 'Prompt template used by local custom actions.', 'sentient-forms' ),
+                    'description' => __( 'Prompt template used by action templates.', 'sentient-forms' ),
                     'type'        => [ 'string', 'null' ],
                     'context'     => [ 'view', 'edit' ],
                 ],
                 'structuredOutputSchema' => [
-                    'description'          => __( 'Structured output schema for the local action template.', 'sentient-forms' ),
+                    'description'          => __( 'Structured output schema for the action template.', 'sentient-forms' ),
                     'type'                 => [ 'object', 'null' ],
                     'context'              => [ 'view', 'edit' ],
                     'additionalProperties' => true,
@@ -246,7 +246,7 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
                 'icon'                   => '',
                 'hooks'                  => $this->resolve_template_hooks( $template ),
                 'compatibility'          => [],
-                'source'                 => 'local',
+                'source'                 => $this->normalize_local_template_source( $template['source'] ?? null ),
                 'baseCreditCost'         => null,
                 'modelHint'              => isset( $template['default_model'] ) && is_scalar( $template['default_model'] ) ? sanitize_text_field( (string) $template['default_model'] ) : null,
                 'overrideSchema'         => is_array( $template['override_schema'] ?? null ) ? $template['override_schema'] : [],
@@ -322,12 +322,35 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
     }
 
     /**
-     * Resolve supported hooks for a CPS action template.
+     * Normalize template sources for the REST contract.
      *
-     * Older CPS deployments did not expose hook metadata. Keep inference here so
-     * healthy CPS templates do not degrade into ambiguous local defaults.
+     * Imported templates need to stay distinguishable so the UI can avoid
+     * presenting them as built-in actions. All other site-owned rows collapse
+     * to bundled because the UI no longer exposes source-of-authority chips.
      *
-     * @param array<string, mixed> $template CPS template summary.
+     * @param mixed $source Stored template source identifier.
+     *
+     * @return string
+     */
+    private function normalize_local_template_source( mixed $source ): string
+    {
+        $source_key = is_scalar( $source ) ? sanitize_key( (string) $source ) : '';
+
+        if ( 'imported' === $source_key )
+        {
+            return 'imported';
+        }
+
+        return 'bundled';
+    }
+
+    /**
+     * Resolve supported hooks for a template summary.
+     *
+     * Imported legacy bundles may omit hook metadata. Keep inference here so
+     * older template payloads do not degrade into ambiguous defaults.
+     *
+     * @param array<string, mixed> $template Template summary payload.
      *
      * @return array<int, string>
      */

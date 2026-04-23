@@ -3,18 +3,17 @@
 - button "Refresh"
 - button "Manage custom actions"
 - paragraph: Built-in actions
-- paragraph: Action templates available to map.
-- text: Managed templates
+- paragraph: Included with Sentient Forms and ready to map.
 - paragraph: 🛡️ Content Quality
 - list:
   - listitem:
     - paragraph: Spam detection
     - button "Defaults"
-    - text: 1 form Managed
+    - text: 1 form
   - listitem:
     - paragraph: Spam analysis
     - button "Defaults"
-    - text: 0 forms Managed
+    - text: 0 forms
 - paragraph: Custom actions
 - paragraph: Tenant-specific automations.
 - text: 1 active

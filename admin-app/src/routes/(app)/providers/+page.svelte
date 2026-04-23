@@ -968,7 +968,7 @@
 	</div>
 
 	<Card
-		title="Local action builder"
+		title="Action builder"
 		subtitle="Create form-specific provider actions from the Actions screen."
 		data-testid="providers-actions-builder-redirect-card"
 	>
@@ -1000,7 +1000,7 @@
 					</div>
 					<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
 						Choose a form in Actions, then use Direct OpenRouter or Sentient managed proxy to
-						create a local action and mapping from the same screen where you manage hooks, run
+						create an action and mapping from the same screen where you manage hooks, run
 						mode, and mapping health.
 					</p>
 				</div>

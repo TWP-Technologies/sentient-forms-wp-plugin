@@ -49,7 +49,7 @@ export class MockSentientFormsApiClient {
 		{
 			id: 'summarize',
 			label: 'Summarize entry',
-			source: 'local',
+			source: 'bundled',
 			hooks: { gform_after_submission: 'After submission' },
 			baseCreditCost: 6,
 			modelHint: 'gemini-1.5-pro'

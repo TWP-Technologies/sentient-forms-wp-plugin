@@ -139,7 +139,7 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
         $data = $response->get_data();
         $this->assertNotEmpty( $data );
-        $this->assertSame( 'local', $data[0]['source'] );
+        $this->assertSame( 'bundled', $data[0]['source'] );
         $this->assertFalse( $http_called, 'Proxy keys must not trigger CPS action definition fetches unless legacy CPS templates are explicitly enabled.' );
     }
 
@@ -193,11 +193,50 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
 
         $this->assertIsArray( $definition );
         $this->assertSame( (string) $template_id, $definition['templateId'] ?? null );
-        $this->assertSame( 'local', $definition['source'] ?? null );
+        $this->assertSame( 'bundled', $definition['source'] ?? null );
         $this->assertSame( 'Summarize {{form.title}}: {{entry}}', $definition['promptTemplate'] ?? null );
         $this->assertSame( 'openrouter/auto', $definition['modelHint'] ?? null );
         $this->assertSame( 'object', $definition['structuredOutputSchema']['type'] ?? null );
         $this->assertArrayHasKey( 'tone', $definition['overrideSchema'] ?? [] );
+    }
+
+    public function test_imported_templates_remain_distinguishable_from_built_ins(): void
+    {
+        global $wpdb;
+
+        $templates = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+        $template_id = $templates->upsert_by_code(
+            [
+                'source'          => 'imported',
+                'external_id'     => 'definition-route-imported-template',
+                'code'            => 'definition_route_imported_v1',
+                'display_name'    => 'Imported Definition Route Template',
+                'description'     => 'Imported from prior CPS history.',
+                'prompt_template' => 'Imported prompt',
+                'version'         => 'imported-test',
+                'is_active'       => true,
+            ]
+        );
+        $this->assertIsInt( $template_id );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/definitions' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $definition = null;
+        foreach ( $response->get_data() as $candidate )
+        {
+            if ( 'definition_route_imported_v1' === (string) ( $candidate['id'] ?? '' ) )
+            {
+                $definition = $candidate;
+                break;
+            }
+        }
+
+        $this->assertIsArray( $definition );
+        $this->assertSame( (string) $template_id, $definition['templateId'] ?? null );
+        $this->assertSame( 'imported', $definition['source'] ?? null );
     }
 
     public function test_definitions_fall_back_to_local_registry_when_cps_unavailable(): void
@@ -223,7 +262,7 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
         $data = $response->get_data();
         $this->assertNotEmpty( $data );
-        $this->assertSame( 'local', $data[0]['source'] );
+        $this->assertSame( 'bundled', $data[0]['source'] );
     }
 
     private function mock_http_response( string $path_suffix, array $body, ?callable $assertion = null ): void

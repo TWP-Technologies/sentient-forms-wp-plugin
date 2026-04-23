@@ -255,7 +255,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
         {
             return $this->prepare_error_response(
                 'rest_invalid_param',
-                __( 'template_id must be a local action template ID.', 'sentient-forms' ),
+                __( 'template_id must be an action template ID.', 'sentient-forms' ),
                 400,
             );
         }
@@ -610,7 +610,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                 'type'              => 'string',
                 'required'          => true,
                 'sanitize_callback' => 'sanitize_text_field',
-                'description'       => __( 'UUID of the CPS action template.', 'sentient-forms' ),
+                'description'       => __( 'Identifier of the base action template.', 'sentient-forms' ),
             ],
             'code'             => [
                 'type'              => 'string',

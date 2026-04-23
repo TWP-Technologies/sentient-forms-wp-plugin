@@ -142,14 +142,14 @@ export function localOpenRouterSetupUnavailableMessage(
 	const blockedCredential = pickBlockedOpenRouterCredential(credentials);
 
 	if (!blockedCredential) {
-		return 'Validate and save a key, or connect a server-backed constant, before creating a local action.';
+		return 'Validate and save a key, or connect a server-backed constant, before creating a Direct OpenRouter action.';
 	}
 
 	const detail = providerCredentialStatusDetail(blockedCredential);
 
 	return detail
-		? `${detail} Then validate a ready OpenRouter key or server-backed constant before creating a local action.`
-		: 'Validate and save a key, or connect a server-backed constant, before creating a local action.';
+		? `${detail} Then validate a ready OpenRouter key or server-backed constant before creating a Direct OpenRouter action.`
+		: 'Validate and save a key, or connect a server-backed constant, before creating a Direct OpenRouter action.';
 }
 
 export function providerCredentialAuthModeLabel(credential: LocalProviderCredential): string {
@@ -207,7 +207,7 @@ export function openRouterActionHealth(
 			status: 'missing',
 			badgeStatus: 'missing',
 			title: 'OpenRouter key missing',
-			message: 'Connect and validate an OpenRouter key before direct local actions can run.',
+			message: 'Connect and validate an OpenRouter key before Direct OpenRouter actions can run.',
 			credential: null
 		};
 	}
@@ -219,8 +219,8 @@ export function openRouterActionHealth(
 		badgeStatus: blockedCredential.status,
 		title: 'OpenRouter key needs attention',
 		message: detail
-			? `${detail} Direct local actions stay blocked until a ready key is available.`
-			: 'Direct local actions stay blocked until a ready OpenRouter key is available.',
+			? `${detail} Direct OpenRouter actions stay blocked until a ready key is available.`
+			: 'Direct OpenRouter actions stay blocked until a ready OpenRouter key is available.',
 		credential: blockedCredential
 	};
 }

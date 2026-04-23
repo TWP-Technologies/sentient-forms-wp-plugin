@@ -50,7 +50,7 @@
 
 <Section
 	heading="Custom Actions"
-	description="Create site-owned workflows backed by local action templates."
+	description="Create site-owned workflows backed by built-in action templates."
 >
 	{#snippet actions()}
 		<div class="sf:flex sf:gap-2 sf:flex-wrap">

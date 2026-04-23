@@ -1059,14 +1059,10 @@
 	});
 
 	const hasDefinitions = $derived(definitions.length > 0);
-	const hasCpsDefinitions = $derived(
-		hasDefinitions && definitions.some((definition) => definition.source === 'cps')
+	const builtInDefinitions = $derived(
+		definitions.filter((definition) => (definition.source ?? 'bundled') !== 'imported')
 	);
-	const hasLocalDefinitions = $derived(
-		hasDefinitions && definitions.some((definition) => (definition.source ?? 'local') !== 'cps')
-	);
-	const definitionsBadgeVariant = $derived(hasCpsDefinitions ? 'success' : 'warning');
-	const definitionsBadgeLabel = $derived(hasCpsDefinitions ? 'Managed templates' : 'Local fallback');
+	const hasBuiltInDefinitions = $derived(builtInDefinitions.length > 0);
 
 	const selectedDefinition = $derived(
 		selectedTemplateId ? definitionLookup[selectedTemplateId] : undefined
@@ -1362,7 +1358,7 @@
 						variant: 'danger',
 						title: 'Action mapping is invalid',
 						description:
-							'The linked action no longer exists or is misconfigured. Edit the action mapping to point at a valid local or managed action before retrying.',
+							'The linked action no longer exists or is misconfigured. Edit the action mapping to point at a valid action before retrying.',
 						actions: [{ id: 'refresh', label: 'Refresh status' }]
 					};
 				default:
@@ -1406,9 +1402,6 @@
 	const formatBaseCreditCost = (definition: ActionDefinition) =>
 		typeof definition.baseCreditCost === 'number' ? `${definition.baseCreditCost}` : '—';
 	const formatModelHint = (definition: ActionDefinition) => definition.modelHint ?? '—';
-	const definitionSourceBadgeVariant = (definition: ActionDefinition) =>
-		definition.source === 'cps' ? 'success' : 'warning';
-
 	function invalidHooksForLinkage(linkage: FormActionLinkage): string[] {
 		const triggerHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
 		const triggerSources = getMappingTriggerSources(linkage);
@@ -1798,12 +1791,12 @@
 		const resultMetaKey = localBuilderResultMetaKey.trim();
 
 		if (!credential) {
-			createError = 'Save and validate an OpenRouter key before creating a direct local action.';
+			createError = 'Save and validate an OpenRouter key before creating a Direct OpenRouter action.';
 			return;
 		}
 
 		if (promptTemplate.length === 0) {
-			createError = 'Enter a prompt template for the local action.';
+			createError = 'Enter a prompt template for the Direct OpenRouter action.';
 			return;
 		}
 
@@ -3174,33 +3167,27 @@
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Action library</p>
 					<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
-						Browse action templates and custom actions you can map to this form.
+						Browse built-in actions and custom actions you can map to this form.
 					</p>
 				</div>
-				<Badge variant={definitionsBadgeVariant}>{definitionsBadgeLabel}</Badge>
 			</div>
 
 			{#if !hasDefinitions}
 				<Alert variant="warning" class="sf:mt-3">
 					Action templates are unavailable right now. You can still link custom actions below.
 				</Alert>
-			{:else if hasLocalDefinitions}
-				<Alert variant="info" class="sf:mt-3">
-					Some templates come from local extensions. Confirm the intended provider before
-					linking.
-				</Alert>
 			{/if}
 
 			<div class="sf:mt-4 sf:grid sf:gap-3">
 				<Card class="sf:border-dashed">
 					<p class="sf:text-xs sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2">
-						Built-in templates
+						Built-in actions
 					</p>
-					{#if definitions.length === 0}
-						<p class="sf:text-sm sf:text-slate-600">No templates available.</p>
+					{#if !hasBuiltInDefinitions}
+						<p class="sf:text-sm sf:text-slate-600">No built-in actions available.</p>
 					{:else}
 						<ul class="sf:space-y-2">
-							{#each definitions.slice(0, 5) as definition (definition.id)}
+							{#each builtInDefinitions.slice(0, 5) as definition (definition.id)}
 								<li class="sf:flex sf:min-w-0 sf:items-start sf:justify-between sf:gap-3">
 									<div class="sf:min-w-0 sf:flex-1">
 										<p class="sf:break-words sf:text-sm sf:font-semibold sf:text-slate-800">
@@ -3210,7 +3197,7 @@
 											Hooks: {summarizeDefinitionHooks(definition.hooks)}
 										</p>
 										<p class="sf:break-words sf:text-xs sf:text-slate-500">
-											Managed base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+											Base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
 												definition
 											)}
 										</p>
@@ -3224,9 +3211,6 @@
 										>
 											Defaults
 										</Button>
-										<Badge variant={definitionSourceBadgeVariant(definition)}>
-											{definition.source === 'cps' ? 'Managed' : 'Local'}
-										</Badge>
 									</div>
 								</li>
 							{/each}
@@ -4475,7 +4459,7 @@
 											</p>
 											<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
 											<p class="sf:text-xs sf:text-slate-500">
-												Managed base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+												Base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
 													definition
 												)}
 											</p>
@@ -4516,7 +4500,7 @@
 											<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
 											{#if action.base_credit_cost !== null}
 												<p class="sf:text-xs sf:text-slate-500">
-													Managed base cost: {action.base_credit_cost} credits
+													Base cost: {action.base_credit_cost} credits
 												</p>
 											{/if}
 										</div>
@@ -4810,13 +4794,14 @@
 								(!hasDefinitions && createKind === 'template') ||
 								(createKind === 'custom' && customActions.length === 0) ||
 								(createKind === 'local_openrouter' && !selectedLocalBuilderCredential)}
+							data-testid="link-action-submit"
 						>
 							{creating
 								? createKind === 'local_openrouter'
 									? 'Creating...'
 									: 'Linking...'
 								: createKind === 'local_openrouter'
-									? 'Create local action'
+									? 'Create Direct OpenRouter action'
 									: 'Link action'}
 						</Button>
 					</div>

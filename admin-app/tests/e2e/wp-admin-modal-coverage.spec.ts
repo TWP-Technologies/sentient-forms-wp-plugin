@@ -108,6 +108,13 @@ async function coverProvidersDisclosures(page: Page): Promise<void> {
 
 	const managedCard = page.getByTestId('providers-managed-setup-card');
 	await expect(managedCard).toBeVisible();
+	const managedAccountRequired = managedCard.getByTestId('providers-managed-account-required');
+	if (await managedAccountRequired.count()) {
+		await expect(managedAccountRequired).toBeVisible();
+		await attachLocatorScreenshot(page, managedCard, 'providers-managed-account-required');
+		return;
+	}
+
 	const managedDisclosure = managedCard.getByLabel(/I understand Sentient receives the rendered prompt/i);
 	await expect(managedDisclosure).toBeVisible();
 	await managedDisclosure.check();
@@ -172,7 +179,7 @@ async function coverAddActionDrawer(page: Page): Promise<void> {
 	await expect(drawer.getByRole('radio').first()).toBeVisible();
 	await attachLocatorScreenshot(page, drawer, 'add-action-custom');
 
-	const directTab = page.getByRole('button', { name: 'Direct OpenRouter' });
+	const directTab = page.getByRole('button', { name: /^Direct OpenRouter$/ });
 	await directTab.click();
 	await expect(page.getByTestId('local-openrouter-builder')).toBeVisible();
 	await attachLocatorScreenshot(page, drawer, 'add-action-direct-openrouter');
@@ -292,7 +299,7 @@ async function ensureAtLeastOneLinkedAction(page: Page): Promise<void> {
 	await page.locator('header').first().getByRole('button', { name: 'Add action' }).click();
 	const drawer = page.getByTestId('link-action-form');
 	await expect(drawer).toBeVisible();
-	await page.getByRole('button', { name: 'Direct OpenRouter' }).click();
+	await drawer.getByRole('button', { name: /^Direct OpenRouter$/ }).click();
 	await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
 
 	const hookOption = drawer.locator('input[type="checkbox"]').first();
@@ -314,8 +321,9 @@ async function ensureAtLeastOneLinkedAction(page: Page): Promise<void> {
 		await credentialSelect.selectOption(firstCredentialValue);
 	}
 
-	const submitButton = drawer.getByRole('button', { name: 'Create local action' });
+	const submitButton = drawer.getByTestId('link-action-submit');
 	await expect(submitButton).toBeVisible();
+	await expect(submitButton).toContainText('Create Direct OpenRouter action');
 	await submitButton.click();
 
 	const builderResult = drawer.getByTestId('local-builder-result');

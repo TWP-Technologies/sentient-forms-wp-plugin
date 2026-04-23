@@ -451,7 +451,7 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
 		const drawer = page.getByTestId('link-action-form');
 		await expect(drawer).toBeVisible();
-		await page.getByRole('button', { name: 'Direct OpenRouter' }).click();
+		await drawer.getByRole('button', { name: /^Direct OpenRouter$/ }).click();
 
 		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
 		await expect(drawer.getByTestId('local-builder-template')).toHaveValue('spam_filter');
@@ -465,7 +465,9 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		await drawer
 			.getByTestId('local-builder-execution-mode')
 			.selectOption(localOpenRouterBrowserExecutionMode);
-		await drawer.getByRole('button', { name: 'Create local action' }).click();
+		const submitButton = drawer.getByTestId('link-action-submit');
+		await expect(submitButton).toContainText('Create Direct OpenRouter action');
+		await submitButton.click();
 
 		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #');
 		const mappings = getLocalFormMappings(formId);
@@ -571,7 +573,7 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
 		const drawer = page.getByTestId('link-action-form');
 		await expect(drawer).toBeVisible();
-		await page.getByRole('button', { name: 'Direct OpenRouter' }).click();
+		await drawer.getByRole('button', { name: /^Direct OpenRouter$/ }).click();
 		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
 		await drawer.getByTestId('local-builder-credential').selectOption(String(seed.credential_id));
 		await drawer
@@ -580,7 +582,9 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		await drawer
 			.getByTestId('local-builder-execution-mode')
 			.selectOption(localOpenRouterBrowserExecutionMode);
-		await drawer.getByRole('button', { name: 'Create local action' }).click();
+		const submitButton = drawer.getByTestId('link-action-submit');
+		await expect(submitButton).toContainText('Create Direct OpenRouter action');
+		await submitButton.click();
 
 		const email = `${token}@example.test`;
 		const baselineEntryId = getLatestEntryId(formId);

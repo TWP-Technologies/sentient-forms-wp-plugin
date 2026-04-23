@@ -153,22 +153,16 @@
 	);
 
 	// Group definitions by category
-	const groupedDefinitions = $derived(groupDefinitionsByCategory(definitions));
+	const builtInDefinitions = $derived(
+		definitions.filter((definition) => (definition.source ?? 'bundled') !== 'imported')
+	);
+	const groupedDefinitions = $derived(groupDefinitionsByCategory(builtInDefinitions));
 	const categoryOrder: ActionCategory[] = [
 		'content_quality',
 		'data_processing',
 		'automation',
 		'custom'
 	];
-
-	const definitionsBadgeVariant = $derived(
-		definitions.some((definition) => definition.source === 'cps') ? 'success' : 'warning'
-	);
-	const definitionsBadgeLabel = $derived(
-		definitions.some((definition) => definition.source === 'cps')
-			? 'Managed templates'
-			: 'Local templates'
-	);
 
 	function friendlyMessageFromError(err: unknown, fallback: string): string {
 		if (err instanceof ApiClientError) {
@@ -625,32 +619,33 @@
 	{/snippet}
 
 	<div class="sf:grid sf:gap-4 sf:lg:grid-cols-3">
-		<Card>
+		<Card data-testid="actions-built-in-card">
 			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Built-in actions</p>
-					<p class="sf:text-xs sf:text-slate-600">Action templates available to map.</p>
+					<p class="sf:text-xs sf:text-slate-600">
+						Included with Sentient Forms and ready to map.
+					</p>
 				</div>
-				<Badge variant={definitionsBadgeVariant}>{definitionsBadgeLabel}</Badge>
 			</div>
 				{#if definitionsLoading}
 					<div class="sf:mt-3">
 						<StateTemplate
 							variant="loading"
 							title="Loading built-in actions"
-							message="Fetching available action templates."
+							message="Fetching available built-in actions."
 							inline
 							dense
 							testId="actions-definitions-loading-state"
 						/>
 					</div>
-				{:else if definitions.length === 0}
+				{:else if builtInDefinitions.length === 0}
 					<div class="sf:mt-3">
 						<StateTemplate
 							variant="empty"
-							title="No templates loaded yet"
-							message="Refresh or verify the local template source, then try again."
-							actionLabel="Refresh templates"
+							title="No built-in actions loaded yet"
+							message="Refresh and try again."
+							actionLabel="Refresh actions"
 							onAction={() => {
 								void loadDefinitions();
 							}}
@@ -693,9 +688,6 @@
 													</Button>
 													<Badge variant={formCount > 0 ? 'info' : 'neutral'}>
 														{formCount} form{formCount !== 1 ? 's' : ''}
-													</Badge>
-													<Badge variant={definition.source === 'cps' ? 'success' : 'warning'}>
-														{definition.source === 'cps' ? 'Managed' : 'Local'}
 													</Badge>
 												</div>
 											</li>
