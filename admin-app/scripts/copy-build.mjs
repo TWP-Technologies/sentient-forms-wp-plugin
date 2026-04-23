@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +27,49 @@ const ensureDir = async (dir) => {
 
 const copyRecursive = async (src, dest) => cp(src, dest, { recursive: true });
 
+const resetDir = async (dir) => {
+  await rm(dir, { recursive: true, force: true });
+  await ensureDir(dir);
+};
+
+const collectManifestAssetPaths = (manifest) => {
+  const files = new Set();
+
+  for (const entry of Object.values(manifest)) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+
+    const { file, css } = entry;
+
+    if (typeof file === 'string' && file.length > 0) {
+      files.add(file);
+    }
+
+    if (Array.isArray(css)) {
+      for (const candidate of css) {
+        if (typeof candidate === 'string' && candidate.length > 0) {
+          files.add(candidate);
+        }
+      }
+    }
+  }
+
+  return [...files];
+};
+
+const assertManifestAssetsExist = async (outputRoot, manifest) => {
+  const missing = collectManifestAssetPaths(manifest).filter(
+    (relativePath) => !existsSync(path.join(outputRoot, relativePath))
+  );
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Copied build assets do not match manifest references: ${missing.join(', ')}`
+    );
+  }
+};
+
 const main = async () => {
   if (!existsSync(clientDir)) {
     throw new Error(`Client build directory not found: ${clientDir}`);
@@ -35,7 +78,7 @@ const main = async () => {
     throw new Error(`Vite manifest not found: ${manifestSrc}`);
   }
 
-  await ensureDir(outputDir);
+  await resetDir(outputDir);
   await copyRecursive(clientDir, path.join(outputDir, '_app'));
 
   const indexHtmlSrc = path.join(buildDir, 'index.html');
@@ -43,8 +86,9 @@ const main = async () => {
     await cp(indexHtmlSrc, path.join(outputDir, 'index.html'));
   }
 
-  const manifest = await readFile(manifestSrc);
+  const manifest = await readFile(manifestSrc, 'utf8');
   await writeFile(manifestDest, manifest);
+  await assertManifestAssetsExist(outputDir, JSON.parse(manifest));
   console.log('[copy-build] Assets copied to', outputDir);
 };
 
