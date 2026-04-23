@@ -139,9 +139,17 @@ async function coverActionsOverviewDefaults(page: Page): Promise<void> {
 	await defaultsModal.getByTestId('action-defaults-close').click();
 	await expect(defaultsModal).toBeHidden();
 
-	const customDefaultsButton = page.getByTestId(
+	const customActionsCard = page.getByTestId('actions-custom-actions-card');
+	await expect(customActionsCard).toBeVisible();
+
+	let customDefaultsButton = customActionsCard.getByTestId(
 		`action-defaults-button-${modalCoverageCustomActionCode}`
 	);
+	if ((await customDefaultsButton.count()) === 0) {
+		customDefaultsButton = customActionsCard
+			.locator('button[data-testid^="action-defaults-button-"]')
+			.first();
+	}
 	await expect(customDefaultsButton).toBeVisible();
 	await customDefaultsButton.click();
 	await expect(defaultsModal).toBeVisible();

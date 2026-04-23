@@ -700,7 +700,7 @@
 			{/if}
 		</Card>
 
-		<Card>
+		<Card data-testid="actions-custom-actions-card">
 			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Custom actions</p>
