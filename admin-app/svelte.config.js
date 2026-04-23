@@ -7,6 +7,7 @@ const config = {
 	preprocess: vitePreprocess(),
 	kit: {
 		adapter: adapter({ fallback: 'index.html' }),
+		embedded: true,
 		alias: {
 			$lib: 'src/lib',
 			$components: 'src/lib/components'

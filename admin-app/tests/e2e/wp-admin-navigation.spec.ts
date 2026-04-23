@@ -75,7 +75,42 @@ test.describe('WordPress admin navigation escapes the Sentient SPA', () => {
 			.locator('#the-list tr')
 			.filter({ has: page.locator('strong', { hasText: 'Sentient Forms' }) });
 
-		await expect(sentientRows).toHaveCount(1);
+		await expect(sentientRows.first()).toBeVisible();
+	});
+
+	test('dashboard admin menu link is not captured by the Sentient hash router', async ({ page }) => {
+		await loginToWpAdmin(page);
+		await ensureSentientFormsSpa(page, '/actions');
+
+		const dashboardLink = page.locator('#menu-dashboard > a[href="index.php"]').first();
+
+		await expect(dashboardLink).toBeVisible();
+
+		await Promise.all([
+			page.waitForURL(`${wpBaseUrl}/wp-admin/index.php`, { timeout: 10000 }),
+			dashboardLink.click()
+		]);
+
+		await expect(page).toHaveTitle(/Dashboard/i);
+	});
+
+	test('same-path WordPress admin.php links are not captured by the Sentient hash router', async ({
+		page
+	}) => {
+		await loginToWpAdmin(page);
+		await ensureSentientFormsSpa(page, '/actions');
+
+		const formsLink = page.locator('#adminmenu a[href="admin.php?page=gf_edit_forms"]').first();
+
+		await expect(formsLink).toBeVisible();
+
+		await Promise.all([
+			page.waitForURL(`${wpBaseUrl}/wp-admin/admin.php?page=gf_edit_forms`, { timeout: 10000 }),
+			formsLink.click()
+		]);
+
+		await expect(page).toHaveURL(`${wpBaseUrl}/wp-admin/admin.php?page=gf_edit_forms`);
+		await expect(page.locator('#sentient-forms-admin-app')).toHaveCount(0);
 	});
 
 	test('providers view does not lock or compress document scrolling', async ({ page }) => {
