@@ -16,7 +16,7 @@
 
 	interface Props {
 		/** Current value as a record */
-		value: Record<string, unknown>;
+		value?: Record<string, unknown>;
 		/** Optional override schema from the template */
 		schema?: TemplateOverrideSchema;
 		/** Callback when value changes */
@@ -25,13 +25,16 @@
 		id?: string;
 	}
 
-	let { value = $bindable({}), schema, onchange, id = 'prompt-builder' }: Props = $props();
+	let { value = $bindable(), schema, onchange, id = 'prompt-builder' }: Props = $props();
 
 	type EditorMode = 'form' | 'json';
 	let mode = $state<EditorMode>('form');
 	let jsonText = $state('');
 	let jsonError = $state<string | null>(null);
 	let formPairs = $state<Array<{ key: string; value: string; fromSchema: boolean }>>([]);
+	const safeValue = $derived.by<Record<string, unknown>>(() =>
+		value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+	);
 
 	// Get schema keys for dropdown
 	const schemaKeys = $derived(schema ? Object.keys(schema) : []);
@@ -39,13 +42,13 @@
 
 	// Initialize from value prop
 	$effect(() => {
-		if (Object.keys(value).length > 0 && formPairs.length === 0) {
-			formPairs = Object.entries(value).map(([key, val]) => ({
+		if (Object.keys(safeValue).length > 0 && formPairs.length === 0) {
+			formPairs = Object.entries(safeValue).map(([key, val]) => ({
 				key,
 				value: typeof val === 'string' ? val : JSON.stringify(val),
 				fromSchema: hasSchema && schemaKeys.includes(key)
 			}));
-			jsonText = JSON.stringify(value, null, 2);
+			jsonText = JSON.stringify(safeValue, null, 2);
 		}
 	});
 

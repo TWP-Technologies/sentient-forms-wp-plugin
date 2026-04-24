@@ -33,7 +33,7 @@
 		disabled = false,
 		name = undefined,
 		placeholder = undefined,
-		value = $bindable(''),
+		value = $bindable(),
 		selectClass = '',
 		onchange,
 		...rest

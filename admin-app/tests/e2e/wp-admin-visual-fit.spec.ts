@@ -75,18 +75,22 @@ function attachmentName(routeName: string, viewportName: string): string {
 
 async function assertNoPageOverflow(page: Page, contextLabel: string): Promise<void> {
 	const overflow = await page.evaluate(() => {
-		const main = document.querySelector('main');
-		const appFrame = document.querySelector('[data-testid="app-content-frame"]');
-		return {
-			mainOverflow:
-				main instanceof HTMLElement ? Math.max(0, main.scrollWidth - main.clientWidth) : 0,
-			appFrameOverflow:
-				appFrame instanceof HTMLElement
+			const main = document.querySelector('main');
+			const appFrame = document.querySelector('[data-testid="app-content-frame"]');
+			return {
+				documentOverflow: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
+				bodyOverflow: Math.max(0, document.body.scrollWidth - window.innerWidth),
+				mainOverflow:
+					main instanceof HTMLElement ? Math.max(0, main.scrollWidth - main.clientWidth) : 0,
+				appFrameOverflow:
+					appFrame instanceof HTMLElement
 					? Math.max(0, appFrame.scrollWidth - appFrame.clientWidth)
 					: 0
 		};
-	});
+		});
 
+	expect(overflow.documentOverflow, `${contextLabel} document overflow`).toBeLessThanOrEqual(1);
+	expect(overflow.bodyOverflow, `${contextLabel} body overflow`).toBeLessThanOrEqual(1);
 	expect(overflow.mainOverflow, `${contextLabel} main overflow`).toBeLessThanOrEqual(1);
 	expect(overflow.appFrameOverflow, `${contextLabel} app frame overflow`).toBeLessThanOrEqual(1);
 }

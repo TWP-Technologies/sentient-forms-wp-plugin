@@ -30,7 +30,7 @@
 		placeholder = undefined,
 		rows = 4,
 		textareaClass = '',
-		value = $bindable(''),
+		value = $bindable(),
 		...rest
 	}: Props = $props();
 

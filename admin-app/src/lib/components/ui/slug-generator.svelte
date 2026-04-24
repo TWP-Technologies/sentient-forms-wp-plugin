@@ -8,9 +8,9 @@
 
 	interface Props {
 		/** Display name to generate slug from */
-		name: string;
+		name?: string;
 		/** Current slug value (for manual override) */
-		value: string;
+		value?: string;
 		/** Callback when slug changes */
 		onchange?: (slug: string) => void;
 		/** Input ID for label association */
@@ -21,7 +21,7 @@
 
 	let {
 		name,
-		value = $bindable(''),
+		value = $bindable(),
 		onchange,
 		id = 'slug-generator',
 		manualOnly = false
@@ -32,9 +32,10 @@
 
 	// Auto-generate slug from name when not manually edited
 	const generatedSlug = $derived.by(() => {
-		if (manualOnly || isManuallyEdited) return value;
+		const currentValue = value ?? '';
+		if (manualOnly || isManuallyEdited) return currentValue;
 		// Transform: lowercase, replace spaces/underscores with dashes, strip invalid chars
-		const transformed = name
+		const transformed = (name ?? '')
 			.toLowerCase()
 			.replace(/[\s_]+/g, '-')
 			.replace(/[^a-z0-9-]/g, '');
@@ -43,7 +44,7 @@
 
 	// Sync generated slug to value when auto-generating
 	$effect(() => {
-		if (!manualOnly && !isManuallyEdited && generatedSlug !== value) {
+		if (!manualOnly && !isManuallyEdited && generatedSlug !== (value ?? '')) {
 			value = generatedSlug;
 			onchange?.(generatedSlug);
 		}
@@ -73,7 +74,7 @@
 		<input
 			type="text"
 			{id}
-			{value}
+			value={value ?? ''}
 			oninput={handleInput}
 			placeholder="e.g., follow-up-reply"
 			class="sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:font-mono

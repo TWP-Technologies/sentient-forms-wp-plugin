@@ -12,7 +12,7 @@
 
 	// Props
 	let {
-		open = $bindable(false),
+		open = $bindable(),
 		siteId,
 		formSource,
 		formId,
@@ -27,6 +27,8 @@
 		onImport?: (mapping: FormMapping) => void;
 	} = $props();
 
+	const isOpen = $derived(open === true);
+
 	// Local state
 	let selectedTemplate = $state<FormMapping | null>(null);
 	let fieldMappings = $state<Record<string, string>>({});
@@ -40,7 +42,7 @@
 
 	// Reset state when modal opens
 	$effect(() => {
-		if (open) {
+		if (isOpen) {
 			selectedTemplate = null;
 			fieldMappings = {};
 			step = 'select';
@@ -101,7 +103,7 @@
 	}
 </script>
 
-{#if open}
+{#if isOpen}
 	<div
 		class="sf-template-library-overlay"
 		onclick={handleOverlayClick}

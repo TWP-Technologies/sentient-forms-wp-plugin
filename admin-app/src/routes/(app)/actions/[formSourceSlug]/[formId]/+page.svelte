@@ -17,7 +17,7 @@
 		StateTemplate
 	} from '$lib/components/ui';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
-	import { DEFAULT_BATCH_SETTINGS } from '$lib/utils/batch';
+	import { DEFAULT_BATCH_SETTINGS, sanitizeBatchSettings } from '$lib/utils/batch';
 	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
 	import {
 		createInitialMappingModalSectionExpansion,
@@ -2251,13 +2251,16 @@
 				? draftSnapshot.triggerHooks
 				: [hookEntries[0]?.[0] ?? 'gform_validation'];
 		draftHooks = new Set(initialHooks);
-		// Clone settings with sensible defaults to avoid Svelte 5 $bindable() issues with undefined
 		const baseSettings = linkage.settings ?? {};
 		const inheritedFormConfig =
 			formLevelConfigByActionId[linkage.central_action_id] ?? createBlankFormActionConfig();
 		const inheritedActionConfig =
 			actionDefaultsByActionId[linkage.central_action_id] ?? createBlankFormActionConfig();
+		const baseBatchSettings = isPlainObject(baseSettings.batch_settings)
+			? baseSettings.batch_settings
+			: {};
 		const nextDraftSettings = {
+			...baseSettings,
 			spam_confidence_threshold: baseSettings.spam_confidence_threshold ?? 0.8,
 			spam_result_display_mode: normalizeSpamResultDisplayMode(
 				baseSettings.spam_result_display_mode ??
@@ -2276,9 +2279,8 @@
 			spam_negative_examples: baseSettings.spam_negative_examples ?? [],
 			// CB-EXEC-002: Execution mode - default to after_submission (async) for safety
 			execution_mode: baseSettings.execution_mode ?? 'after_submission',
-			// CB-EXEC-003/004: Batch settings with sensible defaults
-			batch_settings: baseSettings.batch_settings ?? { ...DEFAULT_BATCH_SETTINGS },
-			...baseSettings,
+			// CB-EXEC-003/004: Batch settings with sensible defaults.
+			batch_settings: sanitizeBatchSettings(baseBatchSettings),
 			dependency_ids: draftSnapshot.dependencyIds,
 			trigger_sources: draftSnapshot.triggerSources,
 			conditions: baseSettings.conditions ?? createDefaultConditionConfig()

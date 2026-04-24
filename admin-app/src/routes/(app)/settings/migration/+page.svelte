@@ -358,16 +358,16 @@
 		</div>
 
 		{#if report.warnings.length > 0}
-			<div class="sf:rounded-lg sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4 sf:space-y-2">
-				<p class="sf:font-semibold sf:text-amber-950">Review before reset</p>
-				<ul class="sf:space-y-1">
-					{#each report.warnings as warning}
-						<li class="sf:text-sm sf:text-amber-950">
-							<span class="sf:font-medium">{warning.code}</span>: {warning.message}
-						</li>
-					{/each}
-				</ul>
-			</div>
+				<div class="sf:min-w-0 sf:rounded-lg sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4 sf:space-y-2">
+					<p class="sf:font-semibold sf:text-amber-950">Review before reset</p>
+					<ul class="sf:space-y-1">
+						{#each report.warnings as warning}
+							<li class="sf:min-w-0 sf:break-words sf:text-sm sf:text-amber-950">
+								<span class="sf:font-medium sf:break-all">{warning.code}</span>: {warning.message}
+							</li>
+						{/each}
+					</ul>
+				</div>
 		{/if}
 
 		<div class="sf:grid sf:grid-cols-1 sf:gap-4 sf:lg:grid-cols-2">

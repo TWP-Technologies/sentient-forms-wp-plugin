@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { tick } from 'svelte';
 import { createClassComponent } from 'svelte/legacy';
 import InputField from '$lib/components/ui/input-field.svelte';
@@ -6,6 +8,7 @@ import SelectField from '$lib/components/ui/select-field.svelte';
 import TextareaField from '$lib/components/ui/textarea-field.svelte';
 import Toggle from '$lib/components/ui/toggle.svelte';
 import ValidationSummary from '$lib/components/ui/validation-summary.svelte';
+import BindableUndefinedFieldHarness from './fixtures/BindableUndefinedFieldHarness.svelte';
 
 afterEach(() => {
 	document.body.innerHTML = '';
@@ -30,6 +33,23 @@ function mount(Component: unknown, initialProps: Record<string, unknown>) {
 			target.remove();
 		}
 	};
+}
+
+function collectSvelteFiles(directory: string): string[] {
+	const entries = readdirSync(directory);
+	const files: string[] = [];
+
+	for (const entry of entries) {
+		const path = join(directory, entry);
+		const stat = statSync(path);
+		if (stat.isDirectory()) {
+			files.push(...collectSvelteFiles(path));
+		} else if (entry.endsWith('.svelte')) {
+			files.push(path);
+		}
+	}
+
+	return files;
 }
 
 describe('Form field primitives', () => {
@@ -68,6 +88,27 @@ describe('Form field primitives', () => {
 
 		expect(select.value).toBe('pro');
 		dispose();
+	});
+
+	it('allows bound UI primitives to start with undefined values', () => {
+		for (const field of ['input', 'select', 'textarea', 'toggle', 'model', 'slug', 'prompt']) {
+			const { target, dispose } = mount(BindableUndefinedFieldHarness, { field });
+			expect(target.querySelector('input, select, textarea, button')).toBeTruthy();
+			dispose();
+		}
+	});
+
+	it('does not define bindable props with fallback values', () => {
+		const srcRoot = join(process.cwd(), 'src');
+		const offenders = collectSvelteFiles(srcRoot).flatMap((file) => {
+			const content = readFileSync(file, 'utf8');
+			return Array.from(content.matchAll(/\$bindable\(\s*[^)\s]/g)).map((match) => ({
+				file: file.replace(`${process.cwd()}/`, ''),
+				index: match.index
+			}));
+		});
+
+		expect(offenders).toEqual([]);
 	});
 
 	it('binds textarea content', async () => {

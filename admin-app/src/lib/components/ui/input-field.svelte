@@ -32,7 +32,7 @@
 		autocomplete = undefined,
 		inputClass = '',
 		name = undefined,
-		value = $bindable(''),
+		value = $bindable(),
 		...rest
 	}: Props = $props();
 

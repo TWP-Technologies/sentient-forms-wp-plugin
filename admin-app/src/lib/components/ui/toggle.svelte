@@ -14,7 +14,7 @@
 	const autoId = $props.id();
 	let {
 		id = autoId,
-		checked = $bindable(false),
+		checked = $bindable(),
 		disabled = false,
 		label = null,
 		description = null,
@@ -24,7 +24,8 @@
 
 	let ariaDescribedBy = $derived(description ? `${id}-description` : undefined);
 	let ariaLabelledBy = $derived(label ? `${id}-label` : undefined);
-	let thumbStyle = $derived(`transform: translateX(${checked ? '1.25rem' : '0'});`);
+	let isChecked = $derived(checked === true);
+	let thumbStyle = $derived(`transform: translateX(${isChecked ? '1.25rem' : '0'});`);
 
 	function emitChange(next: boolean) {
 		checked = next;
@@ -33,14 +34,14 @@
 
 	function handleClick() {
 		if (disabled) return;
-		emitChange(!checked);
+		emitChange(!isChecked);
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
 		if (disabled) return;
 		if (event.key === ' ' || event.key === 'Enter') {
 			event.preventDefault();
-			emitChange(!checked);
+			emitChange(!isChecked);
 		}
 	}
 </script>
@@ -50,11 +51,11 @@
 		type="button"
 		id={id}
 		role="switch"
-		aria-checked={checked}
+		aria-checked={isChecked}
 		aria-describedby={ariaDescribedBy}
 		aria-labelledby={ariaLabelledBy}
 		aria-label={ariaLabelledBy ? undefined : label ?? 'Toggle setting'}
-		class="sf:relative sf:inline-flex sf:h-6 sf:w-11 sf:shrink-0 sf:items-center sf:rounded-full sf:border-2 sf:border-transparent sf:transition-colors sf:duration-200 sf:ease-in-out sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-2 {checked
+		class="sf:relative sf:inline-flex sf:h-6 sf:w-11 sf:shrink-0 sf:items-center sf:rounded-full sf:border-2 sf:border-transparent sf:transition-colors sf:duration-200 sf:ease-in-out sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-2 {isChecked
 			? 'sf:bg-primary-600'
 			: 'sf:bg-slate-300'} {disabled
 			? 'sf:opacity-50 sf:cursor-not-allowed'

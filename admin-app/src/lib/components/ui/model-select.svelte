@@ -5,14 +5,14 @@
 <script lang="ts">
 	interface Props {
 		/** Currently selected model hint */
-		value: string | null;
+		value?: string | null;
 		/** Callback when selection changes */
 		onchange?: (value: string | null) => void;
 		/** Input ID for label association */
 		id?: string;
 	}
 
-	let { value = $bindable(null), onchange, id = 'model-select' }: Props = $props();
+	let { value = $bindable(), onchange, id = 'model-select' }: Props = $props();
 
 	// Static model options - TODO: fetch from the local provider model registry when available
 	const modelOptions = [
@@ -29,10 +29,11 @@
 
 	// Check if current value is a custom model
 	$effect(() => {
-		const isKnownModel = modelOptions.some((opt) => opt.value === value || opt.value === '');
-		if (value && !isKnownModel) {
+		const currentValue = value ?? null;
+		const isKnownModel = modelOptions.some((opt) => opt.value === currentValue || opt.value === '');
+		if (currentValue && !isKnownModel) {
 			showCustomInput = true;
-			customValue = value;
+			customValue = currentValue;
 		}
 	});
 
@@ -63,8 +64,9 @@
 	// Determine which option to show as selected
 	const selectValue = $derived.by(() => {
 		if (showCustomInput) return 'custom';
-		if (!value) return '';
-		const known = modelOptions.find((opt) => opt.value === value);
+		const currentValue = value ?? null;
+		if (!currentValue) return '';
+		const known = modelOptions.find((opt) => opt.value === currentValue);
 		return known ? known.value : 'custom';
 	});
 </script>
