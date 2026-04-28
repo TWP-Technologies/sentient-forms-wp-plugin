@@ -496,16 +496,46 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
     private function build_local_model_selection_json( array $payload, array $definition, ?array $existing = null ): array
     {
         $existing_selection = is_array( $existing['model_selection_json'] ?? null ) ? $existing['model_selection_json'] : [];
-        $model              = isset( $payload['model_hint'] ) && null !== $payload['model_hint'] && '' !== trim( (string) $payload['model_hint'] )
+        $runtime_selection  = is_array( $payload['model_selection'] ?? null ) ? $payload['model_selection'] : null;
+        $model              = is_array( $runtime_selection ) && isset( $runtime_selection['primary'] )
+            ? sanitize_text_field( (string) $runtime_selection['primary'] )
+            : ( isset( $payload['model_hint'] ) && null !== $payload['model_hint'] && '' !== trim( (string) $payload['model_hint'] )
             ? sanitize_text_field( (string) $payload['model_hint'] )
-            : sanitize_text_field( (string) ( $existing_selection['model'] ?? $definition['model'] ?? 'openrouter/auto' ) );
+            : sanitize_text_field( (string) ( $existing_selection['model'] ?? $definition['model'] ?? 'openrouter/auto' ) ) );
+
+        $provider = is_array( $runtime_selection ) && isset( $runtime_selection['provider'] ) && is_scalar( $runtime_selection['provider'] )
+            ? sanitize_key( (string) $runtime_selection['provider'] )
+            : sanitize_key( (string) ( $existing_selection['provider'] ?? $definition['provider'] ?? 'openrouter' ) );
+        if ( ! in_array( $provider, [ 'openrouter', 'sentient_managed' ], true ) )
+        {
+            $provider = 'openrouter';
+        }
 
         $selection = [
-            'provider' => sanitize_key( (string) ( $existing_selection['provider'] ?? $definition['provider'] ?? 'openrouter' ) ),
-            'model'    => '' !== $model ? $model : 'openrouter/auto',
+            'provider' => $provider,
+            'model'    => '' !== $model ? $model : ( 'sentient_managed' === $provider ? 'gemini-3-flash-preview' : 'openrouter/auto' ),
         ];
 
-        $credential_id = isset( $existing_selection['credential_id'] ) ? absint( $existing_selection['credential_id'] ) : $this->find_default_local_openrouter_credential_id();
+        if ( is_array( $runtime_selection ) )
+        {
+            $selection['selection'] = $runtime_selection;
+
+            if ( isset( $runtime_selection['backup'] ) && is_scalar( $runtime_selection['backup'] ) )
+            {
+                $selection['backup_model'] = sanitize_text_field( (string) $runtime_selection['backup'] );
+            }
+
+            if ( isset( $runtime_selection['reasoning'] ) && is_scalar( $runtime_selection['reasoning'] ) )
+            {
+                $selection['reasoning'] = sanitize_key( (string) $runtime_selection['reasoning'] );
+            }
+        }
+
+        $credential_id = is_array( $runtime_selection ) && isset( $runtime_selection['credential_id'] )
+            ? absint( $runtime_selection['credential_id'] )
+            : ( isset( $existing_selection['credential_id'] ) && $provider === sanitize_key( (string) ( $existing_selection['provider'] ?? '' ) )
+                ? absint( $existing_selection['credential_id'] )
+                : $this->find_default_local_credential_id( $provider ) );
         if ( $credential_id > 0 )
         {
             $selection['credential_id'] = $credential_id;
@@ -514,16 +544,18 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
         return $selection;
     }
 
-    private function find_default_local_openrouter_credential_id(): int
+    private function find_default_local_credential_id( string $provider ): int
     {
         if ( ! $this->local_provider_credentials )
         {
             return 0;
         }
 
+        $provider          = sanitize_key( $provider );
+        $ready_credentials = [];
         foreach ( $this->local_provider_credentials->list( [ 'limit' => 100 ] ) as $credential )
         {
-            if ( 'openrouter' !== sanitize_key( (string) ( $credential['provider'] ?? '' ) ) )
+            if ( $provider !== sanitize_key( (string) ( $credential['provider'] ?? '' ) ) )
             {
                 continue;
             }
@@ -536,11 +568,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             $credential_id = absint( $credential['id'] ?? 0 );
             if ( $credential_id > 0 )
             {
-                return $credential_id;
+                $ready_credentials[] = $credential_id;
             }
         }
 
-        return 0;
+        return 1 === count( $ready_credentials ) ? $ready_credentials[0] : 0;
     }
 
     /**
@@ -590,6 +622,9 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             'model_hint'                => isset( $row['model_selection_json']['model'] ) && is_scalar( $row['model_selection_json']['model'] )
                 ? sanitize_text_field( (string) $row['model_selection_json']['model'] )
                 : null,
+            'model_selection'           => is_array( $row['model_selection_json']['selection'] ?? null )
+                ? $this->sanitize_model_selection( $row['model_selection_json']['selection'] )
+                : $this->model_selection_from_legacy_model_hint( $row['model_selection_json']['model'] ?? null ),
             'base_credit_cost'          => null,
             'status'                    => isset( $row['status'] ) ? sanitize_key( (string) $row['status'] ) : 'active',
             'archived_at'               => null,
@@ -728,6 +763,12 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
                 'required'          => false,
                 'sanitize_callback' => 'sanitize_text_field',
             ],
+            'model_selection'  => [
+                'type'              => 'object',
+                'required'          => false,
+                'sanitize_callback' => [ $this, 'sanitize_model_selection' ],
+                'description'       => __( 'Structured local model selection for this custom action.', 'sentient-forms' ),
+            ],
             'action_kind'      => [
                 'type'              => 'string',
                 'required'          => false,
@@ -834,6 +875,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             'description'      => $request->get_param( 'description' ) ? sanitize_textarea_field( (string) $request->get_param( 'description' ) ) : null,
             'prompt_overrides' => $prompt_overrides,
             'model_hint'       => $request->get_param( 'model_hint' ) ? sanitize_text_field( (string) $request->get_param( 'model_hint' ) ) : null,
+            'model_selection'  => $this->sanitize_model_selection( $request->get_param( 'model_selection' ) ),
             'action_kind'      => $action_kind,
             'definition'       => $definition,
             'definition_version' => $definition_version,
@@ -896,11 +938,102 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             'description'      => $request->get_param( 'description' ) ? sanitize_textarea_field( (string) $request->get_param( 'description' ) ) : null,
             'prompt_overrides' => $prompt_overrides,
             'model_hint'       => $request->get_param( 'model_hint' ) ? sanitize_text_field( (string) $request->get_param( 'model_hint' ) ) : null,
+            'model_selection'  => $this->sanitize_model_selection( $request->get_param( 'model_selection' ) ),
             'action_kind'      => $action_kind,
             'definition'       => $definition,
             'definition_version' => $definition_version,
             'output_contract'  => $output_contract,
             'supported_execution_modes' => $supported_execution_modes,
+        ];
+    }
+
+    /**
+     * @param mixed $value
+     */
+    public function sanitize_model_selection( $value ): ?array
+    {
+        if ( null === $value || '' === $value )
+        {
+            return null;
+        }
+
+        if ( ! is_array( $value ) )
+        {
+            return null;
+        }
+
+        $primary = isset( $value['primary'] ) && is_scalar( $value['primary'] )
+            ? sanitize_text_field( (string) $value['primary'] )
+            : '';
+        if ( '' === $primary )
+        {
+            return null;
+        }
+
+        $selection = [
+            'primary'   => $primary,
+            'is_preset' => ! empty( $value['is_preset'] ) || str_starts_with( $primary, 'sf_' ),
+        ];
+
+        if ( isset( $value['provider'] ) && is_scalar( $value['provider'] ) )
+        {
+            $provider = sanitize_key( (string) $value['provider'] );
+            if ( in_array( $provider, [ 'openrouter', 'sentient_managed' ], true ) )
+            {
+                $selection['provider'] = $provider;
+            }
+        }
+
+        if ( isset( $value['credential_id'] ) && is_scalar( $value['credential_id'] ) )
+        {
+            $credential_id = absint( $value['credential_id'] );
+            if ( $credential_id > 0 )
+            {
+                $selection['credential_id'] = $credential_id;
+            }
+        }
+
+        if ( isset( $value['backup'] ) && is_scalar( $value['backup'] ) )
+        {
+            $backup = sanitize_text_field( (string) $value['backup'] );
+            if ( '' !== $backup )
+            {
+                $selection['backup'] = $backup;
+            }
+        }
+
+        if ( isset( $value['reasoning'] ) && is_scalar( $value['reasoning'] ) )
+        {
+            $reasoning = sanitize_key( (string) $value['reasoning'] );
+            if ( in_array( $reasoning, [ 'none', 'minimal', 'low', 'medium', 'high', 'xhigh' ], true ) )
+            {
+                $selection['reasoning'] = $reasoning;
+            }
+        }
+
+        return $selection;
+    }
+
+    /**
+     * @param mixed $model_hint
+     */
+    private function model_selection_from_legacy_model_hint( $model_hint ): ?array
+    {
+        if ( ! is_scalar( $model_hint ) )
+        {
+            return null;
+        }
+
+        $model = sanitize_text_field( (string) $model_hint );
+        if ( '' === $model )
+        {
+            return null;
+        }
+
+        return [
+            'primary'   => $model,
+            'backup'    => null,
+            'is_preset' => str_starts_with( $model, 'sf_' ),
         ];
     }
 

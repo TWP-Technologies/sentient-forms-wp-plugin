@@ -141,7 +141,7 @@
 								<Badge variant="neutral">Updated before</Badge>
 							{/if}
 						</div>
-						<h2 id="privacy-setup-assistant-title" class="sf:text-xl sf:font-semibold">
+						<h2 id="privacy-setup-assistant-title" class="sf:text-xl sf:font-semibold sf:text-white">
 							Choose how much Sentient Forms keeps locally
 						</h2>
 						<p class="sf:max-w-2xl sf:text-sm sf:text-slate-200">
@@ -171,9 +171,9 @@
 								type="button"
 								variant="secondary"
 								size="md"
-								class={`sf:h-full sf:w-full sf:flex-col sf:items-start sf:rounded-lg sf:p-4 sf:text-left ${
+								class={`sf:h-full sf:w-full sf:flex-col sf:items-start sf:rounded-lg sf:p-4 sf:text-left sf:transition-all ${
 									selectedPreset === preset.id
-										? 'sf:border-primary-500 sf:bg-primary-50 sf:shadow-sm sf:hover:border-primary-500 sf:hover:bg-primary-50'
+										? 'sf:border-primary-600 sf:bg-primary-50 sf:shadow-md sf:ring-2 sf:ring-primary-500 sf:ring-offset-2 sf:ring-offset-white sf:hover:border-primary-600 sf:hover:bg-primary-50'
 										: 'sf:border-slate-200 sf:bg-white sf:hover:border-slate-300 sf:hover:bg-slate-50'
 								}`}
 								aria-pressed={selectedPreset === preset.id}
@@ -187,6 +187,9 @@
 									<Badge variant={preset.id === 'balanced' ? 'success' : 'neutral'}>
 										{preset.kicker}
 									</Badge>
+									{#if selectedPreset === preset.id}
+										<Badge variant="info">Selected</Badge>
+									{/if}
 							</div>
 							<p class="sf:mt-2 sf:text-sm sf:text-slate-600">{preset.description}</p>
 								<ul class="sf:mt-4 sf:space-y-2 sf:text-xs sf:text-slate-500">
@@ -257,16 +260,21 @@
 					</div>
 				</div>
 
-				<div class="sf:flex sf:flex-col sf:gap-3 sf:border-t sf:border-slate-200 sf:pt-5 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between">
-					<p class="sf:text-sm sf:text-slate-500">
+				<div class="sf:flex sf:flex-col sf:gap-3 sf:border-t sf:border-slate-200 sf:pt-5 sf:md:flex-row sf:md:items-center sf:md:justify-between">
+					<p class="sf:min-w-0 sf:text-sm sf:text-slate-500">
 						Skip Customized Setup applies the recommended Balanced defaults and keeps the plugin ready
 						to use immediately.
 					</p>
-					<div class="sf:flex sf:flex-wrap sf:gap-2">
+					<div class="sf:flex sf:shrink-0 sf:flex-nowrap sf:gap-2">
 						<Button variant="secondary" disabled={saving} onclick={useBalancedDefaults}>
-							Skip Customized Setup
+							Skip setup
 						</Button>
-						<Button loading={saving} disabled={saving} onclick={applySelectedPreset}>
+						<Button
+							class="sf:min-w-[9rem]"
+							loading={saving}
+							disabled={saving}
+							onclick={applySelectedPreset}
+						>
 							{saving ? 'Saving...' : `Apply ${selectedDefinition.label}`}
 						</Button>
 					</div>

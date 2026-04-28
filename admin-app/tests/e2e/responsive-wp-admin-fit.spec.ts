@@ -25,7 +25,7 @@ const viewports: ViewportProfile[] = [
 
 const routeChecks: RouteCheck[] = [
 	{ path: '/#/dashboard', ready: (page) => page.getByTestId('dashboard-local-first-summary') },
-	{ path: '/#/licensing', ready: (page) => page.getByRole('heading', { name: 'License management' }) },
+	{ path: '/#/licensing', ready: (page) => page.getByRole('heading', { name: 'Managed service' }) },
 	{ path: '/#/actions', ready: (page) => page.getByRole('heading', { name: 'Actions' }) },
 	{ path: '/#/actions/log', ready: (page) => page.getByRole('heading', { name: 'Action Log' }) },
 	{ path: '/#/actions/custom', ready: (page) => page.getByRole('heading', { name: 'Custom Actions' }) },

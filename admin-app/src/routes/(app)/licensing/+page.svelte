@@ -2,7 +2,6 @@
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
 	import type {
 		ApiErrorPayload,
-		BillingPolicyState,
 		BillingPortalSessionRequest,
 		BillingSubscriptionState,
 		BillingStateResponse,
@@ -41,8 +40,13 @@
 		label: string;
 		description: string;
 		ctaLabel: string;
-		trialPeriodDays?: number;
 		quantity?: number;
+	}
+
+	interface ManagedCheckoutReference {
+		checkoutIntentId?: string | null;
+		checkoutSessionId?: string | null;
+		activationToken?: string | null;
 	}
 
 	type BillingActionContext = 'billing_state' | 'checkout' | 'portal';
@@ -54,34 +58,28 @@
 		retry: () => Promise<void>;
 	}
 
-	const BUSINESS_PLAN_SITE_CAP = 200;
-	const DEFAULT_BILLING_POLICY: BillingPolicyState = {
-		paid_trial_days: 14,
-		free_plan_monthly_credits: 50,
-		free_plan_indefinite: true,
-		private_beta_trial_enabled: true
-	};
-
 	const checkoutPlanCatalog = [
 		{
 			code: 'starter',
 			label: 'Starter',
-			priceDescription: '$15/month, 1 site, 1,500 monthly credits.',
+			priceDescription: '$15/month for this WordPress site, 1,500 monthly managed credits.',
 			ctaLabel: 'Choose Starter'
 		},
 		{
 			code: 'pro',
 			label: 'Pro',
-			priceDescription: '$39/month, up to 5 sites, 4,000 monthly credits.',
+			priceDescription: '$39/month for this WordPress site, 4,000 monthly managed credits.',
 			ctaLabel: 'Choose Pro'
 		},
 		{
 			code: 'business',
 			label: 'Business',
-			priceDescription: `$99/month, up to ${BUSINESS_PLAN_SITE_CAP} sites during launch, 12,000 monthly credits.`,
+			priceDescription: '$99/month for this WordPress site, 12,000 monthly managed credits.',
 			ctaLabel: 'Choose Business'
 		}
 	] as const;
+
+	const MANAGED_DISCLOSURE_VERSION = 'managed-service-v1';
 
 	function buildEffectiveCreditSnapshot(
 		billingState: BillingStateResponse | null
@@ -93,13 +91,11 @@
 		return {
 			current_balance: billingState.credits.current_balance,
 			ledger_delta: billingState.credits.ledger_delta,
-			tier:
-				resolveBillingTier(billingState) ??
-				{
-					code: 'unknown',
-					display_name: 'Unknown',
-					monthly_credit_quota: billingState.credits.tier_quota
-				},
+			tier: resolveBillingTier(billingState) ?? {
+				code: 'unknown',
+				display_name: 'Unknown',
+				monthly_credit_quota: billingState.credits.tier_quota
+			},
 			stale: false
 		};
 	}
@@ -129,10 +125,10 @@
 
 	function formatBillingBoundaryValue(value: boolean | null | undefined): string {
 		if (value === true) {
-			return 'Sentient billed';
+			return 'Sentient Forms billed';
 		}
 		if (value === false) {
-			return 'Not Sentient billed';
+			return 'External billing';
 		}
 		return 'Not configured';
 	}
@@ -208,7 +204,7 @@
 		}
 
 		if (monthlyQuota !== null) {
-			return `Managed proxy usage is metered by Sentient. This plan includes ${monthlyQuota.toLocaleString()} monthly managed credits; direct OpenRouter runs stay outside Sentient billing.`;
+			return `Managed-service usage is metered by Sentient Forms. This plan includes ${monthlyQuota.toLocaleString()} monthly managed credits; direct OpenRouter runs stay outside Sentient Forms billing.`;
 		}
 
 		return detail;
@@ -224,6 +220,10 @@
 	let checkoutPlanPending = $state<string | null>(null);
 	let portalLoading = $state(false);
 	let billingControlsElement = $state<HTMLDivElement | null>(null);
+	let acceptedManagedCheckoutDisclosure = $state(false);
+	let checkoutCompletionLoading = $state(false);
+	let managedCheckoutReference = $state<ManagedCheckoutReference | null>(null);
+	let managedCheckoutCompletionMessage = $state<string | null>(null);
 
 	let resetInfo = $derived(getNextCreditReset());
 	let effectiveCredits = $derived(buildEffectiveCreditSnapshot(billing));
@@ -244,7 +244,6 @@
 	let billingBoundary = $derived(billing?.billing_boundary ?? null);
 	let managedUsage = $derived(billing?.managed_usage ?? null);
 	let managedUsageMetrics = $derived(resolveManagedUsageMetrics(managedUsage));
-	let billingPolicy = $derived(resolveBillingPolicy(billing?.policy));
 	let creditSeverityLabel = $derived(formatCreditSeverityLabel(creditPresentation.severity));
 	let creditSeverityVariant = $derived(creditSeverityToBadgeVariant(creditPresentation.severity));
 	let managedCreditBadgeLabel = $derived(
@@ -255,9 +254,8 @@
 		checkoutPlanCatalog.map((plan) => ({
 			code: plan.code,
 			label: plan.label,
-			description: `${plan.priceDescription} Includes a one-time ${billingPolicy.paid_trial_days}-day paid-plan trial when eligible.`,
-			ctaLabel: plan.ctaLabel,
-			trialPeriodDays: billingPolicy.paid_trial_days
+			description: plan.priceDescription,
+			ctaLabel: plan.ctaLabel
 		}))
 	);
 	let tierLabel = $derived(
@@ -289,16 +287,17 @@
 			? `${managedUsageMetrics.totalEvents.toLocaleString()} managed run${
 					managedUsageMetrics.totalEvents === 1 ? '' : 's'
 				}, ${managedUsageMetrics.succeededEvents.toLocaleString()} succeeded, ${managedUsageMetrics.failedEvents.toLocaleString()} failed.`
-			: 'No managed proxy usage recorded yet.'
+			: 'No managed-service usage recorded yet.'
 	);
 	let managedUsageTokens = $derived(
 		managedUsage
 			? `${managedUsageMetrics.inputTokens.toLocaleString()} input tokens, ${managedUsageMetrics.outputTokens.toLocaleString()} output tokens, ${formatMicroUsd(managedUsageMetrics.billedMicroUsd)} billed.`
-			: 'Sentient metering starts only after managed proxy execution is enabled.'
+			: 'Sentient Forms metering starts only after managed-service execution is enabled.'
 	);
 
 	onMount(() => {
 		void (async () => {
+			await completeManagedCheckoutFromReturn();
 			await licenseStore.load();
 			await refreshLicenseAndBilling();
 			await maybeFocusBillingControls();
@@ -378,7 +377,7 @@
 				case 'billing_not_configured':
 					return 'Billing is not configured for this environment yet. Ask an administrator to verify Stripe keys and webhook secrets.';
 				case 'trial_unavailable':
-					return `This license already consumed its one-time ${billingPolicy.paid_trial_days}-day paid-plan trial. Continue with a paid plan to switch tiers.`;
+					return 'This site is not eligible for that checkout path. Continue with an active managed-service plan or open the billing portal to update payment details.';
 				case 'billing_provider_unreachable':
 				case 'billing_provider_error':
 					return 'Stripe is temporarily unavailable. Retry in a moment or use Manage billing once connectivity recovers.';
@@ -477,6 +476,107 @@
 		return window.location.href;
 	}
 
+	function managedCheckoutReturnUrl(): string {
+		if (typeof window === 'undefined') {
+			return '/wp-admin/';
+		}
+
+		const url = new URL(window.location.href);
+		url.searchParams.delete('sentient_managed_checkout');
+		url.searchParams.delete('checkout_intent_id');
+		url.searchParams.delete('checkout_session_id');
+		url.searchParams.delete('stripe_session_id');
+		url.searchParams.delete('activation_token');
+		return url.toString();
+	}
+
+	function readManagedCheckoutReference(): ManagedCheckoutReference | null {
+		if (typeof window === 'undefined') {
+			return null;
+		}
+
+		const params = new URLSearchParams(window.location.search);
+		const checkoutResult = params.get('sentient_managed_checkout');
+		if (checkoutResult !== 'success' && checkoutResult !== 'completed') {
+			return null;
+		}
+
+		const reference = {
+			checkoutIntentId: params.get('checkout_intent_id'),
+			checkoutSessionId: params.get('checkout_session_id') ?? params.get('stripe_session_id'),
+			activationToken: params.get('activation_token')
+		};
+
+		if (!reference.checkoutIntentId && !reference.checkoutSessionId) {
+			return null;
+		}
+
+		return reference;
+	}
+
+	function clearManagedCheckoutReturnParams(): void {
+		if (typeof window === 'undefined') {
+			return;
+		}
+
+		const url = new URL(window.location.href);
+		url.searchParams.delete('sentient_managed_checkout');
+		url.searchParams.delete('checkout_intent_id');
+		url.searchParams.delete('checkout_session_id');
+		url.searchParams.delete('stripe_session_id');
+		url.searchParams.delete('activation_token');
+		window.history.replaceState({}, '', url.toString());
+	}
+
+	async function completeManagedCheckoutFromReturn(): Promise<void> {
+		const reference = readManagedCheckoutReference();
+		if (!reference) {
+			return;
+		}
+
+		managedCheckoutReference = reference;
+		await completeManagedCheckout(reference);
+	}
+
+	async function completeManagedCheckout(reference: ManagedCheckoutReference): Promise<void> {
+		checkoutCompletionLoading = true;
+		billingError = null;
+		managedCheckoutCompletionMessage = null;
+
+		try {
+			const result = await client.completeManagedCheckout(
+				{
+					checkout_intent_id: reference.checkoutIntentId,
+					checkout_session_id: reference.checkoutSessionId,
+					activation_token: reference.activationToken
+				},
+				{ showNotifications: false }
+			);
+
+			if (result.activation_ready) {
+				managedCheckoutCompletionMessage =
+					'Managed service is active. Sentient Forms stored the site credential for managed execution.';
+				notifications.success(managedCheckoutCompletionMessage);
+				managedCheckoutReference = null;
+				clearManagedCheckoutReturnParams();
+				await licenseStore.load();
+				await refreshLicenseAndBilling();
+				return;
+			}
+
+			managedCheckoutCompletionMessage =
+				result.message ??
+				'Stripe checkout succeeded. Sentient Forms is waiting for the billing webhook before activating this site.';
+		} catch (error) {
+			console.error('Failed to complete managed checkout', error);
+			setBillingError(error, 'checkout', async () => {
+				await completeManagedCheckout(reference);
+			});
+		} finally {
+			checkoutCompletionLoading = false;
+		}
+	}
+
 	async function handleActivate(event: SubmitEvent) {
 		event.preventDefault();
 		issues = [];
@@ -516,20 +616,41 @@
 			return;
 		}
 
+		if (!hasConnectedLicense && !acceptedManagedCheckoutDisclosure) {
+			issues = [
+				{
+					id: 'managed-checkout-disclosure',
+					message: 'Accept the Sentient Forms managed-service disclosure before checkout.'
+				}
+			];
+			return;
+		}
+
 		checkoutPlanPending = plan.code;
 		billingError = null;
+		issues = [];
 
 		try {
-			const session = await client.createCheckoutSession(
-				{
-					plan_code: plan.code,
-					success_url: currentRouteUrl(),
-					cancel_url: currentRouteUrl(),
-					quantity: plan.quantity ?? 1,
-					trial_period_days: plan.trialPeriodDays
-				},
-				{ showNotifications: false }
-			);
+			const session = hasConnectedLicense
+				? await client.createCheckoutSession(
+						{
+							plan_code: plan.code,
+							success_url: currentRouteUrl(),
+							cancel_url: currentRouteUrl(),
+							quantity: plan.quantity ?? 1
+						},
+						{ showNotifications: false }
+					)
+				: await client.startManagedCheckout(
+						{
+							plan_code: plan.code,
+							success_url: managedCheckoutReturnUrl(),
+							cancel_url: managedCheckoutReturnUrl(),
+							disclosure_version: MANAGED_DISCLOSURE_VERSION,
+							accepted_managed_service_terms: acceptedManagedCheckoutDisclosure
+						},
+						{ showNotifications: false }
+					);
 			if (typeof window !== 'undefined') {
 				window.location.assign(session.checkout_url);
 			}
@@ -566,68 +687,132 @@
 	function resolveQuotaCalloutTitle(_severity: CreditSeverity): string {
 		return creditPresentation.calloutTitle;
 	}
-
-	function resolveBillingPolicy(
-		policy: BillingStateResponse['policy'] | null | undefined
-	): BillingPolicyState {
-		return {
-			paid_trial_days:
-				typeof policy?.paid_trial_days === 'number' && policy.paid_trial_days > 0
-					? policy.paid_trial_days
-					: DEFAULT_BILLING_POLICY.paid_trial_days,
-			free_plan_monthly_credits:
-				typeof policy?.free_plan_monthly_credits === 'number' &&
-				policy.free_plan_monthly_credits >= 0
-					? policy.free_plan_monthly_credits
-					: DEFAULT_BILLING_POLICY.free_plan_monthly_credits,
-			free_plan_indefinite:
-				typeof policy?.free_plan_indefinite === 'boolean'
-					? policy.free_plan_indefinite
-					: DEFAULT_BILLING_POLICY.free_plan_indefinite,
-			private_beta_trial_enabled:
-				typeof policy?.private_beta_trial_enabled === 'boolean'
-					? policy.private_beta_trial_enabled
-					: DEFAULT_BILLING_POLICY.private_beta_trial_enabled
-		};
-	}
-
-	function freePlanPolicyText(policy: BillingPolicyState): string {
-		const cadence = policy.free_plan_indefinite
-			? 'remains available indefinitely'
-			: 'remains available';
-		return `The Free plan ${cadence} with ${policy.free_plan_monthly_credits} monthly credits.`;
-	}
 </script>
 
 <Section
-	heading={hasConnectedLicense ? 'License management' : 'License activation'}
+	heading={hasConnectedLicense ? 'Managed service' : 'Activate managed service'}
 	description={hasConnectedLicense
-		? 'Review Sentient managed billing, usage, and site allocation. Direct OpenRouter remains outside Sentient billing.'
-		: 'Provide your Sentient Forms license key to enable optional Sentient managed billing.'}
+		? 'Review the optional Sentient Forms managed service for this WordPress site. Use OpenRouter directly when you want to manage the account yourself; use this service when you want Sentient Forms to handle model access, spending controls, metering, and billing.'
+		: 'Provide a Sentient Forms license key when you want managed execution for this WordPress site. You can still use free OpenRouter routes or your own OpenRouter key without a managed-service license.'}
 >
 	<ValidationSummary {issues} />
 
 	{#if !hasConnectedLicense}
-		<Card>
+		<Card class="sf:border-blue-200 sf:bg-blue-50" data-testid="licensing-managed-checkout-card">
+			<div class="sf:grid sf:gap-5 sf:lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+				<div class="sf:space-y-3">
+					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-blue-900">
+						Recommended setup
+					</p>
+					<h2 class="sf:text-xl sf:font-semibold sf:text-slate-950">
+						Let Sentient Forms manage model access
+					</h2>
+					<p class="sf:text-sm sf:text-slate-700">
+						Choose this when you want a site license, spending controls, model routing, and support
+						handled from one subscription. Each license covers this WordPress site only.
+					</p>
+					<label
+						class="sf:flex sf:items-start sf:gap-3 sf:rounded-md sf:border sf:border-blue-200 sf:bg-white sf:p-3 sf:text-sm sf:text-slate-700"
+						data-testid="licensing-managed-checkout-disclosure"
+					>
+						<input
+							type="checkbox"
+							class="sf:mt-1"
+							bind:checked={acceptedManagedCheckoutDisclosure}
+							aria-describedby="managed-checkout-disclosure-copy"
+						/>
+						<span id="managed-checkout-disclosure-copy">
+							I understand managed-service runs send required prompts and form fields to Sentient
+							Forms for model execution and metering. Sentient Forms does not store prompt or
+							response payloads for these runs.
+						</span>
+					</label>
+					{#if managedCheckoutCompletionMessage}
+						<StateTemplate
+							variant="empty"
+							title={managedCheckoutReference ? 'Activation pending' : 'Managed service active'}
+							message={managedCheckoutCompletionMessage}
+							actionLabel={managedCheckoutReference ? 'Check again' : null}
+							onAction={managedCheckoutReference
+								? () => {
+										void completeManagedCheckout(managedCheckoutReference);
+									}
+								: null}
+							inline
+							testId="licensing-managed-checkout-completion"
+						/>
+					{/if}
+					{#if checkoutCompletionLoading}
+						<StateTemplate
+							variant="loading"
+							title="Completing checkout"
+							message="Waiting for the managed-service activation response."
+							inline
+							testId="licensing-managed-checkout-loading"
+						/>
+					{/if}
+				</div>
+
+				<div class="sf:grid sf:gap-3 sf:md:grid-cols-3">
+					{#each checkoutPlans as plan}
+						<div
+							class="sf:flex sf:flex-col sf:rounded-md sf:border sf:border-blue-200 sf:bg-white sf:p-3 sf:space-y-3"
+						>
+							<div class="sf:space-y-1">
+								<p class="sf:text-sm sf:font-semibold sf:text-slate-950">{plan.label}</p>
+								<p class="sf:text-xs sf:text-slate-600">{plan.description}</p>
+							</div>
+							<Button
+								class="sf:mt-auto sf:w-full"
+								disabled={Boolean(checkoutPlanPending) || checkoutCompletionLoading}
+								onclick={() => {
+									void handleCheckout(plan);
+								}}
+							>
+								{checkoutPlanPending === plan.code ? 'Redirecting…' : plan.ctaLabel}
+							</Button>
+						</div>
+					{/each}
+				</div>
+			</div>
+
+			{#if billingError}
+				<StateTemplate
+					variant="error"
+					title={billingError.title}
+					message={billingError.message}
+					actionLabel={billingError.actionLabel}
+					onAction={() => {
+						void billingError?.retry();
+					}}
+					inline
+					testId="licensing-managed-checkout-error-state"
+				/>
+			{/if}
+		</Card>
+
+		<Card title="Already have a license key">
 			<form class="sf:space-y-4" onsubmit={handleActivate}>
-				<InputField
-					id="license-key"
-					bind:value={licenseKey}
-					label="License key"
-					placeholder="LIC-XXXX-XXXX-XXXX"
-					required
-					error={issues.find((issue) => issue.id === 'license-key')?.message ?? null}
-				/>
-				<InputField
-					id="site-url"
-					value={$licenseStore.siteUrl}
-					label="Site URL"
-					type="url"
-					placeholder={$licenseStore.siteUrl}
-					disabled
-				/>
-				<Button type="submit" disabled={$licenseStore.loading}>
-					{$licenseStore.loading ? 'Processing…' : 'Activate'}
+				<div class="sf:grid sf:gap-4 sf:md:grid-cols-[minmax(0,1fr)_minmax(220px,0.45fr)]">
+					<InputField
+						id="license-key"
+						bind:value={licenseKey}
+						label="License key"
+						placeholder="LIC-XXXX-XXXX-XXXX"
+						required
+						error={issues.find((issue) => issue.id === 'license-key')?.message ?? null}
+					/>
+					<InputField
+						id="site-url"
+						value={$licenseStore.siteUrl}
+						label="Site URL"
+						type="url"
+						placeholder={$licenseStore.siteUrl}
+						disabled
+					/>
+				</div>
+				<Button type="submit" variant="secondary" disabled={$licenseStore.loading}>
+					{$licenseStore.loading ? 'Processing…' : 'Activate license'}
 				</Button>
 			</form>
 		</Card>
@@ -638,7 +823,7 @@
 			<div class="sf:grid sf:gap-6 sf:lg:grid-cols-2 sf:items-start">
 				<div class="sf:space-y-3">
 					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
-						License
+						Managed service
 					</p>
 					<p
 						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
@@ -659,7 +844,7 @@
 
 				<div class="sf:space-y-3">
 					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
-						Managed credits
+						Managed service credits
 					</p>
 					<p
 						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
@@ -719,7 +904,7 @@
 				<div class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-3">
 					<div>
 						<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
-							Billing
+							Subscription
 						</p>
 						<p class="sf:text-sm sf:text-slate-700">
 							Subscription status:
@@ -742,17 +927,18 @@
 								data-testid="licensing-trial-status-note"
 							>
 								{#if billingSubscription.trial_end}
-									Trial active until {formatTimestamp(billingSubscription.trial_end)}.
+									Legacy introductory period ends {formatTimestamp(billingSubscription.trial_end)}.
 								{:else}
-									Trial active for this subscription.
+									Legacy introductory period active.
 								{/if}
-								One-time {billingPolicy.paid_trial_days}-day paid-plan trial.
 							</p>
 						{/if}
-						<p class="sf:text-xs sf:text-slate-600">Site capacity: {billingAllocationUsage}</p>
+						<p class="sf:text-xs sf:text-slate-600">
+							Licensed WordPress site: {billingAllocationUsage}
+						</p>
 						{#if billingAllocation}
 							<p class="sf:text-xs sf:text-slate-600">
-								Tier site limit {billingAllocation.tier_site_limit} x seats {billingAllocation.seat_quantity}
+								Managed-service allocation for this WordPress install.
 							</p>
 							{#if billingAllocation.over_limit}
 								<p class="sf:text-xs sf:font-semibold sf:text-warning-700">
@@ -784,8 +970,8 @@
 							Billing boundary
 						</p>
 						<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-							BYOK and OpenRouter free-model runs stay outside Sentient metering. Sentient charges
-							only for managed proxy runs.
+							BYOK and OpenRouter free-model runs stay outside Sentient Forms metering. Sentient
+							Forms charges only for managed-service runs.
 						</p>
 					</div>
 					<div class="sf:grid sf:gap-2 sf:md:grid-cols-2">
@@ -800,7 +986,8 @@
 							</Badge>
 						</div>
 						<div class="sf:flex sf:items-center sf:justify-between sf:gap-2">
-							<span class="sf:text-sm sf:font-medium sf:text-slate-700">Sentient managed proxy</span
+							<span class="sf:text-sm sf:font-medium sf:text-slate-700"
+								>Sentient Forms managed service</span
 							>
 							<Badge
 								variant={billingBoundaryVariant(billingBoundary?.managed_proxy_billed_by_sentient)}
@@ -819,18 +1006,6 @@
 				</div>
 
 				<div class="sf:grid sf:gap-3 sf:md:grid-cols-3">
-					{#if !hasExistingSubscription}
-						<p
-							class="sf:md:col-span-3 sf:text-xs sf:text-slate-600"
-							data-testid="licensing-trial-policy-note"
-						>
-							Eligible paid subscriptions start with a one-time {billingPolicy.paid_trial_days}-day
-							paid-plan trial. {freePlanPolicyText(billingPolicy)}
-							{#if billingPolicy.private_beta_trial_enabled}
-								Invite-only Private Beta sites can remain on Private Beta until you upgrade.
-							{/if}
-						</p>
-					{/if}
 					{#if hasExistingSubscription}
 						<div
 							class="sf:md:col-span-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3 sf:space-y-2"
@@ -842,8 +1017,8 @@
 								Plan changes
 							</p>
 							<p class="sf:text-xs sf:text-slate-600">
-								Use the Stripe billing portal to change, cancel, or authenticate this managed
-								subscription. Direct OpenRouter remains separate.
+								Use the Stripe billing portal to change, cancel, or authenticate this
+								managed-service subscription. Direct OpenRouter remains separate.
 							</p>
 						</div>
 					{/if}
@@ -851,8 +1026,8 @@
 						class="sf:md:col-span-3 sf:text-xs sf:text-slate-600"
 						data-testid="licensing-business-cap-note"
 					>
-						Business currently supports up to {BUSINESS_PLAN_SITE_CAP} sites during launch. Contact support
-						for larger agency or multi-brand allocations.
+						Each Sentient Forms managed-service license covers one WordPress site. Use a separate
+						license for each additional site.
 					</p>
 					{#each checkoutPlans as plan}
 						<div
@@ -886,9 +1061,9 @@
 						Managed usage
 					</p>
 					<p class="sf:text-xs sf:text-slate-600">
-						Managed proxy usage is governed by the active Sentient plan. Top-up packs are retired
-						for the local-first service; use direct OpenRouter credentials for non-Sentient billed
-						runs or manage the plan in Stripe.
+						Managed-service usage is governed by the active Sentient Forms plan for this WordPress
+						site. Direct OpenRouter credentials remain available for runs that are not billed by
+						Sentient Forms.
 					</p>
 				</div>
 
@@ -922,7 +1097,7 @@
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-700">Proxy key stored</span>
+				<span class="sf:font-medium sf:text-slate-700">Managed service key stored</span>
 				<span class="sf:text-slate-900 sf:font-semibold">
 					{$licenseStore.proxyKeyPresent ? 'Yes' : 'No'}
 				</span>
@@ -962,7 +1137,7 @@
 			<div
 				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-1 sf:sm:flex-row sf:sm:items-center"
 			>
-				<span class="sf:font-medium sf:text-slate-700">Managed proxy billing</span>
+				<span class="sf:font-medium sf:text-slate-700">Managed service billing</span>
 				<span class="sf:text-slate-900">{managedProxyBoundaryLabel}</span>
 			</div>
 			<div

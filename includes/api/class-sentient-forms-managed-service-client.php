@@ -1,6 +1,6 @@
 <?php
 /**
- * Sentient managed service client for account and billing endpoints.
+ * Sentient Forms managed-service client for account and billing endpoints.
  *
  * @package Sentient_Forms
  */
@@ -131,6 +131,45 @@ class Sentient_Forms_Managed_Service_Client
                 'bearer_token' => $proxy_api_key,
             ]
         );
+    }
+
+    /**
+     * Start a first-time managed-service Stripe Checkout session.
+     *
+     * This route intentionally does not require a proxy key because it is the
+     * path that creates the managed account for this WordPress site.
+     *
+     * @param array<string, mixed> $payload Checkout payload.
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    public function start_managed_checkout( array $payload ): array | WP_Error
+    {
+        $payload = $this->normalize_managed_checkout_start_payload( $payload );
+        if ( is_wp_error( $payload ) )
+        {
+            return $payload;
+        }
+
+        return $this->client->post( '/account/checkout/start', $payload );
+    }
+
+    /**
+     * Complete a first-time managed-service checkout after Stripe returns.
+     *
+     * @param array<string, mixed> $payload Checkout completion payload.
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    public function complete_managed_checkout( array $payload ): array | WP_Error
+    {
+        $payload = $this->normalize_managed_checkout_complete_payload( $payload );
+        if ( is_wp_error( $payload ) )
+        {
+            return $payload;
+        }
+
+        return $this->client->post( '/account/checkout/complete', $payload );
     }
 
     /**
@@ -290,14 +329,140 @@ class Sentient_Forms_Managed_Service_Client
             $normalized['quantity'] = max( 1, (int) $payload['quantity'] );
         }
 
-        if ( isset( $payload['trial_period_days'] ) )
-        {
-            $normalized['trial_period_days'] = max( 0, (int) $payload['trial_period_days'] );
-        }
-
         if ( isset( $payload['allow_promotion_codes'] ) )
         {
             $normalized['allow_promotion_codes'] = (bool) $payload['allow_promotion_codes'];
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function normalize_managed_checkout_start_payload( array $payload ): array | WP_Error
+    {
+        $normalized = [];
+
+        foreach ( [ 'plan_code', 'site_url', 'local_site_identifier', 'disclosure_version' ] as $required_key )
+        {
+            if ( ! isset( $payload[ $required_key ] ) || ! is_scalar( $payload[ $required_key ] ) || '' === trim( (string) $payload[ $required_key ] ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_checkout_invalid_payload',
+                    sprintf(
+                        /* translators: %s: request field name. */
+                        __( 'Managed checkout payload is missing %s.', 'sentient-forms' ),
+                        $required_key
+                    )
+                );
+            }
+        }
+
+        foreach ( [ 'success_url', 'cancel_url' ] as $required_url )
+        {
+            if ( ! isset( $payload[ $required_url ] ) || ! is_scalar( $payload[ $required_url ] ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_checkout_invalid_payload',
+                    sprintf(
+                        /* translators: %s: request field name. */
+                        __( 'Managed checkout payload is missing %s.', 'sentient-forms' ),
+                        $required_url
+                    )
+                );
+            }
+
+            $url = $this->normalize_required_url( (string) $payload[ $required_url ], $required_url );
+            if ( is_wp_error( $url ) )
+            {
+                return $url;
+            }
+
+            $normalized[ $required_url ] = $url;
+        }
+
+        $site_url = $this->normalize_required_url( (string) $payload['site_url'], 'site_url' );
+        if ( is_wp_error( $site_url ) )
+        {
+            return $site_url;
+        }
+
+        $normalized['plan_code']                       = sanitize_key( (string) $payload['plan_code'] );
+        $normalized['site_url']                        = $site_url;
+        $normalized['local_site_identifier']           = sanitize_text_field( (string) $payload['local_site_identifier'] );
+        $normalized['disclosure_version']              = sanitize_text_field( (string) $payload['disclosure_version'] );
+        $normalized['accepted_managed_service_terms']  = ! empty( $payload['accepted_managed_service_terms'] );
+        $normalized['require_zdr']                     = ! array_key_exists( 'require_zdr', $payload ) || (bool) $payload['require_zdr'];
+
+        if ( ! $normalized['accepted_managed_service_terms'] )
+        {
+            return new WP_Error(
+                'sentient_managed_checkout_consent_required',
+                __( 'You must accept the Sentient Forms managed-service disclosure before checkout.', 'sentient-forms' )
+            );
+        }
+
+        if ( ! in_array( $normalized['plan_code'], [ 'starter', 'pro', 'business' ], true ) )
+        {
+            return new WP_Error(
+                'sentient_managed_checkout_invalid_plan',
+                __( 'Choose a valid managed-service plan.', 'sentient-forms' )
+            );
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function normalize_managed_checkout_complete_payload( array $payload ): array | WP_Error
+    {
+        $normalized = [];
+
+        foreach ( [ 'site_url', 'local_site_identifier' ] as $required_key )
+        {
+            if ( ! isset( $payload[ $required_key ] ) || ! is_scalar( $payload[ $required_key ] ) || '' === trim( (string) $payload[ $required_key ] ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_checkout_invalid_payload',
+                    sprintf(
+                        /* translators: %s: request field name. */
+                        __( 'Managed checkout completion payload is missing %s.', 'sentient-forms' ),
+                        $required_key
+                    )
+                );
+            }
+        }
+
+        $site_url = $this->normalize_required_url( (string) $payload['site_url'], 'site_url' );
+        if ( is_wp_error( $site_url ) )
+        {
+            return $site_url;
+        }
+
+        $normalized['site_url']              = $site_url;
+        $normalized['local_site_identifier'] = sanitize_text_field( (string) $payload['local_site_identifier'] );
+
+        foreach ( [ 'checkout_intent_id', 'checkout_session_id', 'activation_token' ] as $optional_text )
+        {
+            if ( isset( $payload[ $optional_text ] ) && is_scalar( $payload[ $optional_text ] ) && '' !== trim( (string) $payload[ $optional_text ] ) )
+            {
+                $normalized[ $optional_text ] = sanitize_text_field( (string) $payload[ $optional_text ] );
+            }
+        }
+
+        if ( empty( $normalized['checkout_intent_id'] ) && empty( $normalized['checkout_session_id'] ) )
+        {
+            return new WP_Error(
+                'sentient_managed_checkout_missing_reference',
+                __( 'Managed checkout completion requires a checkout intent or Stripe session reference.', 'sentient-forms' )
+            );
         }
 
         return $normalized;
@@ -342,7 +507,7 @@ class Sentient_Forms_Managed_Service_Client
         {
             return new WP_Error(
                 $error_code,
-                __( 'Sentient managed service requests require a proxy key.', 'sentient-forms' )
+                __( 'Sentient Forms managed-service requests require a site credential key.', 'sentient-forms' )
             );
         }
 

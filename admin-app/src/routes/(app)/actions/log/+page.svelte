@@ -37,6 +37,15 @@
 			base_floor_credits?: number | null;
 			normalized_actual_credits?: number | null;
 			debited_credits?: number | null;
+			provider_cost?: Record<string, unknown> | null;
+		} | null;
+		usage_cost?: {
+			route?: string | null;
+			label?: string | null;
+			kind?: string | null;
+			known?: boolean | null;
+			credits?: number | null;
+			amount_usd?: number | null;
 		} | null;
 		details?: Record<string, unknown> | null;
 		created_at: string;
@@ -215,12 +224,78 @@
 		return Array.isArray(current) ? current : [];
 	}
 
+	function readUnknownPath(source: unknown, path: string[]): unknown {
+		let current: unknown = source;
+		for (const segment of path) {
+			if (!isRecord(current) || !(segment in current)) {
+				return null;
+			}
+			current = current[segment];
+		}
+
+		return current;
+	}
+
+	function usageCostLabel(entry: ActionLogEntry): string {
+		const label = entry.usage_cost?.label;
+		if (typeof label === 'string' && label.trim().length > 0) {
+			return label.trim();
+		}
+
+		const debitedCredits = entry.pricing?.debited_credits ?? entry.credits_used;
+		if (typeof debitedCredits === 'number' && debitedCredits > 0) {
+			return `SF ${debitedCredits} ${debitedCredits === 1 ? 'credit' : 'credits'}`;
+		}
+
+		return 'Unknown';
+	}
+
+	function usageCostVariant(entry: ActionLogEntry): 'neutral' | 'success' | 'warning' | 'danger' | 'info' {
+		const kind = entry.usage_cost?.kind ?? '';
+		if (kind === 'openrouter_free') return 'success';
+		if (kind === 'openrouter_currency') return 'info';
+		if (kind === 'sentient_credits') return 'warning';
+		return 'neutral';
+	}
+
+	function usageCostTitle(entry: ActionLogEntry): string {
+		const route = entry.usage_cost?.route;
+		const known = entry.usage_cost?.known;
+		if (route === 'openrouter_direct' && known === false) {
+			return 'OpenRouter direct run. Provider cost was not returned with this execution.';
+		}
+		if (route === 'openrouter_direct') {
+			return 'OpenRouter direct run. Provider charges belong to the site owner OpenRouter account.';
+		}
+		if (route === 'sentient_forms_managed') {
+			return 'Sentient Forms managed-service run. Usage is metered by Sentient Forms.';
+		}
+		return 'Usage route could not be determined from stored execution metadata.';
+	}
+
+	function storedResult(entry: ActionLogEntry): unknown {
+		return (
+			readUnknownPath(entry.details, ['stored_result']) ??
+			readUnknownPath(entry.details, ['evaluation_payload', 'result_data']) ??
+			null
+		);
+	}
+
+	function formatJson(value: unknown): string {
+		if (value === null || value === undefined) {
+			return '';
+		}
+
+		return JSON.stringify(value, null, 2);
+	}
+
 	function hasOperationalDetails(entry: ActionLogEntry): boolean {
 		return Boolean(
 			entry.execution_request_id ||
 				entry.mapping_id ||
 				entry.resolved_model_id ||
 				entry.pricing?.pricing_policy_version ||
+				storedResult(entry) !== null ||
 				readStringPath(entry.details, ['meta', 'request_id']) ||
 				readStringPath(entry.details, ['evaluation_payload', 'result_data', 'justification']) ||
 				readStringPath(entry.details, ['evaluation_payload', 'result_data', 'reasoning']) ||
@@ -388,7 +463,7 @@
 							<th class="sf:pb-2 sf:pr-4">Status</th>
 							<th class="sf:pb-2 sf:pr-4">Output</th>
 							<th class="sf:pb-2 sf:pr-4">Result</th>
-							<th class="sf:pb-2 sf:pr-4">Sentient debit</th>
+							<th class="sf:pb-2 sf:pr-4">Usage cost</th>
 							<th class="sf:pb-2">Time</th>
 						</tr>
 					</thead>
@@ -434,7 +509,13 @@
 										</span>
 									{/if}
 								</td>
-								<td class="sf:py-3 sf:pr-4 sf:text-slate-700">{entry.credits_used}</td>
+								<td class="sf:py-3 sf:pr-4">
+									<span title={usageCostTitle(entry)}>
+										<Badge variant={usageCostVariant(entry)}>
+											{usageCostLabel(entry)}
+										</Badge>
+									</span>
+								</td>
 								<td class="sf:py-3 sf:text-slate-500 sf:text-xs">
 									{formatTimestamp(entry.created_at)}
 								</td>
@@ -449,37 +530,37 @@
 											<summary class="sf:cursor-pointer sf:text-sm sf:font-medium sf:text-slate-700">
 												Execution details
 											</summary>
-											<div class="sf:mt-3 sf:grid sf:gap-3 sf:text-xs sf:text-slate-600 md:sf:grid-cols-2">
+											<div class="sf:mt-3 sf:grid sf:gap-3 sf:text-xs sf:text-slate-600 md:sf:grid-cols-3 xl:sf:grid-cols-5">
 												{#if entry.execution_request_id}
-													<div>
+													<div class="sf:min-w-0">
 														<p class="sf:font-semibold sf:text-slate-700">Execution Request</p>
 														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.execution_request_id}</p>
 													</div>
 												{/if}
 												{#if readStringPath(entry.details, ['meta', 'request_id'])}
-													<div>
+													<div class="sf:min-w-0">
 														<p class="sf:font-semibold sf:text-slate-700">Managed request</p>
 														<p class="sf:font-mono sf:text-[11px] sf:break-all">{readStringPath(entry.details, ['meta', 'request_id'])}</p>
 													</div>
 												{/if}
 												{#if entry.mapping_id}
-													<div>
+													<div class="sf:min-w-0">
 														<p class="sf:font-semibold sf:text-slate-700">Mapping</p>
 														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.mapping_id}</p>
 													</div>
 												{/if}
 												{#if entry.resolved_model_id}
-													<div>
+													<div class="sf:min-w-0">
 														<p class="sf:font-semibold sf:text-slate-700">Resolved Model</p>
 														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.resolved_model_id}</p>
 													</div>
 												{/if}
 												{#if entry.pricing?.pricing_policy_version}
-													<div>
+													<div class="sf:min-w-0">
 														<p class="sf:font-semibold sf:text-slate-700">Usage policy</p>
 														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.pricing.pricing_policy_version}</p>
 														<p class="sf:mt-1">
-															Sentient debit {entry.pricing.debited_credits ?? entry.credits_used} credits
+															Usage cost {usageCostLabel(entry)}
 															{#if entry.pricing.base_floor_credits !== null && entry.pricing.base_floor_credits !== undefined}
 																, base floor {entry.pricing.base_floor_credits}
 															{/if}
@@ -490,7 +571,7 @@
 													</div>
 												{/if}
 												{#if readStringPath(entry.details, ['evaluation_payload', 'result_data', 'justification']) || readStringPath(entry.details, ['evaluation_payload', 'result_data', 'reasoning'])}
-													<div class="md:sf:col-span-2">
+													<div class="md:sf:col-span-3 xl:sf:col-span-5">
 														<p class="sf:font-semibold sf:text-slate-700">Justification</p>
 														<p>
 															{readStringPath(entry.details, ['evaluation_payload', 'result_data', 'justification']) ??
@@ -505,13 +586,19 @@
 													</div>
 												{/if}
 												{#if readArrayPath(entry.details, ['evaluation_payload', 'result_data', 'indicators']).length > 0}
-													<div class="md:sf:col-span-2">
+													<div class="md:sf:col-span-3 xl:sf:col-span-5">
 														<p class="sf:font-semibold sf:text-slate-700">Indicators</p>
 														<div class="sf:flex sf:flex-wrap sf:gap-2 sf:mt-1">
 															{#each readArrayPath(entry.details, ['evaluation_payload', 'result_data', 'indicators']) as indicator}
 																<Badge variant="warning">{indicatorLabel(indicator)}</Badge>
 															{/each}
 														</div>
+													</div>
+												{/if}
+												{#if storedResult(entry) !== null}
+													<div class="md:sf:col-span-3 xl:sf:col-span-5">
+														<p class="sf:font-semibold sf:text-slate-700">Stored result</p>
+														<pre class="sf:mt-1 sf:max-h-80 sf:overflow-auto sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:text-[11px] sf:leading-relaxed sf:text-slate-800">{formatJson(storedResult(entry))}</pre>
 													</div>
 												{/if}
 											</div>

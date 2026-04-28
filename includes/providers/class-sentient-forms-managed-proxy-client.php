@@ -1,6 +1,6 @@
 <?php
 /**
- * Sentient managed proxy client for paid local-first execution.
+ * Sentient Forms managed-service client for paid local-first execution.
  *
  * @package Sentient_Forms
  */
@@ -42,9 +42,9 @@ class Sentient_Forms_Managed_Proxy_Client
     }
 
     /**
-     * Execute a Sentient-managed paid request through the minimal service.
+     * Execute a Sentient Forms managed paid request through the minimal service.
      *
-     * @param string               $proxy_api_key Site proxy key issued by Sentient.
+     * @param string               $proxy_api_key Site credential key issued by Sentient Forms.
      * @param array<string, mixed> $payload       Managed execution payload.
      *
      * @return array<string, mixed>|WP_Error
@@ -56,7 +56,7 @@ class Sentient_Forms_Managed_Proxy_Client
         {
             return new WP_Error(
                 'sentient_managed_missing_proxy_key',
-                __( 'Sentient managed execution requires a proxy key.', 'sentient-forms' )
+                __( 'Sentient Forms managed execution requires a managed-service credential.', 'sentient-forms' )
             );
         }
 
@@ -215,7 +215,7 @@ class Sentient_Forms_Managed_Proxy_Client
         {
             return new WP_Error(
                 'sentient_managed_provider_required',
-                __( 'Managed execution requests must use the Sentient managed provider.', 'sentient-forms' )
+                __( 'Managed execution requests must use the Sentient Forms managed-service provider.', 'sentient-forms' )
             );
         }
 

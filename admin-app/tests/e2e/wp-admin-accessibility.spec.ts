@@ -30,7 +30,7 @@ const routeAudits: RouteAudit[] = [
 	{
 		name: 'licensing',
 		path: '/licensing',
-		ready: (page) => page.getByRole('heading', { name: 'License management' })
+		ready: (page) => page.getByRole('heading', { name: 'Managed service' })
 	},
 	{
 		name: 'settings',

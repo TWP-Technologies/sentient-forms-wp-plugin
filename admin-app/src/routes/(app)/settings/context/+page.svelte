@@ -310,7 +310,7 @@
 						{generating ? 'Generating...' : 'Generate Site Context'}
 					</Button>
 					<p class="sf:text-xs sf:text-green-700">
-						The starter summary is generated locally and does not call OpenRouter or Sentient.
+						The starter summary is generated locally and does not call OpenRouter or Sentient Forms.
 					</p>
 				</div>
 			</Card>

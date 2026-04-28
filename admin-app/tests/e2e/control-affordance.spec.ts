@@ -118,6 +118,7 @@ test.describe('Control affordance normalization', () => {
 
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 
+		await page.getByTestId('action-definitions-card').locator('summary').click();
 		await page.getByRole('button', { name: 'Defaults' }).first().click();
 		const formDefaultsModal = page.getByTestId('form-defaults-modal');
 		await expect(formDefaultsModal).toBeVisible();

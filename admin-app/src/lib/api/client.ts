@@ -1,4 +1,8 @@
 import type { SentientFormsConfig } from '$lib/api/http';
+import {
+	announceWordPressSessionExpired,
+	isWordPressSessionExpired
+} from '$lib/api/session-expiry';
 import { notifications } from '$lib/stores/notifications';
 import type {
 	ActionDefinition,
@@ -54,6 +58,10 @@ import type {
 	LocalProviderCredential,
 	LocalProviderCredentialDeleteResponse,
 	LocalSupportBundle,
+	ManagedCheckoutCompleteRequest,
+	ManagedCheckoutCompleteResponse,
+	ManagedCheckoutStartRequest,
+	ManagedCheckoutStartResponse,
 	OpenRouterConstantRequest,
 	OpenRouterModelsRefreshRequest,
 	OpenRouterModelsResponse,
@@ -187,6 +195,36 @@ export class SentientFormsApiClient {
 	): Promise<BillingCheckoutSessionResponse> {
 		const response = await this.request<RestEnvelope<BillingCheckoutSessionResponse>>(
 			'license/billing/checkout-session',
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+		return this.unwrap(response);
+	}
+
+	async startManagedCheckout(
+		payload: ManagedCheckoutStartRequest,
+		options: RequestOptions = {}
+	): Promise<ManagedCheckoutStartResponse> {
+		const response = await this.request<RestEnvelope<ManagedCheckoutStartResponse>>(
+			'license/managed-checkout/start',
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+		return this.unwrap(response);
+	}
+
+	async completeManagedCheckout(
+		payload: ManagedCheckoutCompleteRequest,
+		options: RequestOptions = {}
+	): Promise<ManagedCheckoutCompleteResponse> {
+		const response = await this.request<RestEnvelope<ManagedCheckoutCompleteResponse>>(
+			'license/managed-checkout/complete',
 			{
 				method: 'POST',
 				body: payload,
@@ -1177,6 +1215,9 @@ export class SentientFormsApiClient {
 			parsed = await this.parseResponseBody(response);
 
 			if (!response.ok) {
+				if (isWordPressSessionExpired(response.status, parsed)) {
+					announceWordPressSessionExpired(parsed);
+				}
 				throw new ApiClientError('Request failed', response.status, parsed);
 			}
 
@@ -1188,7 +1229,15 @@ export class SentientFormsApiClient {
 		} catch (error) {
 			const clientError =
 				error instanceof ApiClientError ? error : coerceToApiClientError(error, parsed);
-			if ((showNotifications ?? this.notifyErrors) && isApiErrorPayload(clientError.payload)) {
+			const sessionExpired = isWordPressSessionExpired(clientError.status, clientError.payload);
+			if (sessionExpired) {
+				announceWordPressSessionExpired(clientError.payload);
+			}
+			if (
+				!sessionExpired &&
+				(showNotifications ?? this.notifyErrors) &&
+				isApiErrorPayload(clientError.payload)
+			) {
 				const message =
 					clientError.payload.message ?? clientError.payload.error?.message ?? clientError.message;
 				notifications.error(message ?? 'Request failed');

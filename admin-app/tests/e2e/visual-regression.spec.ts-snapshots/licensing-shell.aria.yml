@@ -1,39 +1,39 @@
-- heading "License management" [level=2]
-- paragraph: Review Sentient managed billing, usage, and site allocation. Direct OpenRouter remains outside Sentient billing.
-- paragraph: License
+- heading "Managed service" [level=2]
+- paragraph: Review the optional Sentient Forms managed service for this WordPress site. Use OpenRouter directly when you want to manage the account yourself; use this service when you want Sentient Forms to handle model access, spending controls, metering, and billing.
+- paragraph: Managed service
 - paragraph: Active and connected
 - text: "active Tier: Pro"
 - paragraph: "/Last synced: Jan 5, \\d+, 4:\\d+ AM/"
-- paragraph: Managed credits
+- paragraph: Managed service credits
 - paragraph: /\d+ \/ \d+ managed credits remaining/
 - text: Healthy Resets May 1 (9 days)
 - paragraph: Resets May 1 (9 days). Managed usage is healthy.
-- paragraph: Billing
+- paragraph: Subscription
 - paragraph: "Subscription status: active"
 - paragraph: "Billing provider: stripe"
 - paragraph: /Current period ends Jan \d+, \d+, 6:\d+ PM/
-- paragraph: "Site capacity: 1 / 1"
-- paragraph: Tier site limit 1 x seats 1
+- paragraph: "Licensed WordPress site: 1 / 1"
+- paragraph: Managed-service allocation for this WordPress install.
 - button "Manage billing"
 - paragraph: Billing boundary
-- paragraph: BYOK and OpenRouter free-model runs stay outside Sentient metering. Sentient charges only for managed proxy runs.
-- text: Direct OpenRouter Not configured Sentient managed proxy Not configured
-- paragraph: No managed proxy usage recorded yet.
-- paragraph: Sentient metering starts only after managed proxy execution is enabled.
+- paragraph: BYOK and OpenRouter free-model runs stay outside Sentient Forms metering. Sentient Forms charges only for managed-service runs.
+- text: Direct OpenRouter Not configured Sentient Forms managed service Not configured
+- paragraph: No managed-service usage recorded yet.
+- paragraph: Sentient Forms metering starts only after managed-service execution is enabled.
 - paragraph: Plan changes
-- paragraph: Use the Stripe billing portal to change, cancel, or authenticate this managed subscription. Direct OpenRouter remains separate.
-- paragraph: /Business currently supports up to \d+ sites during launch\. Contact support for larger agency or multi-brand allocations\./
+- paragraph: Use the Stripe billing portal to change, cancel, or authenticate this managed-service subscription. Direct OpenRouter remains separate.
+- paragraph: Each Sentient Forms managed-service license covers one WordPress site. Use a separate license for each additional site.
 - paragraph: Starter
-- paragraph: /\$\d+\/month, 1 site, \d+,\d+ monthly credits\. Includes a one-time \d+-day paid-plan trial when eligible\./
+- paragraph: /\$\d+\/month for this WordPress site, \d+,\d+ monthly managed credits\./
 - button "Manage in billing portal"
 - paragraph: Pro
-- paragraph: /\$\d+\/month, up to 5 sites, \d+,\d+ monthly credits\. Includes a one-time \d+-day paid-plan trial when eligible\./
+- paragraph: /\$\d+\/month for this WordPress site, \d+,\d+ monthly managed credits\./
 - button "Manage in billing portal"
 - paragraph: Business
-- paragraph: /\$\d+\/month, up to \d+ sites during launch, \d+,\d+ monthly credits\. Includes a one-time \d+-day paid-plan trial when eligible\./
+- paragraph: /\$\d+\/month for this WordPress site, \d+,\d+ monthly managed credits\./
 - button "Manage in billing portal"
 - paragraph: Managed usage
-- paragraph: Managed proxy usage is governed by the active Sentient plan. Top-up packs are retired for the local-first service; use direct OpenRouter credentials for non-Sentient billed runs or manage the plan in Stripe.
+- paragraph: Managed-service usage is governed by the active Sentient Forms plan for this WordPress site. Direct OpenRouter credentials remain available for runs that are not billed by Sentient Forms.
 - heading "License details" [level=2]
-- text: /License status active Proxy key stored Yes Tier Pro Subscription status active Site capacity 1 \/ 1 Billing period end Jan \d+, \d+, 6:\d+ PM Direct OpenRouter billing Not configured Managed proxy billing Not configured Capacity policy tier_x_quantity_v1 Over-limit grace — Credits reset May 1, \d+ Expires Dec \d+, \d+, 6:\d+ PM Last synced Jan 5, \d+, 4:\d+ AM/
+- text: /License status active Managed service key stored Yes Tier Pro Subscription status active Site capacity 1 \/ 1 Billing period end Jan \d+, \d+, 6:\d+ PM Direct OpenRouter billing Not configured Managed service billing Not configured Capacity policy tier_x_quantity_v1 Over-limit grace — Credits reset May 1, \d+ Expires Dec \d+, \d+, 6:\d+ PM Last synced Jan 5, \d+, 4:\d+ AM/
 - button "Deactivate license"

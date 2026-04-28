@@ -1,5 +1,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { SentientFormsApiClient, ApiClientError } from '$lib/api/client';
+import {
+	SESSION_EXPIRED_EVENT,
+	resetSessionExpiryAnnouncementForTests
+} from '$lib/api/session-expiry';
 import type { LicenseActivationRequest } from '$lib/api/types';
 import { notifications } from '$lib/stores/notifications';
 
@@ -16,6 +20,7 @@ describe('SentientFormsApiClient', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		mockFetch.mockReset();
+		resetSessionExpiryAnnouncementForTests();
 	});
 
 	it('activates license and normalizes response', async () => {
@@ -47,9 +52,12 @@ describe('SentientFormsApiClient', () => {
 
 		const result = await client.activateLicense(payload, { showNotifications: false });
 
-		expect(mockFetch).toHaveBeenCalledWith(`${baseUrl}license/activate`, expect.objectContaining({
-			method: 'POST'
-		}));
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}license/activate`,
+			expect.objectContaining({
+				method: 'POST'
+			})
+		);
 		expect(result).toEqual({
 			success: true,
 			message: 'Activated',
@@ -307,7 +315,7 @@ describe('SentientFormsApiClient', () => {
 		});
 	});
 
-	it('sets up the Sentient managed proxy credential with disclosure acceptance', async () => {
+	it('sets up the Sentient Forms managed-service credential with disclosure acceptance', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,
 			status: 200,
@@ -320,7 +328,7 @@ describe('SentientFormsApiClient', () => {
 					credential: {
 						id: 77,
 						provider: 'sentient_managed',
-						label: 'Sentient managed proxy',
+						label: 'Sentient Forms managed service',
 						auth_mode: 'sentient_proxy',
 						constant_name: null,
 						status: 'valid',
@@ -349,7 +357,7 @@ describe('SentientFormsApiClient', () => {
 
 		const result = await client.setupSentientManagedProvider(
 			{
-				label: 'Sentient managed proxy',
+				label: 'Sentient Forms managed service',
 				disclosure_version: '2026-04-sentient-managed-proxy-v1',
 				accepted_external_service_terms: true
 			},
@@ -361,7 +369,7 @@ describe('SentientFormsApiClient', () => {
 			expect.objectContaining({
 				method: 'POST',
 				body: JSON.stringify({
-					label: 'Sentient managed proxy',
+					label: 'Sentient Forms managed service',
 					disclosure_version: '2026-04-sentient-managed-proxy-v1',
 					accepted_external_service_terms: true
 				})
@@ -376,6 +384,102 @@ describe('SentientFormsApiClient', () => {
 				direct_openrouter_billed_by_sentient: false,
 				managed_proxy_billed_by_sentient: true
 			}
+		});
+	});
+
+	it('starts managed checkout through the first-time license route', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						checkout_intent_id: 'mci_123',
+						checkout_session_id: 'cs_test_123',
+						checkout_url: 'https://checkout.stripe.com/c/pay/cs_test_123',
+						plan_code: 'starter',
+						consent_recorded: true
+					}
+				})
+		});
+
+		const result = await client.startManagedCheckout(
+			{
+				plan_code: 'starter',
+				success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+				cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+				disclosure_version: 'managed-service-v1',
+				accepted_managed_service_terms: true
+			},
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}license/managed-checkout/start`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({
+					plan_code: 'starter',
+					success_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+					cancel_url: 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+					disclosure_version: 'managed-service-v1',
+					accepted_managed_service_terms: true
+				})
+			})
+		);
+		expect(result).toMatchObject({
+			checkout_intent_id: 'mci_123',
+			checkout_url: 'https://checkout.stripe.com/c/pay/cs_test_123',
+			consent_recorded: true
+		});
+	});
+
+	it('completes managed checkout and unwraps activation metadata', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						activation_ready: true,
+						license_id: 'lic-managed-123',
+						site_id: 'site-managed-456',
+						proxy_api_key: 'proxy-issued',
+						credential_id: 88,
+						managed_provider_ready: true
+					}
+				})
+		});
+
+		const result = await client.completeManagedCheckout(
+			{
+				checkout_intent_id: 'mci_123',
+				checkout_session_id: 'cs_test_123',
+				activation_token: 'token-123'
+			},
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}license/managed-checkout/complete`,
+			expect.objectContaining({
+				method: 'POST',
+				body: JSON.stringify({
+					checkout_intent_id: 'mci_123',
+					checkout_session_id: 'cs_test_123',
+					activation_token: 'token-123'
+				})
+			})
+		);
+		expect(result).toMatchObject({
+			activation_ready: true,
+			proxy_api_key: 'proxy-issued',
+			credential_id: 88,
+			managed_provider_ready: true
 		});
 	});
 
@@ -469,6 +573,36 @@ describe('SentientFormsApiClient', () => {
 			consent_recorded: true,
 			stored: 2
 		});
+	});
+
+	it('announces expired WordPress sessions without emitting generic request errors', async () => {
+		const errors = vi.spyOn(notifications, 'error');
+		const sessionHandler = vi.fn();
+		window.addEventListener(SESSION_EXPIRED_EVENT, sessionHandler);
+
+		mockFetch.mockResolvedValue({
+			ok: false,
+			status: 403,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					code: 'rest_cookie_invalid_nonce',
+					message: 'Cookie check failed'
+				})
+		});
+
+		await expect(client.getLicenseInfo({ showNotifications: true })).rejects.toBeInstanceOf(
+			ApiClientError
+		);
+
+		expect(sessionHandler).toHaveBeenCalledTimes(1);
+		expect(errors).toHaveBeenCalledTimes(1);
+		expect(errors).toHaveBeenCalledWith(
+			'WordPress session expired. Reload this admin page before retrying.',
+			0
+		);
+
+		window.removeEventListener(SESSION_EXPIRED_EVENT, sessionHandler);
 	});
 
 	it('creates a local custom action in WordPress-local tables', async () => {
@@ -728,8 +862,8 @@ describe('SentientFormsApiClient', () => {
 	it('coerces unknown rejection into ApiClientError', async () => {
 		mockFetch.mockRejectedValue(new Error('Network down'));
 
-		await expect(
-			client.getLicenseInfo({ showNotifications: false })
-		).rejects.toBeInstanceOf(ApiClientError);
+		await expect(client.getLicenseInfo({ showNotifications: false })).rejects.toBeInstanceOf(
+			ApiClientError
+		);
 	});
 });

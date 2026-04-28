@@ -58,6 +58,8 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertArrayHasKey( '/sentient-forms/v1/license/deactivate', $routes, 'Deactivate route should be registered' );
         $this->assertArrayHasKey( '/sentient-forms/v1/license/bootstrap', $routes, 'Bootstrap route should be registered' );
         $this->assertArrayHasKey( '/sentient-forms/v1/license/billing-state', $routes, 'Billing-state route should be registered' );
+        $this->assertArrayHasKey( '/sentient-forms/v1/license/managed-checkout/start', $routes, 'Managed checkout start route should be registered' );
+        $this->assertArrayHasKey( '/sentient-forms/v1/license/managed-checkout/complete', $routes, 'Managed checkout complete route should be registered' );
         $this->assertArrayHasKey( '/sentient-forms/v1/license/billing/checkout-session', $routes, 'Checkout-session route should be registered' );
         $this->assertArrayHasKey( '/sentient-forms/v1/license/billing/subscription-change', $routes, 'Subscription-change route should be registered' );
         $this->assertArrayHasKey( '/sentient-forms/v1/license/billing/top-up-session', $routes, 'Top-up-session route should be registered' );
@@ -150,6 +152,239 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'active', $data['status'] );
         $this->assertTrue( $data['proxy_key_present'] );
         $this->assertSame( 'starter', $data['tier']['code'] ?? null );
+    }
+
+    public function test_start_managed_checkout_records_consent_and_does_not_require_proxy_key(): void
+    {
+        $this->mock_http_response(
+            '/v2/account/checkout/start',
+            [
+                'success' => true,
+                'data'    => [
+                    'checkout_intent_id'  => 'mci_123',
+                    'checkout_session_id' => 'cs_test_123',
+                    'checkout_url'        => 'https://checkout.stripe.com/c/pay/cs_test_123',
+                    'plan_code'           => 'starter',
+                ],
+            ],
+            function ( array $args ): void {
+                $this->assertSame( 'POST', $args['method'] ?? null );
+                $this->assertArrayNotHasKey( 'Authorization', $args['headers'] ?? [] );
+
+                $body = json_decode( (string) ( $args['body'] ?? '' ), true );
+                $this->assertIsArray( $body );
+                $this->assertSame( 'starter', $body['plan_code'] ?? null );
+                $this->assertSame( home_url(), $body['site_url'] ?? null );
+                $this->assertNotEmpty( $body['local_site_identifier'] ?? '' );
+                $this->assertSame( 'managed-service-v1', $body['disclosure_version'] ?? null );
+                $this->assertTrue( $body['accepted_managed_service_terms'] ?? false );
+                $this->assertTrue( $body['require_zdr'] ?? false );
+                $this->assertArrayNotHasKey( 'trial_period_days', $body );
+                $this->assertArrayNotHasKey( 'quantity', $body );
+            }
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/start' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'plan_code'                      => 'starter',
+            'success_url'                    => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+            'cancel_url'                     => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+            'disclosure_version'             => 'managed-service-v1',
+            'accepted_managed_service_terms' => true,
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'mci_123', $data['checkout_intent_id'] );
+        $this->assertTrue( $data['consent_recorded'] );
+        $this->assertNotEmpty( $data['consent_id'] );
+    }
+
+    public function test_managed_checkout_uses_same_local_site_identifier_for_start_and_complete(): void
+    {
+        Sentient_Forms_Plugin::instance()->update_options( [] );
+
+        $requests = [];
+        $handler  = function ( $preempt, $args, $url ) use ( &$requests ) {
+            if ( str_ends_with( $url, '/v2/account/checkout/start' ) ) {
+                $requests['start'] = json_decode( (string) ( $args['body'] ?? '' ), true );
+
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode( [
+                        'success' => true,
+                        'data'    => [
+                            'checkout_intent_id'  => 'mci_stable_local',
+                            'checkout_session_id' => 'cs_test_stable_local',
+                            'checkout_url'        => 'https://checkout.stripe.com/c/pay/cs_test_stable_local',
+                            'plan_code'           => 'starter',
+                        ],
+                    ] ),
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                ];
+            }
+
+            if ( str_ends_with( $url, '/v2/account/checkout/complete' ) ) {
+                $requests['complete'] = json_decode( (string) ( $args['body'] ?? '' ), true );
+
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode( [
+                        'success' => true,
+                        'data'    => [
+                            'activation_ready' => false,
+                            'status'           => 'fulfilled',
+                            'message'          => 'Waiting for the Stripe webhook.',
+                        ],
+                    ] ),
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                ];
+            }
+
+            return $preempt;
+        };
+        add_filter( 'pre_http_request', $handler, 1, 3 );
+
+        $start_request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/start' );
+        $start_request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $start_request->add_header( 'Content-Type', 'application/json' );
+        $start_request->set_body( wp_json_encode( [
+            'plan_code'                      => 'starter',
+            'success_url'                    => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+            'cancel_url'                     => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+            'disclosure_version'             => 'managed-service-v1',
+            'accepted_managed_service_terms' => true,
+        ] ) );
+        $start_response = rest_get_server()->dispatch( $start_request );
+
+        $complete_request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/complete' );
+        $complete_request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $complete_request->add_header( 'Content-Type', 'application/json' );
+        $complete_request->set_body( wp_json_encode( [
+            'checkout_intent_id'  => 'mci_stable_local',
+            'checkout_session_id' => 'cs_test_stable_local',
+            'activation_token'    => 'token-stable-local',
+        ] ) );
+        $complete_response = rest_get_server()->dispatch( $complete_request );
+        remove_filter( 'pre_http_request', $handler, 1 );
+
+        $this->assertSame( 200, $start_response->get_status() );
+        $this->assertSame( 200, $complete_response->get_status() );
+        $this->assertNotEmpty( $requests['start']['local_site_identifier'] ?? '' );
+        $this->assertSame(
+            $requests['start']['local_site_identifier'],
+            $requests['complete']['local_site_identifier'] ?? null,
+            'Managed checkout completion must use the same durable local site identifier as checkout start.'
+        );
+
+        $options = Sentient_Forms_Plugin::instance()->get_options();
+        $this->assertSame(
+            $requests['start']['local_site_identifier'],
+            $options['license']['local_site_identifier'] ?? null,
+            'The generated local site identifier must be persisted before returning from checkout start.'
+        );
+    }
+
+    public function test_start_managed_checkout_requires_disclosure_consent_before_remote_call(): void
+    {
+        $guard = function ( $preempt, $args, $url ) {
+            $this->fail( 'Managed checkout must not call the remote service without consent: ' . $url );
+            return $preempt;
+        };
+        add_filter( 'pre_http_request', $guard, 1, 3 );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/start' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'plan_code'                      => 'starter',
+            'success_url'                    => 'https://example.test/success',
+            'cancel_url'                     => 'https://example.test/cancel',
+            'disclosure_version'             => 'managed-service-v1',
+            'accepted_managed_service_terms' => false,
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+        remove_filter( 'pre_http_request', $guard, 1 );
+
+        $this->assertSame( 400, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'sentient_managed_checkout_consent_required', $data['code'] ?? null );
+    }
+
+    public function test_complete_managed_checkout_stores_license_and_enables_managed_provider(): void
+    {
+        $this->mock_http_response(
+            '/v2/account/checkout/complete',
+            [
+                'success' => true,
+                'data'    => [
+                    'activation_ready' => true,
+                    'service'          => 'sentient-managed',
+                    'license_key'      => '0abcdefghjkmnpqrstvwxyz123',
+                    'license_id'       => 'lic-managed-123',
+                    'site_id'          => 'site-managed-456',
+                    'proxy_api_key'    => 'managed-proxy-key',
+                    'status'           => 'active',
+                    'tier'             => [
+                        'code'                 => 'starter',
+                        'display_name'         => 'Starter',
+                        'site_limit'           => 1,
+                        'monthly_credit_quota' => 1500,
+                    ],
+                    'expires_at'       => null,
+                ],
+            ],
+            function ( array $args ): void {
+                $this->assertSame( 'POST', $args['method'] ?? null );
+                $this->assertArrayNotHasKey( 'Authorization', $args['headers'] ?? [] );
+
+                $body = json_decode( (string) ( $args['body'] ?? '' ), true );
+                $this->assertIsArray( $body );
+                $this->assertSame( home_url(), $body['site_url'] ?? null );
+                $this->assertNotEmpty( $body['local_site_identifier'] ?? '' );
+                $this->assertSame( 'mci_123', $body['checkout_intent_id'] ?? null );
+                $this->assertSame( 'cs_test_123', $body['checkout_session_id'] ?? null );
+                $this->assertSame( 'token-123', $body['activation_token'] ?? null );
+            }
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/complete' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->add_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( [
+            'checkout_intent_id'  => 'mci_123',
+            'checkout_session_id' => 'cs_test_123',
+            'activation_token'    => 'token-123',
+        ] ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertTrue( $data['activation_ready'] );
+        $this->assertTrue( $data['managed_provider_ready'] );
+        $this->assertNotEmpty( $data['credential_id'] );
+
+        $license = Sentient_Forms_Plugin::instance()->get_license_data();
+        $this->assertSame( 'active', $license['license_status'] );
+        $this->assertSame( 'managed-proxy-key', $license['proxy_api_key'] );
+        $this->assertSame( 'lic-managed-123', $license['license_id'] );
+        $this->assertSame( 'site-managed-456', $license['site_id'] );
+
+        global $wpdb;
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $credential = $credentials->find_by_provider_auth_mode( 'sentient_managed', 'sentient_proxy' );
+        $this->assertIsArray( $credential );
+        $this->assertSame( 'valid', $credential['status'] );
+        $this->assertTrue( $credential['status_json']['proxy_key_present'] ?? false );
     }
 
     public function test_activate_license_invalid_format_is_rejected(): void
@@ -395,7 +630,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                 $body = json_decode( (string) ( $args['body'] ?? '' ), true );
                 $this->assertIsArray( $body );
                 $this->assertSame( 'starter', $body['plan_code'] ?? null );
-                $this->assertSame( 14, $body['trial_period_days'] ?? null );
+                $this->assertArrayNotHasKey( 'trial_period_days', $body );
             }
         );
 

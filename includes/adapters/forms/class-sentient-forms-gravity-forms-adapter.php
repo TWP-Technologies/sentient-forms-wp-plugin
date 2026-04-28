@@ -1146,20 +1146,137 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             {
                 foreach ( $form[ 'fields' ] as $field )
                 {
-                    $field_id   = $field->id;
-                    $input_name = 'input_' . str_replace( '.', '_', $field_id );
+                    $field_id = (string) $field->id;
 
                     // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification before this hook.
-                    if ( isset( $_POST[ $input_name ] ) )
+                    $posted_value = $this->get_posted_gravity_input_value( $field_id );
+                    if ( null !== $posted_value )
                     {
-                        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification before this hook.
-                        $entry[ $field_id ] = sanitize_text_field( wp_unslash( $_POST[ $input_name ] ) );
+                        $entry[ $field_id ] = $posted_value;
+                    }
+
+                    $complex_values = $this->get_posted_gravity_complex_input_values( $field );
+                    foreach ( $complex_values as $input_id => $input_value )
+                    {
+                        $entry[ $input_id ] = $input_value;
+                    }
+
+                    if ( [] !== $complex_values )
+                    {
+                        $aggregate = $this->aggregate_gravity_complex_input_values( $complex_values );
+                        if ( '' !== $aggregate && ! isset( $entry[ $field_id ] ) )
+                        {
+                            $entry[ $field_id ] = $aggregate;
+                        }
                     }
                 }
             }
         }
 
         return $entry;
+    }
+
+    private function get_posted_gravity_input_value( string $field_id ): mixed
+    {
+        $input_name = 'input_' . str_replace( '.', '_', $field_id );
+
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- Gravity Forms owns frontend submission verification before this hook.
+        if ( ! isset( $_POST[ $input_name ] ) )
+        {
+            return null;
+        }
+
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Gravity Forms owns frontend submission verification before this hook; the value is sanitized recursively by sanitize_posted_gravity_input_value().
+        return $this->sanitize_posted_gravity_input_value( wp_unslash( $_POST[ $input_name ] ) );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_posted_gravity_complex_input_values( object $field ): array
+    {
+        $inputs = isset( $field->inputs ) && is_array( $field->inputs ) ? $field->inputs : [];
+        if ( [] === $inputs )
+        {
+            return [];
+        }
+
+        $values = [];
+        foreach ( $inputs as $input )
+        {
+            $input_id = null;
+            if ( is_array( $input ) && isset( $input['id'] ) && is_scalar( $input['id'] ) )
+            {
+                $input_id = (string) $input['id'];
+            }
+            elseif ( is_object( $input ) && isset( $input->id ) && is_scalar( $input->id ) )
+            {
+                $input_id = (string) $input->id;
+            }
+
+            if ( null === $input_id || '' === trim( $input_id ) )
+            {
+                continue;
+            }
+
+            $posted_value = $this->get_posted_gravity_input_value( $input_id );
+            if ( null !== $posted_value )
+            {
+                $values[ $input_id ] = $posted_value;
+            }
+        }
+
+        return $values;
+    }
+
+    private function sanitize_posted_gravity_input_value( mixed $value ): mixed
+    {
+        if ( is_array( $value ) )
+        {
+            $sanitized = [];
+            foreach ( $value as $key => $item )
+            {
+                if ( is_array( $item ) )
+                {
+                    $sanitized[ sanitize_key( (string) $key ) ] = $this->sanitize_posted_gravity_input_value( $item );
+                    continue;
+                }
+
+                if ( is_scalar( $item ) )
+                {
+                    $sanitized[ sanitize_key( (string) $key ) ] = sanitize_text_field( (string) $item );
+                }
+            }
+
+            return $sanitized;
+        }
+
+        return is_scalar( $value ) ? sanitize_text_field( (string) $value ) : null;
+    }
+
+    /**
+     * @param array<string, mixed> $values
+     */
+    private function aggregate_gravity_complex_input_values( array $values ): string
+    {
+        $parts = [];
+        array_walk_recursive(
+            $values,
+            static function ( mixed $value ) use ( &$parts ): void {
+                if ( ! is_scalar( $value ) )
+                {
+                    return;
+                }
+
+                $value = trim( (string) $value );
+                if ( '' !== $value )
+                {
+                    $parts[] = $value;
+                }
+            }
+        );
+
+        return implode( ' ', $parts );
     }
 
     private function maybe_execute_cps_validation(
@@ -2827,15 +2944,17 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             ? 'validation'
             : 'after_submission';
 
-        $settings = [
-            'local_form_mapping_id' => $id,
-            'execution_mode'        => $execution_mode,
-            'input_mapping'         => is_array( $row['input_bindings_json'] ?? null )
-                ? $row['input_bindings_json']
-                : [],
-            'trigger_sources'       => [
-                $hook => [ 'type' => 'hook_root' ],
-            ],
+        $settings = is_array( $row['settings_json'] ?? null )
+            ? $row['settings_json']
+            : [];
+
+        $settings['local_form_mapping_id'] = $id;
+        $settings['execution_mode']        = $execution_mode;
+        $settings['input_mapping']         = is_array( $row['input_bindings_json'] ?? null )
+            ? $row['input_bindings_json']
+            : [];
+        $settings['trigger_sources']       = [
+            $hook => [ 'type' => 'hook_root' ],
         ];
 
         if ( isset( $row['conditions_json'] ) && is_array( $row['conditions_json'] ) )

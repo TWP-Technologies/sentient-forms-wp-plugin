@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
+	import { SESSION_EXPIRED_EVENT } from '$lib/api/session-expiry';
 	import PrivacySetupAssistant from '$lib/components/privacy-setup-assistant.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
 	import type { PluginSettingsResponse } from '$lib/api/types';
@@ -13,7 +14,7 @@
 		routerType,
 		type NavigationLinkPath
 	} from '$lib/navigation';
-	import { Button } from '$lib/components/ui';
+	import { Alert, Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 
 	interface Props {
@@ -30,9 +31,8 @@
 		{ path: '/actions', label: 'Actions' },
 		{ path: '/actions/log', label: 'Action Log' },
 		{ path: '/actions/custom', label: 'Custom Actions' },
-		{ path: '/licensing', label: 'Managed Billing' },
-		{ path: '/settings', label: 'Settings' },
-		{ path: '/settings/migration', label: 'Cutover' }
+		{ path: '/licensing', label: 'Managed Service' },
+		{ path: '/settings', label: 'Settings' }
 	];
 
 	let renderedPath = $derived(deriveActivePath(page.url));
@@ -43,12 +43,19 @@
 	let privacySettings = $state<PluginSettingsResponse | null>(null);
 	let privacyAssistantOpen = $state(false);
 	let privacyAssistantSaving = $state(false);
+	let sessionExpired = $state(false);
+	let sessionExpiredMessage = $state('WordPress session expired. Reload this admin page before retrying.');
 
 	function handleNavClick(event: MouseEvent, path: NavigationLinkPath): void {
 		if (event.defaultPrevented || event.button !== 0) return;
 		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 		event.preventDefault();
 		void navigateToAppPath(path);
+	}
+
+	function reloadAdminPage(): void {
+		if (typeof window === 'undefined') return;
+		window.location.reload();
 	}
 
 	$effect(() => {
@@ -145,8 +152,20 @@
 
 		window.addEventListener('sentient-forms:open-privacy-setup', openAssistant);
 
+		const handleSessionExpired = (event: Event) => {
+			const detail = (event as CustomEvent<{ message?: string }>).detail;
+			sessionExpiredMessage =
+				typeof detail?.message === 'string' && detail.message.trim().length > 0
+					? detail.message
+					: 'WordPress session expired. Reload this admin page before retrying.';
+			sessionExpired = true;
+		};
+
+		window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+
 		return () => {
 			window.removeEventListener('sentient-forms:open-privacy-setup', openAssistant);
+			window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
 		};
 	});
 </script>
@@ -182,6 +201,21 @@
 				data-testid="app-content-frame"
 				class="sf:mx-auto sf:flex sf:w-full sf:min-w-0 sf:max-w-[112rem] sf:flex-col"
 			>
+				{#if sessionExpired}
+					<Alert variant="warning" class="sf:mb-4" data-testid="session-expired-banner">
+						<div
+							class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
+						>
+							<div>
+								<p class="sf:font-semibold">WordPress session expired</p>
+								<p class="sf:mt-1 sf:text-sm">{sessionExpiredMessage}</p>
+							</div>
+							<Button size="sm" onclick={reloadAdminPage} data-testid="session-expired-reload">
+								Reload admin
+							</Button>
+						</div>
+					</Alert>
+				{/if}
 				<svelte:boundary>
 					{@render children?.()}
 

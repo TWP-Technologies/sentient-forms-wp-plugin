@@ -44,7 +44,6 @@ export interface BillingCheckoutSessionRequest {
 	success_url: string;
 	cancel_url: string;
 	quantity?: number;
-	trial_period_days?: number;
 }
 
 export interface BillingCheckoutSessionResponse {
@@ -52,6 +51,46 @@ export interface BillingCheckoutSessionResponse {
 	checkout_url: string;
 	customer_id: string;
 	subscription_id?: string | null;
+}
+
+export interface ManagedCheckoutStartRequest {
+	plan_code: string;
+	success_url: string;
+	cancel_url: string;
+	disclosure_version: string;
+	accepted_managed_service_terms: boolean;
+}
+
+export interface ManagedCheckoutStartResponse {
+	checkout_intent_id: string;
+	checkout_session_id: string;
+	checkout_url: string;
+	plan_code?: string;
+	status?: string;
+	consent_recorded?: boolean;
+	consent_id?: number;
+	disclosure_version?: string;
+}
+
+export interface ManagedCheckoutCompleteRequest {
+	checkout_intent_id?: string | null;
+	checkout_session_id?: string | null;
+	activation_token?: string | null;
+}
+
+export interface ManagedCheckoutCompleteResponse {
+	activation_ready: boolean;
+	status?: string;
+	message?: string;
+	license_key?: string;
+	license_id?: string;
+	site_id?: string;
+	proxy_api_key?: string;
+	tier?: string | TierSummary;
+	expires_at?: string | null;
+	expiry_date?: string | null;
+	credential_id?: number;
+	managed_provider_ready?: boolean;
 }
 
 export interface BillingPortalSessionResponse {
@@ -1019,6 +1058,10 @@ export interface ModelSelection {
 	primary: string;
 	backup?: string | null;
 	is_preset: boolean;
+	provider?: LocalProvider | null;
+	credential_id?: number | null;
+	reasoning?: string | null;
+	tools?: Record<string, unknown> | null;
 }
 
 export interface ModelInfo {
@@ -1032,11 +1075,15 @@ export interface ModelInfo {
 		code: boolean;
 		vision: boolean;
 		tools: boolean;
+		structured?: boolean;
+		web_search?: boolean;
 		long_context: boolean;
 	};
 	context_window: number;
 	is_preview: boolean;
 	tags: string[];
+	supported_parameters?: string[];
+	pricing?: Record<string, string>;
 	recommended_for: string[];
 }
 
@@ -1227,6 +1274,7 @@ export interface CustomAction {
 	description: string | null;
 	prompt_overrides: Record<string, unknown>;
 	model_hint: string | null;
+	model_selection?: ModelSelection | null;
 	base_credit_cost: number | null;
 	status: CustomActionStatus;
 	archived_at: string | null;
@@ -1269,6 +1317,7 @@ export interface CustomActionCreatePayload {
 	description?: string | null;
 	prompt_overrides?: Record<string, unknown>;
 	model_hint?: string | null;
+	model_selection?: ModelSelection | null;
 	action_kind: ActionKind;
 	definition?: ActionDefinitionPayload | null;
 	definition_version: number;

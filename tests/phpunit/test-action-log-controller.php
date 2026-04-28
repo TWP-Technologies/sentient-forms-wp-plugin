@@ -315,6 +315,10 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'openrouter/auto', $data['entries'][0]['resolved_model_id'] );
         $this->assertSame( 'local_execution_events', $data['entries'][0]['details']['source'] );
         $this->assertSame( 0, $data['entries'][0]['pricing']['debited_credits'] );
+        $this->assertSame( 'openrouter_direct', $data['entries'][0]['usage_cost']['route'] );
+        $this->assertSame( 'OR $0.0002', $data['entries'][0]['usage_cost']['label'] );
+        $this->assertSame( 0.0002, $data['entries'][0]['usage_cost']['amount_usd'] );
+        $this->assertSame( 'Submission looks legitimate.', $data['entries'][0]['details']['stored_result']['content'] );
     }
 
     public function test_get_log_entries_filters_unbacked_local_first_legacy_success_rows(): void
@@ -500,6 +504,12 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
                 'token_usage_json'     => [
                     'prompt_tokens'     => 11,
                     'completion_tokens' => 5,
+                ],
+                'cost_json'            => [
+                    'provider'   => 'openrouter',
+                    'currency'   => 'USD',
+                    'amount_usd' => 0.0002,
+                    'source'     => 'openrouter_usage_cost',
                 ],
                 'result_json'          => [
                     'content'    => 'Submission looks legitimate.',

@@ -549,6 +549,20 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     public function test_add_form_action_creates_local_first_bundled_mapping_with_canonical_identity(): void
     {
+        global $wpdb;
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $credential_id = $credentials->create(
+            [
+                'provider'      => 'openrouter',
+                'label'         => 'Owner OpenRouter key',
+                'auth_mode'     => 'constant',
+                'constant_name' => 'SENTIENT_FORMS_OPENROUTER_KEY',
+                'status'        => 'valid',
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/12/actions' );
         $request->set_param( 'form_source_slug', 'gravity_forms' );
         $request->set_param( 'form_id', 12 );
@@ -579,8 +593,6 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'active', $data['linked_action_status'] ?? null );
         $this->assertSame( 'ok', $data['repair_state'] ?? null );
 
-        global $wpdb;
-
         $templates      = new Sentient_Forms_Action_Templates_Repository( $wpdb );
         $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
         $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
@@ -595,6 +607,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertIsArray( $custom_action );
         $this->assertSame( (int) ( $template['id'] ?? 0 ), (int) ( $custom_action['template_id'] ?? 0 ) );
         $this->assertSame( 'active', $custom_action['status'] ?? null );
+        $this->assertSame( $credential_id, (int) ( $custom_action['model_selection_json']['credential_id'] ?? 0 ) );
 
         $stored_mappings = $mappings->list_for_form( 'gravity_forms', '12' );
         $this->assertCount( 2, $stored_mappings );
@@ -642,6 +655,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'sync', $stored_mappings[0]['execution_mode'] ?? null );
         $this->assertSame( [ 'message' => '4' ], $stored_mappings[0]['input_bindings_json'] ?? null );
         $this->assertTrue( $stored_mappings[0]['effect_mapping_json']['store_result'] ?? false );
+        $this->assertSame( 'structured.message', $stored_mappings[0]['effect_mapping_json']['entry_note']['path'] ?? null );
     }
 
     public function test_add_form_action_creates_local_first_entry_summary_mapping_only_on_supported_hook(): void
@@ -671,6 +685,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'gform_after_submission', $stored_mappings[0]['hook'] ?? null );
         $this->assertSame( 'async', $stored_mappings[0]['execution_mode'] ?? null );
         $this->assertSame( 'content', $stored_mappings[0]['effect_mapping_json']['meta']['sentient_forms_summary'] ?? null );
+        $this->assertSame( 'content', $stored_mappings[0]['effect_mapping_json']['entry_note']['path'] ?? null );
 
         $custom_action = $custom_actions->get_by_code(
             Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'entry_summary_v1' )
@@ -1834,6 +1849,14 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
                         'value'    => 'enterprise',
                     ],
                 ],
+                'include_site_context' => 'yes',
+                'model_selection'      => [
+                    'primary'       => 'sf_default',
+                    'backup'        => null,
+                    'is_preset'     => true,
+                    'provider'      => 'sentient_managed',
+                    'credential_id' => 1,
+                ],
             ]
         );
 
@@ -1847,9 +1870,17 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'local_first_' . $record['mapping_id'], $data['local_mapping_id'] ?? null );
         $this->assertFalse( $data['is_action_enabled_for_form'] ?? true );
         $this->assertSame( [ 'name' => '1', 'message' => '2' ], $data['settings']['input_mapping'] ?? null );
+        $this->assertSame( 'sentient_managed', $data['settings']['model_selection']['provider'] ?? null );
+        $this->assertSame( 'sf_default', $data['settings']['model_selection']['primary'] ?? null );
+        $this->assertSame( 1, (int) ( $data['settings']['model_selection']['credential_id'] ?? 0 ) );
+        $this->assertSame( 'yes', $data['settings']['include_site_context'] ?? null );
         $this->assertIsArray( $stored );
         $this->assertFalse( $stored['enabled'] );
         $this->assertSame( [ 'name' => '1', 'message' => '2' ], $stored['input_bindings_json'] ?? null );
+        $this->assertSame( 'sentient_managed', $stored['settings_json']['model_selection']['provider'] ?? null );
+        $this->assertSame( 'sf_default', $stored['settings_json']['model_selection']['primary'] ?? null );
+        $this->assertSame( 1, (int) ( $stored['settings_json']['model_selection']['credential_id'] ?? 0 ) );
+        $this->assertSame( 'yes', $stored['settings_json']['include_site_context'] ?? null );
         $this->assertTrue( $stored['conditions_json']['enabled'] ?? false );
         $this->assertSame( 'enterprise', $stored['conditions_json']['root']['value'] ?? null );
     }
@@ -2276,6 +2307,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         foreach (
             [
+                'sentient_provider_credentials',
                 'sentient_action_templates',
                 'sentient_custom_actions',
                 'sentient_form_mappings',

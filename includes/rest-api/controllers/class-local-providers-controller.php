@@ -19,13 +19,15 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
     private Sentient_Forms_Model_Cache_Repository $model_cache;
     private Sentient_Forms_OpenRouter_Direct_Client $openrouter;
     private Sentient_Forms_Provider_Credential_Vault $vault;
+    private Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service;
 
     public function __construct(
         ?Sentient_Forms_Provider_Credentials_Repository $credentials = null,
         ?Sentient_Forms_External_Service_Consent_Repository $consents = null,
         ?Sentient_Forms_Model_Cache_Repository $model_cache = null,
         ?Sentient_Forms_OpenRouter_Direct_Client $openrouter = null,
-        ?Sentient_Forms_Provider_Credential_Vault $vault = null
+        ?Sentient_Forms_Provider_Credential_Vault $vault = null,
+        ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null
     )
     {
         parent::__construct();
@@ -37,6 +39,11 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         $this->model_cache = $model_cache ?? new Sentient_Forms_Model_Cache_Repository( $wpdb );
         $this->openrouter  = $openrouter ?? new Sentient_Forms_OpenRouter_Direct_Client();
         $this->vault       = $vault ?? new Sentient_Forms_Provider_Credential_Vault();
+        $this->model_selection_service = $model_selection_service ?? new Sentient_Forms_Local_Action_Model_Selection_Service(
+            new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ),
+            $this->credentials,
+            new Sentient_Forms_Form_Mappings_Repository( $wpdb )
+        );
     }
 
     public function register_routes(): void
@@ -239,6 +246,11 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
             {
                 return $credential_id;
             }
+
+            if ( in_array( $local_status, [ 'valid', 'limited' ], true ) )
+            {
+                $this->model_selection_service->repair_all_custom_actions();
+            }
         }
 
         return $this->prepare_item_for_response(
@@ -347,6 +359,11 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
             {
                 return $credential_id;
             }
+        }
+
+        if ( in_array( $local_status, [ 'valid', 'limited' ], true ) )
+        {
+            $this->model_selection_service->repair_all_custom_actions();
         }
 
         return $this->prepare_item_for_response(
@@ -458,7 +475,7 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         {
             return new WP_Error(
                 'sentient_forms_external_service_consent_required',
-                __( 'You must accept the Sentient managed proxy disclosure before enabling managed execution.', 'sentient-forms' ),
+                __( 'You must accept the Sentient Forms managed-service disclosure before enabling managed execution.', 'sentient-forms' ),
                 [ 'status' => 400 ]
             );
         }
@@ -495,7 +512,7 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         $label = sanitize_text_field( (string) $request->get_param( 'label' ) );
         if ( '' === $label )
         {
-            $label = __( 'Sentient managed proxy', 'sentient-forms' );
+            $label = __( 'Sentient Forms managed service', 'sentient-forms' );
         }
 
         $status_json = [
@@ -782,7 +799,7 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         {
             return new WP_Error(
                 'sentient_forms_sentient_managed_account_required',
-                __( 'Activate a Sentient managed account before enabling managed proxy execution.', 'sentient-forms' ),
+                __( 'Activate a Sentient Forms managed-service account before enabling managed execution.', 'sentient-forms' ),
                 [
                     'status' => 400,
                     'account' => [

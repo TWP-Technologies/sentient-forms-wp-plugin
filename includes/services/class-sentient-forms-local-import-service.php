@@ -19,6 +19,7 @@ class Sentient_Forms_Local_Import_Service
     private Sentient_Forms_Form_Mappings_Repository $mappings;
     private Sentient_Forms_Execution_Events_Repository $events;
     private Sentient_Forms_Migration_Runs_Repository $migration_runs;
+    private Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service;
 
     public function __construct(
         ?wpdb $database = null,
@@ -26,7 +27,8 @@ class Sentient_Forms_Local_Import_Service
         ?Sentient_Forms_Local_Custom_Actions_Repository $custom_actions = null,
         ?Sentient_Forms_Form_Mappings_Repository $mappings = null,
         ?Sentient_Forms_Execution_Events_Repository $events = null,
-        ?Sentient_Forms_Migration_Runs_Repository $migration_runs = null
+        ?Sentient_Forms_Migration_Runs_Repository $migration_runs = null,
+        ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null
     )
     {
         global $wpdb;
@@ -37,6 +39,11 @@ class Sentient_Forms_Local_Import_Service
         $this->mappings       = $mappings ?? new Sentient_Forms_Form_Mappings_Repository( $database );
         $this->events         = $events ?? new Sentient_Forms_Execution_Events_Repository( $database );
         $this->migration_runs = $migration_runs ?? new Sentient_Forms_Migration_Runs_Repository( $database );
+        $this->model_selection_service = $model_selection_service ?? new Sentient_Forms_Local_Action_Model_Selection_Service(
+            $this->custom_actions,
+            new Sentient_Forms_Provider_Credentials_Repository( $database ),
+            $this->mappings
+        );
     }
 
     /**
@@ -996,14 +1003,28 @@ class Sentient_Forms_Local_Import_Service
                 );
             }
 
+            $definition_json = $this->array_value( $action, 'definition_json' ) ?: [];
+            if ( '' !== $template_code && empty( $definition_json['template_code'] ) )
+            {
+                $definition_json['template_code'] = $template_code;
+            }
+
+            $model_selection_json = $this->model_selection_service->prepare_model_selection_for_action(
+                [
+                    'code'                 => $code,
+                    'definition_json'      => $definition_json,
+                    'model_selection_json' => $this->array_value( $action, 'model_selection_json' ),
+                ]
+            );
+
             $id = $this->custom_actions->upsert_by_code(
                 [
                     'external_id'          => $this->text( $action, 'external_id' ),
                     'template_id'          => $template_id,
                     'code'                 => $code,
                     'display_name'         => $this->text( $action, 'display_name' ) ?: $code,
-                    'definition_json'      => $this->array_value( $action, 'definition_json' ) ?: [],
-                    'model_selection_json' => $this->array_value( $action, 'model_selection_json' ),
+                    'definition_json'      => $definition_json,
+                    'model_selection_json' => $model_selection_json,
                     'status'               => $this->code( $action, 'status', 'active' ),
                 ]
             );
@@ -1011,6 +1032,12 @@ class Sentient_Forms_Local_Import_Service
             if ( is_wp_error( $id ) )
             {
                 return $id;
+            }
+
+            $local_action = $this->custom_actions->get( (int) $id );
+            if ( is_array( $local_action ) )
+            {
+                $this->model_selection_service->prepare_bundled_action_for_execution( $local_action );
             }
 
             $ids_by_code[ $code ] = $id;
@@ -1090,6 +1117,13 @@ class Sentient_Forms_Local_Import_Service
             }
 
             $local_id = is_array( $id ) ? (int) $id['id'] : (int) $id;
+            $local_mapping = is_array( $id ) ? $id : $this->mappings->get( $local_id );
+            $local_action  = $this->custom_actions->get( $action_id );
+            if ( is_array( $local_mapping ) && is_array( $local_action ) )
+            {
+                $this->model_selection_service->prepare_mapping_for_action( $local_mapping, $local_action );
+            }
+
             $ids_by_key[ $key ] = $local_id;
             $external_id = $this->text( $form_mapping, 'external_id' );
             if ( '' !== $external_id )

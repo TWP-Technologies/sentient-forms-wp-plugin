@@ -48,7 +48,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		);
 	});
 
-	test('dashboard leads with local workspace and direct OpenRouter state', async ({ page }) => {
+	test('dashboard leads with managed service and self-managed OpenRouter state', async ({ page }) => {
 		let licenseRequests = 0;
 		let creditRequests = 0;
 
@@ -146,16 +146,25 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 
 		await page.goto('/#/dashboard', { waitUntil: 'networkidle' });
 
-		await expect(page.getByRole('heading', { name: 'Local workspace' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Sentient Forms workspace' })).toBeVisible();
 		await expect(page.getByTestId('dashboard-local-first-summary')).toContainText(
-			'OpenRouter ready'
+			'Managed service not connected'
+		);
+		await expect(page.getByTestId('dashboard-local-first-summary')).toContainText(
+			'Direct OpenRouter optional'
 		);
 		await expect(page.getByTestId('dashboard-provider-count')).toContainText('1');
 		await expect(page.getByTestId('dashboard-template-count')).toContainText('2');
 		await expect(page.getByTestId('dashboard-custom-action-count')).toContainText('1');
 		await expect(page.getByTestId('dashboard-execution-count')).toContainText('1');
+		await expect(page.getByTestId('dashboard-managed-status')).toContainText(
+			'Managed service not connected'
+		);
+		await expect(page.getByTestId('dashboard-openrouter-status')).toContainText(
+			'OpenRouter ready'
+		);
 		await expect(page.getByTestId('dashboard-free-path-card')).toContainText(
-			'Direct OpenRouter: no'
+			'Try actions with free models first'
 		);
 		await expect(page.getByText('License health')).toHaveCount(0);
 		await expect(page.getByText(/credits remaining/i)).toHaveCount(0);
@@ -324,6 +333,11 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await page.goto('/#/providers', { waitUntil: 'networkidle' });
 
 		await expect(page.getByRole('heading', { name: 'Providers' })).toBeVisible();
+		const catalogCard = page.getByTestId('providers-openrouter-model-catalog');
+		await expect(catalogCard.getByTestId('providers-model-catalog-disclosure')).toBeVisible();
+		await expect(catalogCard.getByTestId('providers-refresh-model-catalog')).toBeDisabled();
+		await catalogCard.getByLabel(/refreshing the catalog contacts OpenRouter/).check();
+		await expect(catalogCard.getByTestId('providers-refresh-model-catalog')).toBeEnabled();
 		const openRouterCard = page.getByTestId('providers-openrouter-form-card');
 		await openRouterCard.getByLabel('API key').fill('sk-or-test');
 		await openRouterCard.getByLabel(/I understand OpenRouter receives/).check();
@@ -341,7 +355,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		});
 	});
 
-	test('providers enables Sentient managed proxy with disclosure acceptance', async ({ page }) => {
+	test('providers enables Sentient Forms managed service with disclosure acceptance', async ({ page }) => {
 		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
 			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
@@ -361,7 +375,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		const managedCredential = {
 			id: 77,
 			provider: 'sentient_managed',
-			label: 'Primary managed proxy',
+			label: 'Primary managed service',
 			auth_mode: 'sentient_proxy',
 			constant_name: null,
 			status: 'valid',
@@ -440,21 +454,21 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('providers-managed-summary')).toContainText(
 			'Managed account ready'
 		);
-		await page.locator('#sentient-managed-label').fill('Primary managed proxy');
+		await page.locator('#sentient-managed-label').fill('Primary managed service');
 		await page
-			.getByLabel(/I understand Sentient receives the rendered prompt/)
+			.getByLabel(/I understand Sentient Forms receives the rendered prompt/)
 			.check();
-		await page.getByRole('button', { name: 'Enable managed proxy credential' }).click();
+		await page.getByRole('button', { name: 'Enable managed service' }).click();
 
 		await expect(page.getByTestId('providers-managed-setup-result')).toContainText('Ready');
 		await expect(page.getByTestId('providers-managed-setup-result')).toContainText(
 			'Managed credential #77'
 		);
 		await expect(page.getByTestId('providers-managed-list-card')).toContainText(
-			'Primary managed proxy'
+			'Primary managed service'
 		);
 		expect(setupPayload).toMatchObject({
-			label: 'Primary managed proxy',
+			label: 'Primary managed service',
 			disclosure_version: '2026-04-sentient-managed-proxy-v1',
 			accepted_external_service_terms: true
 		});
@@ -640,7 +654,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 
 		await page.goto('/#/licensing', { waitUntil: 'networkidle' });
 
-		await expect(page.getByRole('heading', { name: 'License management' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Managed service' })).toBeVisible();
 		await expect(page.getByTestId('licensing-overview-card')).toBeVisible();
 		await expect(page.getByTestId('licensing-status-badge')).toContainText('active');
 		await expect(page.getByTestId('licensing-credits-headline')).toContainText(
@@ -686,7 +700,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 
 		await page.goto('/#/licensing', { waitUntil: 'networkidle' });
 
-		await expect(page.getByRole('heading', { name: 'License activation' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Activate managed service' })).toBeVisible();
 		await expect(page.getByLabel('License key')).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Activate', exact: true })).toBeVisible();
 	});

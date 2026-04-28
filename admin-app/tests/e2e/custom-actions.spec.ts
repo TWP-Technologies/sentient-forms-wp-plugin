@@ -18,6 +18,7 @@ test.describe('Custom actions admin view', () => {
 				description: null,
 				prompt_overrides: {},
 				model_hint: null,
+				model_selection: null,
 				base_credit_cost: 10,
 				status: 'active',
 				archived_at: null,
@@ -81,6 +82,119 @@ test.describe('Custom actions admin view', () => {
 				});
 			}
 
+			if (method === 'GET' && url.endsWith('/models')) {
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						success: true,
+						data: {
+							models: [
+								{
+									id: 'openai/gpt-5.1',
+									display_name: 'OpenAI: GPT-5.1',
+									provider: 'openrouter',
+									speed_tier: 'balanced',
+									cost_tier: 'medium',
+									capabilities: {
+										reasoning: true,
+										code: false,
+										vision: true,
+										tools: true,
+										structured: true,
+										web_search: false,
+										long_context: true
+									},
+									context_window: 400000,
+									is_preview: false,
+									tags: ['structured-output', 'reasoning'],
+									recommended_for: ['General purpose']
+								},
+								{
+									id: 'openrouter/free',
+									display_name: 'OpenRouter Free Models Router',
+									provider: 'openrouter',
+									speed_tier: 'fast',
+									cost_tier: 'free',
+									capabilities: {
+										reasoning: true,
+										code: false,
+										vision: true,
+										tools: true,
+										structured: true,
+										web_search: false,
+										long_context: true
+									},
+									context_window: 200000,
+									is_preview: false,
+									tags: ['free', 'structured-output'],
+									recommended_for: ['Free testing']
+								}
+							],
+							presets: [
+								{
+									code: 'sf_default',
+									display_name: 'Recommended',
+									description: 'Recommended paid model.',
+									category: 'local',
+									resolved_model_id: 'openai/gpt-5.1',
+									auto_upgrade: true
+								},
+								{
+									code: 'sf_free',
+									display_name: 'Free model',
+									description: 'Free workflow proof.',
+									category: 'local',
+									resolved_model_id: 'openrouter/free',
+									auto_upgrade: true
+								}
+							],
+							pricing_policy_version: 'mock'
+						}
+					})
+				});
+			}
+
+			if (method === 'POST' && (url.endsWith('/models/resolve') || url.endsWith('/models/estimate'))) {
+				const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+				const actionSelection = payload.action_selection as Record<string, unknown> | undefined;
+				const primary = String(actionSelection?.primary ?? 'sf_default');
+				const resolvedModelId = primary === 'sf_free' ? 'openrouter/free' : 'openai/gpt-5.1';
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						success: true,
+						data: url.endsWith('/models/resolve')
+							? {
+									model_id: resolvedModelId,
+									display_name: resolvedModelId,
+									resolution_source: 'action',
+									override_chain: [],
+									backup_model_id: null
+							  }
+							: {
+									resolved_model: {
+										model_id: resolvedModelId,
+										display_name: resolvedModelId,
+										resolution_source: 'action',
+										override_chain: [],
+										backup_model_id: null
+									},
+									pricing_estimate: {
+										action_id: String(payload.action_id ?? 'custom'),
+										resolved_model_id: resolvedModelId,
+										base_floor_credits: 0,
+										normalized_actual_credits: 0,
+										estimated_debit_credits: 0,
+										pricing_policy_version: 'mock',
+										estimate_source: 'mock'
+									}
+							  }
+					})
+				});
+			}
+
 			if (url.includes('/custom-actions')) {
 				const reactivateMatch = url.match(/custom-actions\/([^/?]+)\/reactivate$/);
 				const actionMatch = url.match(/custom-actions\/([^/?]+)$/);
@@ -108,6 +222,8 @@ test.describe('Custom actions admin view', () => {
 						description: (payload.description as string | null | undefined) ?? null,
 						prompt_overrides: (payload.prompt_overrides as Record<string, unknown> | undefined) ?? {},
 						model_hint: (payload.model_hint as string | null | undefined) ?? null,
+						model_selection:
+							(payload.model_selection as Record<string, unknown> | null | undefined) ?? null,
 						base_credit_cost: null,
 						status: 'active',
 						archived_at: null,
@@ -211,6 +327,10 @@ test.describe('Custom actions admin view', () => {
 		expect(lastCreatePayload).toMatchObject({
 			template_id: '11111111-1111-4111-8111-111111111111',
 			code: 'beta-action',
+			model_selection: {
+				primary: 'sf_default',
+				is_preset: true
+			},
 			prompt_overrides: {
 				custom_instructions: 'Write a direct, demo-ready follow-up summary.'
 			}

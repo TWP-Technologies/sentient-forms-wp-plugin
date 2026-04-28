@@ -159,6 +159,104 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         $this->assertTrue( $payload['allow_promotion_codes'] );
     }
 
+    public function test_managed_checkout_start_posts_consent_and_site_identity_without_proxy_auth(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return self::success_response(
+                    [
+                        'checkout_intent_id' => 'mci_123',
+                        'checkout_url'       => 'https://checkout.stripe.com/c/pay/cs_test_123',
+                        'checkout_session_id' => 'cs_test_123',
+                    ]
+                );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->start_managed_checkout(
+            [
+                'plan_code'                      => 'starter',
+                'site_url'                       => 'https://example.test',
+                'local_site_identifier'          => 'example-local',
+                'success_url'                    => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+                'cancel_url'                     => 'https://example.test/wp-admin/admin.php?page=sentient-forms#/licensing',
+                'disclosure_version'             => 'managed-service-v1',
+                'accepted_managed_service_terms' => true,
+                'require_zdr'                    => true,
+                'trial_period_days'              => 14,
+                'quantity'                       => 5,
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'mci_123', $result['checkout_intent_id'] );
+        $this->assertSame( 'https://minimal.sentient.test/v2/account/checkout/start', $calls[0]['url'] );
+        $this->assertArrayNotHasKey( 'Authorization', $calls[0]['args']['headers'] );
+
+        $payload = json_decode( $calls[0]['args']['body'], true );
+        $this->assertSame( 'starter', $payload['plan_code'] );
+        $this->assertSame( 'https://example.test', $payload['site_url'] );
+        $this->assertSame( 'example-local', $payload['local_site_identifier'] );
+        $this->assertSame( 'managed-service-v1', $payload['disclosure_version'] );
+        $this->assertTrue( $payload['accepted_managed_service_terms'] );
+        $this->assertTrue( $payload['require_zdr'] );
+        $this->assertArrayNotHasKey( 'trial_period_days', $payload );
+        $this->assertArrayNotHasKey( 'quantity', $payload );
+    }
+
+    public function test_managed_checkout_complete_posts_reference_without_proxy_auth(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return self::success_response(
+                    [
+                        'activation_ready' => true,
+                        'license_key'      => '0abcdefghjkmnpqrstvwxyz123',
+                        'site_id'          => 'site-123',
+                        'proxy_api_key'    => 'proxy-issued',
+                    ]
+                );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Service_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->complete_managed_checkout(
+            [
+                'site_url'              => 'https://example.test',
+                'local_site_identifier' => 'example-local',
+                'checkout_intent_id'    => 'mci_123',
+                'checkout_session_id'   => 'cs_test_123',
+                'activation_token'      => 'token-123',
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertTrue( $result['activation_ready'] );
+        $this->assertSame( 'proxy-issued', $result['proxy_api_key'] );
+        $this->assertSame( 'https://minimal.sentient.test/v2/account/checkout/complete', $calls[0]['url'] );
+        $this->assertArrayNotHasKey( 'Authorization', $calls[0]['args']['headers'] );
+
+        $payload = json_decode( $calls[0]['args']['body'], true );
+        $this->assertSame( 'https://example.test', $payload['site_url'] );
+        $this->assertSame( 'example-local', $payload['local_site_identifier'] );
+        $this->assertSame( 'mci_123', $payload['checkout_intent_id'] );
+        $this->assertSame( 'cs_test_123', $payload['checkout_session_id'] );
+        $this->assertSame( 'token-123', $payload['activation_token'] );
+    }
+
     public function test_portal_session_posts_to_v2_billing_route(): void
     {
         $calls = [];

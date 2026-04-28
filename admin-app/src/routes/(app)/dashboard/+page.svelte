@@ -28,7 +28,13 @@
 	let openRouterCredential = $derived(
 		providers.find((credential) => credential.provider === 'openrouter' && credential.secret_configured)
 	);
+	let managedCredential = $derived(
+		providers.find(
+			(credential) => credential.provider === 'sentient_managed' && credential.secret_configured
+		)
+	);
 	let openRouterStatus = $derived(openRouterCredential?.status ?? 'missing');
+	let managedStatus = $derived(managedCredential?.status ?? 'missing');
 	let recentLocalEvents = $derived(recentEvents.filter((event) => !isImportedHistoryEvent(event)));
 	let importedHistoryCount = $derived(recentEvents.length - recentLocalEvents.length);
 	let successfulRuns = $derived(
@@ -38,11 +44,6 @@
 	let activeTemplates = $derived(templates.filter((template) => template.is_active).length);
 	let activeCustomActions = $derived(
 		customActions.filter((action) => action.status === 'active').length
-	);
-	let executionRetentionDays = $derived(
-		typeof supportBundle?.retention?.event_retention_days === 'number'
-			? supportBundle.retention.event_retention_days
-			: null
 	);
 	let latestEvent = $derived(recentLocalEvents[0] ?? null);
 
@@ -104,6 +105,21 @@
 		}
 	}
 
+	function managedStatusLabel(status: string): string {
+		switch (status) {
+			case 'valid':
+				return 'Managed service ready';
+			case 'limited':
+				return 'Managed service limited';
+			case 'invalid':
+				return 'Managed service needs attention';
+			case 'disabled':
+				return 'Managed service disabled';
+			default:
+				return 'Managed service not connected';
+		}
+	}
+
 	function openRouterStatusVariant(status: string): BadgeVariant {
 		switch (status) {
 			case 'valid':
@@ -138,11 +154,6 @@
 		return provider === 'legacy_cps' || provider === 'cps';
 	}
 
-	function tableCount(tableSuffix: string): string {
-		const count = supportBundle?.local_tables?.[tableSuffix];
-		return typeof count === 'number' ? String(count) : '—';
-	}
-
 	onMount(() => {
 		void loadDashboardData();
 
@@ -165,14 +176,14 @@
 </script>
 
 <Section
-	heading="Local workspace"
-	description="Run AI actions from this WordPress site with your own provider key. Sentient billing stays optional."
+	heading="Sentient Forms workspace"
+	description="Start with the managed Sentient Forms service when you want setup, model access, spend controls, and support handled for this WordPress site. Direct OpenRouter remains available for free testing and self-managed BYOK use."
 >
 	{#snippet actions()}
 		<Button variant="secondary" onclick={loadDashboardData} disabled={loading}>
 			{loading ? 'Refreshing...' : 'Refresh'}
 		</Button>
-		<Button onclick={() => navigateToAppPath('/providers')}>Connect OpenRouter</Button>
+		<Button onclick={() => navigateToAppPath('/licensing')}>Set up managed service</Button>
 	{/snippet}
 
 	{#if errors.length > 0}
@@ -196,23 +207,27 @@
 		<div class="sf:grid sf:gap-6 sf:lg:grid-cols-[1.2fr_0.8fr]">
 			<div class="sf:space-y-3">
 				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-					<Badge variant={openRouterStatusVariant(openRouterStatus)}>
-						{openRouterStatusLabel(openRouterStatus)}
+					<Badge variant={openRouterStatusVariant(managedStatus)}>
+						{managedStatusLabel(managedStatus)}
 					</Badge>
-					<Badge variant="info">Free path available</Badge>
+					<Badge variant="info">Recommended setup</Badge>
+					<Badge variant="neutral">Direct OpenRouter optional</Badge>
 				</div>
 				<h3 class="sf:text-xl sf:font-semibold sf:text-slate-900">
-					{openRouterCredential?.label ?? 'Bring your own OpenRouter key'}
+					{managedCredential?.label ?? 'Managed Sentient Forms service'}
 				</h3>
 				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
-					OpenRouter direct mode keeps provider credentials and action data in WordPress. Sentient does not meter direct BYOK or free-model runs.
+					Use managed execution when you want Sentient Forms to handle provider setup, recommended paid models, service metering, and spend controls. Free OpenRouter routes are useful for proving a workflow; BYOK is for teams that want to own provider billing and key limits themselves.
 				</p>
 				<div class="sf:flex sf:flex-wrap sf:gap-2">
-					<Button size="sm" onclick={() => navigateToAppPath('/providers')}>
-						{openRouterCredential ? 'Review provider' : 'Connect provider'}
+					<Button size="sm" onclick={() => navigateToAppPath('/licensing')}>
+						{managedCredential ? 'Review managed service' : 'Set up managed service'}
 					</Button>
 					<Button size="sm" variant="secondary" onclick={() => navigateToAppPath('/actions')}>
 						Map a form
+					</Button>
+					<Button size="sm" variant="ghost" onclick={() => navigateToAppPath('/providers')}>
+						Use direct OpenRouter
 					</Button>
 				</div>
 			</div>
@@ -247,10 +262,29 @@
 	</Card>
 
 	<div class="sf:grid sf:gap-4 sf:xl:grid-cols-3">
+		<Card data-testid="dashboard-managed-status">
+			<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
+				<div>
+					<h3 class="sf:text-sm sf:font-medium sf:text-slate-600">Recommended provider</h3>
+					<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">
+						{managedStatusLabel(managedStatus)}
+					</p>
+				</div>
+				<Badge variant={openRouterStatusVariant(managedStatus)}>
+					{managedCredential ? 'Configured' : 'Setup'}
+				</Badge>
+			</div>
+			<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
+				{managedCredential?.last_validated_at
+					? `Last checked ${formatTimestamp(managedCredential.last_validated_at)}`
+					: 'Activate managed service for paid models, setup help, and spend controls.'}
+			</p>
+		</Card>
+
 		<Card data-testid="dashboard-openrouter-status">
 			<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
 				<div>
-					<h3 class="sf:text-sm sf:font-medium sf:text-slate-600">Direct provider</h3>
+					<h3 class="sf:text-sm sf:font-medium sf:text-slate-600">Self-managed provider</h3>
 					<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">
 						{openRouterStatusLabel(openRouterStatus)}
 					</p>
@@ -267,20 +301,10 @@
 		</Card>
 
 		<Card data-testid="dashboard-free-path-card">
-			<h3 class="sf:text-sm sf:font-medium sf:text-slate-600">Sentient charges</h3>
-			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">Direct OpenRouter: no</p>
+			<h3 class="sf:text-sm sf:font-medium sf:text-slate-600">Free workflow proof</h3>
+			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">OpenRouter free routes</p>
 			<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
-				Managed billing belongs only to Sentient-hosted paid execution. BYOK and OpenRouter free models stay outside the Sentient meter.
-			</p>
-		</Card>
-
-		<Card data-testid="dashboard-diagnostics-card">
-			<h3 class="sf:text-sm sf:font-medium sf:text-slate-600">Local diagnostics</h3>
-			<p class="sf:mt-2 sf:text-lg sf:font-semibold sf:text-slate-900">
-				{executionRetentionDays ? `${executionRetentionDays} day retention` : 'Retention not set'}
-			</p>
-			<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
-				Events table: {tableCount('sentient_execution_events')}. Providers table: {tableCount('sentient_provider_credentials')}.
+				Try actions with free models first if you want to confirm the plugin path before choosing managed service or BYOK paid models.
 			</p>
 		</Card>
 	</div>

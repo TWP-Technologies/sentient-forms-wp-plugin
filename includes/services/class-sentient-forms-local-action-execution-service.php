@@ -21,7 +21,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         private ?Sentient_Forms_Local_Prompt_Renderer $renderer = null,
         private ?Sentient_Forms_Local_Result_Applier $result_applier = null,
         private ?Sentient_Forms_Action_Templates_Repository $templates = null,
-        private ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null
+        private ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null,
+        private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null
     )
     {
         global $wpdb;
@@ -37,6 +38,11 @@ class Sentient_Forms_Local_Action_Execution_Service
         $this->result_applier = $this->result_applier ?? new Sentient_Forms_Local_Result_Applier();
         $this->templates      = $this->templates ?? new Sentient_Forms_Action_Templates_Repository( $wpdb );
         $this->managed_proxy  = $this->managed_proxy ?? new Sentient_Forms_Managed_Proxy_Client();
+        $this->model_selection_service = $this->model_selection_service ?? new Sentient_Forms_Local_Action_Model_Selection_Service(
+            $this->custom_actions,
+            $this->credentials,
+            $this->mappings
+        );
     }
 
     /**
@@ -93,6 +99,9 @@ class Sentient_Forms_Local_Action_Execution_Service
             );
         }
 
+        $action  = $this->model_selection_service->prepare_bundled_action_for_execution( $action );
+        $mapping = $this->model_selection_service->prepare_mapping_for_action( $mapping, $action );
+
         $definition                 = is_array( $action['definition_json'] ?? null ) ? $action['definition_json'] : [];
         $structured_output_contract = $this->resolve_structured_output_contract( $action, $definition );
         if ( is_wp_error( $structured_output_contract ) )
@@ -100,7 +109,25 @@ class Sentient_Forms_Local_Action_Execution_Service
             return $structured_output_contract;
         }
 
-        $model_selection = is_array( $action['model_selection_json'] ?? null ) ? $action['model_selection_json'] : [];
+        $original_model_selection = is_array( $action['model_selection_json'] ?? null ) ? $action['model_selection_json'] : [];
+        $base_model_selection     = $this->model_selection_service->prepare_model_selection_for_action( $action );
+        if ( $base_model_selection !== $original_model_selection )
+        {
+            $updated_action = $this->custom_actions->update(
+                (int) $action['id'],
+                [
+                    'model_selection_json' => $base_model_selection,
+                ]
+            );
+
+            if ( ! is_wp_error( $updated_action ) )
+            {
+                $action = $updated_action;
+            }
+        }
+
+        $action['model_selection_json'] = $base_model_selection;
+        $model_selection                = $this->model_selection_service->prepare_model_selection_for_execution( $action, $context );
         $provider        = sanitize_key( (string) ( $model_selection['provider'] ?? $definition['provider'] ?? 'openrouter' ) );
         $model           = sanitize_text_field( (string) ( $model_selection['model'] ?? $definition['model'] ?? 'openrouter/auto' ) );
 
@@ -119,29 +146,10 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $credential_id = (int) ( $model_selection['credential_id'] ?? $definition['credential_id'] ?? $context['credential_id'] ?? 0 );
-        $credential    = $this->credentials->get( $credential_id );
-        if ( null === $credential )
+        $credential    = $this->model_selection_service->resolve_execution_credential( $provider, $credential_id );
+        if ( is_wp_error( $credential ) )
         {
-            return new WP_Error(
-                'sentient_forms_provider_credential_not_found',
-                __( 'Provider credential could not be found.', 'sentient-forms' )
-            );
-        }
-
-        if ( $provider !== (string) ( $credential['provider'] ?? '' ) )
-        {
-            return new WP_Error(
-                'sentient_forms_provider_credential_mismatch',
-                __( 'Provider credential does not match the action provider.', 'sentient-forms' )
-            );
-        }
-
-        if ( in_array( (string) ( $credential['status'] ?? '' ), [ 'disabled', 'invalid' ], true ) )
-        {
-            return new WP_Error(
-                'sentient_forms_provider_credential_unavailable',
-                __( 'Provider credential is not available for execution.', 'sentient-forms' )
-            );
+            return $credential;
         }
 
         $api_key = null;
@@ -275,6 +283,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                     'model'                => $model,
                     'status'               => 'failed',
                     'token_usage_json'     => is_array( $response['usage'] ?? null ) ? $response['usage'] : null,
+                    'cost_json'            => $this->extract_openrouter_usage_cost( is_array( $response['usage'] ?? null ) ? $response['usage'] : [] ),
                     'error_code'           => $result->get_error_code(),
                     'error_message'        => $result->get_error_message(),
                     'payload_digest'       => $payload_digest,
@@ -319,6 +328,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'model'                => $model,
                 'status'               => 'succeeded',
                 'token_usage_json'     => $result['usage'] ?? null,
+                'cost_json'            => $result['cost'] ?? null,
                 'result_json'          => $stored_result,
                 'payload_digest'       => $payload_digest,
             ]
@@ -393,7 +403,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             return new WP_Error(
                 'sentient_forms_sentient_managed_auth_mode_unsupported',
-                __( 'Sentient managed execution requires a managed proxy credential.', 'sentient-forms' )
+                __( 'Sentient Forms managed execution requires a managed-service credential.', 'sentient-forms' )
             );
         }
 
@@ -401,7 +411,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             return new WP_Error(
                 'sentient_forms_sentient_managed_plugin_unavailable',
-                __( 'Sentient managed execution could not read the site account state.', 'sentient-forms' )
+                __( 'Sentient Forms managed execution could not read the site account state.', 'sentient-forms' )
             );
         }
 
@@ -412,7 +422,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             return new WP_Error(
                 'sentient_forms_sentient_managed_account_inactive',
-                __( 'Sentient managed execution requires an active managed account.', 'sentient-forms' )
+                __( 'Sentient Forms managed execution requires an active managed-service account.', 'sentient-forms' )
             );
         }
 
@@ -421,7 +431,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             return new WP_Error(
                 'sentient_forms_sentient_managed_proxy_key_missing',
-                __( 'Sentient managed execution requires a site proxy key.', 'sentient-forms' )
+                __( 'Sentient Forms managed execution requires a site credential key.', 'sentient-forms' )
             );
         }
 
@@ -430,7 +440,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             return new WP_Error(
                 'sentient_forms_sentient_managed_site_id_missing',
-                __( 'Sentient managed execution requires a managed site ID.', 'sentient-forms' )
+                __( 'Sentient Forms managed execution requires a managed site ID.', 'sentient-forms' )
             );
         }
 
@@ -456,7 +466,8 @@ class Sentient_Forms_Local_Action_Execution_Service
 
         if ( isset( $definition['messages'] ) && is_array( $definition['messages'] ) )
         {
-            return $this->renderer->render_messages( $definition['messages'], $variables );
+            $messages = $this->renderer->render_messages( $definition['messages'], $variables );
+            return is_wp_error( $messages ) ? $messages : $this->inject_site_context_message( $messages, $mapping, $context );
         }
 
         $prompt_template = $this->resolve_prompt_template( $action, $definition );
@@ -482,7 +493,78 @@ class Sentient_Forms_Local_Action_Execution_Service
             'content' => $prompt_template,
         ];
 
-        return $this->renderer->render_messages( $messages, $variables );
+        $rendered = $this->renderer->render_messages( $messages, $variables );
+        return is_wp_error( $rendered ) ? $rendered : $this->inject_site_context_message( $rendered, $mapping, $context );
+    }
+
+    /**
+     * @param array<int, array{role: string, content: string}> $messages
+     * @param array<string, mixed>                            $mapping
+     * @param array<string, mixed>                            $context
+     * @return array<int, array{role: string, content: string}>
+     */
+    private function inject_site_context_message( array $messages, array $mapping, array $context ): array
+    {
+        $site_context = $this->resolve_site_context_for_mapping( $mapping, $context );
+        if ( '' === $site_context )
+        {
+            return $messages;
+        }
+
+        $context_message = [
+            'role'    => 'system',
+            'content' => "Site context for this WordPress site:\n" . $site_context,
+        ];
+
+        foreach ( $messages as $index => $message )
+        {
+            if ( 'system' === sanitize_key( (string) ( $message['role'] ?? '' ) ) )
+            {
+                $messages[ $index ]['content'] = trim( (string) $message['content'] . "\n\n" . $context_message['content'] );
+                return $messages;
+            }
+        }
+
+        array_unshift( $messages, $context_message );
+        return $messages;
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $context
+     */
+    private function resolve_site_context_for_mapping( array $mapping, array $context ): string
+    {
+        $settings = is_array( $context['settings'] ?? null )
+            ? $context['settings']
+            : ( is_array( $mapping['settings'] ?? null ) ? $mapping['settings'] : [] );
+        $mode     = sanitize_key( (string) ( $settings['include_site_context'] ?? 'global' ) );
+        if ( 'never' === $mode )
+        {
+            return '';
+        }
+
+        $context = get_option( 'sentient_forms_site_context', null );
+        if ( ! is_array( $context ) )
+        {
+            return '';
+        }
+
+        if ( empty( $context['pii_ack'] ) )
+        {
+            return '';
+        }
+
+        if ( 'always' !== $mode && empty( $context['auto_include'] ) )
+        {
+            return '';
+        }
+
+        $summary = isset( $context['summary_text'] ) && is_scalar( $context['summary_text'] )
+            ? trim( sanitize_textarea_field( (string) $context['summary_text'] ) )
+            : '';
+
+        return mb_substr( $summary, 0, 5000 );
     }
 
     private function resolve_prompt_template( array $action, array $definition ): string
@@ -538,6 +620,12 @@ class Sentient_Forms_Local_Action_Execution_Service
         if ( isset( $definition['response_format'] ) && is_array( $definition['response_format'] ) )
         {
             $payload['response_format'] = $definition['response_format'];
+        }
+
+        $reasoning = $this->normalize_reasoning_payload( $model_selection['reasoning'] ?? null );
+        if ( null !== $reasoning )
+        {
+            $payload['reasoning'] = $reasoning;
         }
 
         return $payload;
@@ -682,12 +770,32 @@ class Sentient_Forms_Local_Action_Execution_Service
             'usage'                => is_array( $response['usage'] ?? null ) ? $response['usage'] : null,
         ];
 
+        $cost = $this->extract_openrouter_usage_cost( is_array( $response['usage'] ?? null ) ? $response['usage'] : [] );
+        if ( null !== $cost )
+        {
+            $result['cost'] = $cost;
+        }
+
         if ( null !== $structured )
         {
             $result['structured'] = $structured;
         }
 
         return $result;
+    }
+
+    /**
+     * @return array{effort: string}|null
+     */
+    private function normalize_reasoning_payload( mixed $value ): ?array
+    {
+        $effort = sanitize_key( (string) $value );
+        if ( ! in_array( $effort, [ 'none', 'minimal', 'low', 'medium', 'high', 'xhigh' ], true ) )
+        {
+            return null;
+        }
+
+        return [ 'effort' => $effort ];
     }
 
     private function normalize_managed_response( array $response ): array
@@ -705,12 +813,113 @@ class Sentient_Forms_Local_Action_Execution_Service
             'metering'             => is_array( $response['metering'] ?? null ) ? $response['metering'] : null,
         ];
 
+        if ( is_array( $response['metering'] ?? null ) )
+        {
+            $result['cost'] = $this->extract_managed_metering_cost( $response['metering'] );
+        }
+
         if ( null !== $structured )
         {
             $result['structured'] = $structured;
         }
 
         return $result;
+    }
+
+    /**
+     * @param array<string, mixed> $usage
+     * @return array<string, mixed>|null
+     */
+    private function extract_openrouter_usage_cost( array $usage ): ?array
+    {
+        $amount = $this->numeric_provider_cost( $usage['cost'] ?? null );
+        if ( null === $amount && ! isset( $usage['cost_details'] ) && ! isset( $usage['server_tool_use'] ) )
+        {
+            return null;
+        }
+
+        $cost = [
+            'provider' => 'openrouter',
+            'currency' => 'USD',
+            'source'   => null === $amount ? 'openrouter_usage_details' : 'openrouter_usage_cost',
+        ];
+
+        if ( null !== $amount )
+        {
+            $cost['amount_usd'] = $amount;
+            $cost['free']       = 0.0 === $amount;
+        }
+
+        if ( is_array( $usage['cost_details'] ?? null ) )
+        {
+            $cost['cost_details'] = $this->sanitize_scalar_map( $usage['cost_details'] );
+        }
+
+        if ( is_array( $usage['server_tool_use'] ?? null ) )
+        {
+            $cost['server_tool_use'] = $this->sanitize_scalar_map( $usage['server_tool_use'] );
+        }
+
+        return $cost;
+    }
+
+    /**
+     * @param array<string, mixed> $metering
+     * @return array<string, mixed>
+     */
+    private function extract_managed_metering_cost( array $metering ): array
+    {
+        $cost = [
+            'provider' => 'sentient_forms',
+            'currency' => 'USD',
+            'source'   => 'sentient_forms_metering',
+        ];
+
+        if ( isset( $metering['debited_credits'] ) && is_numeric( $metering['debited_credits'] ) )
+        {
+            $cost['debited_credits'] = absint( $metering['debited_credits'] );
+        }
+
+        if ( isset( $metering['billed_amount_microusd'] ) && is_numeric( $metering['billed_amount_microusd'] ) )
+        {
+            $cost['billed_amount_microusd'] = absint( $metering['billed_amount_microusd'] );
+        }
+
+        if ( isset( $metering['free_usage'] ) )
+        {
+            $cost['free'] = rest_sanitize_boolean( $metering['free_usage'] );
+        }
+
+        return $cost;
+    }
+
+    private function numeric_provider_cost( mixed $value ): ?float
+    {
+        if ( ! is_numeric( $value ) )
+        {
+            return null;
+        }
+
+        $amount = (float) $value;
+        return $amount >= 0 ? $amount : null;
+    }
+
+    /**
+     * @param array<string, mixed> $values
+     * @return array<string, mixed>
+     */
+    private function sanitize_scalar_map( array $values ): array
+    {
+        $sanitized = [];
+        foreach ( $values as $key => $value )
+        {
+            if ( is_scalar( $value ) || null === $value )
+            {
+                $sanitized[ sanitize_key( (string) $key ) ] = null === $value ? null : sanitize_text_field( (string) $value );
+            }
+        }
+
+        return $sanitized;
     }
 
     /**

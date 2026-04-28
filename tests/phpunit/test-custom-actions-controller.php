@@ -181,7 +181,16 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $request->set_param( 'display_name', 'Local Create Action' );
         $request->set_param( 'description', 'Created through the legacy custom-actions route locally.' );
         $request->set_param( 'prompt_overrides', [ 'custom_instructions' => 'Summarize and add an entry note.' ] );
-        $request->set_param( 'model_hint', 'openrouter/auto' );
+        $request->set_param( 'model_hint', 'sf_quality' );
+        $request->set_param(
+            'model_selection',
+            [
+                'primary'   => 'sf_quality',
+                'backup'    => 'openrouter/free',
+                'is_preset' => true,
+                'reasoning' => 'medium',
+            ]
+        );
         $request->set_param(
             'definition',
             [
@@ -220,6 +229,10 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $this->assertSame( 'Summarize {{form.title}}: {{entry}}', $data['action']['definition']['prompt_template'] ?? null );
         $this->assertSame( 'Result: {{llm_output}}', $data['action']['definition']['execution_defaults']['post_execution_actions'][0]['message'] ?? null );
         $this->assertSame( 'object', $data['action']['output_contract']['schema']['type'] ?? null );
+        $this->assertSame( 'sf_quality', $data['action']['model_selection']['primary'] ?? null );
+        $this->assertSame( 'openrouter/free', $data['action']['model_selection']['backup'] ?? null );
+        $this->assertTrue( $data['action']['model_selection']['is_preset'] ?? false );
+        $this->assertSame( 'medium', $data['action']['model_selection']['reasoning'] ?? null );
         $this->assertGreaterThan( 0, $data['quota']['quota_remaining'] ?? 0 );
     }
 

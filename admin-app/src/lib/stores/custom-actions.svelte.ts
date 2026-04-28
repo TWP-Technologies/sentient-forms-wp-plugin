@@ -45,7 +45,7 @@ function initialState(): CustomActionsState {
 
 const friendlyMessages: Record<string, string> = {
 	cps_missing_proxy_key:
-		'Activate your Sentient Forms license before managing custom actions.',
+		'Activate your Sentient Forms managed service before managing custom actions.',
 	quota_exceeded:
 		'You reached the custom action quota for your tier. Archive an existing one or upgrade your plan.'
 };

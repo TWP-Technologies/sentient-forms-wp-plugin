@@ -3,6 +3,7 @@ import {
 	deriveDraftExecutionKind,
 	isSpamActionCode,
 	normalizeFormActionConfig,
+	normalizeModelSelection,
 	normalizeSpamIndicatorsDisplay,
 	normalizeSpamResultDisplayMode
 } from '$lib/utils/action-config';
@@ -45,6 +46,26 @@ describe('action config helpers', () => {
 		).toMatchObject({
 			spam_result_display_mode: 'entry_note',
 			spam_indicators_display: 'detailed'
+		});
+	});
+
+	it('preserves execution route metadata when normalizing model selections', () => {
+		expect(
+			normalizeModelSelection({
+				primary: 'sf_default',
+				backup: '',
+				is_preset: true,
+				provider: 'sentient_managed',
+				credential_id: '42',
+				reasoning: 'high'
+			})
+		).toEqual({
+			primary: 'sf_default',
+			backup: null,
+			is_preset: true,
+			provider: 'sentient_managed',
+			credential_id: 42,
+			reasoning: 'high'
 		});
 	});
 });

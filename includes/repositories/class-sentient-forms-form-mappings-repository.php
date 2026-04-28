@@ -36,6 +36,12 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
             return $effect_mapping_json;
         }
 
+        $settings_json = $this->encode_json_field( $data['settings_json'] ?? null, 'settings_json' );
+        if ( is_wp_error( $settings_json ) )
+        {
+            return $settings_json;
+        }
+
         $now = $this->now();
         $inserted = $this->wpdb->insert(
             $this->table_name(),
@@ -50,11 +56,12 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
                 'input_bindings_json' => $input_bindings_json,
                 'execution_mode'      => sanitize_key( (string) ( $data['execution_mode'] ?? 'async' ) ),
                 'effect_mapping_json' => $effect_mapping_json,
+                'settings_json'       => $settings_json,
                 'enabled'             => empty( $data['enabled'] ) ? 0 : 1,
                 'created_at'          => $now,
                 'updated_at'          => $now,
             ],
-            [ '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ]
+            [ '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s' ]
         );
 
         if ( false === $inserted )
@@ -195,6 +202,18 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
             $formats[]                     = '%s';
         }
 
+        if ( array_key_exists( 'settings_json', $data ) )
+        {
+            $settings_json = $this->encode_json_field( $data['settings_json'], 'settings_json' );
+            if ( is_wp_error( $settings_json ) )
+            {
+                return $settings_json;
+            }
+
+            $fields['settings_json'] = $settings_json;
+            $formats[]               = '%s';
+        }
+
         if ( array_key_exists( 'enabled', $data ) )
         {
             $fields['enabled'] = empty( $data['enabled'] ) ? 0 : 1;
@@ -246,6 +265,7 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
         $row['conditions_json']     = $this->decode_json_field( $row['conditions_json'] ?? null );
         $row['input_bindings_json'] = $this->decode_json_field( $row['input_bindings_json'] ?? null ) ?: [];
         $row['effect_mapping_json'] = $this->decode_json_field( $row['effect_mapping_json'] ?? null );
+        $row['settings_json']       = $this->decode_json_field( $row['settings_json'] ?? null ) ?: [];
         $row['enabled']             = ! empty( $row['enabled'] );
         return $row;
     }

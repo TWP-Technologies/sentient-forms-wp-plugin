@@ -43,7 +43,7 @@ describe('license-health-presentation', () => {
 		expect(presentation.quotaCta).toEqual({
 			label: 'Review billing',
 			enabled: true,
-			reason: 'Open Licensing to review managed usage and plan options.',
+			reason: 'Open Managed Service to review managed usage and plan options.',
 			action: 'focus_licensing_billing'
 		});
 	});
@@ -52,7 +52,7 @@ describe('license-health-presentation', () => {
 		const presentation = buildCreditPresentation(withCredits(0, 100), 'Resets Mar 1 (5 days)');
 		expect(presentation.severity).toBe('critical');
 		expect(presentation.headline).toBe('No managed credits remaining');
-		expect(presentation.detail).toContain('Managed proxy runs may pause until credits reset');
+		expect(presentation.detail).toContain('Managed-service runs may pause until credits reset');
 		expect(presentation.percentage).toBe(0);
 		expect(presentation.quotaCta?.enabled).toBe(true);
 		expect(presentation.quotaCta?.action).toBe('focus_licensing_billing');
@@ -123,7 +123,7 @@ describe('license-health-presentation', () => {
 		expect(presentation.quotaCta).toEqual({
 			label: 'Resolve balance',
 			enabled: true,
-			reason: 'Open Licensing to review billing and restore managed execution.',
+			reason: 'Open Managed Service to review billing and restore managed execution.',
 			action: 'focus_licensing_billing'
 		});
 	});

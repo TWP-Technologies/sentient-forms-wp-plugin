@@ -73,7 +73,10 @@ async function maybeCompletePrivacySetupAssistant(page: Page): Promise<void> {
 
 	while (Date.now() < deadline) {
 		if (await assistant.isVisible().catch(() => false)) {
-			await assistant.getByRole('button', { name: 'Skip Customized Setup' }).click();
+			const skipSetup = assistant
+				.getByRole('button', { name: 'Skip setup' })
+				.or(assistant.getByRole('button', { name: 'Skip Customized Setup' }));
+			await skipSetup.click();
 			await expect(assistant).toBeHidden();
 			return;
 		}

@@ -29,6 +29,9 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
      */
     protected string $rest_base = 'models';
 
+    private const MANAGED_PROVIDER      = 'sentient_managed';
+    private const MANAGED_DEFAULT_MODEL = 'gemini-3-flash-preview';
+
     /**
      * Local OpenRouter model metadata cache.
      *
@@ -251,6 +254,26 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             }
         }
 
+        if ( [] === $models )
+        {
+            foreach ( Sentient_Forms_OpenRouter_Model_Recommendations::all() as $model_id => $metadata )
+            {
+                $model = $this->format_openrouter_model_info(
+                    [
+                        'model_id'      => $model_id,
+                        'metadata_json' => $metadata,
+                        'expires_at'    => gmdate( 'Y-m-d H:i:s', time() + MONTH_IN_SECONDS ),
+                    ]
+                );
+
+                if ( '' !== $model['id'] )
+                {
+                    $model['tags'][] = 'bundled-recommendation';
+                    $models[ $model['id'] ] = $model;
+                }
+            }
+        }
+
         uasort(
             $models,
             static function ( array $a, array $b ): int {
@@ -289,6 +312,8 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             'code'         => (bool) preg_match( '/code|coder|coding/i', $model_id . ' ' . $name ),
             'vision'       => in_array( 'image', $input_modalities, true ),
             'tools'        => (bool) array_intersect( $supported_parameters, [ 'tools', 'tool_choice', 'function_call' ] ),
+            'structured'   => (bool) array_intersect( $supported_parameters, [ 'response_format', 'structured_outputs' ] ),
+            'web_search'   => array_key_exists( 'web_search', $pricing ),
             'long_context' => $context_window >= 128000,
         ];
 
@@ -298,7 +323,11 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
                     $is_free ? 'free' : null,
                     $is_preview ? 'preview' : null,
                     $is_stale ? 'stale-cache' : null,
-                    in_array( 'response_format', $supported_parameters, true ) ? 'structured-output' : null,
+                    $capabilities['structured'] ? 'structured-output' : null,
+                    $capabilities['tools'] ? 'tools' : null,
+                    $capabilities['reasoning'] ? 'reasoning' : null,
+                    $capabilities['code'] ? 'code' : null,
+                    $capabilities['web_search'] ? 'web-search' : null,
                     in_array( 'text', $output_modalities, true ) ? 'text-output' : null,
                     $capabilities['vision'] ? 'vision' : null,
                     $capabilities['long_context'] ? 'long-context' : null,
@@ -316,24 +345,47 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             'context_window'  => $context_window,
             'is_preview'      => $is_preview,
             'tags'            => $tags,
-            'recommended_for' => $this->recommended_for( $is_free, $capabilities, $supported_parameters ),
+            'supported_parameters' => $supported_parameters,
+            'pricing'         => $this->sanitize_pricing_map( $pricing ),
+            'recommended_for' => $this->recommended_for( $is_free, $capabilities, $supported_parameters, $metadata ),
         ];
     }
 
     private function build_presets( array $models ): array
     {
-        $default_model    = $this->pick_default_model_id( $models );
-        $free_model       = $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' === $model['cost_tier'] ) ?: $default_model;
-        $structured_model = $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'structured-output', $model['tags'], true ) ) ?: $default_model;
-        $long_model       = $this->pick_long_context_model_id( $models ) ?: $default_model;
+        $recommended_model = $this->pick_default_model_id( $models );
+        $quality_model     = $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'High-quality analysis', $model['recommended_for'] ?? [], true ) ) ?: $recommended_model;
+        $free_model        = $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' === $model['cost_tier'] ) ?: $recommended_model;
+        $structured_model  = $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'structured-output', $model['tags'], true ) ) ?: $recommended_model;
+        $fast_model        = $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( (string) ( $model['speed_tier'] ?? '' ), [ 'fastest', 'fast' ], true ) ) ?: $recommended_model;
+        $low_cost_model    = $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' !== (string) ( $model['cost_tier'] ?? '' ) && in_array( (string) ( $model['cost_tier'] ?? '' ), [ 'low', 'medium' ], true ) ) ?: $free_model;
+        $long_model        = $this->pick_long_context_model_id( $models ) ?: $recommended_model;
+        $reasoning_model   = $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['reasoning'] ) ) ?: $recommended_model;
+        $code_model        = $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['code'] ) ) ?: $recommended_model;
 
         return [
             [
                 'code'              => 'sf_default',
-                'display_name'      => __( 'Default local model', 'sentient-forms' ),
-                'description'       => __( 'Uses the best available cached OpenRouter text model, preferring free structured-output models when present.', 'sentient-forms' ),
+                'display_name'      => __( 'Recommended', 'sentient-forms' ),
+                'description'       => __( 'Uses the best cached OpenRouter model for general Sentient Forms actions, preferring free structured-output models when present.', 'sentient-forms' ),
                 'category'          => 'local',
-                'resolved_model_id' => $default_model,
+                'resolved_model_id' => $recommended_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_general',
+                'display_name'      => __( 'General purpose', 'sentient-forms' ),
+                'description'       => __( 'Balanced fallback for summaries, classification, and ordinary form automation.', 'sentient-forms' ),
+                'category'          => 'local',
+                'resolved_model_id' => $recommended_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_quality',
+                'display_name'      => __( 'Higher quality', 'sentient-forms' ),
+                'description'       => __( 'Prefers a stronger paid model for important production workflows where output quality matters more than raw cost.', 'sentient-forms' ),
+                'category'          => 'local',
+                'resolved_model_id' => $quality_model,
                 'auto_upgrade'      => true,
             ],
             [
@@ -353,11 +405,43 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
                 'auto_upgrade'      => true,
             ],
             [
+                'code'              => 'sf_fast',
+                'display_name'      => __( 'Speed', 'sentient-forms' ),
+                'description'       => __( 'Prefers cached models identified as fast or lightweight for low-latency form handling.', 'sentient-forms' ),
+                'category'          => 'local',
+                'resolved_model_id' => $fast_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_low_cost',
+                'display_name'      => __( 'Low cost', 'sentient-forms' ),
+                'description'       => __( 'Prefers free or low-cost cached models before paid premium models.', 'sentient-forms' ),
+                'category'          => 'local',
+                'resolved_model_id' => $low_cost_model,
+                'auto_upgrade'      => true,
+            ],
+            [
                 'code'              => 'sf_long_context',
                 'display_name'      => __( 'Long context', 'sentient-forms' ),
                 'description'       => __( 'Uses the cached model with the largest context window.', 'sentient-forms' ),
                 'category'          => 'local',
                 'resolved_model_id' => $long_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_reasoning',
+                'display_name'      => __( 'Reasoning', 'sentient-forms' ),
+                'description'       => __( 'Prefers a cached model that advertises reasoning or thinking controls.', 'sentient-forms' ),
+                'category'          => 'local',
+                'resolved_model_id' => $reasoning_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_code',
+                'display_name'      => __( 'Code generation', 'sentient-forms' ),
+                'description'       => __( 'Prefers cached models whose metadata indicates coding strength.', 'sentient-forms' ),
+                'category'          => 'local',
+                'resolved_model_id' => $code_model,
                 'auto_upgrade'      => true,
             ],
         ];
@@ -412,7 +496,10 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
 
         return [
             'model_id'          => (string) $applied['model_id'],
-            'display_name'      => $model['display_name'] ?? (string) $applied['model_id'],
+            'display_name'      => $model['display_name']
+                ?? ( self::MANAGED_DEFAULT_MODEL === (string) $applied['model_id']
+                    ? __( 'Sentient Forms managed default', 'sentient-forms' )
+                    : (string) $applied['model_id'] ),
             'resolution_source' => (string) $applied['level'],
             'override_chain'    => array_map(
                 static function ( array $step ): array {
@@ -442,6 +529,26 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             $backup        = isset( $selection['backup'] ) && '' !== (string) $selection['backup'] ? sanitize_text_field( (string) $selection['backup'] ) : null;
             $is_preset     = ! empty( $selection['is_preset'] );
             $selection_key = $primary;
+
+            if (
+                isset( $selection['provider'] )
+                && is_scalar( $selection['provider'] )
+                && self::MANAGED_PROVIDER === sanitize_key( (string) $selection['provider'] )
+            )
+            {
+                $model_id = $is_preset && $allow_presets ? self::MANAGED_DEFAULT_MODEL : $primary;
+
+                return [
+                    'level'           => $level,
+                    'selection'       => $selection_key,
+                    'model_id'        => $model_id,
+                    'backup_model_id' => $backup,
+                    'applied'         => false,
+                    'reason'          => '' !== $model_id
+                        ? __( 'Selection resolves through the Sentient Forms managed service route.', 'sentient-forms' )
+                        : __( 'No managed model selection configured at this level.', 'sentient-forms' ),
+                ];
+            }
         }
         elseif ( is_scalar( $selection ) )
         {
@@ -491,6 +598,16 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
 
     private function pick_default_model_id( array $models ): string
     {
+        $paid_general = $this->pick_first_model_id(
+            $models,
+            static fn ( array $model ): bool => 'free' !== (string) ( $model['cost_tier'] ?? '' )
+                && in_array( 'General purpose', $model['recommended_for'] ?? [], true )
+        );
+        if ( $paid_general )
+        {
+            return $paid_general;
+        }
+
         $structured_free = $this->pick_first_model_id(
             $models,
             static fn ( array $model ): bool => 'free' === $model['cost_tier'] && in_array( 'structured-output', $model['tags'], true )
@@ -532,6 +649,46 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
         return $models[ $model_id ] ?? null;
     }
 
+    private function fallback_openrouter_auto_model(): array
+    {
+        return [
+            'id'                   => 'openrouter/auto',
+            'display_name'         => 'OpenRouter Auto',
+            'provider'             => 'openrouter',
+            'speed_tier'           => 'balanced',
+            'cost_tier'            => 'unknown',
+            'capabilities'         => [
+                'reasoning'    => false,
+                'code'         => false,
+                'vision'       => false,
+                'tools'        => false,
+                'structured'   => false,
+                'web_search'   => false,
+                'long_context' => false,
+            ],
+            'context_window'       => 0,
+            'is_preview'           => false,
+            'tags'                 => [ 'fallback' ],
+            'supported_parameters' => [],
+            'pricing'              => [],
+            'recommended_for'      => [ __( 'Fallback until the OpenRouter catalog is refreshed', 'sentient-forms' ) ],
+        ];
+    }
+
+    private function sanitize_pricing_map( array $pricing ): array
+    {
+        $sanitized = [];
+        foreach ( $pricing as $key => $value )
+        {
+            if ( is_scalar( $value ) )
+            {
+                $sanitized[ sanitize_key( (string) $key ) ] = sanitize_text_field( (string) $value );
+            }
+        }
+
+        return $sanitized;
+    }
+
     private function sanitize_string_list( mixed $value ): array
     {
         if ( ! is_array( $value ) )
@@ -566,9 +723,19 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
 
     private function infer_cost_tier( array $pricing ): string
     {
+        if ( [] === $pricing )
+        {
+            return 'unknown';
+        }
+
         $prompt     = isset( $pricing['prompt'] ) ? (float) $pricing['prompt'] : 0.0;
         $completion = isset( $pricing['completion'] ) ? (float) $pricing['completion'] : 0.0;
         $max        = max( $prompt, $completion );
+
+        if ( $prompt < 0 || $completion < 0 )
+        {
+            return 'unknown';
+        }
 
         if ( 0.0 === $max )
         {
@@ -593,9 +760,9 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
         return 'premium';
     }
 
-    private function recommended_for( bool $is_free, array $capabilities, array $supported_parameters ): array
+    private function recommended_for( bool $is_free, array $capabilities, array $supported_parameters, array $metadata = [] ): array
     {
-        $recommendations = [];
+        $recommendations = $this->sanitize_string_label_list( $metadata['recommended_for'] ?? [] );
 
         if ( $is_free )
         {
@@ -618,6 +785,29 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
         }
 
         return $recommendations;
+    }
+
+    private function sanitize_string_label_list( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $labels = [];
+        foreach ( $value as $item )
+        {
+            if ( is_scalar( $item ) )
+            {
+                $label = sanitize_text_field( (string) $item );
+                if ( '' !== $label )
+                {
+                    $labels[] = $label;
+                }
+            }
+        }
+
+        return array_values( array_unique( $labels ) );
     }
 
     /**

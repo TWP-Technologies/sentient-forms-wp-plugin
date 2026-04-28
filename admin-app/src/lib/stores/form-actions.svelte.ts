@@ -61,7 +61,7 @@ const friendlyMessages: Record<string, string> = {
 	invalid_request:
 		'Sentient Forms sent an invalid execution payload. Review your action configuration and try again.',
 	cps_missing_proxy_key:
-		'Sentient Forms proxy key is missing. Activate your license on the Licensing tab to resume execution.',
+		'Sentient Forms managed service key is missing. Activate your license on the Managed Service tab to resume execution.',
 	duplicate_execution:
 		'Sentient Forms already processed this submission. Refresh the status to review the previous result.'
 };

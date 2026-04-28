@@ -130,6 +130,74 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
 
         register_rest_route(
             $this->namespace,
+            '/' . $this->rest_base . '/managed-checkout/start',
+            [
+                [
+                    'methods'             => WP_REST_Server::EDITABLE,
+                    'callback'            => [ $this, 'start_managed_checkout' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'plan_code' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_key',
+                        ],
+                        'success_url' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'esc_url_raw',
+                        ],
+                        'cancel_url' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'esc_url_raw',
+                        ],
+                        'disclosure_version' => [
+                            'required'          => true,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                        ],
+                        'accepted_managed_service_terms' => [
+                            'required'          => true,
+                            'type'              => 'boolean',
+                            'sanitize_callback' => 'rest_sanitize_boolean',
+                        ],
+                    ],
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/managed-checkout/complete',
+            [
+                [
+                    'methods'             => WP_REST_Server::EDITABLE,
+                    'callback'            => [ $this, 'complete_managed_checkout' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'checkout_intent_id' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                        ],
+                        'checkout_session_id' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                        ],
+                        'activation_token' => [
+                            'required'          => false,
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
+                        ],
+                    ],
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
             '/' . $this->rest_base . '/billing/checkout-session',
             [
                 [
@@ -407,6 +475,111 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         );
     }
 
+    public function start_managed_checkout( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $accepted = rest_sanitize_boolean( $request->get_param( 'accepted_managed_service_terms' ) );
+        if ( ! $accepted )
+        {
+            return $this->prepare_error_response(
+                'sentient_managed_checkout_consent_required',
+                __( 'Accept the Sentient Forms managed-service disclosure before starting checkout.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        $plan_code = sanitize_key( (string) $request->get_param( 'plan_code' ) );
+        if ( ! in_array( $plan_code, [ 'starter', 'pro', 'business' ], true ) )
+        {
+            return $this->prepare_error_response(
+                'sentient_managed_checkout_invalid_plan',
+                __( 'Choose a valid managed-service plan.', 'sentient-forms' ),
+                400,
+            );
+        }
+
+        $disclosure_version = sanitize_text_field( (string) $request->get_param( 'disclosure_version' ) );
+        $consent_id = $this->record_managed_service_consent(
+            $disclosure_version,
+            [
+                'action'                => 'managed_checkout_start',
+                'request_ip'            => $this->request_ip_hash(),
+                'plan_code'             => $plan_code,
+                'local_site_identifier' => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
+                'require_zdr'           => true,
+            ]
+        );
+        if ( is_wp_error( $consent_id ) )
+        {
+            return $consent_id;
+        }
+
+        $client = $this->get_managed_service_client();
+        $response = $client->start_managed_checkout(
+            [
+                'plan_code'                      => $plan_code,
+                'site_url'                       => home_url(),
+                'local_site_identifier'          => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
+                'success_url'                    => (string) $request->get_param( 'success_url' ),
+                'cancel_url'                     => (string) $request->get_param( 'cancel_url' ),
+                'disclosure_version'             => $disclosure_version,
+                'accepted_managed_service_terms' => true,
+                'require_zdr'                    => true,
+            ]
+        );
+
+        if ( is_wp_error( $response ) )
+        {
+            return $this->prepare_cps_error( $response );
+        }
+
+        $payload                      = $this->normalize_activation_payload( $response );
+        $payload['consent_recorded']  = true;
+        $payload['consent_id']        = $consent_id;
+        $payload['disclosure_version'] = $disclosure_version;
+
+        return $this->prepare_item_for_response( $payload, 200 );
+    }
+
+    public function complete_managed_checkout( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $client = $this->get_managed_service_client();
+        $response = $client->complete_managed_checkout(
+            [
+                'site_url'              => home_url(),
+                'local_site_identifier' => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
+                'checkout_intent_id'    => (string) $request->get_param( 'checkout_intent_id' ),
+                'checkout_session_id'   => (string) $request->get_param( 'checkout_session_id' ),
+                'activation_token'      => (string) $request->get_param( 'activation_token' ),
+            ]
+        );
+
+        if ( is_wp_error( $response ) )
+        {
+            return $this->prepare_cps_error( $response );
+        }
+
+        $payload = $this->normalize_activation_payload( $response );
+        if ( ! empty( $payload['activation_ready'] ) && ! empty( $payload['proxy_api_key'] ) )
+        {
+            $license_key = isset( $payload['license_key'] ) && is_scalar( $payload['license_key'] )
+                ? sanitize_text_field( (string) $payload['license_key'] )
+                : '';
+
+            $this->store_managed_activation_payload( $license_key, $payload );
+
+            $credential_id = $this->ensure_sentient_managed_provider_credential( Sentient_Forms_Plugin::instance()->get_license_data() );
+            if ( is_wp_error( $credential_id ) )
+            {
+                return $credential_id;
+            }
+
+            $payload['credential_id']          = $credential_id;
+            $payload['managed_provider_ready'] = true;
+        }
+
+        return $this->prepare_item_for_response( $payload, 200 );
+    }
+
     public function get_billing_state( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
         $proxy_key = $this->require_proxy_key();
@@ -464,12 +637,6 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
                 __( 'price_id or plan_code is required.', 'sentient-forms' ),
                 400,
             );
-        }
-
-        $trial_days = $request->get_param( 'trial_period_days' );
-        if ( null !== $trial_days && '' !== $trial_days )
-        {
-            $payload['trial_period_days'] = max( 0, (int) $trial_days );
         }
 
         $client   = $this->get_managed_service_client();
@@ -700,6 +867,97 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
                 'last_synced'    => current_time( 'mysql' ),
             ]
         );
+    }
+
+    private function ensure_sentient_managed_provider_credential( array $license_data ): int | WP_Error
+    {
+        global $wpdb;
+
+        $status_json = [
+            'license_id'        => $license_data['license_id'] ?? '',
+            'site_id'           => $license_data['site_id'] ?? '',
+            'license_status'    => $license_data['license_status'] ?? 'active',
+            'proxy_key_present' => '' !== trim( (string) ( $license_data['proxy_api_key'] ?? '' ) ),
+            'billing_boundary'  => [
+                'direct_openrouter_billed_by_sentient' => false,
+                'managed_proxy_billed_by_sentient'     => true,
+            ],
+        ];
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $existing    = $credentials->find_by_provider_auth_mode( 'sentient_managed', 'sentient_proxy' );
+        if ( is_array( $existing ) )
+        {
+            $updated = $credentials->update_status( (int) $existing['id'], 'valid', $status_json );
+            if ( is_wp_error( $updated ) )
+            {
+                return $updated;
+            }
+
+            $this->repair_custom_action_model_selection_after_provider_change();
+            return (int) $existing['id'];
+        }
+
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'sentient_managed',
+                'label'             => __( 'Sentient Forms managed service', 'sentient-forms' ),
+                'auth_mode'         => 'sentient_proxy',
+                'status'            => 'valid',
+                'status_json'       => $status_json,
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+
+        if ( is_wp_error( $credential_id ) )
+        {
+            return $credential_id;
+        }
+
+        $this->repair_custom_action_model_selection_after_provider_change();
+        return (int) $credential_id;
+    }
+
+    private function repair_custom_action_model_selection_after_provider_change(): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Local_Action_Model_Selection_Service' ) )
+        {
+            return;
+        }
+
+        global $wpdb;
+
+        $service = new Sentient_Forms_Local_Action_Model_Selection_Service(
+            new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ),
+            new Sentient_Forms_Provider_Credentials_Repository( $wpdb ),
+            new Sentient_Forms_Form_Mappings_Repository( $wpdb )
+        );
+        $service->repair_all_custom_actions();
+    }
+
+    private function record_managed_service_consent( string $disclosure_version, array $metadata ): int | WP_Error
+    {
+        global $wpdb;
+
+        $consents = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+
+        return $consents->record(
+            'sentient_managed',
+            $disclosure_version,
+            get_current_user_id() ?: null,
+            $metadata
+        );
+    }
+
+    private function request_ip_hash(): ?string
+    {
+        $ip = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( (string) wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+        if ( '' === $ip )
+        {
+            return null;
+        }
+
+        return hash( 'sha256', $ip );
     }
 
     private function require_proxy_key(): WP_Error | string

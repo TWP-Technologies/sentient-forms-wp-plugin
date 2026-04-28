@@ -71,9 +71,12 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 		$request->set_param(
 			'model_selection',
 			[
-				'primary'   => 'gemini-2.5-flash',
-				'backup'    => 'gemini-2.5-pro',
-				'is_preset' => false,
+				'primary'       => 'gemini-3-flash-preview',
+				'backup'        => 'gemini-3-pro-preview',
+				'is_preset'     => false,
+				'provider'      => 'sentient_managed',
+				'credential_id' => 123,
+				'reasoning'     => 'high',
 			]
 		);
 
@@ -81,10 +84,15 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 		$data     = $response->get_data();
 		$stored   = get_option( $this->option_key, [] );
 
-		$this->assertSame( 'gemini-2.5-flash', $data['config']['model_selection']['primary'] );
-		$this->assertSame( 'gemini-2.5-pro', $data['config']['model_selection']['backup'] );
+		$this->assertSame( 'gemini-3-flash-preview', $data['config']['model_selection']['primary'] );
+		$this->assertSame( 'gemini-3-pro-preview', $data['config']['model_selection']['backup'] );
 		$this->assertFalse( $data['config']['model_selection']['is_preset'] );
-		$this->assertSame( 'gemini-2.5-flash', $stored['summary_v1']['model_selection']['primary'] );
+		$this->assertSame( 'sentient_managed', $data['config']['model_selection']['provider'] );
+		$this->assertSame( 123, $data['config']['model_selection']['credential_id'] );
+		$this->assertSame( 'high', $data['config']['model_selection']['reasoning'] );
+		$this->assertSame( 'gemini-3-flash-preview', $stored['summary_v1']['model_selection']['primary'] );
+		$this->assertSame( 'sentient_managed', $stored['summary_v1']['model_selection']['provider'] );
+		$this->assertSame( 123, $stored['summary_v1']['model_selection']['credential_id'] );
 		$this->assertArrayNotHasKey( 'model_override', $stored['summary_v1'] );
 	}
 

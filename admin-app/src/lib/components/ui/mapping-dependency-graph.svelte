@@ -1787,23 +1787,23 @@
 <div class="sf:space-y-3" data-testid="dependency-graph">
 	<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
 		<div>
-			<p class="sf:text-sm sf:font-medium sf:text-slate-700">Dependency graph</p>
+			<p class="sf:text-sm sf:font-medium sf:text-slate-700">Action Execution Order</p>
 			<div
 				class="sf:mt-1 sf:flex sf:flex-wrap sf:items-center sf:gap-2 sf:text-[11px] sf:text-slate-600"
 			>
 				<span class="sf:rounded-full sf:border sf:border-slate-200 sf:bg-white sf:px-2 sf:py-0.5">
-					Pan, zoom, and drag enabled
+					Drag to reorder
 				</span>
 				<span class="sf:rounded-full sf:border sf:border-blue-200 sf:bg-blue-50 sf:px-2 sf:py-0.5">
-					Blue right handle -> left gray or hook-blue handle: dependency
+					Blue edges run first
 				</span>
 				<span
 					class="sf:rounded-full sf:border sf:border-indigo-200 sf:bg-indigo-50 sf:px-2 sf:py-0.5"
 				>
-					Hook root handle -> action: retarget trigger and make autonomous
+					Hook roots start a run
 				</span>
 				<span class="sf:rounded-full sf:border sf:border-rose-200 sf:bg-rose-50 sf:px-2 sf:py-0.5">
-					Hover edge turns red; click to remove that dependency
+					Red edges can be removed
 				</span>
 			</div>
 		</div>

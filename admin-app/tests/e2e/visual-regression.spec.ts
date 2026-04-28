@@ -33,7 +33,7 @@ const routeVisualAudits: RouteVisualAudit[] = [
 	{
 		name: 'licensing',
 		path: '/#/licensing',
-		ready: (page) => page.getByRole('heading', { name: 'License management' }),
+		ready: (page) => page.getByRole('heading', { name: 'Managed service' }),
 		screenshot: 'licensing-shell.png',
 		ariaSnapshot: 'licensing-shell.aria.yml'
 	},

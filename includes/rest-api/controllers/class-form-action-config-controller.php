@@ -273,11 +273,37 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
             $backup           = $sanitized_backup !== '' ? $sanitized_backup : null;
         }
 
-        return [
+        $selection = [
             'primary'   => $primary,
             'backup'    => $backup,
             'is_preset' => isset( $value['is_preset'] ) ? (bool) $value['is_preset'] : false,
         ];
+
+        if ( isset( $value['provider'] ) && is_scalar( $value['provider'] ) )
+        {
+            $provider = sanitize_key( (string) $value['provider'] );
+            if ( in_array( $provider, [ 'openrouter', 'sentient_managed' ], true ) )
+            {
+                $selection['provider'] = $provider;
+            }
+        }
+
+        if ( isset( $value['credential_id'] ) && is_scalar( $value['credential_id'] ) )
+        {
+            $credential_id = absint( $value['credential_id'] );
+            if ( $credential_id > 0 )
+            {
+                $selection['credential_id'] = $credential_id;
+            }
+        }
+
+        $reasoning = isset( $value['reasoning'] ) ? sanitize_key( (string) $value['reasoning'] ) : '';
+        if ( in_array( $reasoning, [ 'none', 'minimal', 'low', 'medium', 'high', 'xhigh' ], true ) )
+        {
+            $selection['reasoning'] = $reasoning;
+        }
+
+        return $selection;
     }
 
     /**

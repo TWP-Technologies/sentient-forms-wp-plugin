@@ -38,6 +38,12 @@ type LocalExecutionEvent = {
 	model?: string;
 };
 
+type LocalCustomActionSeed = {
+	action_id: number;
+	mapping_id: number;
+	model_selection_json: Record<string, unknown>;
+};
+
 async function ensureDirectOpenRouterBuilder(page: Page, drawer: Locator): Promise<void> {
 	const builder = drawer.getByTestId('local-openrouter-builder');
 	if (!(await builder.isVisible({ timeout: 1000 }).catch(() => false))) {
@@ -46,7 +52,10 @@ async function ensureDirectOpenRouterBuilder(page: Page, drawer: Locator): Promi
 	await expect(builder).toBeVisible();
 }
 
-function seedLocalOpenRouterProvider(label: string): LocalProviderSeed {
+function seedLocalOpenRouterProvider(
+	label: string,
+	options: { exclusive?: boolean } = {}
+): LocalProviderSeed {
 	const output = runWpEval(
 		`
 if ( ! class_exists( 'Sentient_Forms_Installer' ) ) {
@@ -64,6 +73,7 @@ $encrypted   = $vault->encrypt( $secret );
 $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
 $consents    = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
 $table       = $wpdb->prefix . 'sentient_provider_credentials';
+$exclusive   = '1' === ( getenv( 'OPENROUTER_EXCLUSIVE' ) ?: '' );
 
 if ( ! is_string( $encrypted ) ) {
     echo wp_json_encode([ 'error' => 'encrypt_failed' ]);
@@ -136,6 +146,24 @@ if ( is_wp_error( $credential_id ) ) {
     return;
 }
 
+if ( $exclusive ) {
+    $other_rows = $wpdb->get_results(
+        $wpdb->prepare(
+            'SELECT id FROM ' . esc_sql( $table ) . ' WHERE provider = %s AND id <> %d ORDER BY id ASC',
+            'openrouter',
+            (int) $credential_id
+        ),
+        ARRAY_A
+    );
+
+    foreach ( is_array( $other_rows ) ? $other_rows : [] as $row ) {
+        $row_id = absint( $row['id'] ?? 0 );
+        if ( $row_id > 0 ) {
+            $credentials->delete( $row_id );
+        }
+    }
+}
+
 $latest_consent = $consents->latest_for_provider( 'openrouter' );
 if (
     is_array( $latest_consent ) &&
@@ -162,6 +190,7 @@ echo wp_json_encode(
 );
 `,
 		{
+			OPENROUTER_EXCLUSIVE: options.exclusive ? '1' : '',
 			OPENROUTER_LABEL: label
 		}
 	);
@@ -417,6 +446,153 @@ echo wp_json_encode( [ 'urls' => is_array( $urls ) ? $urls : [] ] );
 	return Array.isArray(parsed.urls) ? parsed.urls : [];
 }
 
+function seedImportedEntrySummaryMappingWithoutCredential(
+	formId: number,
+	executionMode: 'sync' | 'async'
+): LocalCustomActionSeed {
+	const output = runWpEval(
+		`
+if ( ! class_exists( 'Sentient_Forms_Installer' ) ) {
+    echo wp_json_encode([ 'error' => 'sentient_forms_not_loaded' ]);
+    return;
+}
+
+Sentient_Forms_Installer::maybe_upgrade();
+
+global $wpdb;
+$form_id        = (string) absint( getenv( 'FORM_ID' ) ?: 0 );
+$execution_mode = sanitize_key( getenv( 'EXECUTION_MODE' ) ?: 'sync' );
+$definition     = Sentient_Forms_Bundled_Action_Templates::get( 'entry_summary_v1' );
+
+if ( ! is_array( $definition ) || '' === $form_id || '0' === $form_id ) {
+    echo wp_json_encode([ 'error' => 'invalid_seed_input' ]);
+    return;
+}
+
+$templates      = new Sentient_Forms_Action_Templates_Repository( $wpdb );
+$custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+$mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+$template_id    = $templates->upsert_by_code(
+    [
+        'source'                   => 'bundled',
+        'code'                     => 'entry_summary_v1',
+        'display_name'             => $definition['display_name'] ?? 'Entry Summary',
+        'description'              => $definition['description'] ?? null,
+        'prompt_template'          => $definition['prompt_template'] ?? '',
+        'default_model'            => $definition['default_model'] ?? 'openrouter/auto',
+        'structured_output_schema' => $definition['structured_output_schema'] ?? null,
+        'override_schema'          => $definition['override_schema'] ?? null,
+        'version'                  => $definition['version'] ?? '1',
+        'is_active'                => true,
+    ]
+);
+
+if ( is_wp_error( $template_id ) ) {
+    echo wp_json_encode([ 'error' => $template_id->get_error_message() ]);
+    return;
+}
+
+$action_id = $custom_actions->upsert_by_code(
+    [
+        'template_id'          => $template_id,
+        'code'                 => 'imported_entry_summary_v1_5cfa445eee8f',
+        'display_name'         => 'Entry Summary Import',
+        'definition_json'      => array_merge(
+            $definition['definition_json'] ?? [],
+            [
+                'template_code' => 'entry_summary_v1',
+            ]
+        ),
+        'model_selection_json' => [
+            'provider' => 'openrouter',
+            'model'    => 'gemini-3-flash-preview',
+        ],
+        'status'               => 'active',
+    ]
+);
+
+if ( is_wp_error( $action_id ) ) {
+    echo wp_json_encode([ 'error' => $action_id->get_error_message() ]);
+    return;
+}
+
+$mapping_id = $mappings->create(
+    [
+        'form_source'         => 'gravity_forms',
+        'form_id'             => $form_id,
+        'hook'                => 'gform_after_submission',
+        'action_kind'         => 'custom_action',
+        'action_id'           => $action_id,
+        'input_bindings_json' => [
+            'name'     => '1',
+            'email'    => '2',
+            'comments' => '3',
+        ],
+        'effect_mapping_json' => $definition['effect_mapping_json'] ?? [ 'store_result' => true ],
+        'execution_mode'      => in_array( $execution_mode, [ 'sync', 'async' ], true ) ? $execution_mode : 'sync',
+        'enabled'             => true,
+    ]
+);
+
+if ( is_wp_error( $mapping_id ) ) {
+    echo wp_json_encode([ 'error' => $mapping_id->get_error_message() ]);
+    return;
+}
+
+$action = $custom_actions->get( (int) $action_id );
+echo wp_json_encode(
+    [
+        'action_id'            => (int) $action_id,
+        'mapping_id'           => (int) $mapping_id,
+        'model_selection_json' => is_array( $action['model_selection_json'] ?? null ) ? $action['model_selection_json'] : [],
+    ]
+);
+`,
+		{
+			FORM_ID: String(formId),
+			EXECUTION_MODE: executionMode
+		}
+	);
+
+	const parsed = JSON.parse(output) as Partial<LocalCustomActionSeed> & { error?: string };
+	if (parsed.error) {
+		throw new Error(`Failed to seed imported Entry Summary mapping: ${parsed.error}`);
+	}
+
+	if (!parsed.action_id || !parsed.mapping_id || !parsed.model_selection_json) {
+		throw new Error(`Imported Entry Summary seed returned an invalid payload: ${output}`);
+	}
+
+	return {
+		action_id: parsed.action_id,
+		mapping_id: parsed.mapping_id,
+		model_selection_json: parsed.model_selection_json
+	};
+}
+
+function getLocalCustomActionModelSelection(code: string): Record<string, unknown> {
+	const output = runWpEval(
+		`
+global $wpdb;
+$code           = sanitize_key( getenv( 'ACTION_CODE' ) ?: '' );
+$custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+$action         = $custom_actions->get_by_code( $code );
+
+echo wp_json_encode(
+    [
+        'model_selection_json' => is_array( $action['model_selection_json'] ?? null ) ? $action['model_selection_json'] : [],
+    ]
+);
+`,
+		{
+			ACTION_CODE: code
+		}
+	);
+
+	const parsed = JSON.parse(output) as { model_selection_json?: Record<string, unknown> };
+	return parsed.model_selection_json ?? {};
+}
+
 test.describe('Local OpenRouter browser submission @local-openrouter-browser', function () {
 	test.skip(
 		!runLocalOpenRouterBrowserSmoke,
@@ -551,6 +727,104 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		expect(
 			localActionNotes.some((note) => note.value.includes('Missing Authentication header'))
 		).toBe(false);
+
+		const urls = getLocalOpenRouterSmokeUrls();
+		expect(urls.some((url) => url.includes('openrouter.ai/api/v1/chat/completions'))).toBe(true);
+		expect(urls.filter((url) => url.includes('sentientforms.com'))).toHaveLength(0);
+	});
+
+	test('runs an imported bundled Entry Summary mapping that was saved before credential binding', async function ({
+		page
+	}) {
+		await requireWpRestHealthy(page);
+
+		const token = `imported-summary-${Date.now()}`;
+		const formId = ensureGravityForm('Local OpenRouter Imported Entry Summary', [
+			{ type: 'text', id: 1, label: 'Name', isRequired: true },
+			{ type: 'email', id: 2, label: 'Email', isRequired: true },
+			{ type: 'textarea', id: 3, label: 'Comments', isRequired: true }
+		]);
+		resetLocalFormFixture({
+			formId,
+			actionCodes: ['imported_entry_summary_v1_5cfa445eee8f']
+		});
+		expect(getLocalFormMappings(formId)).toEqual([]);
+
+		const seed = seedLocalOpenRouterProvider('Imported Entry Summary OpenRouter key', {
+			exclusive: true
+		});
+		const imported = seedImportedEntrySummaryMappingWithoutCredential(
+			formId,
+			localOpenRouterBrowserExecutionMode
+		);
+		expect(imported.model_selection_json).toMatchObject({
+			provider: 'openrouter',
+			model: 'gemini-3-flash-preview'
+		});
+		expect(imported.model_selection_json.credential_id).toBeUndefined();
+
+		setLocalOpenRouterMockResponse({
+			summary: 'Imported built-in entry summary completed from a real browser submission.'
+		});
+
+		const formUrl = ensureGravityFormPage(formId, 'Local OpenRouter Imported Entry Summary Page');
+		const email = `${token}@example.test`;
+		const baselineEntryId = getLatestEntryId(formId);
+
+		await submitFrontEndGravityForm(page, formUrl, formId, {
+			name: 'Imported Summary Lead',
+			email,
+			message:
+				'Please quote product number 183671 at 500 pieces. Also, this message mentions suspicious viagra sales copy.'
+		});
+
+		const entryId = await waitForEntryId(page, formId, baselineEntryId, email);
+		expect(entryId).toBeGreaterThan(baselineEntryId);
+
+		await expect
+			.poll(function () {
+				if (localOpenRouterBrowserExecutionMode === 'async') {
+					runActionScheduler();
+				}
+
+				return getLatestLocalExecutionEvent(entryId)?.status ?? null;
+			})
+			.toBe('succeeded');
+
+		const event = getLatestLocalExecutionEvent(entryId);
+		expect(event).toMatchObject({
+			entry_id: String(entryId),
+			provider: 'openrouter',
+			model: 'openrouter/auto',
+			status: 'succeeded'
+		});
+
+		const repairedSelection = getLocalCustomActionModelSelection(
+			'imported_entry_summary_v1_5cfa445eee8f'
+		);
+		expect(repairedSelection).toMatchObject({
+			provider: 'openrouter',
+			model: 'openrouter/auto',
+			credential_id: seed.credential_id
+		});
+
+		const summary = getEntryMeta(entryId, 'sentient_forms_summary');
+		const summaryText = typeof summary === 'string' ? summary : JSON.stringify(summary);
+		expect(summaryText).toContain('Imported built-in entry summary completed');
+
+		const notes = await waitForGravityEntryNotes(
+			entryId,
+			page,
+			(entryNotes) =>
+				entryNotes.every((note) => !note.value.includes('Provider credential could not be found')),
+			{
+				description: 'absence of provider credential failure notes',
+				runScheduler: localOpenRouterBrowserExecutionMode === 'async'
+			}
+		);
+		expect(notes.some((note) => note.value.includes('Provider credential could not be found'))).toBe(
+			false
+		);
 
 		const urls = getLocalOpenRouterSmokeUrls();
 		expect(urls.some((url) => url.includes('openrouter.ai/api/v1/chat/completions'))).toBe(true);

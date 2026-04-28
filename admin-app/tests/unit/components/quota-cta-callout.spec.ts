@@ -35,7 +35,7 @@ describe('QuotaCtaCallout', () => {
 			cta: {
 				label: 'Review licensing',
 				enabled: true,
-				reason: 'Open Licensing to review current credit status and next steps.',
+				reason: 'Open Managed Service to review current credit status and next steps.',
 				action: 'navigate_licensing'
 			},
 			onAction: (nextAction: string) => {
@@ -50,7 +50,7 @@ describe('QuotaCtaCallout', () => {
 		const reason = target.querySelector('[data-testid="quota-cta-reason"]');
 		expect(target.querySelector('[data-testid="quota-cta-callout"]')).not.toBeNull();
 		expect(button?.disabled).toBe(false);
-		expect(reason?.textContent).toContain('Open Licensing');
+		expect(reason?.textContent).toContain('Open Managed Service');
 		button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 		expect(action).toBe('navigate_licensing');
 		dispose();

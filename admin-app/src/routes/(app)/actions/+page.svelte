@@ -1109,6 +1109,7 @@
 							templateModelHint={getActionDefinitionContext(configuringActionId).modelHint}
 							baseCreditCost={getActionDefinitionContext(configuringActionId).baseCreditCost}
 							actionSelection={actionDefaults.model_selection ?? null}
+							{providerCredentials}
 							onchange={handleActionModelSelectionChange}
 						/>
 					</div>

@@ -9,7 +9,7 @@
 		Button,
 		Card,
 		InputField,
-		ModelSelect,
+		ModelSelector,
 		SelectField,
 		TextareaField,
 		Toggle,
@@ -25,7 +25,8 @@
 		ActionDefinition,
 		ActionDefinitionPayload,
 		CustomAction,
-		CustomActionPostExecutionActionPayload
+		CustomActionPostExecutionActionPayload,
+		ModelSelection
 	} from '$lib/api/types';
 	import { generateCustomActionCode } from '$lib/utils/custom-actions';
 
@@ -127,6 +128,20 @@
 			: ''
 	);
 	let modelHint = $state<string | null>(initialData?.model_hint ?? null);
+	let modelSelection = $state<ModelSelection | null>(
+		initialData?.model_selection ??
+			(initialData?.model_hint
+				? {
+						primary: initialData.model_hint,
+						backup: null,
+						is_preset: initialData.model_hint.startsWith('sf_')
+					}
+				: {
+						primary: 'sf_default',
+						backup: null,
+						is_preset: true
+					})
+	);
 	let addEntryNote = $state(initialData === null || Boolean(initialEntryNote));
 	let entryNoteMessage = $state(
 		typeof initialEntryNote?.message === 'string'
@@ -171,6 +186,7 @@
 	);
 	const generatedCode = $derived(generateCustomActionCode(displayName));
 	const baseTemplateUnavailable = $derived(!isEditMode && selectableDefinitions.length === 0);
+	const resolvedModelHint = $derived(modelSelection?.primary ?? modelHint ?? null);
 
 	let errors = $state<Array<{ path: string; message: string }>>([]);
 
@@ -277,7 +293,8 @@
 			display_name: displayName.trim(),
 			description: description.trim() || null,
 			prompt_overrides: buildPromptOverrides(),
-			model_hint: modelHint?.trim() || null,
+			model_hint: resolvedModelHint?.trim() || null,
+			model_selection: modelSelection,
 			action_kind: initialData?.action_kind ?? 'template_override',
 			definition: buildDefinition(),
 			definition_version: initialData?.definition_version ?? 1,
@@ -332,8 +349,9 @@
 		}
 	}
 
-	function handleModelChange(value: string | null) {
-		modelHint = value;
+	function handleModelChange(selection: ModelSelection) {
+		modelSelection = selection;
+		modelHint = selection.primary;
 	}
 </script>
 
@@ -536,9 +554,14 @@
 		</div>
 
 		<div class="sf:grid sf:gap-4 sf:md:grid-cols-1">
-			<ModelSelect
-				id="custom-action-model-hint"
-				bind:value={modelHint}
+			<ModelSelector
+				label="Model Selection"
+				level="action"
+				value={modelSelection}
+				actionId={initialData?.code ?? generatedCode}
+				templateModelHint={selectedDefinition?.modelHint ?? null}
+				baseCreditCost={selectedDefinition?.baseCreditCost ?? initialData?.base_credit_cost ?? null}
+				actionSelection={modelSelection}
 				onchange={handleModelChange}
 			/>
 		</div>

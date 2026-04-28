@@ -1,4 +1,8 @@
 import type { FormSourceSummary } from '$lib/api/types';
+import {
+	announceWordPressSessionExpired,
+	isWordPressSessionExpired
+} from '$lib/api/session-expiry';
 import { notifications } from '$lib/stores/notifications';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -123,7 +127,10 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 
 	if (!response.ok) {
         const error = new ApiError('Request failed', response.status, payload);
-        if (showNotifications) {
+        const sessionExpired = isWordPressSessionExpired(response.status, payload);
+        if (sessionExpired) {
+            announceWordPressSessionExpired(payload);
+        } else if (showNotifications) {
             const message = isApiErrorPayload(payload) ? payload.message : null;
             notifications.error(message ?? 'Request failed');
         }

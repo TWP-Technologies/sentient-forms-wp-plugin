@@ -159,7 +159,7 @@ export function providerCredentialAuthModeLabel(credential: LocalProviderCredent
 		case 'constant':
 			return 'Server secret';
 		case 'sentient_proxy':
-			return 'Managed proxy';
+			return 'Managed service';
 		case 'oauth_broker':
 			return 'OAuth broker';
 		default:
@@ -178,7 +178,7 @@ export function providerCredentialSecretSummary(credential: LocalProviderCredent
 	}
 
 	if (credential.auth_mode === 'sentient_proxy') {
-		return credential.secret_configured ? 'proxy key available' : 'proxy key missing';
+		return credential.secret_configured ? 'service key available' : 'service key missing';
 	}
 
 	return credential.secret_configured ? 'secret configured' : 'secret missing';

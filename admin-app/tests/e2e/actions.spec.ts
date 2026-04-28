@@ -60,9 +60,9 @@ const baseLinkages = [
 	{
 		local_mapping_id: 'map-1',
 		form_id: formId,
-		action_code: 'spam-check',
+		central_action_id: 'spam-check',
 		action_name_label: 'Spam check',
-		action_source: 'cps',
+		action_type_indicator: 'master',
 		action_status: 'active',
 		trigger_hooks: ['gform_validation'],
 		created_at: '2025-11-20T00:00:00Z',
@@ -591,9 +591,36 @@ test.describe('Actions admin flows', () => {
 		await page.getByRole('button', { name: 'Configure' }).click();
 
 		await expectAppUrl(page, '/actions/gravity_forms/123');
-		await expect(page.getByText('Action library')).toBeVisible();
-		const definitionsCard = page.getByTestId('action-definitions-card');
-		await expect(definitionsCard.getByText('Spam Detection', { exact: true })).toBeVisible();
+		await expect(page.getByText('Action Execution Order')).toBeVisible();
+		await expect(page.locator('header').getByRole('button', { name: 'Add action' })).toBeVisible();
+	});
+
+	test('opens mapping editor from table without cloning Svelte state proxies', async ({ page }) => {
+		const pageErrors: string[] = [];
+		page.on('pageerror', (error) => {
+			pageErrors.push(error.message);
+		});
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		const table = await openLinkedActionsTable(page);
+		await table.locator('tbody tr').first().getByRole('button', { name: 'Configure' }).click();
+
+		const modal = page.getByTestId('mapping-config-modal');
+		await expect(modal.getByText('Configure Action Mapping')).toBeVisible();
+		await expect(modal.getByTestId('mapping-section-toggle-conditions')).toBeVisible();
+		expect(pageErrors.filter((message) => message.includes('structuredClone'))).toEqual([]);
 	});
 
 	test('shows only built-in definitions in the overview card and hides source chips', async ({
@@ -1386,7 +1413,7 @@ test.describe('Actions admin flows', () => {
 		await expect(table.getByText('Disabled')).toBeVisible();
 	});
 
-	test('surfaces only the documented bundled built-ins in the action library', async ({ page }) => {
+	test('surfaces only the documented bundled built-ins in the add-action drawer', async ({ page }) => {
 		await mockWpJson(page, {
 			actions: {
 				forms: { [formSource]: baseForms },
@@ -1417,13 +1444,6 @@ test.describe('Actions admin flows', () => {
 		});
 
 		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
-
-		const libraryCard = page.getByTestId('action-definitions-card');
-		await expect(libraryCard.getByText('Spam Detection')).toBeVisible();
-		await expect(libraryCard.getByText('Content Quality Validation')).toBeVisible();
-		await expect(libraryCard.getByText('Entry Summary')).toBeVisible();
-		await expect(libraryCard.getByText('Spam Analysis')).toHaveCount(0);
-		await expect(libraryCard.getByText('Entry Evaluation')).toHaveCount(0);
 
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
 		const drawer = page.getByTestId('link-action-form');
@@ -2806,9 +2826,21 @@ test.describe('Actions admin flows', () => {
 		const graphCanvas = page.getByTestId('dependency-graph-canvas');
 		const mapOneCard = page.getByTestId('dependency-node-card-map-1');
 		await dragNodeCardByMouse(page, 'map-2', 140, 68);
-		const draggedBox = await mapTwoCard.boundingBox();
+		let draggedBox = await mapTwoCard.boundingBox();
 		if (!draggedBox) {
 			throw new Error('Could not resolve dragged map-2 card position before edge removal.');
+		}
+		if (
+			Math.max(
+				Math.abs(draggedBox.x - beforeDragBox.x),
+				Math.abs(draggedBox.y - beforeDragBox.y)
+			) < 12
+		) {
+			await dragNodeCardByMouse(page, 'map-2', 180, 96);
+			draggedBox = await mapTwoCard.boundingBox();
+			if (!draggedBox) {
+				throw new Error('Could not resolve re-dragged map-2 card position before edge removal.');
+			}
 		}
 		assertBoxMoved(beforeDragBox, draggedBox);
 		const mapOneBeforeRemoveBox = await mapOneCard.boundingBox();
@@ -2907,7 +2939,7 @@ test.describe('Actions admin flows', () => {
 		await expect(dependentCard.getByText('During Validation')).toHaveCount(0);
 	});
 
-	test('shows compact graph helper legend and removes redundant per-card drag instruction', async ({
+	test('shows compact execution-order helper legend and removes redundant per-card drag instruction', async ({
 		page
 	}) => {
 		const linkages = [
@@ -2936,10 +2968,11 @@ test.describe('Actions admin flows', () => {
 
 		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
 		await ensureDependencyGraphVisible(page);
-		await expect(page.getByText('Pan, zoom, and drag enabled')).toBeVisible();
-		await expect(
-			page.getByText('Blue right handle -> left gray or hook-blue handle: dependency')
-		).toBeVisible();
+		const graph = page.getByTestId('dependency-graph');
+		await expect(graph.getByText('Action Execution Order')).toBeVisible();
+		await expect(graph.getByText('Drag to reorder')).toBeVisible();
+		await expect(graph.getByText('Blue edges run first')).toBeVisible();
+		await expect(graph.getByText('Hook roots start a run')).toBeVisible();
 		const mappingCard = page.getByTestId('dependency-node-card-map-1');
 		await expect(mappingCard).not.toContainText(
 			"Drag from the right blue handle into another action's left gray or hook-blue handles to set dependency order."

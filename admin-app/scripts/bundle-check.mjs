@@ -2,9 +2,11 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-// The dependency-graph UX introduced xyflow/dagre runtime chunks; keep a hard
-// ceiling, but leave only narrow headroom above the current ~756 KB baseline.
-const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 760);
+// This totals all JS emitted by the static admin SPA, including lazy route
+// chunks. The local-first model selector, action log, managed-service setup,
+// and dependency-graph UX currently sit at ~798 KB after route splitting; keep
+// a hard ceiling with narrow headroom so accidental payload growth still fails.
+const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 825);
 const distRoot = path.resolve('..', 'assets', 'dist', '_app', 'immutable');
 
 async function collectSizes(dir) {

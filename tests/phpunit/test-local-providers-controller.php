@@ -451,7 +451,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' );
         $request->set_body_params(
             [
-                'label'                           => 'Sentient managed proxy',
+                'label'                           => 'Sentient Forms managed service',
                 'disclosure_version'              => '2026-04-sentient-managed-proxy-v1',
                 'accepted_external_service_terms' => false,
             ]
@@ -473,7 +473,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' );
         $request->set_body_params(
             [
-                'label'                           => 'Sentient managed proxy',
+                'label'                           => 'Sentient Forms managed service',
                 'disclosure_version'              => '2026-04-sentient-managed-proxy-v1',
                 'accepted_external_service_terms' => true,
             ]
@@ -500,7 +500,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' );
         $request->set_body_params(
             [
-                'label'                           => 'Primary Sentient managed proxy',
+                'label'                           => 'Primary Sentient Forms managed service',
                 'disclosure_version'              => '2026-04-sentient-managed-proxy-v1',
                 'accepted_external_service_terms' => true,
             ]
@@ -562,7 +562,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $first_id = $credentials->create(
             [
                 'provider'          => 'sentient_managed',
-                'label'             => 'Existing managed proxy',
+                'label'             => 'Existing managed service',
                 'auth_mode'         => 'sentient_proxy',
                 'status'            => 'disabled',
                 'status_json'       => [ 'proxy_key_present' => false ],

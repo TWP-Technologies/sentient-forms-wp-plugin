@@ -48,7 +48,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $data = $response->get_data();
         $this->assertSame( 'local-openrouter-v1', $data['pricing_policy_version'] );
         $this->assertCount( 2, $data['models'] );
-        $this->assertCount( 4, $data['presets'] );
+        $this->assertGreaterThanOrEqual( 8, count( $data['presets'] ) );
 
         $this->assertSame( 'openai/gpt-oss-20b:free', $data['models'][0]['id'] );
         $this->assertSame( 'free', $data['models'][0]['cost_tier'] );
@@ -58,7 +58,42 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $preset_codes = wp_list_pluck( $data['presets'], 'code' );
         $this->assertContains( 'sf_default', $preset_codes );
         $this->assertContains( 'sf_free', $preset_codes );
+        $this->assertContains( 'sf_general', $preset_codes );
+        $this->assertContains( 'sf_quality', $preset_codes );
+        $this->assertContains( 'sf_structured', $preset_codes );
+        $this->assertContains( 'sf_fast', $preset_codes );
+        $this->assertContains( 'sf_low_cost', $preset_codes );
+        $this->assertContains( 'sf_long_context', $preset_codes );
+        $this->assertContains( 'sf_reasoning', $preset_codes );
+        $this->assertContains( 'sf_code', $preset_codes );
         $this->assertSame( 'openai/gpt-oss-20b:free', $data['presets'][0]['resolved_model_id'] );
+    }
+
+    public function test_list_models_returns_bundled_recommendations_when_cache_empty(): void
+    {
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/models' );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data      = $response->get_data();
+        $model_ids = wp_list_pluck( $data['models'], 'id' );
+
+        $this->assertContains( 'openai/gpt-5.1', $model_ids );
+        $this->assertContains( 'anthropic/claude-sonnet-4.5', $model_ids );
+        $this->assertContains( 'openrouter/free', $model_ids );
+        $this->assertContains( 'openrouter/auto', $model_ids );
+        $this->assertContains( 'bundled-recommendation', $data['models'][0]['tags'] );
+        $this->assertSame( 'openai/gpt-5.1', $data['presets'][0]['resolved_model_id'] );
+
+        $presets_by_code = [];
+        foreach ( $data['presets'] as $preset )
+        {
+            $presets_by_code[ $preset['code'] ] = $preset;
+        }
+
+        $this->assertSame( 'openrouter/free', $presets_by_code['sf_free']['resolved_model_id'] );
+        $this->assertSame( 'anthropic/claude-sonnet-4.5', $presets_by_code['sf_quality']['resolved_model_id'] );
     }
 
     public function test_resolve_model_prefers_mapping_selection_over_lower_scopes(): void
@@ -102,6 +137,42 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 'sf_free', $applied[0]['selection'] );
     }
 
+    public function test_resolve_model_preserves_managed_route_preview(): void
+    {
+        $this->seed_model_cache();
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' );
+        $request->set_body_params(
+            [
+                'mapping_selection' => [
+                    'primary'   => 'sf_default',
+                    'is_preset' => true,
+                    'provider'  => 'sentient_managed',
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'gemini-3-flash-preview', $data['model_id'] );
+        $this->assertSame( 'Sentient Forms managed default', $data['display_name'] );
+        $this->assertSame( 'mapping', $data['resolution_source'] );
+
+        $applied = array_values(
+            array_filter(
+                $data['override_chain'],
+                static fn ( array $step ): bool => ! empty( $step['applied'] )
+            )
+        );
+
+        $this->assertCount( 1, $applied );
+        $this->assertSame( 'mapping', $applied[0]['level'] );
+        $this->assertStringContainsString( 'managed service', $applied[0]['reason'] );
+    }
+
     public function test_resolve_model_uses_template_hint_when_no_override_exists(): void
     {
         $this->seed_model_cache();
@@ -118,7 +189,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 'template', $data['resolution_source'] );
     }
 
-    public function test_resolve_model_falls_back_to_openrouter_auto_when_cache_empty(): void
+    public function test_resolve_model_falls_back_to_bundled_recommended_model_when_cache_empty(): void
     {
         $request  = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' );
         $response = rest_get_server()->dispatch( $request );
@@ -126,9 +197,9 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
 
         $data = $response->get_data();
-        $this->assertSame( 'openrouter/auto', $data['model_id'] );
+        $this->assertSame( 'openai/gpt-5.1', $data['model_id'] );
         $this->assertSame( 'fallback', $data['resolution_source'] );
-        $this->assertSame( 'openrouter/auto', $data['display_name'] );
+        $this->assertSame( 'OpenAI: GPT-5.1', $data['display_name'] );
     }
 
     public function test_estimate_model_reports_no_sentient_debit_for_local_openrouter(): void

@@ -237,6 +237,11 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             'execution_request_id' => $request->get_param( 'execution_request_id' ) ?: null,
             'mapping_id'     => $request->get_param( 'mapping_id' ) ?: null,
             'resolved_model_id' => $request->get_param( 'resolved_model_id' ) ?: null,
+            'usage_cost'     => self::build_legacy_usage_cost_summary(
+                [
+                    'credits_used' => (int) $request->get_param( 'credits_used' ),
+                ]
+            ),
             'created_at'     => gmdate( 'c' ),
             'completed_at'   => $request->get_param( 'status' ) !== 'pending' ? gmdate( 'c' ) : null,
         ];
@@ -294,6 +299,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                                     ? sanitize_text_field( (string) $data['resolved_model_id'] )
                                     : null,
             'pricing'        => self::sanitize_log_json_value( $data['pricing'] ?? [] ),
+            'usage_cost'     => self::sanitize_log_json_value( $data['usage_cost'] ?? self::build_legacy_usage_cost_summary( $data ) ),
             'details'        => self::sanitize_log_json_value( $data['details'] ?? [] ),
             'structured_output_valid' => ! empty( $data['structured_output_valid'] ),
             'created_at'     => gmdate( 'c' ),
@@ -575,6 +581,8 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         $status      = $this->normalize_local_execution_status( (string) ( $event['status'] ?? '' ) );
         $action      = $this->resolve_local_execution_action( $event );
         $cost        = is_array( $event['cost_json'] ?? null ) ? $event['cost_json'] : [];
+        $provider    = sanitize_key( (string) ( $event['provider'] ?? 'openrouter' ) );
+        $metering    = is_array( $result_json['metering'] ?? null ) ? $result_json['metering'] : [];
 
         $pricing = [
             'pricing_policy_version'     => 'local-direct-provider-v1',
@@ -583,6 +591,20 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             'normalized_actual_credits'  => 0,
             'debited_credits'            => 0,
         ];
+
+        if ( 'sentient_managed' === $provider )
+        {
+            $debited_credits = isset( $metering['debited_credits'] ) ? absint( $metering['debited_credits'] ) : 0;
+            $pricing = [
+                'pricing_policy_version'     => isset( $metering['pricing_policy_version'] ) && is_scalar( $metering['pricing_policy_version'] )
+                    ? sanitize_text_field( (string) $metering['pricing_policy_version'] )
+                    : 'sentient-managed-v1',
+                'estimate_source'            => 'sentient_forms_managed_metering',
+                'base_floor_credits'         => 0,
+                'normalized_actual_credits'  => $debited_credits,
+                'debited_credits'            => $debited_credits,
+            ];
+        }
 
         if ( ! empty( $cost ) )
         {
@@ -606,11 +628,13 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             'mapping_id'              => isset( $event['mapping_id'] ) ? 'local_first_' . absint( $event['mapping_id'] ) : null,
             'resolved_model_id'       => isset( $event['model'] ) ? sanitize_text_field( (string) $event['model'] ) : null,
             'pricing'                 => $pricing,
+            'usage_cost'              => $this->build_local_usage_cost_summary( $provider, $event, $result_json, $cost, $pricing ),
             'details'                 => [
                 'source'             => 'local_execution_events',
-                'provider'           => sanitize_key( (string) ( $event['provider'] ?? 'openrouter' ) ),
+                'provider'           => $provider,
                 'token_usage'        => is_array( $event['token_usage_json'] ?? null ) ? $event['token_usage_json'] : [],
                 'cost'               => $cost,
+                'stored_result'      => $result_json,
                 'evaluation_payload' => [
                     'result_data' => $result_data,
                 ],
@@ -814,6 +838,140 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         return null;
     }
 
+    /**
+     * @param array<string, mixed> $event
+     * @param array<string, mixed> $result_json
+     * @param array<string, mixed> $cost
+     * @param array<string, mixed> $pricing
+     * @return array<string, mixed>
+     */
+    private function build_local_usage_cost_summary( string $provider, array $event, array $result_json, array $cost, array $pricing ): array
+    {
+        if ( 'sentient_managed' === $provider )
+        {
+            $credits = absint( $pricing['debited_credits'] ?? 0 );
+            return [
+                'route'       => 'sentient_forms_managed',
+                'label'       => sprintf(
+                    /* translators: %d: Sentient Forms credit count. */
+                    _n( 'SF %d credit', 'SF %d credits', $credits, 'sentient-forms' ),
+                    $credits
+                ),
+                'kind'        => 'sentient_credits',
+                'credits'     => $credits,
+                'amount_usd'  => $this->microusd_to_usd( $cost['billed_amount_microusd'] ?? ( $result_json['metering']['billed_amount_microusd'] ?? null ) ),
+                'known'       => true,
+            ];
+        }
+
+        $amount = $this->extract_amount_usd( $cost );
+        if ( null !== $amount )
+        {
+            return [
+                'route'      => 'openrouter_direct',
+                'label'      => 0.0 === $amount ? 'OR Free' : 'OR ' . $this->format_usd( $amount ),
+                'kind'       => 0.0 === $amount ? 'openrouter_free' : 'openrouter_currency',
+                'amount_usd' => $amount,
+                'known'      => true,
+            ];
+        }
+
+        $model = is_scalar( $event['model'] ?? null ) ? (string) $event['model'] : '';
+        if ( str_ends_with( $model, ':free' ) || ! empty( $cost['free'] ) )
+        {
+            return [
+                'route'      => 'openrouter_direct',
+                'label'      => 'OR Free',
+                'kind'       => 'openrouter_free',
+                'amount_usd' => 0.0,
+                'known'      => true,
+            ];
+        }
+
+        return [
+            'route' => 'openrouter_direct',
+            'label' => 'Unknown',
+            'kind'  => 'unknown',
+            'known' => false,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private static function build_legacy_usage_cost_summary( array $data ): array
+    {
+        $pricing = is_array( $data['pricing'] ?? null ) ? $data['pricing'] : [];
+        $credits = absint( $pricing['debited_credits'] ?? $data['credits_used'] ?? 0 );
+        if ( $credits > 0 )
+        {
+            return [
+                'route'   => 'sentient_forms_managed',
+                'label'   => sprintf(
+                    /* translators: %d: Sentient Forms credit count. */
+                    _n( 'SF %d credit', 'SF %d credits', $credits, 'sentient-forms' ),
+                    $credits
+                ),
+                'kind'    => 'sentient_credits',
+                'credits' => $credits,
+                'known'   => true,
+            ];
+        }
+
+        return [
+            'route' => 'unknown',
+            'label' => 'Unknown',
+            'kind'  => 'unknown',
+            'known' => false,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $cost
+     */
+    private function extract_amount_usd( array $cost ): ?float
+    {
+        if ( isset( $cost['amount_usd'] ) && is_numeric( $cost['amount_usd'] ) )
+        {
+            $amount = (float) $cost['amount_usd'];
+            return $amount >= 0 ? $amount : null;
+        }
+
+        if ( isset( $cost['cost'] ) && is_numeric( $cost['cost'] ) )
+        {
+            $amount = (float) $cost['cost'];
+            return $amount >= 0 ? $amount : null;
+        }
+
+        return null;
+    }
+
+    private function microusd_to_usd( mixed $value ): ?float
+    {
+        if ( ! is_numeric( $value ) )
+        {
+            return null;
+        }
+
+        return max( 0, (float) $value ) / 1000000;
+    }
+
+    private function format_usd( float $amount ): string
+    {
+        if ( $amount >= 1 )
+        {
+            return '$' . number_format( $amount, 2 );
+        }
+
+        if ( $amount >= 0.01 )
+        {
+            return '$' . number_format( $amount, 4 );
+        }
+
+        return '$' . rtrim( rtrim( number_format( $amount, 6 ), '0' ), '.' );
+    }
+
     private static function backfill_local_execution_events(
         array $execution_request_ids,
         int $entry_id,
@@ -980,7 +1138,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                     'type'        => [ 'string', 'null' ],
                 ],
                 'credits_used' => [
-                    'description' => __( 'Sentient credits debited; zero for direct local provider runs.', 'sentient-forms' ),
+                    'description' => __( 'Sentient Forms managed credits debited; zero for direct local provider runs.', 'sentient-forms' ),
                     'type'        => 'integer',
                 ],
                 'error_code' => [
@@ -1005,6 +1163,11 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                 ],
                 'pricing' => [
                     'description' => __( 'Pricing summary metadata for the execution.', 'sentient-forms' ),
+                    'type'        => 'object',
+                    'readonly'    => true,
+                ],
+                'usage_cost' => [
+                    'description' => __( 'Human-readable billing route and provider cost summary.', 'sentient-forms' ),
                     'type'        => 'object',
                     'readonly'    => true,
                 ],

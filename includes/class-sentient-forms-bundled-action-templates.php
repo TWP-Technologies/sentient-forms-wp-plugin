@@ -62,6 +62,12 @@ RULES:
 4. For spam or likely_spam, include at least one indicator with evidence when possible
 5. For ham, indicators can be an empty array
 6. Justification should be 1-3 human-readable sentences
+
+Form context:
+{{form}}
+
+Submission data:
+{{entry}}
 PROMPT,
                 'default_model'            => 'openrouter/auto',
                 'structured_output_schema' => [
@@ -156,6 +162,7 @@ Your task is to:
 2. Detect vague or low-effort responses like "test", "asdf", or placeholder text
 3. Identify fields that require more detail based on context
 4. Be helpful but firm and guide users toward sufficient detail
+5. Do not reject content only because it is promotional, suspicious, malicious, or spam-like if the field still contains enough meaningful detail. Spam classification belongs to the Spam Detection action.
 
 Respond only with valid JSON in this exact format:
 {
@@ -172,7 +179,13 @@ Respond only with valid JSON in this exact format:
 
 If all fields meet quality standards, set is_valid to true and include an empty fields array.
 If any field needs more content, set is_valid to false and include specific field-level errors.
-Only flag fields that are genuinely insufficient.
+Only flag fields that are genuinely insufficient. Do not use content validation as spam moderation.
+
+Form context:
+{{form}}
+
+Submission data:
+{{entry}}
 PROMPT,
                 'default_model'            => 'openrouter/auto',
                 'structured_output_schema' => [
@@ -230,6 +243,10 @@ PROMPT,
                 'default_execution_mode'   => 'sync',
                 'effect_mapping_json'      => [
                     'store_result' => true,
+                    'entry_note'   => [
+                        'path'   => 'structured.message',
+                        'prefix' => __( 'Sentient Forms content validation:', 'sentient-forms' ),
+                    ],
                 ],
             ],
             'entry_summary_v1' => [
@@ -244,6 +261,12 @@ Provide a brief, human-readable summary of this form submission. Include:
 3. Any notable patterns or concerns
 
 Keep the summary concise (3-5 sentences max). Write in a professional tone suitable for an admin dashboard.
+
+Form context:
+{{form}}
+
+Submission data:
+{{entry}}
 PROMPT,
                 'default_model'            => 'openrouter/auto',
                 'structured_output_schema' => null,
@@ -283,6 +306,10 @@ PROMPT,
                     'store_result' => true,
                     'meta'         => [
                         'sentient_forms_summary' => 'content',
+                    ],
+                    'entry_note'   => [
+                        'path'   => 'content',
+                        'prefix' => __( 'Sentient Forms entry summary:', 'sentient-forms' ),
                     ],
                 ],
             ],
@@ -339,6 +366,14 @@ PROMPT,
             if ( self::has( $candidate ) )
             {
                 return $candidate;
+            }
+
+            foreach ( array_keys( self::definitions() ) as $template_code )
+            {
+                if ( str_starts_with( $candidate, $template_code . '_' ) )
+                {
+                    return $template_code;
+                }
             }
         }
 

@@ -842,20 +842,34 @@ final class Sentient_Forms_Plugin
 
     public function get_local_site_identifier(): string
     {
-        $license = $this->get_license_data();
-        if ( !empty( $license['local_site_identifier'] ) )
+        $options        = $this->get_options();
+        $stored_license = isset( $options['license'] ) && is_array( $options['license'] )
+            ? $options['license']
+            : [];
+
+        if ( isset( $options['local_site_identifier'] ) && is_scalar( $options['local_site_identifier'] ) )
         {
-            return $license['local_site_identifier'];
+            $stored_license['local_site_identifier'] = $options['local_site_identifier'];
+        }
+
+        $stored_identifier = isset( $stored_license['local_site_identifier'] ) && is_scalar( $stored_license['local_site_identifier'] )
+            ? sanitize_text_field( (string) $stored_license['local_site_identifier'] )
+            : '';
+
+        if ( '' !== $stored_identifier )
+        {
+            return $stored_identifier;
         }
 
         $identifier = $this->generate_local_site_identifier();
 
-        $this->set_license_data(
-            array_merge(
-                $license,
-                [ 'local_site_identifier' => $identifier ]
-            )
-        );
+        $license_data                          = array_merge( $this->get_license_defaults(), $stored_license );
+        $license_data['local_site_identifier'] = $identifier;
+        $options['license']                    = $license_data;
+
+        unset( $options['license_key'], $options['license_status'], $options['proxy_api_key'], $options['local_site_identifier'] );
+
+        $this->save_options( $options );
 
         return $identifier;
     }

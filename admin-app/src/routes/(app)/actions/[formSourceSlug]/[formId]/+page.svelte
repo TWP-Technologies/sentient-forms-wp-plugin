@@ -517,6 +517,20 @@
 		return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 	}
 
+	function cloneDraftValue<T>(value: T): T {
+		if (typeof structuredClone === 'function') {
+			try {
+				return structuredClone(value);
+			} catch {
+				// Svelte state proxies cannot always be structured-cloned; JSON fallback is enough for
+				// the plain mapping settings objects this editor stores.
+			}
+		}
+
+		const serialized = JSON.stringify(value);
+		return serialized === undefined ? value : (JSON.parse(serialized) as T);
+	}
+
 	function getCustomActionPostExecutionActions(
 		action: CustomAction | null
 	): CustomActionPostExecutionActionPayload[] {
@@ -1436,20 +1450,20 @@
 						variant: 'warning',
 						title: 'Out of credits',
 						description:
-							'Sentient Forms could not execute the last managed submission because this license is out of credits. Visit the Licensing tab to review billing before retrying.',
+							'Sentient Forms could not execute the last managed submission because this license is out of credits. Open Managed Service to review billing before retrying.',
 						actions: [
-							{ id: 'licensing', label: 'Open Licensing', variant: 'primary' },
+							{ id: 'licensing', label: 'Open Managed Service', variant: 'primary' },
 							{ id: 'refresh', label: 'Refresh status' }
 						]
 					};
 				case 'cps_missing_proxy_key':
 					return {
 						variant: 'warning',
-						title: 'License activation required',
+						title: 'Managed service activation required',
 						description:
-							'Sentient Forms proxy credentials are missing. Activate your license on the Licensing tab, then retry the submission.',
+							'Sentient Forms managed service credentials are missing. Activate this site on the Managed Service page, then retry the submission.',
 						actions: [
-							{ id: 'licensing', label: 'Open Licensing', variant: 'primary' },
+							{ id: 'licensing', label: 'Open Managed Service', variant: 'primary' },
 							{ id: 'refresh', label: 'Refresh status' }
 						]
 					};
@@ -2251,7 +2265,7 @@
 				? draftSnapshot.triggerHooks
 				: [hookEntries[0]?.[0] ?? 'gform_validation'];
 		draftHooks = new Set(initialHooks);
-		const baseSettings = linkage.settings ?? {};
+		const baseSettings = cloneDraftValue(linkage.settings ?? {});
 		const inheritedFormConfig =
 			formLevelConfigByActionId[linkage.central_action_id] ?? createBlankFormActionConfig();
 		const inheritedActionConfig =
@@ -2275,15 +2289,15 @@
 				'simple'
 			),
 			include_site_context: baseSettings.include_site_context ?? 'global',
-			spam_positive_examples: baseSettings.spam_positive_examples ?? [],
-			spam_negative_examples: baseSettings.spam_negative_examples ?? [],
+			spam_positive_examples: cloneDraftValue(baseSettings.spam_positive_examples ?? []),
+			spam_negative_examples: cloneDraftValue(baseSettings.spam_negative_examples ?? []),
 			// CB-EXEC-002: Execution mode - default to after_submission (async) for safety
 			execution_mode: baseSettings.execution_mode ?? 'after_submission',
 			// CB-EXEC-003/004: Batch settings with sensible defaults.
 			batch_settings: sanitizeBatchSettings(baseBatchSettings),
-			dependency_ids: draftSnapshot.dependencyIds,
-			trigger_sources: draftSnapshot.triggerSources,
-			conditions: baseSettings.conditions ?? createDefaultConditionConfig()
+			dependency_ids: cloneDraftValue(draftSnapshot.dependencyIds),
+			trigger_sources: cloneDraftValue(draftSnapshot.triggerSources),
+			conditions: cloneDraftValue(baseSettings.conditions ?? createDefaultConditionConfig())
 		};
 		draftSettings = nextDraftSettings;
 		editingLinkageId = linkage.local_mapping_id;
@@ -2295,10 +2309,16 @@
 	}
 
 	function cancelEditingAction() {
+		const cancelledMappingId = editingLinkageId;
 		editingLinkageId = null;
 		showMappingConfigModal = false;
 		draftHooks = new Set();
 		draftSettings = {};
+		if (cancelledMappingId && graphDraftByMappingId[cancelledMappingId]) {
+			const nextDraftMap = { ...graphDraftByMappingId };
+			delete nextDraftMap[cancelledMappingId];
+			graphDraftByMappingId = nextDraftMap;
+		}
 		resetMappingSectionExpansion(null);
 		editBaselineSignature = null;
 		clearRootAttachUndoState();
@@ -3141,6 +3161,7 @@
 								actionSelection={actionDefaultsByActionId[configuringActionId ?? '']
 									?.model_selection ?? null}
 								formSelection={formLevelConfig.model_selection ?? null}
+								{providerCredentials}
 								onchange={handleFormLevelModelSelectionChange}
 							/>
 						</div>
@@ -3298,7 +3319,7 @@
 			<Button variant="secondary" onclick={() => (showTemplateLibrary = true)}
 				>Import from Library</Button
 			>
-			<Button variant="secondary" onclick={checkEntryStatus}>Check entry status</Button>
+			<Button variant="secondary" onclick={checkEntryStatus}>Check Sentient Forms log entry</Button>
 		</div>
 	{/snippet}
 
@@ -3369,49 +3390,54 @@
 	{/if}
 
 	<div class="sf:grid sf:gap-4 sf:xl:grid-cols-3">
-		<Card class="sf:min-w-0 sf:xl:col-span-2" data-testid="action-definitions-card">
+		<Card class="sf:hidden" data-testid="action-definitions-card-legacy-hidden" aria-hidden="true">
 			<div
 				class="sf:flex sf:flex-col sf:gap-3 sf:md:flex-row sf:md:items-center sf:md:justify-between"
 			>
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Action library</p>
 					<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
-						Browse built-in actions and custom actions you can map to this form.
+						Use Add action to map an action to this form. Browse the catalog only when you need
+						to inspect available defaults.
 					</p>
 				</div>
 			</div>
 
-			{#if !hasDefinitions}
-				<Alert variant="warning" class="sf:mt-3">
-					Built-in actions are unavailable right now. You can still link custom actions below.
-				</Alert>
-			{/if}
+			<details class="sf:mt-3 sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+				<summary class="sf:cursor-pointer sf:text-sm sf:font-medium sf:text-slate-700">
+					Browse {builtInDefinitions.length} built-in and {customActions.length} custom actions
+				</summary>
 
-			<div class="sf:mt-4 sf:grid sf:gap-3">
-				<Card class="sf:border-dashed">
-					<p class="sf:text-xs sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2">
-						Built-in actions
-					</p>
-					{#if !hasBuiltInDefinitions}
-						<p class="sf:text-sm sf:text-slate-600">No built-in actions available.</p>
-					{:else}
-						<ul class="sf:space-y-2">
-							{#each builtInDefinitions.slice(0, 5) as definition (definition.id)}
-								<li class="sf:flex sf:min-w-0 sf:items-start sf:justify-between sf:gap-3">
-									<div class="sf:min-w-0 sf:flex-1">
-										<p class="sf:break-words sf:text-sm sf:font-semibold sf:text-slate-800">
-											{definition.label ?? definition.id}
-										</p>
-										<p class="sf:text-xs sf:text-slate-500">
-											Hooks: {summarizeDefinitionHooks(definition.hooks)}
-										</p>
-										<p class="sf:break-words sf:text-xs sf:text-slate-500">
-											Base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
-												definition
-											)}
-										</p>
-									</div>
-									<div class="sf:flex sf:shrink-0 sf:items-center sf:gap-2">
+				{#if !hasDefinitions}
+					<Alert variant="warning" class="sf:mt-3">
+						Built-in actions are unavailable right now. You can still link custom actions below.
+					</Alert>
+				{/if}
+
+				<div class="sf:mt-4 sf:grid sf:gap-3 sf:lg:grid-cols-2">
+					<div class="sf:rounded sf:border sf:border-dashed sf:border-slate-200 sf:p-3">
+						<p class="sf:text-xs sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2">
+							Built-in actions
+						</p>
+						{#if !hasBuiltInDefinitions}
+							<p class="sf:text-sm sf:text-slate-600">No built-in actions available.</p>
+						{:else}
+							<ul class="sf:space-y-2">
+								{#each builtInDefinitions.slice(0, 5) as definition (definition.id)}
+									<li class="sf:flex sf:min-w-0 sf:items-start sf:justify-between sf:gap-3">
+										<div class="sf:min-w-0 sf:flex-1">
+											<p class="sf:break-words sf:text-sm sf:font-semibold sf:text-slate-800">
+												{definition.label ?? definition.id}
+											</p>
+											<p class="sf:text-xs sf:text-slate-500">
+												Hooks: {summarizeDefinitionHooks(definition.hooks)}
+											</p>
+											<p class="sf:break-words sf:text-xs sf:text-slate-500">
+												Base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+													definition
+												)}
+											</p>
+										</div>
 										<Button
 											size="sm"
 											variant="ghost"
@@ -3420,60 +3446,60 @@
 										>
 											Defaults
 										</Button>
-									</div>
-								</li>
-							{/each}
-						</ul>
-					{/if}
-				</Card>
-
-				<Card class="sf:border-dashed">
-					<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
-						<div>
-							<p class="sf:text-xs sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-1">
-								Custom actions
-							</p>
-							<p class="sf:text-sm sf:text-slate-700">
-								{customActions.length > 0
-									? `${customActions.length} active`
-									: 'No active custom actions'}
-							</p>
-						</div>
-						<Button
-							size="sm"
-							variant="secondary"
-							onclick={() => navigateToAppPath('/actions/custom')}
-						>
-							Manage
-						</Button>
+									</li>
+								{/each}
+							</ul>
+						{/if}
 					</div>
-					{#if customActions.length > 0}
-						<ul class="sf:mt-3 sf:space-y-2">
-							{#each customActions.slice(0, 4) as action (action.id)}
-								<li class="sf:flex sf:min-w-0 sf:items-start sf:justify-between sf:gap-3">
-									<div class="sf:min-w-0 sf:flex-1">
-										<p class="sf:break-words sf:text-sm sf:font-semibold sf:text-slate-800">
-											{action.display_name}
-										</p>
-										<p class="sf:break-all sf:text-xs sf:text-slate-500">Code: {action.code}</p>
-									</div>
-									<div class="sf:flex sf:shrink-0 sf:items-center sf:gap-2">
-										<Button
-											size="sm"
-											variant="ghost"
-											onclick={() => loadFormLevelConfig(action.code)}
-											disabled={formLevelConfigLoading}
-										>
-											Defaults
-										</Button>
-										<Badge variant="success">Active</Badge>
-									</div>
-								</li>
-							{/each}
-						</ul>
-					{/if}
-				</Card>
-			</div>
+
+					<div class="sf:rounded sf:border sf:border-dashed sf:border-slate-200 sf:p-3">
+						<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
+							<div>
+								<p class="sf:text-xs sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-1">
+									Custom actions
+								</p>
+								<p class="sf:text-sm sf:text-slate-700">
+									{customActions.length > 0
+										? `${customActions.length} active`
+										: 'No active custom actions'}
+								</p>
+							</div>
+							<Button
+								size="sm"
+								variant="secondary"
+								onclick={() => navigateToAppPath('/actions/custom')}
+							>
+								Manage
+							</Button>
+						</div>
+						{#if customActions.length > 0}
+							<ul class="sf:mt-3 sf:space-y-2">
+								{#each customActions.slice(0, 4) as action (action.id)}
+									<li class="sf:flex sf:min-w-0 sf:items-start sf:justify-between sf:gap-3">
+										<div class="sf:min-w-0 sf:flex-1">
+											<p class="sf:break-words sf:text-sm sf:font-semibold sf:text-slate-800">
+												{action.display_name}
+											</p>
+											<p class="sf:break-all sf:text-xs sf:text-slate-500">Code: {action.code}</p>
+										</div>
+										<div class="sf:flex sf:shrink-0 sf:items-center sf:gap-2">
+											<Button
+												size="sm"
+												variant="ghost"
+												onclick={() => loadFormLevelConfig(action.code)}
+												disabled={formLevelConfigLoading}
+											>
+												Defaults
+											</Button>
+											<Badge variant="success">Active</Badge>
+										</div>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					</div>
+				</div>
+			</details>
 
 			<div
 				class="sf:mt-6 sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
@@ -3486,140 +3512,6 @@
 				</div>
 				<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
 			</div>
-		</Card>
-
-		<Card class="sf:min-w-0 sf:space-y-3" data-testid="form-execution-status">
-			<div
-				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
-			>
-				<p class="sf:text-sm sf:font-medium sf:text-slate-700">Execution status</p>
-				{#if actionsState.status}
-					<Badge variant={statusBadgeVariant(actionsState.status)}
-						>{actionsState.status.status}</Badge
-					>
-				{/if}
-			</div>
-			{#if actionsState.supportsStatus === false}
-				<Alert variant="warning">
-					Execution status is unavailable in this plugin build
-					{#if actionsState.cpsVersion}(current {actionsState.cpsVersion}){/if}
-					{#if actionsState.requiredStatusVersion}
-						(Requires status API ≥ {actionsState.requiredStatusVersion})
-					{/if}. Refresh the plugin or enable the status endpoint to see run results.
-				</Alert>
-			{:else if actionsState.status}
-				<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
-				<p class="sf:text-sm sf:text-slate-600">{statusDescription(actionsState.status)}</p>
-				{#if actionsState.status.last_error_code || (actionsState.status.status === 'error' && actionsState.status.message)}
-					<p class="sf:text-xs sf:text-amber-700 sf:mt-1" data-testid="form-execution-status-error">
-						{actionsState.status.last_error_code
-							? `Last error: ${actionsState.status.last_error_code}`
-							: ''}
-						{actionsState.status.message ? ` ${actionsState.status.message}` : ''}
-					</p>
-				{/if}
-				{#if actionsState.status.updated_at}
-					<p class="sf:text-xs sf:text-slate-500">
-						Updated {new Date(actionsState.status.updated_at).toLocaleString()}
-					</p>
-				{:else}
-					<p class="sf:text-xs sf:text-slate-500">Last updated: not available</p>
-				{/if}
-				<div class="sf:flex sf:justify-end">
-					<Button size="sm" variant="secondary" onclick={refresh}>Refresh now</Button>
-				</div>
-			{:else}
-				<p class="sf:text-sm sf:text-slate-600">Status not loaded yet.</p>
-			{/if}
-
-			{#if statusAdvice}
-				<Alert variant={statusAdvice.variant}>
-					<div class="sf:flex sf:flex-col sf:gap-2">
-						<p class="sf:font-medium">{statusAdvice.title}</p>
-						<p>{statusAdvice.description}</p>
-						{#if statusAdvice.actions && statusAdvice.actions.length > 0}
-							<div class="sf:flex sf:flex-wrap sf:gap-2">
-								{#each statusAdvice.actions as action (action.id)}
-									<Button
-										size="sm"
-										variant={action.variant ?? 'secondary'}
-										onclick={() => performStatusAction(action.id)}
-									>
-										{action.label}
-									</Button>
-								{/each}
-							</div>
-						{/if}
-					</div>
-				</Alert>
-			{/if}
-
-			<form class="sf:pt-2 sf:space-y-2" onsubmit={checkEntryStatus}>
-				<InputField
-					id="entry-id-input"
-					label="Check entry status"
-					placeholder="Enter entry ID"
-					bind:value={entryLookupId}
-				/>
-				<div class="sf:flex sf:justify-end">
-					<Button type="submit" variant="secondary" size="sm">Check</Button>
-				</div>
-			</form>
-
-			{#if checkedEntryStatus}
-				<div
-					class="sf:mt-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3 sf:space-y-1"
-				>
-					<p class="sf:text-xs sf:font-semibold sf:text-slate-700">
-						Entry {checkedEntryStatus.entry_id} status: {checkedEntryStatus.status}
-					</p>
-					{#if checkedEntryStatus.metering_summary}
-						<p class="sf:text-xs sf:text-slate-600">
-							Credits debited:
-							<strong>{checkedEntryStatus.metering_summary.credits_debited ?? 'n/a'}</strong>
-							{#if checkedEntryStatus.metering_summary.pricing_policy_version}
-								· Policy: {checkedEntryStatus.metering_summary.pricing_policy_version}
-							{/if}
-						</p>
-						{#if checkedEntryStatus.metering_summary.correlation_id}
-							<p class="sf:text-xs sf:text-slate-600 sf:break-all">
-								Correlation: {checkedEntryStatus.metering_summary.correlation_id}
-							</p>
-						{/if}
-						{#if checkedEntryStatus.metering_summary.workflow}
-							<details class="sf:pt-1">
-								<summary class="sf:cursor-pointer sf:text-xs sf:font-medium sf:text-slate-700">
-									Workflow metering breakdown
-								</summary>
-								<div class="sf:mt-1 sf:space-y-1">
-									<p class="sf:text-xs sf:text-slate-600">
-										Status: {checkedEntryStatus.metering_summary.workflow.status} · Credits total:
-										{checkedEntryStatus.metering_summary.workflow.credits_total}
-									</p>
-									{#if Object.keys(checkedEntryStatus.metering_summary.workflow.credits_by_node).length > 0}
-										<ul class="sf:text-xs sf:text-slate-600 sf:list-disc sf:pl-4">
-											{#each Object.entries(checkedEntryStatus.metering_summary.workflow.credits_by_node) as [nodeId, nodeCredits] (nodeId)}
-												<li>{nodeId}: {nodeCredits}</li>
-											{/each}
-										</ul>
-									{/if}
-									{#if checkedEntryStatus.metering_summary.workflow.failed_nodes.length > 0}
-										<p class="sf:text-xs sf:text-amber-700">
-											Failed nodes: {checkedEntryStatus.metering_summary.workflow.failed_nodes.join(
-												', '
-											)}
-										</p>
-									{/if}
-								</div>
-							</details>
-						{/if}
-					{:else}
-						<p class="sf:text-xs sf:text-slate-500">
-							No metering details were recorded for this entry.
-						</p>
-					{/if}
-				</div>
-			{/if}
 		</Card>
 	</div>
 
@@ -3640,14 +3532,16 @@
 		<div
 			class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:mb-3"
 		>
-			{#if linkedActionsView !== 'graph'}
-				<div>
-					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Linked actions</p>
-					<p class="sf:text-xs sf:text-slate-500">
-						Enable, disable, or retarget hooks for actions connected to this form.
-					</p>
-				</div>
-			{/if}
+			<div>
+				<p class="sf:text-sm sf:font-medium sf:text-slate-700">
+					{linkedActionsView === 'graph' ? 'Action Execution Order' : 'Linked actions'}
+				</p>
+				<p class="sf:text-xs sf:text-slate-500">
+					{linkedActionsView === 'graph'
+						? 'Review and edit the order actions run for this form.'
+						: 'Enable, disable, or retarget hooks for actions connected to this form.'}
+				</p>
+			</div>
 			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 				{#if actionsState.items.length > 0}
 					<Button
@@ -3658,7 +3552,7 @@
 						}}
 						data-testid="linked-actions-view-graph"
 					>
-						Graph
+						Execution order
 					</Button>
 					<Button
 						variant={linkedActionsView === 'table' ? 'primary' : 'secondary'}
@@ -3671,9 +3565,103 @@
 						Table
 					</Button>
 				{/if}
+				<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
 				<Button variant="secondary" size="sm" onclick={refresh}>Refresh</Button>
 			</div>
 		</div>
+
+		<details
+			class="sf:mb-3 sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3"
+			data-testid="action-definitions-card"
+		>
+			<summary class="sf:cursor-pointer sf:text-sm sf:font-medium sf:text-slate-800">
+				Action defaults and library
+			</summary>
+			<div class="sf:mt-3 sf:grid sf:gap-3 sf:lg:grid-cols-2">
+				<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+					<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
+						<div>
+							<p class="sf:text-xs sf:uppercase sf:tracking-wide sf:text-slate-500">
+								Built-in actions
+							</p>
+							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
+								Configure form-level defaults without moving the execution-order graph.
+							</p>
+						</div>
+						<Badge variant="neutral">{builtInDefinitions.length}</Badge>
+					</div>
+					{#if !hasBuiltInDefinitions}
+						<p class="sf:mt-3 sf:text-sm sf:text-slate-600">No built-in actions available.</p>
+					{:else}
+						<ul class="sf:mt-3 sf:grid sf:gap-2 sf:md:grid-cols-2">
+							{#each builtInDefinitions as definition (definition.id)}
+								<li
+									class="sf:flex sf:min-w-0 sf:items-center sf:justify-between sf:gap-2 sf:rounded sf:border sf:border-slate-100 sf:p-2"
+								>
+									<div class="sf:min-w-0">
+										<p class="sf:truncate sf:text-sm sf:font-medium sf:text-slate-800">
+											{definition.label ?? definition.id}
+										</p>
+										<p class="sf:truncate sf:text-xs sf:text-slate-500">
+											{formatModelHint(definition)}
+										</p>
+									</div>
+									<Button
+										size="sm"
+										variant="ghost"
+										onclick={() => loadFormLevelConfig(definition.id)}
+										disabled={formLevelConfigLoading}
+									>
+										Defaults
+									</Button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</div>
+				<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+					<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
+						<div>
+							<p class="sf:text-xs sf:uppercase sf:tracking-wide sf:text-slate-500">
+								Custom actions
+							</p>
+							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
+								Edit defaults for active custom actions, or open the custom action library.
+							</p>
+						</div>
+						<Button size="sm" variant="secondary" onclick={() => navigateToAppPath('/actions/custom')}>
+							Manage
+						</Button>
+					</div>
+					{#if customActions.length === 0}
+						<p class="sf:mt-3 sf:text-sm sf:text-slate-600">No active custom actions.</p>
+					{:else}
+						<ul class="sf:mt-3 sf:grid sf:gap-2 sf:md:grid-cols-2">
+							{#each customActions as action (action.id)}
+								<li
+									class="sf:flex sf:min-w-0 sf:items-center sf:justify-between sf:gap-2 sf:rounded sf:border sf:border-slate-100 sf:p-2"
+								>
+									<div class="sf:min-w-0">
+										<p class="sf:truncate sf:text-sm sf:font-medium sf:text-slate-800">
+											{action.display_name}
+										</p>
+										<p class="sf:truncate sf:text-xs sf:text-slate-500">{action.code}</p>
+									</div>
+									<Button
+										size="sm"
+										variant="ghost"
+										onclick={() => loadFormLevelConfig(action.code)}
+										disabled={formLevelConfigLoading}
+									>
+										Defaults
+									</Button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</div>
+			</div>
+		</details>
 
 		{#if actionsState.loading}
 			<StateTemplate
@@ -3831,6 +3819,162 @@
 				</table>
 			</div>
 		{/if}
+
+		<div class="sf:mt-4 sf:border-t sf:border-slate-200 sf:pt-4" data-testid="form-execution-status">
+			<details
+				class="sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3"
+				open={actionsState.status?.status === 'error' ||
+					Boolean(actionsState.status?.last_error_code) ||
+					Boolean(checkedEntryStatus)}
+			>
+				<summary class="sf:cursor-pointer sf:text-sm sf:font-medium sf:text-slate-800">
+					Execution status and Sentient Forms log lookup
+				</summary>
+				<div class="sf:mt-3 sf:grid sf:gap-4 sf:lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
+					<div class="sf:space-y-2">
+						<div class="sf:flex sf:items-center sf:justify-between sf:gap-3">
+							<p class="sf:text-sm sf:font-medium sf:text-slate-700">Latest execution</p>
+							{#if actionsState.status}
+								<Badge variant={statusBadgeVariant(actionsState.status)}
+									>{actionsState.status.status}</Badge
+								>
+							{/if}
+						</div>
+						{#if actionsState.supportsStatus === false}
+							<Alert variant="warning">
+								Execution status is unavailable in this plugin build
+								{#if actionsState.cpsVersion}(current {actionsState.cpsVersion}){/if}
+								{#if actionsState.requiredStatusVersion}
+									(Requires status API ≥ {actionsState.requiredStatusVersion})
+								{/if}.
+							</Alert>
+						{:else if actionsState.status}
+							<p class="sf:text-sm sf:text-slate-700">{statusHeadline(actionsState.status)}</p>
+							<p class="sf:text-sm sf:text-slate-600">{statusDescription(actionsState.status)}</p>
+							{#if actionsState.status.last_error_code || (actionsState.status.status === 'error' && actionsState.status.message)}
+								<p
+									class="sf:text-xs sf:text-amber-700 sf:mt-1"
+									data-testid="form-execution-status-error"
+								>
+									{actionsState.status.last_error_code
+										? `Last error: ${actionsState.status.last_error_code}`
+										: ''}
+									{actionsState.status.message ? ` ${actionsState.status.message}` : ''}
+								</p>
+							{/if}
+							{#if actionsState.status.updated_at}
+								<p class="sf:text-xs sf:text-slate-500">
+									Updated {new Date(actionsState.status.updated_at).toLocaleString()}
+								</p>
+							{:else}
+								<p class="sf:text-xs sf:text-slate-500">Last updated: not available</p>
+							{/if}
+							<div class="sf:flex sf:flex-wrap sf:gap-2">
+								<Button size="sm" variant="secondary" onclick={refresh}>Refresh status</Button>
+							</div>
+						{:else}
+							<p class="sf:text-sm sf:text-slate-600">Status not loaded yet.</p>
+						{/if}
+
+						{#if statusAdvice}
+							<Alert variant={statusAdvice.variant}>
+								<div class="sf:flex sf:flex-col sf:gap-2">
+									<p class="sf:font-medium">{statusAdvice.title}</p>
+									<p>{statusAdvice.description}</p>
+									{#if statusAdvice.actions && statusAdvice.actions.length > 0}
+										<div class="sf:flex sf:flex-wrap sf:gap-2">
+											{#each statusAdvice.actions as action (action.id)}
+												<Button
+													size="sm"
+													variant={action.variant ?? 'secondary'}
+													onclick={() => performStatusAction(action.id)}
+												>
+													{action.label}
+												</Button>
+											{/each}
+										</div>
+									{/if}
+								</div>
+							</Alert>
+						{/if}
+					</div>
+
+					<div class="sf:space-y-3">
+						<form class="sf:space-y-2" onsubmit={checkEntryStatus}>
+							<InputField
+								id="entry-id-input"
+								label="Check Sentient Forms Action Log entry"
+								placeholder="Action Log entry ID from this form"
+								bind:value={entryLookupId}
+							/>
+							<p class="sf:text-xs sf:text-slate-500">
+								Use an entry ID from the Sentient Forms Action Log for this Gravity Forms form,
+								not the Gravity Forms submission ID.
+							</p>
+							<div class="sf:flex sf:justify-end">
+								<Button type="submit" variant="secondary" size="sm">Check log entry</Button>
+							</div>
+						</form>
+
+						{#if checkedEntryStatus}
+							<div
+								class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:space-y-1"
+							>
+								<p class="sf:text-xs sf:font-semibold sf:text-slate-700">
+									Sentient Forms log entry {checkedEntryStatus.entry_id} status:
+									{checkedEntryStatus.status}
+								</p>
+								{#if checkedEntryStatus.metering_summary}
+									<p class="sf:text-xs sf:text-slate-600">
+										Credits debited:
+										<strong>{checkedEntryStatus.metering_summary.credits_debited ?? 'n/a'}</strong>
+										{#if checkedEntryStatus.metering_summary.pricing_policy_version}
+											· Policy: {checkedEntryStatus.metering_summary.pricing_policy_version}
+										{/if}
+									</p>
+									{#if checkedEntryStatus.metering_summary.correlation_id}
+										<p class="sf:text-xs sf:text-slate-600 sf:break-all">
+											Correlation: {checkedEntryStatus.metering_summary.correlation_id}
+										</p>
+									{/if}
+									{#if checkedEntryStatus.metering_summary.workflow}
+										<details class="sf:pt-1">
+											<summary class="sf:cursor-pointer sf:text-xs sf:font-medium sf:text-slate-700">
+												Workflow metering breakdown
+											</summary>
+											<div class="sf:mt-1 sf:space-y-1">
+												<p class="sf:text-xs sf:text-slate-600">
+													Status: {checkedEntryStatus.metering_summary.workflow.status} · Credits total:
+													{checkedEntryStatus.metering_summary.workflow.credits_total}
+												</p>
+												{#if Object.keys(checkedEntryStatus.metering_summary.workflow.credits_by_node).length > 0}
+													<ul class="sf:text-xs sf:text-slate-600 sf:list-disc sf:pl-4">
+														{#each Object.entries(checkedEntryStatus.metering_summary.workflow.credits_by_node) as [nodeId, nodeCredits] (nodeId)}
+															<li>{nodeId}: {nodeCredits}</li>
+														{/each}
+													</ul>
+												{/if}
+												{#if checkedEntryStatus.metering_summary.workflow.failed_nodes.length > 0}
+													<p class="sf:text-xs sf:text-amber-700">
+														Failed nodes: {checkedEntryStatus.metering_summary.workflow.failed_nodes.join(
+															', '
+														)}
+													</p>
+												{/if}
+											</div>
+										</details>
+									{/if}
+								{:else}
+									<p class="sf:text-xs sf:text-slate-500">
+										No metering details were recorded for this log entry.
+									</p>
+								{/if}
+							</div>
+						{/if}
+					</div>
+				</div>
+			</details>
+		</div>
 	</Card>
 
 	{#if showMappingConfigModal && editingLinkage}
@@ -4483,6 +4627,7 @@
 									formSelection={currentFormActionConfig.model_selection ?? null}
 									mappingSelection={(draftSettings.model_selection as ModelSelection | undefined) ??
 										null}
+									{providerCredentials}
 									onchange={handleMappingModelSelectionChange}
 								/>
 
@@ -4931,6 +5076,7 @@
 										label="Local model policy"
 										level="action"
 										templateModelHint="openrouter/auto"
+										{providerCredentials}
 										onchange={handleLocalBuilderModelSelectionChange}
 									/>
 								</div>

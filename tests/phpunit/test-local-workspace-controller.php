@@ -381,6 +381,19 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
     {
         $bundle = $this->sample_cps_export_bundle();
 
+        global $wpdb;
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $credential_id = $credentials->create(
+            [
+                'provider'      => 'openrouter',
+                'label'         => 'Owner OpenRouter key',
+                'auth_mode'     => 'constant',
+                'constant_name' => 'SENTIENT_FORMS_OPENROUTER_KEY',
+                'status'        => 'valid',
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+
         $result = $this->dispatch_json(
             'POST',
             '/sentient-forms/v1/local/migration/import/apply',
@@ -403,7 +416,6 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 1, $this->table_count( 'sentient_form_mappings' ) );
         $this->assertSame( 1, $this->table_count( 'sentient_execution_events' ) );
 
-        global $wpdb;
         $templates = new Sentient_Forms_Action_Templates_Repository( $wpdb );
         $template  = $templates->get_by_code( 'remote_spam_triage_v1' );
         $this->assertSame( 'imported', $template['source'] );
@@ -413,6 +425,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $action  = $actions->get_by_code( 'remote_contact_spam_triage' );
         $this->assertSame( (int) $template['id'], (int) $action['template_id'] );
         $this->assertSame( 'custom-cps-1', $action['external_id'] );
+        $this->assertSame( $credential_id, (int) ( $action['model_selection_json']['credential_id'] ?? 0 ) );
 
         $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
         $mapping_rows = $mappings->list_for_form( 'gravity_forms', '7' );

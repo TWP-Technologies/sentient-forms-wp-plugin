@@ -504,8 +504,8 @@
 			<div>
 				<p class="sf:font-medium sf:text-slate-900">Enable telemetry sharing</p>
 				<p class="sf:text-sm sf:text-slate-600">
-					Share aggregated action metrics and local reliability diagnostics to help Sentient
-					Forms improve reliability.
+					Share aggregated action metrics and local reliability diagnostics to help Sentient Forms
+					improve reliability.
 				</p>
 			</div>
 			<label class="sf:flex sf:items-center sf:gap-3">

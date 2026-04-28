@@ -118,7 +118,7 @@ async function coverProvidersDisclosures(page: Page): Promise<void> {
 	}
 
 	const managedDisclosure = managedCard.getByLabel(
-		/I understand Sentient receives the rendered prompt/i
+		/I understand Sentient Forms receives the rendered prompt/i
 	);
 	await expect(managedDisclosure).toBeVisible();
 	await managedDisclosure.check();
@@ -160,22 +160,9 @@ async function coverActionsOverviewDefaults(page: Page): Promise<void> {
 
 async function coverFormActionPanelsAndModals(page: Page): Promise<void> {
 	await openFirstFormActions(page);
-	await coverFormDefaults(page);
 	await coverAddActionDrawer(page);
 	await coverTemplateLibrary(page);
 	await coverMappingConfigAndGraph(page);
-}
-
-async function coverFormDefaults(page: Page): Promise<void> {
-	const definitionsCard = page.getByTestId('action-definitions-card');
-	await expect(definitionsCard).toBeVisible();
-	await definitionsCard.getByRole('button', { name: 'Defaults' }).first().click();
-
-	const formDefaultsModal = page.getByTestId('form-defaults-modal');
-	await expect(formDefaultsModal).toBeVisible();
-	await attachLocatorScreenshot(page, formDefaultsModal, 'form-defaults-modal');
-	await formDefaultsModal.getByTestId('form-defaults-close').click();
-	await expect(formDefaultsModal).toBeHidden();
 }
 
 async function coverAddActionDrawer(page: Page): Promise<void> {
@@ -226,12 +213,26 @@ async function coverMappingConfigAndGraph(page: Page): Promise<void> {
 	const mappingModal = page.getByTestId('mapping-config-modal');
 	await expect(mappingModal).toBeVisible();
 	await expandVisibleMappingSections(mappingModal);
+	await coverFormDefaultsFromMappingModal(page, mappingModal);
 	await attachLocatorScreenshot(page, mappingModal, 'mapping-config-all-sections');
 
 	await mappingModal.getByTestId('mapping-config-open-graph').click();
 	const graphCanvas = page.getByTestId('dependency-graph-canvas');
 	await expect(graphCanvas).toBeVisible();
 	await attachLocatorScreenshot(page, graphCanvas, 'dependency-graph');
+}
+
+async function coverFormDefaultsFromMappingModal(page: Page, mappingModal: Locator): Promise<void> {
+	const editDefaultsButton = mappingModal.getByRole('button', { name: 'Edit Form Defaults' }).first();
+	await expect(editDefaultsButton).toBeVisible();
+	await editDefaultsButton.click();
+
+	const formDefaultsModal = page.getByTestId('form-defaults-modal');
+	await expect(formDefaultsModal).toBeVisible();
+	await attachLocatorScreenshot(page, formDefaultsModal, 'form-defaults-modal');
+	await formDefaultsModal.getByTestId('form-defaults-close').click();
+	await expect(formDefaultsModal).toBeHidden();
+	await expect(mappingModal).toBeVisible();
 }
 
 async function coverSettingsRetentionControls(page: Page): Promise<void> {
@@ -283,7 +284,8 @@ async function openFirstFormActions(page: Page): Promise<void> {
 		page.waitForURL(/#\/actions\/[^/]+\/\d+$/, { timeout: 10000 }),
 		configureButton.click()
 	]);
-	await expect(page.getByTestId('action-definitions-card')).toBeVisible();
+	await expect(page.getByTestId('form-execution-status')).toBeVisible();
+	await expect(page.getByText('Action Execution Order')).toBeVisible();
 }
 
 async function ensureAtLeastOneLinkedAction(page: Page): Promise<void> {

@@ -329,6 +329,7 @@ class Sentient_Forms_Installer
                 input_bindings_json LONGTEXT NOT NULL,
                 execution_mode VARCHAR(30) NOT NULL,
                 effect_mapping_json LONGTEXT NULL,
+                settings_json LONGTEXT NULL,
                 enabled TINYINT(1) NOT NULL DEFAULT 1,
                 created_at DATETIME NOT NULL,
                 updated_at DATETIME NOT NULL,
@@ -439,10 +440,22 @@ class Sentient_Forms_Installer
 
         $mappings_table = $wpdb->prefix . 'sentient_form_mappings';
         $actions_table  = $wpdb->prefix . 'sentient_custom_actions';
+        $credentials_table = $wpdb->prefix . 'sentient_provider_credentials';
 
         if ( ! self::table_exists( $mappings_table ) || ! self::table_exists( $actions_table ) )
         {
             return;
+        }
+
+        if ( self::table_exists( $credentials_table ) )
+        {
+            $model_selection_service = new Sentient_Forms_Local_Action_Model_Selection_Service(
+                new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb ),
+                new Sentient_Forms_Provider_Credentials_Repository( $wpdb ),
+                new Sentient_Forms_Form_Mappings_Repository( $wpdb )
+            );
+            $model_selection_service->repair_all_custom_actions();
+            $model_selection_service->repair_all_bundled_form_mappings();
         }
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Installer repair inspects plugin-owned local-first custom tables during activation/upgrade only.

@@ -42,7 +42,7 @@
 	let label = $state('OpenRouter key');
 	let constantLabel = $state('OpenRouter server secret');
 	let constantName = $state('SENTIENT_FORMS_OPENROUTER_KEY');
-	let managedLabel = $state('Sentient managed proxy');
+	let managedLabel = $state('Sentient Forms managed service');
 	let saveKey = $state(true);
 	let acceptedDisclosure = $state(false);
 	let acceptedManagedDisclosure = $state(false);
@@ -91,7 +91,7 @@
 	);
 	let localSetupUnavailableMessage = $derived(
 		managedAccountReady
-			? 'Enable the Sentient managed proxy credential here or validate an OpenRouter key or server secret for direct local execution.'
+			? 'Enable the Sentient Forms managed service here or validate an OpenRouter key or server secret for direct local execution.'
 			: localOpenRouterSetupUnavailableMessage(openRouterCredentials)
 	);
 	let freeModelPreview = $derived(
@@ -294,13 +294,13 @@
 
 		if (!managedAccountReady) {
 			managedSetupError =
-				'Activate a Sentient managed account before enabling managed proxy execution.';
+				'Activate a Sentient Forms managed account before enabling managed execution.';
 			return;
 		}
 
 		if (!acceptedManagedDisclosure) {
 			managedSetupError =
-				'Accept the Sentient managed proxy disclosure before enabling managed execution.';
+				'Accept the Sentient Forms managed service disclosure before enabling managed execution.';
 			return;
 		}
 
@@ -332,7 +332,7 @@
 
 <Section
 	heading="Providers"
-	description="Connect OpenRouter directly from WordPress. Direct BYOK and free-model runs are not billed by Sentient."
+	description="Choose how Sentient Forms actions reach models. Managed service is the recommended setup for most WebMasters; free OpenRouter routes and BYOK remain available for testing and self-managed provider billing."
 >
 	{#snippet actions()}
 		<Button variant="secondary" onclick={loadCredentials} disabled={loading}>
@@ -351,6 +351,102 @@
 		/>
 	{/if}
 
+	<Card title="Pick the operating model" data-testid="providers-operating-model-card">
+		<div class="sf:grid sf:gap-3 sf:lg:grid-cols-3">
+			<div class="sf:rounded sf:border sf:border-primary-200 sf:bg-primary-50 sf:p-4">
+				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+					<Badge variant={managedAccountReady ? 'success' : 'warning'}>
+						{managedAccountReady ? 'Ready to enable' : 'License needed'}
+					</Badge>
+					<Badge variant="info">Recommended</Badge>
+				</div>
+				<h3 class="sf:mt-3 sf:text-base sf:font-semibold sf:text-slate-900">
+					Managed Sentient Forms service
+				</h3>
+				<p class="sf:mt-2 sf:text-sm sf:text-slate-600">
+					Use a Sentient Forms subscription when you want model access, spend controls, metering,
+					and service setup handled for this WordPress site.
+				</p>
+				<p class="sf:mt-3 sf:text-xs sf:font-medium sf:text-slate-700">
+					Managed runs are pass-through: Sentient Forms does not store LLM prompts, form fields,
+					or outputs beyond the billing/support metadata described in the disclosure.
+				</p>
+			</div>
+			<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-4">
+				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+					<Badge variant="success">Free path</Badge>
+					<Badge variant="neutral">OpenRouter</Badge>
+				</div>
+				<h3 class="sf:mt-3 sf:text-base sf:font-semibold sf:text-slate-900">
+					Try actions with free models
+				</h3>
+				<p class="sf:mt-2 sf:text-sm sf:text-slate-600">
+					Use OpenRouter routes marked free. This is the lowest-friction way to confirm a workflow,
+					but model availability, privacy posture, and retention policy are controlled by OpenRouter
+					and the upstream model provider.
+				</p>
+			</div>
+			<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-4">
+				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+					<Badge variant="info">BYOK</Badge>
+					<Badge variant="neutral">Direct billing</Badge>
+				</div>
+				<h3 class="sf:mt-3 sf:text-base sf:font-semibold sf:text-slate-900">
+					Bring your own OpenRouter key
+				</h3>
+				<p class="sf:mt-2 sf:text-sm sf:text-slate-600">
+					Keep Sentient Forms out of the request path for direct model calls. You manage the
+					OpenRouter account, key limits, provider terms, and paid model charges.
+				</p>
+			</div>
+		</div>
+	</Card>
+
+	<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="providers-managed-summary">
+		<div
+			class="sf:flex sf:flex-col sf:gap-4 sf:lg:flex-row sf:lg:items-center sf:lg:justify-between"
+		>
+			<div class="sf:space-y-2">
+				<div class="sf:flex sf:flex-wrap sf:gap-2">
+					<Badge variant={providerStatusVariant(primaryManagedCredential?.status ?? 'missing')}>
+						{providerStatusLabel(primaryManagedCredential?.status ?? 'missing')}
+					</Badge>
+					<Badge variant={managedAccountReady ? 'success' : 'warning'}>
+						{managedAccountReady ? 'Managed account ready' : 'Managed account inactive'}
+					</Badge>
+					<Badge variant="info">Sentient Forms billed</Badge>
+				</div>
+				<h3 class="sf:text-xl sf:font-semibold sf:text-slate-900">
+					Sentient Forms managed service
+				</h3>
+				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
+					Sentient Forms receives rendered prompts and required form fields only for managed
+					service runs. Direct OpenRouter runs stay outside Sentient Forms billing.
+				</p>
+			</div>
+			<div class="sf:flex sf:gap-6">
+				<div>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Saved service credentials</p>
+					<p
+						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+						data-testid="providers-managed-count"
+					>
+						{managedCredentials.length}
+					</p>
+				</div>
+				<div>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Ready service credentials</p>
+					<p
+						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
+						data-testid="providers-managed-ready-count"
+					>
+						{readyManagedCredentials.length}
+					</p>
+				</div>
+			</div>
+		</div>
+	</Card>
+
 	<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="providers-openrouter-summary">
 		<div class="sf:space-y-4">
 			<div
@@ -368,10 +464,10 @@
 						{primaryOpenRouterCredential?.label ?? 'OpenRouter direct'}
 					</h3>
 					<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
-						OpenRouter receives the prompts and form fields needed for direct model calls. Sentient
-						does not receive those direct-call payloads. Use the local vault for the fastest setup, or
-						use a server constant or environment variable when you want the key to stay out of the
-						plugin database.
+						OpenRouter receives the prompts and form fields needed for direct model calls. Sentient Forms
+						does not receive those direct-call payloads. Use the local vault for the fastest
+						setup, or use a server constant or environment variable when you want the key to stay
+						out of the plugin database.
 					</p>
 				</div>
 				<div class="sf:flex sf:gap-6">
@@ -407,49 +503,6 @@
 		</div>
 	</Card>
 
-	<Card class="sf:border-slate-300 sf:bg-slate-50" data-testid="providers-managed-summary">
-		<div
-			class="sf:flex sf:flex-col sf:gap-4 sf:lg:flex-row sf:lg:items-center sf:lg:justify-between"
-		>
-			<div class="sf:space-y-2">
-				<div class="sf:flex sf:flex-wrap sf:gap-2">
-					<Badge variant={providerStatusVariant(primaryManagedCredential?.status ?? 'missing')}>
-						{providerStatusLabel(primaryManagedCredential?.status ?? 'missing')}
-					</Badge>
-					<Badge variant={managedAccountReady ? 'success' : 'warning'}>
-						{managedAccountReady ? 'Managed account ready' : 'Managed account inactive'}
-					</Badge>
-					<Badge variant="info">Sentient billed</Badge>
-				</div>
-				<h3 class="sf:text-xl sf:font-semibold sf:text-slate-900">Sentient managed proxy</h3>
-				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
-					Sentient receives the rendered prompt and required form fields only for managed proxy
-					runs. Direct OpenRouter runs stay outside Sentient billing.
-				</p>
-			</div>
-			<div class="sf:flex sf:gap-6">
-				<div>
-					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Saved proxies</p>
-					<p
-						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
-						data-testid="providers-managed-count"
-					>
-						{managedCredentials.length}
-					</p>
-				</div>
-				<div>
-					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Ready proxies</p>
-					<p
-						class="sf:text-2xl sf:font-semibold sf:text-slate-900"
-						data-testid="providers-managed-ready-count"
-					>
-						{readyManagedCredentials.length}
-					</p>
-				</div>
-			</div>
-		</div>
-	</Card>
-
 	<Card title="OpenRouter model catalog" data-testid="providers-openrouter-model-catalog">
 		<div
 			class="sf:flex sf:flex-col sf:gap-4 sf:lg:flex-row sf:lg:items-start sf:lg:justify-between"
@@ -476,6 +529,35 @@
 						{modelCatalogError}
 					</p>
 				{/if}
+				<Alert
+					variant={acceptedDisclosure ? 'success' : 'info'}
+					data-testid="providers-model-catalog-disclosure"
+				>
+					<label class="sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-700">
+						<input
+							class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+							type="checkbox"
+							bind:checked={acceptedDisclosure}
+						/>
+						<span>
+							I understand refreshing the catalog contacts OpenRouter for model metadata, pricing,
+							and capability flags. No form data or prompts are sent. I accept the
+							<a
+								class="sf:font-medium sf:text-slate-900 sf:underline"
+								href="https://openrouter.ai/terms"
+								target="_blank"
+								rel="noreferrer noopener">OpenRouter terms</a
+							>
+							and
+							<a
+								class="sf:font-medium sf:text-slate-900 sf:underline"
+								href="https://openrouter.ai/privacy"
+								target="_blank"
+								rel="noreferrer noopener">privacy policy</a
+							>.
+						</span>
+					</label>
+				</Alert>
 			</div>
 
 			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-6">
@@ -518,7 +600,9 @@
 				<StateTemplate
 					variant="empty"
 					title="No model cache yet"
-					message="Accept the OpenRouter disclosure, then refresh the catalog before choosing a specific model."
+					message="Accept the OpenRouter disclosure in this catalog panel, then refresh before choosing a specific cached model."
+					actionLabel={acceptedDisclosure ? 'Refresh catalog' : null}
+					onAction={acceptedDisclosure ? refreshOpenRouterModels : null}
 					dense
 				/>
 			</div>
@@ -846,13 +930,13 @@
 	</div>
 
 	<div class="sf:grid sf:gap-4 sf:xl:grid-cols-[1fr_0.9fr]">
-		<Card title="Enable Sentient managed proxy" data-testid="providers-managed-setup-card">
+		<Card title="Enable Sentient Forms managed service" data-testid="providers-managed-setup-card">
 			{#if !managedAccountReady}
 				<StateTemplate
 					variant="empty"
-					title="Activate managed billing first"
-					message="Sentient managed proxy needs an active account and site proxy key. Direct OpenRouter remains available without Sentient billing."
-					actionLabel="Open Billing"
+					title="Activate managed service first"
+					message="Managed execution needs an active Sentient Forms subscription for this WordPress site. Direct OpenRouter remains available without Sentient Forms billing."
+					actionLabel="Open Managed Service"
 					onAction={() => navigateToAppPath('/licensing')}
 					dense
 					testId="providers-managed-account-required"
@@ -862,7 +946,7 @@
 					<InputField
 						id="sentient-managed-label"
 						label="Label"
-						placeholder="Sentient managed proxy"
+						placeholder="Sentient Forms managed service"
 						bind:value={managedLabel}
 						disabled={managedSetupLoading}
 					/>
@@ -876,8 +960,8 @@
 							required
 						/>
 						<span>
-							I understand Sentient receives the rendered prompt and required form fields for
-							managed proxy runs, meters usage, and bills through my Sentient plan.
+							I understand Sentient Forms receives the rendered prompt and required form fields
+							for managed service runs, meters usage, and bills through my Sentient Forms plan.
 						</span>
 					</label>
 
@@ -887,7 +971,7 @@
 						disabled={!canEnableManagedProxy}
 						data-testid="providers-managed-setup-submit"
 					>
-						{managedSetupLoading ? 'Enabling...' : 'Enable managed proxy credential'}
+						{managedSetupLoading ? 'Enabling...' : 'Enable managed service'}
 					</Button>
 				</form>
 			{/if}
@@ -922,14 +1006,14 @@
 			{/if}
 		</Card>
 
-		<Card title="Sentient managed proxy credentials" data-testid="providers-managed-list-card">
+		<Card title="Sentient Forms managed service credentials" data-testid="providers-managed-list-card">
 			{#if loading}
-				<StateTemplate variant="loading" title="Loading managed proxy credentials" dense />
+				<StateTemplate variant="loading" title="Loading managed service credentials" dense />
 			{:else if managedCredentials.length === 0}
 				<StateTemplate
 					variant="empty"
-					title="No managed proxy credential"
-					message="Activate managed billing, accept the disclosure, then enable a local proxy credential."
+					title="No managed service credential"
+					message="Activate managed service, accept the disclosure, then enable the site credential."
 					dense
 				/>
 			{:else}
@@ -993,15 +1077,15 @@
 						>
 						<Badge variant={readyManagedCredentials.length > 0 ? 'success' : 'neutral'}
 							>{readyManagedCredentials.length} managed {readyManagedCredentials.length === 1
-								? 'proxy'
-								: 'proxies'}</Badge
+								? 'service credential'
+								: 'service credentials'}</Badge
 						>
 						<Badge variant="info">Actions owns setup</Badge>
 					</div>
 					<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
-						Choose a form in Actions, then use Direct OpenRouter or Sentient managed proxy to
-						create an action and mapping from the same screen where you manage hooks, run
-						mode, and mapping health.
+						Choose a form in Actions, then use Direct OpenRouter or the Sentient Forms managed
+						service to create an action and mapping from the same screen where you manage hooks,
+						run mode, and mapping health.
 					</p>
 				</div>
 				<Button onclick={() => navigateToAppPath('/actions')} data-testid="providers-open-actions">

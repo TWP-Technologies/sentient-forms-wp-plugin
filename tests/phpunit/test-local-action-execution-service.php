@@ -106,6 +106,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
 
         Sentient_Forms_Plugin::instance()->clear_license_data();
         delete_option( 'sentient_forms_forced_execution_request_id' );
+        delete_option( 'sentient_forms_site_context' );
         $GLOBALS['__sentient_forms_local_spam_updates'] = [];
         if ( class_exists( 'Sentient_Forms_Local_Result_Test_Gravity_Meta_Store' ) )
         {
@@ -123,6 +124,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
 
     protected function tearDown(): void
     {
+        delete_option( 'sentient_forms_site_context' );
         remove_filter( 'sentient_forms_local_mark_entry_as_spam', [ $this, 'capture_spam_mark' ], 10 );
         parent::tearDown();
     }
@@ -186,6 +188,384 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'Contact looks legitimate.', $event['result_json']['result_summary'] );
         $this->assertNotEmpty( $event['payload_digest'] );
         $this->assertStringNotContainsString( $fixture['secret'], wp_json_encode( $event ) );
+    }
+
+    public function test_executes_imported_bundled_openrouter_mapping_without_saved_credential_id(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'source'          => 'cps_template_mapping_import',
+                'template_code'   => 'entry_summary_v1',
+                'prompt_template' => 'Provide a brief, human-readable summary of this form submission.',
+            ],
+            [
+                'code'                 => 'imported_entry_summary_v1_5cfa445eee8f',
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => 'gemini-3-flash-preview',
+                ],
+            ]
+        );
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'succeeded', $result['status'] );
+        $this->assertSame( 'openrouter/auto', $result['model'] );
+        $this->assertCount( 1, $client->chat_calls );
+        $this->assertSame( $fixture['secret'], $client->chat_calls[0]['api_key'] );
+        $this->assertSame( 'openrouter/auto', $client->chat_calls[0]['payload']['model'] );
+        $this->assertStringContainsString( 'Submission data:', $client->chat_calls[0]['payload']['messages'][1]['content'] );
+        $this->assertStringContainsString( 'Ada Lovelace', $client->chat_calls[0]['payload']['messages'][1]['content'] );
+        $this->assertStringContainsString( 'Contact Form', $client->chat_calls[0]['payload']['messages'][1]['content'] );
+
+        $action = $this->custom_actions->get_by_code( 'imported_entry_summary_v1_5cfa445eee8f' );
+        $this->assertIsArray( $action );
+        $this->assertSame( $fixture['credential_id'], (int) ( $action['model_selection_json']['credential_id'] ?? 0 ) );
+        $this->assertSame( 'openrouter/auto', $action['model_selection_json']['model'] ?? null );
+        $this->assertStringContainsString( '{{entry}}', $action['definition_json']['prompt_template'] ?? '' );
+
+        $mapping = $this->mappings->get( $fixture['mapping_id'] );
+        $this->assertIsArray( $mapping );
+        $this->assertSame( 'content', $mapping['effect_mapping_json']['meta']['sentient_forms_summary'] ?? null );
+        $this->assertSame( 'content', $mapping['effect_mapping_json']['entry_note']['path'] ?? null );
+
+        $event = $this->events->get_by_request_id( $result['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertContains( 'meta:sentient_forms_summary', $event['result_json']['effects']['applied'] ?? [] );
+        $this->assertContains( 'entry_note', $event['result_json']['effects']['applied'] ?? [] );
+    }
+
+    public function test_includes_site_context_from_runtime_settings_when_enabled(): void
+    {
+        update_option(
+            'sentient_forms_site_context',
+            [
+                'summary_text' => 'This WordPress site sells industrial components to plant managers.',
+                'auto_include' => false,
+                'pii_ack'      => true,
+            ],
+            false
+        );
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'include_site_context' => 'always',
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $system_message = $client->chat_calls[0]['payload']['messages'][0]['content'] ?? '';
+        $this->assertStringContainsString( 'Classify contact form submissions.', $system_message );
+        $this->assertStringContainsString( 'Site context for this WordPress site:', $system_message );
+        $this->assertStringContainsString( 'industrial components to plant managers', $system_message );
+    }
+
+    public function test_never_setting_omits_site_context_from_runtime_prompt(): void
+    {
+        update_option(
+            'sentient_forms_site_context',
+            [
+                'summary_text' => 'This context should not be sent for this mapping.',
+                'auto_include' => true,
+                'pii_ack'      => true,
+            ],
+            false
+        );
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'include_site_context' => 'never',
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $payload_json = (string) wp_json_encode( $client->chat_calls[0]['payload'] );
+        $this->assertStringNotContainsString( 'Site context for this WordPress site:', $payload_json );
+        $this->assertStringNotContainsString( 'This context should not be sent', $payload_json );
+    }
+
+    public function test_site_context_requires_runtime_pii_acknowledgement(): void
+    {
+        update_option(
+            'sentient_forms_site_context',
+            [
+                'summary_text' => 'This site context lacks the required acknowledgement.',
+                'auto_include' => true,
+                'pii_ack'      => false,
+            ],
+            false
+        );
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'include_site_context' => 'always',
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $payload_json = (string) wp_json_encode( $client->chat_calls[0]['payload'] );
+        $this->assertStringNotContainsString( 'Site context for this WordPress site:', $payload_json );
+        $this->assertStringNotContainsString( 'lacks the required acknowledgement', $payload_json );
+    }
+
+    public function test_runtime_model_selection_overrides_action_default_and_passes_reasoning_effort(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'primary'   => 'anthropic/claude-sonnet-4.5',
+                        'is_preset' => false,
+                        'reasoning' => 'high',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'anthropic/claude-sonnet-4.5', $result['model'] );
+        $this->assertCount( 1, $client->chat_calls );
+        $payload = $client->chat_calls[0]['payload'];
+        $this->assertSame( 'anthropic/claude-sonnet-4.5', $payload['model'] );
+        $this->assertSame( [ 'effort' => 'high' ], $payload['reasoning'] ?? null );
+    }
+
+    public function test_runtime_preset_model_selection_resolves_from_local_model_cache(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'primary'   => 'sf_free',
+                        'is_preset' => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openai/gpt-oss-20b:free', $result['model'] );
+        $this->assertCount( 1, $client->chat_calls );
+        $this->assertSame( 'openai/gpt-oss-20b:free', $client->chat_calls[0]['payload']['model'] );
+    }
+
+    public function test_runtime_model_selection_can_route_openrouter_action_through_sentient_managed(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            [
+                'execution_request_id' => 'runtime-managed-req',
+                'provider'             => 'sentient_managed',
+                'model'                => 'gemini-3-flash-preview',
+                'status'               => 'succeeded',
+                'output'               => [
+                    'text' => 'Managed runtime route succeeded.',
+                ],
+                'token_usage'          => [
+                    'input_tokens'  => 12,
+                    'output_tokens' => 6,
+                    'total_tokens'  => 18,
+                ],
+                'metering'             => [
+                    'event_id'               => '44444444-4444-4444-8444-444444444444',
+                    'billed_amount_microusd' => 1200,
+                    'currency'               => 'USD',
+                    'free_usage'             => false,
+                ],
+            ]
+        );
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'runtime-managed-req',
+                'settings'             => [
+                    'model_selection' => [
+                        'primary'       => 'sf_default',
+                        'is_preset'     => true,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed['credential_id'],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'succeeded', $result['status'] );
+        $this->assertSame( 'sentient_managed', $result['provider'] );
+        $this->assertSame( 'gemini-3-flash-preview', $result['model'] );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+        $this->assertSame( $managed['proxy_api_key'], $managed_proxy->execute_calls[0]['proxy_api_key'] );
+
+        $payload = $managed_proxy->execute_calls[0]['payload'];
+        $this->assertSame( 'sentient_managed', $payload['provider'] );
+        $this->assertSame( $managed['site_id'], $payload['site_id'] );
+        $this->assertSame( 'runtime-managed-req', $payload['execution_request_id'] );
+        $this->assertSame( 'gemini-3-flash-preview', $payload['model'] );
+        $this->assertSame( 'contact_spam_triage', $payload['action_code'] );
+    }
+
+    public function test_rejects_ambiguous_openrouter_credential_fallback_before_provider_call(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [],
+            [
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => 'openrouter/auto',
+                ],
+            ]
+        );
+        $second_credential = $this->create_ready_openrouter_credential( 'Secondary OpenRouter', 'sk-or-secondary-secret' );
+        $this->assertGreaterThan( $fixture['credential_id'], $second_credential );
+
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_provider_credential_ambiguous', $result->get_error_code() );
+        $this->assertCount( 0, $client->chat_calls );
+    }
+
+    public function test_rejects_missing_explicit_openrouter_credential_before_provider_call(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [],
+            [
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => 999999,
+                ],
+            ]
+        );
+
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [ 'id' => 99, '1' => 'Ada Lovelace', '2' => 'ada@example.test' ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_provider_credential_not_found', $result->get_error_code() );
+        $this->assertCount( 0, $client->chat_calls );
     }
 
     public function test_executes_local_mapping_and_persists_full_output_when_enabled(): void
@@ -1030,6 +1410,72 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         ];
     }
 
+    private function create_ready_openrouter_credential( string $label, string $secret ): int
+    {
+        $vault     = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted = $vault->encrypt( $secret );
+        $this->assertIsString( $encrypted );
+
+        $credential_id = $this->credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => $label,
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+
+        $this->assertIsInt( $credential_id );
+        return $credential_id;
+    }
+
+    /**
+     * @param array<string, mixed> $license_overrides
+     * @return array{credential_id: int, proxy_api_key: string, site_id: string}
+     */
+    private function create_ready_managed_service_credential( bool $record_consent = true, array $license_overrides = [] ): array
+    {
+        $site_id       = '22222222-2222-4222-8222-222222222222';
+        $proxy_api_key = 'proxy-local-managed-secret';
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            array_merge(
+                [
+                    'license_status' => 'active',
+                    'license_id'     => 'license-managed-test',
+                    'site_id'        => $site_id,
+                    'proxy_api_key'  => $proxy_api_key,
+                    'tier'           => 'pro',
+                ],
+                $license_overrides
+            )
+        );
+
+        $credential_id = $this->credentials->create(
+            [
+                'provider'          => 'sentient_managed',
+                'label'             => 'Sentient Forms managed service',
+                'auth_mode'         => 'sentient_proxy',
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+
+        if ( $record_consent )
+        {
+            $consent_id = $this->consents->record( 'sentient_managed', '2026-04-19', get_current_user_id() );
+            $this->assertIsInt( $consent_id );
+        }
+
+        return [
+            'credential_id' => $credential_id,
+            'proxy_api_key' => (string) ( $license_overrides['proxy_api_key'] ?? $proxy_api_key ),
+            'site_id'       => (string) ( $license_overrides['site_id'] ?? $site_id ),
+        ];
+    }
+
     /**
      * @param array<string, mixed> $license_overrides
      * @return array{credential_id: int, mapping_id: int, proxy_api_key: string, site_id: string}
@@ -1054,7 +1500,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $credential_id = $this->credentials->create(
             [
                 'provider'          => 'sentient_managed',
-                'label'             => 'Sentient managed proxy',
+                'label'             => 'Sentient Forms managed service',
                 'auth_mode'         => 'sentient_proxy',
                 'status'            => 'valid',
                 'last_validated_at' => current_time( 'mysql' ),
@@ -1197,11 +1643,61 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'sentient_custom_actions',
                 'sentient_form_mappings',
                 'sentient_execution_events',
+                'sentient_model_cache',
             ] as $table
         )
         {
             $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
         }
+    }
+
+    private function seed_openrouter_model_cache(): void
+    {
+        $models     = new Sentient_Forms_Model_Cache_Repository( $GLOBALS['wpdb'] );
+        $expires_at = gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS );
+
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'openai/gpt-oss-20b:free',
+                [
+                    'id'                   => 'openai/gpt-oss-20b:free',
+                    'name'                 => 'OpenAI: GPT OSS 20B (free)',
+                    'free'                 => true,
+                    'context_length'       => 131072,
+                    'input_modalities'     => [ 'text' ],
+                    'output_modalities'    => [ 'text' ],
+                    'supported_parameters' => [ 'response_format' ],
+                    'pricing'              => [
+                        'prompt'     => '0',
+                        'completion' => '0',
+                        'request'    => '0',
+                    ],
+                ],
+                $expires_at
+            )
+        );
+
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'anthropic/claude-sonnet-4.5',
+                [
+                    'id'                   => 'anthropic/claude-sonnet-4.5',
+                    'name'                 => 'Anthropic: Claude Sonnet 4.5',
+                    'free'                 => false,
+                    'context_length'       => 200000,
+                    'input_modalities'     => [ 'text' ],
+                    'output_modalities'    => [ 'text' ],
+                    'supported_parameters' => [ 'response_format', 'reasoning', 'tools' ],
+                    'pricing'              => [
+                        'prompt'     => '0.000003',
+                        'completion' => '0.000015',
+                    ],
+                ],
+                $expires_at
+            )
+        );
     }
 }
 

@@ -560,7 +560,7 @@ class Sentient_Forms_Admin
         }
 
         $content  = '<p>' . esc_html__( 'Sentient Forms stores local AI action configuration, provider connection status, form mapping metadata, and execution logs in this WordPress database. Execution logs can include model outputs or error details created from submitted form data depending on the actions an administrator configures.', 'sentient-forms' ) . '</p>';
-        $content .= '<p>' . esc_html__( 'When an administrator enables OpenRouter direct execution, selected form data and prompts are sent from this site to OpenRouter for processing. When an administrator enables Sentient managed execution, selected form data and prompts are sent to the Sentient Forms managed service for paid proxy execution, metering, and billing. These external-service choices require administrator acceptance before calls are made.', 'sentient-forms' ) . '</p>';
+        $content .= '<p>' . esc_html__( 'When an administrator enables OpenRouter direct execution, selected form data and prompts are sent from this site to OpenRouter for processing. When an administrator enables Sentient Forms managed execution, selected form data and prompts are sent to the Sentient Forms managed service for paid pass-through execution, metering, and billing. These external-service choices require administrator acceptance before calls are made.', 'sentient-forms' ) . '</p>';
         $content .= '<p>' . esc_html__( 'Sentient Forms can send anonymized telemetry, such as action usage counts and service health signals, to Total Web Partners when administrators opt in. Telemetry does not include form entries or visitor identifiers by default, and consent can be revoked at any time.', 'sentient-forms' ) . '</p>';
         $content .= '<p>' . esc_html__( 'Site owners can use WordPress personal data export and erase tools for local Sentient Forms execution records that directly contain a verified email address. Local execution logs are subject to the retention period configured by the site administrator.', 'sentient-forms' ) . '</p>';
 
@@ -708,7 +708,7 @@ Promise.all([
                     <?php
                     printf(
                         /* translators: %s: providers page URL. */
-                        wp_kses_post( __( '<strong>Sentient Forms:</strong> Connect OpenRouter or Sentient managed proxy on the <a href="%s">Providers</a> page before enabling AI actions.', 'sentient-forms' ) ),
+                        wp_kses_post( __( '<strong>Sentient Forms:</strong> Connect OpenRouter or Sentient Forms managed service on the <a href="%s">Providers</a> page before enabling AI actions.', 'sentient-forms' ) ),
                         esc_url( $providers_url )
                     );
                     ?>

@@ -47,6 +47,74 @@ const defaultCreditBalance = {
 	}
 };
 
+const defaultModelCatalog = {
+	models: [
+		{
+			id: 'openrouter/free',
+			display_name: 'OpenRouter Free Models Router',
+			provider: 'openrouter',
+			speed_tier: 'fast',
+			cost_tier: 'free',
+			capabilities: {
+				reasoning: true,
+				code: false,
+				vision: true,
+				tools: true,
+				structured: true,
+				web_search: false,
+				long_context: true
+			},
+			context_window: 200000,
+			is_preview: false,
+			tags: ['free', 'structured-output', 'bundled-recommendation'],
+			supported_parameters: ['reasoning', 'response_format', 'structured_outputs', 'tools'],
+			pricing: { prompt: '0', completion: '0' },
+			recommended_for: ['Free testing']
+		},
+		{
+			id: 'openai/gpt-5.1',
+			display_name: 'OpenAI: GPT-5.1',
+			provider: 'openrouter',
+			speed_tier: 'balanced',
+			cost_tier: 'medium',
+			capabilities: {
+				reasoning: true,
+				code: false,
+				vision: true,
+				tools: true,
+				structured: true,
+				web_search: false,
+				long_context: true
+			},
+			context_window: 400000,
+			is_preview: false,
+			tags: ['structured-output', 'reasoning', 'long-context', 'bundled-recommendation'],
+			supported_parameters: ['reasoning', 'response_format', 'structured_outputs', 'tools'],
+			pricing: { prompt: '0.00000125', completion: '0.00001' },
+			recommended_for: ['General purpose', 'Structured output', 'Paid model quality']
+		}
+	],
+	presets: [
+		{
+			code: 'sf_default',
+			display_name: 'Recommended',
+			description: 'Recommended paid model for production workflows.',
+			category: 'local',
+			resolved_model_id: 'openai/gpt-5.1',
+			auto_upgrade: true
+		},
+		{
+			code: 'sf_free',
+			display_name: 'Free model',
+			description: 'Use the OpenRouter free models router for workflow proof.',
+			category: 'local',
+			resolved_model_id: 'openrouter/free',
+			auto_upgrade: true
+		}
+	],
+	pricing_policy_version: 'mock'
+};
+
 export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 	await page.context().unroute('**/wp-json/sentient-forms/v1/**').catch(() => {});
 	const envelope = (data: unknown) =>
@@ -259,19 +327,58 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: envelope([])
+				body: envelope(defaultModelCatalog)
 			});
 		}
 
 		if (urlWithoutQuery.endsWith('/models/resolve') && method === 'POST') {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+			const mapping = payload.mapping_selection as Record<string, unknown> | undefined;
+			const action = payload.action_selection as Record<string, unknown> | undefined;
+			const primary = String(mapping?.primary ?? action?.primary ?? payload.template_model_hint ?? 'openai/gpt-5.1');
+			const resolvedModelId =
+				primary === 'sf_default' ? 'openai/gpt-5.1' : primary === 'sf_free' ? 'openrouter/free' : primary;
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
 				body: envelope({
-					id: payload.model ?? 'openrouter/auto',
-					label: 'Resolved model',
-					provider: 'openrouter'
+					model_id: resolvedModelId,
+					display_name: resolvedModelId,
+					resolution_source: mapping ? 'mapping' : action ? 'action' : 'fallback',
+					override_chain: [],
+					backup_model_id: typeof mapping?.backup === 'string' ? mapping.backup : null
+				})
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/models/estimate') && method === 'POST') {
+			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+			const mapping = payload.mapping_selection as Record<string, unknown> | undefined;
+			const action = payload.action_selection as Record<string, unknown> | undefined;
+			const primary = String(mapping?.primary ?? action?.primary ?? payload.template_model_hint ?? 'openai/gpt-5.1');
+			const resolvedModelId =
+				primary === 'sf_default' ? 'openai/gpt-5.1' : primary === 'sf_free' ? 'openrouter/free' : primary;
+			const actionId = String(payload.action_id ?? 'mock_action');
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope({
+					resolved_model: {
+						model_id: resolvedModelId,
+						display_name: resolvedModelId,
+						resolution_source: 'mock',
+						override_chain: [],
+						backup_model_id: null
+					},
+					pricing_estimate: {
+						action_id: actionId,
+						resolved_model_id: resolvedModelId,
+						base_floor_credits: 0,
+						normalized_actual_credits: 0,
+						estimated_debit_credits: 0,
+						pricing_policy_version: 'mock',
+						estimate_source: 'fallback'
+					}
 				})
 			});
 		}
@@ -284,11 +391,18 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (routes.actions?.status && /\/actions\/status$/.test(urlWithoutQuery)) {
+		if (/\/actions\/status$/.test(urlWithoutQuery)) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: envelope(routes.actions.status)
+				body: envelope(
+					routes.actions?.status ?? {
+						status: 'unknown',
+						last_run_at: null,
+						last_error_code: null,
+						message: ''
+					}
+				)
 			});
 		}
 

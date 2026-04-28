@@ -145,8 +145,8 @@ function buildQuotaCtaState(
 			label: hasNegativeBalance ? 'Resolve balance' : 'Review billing',
 			enabled: true,
 			reason: hasNegativeBalance
-				? 'Open Licensing to review billing and restore managed execution.'
-				: 'Open Licensing to review managed usage and plan options.',
+				? 'Open Managed Service to review billing and restore managed execution.'
+				: 'Open Managed Service to review managed usage and plan options.',
 			action: 'focus_licensing_billing'
 		};
 	}
@@ -156,8 +156,8 @@ function buildQuotaCtaState(
 			label: hasNegativeBalance ? 'Resolve balance' : 'Review billing',
 			enabled: true,
 			reason: hasNegativeBalance
-				? 'Open Licensing to review billing and restore managed execution.'
-				: 'Open Licensing to review managed usage and plan options.',
+				? 'Open Managed Service to review billing and restore managed execution.'
+				: 'Open Managed Service to review managed usage and plan options.',
 			action: 'focus_licensing_billing'
 		};
 	}
@@ -245,7 +245,7 @@ export function buildCreditPresentation(
 	} else if (severity === 'warning') {
 		detail = `${resetSummary}. Low balance, consider upgrading soon to avoid interruptions.`;
 	} else if (severity === 'critical') {
-		detail = `Managed proxy runs may pause until credits reset or the plan changes. ${resetSummary}.`;
+		detail = `Managed-service runs may pause until credits reset or the plan changes. ${resetSummary}.`;
 	} else if (severity === 'unknown') {
 		detail = `Managed credit details are currently unavailable. ${resetSummary}.`;
 	}

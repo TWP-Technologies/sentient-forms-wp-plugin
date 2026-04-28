@@ -50,6 +50,35 @@ describe('custom action schema pricing authority', () => {
 		}
 	});
 
+	it('preserves managed execution route metadata in model selections', () => {
+		const result = validateCreatePayload({
+			template_id: '42',
+			code: 'managed-route',
+			display_name: 'Managed Route',
+			action_kind: 'template_override',
+			definition_version: 1,
+			supported_execution_modes: ['after_submission'],
+			model_selection: {
+				primary: 'sf_default',
+				is_preset: true,
+				provider: 'sentient_managed',
+				credential_id: '42',
+				reasoning: 'medium'
+			}
+		});
+
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.model_selection).toMatchObject({
+				primary: 'sf_default',
+				is_preset: true,
+				provider: 'sentient_managed',
+				credential_id: 42,
+				reasoning: 'medium'
+			});
+		}
+	});
+
 	it('accepts local numeric template IDs for local-first action templates', () => {
 		const result = validateCreatePayload({
 			template_id: '42',

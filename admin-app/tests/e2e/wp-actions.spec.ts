@@ -42,7 +42,7 @@ test.describe('Sentient Forms admin actions', () => {
 		expect(appReady).toBe('ready');
 		expect(Array.isArray(config?.formSources)).toBeTruthy();
 		expect(config?.license?.status).toBeDefined();
-		await expect(page.getByRole('heading', { name: 'Local workspace' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Sentient Forms workspace' })).toBeVisible();
 		await expect(page.locator('nav a[data-nav-path="/dashboard"]')).toHaveClass(/sf-bg-slate-200/);
 
 		await page.evaluate(() => {
@@ -109,7 +109,7 @@ test.describe('Sentient Forms admin actions', () => {
 		});
 
 		expect(state.hash).toBe('#/dashboard');
-		expect(state.heading).toBe('Local workspace');
+		expect(state.heading).toBe('Sentient Forms workspace');
 		expect(state.activeLinks).toEqual(['Dashboard']);
 	});
 

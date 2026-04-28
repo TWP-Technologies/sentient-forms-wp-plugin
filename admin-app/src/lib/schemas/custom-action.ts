@@ -5,6 +5,7 @@ import type {
 	CustomActionStatus,
 	CustomActionUpdatePayload,
 	ExecutionMode,
+	ModelSelection,
 	OutputContract,
 	WorkflowDefinitionPayload,
 	WorkflowEdgePayload,
@@ -75,6 +76,54 @@ function normalizeOptionalTrimmedString(value: unknown): string | null | undefin
 	if (value === undefined) return undefined;
 	if (value === null) return null;
 	return typeof value === 'string' ? value.trim() : undefined;
+}
+
+function validateModelSelection(value: unknown, issues: ValidationIssue[]): ModelSelection | null | undefined {
+	if (value === undefined) return undefined;
+	if (value === null) return null;
+	if (!isRecord(value)) {
+		pushIssue(issues, ['model_selection'], 'Model selection must be a JSON object');
+		return undefined;
+	}
+
+	const primary = typeof value.primary === 'string' ? value.primary.trim() : '';
+	if (!primary) {
+		pushIssue(issues, ['model_selection', 'primary'], 'Primary model or preset is required');
+	}
+
+	const selection: ModelSelection = {
+		primary,
+		is_preset: Boolean(value.is_preset)
+	};
+
+	if (typeof value.backup === 'string' && value.backup.trim().length > 0) {
+		selection.backup = value.backup.trim();
+	} else if (value.backup === null) {
+		selection.backup = null;
+	}
+
+	if (typeof value.reasoning === 'string' && value.reasoning.trim().length > 0) {
+		selection.reasoning = value.reasoning.trim();
+	}
+
+	if (typeof value.provider === 'string' && value.provider.trim().length > 0) {
+		selection.provider = value.provider.trim();
+	}
+
+	if (isPositiveInteger(value.credential_id)) {
+		selection.credential_id = value.credential_id;
+	} else if (typeof value.credential_id === 'string' && value.credential_id.trim().length > 0) {
+		const credentialId = Number.parseInt(value.credential_id, 10);
+		if (Number.isInteger(credentialId) && credentialId >= 1) {
+			selection.credential_id = credentialId;
+		}
+	}
+
+	if (isRecord(value.tools)) {
+		selection.tools = value.tools;
+	}
+
+	return selection;
 }
 
 function validateCode(value: unknown, issues: ValidationIssue[]): string {
@@ -357,6 +406,7 @@ function validateSharedPayload(
 		description: normalizeOptionalTrimmedString(source.description),
 		prompt_overrides: validatePromptOverrides(source.prompt_overrides, issues),
 		model_hint: normalizeOptionalTrimmedString(source.model_hint),
+		model_selection: validateModelSelection(source.model_selection, issues),
 		action_kind: actionKind,
 		definition,
 		definition_version: validateDefinitionVersion(source.definition_version, issues),

@@ -47,6 +47,54 @@ if ( ! function_exists( 'gform_update_meta' ) )
     }
 }
 
+if ( ! class_exists( 'GFAPI' ) )
+{
+    class GFAPI
+    {
+        /** @var array<int,array<string,mixed>> */
+        public static array $entries = [];
+
+        /** @var array<int,array<string,mixed>> */
+        public static array $forms = [];
+
+        public static function get_entry( $entry_id )
+        {
+            $entry_id = (int) $entry_id;
+            if ( isset( self::$entries[ $entry_id ] ) )
+            {
+                return self::$entries[ $entry_id ];
+            }
+
+            return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+        }
+
+        public static function get_form( $form_id )
+        {
+            $form_id = (int) $form_id;
+
+            return self::$forms[ $form_id ] ?? false;
+        }
+
+        public static function get_forms(): array
+        {
+            return array_values( self::$forms );
+        }
+
+        public static function update_entry_property( $entry_id, $property, $value )
+        {
+            $entry_id = (int) $entry_id;
+            if ( ! isset( self::$entries[ $entry_id ] ) )
+            {
+                return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+            }
+
+            self::$entries[ $entry_id ][ (string) $property ] = $value;
+
+            return true;
+        }
+    }
+}
+
 final class Sentient_Forms_Test_Tracking_Action implements Sentient_Forms_Action_Interface
 {
     /** @var callable */
@@ -205,12 +253,21 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
     {
         parent::setUp();
         Sentient_Forms_Test_Gf_Meta_Store::reset();
+        if ( class_exists( 'GFAPI' ) && property_exists( 'GFAPI', 'entries' ) )
+        {
+            GFAPI::$entries = [];
+        }
+        if ( class_exists( 'GFAPI' ) && property_exists( 'GFAPI', 'forms' ) )
+        {
+            GFAPI::$forms = [];
+        }
         $this->adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance() );
     }
 
     protected function tearDown(): void
     {
         $this->set_action_executor( null );
+        Sentient_Forms_Plugin::instance()->clear_license_data();
         parent::tearDown();
     }
 
@@ -3022,6 +3079,185 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         }
     }
 
+    public function test_handle_after_submission_routes_local_table_mapping_settings_json_to_sentient_managed(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $vault          = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted      = $vault->encrypt( 'sk-or-gf-managed-regression-secret' );
+        $http_urls      = [];
+
+        $this->assertIsString( $encrypted );
+
+        $openrouter_credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Action default OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $openrouter_credential_id );
+
+        $managed_credential_id = $credentials->create(
+            [
+                'provider'          => 'sentient_managed',
+                'label'             => 'Sentient Forms managed service',
+                'auth_mode'         => 'sentient_proxy',
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $managed_credential_id );
+        $this->assertIsInt( $consents->record( 'sentient_managed', '2026-04-28', get_current_user_id() ) );
+
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'license_id'     => 'license-gf-managed-regression',
+                'site_id'        => '22222222-2222-4222-8222-222222222222',
+                'proxy_api_key'  => 'proxy-gf-managed-regression',
+                'tier'           => 'pro',
+            ]
+        );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'gf_local_table_settings_json_managed',
+                'display_name'         => 'GF Local Table Settings JSON Managed',
+                'definition_json'      => [
+                    'prompt_template' => 'Summarize Gravity Forms entries.',
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $openrouter_credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '329',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'effect_mapping_json' => [
+                    'store_result' => true,
+                ],
+                'settings_json'       => [
+                    'model_selection' => [
+                        'primary'       => 'sf_default',
+                        'is_preset'     => true,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed_credential_id,
+                    ],
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $http_filter = static function ( $preempt, array $args, string $url ) use ( &$http_urls ): mixed {
+            $http_urls[] = $url;
+
+            if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+            {
+                return new WP_Error( 'unexpected_openrouter_request', 'Managed settings_json runtime tried to call OpenRouter directly.' );
+            }
+
+            if ( false !== strpos( $url, '/managed/execute' ) )
+            {
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode(
+                        [
+                            'success' => true,
+                            'data'    => [
+                                'execution_request_id' => 'managed-settings-json-req',
+                                'provider'             => 'sentient_managed',
+                                'model'                => 'gemini-3-flash-preview',
+                                'status'               => 'succeeded',
+                                'output'               => [
+                                    'text' => 'Managed adapter route succeeded.',
+                                ],
+                                'token_usage'          => [
+                                    'input_tokens'  => 9,
+                                    'output_tokens' => 4,
+                                    'total_tokens'  => 13,
+                                ],
+                                'metering'             => [
+                                    'event_id'               => '55555555-5555-4555-8555-555555555555',
+                                    'billed_amount_microusd' => 1000,
+                                    'currency'               => 'USD',
+                                    'free_usage'             => false,
+                                ],
+                            ],
+                        ]
+                    ),
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'cookies'  => [],
+                ];
+            }
+
+            return $preempt;
+        };
+
+        add_filter( 'pre_http_request', $http_filter, 10, 3 );
+        $this->adapter->handle_after_submission_entry_post_save(
+            [
+                'id'      => 659,
+                'form_id' => 329,
+                'status'  => 'active',
+            ],
+            [
+                'id'     => 329,
+                'title'  => 'Managed Settings JSON Regression Form',
+                'fields' => [],
+            ]
+        );
+        remove_filter( 'pre_http_request', $http_filter, 10 );
+
+        $recent_events = $events->list_recent( 1 );
+        $this->assertCount( 1, $recent_events );
+        $this->assertSame( 'succeeded', $recent_events[0]['status'] ?? null );
+        $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
+        $this->assertSame( 'sentient_managed', $recent_events[0]['provider'] ?? null );
+        $this->assertSame( 'gemini-3-flash-preview', $recent_events[0]['model'] ?? null );
+        $this->assertSame( 1000, $recent_events[0]['cost_json']['billed_amount_microusd'] ?? null );
+        $this->assertSame( 'sentient_forms_metering', $recent_events[0]['cost_json']['source'] ?? null );
+
+        $this->assertContains(
+            true,
+            array_map(
+                static fn ( string $url ): bool => false !== strpos( $url, '/managed/execute' ),
+                $http_urls
+            )
+        );
+        foreach ( $http_urls as $url )
+        {
+            $this->assertStringNotContainsString( 'openrouter.ai/api/v1/chat/completions', $url );
+        }
+    }
+
     public function test_handle_after_submission_records_local_openrouter_failure_note_and_error_meta(): void
     {
         Sentient_Forms_Installer::maybe_upgrade();
@@ -3148,6 +3384,189 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         {
             $this->assertStringNotContainsString( 'sentientforms.com', $url );
         }
+    }
+
+    public function test_handle_validation_includes_complex_gravity_inputs_in_local_prompt(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        if ( ! class_exists( 'GFAPI' ) || ! property_exists( 'GFAPI', 'forms' ) )
+        {
+            $this->markTestSkipped( 'GFAPI test double does not expose form storage.' );
+        }
+
+        global $wpdb;
+
+        $credentials       = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents          = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions    = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings          = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $vault             = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted         = $vault->encrypt( 'sk-or-gf-complex-validation-secret' );
+        $captured_messages = [];
+
+        $this->assertIsString( $encrypted );
+
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Complex field validation OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $this->assertIsInt( $consents->record( 'openrouter', '2026-04-24', 0 ) );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'gf_local_openrouter_complex_validation',
+                'display_name'         => 'GF Local OpenRouter Complex Validation',
+                'definition_json'      => [
+                    'prompt_template' => "Validate this Gravity Forms submission:\n{{entry}}",
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '326',
+                'hook'                => 'gform_validation',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'effect_mapping_json' => [],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $name_field = (object) [
+            'id'                 => 1,
+            'inputs'             => [
+                [ 'id' => '1.3', 'label' => 'First' ],
+                [ 'id' => '1.6', 'label' => 'Last' ],
+            ],
+            'failed_validation'  => false,
+            'validation_message' => '',
+        ];
+        $email_field = (object) [
+            'id'                 => 2,
+            'failed_validation'  => false,
+            'validation_message' => '',
+        ];
+        $comments_field = (object) [
+            'id'                 => 3,
+            'failed_validation'  => false,
+            'validation_message' => '',
+        ];
+
+        GFAPI::$forms[326] = [
+            'id'     => 326,
+            'title'  => 'Complex Validation Form',
+            'fields' => [ $name_field, $email_field, $comments_field ],
+        ];
+
+        $http_filter = static function ( $preempt, array $args, string $url ) use ( &$captured_messages ): mixed {
+            if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+            {
+                $body = json_decode( (string) ( $args['body'] ?? '' ), true );
+                if ( is_array( $body ) && isset( $body['messages'] ) && is_array( $body['messages'] ) )
+                {
+                    $captured_messages = $body['messages'];
+                }
+
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'chatcmpl-gf-complex-validation',
+                            'model'   => 'openrouter/auto',
+                            'choices' => [
+                                [
+                                    'message'       => [
+                                        'role'    => 'assistant',
+                                        'content' => wp_json_encode(
+                                            [
+                                                'is_valid' => true,
+                                                'message'  => 'Content quality looks sufficient for follow-up.',
+                                                'fields'   => [],
+                                            ]
+                                        ),
+                                    ],
+                                    'finish_reason' => 'stop',
+                                ],
+                            ],
+                            'usage'   => [
+                                'prompt_tokens'     => 12,
+                                'completion_tokens' => 7,
+                                'total_tokens'      => 19,
+                            ],
+                        ]
+                    ),
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'cookies'  => [],
+                ];
+            }
+
+            return $preempt;
+        };
+
+        $previous_post = $_POST;
+        try
+        {
+            $_POST = [
+                'gform_submit' => '326',
+                'input_1_3'    => 'BrowserMCP',
+                'input_1_6'    => 'Validation',
+                'input_2'      => 'browsermcp.validation@example.com',
+                'input_3'      => 'We need onboarding support and implementation planning next month.',
+            ];
+
+            add_filter( 'pre_http_request', $http_filter, 10, 3 );
+            $result = $this->adapter->handle_validation(
+                [
+                    'is_valid' => true,
+                    'form'     => GFAPI::$forms[326],
+                ]
+            );
+        }
+        finally
+        {
+            remove_filter( 'pre_http_request', $http_filter, 10 );
+            $_POST = $previous_post;
+        }
+
+        $this->assertTrue( $result['is_valid'] );
+
+        $prompt_text = implode(
+            "\n",
+            array_map(
+                static fn ( array $message ): string => (string) ( $message['content'] ?? '' ),
+                $captured_messages
+            )
+        );
+
+        $this->assertStringContainsString( '"1.3":"BrowserMCP"', $prompt_text );
+        $this->assertStringContainsString( '"1.6":"Validation"', $prompt_text );
+        $this->assertStringContainsString( '"1":"BrowserMCP Validation"', $prompt_text );
+        $this->assertStringContainsString( '"2":"browsermcp.validation@example.com"', $prompt_text );
+        $this->assertStringContainsString( '"3":"We need onboarding support and implementation planning next month."', $prompt_text );
     }
 
     public function test_finalize_async_error_records_local_action_note_and_error_meta(): void
@@ -3333,6 +3752,170 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         {
             $this->assertStringNotContainsString( 'sentientforms.com', $url );
         }
+    }
+
+    public function test_entry_post_save_replays_successful_local_content_validation_effects_to_saved_entry(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $vault          = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted      = $vault->encrypt( 'sk-or-gf-local-validation-note-secret' );
+        $http_urls      = [];
+
+        $this->assertIsString( $encrypted );
+
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Validation note OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $this->assertIsInt( $consents->record( 'openrouter', '2026-04-24', 0 ) );
+
+        $template = Sentient_Forms_Bundled_Action_Templates::get( 'content_validation_v1' );
+        $this->assertIsArray( $template );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'content_validation_v1' ),
+                'display_name'         => 'Content Quality Validation',
+                'definition_json'      => array_merge(
+                    $template['definition_json'],
+                    [
+                        'template_code'   => 'content_validation_v1',
+                        'prompt_template' => $template['prompt_template'],
+                    ]
+                ),
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '325',
+                'hook'                => 'gform_validation',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'effect_mapping_json' => $template['effect_mapping_json'],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $http_filter = static function ( $preempt, array $args, string $url ) use ( &$http_urls ): mixed {
+            $http_urls[] = $url;
+
+            if ( false !== strpos( $url, 'sentientforms.com' ) )
+            {
+                return new WP_Error( 'unexpected_sentient_request', 'Local-first validation tried to call Sentient.' );
+            }
+
+            if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+            {
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'chatcmpl-gf-local-validation-note',
+                            'model'   => 'openrouter/auto',
+                            'choices' => [
+                                [
+                                    'message'       => [
+                                        'role'    => 'assistant',
+                                        'content' => wp_json_encode(
+                                            [
+                                                'is_valid' => true,
+                                                'message'  => 'Content quality looks sufficient for follow-up.',
+                                                'fields'   => [],
+                                            ]
+                                        ),
+                                    ],
+                                    'finish_reason' => 'stop',
+                                ],
+                            ],
+                            'usage'   => [
+                                'prompt_tokens'     => 12,
+                                'completion_tokens' => 7,
+                                'total_tokens'      => 19,
+                            ],
+                        ]
+                    ),
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'cookies'  => [],
+                ];
+            }
+
+            return $preempt;
+        };
+
+        add_filter( 'pre_http_request', $http_filter, 10, 3 );
+        $result = $this->adapter->handle_validation(
+            [
+                'is_valid' => true,
+                'form'     => [
+                    'id'                => 325,
+                    'failed_validation' => false,
+                    'fields'            => [],
+                ],
+            ]
+        );
+        $this->adapter->handle_after_submission_entry_post_save(
+            [
+                'id'      => 811,
+                'form_id' => 325,
+                '3'       => 'We need onboarding support and implementation planning next month.',
+            ],
+            [
+                'id'     => 325,
+                'title'  => 'Content Validation Proof Form',
+                'fields' => [],
+            ]
+        );
+        remove_filter( 'pre_http_request', $http_filter, 10 );
+
+        $this->assertTrue( $result['is_valid'] );
+
+        $recent_events = $events->list_recent( 1 );
+        $this->assertCount( 1, $recent_events );
+        $this->assertSame( 'succeeded', $recent_events[0]['status'] ?? null );
+        $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
+        $this->assertSame( '811', $recent_events[0]['entry_id'] ?? null );
+        $this->assertContains( 'store_result', $recent_events[0]['result_json']['effects']['applied'] ?? [] );
+        $this->assertContains( 'entry_note', $recent_events[0]['result_json']['effects']['applied'] ?? [] );
+        $this->assertNotEmpty( gform_get_meta( 811, 'sentient_forms_last_response' ) );
+
+        $this->assertContains(
+            true,
+            array_map(
+                static fn ( string $url ): bool => false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ),
+                $http_urls
+            )
+        );
     }
 
     public function test_handle_after_submission_local_spam_mapping_suppresses_notifications(): void

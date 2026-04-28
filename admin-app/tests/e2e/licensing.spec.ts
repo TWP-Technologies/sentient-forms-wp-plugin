@@ -122,7 +122,7 @@ test('licensing screen handles activation flow', async ({ page }) => {
 			  }
 			| undefined;
 		expect(body?.plan_code).toBe('starter');
-		expect(body?.trial_period_days).toBe(14);
+		expect(body?.trial_period_days).toBeUndefined();
 
 		return route.fulfill({
 			status: 200,
@@ -141,25 +141,18 @@ test('licensing screen handles activation flow', async ({ page }) => {
 
 	await page.goto('/#/licensing');
 
-	await expect(page.getByRole('heading', { name: 'License activation' })).toBeVisible();
-	await expect(page.getByText('Proxy key stored')).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Activate managed service' })).toBeVisible();
+	await expect(page.getByText('Managed service key stored')).toBeVisible();
 
 	await page.getByLabel('License key').fill('LIC-123456789012345678901234');
-	await page.getByRole('button', { name: 'Activate', exact: true }).click();
+	await page.getByRole('button', { name: 'Activate license', exact: true }).click();
 
-	await expect(page.getByText('Tier: starter')).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Activate', exact: true })).not.toBeVisible();
-	await expect(page.getByTestId('licensing-trial-policy-note')).toContainText(
-		'one-time 14-day paid-plan trial'
-	);
-	await expect(page.getByTestId('licensing-trial-policy-note')).toContainText(
-		'Free plan remains available indefinitely with 50 monthly credits'
-	);
-	await expect(page.getByTestId('licensing-trial-policy-note')).toContainText(
-		'Private Beta sites can remain on Private Beta'
-	);
+	await expect(page.getByText('Tier: Starter')).toBeVisible();
+	await expect(
+		page.getByRole('button', { name: 'Activate license', exact: true })
+	).not.toBeVisible();
 	await expect(page.getByTestId('licensing-business-cap-note')).toContainText(
-		'up to 200 sites during launch'
+		'Each Sentient Forms managed-service license covers one WordPress site'
 	);
 	await page.getByRole('button', { name: 'Choose Starter' }).click();
 	await expect.poll(() => checkoutRequests).toBe(1);
@@ -170,6 +163,156 @@ test('licensing screen handles activation flow', async ({ page }) => {
 
 	await deactivateButton.click();
 	await expect(deactivateButton).not.toBeVisible();
+});
+
+test('first-time managed checkout starts from the recommended license path with hash-safe return urls', async ({
+	page
+}) => {
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+
+	const inactiveStatus = {
+		status: 'inactive',
+		license_key_masked: '',
+		proxy_key_present: false,
+		tier: null,
+		expires_at: null,
+		last_synced: null,
+		license_id: null,
+		site_id: null,
+		site_url: 'https://example.test'
+	};
+	let checkoutRequests = 0;
+
+	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+	await page.route('**/wp-json/sentient-forms/v1/license/managed-checkout/start', (route) => {
+		checkoutRequests += 1;
+		const body = route.request().postDataJSON() as
+			| {
+					plan_code?: string;
+					success_url?: string;
+					cancel_url?: string;
+					accepted_managed_service_terms?: boolean;
+			  }
+			| undefined;
+		expect(body?.plan_code).toBe('starter');
+		expect(body?.accepted_managed_service_terms).toBe(true);
+
+		for (const returnUrl of [body?.success_url, body?.cancel_url]) {
+			expect(returnUrl).toBeTruthy();
+			const parsed = new URL(returnUrl ?? '');
+			expect(parsed.searchParams.get('sentient_managed_checkout')).toBeNull();
+			expect(parsed.hash === '#/licensing' || parsed.pathname.endsWith('/licensing')).toBe(true);
+		}
+
+		return route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					checkout_intent_id: 'mci_test_123',
+					checkout_session_id: 'cs_test_123',
+					checkout_url: `${process.env.PREVIEW_ORIGIN ?? 'http://127.0.0.1:4175'}/#/licensing?managed-checkout-started=1`,
+					status: 'open',
+					provider: 'stripe'
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+
+	await page.goto('/#/licensing');
+
+	await expect(page.getByRole('heading', { name: 'Let Sentient Forms manage model access' })).toBeVisible();
+	await page.getByTestId('licensing-managed-checkout-disclosure').locator('input').check();
+	await page.getByRole('button', { name: 'Choose Starter' }).click();
+
+	await expect.poll(() => checkoutRequests).toBe(1);
+	await expect(page).toHaveURL(/managed-checkout-started=1/);
+});
+
+test('managed checkout return with completed status resumes activation on the licensing route', async ({
+	page
+}) => {
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+
+	const inactiveStatus = {
+		status: 'inactive',
+		license_key_masked: '',
+		proxy_key_present: false,
+		tier: null,
+		expires_at: null,
+		last_synced: null,
+		license_id: null,
+		site_id: null,
+		site_url: 'https://example.test'
+	};
+	let completeRequests = 0;
+
+	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({ success: true, data: inactiveStatus }),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+	await page.route('**/wp-json/sentient-forms/v1/license/managed-checkout/complete', (route) => {
+		completeRequests += 1;
+		const body = route.request().postDataJSON() as
+			| {
+					checkout_intent_id?: string;
+					checkout_session_id?: string;
+					activation_token?: string;
+			  }
+			| undefined;
+		expect(body?.checkout_intent_id).toBe('mci_test_123');
+		expect(body?.checkout_session_id).toBe('cs_test_123');
+		expect(body?.activation_token).toBe('activation-token');
+
+		return route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					activation_ready: false,
+					status: 'pending_webhook',
+					checkout_intent_id: 'mci_test_123',
+					checkout_session_id: 'cs_test_123'
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+
+	await page.goto(
+		'/licensing?sentient_managed_checkout=completed&checkout_intent_id=mci_test_123&stripe_session_id=cs_test_123&activation_token=activation-token'
+	);
+
+	await expect.poll(() => completeRequests).toBe(1);
+	await expect(
+		page.getByText('Stripe checkout succeeded. Sentient Forms is waiting for the billing webhook')
+	).toBeVisible();
 });
 
 test('licensing screen uses billing-state credits without legacy credit refresh', async ({
@@ -255,14 +398,16 @@ test('licensing screen uses billing-state credits without legacy credit refresh'
 
 	await page.goto('/#/licensing', { waitUntil: 'networkidle' });
 
-	await expect(page.getByRole('heading', { name: 'License management' })).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Activate', exact: true })).not.toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Managed service' })).toBeVisible();
+	await expect(
+		page.getByRole('button', { name: 'Activate license', exact: true })
+	).not.toBeVisible();
 	await expect(page.getByText('Tier: Starter')).toBeVisible();
 	await expect(page.getByTestId('licensing-credits-headline')).toContainText(
 		'1500 / 1500 managed credits remaining'
 	);
 	await expect(page.getByTestId('licensing-trial-status-note')).toContainText(
-		'One-time 14-day paid-plan trial.'
+		'Legacy introductory period ends'
 	);
 });
 
@@ -376,13 +521,13 @@ test('licensing screen explains the v2 managed billing boundary', async ({ page 
 		'4,000 monthly managed credits included'
 	);
 	await expect(page.getByText('Subscription status: active')).toBeVisible();
-	await expect(page.getByText('Site capacity: 3 / 10')).toBeVisible();
+	await expect(page.getByText('Licensed WordPress site: 3 / 10')).toBeVisible();
 
 	const boundary = page.getByTestId('licensing-billing-boundary');
 	await expect(boundary).toContainText('Direct OpenRouter');
-	await expect(boundary).toContainText('Not Sentient billed');
-	await expect(boundary).toContainText('Sentient managed proxy');
-	await expect(boundary).toContainText('Sentient billed');
+	await expect(boundary).toContainText('External billing');
+	await expect(boundary).toContainText('Sentient Forms managed service');
+	await expect(boundary).toContainText('Sentient Forms billed');
 	await expect(page.getByTestId('licensing-managed-usage-summary')).toContainText(
 		'8 managed runs, 7 succeeded, 1 failed'
 	);
@@ -500,7 +645,9 @@ test('existing subscriptions use billing portal for plan management', async ({ p
 	});
 
 	await page.goto('/#/licensing', { waitUntil: 'networkidle' });
-	await expect(page.getByTestId('licensing-trial-status-note')).toContainText('Trial active until');
+	await expect(page.getByTestId('licensing-trial-status-note')).toContainText(
+		'Legacy introductory period ends'
+	);
 	await expect(page.getByTestId('licensing-managed-portal-note')).toContainText(
 		'Use the Stripe billing portal'
 	);

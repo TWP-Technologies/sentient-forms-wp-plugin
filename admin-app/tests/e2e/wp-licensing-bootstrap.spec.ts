@@ -27,7 +27,7 @@ test.describe('Licensing bootstrap in real WP admin @licensing-wp', () => {
 		await loginToWpAdmin(page);
 		await ensureSentientFormsSpa(page, '/licensing');
 
-		await expect(page.getByRole('heading', { name: 'License management' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Managed service' })).toBeVisible();
 		await expect(page.getByTestId('licensing-status-headline')).toContainText('Active and connected');
 		await expect(page.getByTestId('licensing-status-badge')).toContainText('active');
 		await expect(page.getByText('Tier: Free')).toBeVisible();

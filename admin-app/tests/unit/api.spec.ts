@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { apiFetch, ApiError } from '$lib/api/http';
+import {
+	SESSION_EXPIRED_EVENT,
+	resetSessionExpiryAnnouncementForTests
+} from '$lib/api/session-expiry';
+import { notifications } from '$lib/stores/notifications';
 
 declare global {
 	interface Window {
@@ -18,6 +23,7 @@ describe('apiFetch', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
+		resetSessionExpiryAnnouncementForTests();
 	});
 
 	it('makes a successful request', async () => {
@@ -64,5 +70,32 @@ describe('apiFetch', () => {
 		}));
 
 		await expect(apiFetch('bad')).rejects.toBeInstanceOf(ApiError);
+	});
+
+	it('announces expired WordPress sessions from the legacy wpFetch wrapper', async () => {
+		window.sentientFormsConfig = config;
+		const errors = vi.spyOn(notifications, 'error');
+		const sessionHandler = vi.fn();
+		window.addEventListener(SESSION_EXPIRED_EVENT, sessionHandler);
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: false,
+				status: 403,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ code: 'rest_cookie_invalid_nonce', message: 'Cookie check failed' })
+			})
+		);
+
+		await expect(apiFetch('bad', { showNotifications: true })).rejects.toBeInstanceOf(ApiError);
+
+		expect(sessionHandler).toHaveBeenCalledTimes(1);
+		expect(errors).toHaveBeenCalledWith(
+			'WordPress session expired. Reload this admin page before retrying.',
+			0
+		);
+
+		window.removeEventListener(SESSION_EXPIRED_EVENT, sessionHandler);
 	});
 });

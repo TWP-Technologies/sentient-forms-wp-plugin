@@ -263,19 +263,23 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $effect_mapping = is_array( $row['effect_mapping_json'] ?? null )
             ? $row['effect_mapping_json']
             : null;
-        $settings       = [
-            'local_form_mapping_id' => $id,
-            'execution_mode'        => $execution_mode,
-            'input_mapping'         => is_array( $row['input_bindings_json'] ?? null )
-                ? $row['input_bindings_json']
-                : [],
-            'effect_mapping_json'   => $effect_mapping,
-            'linked_action_status'  => $identity['linked_action_status'],
-            'repair_state'          => $identity['repair_state'],
-            'trigger_sources'       => [
-                $hook => [ 'type' => 'hook_root' ],
-            ],
-        ];
+        $settings       = is_array( $row['settings_json'] ?? null ) ? $row['settings_json'] : [];
+        $settings       = array_replace_recursive(
+            $settings,
+            [
+                'local_form_mapping_id' => $id,
+                'execution_mode'        => $execution_mode,
+                'input_mapping'         => is_array( $row['input_bindings_json'] ?? null )
+                    ? $row['input_bindings_json']
+                    : [],
+                'effect_mapping_json'   => $effect_mapping,
+                'linked_action_status'  => $identity['linked_action_status'],
+                'repair_state'          => $identity['repair_state'],
+                'trigger_sources'       => [
+                    $hook => [ 'type' => 'hook_root' ],
+                ],
+            ]
+        );
 
         if ( is_array( $effect_mapping ) )
         {
@@ -2115,6 +2119,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     : [],
                 'execution_mode'      => $this->resolve_local_first_execution_mode_for_hook( $hook, $settings, $definition ),
                 'effect_mapping_json' => $this->build_local_first_effect_mapping( $definition, $settings ),
+                'settings_json'       => $this->build_local_first_runtime_settings( $settings ),
                 'enabled'             => $enabled,
             ];
 
@@ -2328,6 +2333,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             return 0;
         }
 
+        $ready_credentials = [];
         foreach ( $this->local_provider_credentials->list( [ 'limit' => 100 ] ) as $credential )
         {
             if ( 'openrouter' !== sanitize_key( (string) ( $credential['provider'] ?? '' ) ) )
@@ -2343,11 +2349,50 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $credential_id = absint( $credential['id'] ?? 0 );
             if ( $credential_id > 0 )
             {
-                return $credential_id;
+                $ready_credentials[] = $credential_id;
             }
         }
 
-        return 0;
+        return 1 === count( $ready_credentials ) ? $ready_credentials[0] : 0;
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     *
+     * @return array<string, mixed>|null
+     */
+    private function build_local_first_runtime_settings( array $settings ): ?array
+    {
+        $column_backed_keys = [
+            'conditions',
+            'effect_mapping_json',
+            'execution_mode',
+            'input_mapping',
+            'is_action_enabled_for_form',
+            'linked_action_status',
+            'local_form_mapping_id',
+            'repair_state',
+            'spam_indicators_display',
+            'spam_result_display_mode',
+            'suppress_notifications_on_spam',
+            'skip_downstream_on_spam',
+            'trigger_hooks',
+            'trigger_sources',
+        ];
+
+        $runtime_settings = [];
+        foreach ( $settings as $key => $value )
+        {
+            $key = sanitize_key( (string) $key );
+            if ( '' === $key || in_array( $key, $column_backed_keys, true ) )
+            {
+                continue;
+            }
+
+            $runtime_settings[ $key ] = $value;
+        }
+
+        return [] === $runtime_settings ? null : $runtime_settings;
     }
 
     /**
@@ -2674,6 +2719,8 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
                         $update['effect_mapping_json'] = $effect_mapping;
                     }
+
+                    $update['settings_json'] = $this->build_local_first_runtime_settings( $settings );
                 }
 
                 $updated = $this->local_form_mappings->update(

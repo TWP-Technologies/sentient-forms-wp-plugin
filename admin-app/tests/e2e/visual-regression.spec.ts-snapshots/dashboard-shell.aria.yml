@@ -1,12 +1,13 @@
-- heading "Local workspace" [level=2]
-- paragraph: Run AI actions from this WordPress site with your own provider key. Sentient billing stays optional.
+- heading "Sentient Forms workspace" [level=2]
+- paragraph: Start with the managed Sentient Forms service when you want setup, model access, spend controls, and support handled for this WordPress site. Direct OpenRouter remains available for free testing and self-managed BYOK use.
 - button "Refresh"
-- button "Connect OpenRouter"
-- text: OpenRouter ready Free path available
-- heading "OpenRouter test key" [level=3]
-- paragraph: OpenRouter direct mode keeps provider credentials and action data in WordPress. Sentient does not meter direct BYOK or free-model runs.
-- button "Review provider"
+- button "Set up managed service"
+- text: Managed service not connected Recommended setup Direct OpenRouter optional
+- heading "Managed Sentient Forms service" [level=3]
+- paragraph: Use managed execution when you want Sentient Forms to handle provider setup, recommended paid models, service metering, and spend controls. Free OpenRouter routes are useful for proving a workflow; BYOK is for teams that want to own provider billing and key limits themselves.
+- button "Set up managed service"
 - button "Map a form"
+- button "Use direct OpenRouter"
 - paragraph: Provider keys
 - paragraph: "1"
 - paragraph: Templates
@@ -15,16 +16,17 @@
 - paragraph: "1"
 - paragraph: Recent runs
 - paragraph: "1"
-- heading "Direct provider" [level=3]
+- heading "Recommended provider" [level=3]
+- paragraph: Managed service not connected
+- text: Setup
+- paragraph: Activate managed service for paid models, setup help, and spend controls.
+- heading "Self-managed provider" [level=3]
 - paragraph: OpenRouter ready
 - text: Ready
 - paragraph: /Last checked Jan 5, \d+, 4:\d+ AM/
-- heading "Sentient charges" [level=3]
-- paragraph: "Direct OpenRouter: no"
-- paragraph: Managed billing belongs only to Sentient-hosted paid execution. BYOK and OpenRouter free models stay outside the Sentient meter.
-- heading "Local diagnostics" [level=3]
-- paragraph: /\d+ day retention/
-- paragraph: "Events table: 1. Providers table: 1."
+- heading "Free workflow proof" [level=3]
+- paragraph: OpenRouter free routes
+- paragraph: Try actions with free models first if you want to confirm the plugin path before choosing managed service or BYOK paid models.
 - heading "Recent local runs" [level=2]
 - text: 1 succeeded 0 failed
 - region "Recent local runs table":

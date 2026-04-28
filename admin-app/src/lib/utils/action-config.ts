@@ -127,11 +127,27 @@ export function normalizeModelSelection(value: unknown): ModelSelection | undefi
 	const backupRaw = candidate.backup;
 	const backup =
 		typeof backupRaw === 'string' && backupRaw.trim().length > 0 ? backupRaw.trim() : null;
+	const provider =
+		typeof candidate.provider === 'string' && candidate.provider.trim().length > 0
+			? candidate.provider.trim()
+			: null;
+	const credentialId =
+		typeof candidate.credential_id === 'number' && Number.isFinite(candidate.credential_id)
+			? candidate.credential_id
+			: typeof candidate.credential_id === 'string' && candidate.credential_id.trim().length > 0
+				? Number.parseInt(candidate.credential_id, 10)
+				: null;
 
 	return {
 		primary,
 		backup,
-		is_preset: candidate.is_preset === true
+		is_preset: candidate.is_preset === true,
+		...(provider ? { provider } : {}),
+		...(credentialId && credentialId > 0 ? { credential_id: credentialId } : {}),
+		...(typeof candidate.reasoning === 'string' &&
+		['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(candidate.reasoning)
+			? { reasoning: candidate.reasoning }
+			: {})
 	};
 }
 
