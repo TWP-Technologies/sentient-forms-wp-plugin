@@ -100,6 +100,16 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             }
         }
 
+        $reasoning = $this->sanitize_reasoning_effort( $selection['reasoning'] ?? null );
+        if ( '' !== $reasoning && $this->model_supports_reasoning( (string) ( $selection['model'] ?? '' ), $provider ) )
+        {
+            $selection['reasoning'] = $reasoning;
+        }
+        elseif ( isset( $selection['reasoning'] ) )
+        {
+            unset( $selection['reasoning'] );
+        }
+
         return $selection;
     }
 
@@ -166,9 +176,13 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         }
 
         $reasoning = $this->sanitize_reasoning_effort( $runtime['reasoning'] ?? null );
-        if ( '' !== $reasoning )
+        if ( '' !== $reasoning && $this->model_supports_reasoning( (string) ( $selection['model'] ?? '' ), (string) ( $selection['provider'] ?? 'openrouter' ) ) )
         {
             $selection['reasoning'] = $reasoning;
+        }
+        elseif ( isset( $selection['reasoning'] ) )
+        {
+            unset( $selection['reasoning'] );
         }
 
         return $selection;
@@ -679,7 +693,9 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             'sf_default',
             'sf_general'    => $recommended,
             'sf_quality'    => $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'High-quality analysis', $model['recommended_for'] ?? [], true ) ) ?: $recommended,
-            'sf_free'       => $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' === (string) ( $model['cost_tier'] ?? '' ) ) ?: $recommended,
+            'sf_free'       => isset( $models['openrouter/free'] )
+                ? 'openrouter/free'
+                : ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' === (string) ( $model['cost_tier'] ?? '' ) ) ?: $recommended ),
             'sf_structured' => $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'structured-output', $model['tags'] ?? [], true ) ) ?: $recommended,
             'sf_fast'       => $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( (string) ( $model['speed_tier'] ?? '' ), [ 'fastest', 'fast' ], true ) ) ?: $recommended,
             'sf_low_cost'   => $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' !== (string) ( $model['cost_tier'] ?? '' ) && in_array( (string) ( $model['cost_tier'] ?? '' ), [ 'low', 'medium' ], true ) )
@@ -785,6 +801,7 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             'capabilities'   => $capabilities,
             'context_window' => $context_window,
             'tags'           => $tags,
+            'supported_parameters' => $supported_parameters,
             'recommended_for' => $this->sanitize_string_label_list( $metadata['recommended_for'] ?? [] ),
         ];
     }
@@ -883,8 +900,23 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
 
     private function model_has_reasoning( string $model_id, string $name, array $supported_parameters ): bool
     {
-        return in_array( 'reasoning', $supported_parameters, true )
-            || (bool) preg_match( '/reason|thinking|o[134]|r1/i', $model_id . ' ' . $name );
+        return (bool) array_intersect( $supported_parameters, [ 'reasoning', 'reasoning_effort' ] );
+    }
+
+    private function model_supports_reasoning( string $model_id, string $provider ): bool
+    {
+        if ( 'sentient_managed' === sanitize_key( $provider ) )
+        {
+            return true;
+        }
+
+        $model = $this->list_local_openrouter_models()[ $model_id ] ?? null;
+        if ( ! is_array( $model ) )
+        {
+            return false;
+        }
+
+        return ! empty( $model['capabilities']['reasoning'] );
     }
 
     private function infer_speed_tier( string $model_id, string $name ): string

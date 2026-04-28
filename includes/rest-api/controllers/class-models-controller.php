@@ -355,7 +355,9 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
     {
         $recommended_model = $this->pick_default_model_id( $models );
         $quality_model     = $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'High-quality analysis', $model['recommended_for'] ?? [], true ) ) ?: $recommended_model;
-        $free_model        = $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' === $model['cost_tier'] ) ?: $recommended_model;
+        $free_model        = isset( $models['openrouter/free'] )
+            ? 'openrouter/free'
+            : ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' === $model['cost_tier'] ) ?: $recommended_model );
         $structured_model  = $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'structured-output', $model['tags'], true ) ) ?: $recommended_model;
         $fast_model        = $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( (string) ( $model['speed_tier'] ?? '' ), [ 'fastest', 'fast' ], true ) ) ?: $recommended_model;
         $low_cost_model    = $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' !== (string) ( $model['cost_tier'] ?? '' ) && in_array( (string) ( $model['cost_tier'] ?? '' ), [ 'low', 'medium' ], true ) ) ?: $free_model;
@@ -701,8 +703,7 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
 
     private function model_has_reasoning( string $model_id, string $name, array $supported_parameters ): bool
     {
-        return in_array( 'reasoning', $supported_parameters, true )
-            || (bool) preg_match( '/reason|thinking|o[134]|r1/i', $model_id . ' ' . $name );
+        return (bool) array_intersect( $supported_parameters, [ 'reasoning', 'reasoning_effort' ] );
     }
 
     private function infer_speed_tier( string $model_id, string $name ): string

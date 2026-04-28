@@ -337,13 +337,15 @@
 	}
 
 	function handleSelectionChange() {
+		const includeReasoning =
+			advancedMode && selectedReasoning !== 'default' && selectedModelAllowsReasoning();
 		const selection: ModelSelection = {
 			primary: advancedMode ? selectedModel : selectedPreset,
 			backup: selectedBackup || null,
 			is_preset: !advancedMode,
 			provider: selectedProvider,
 			credential_id: selectedCredentialId,
-			...(advancedMode && selectedReasoning !== 'default' ? { reasoning: selectedReasoning } : {})
+			...(includeReasoning ? { reasoning: selectedReasoning } : {})
 		};
 		void resolveSelectionPreview(selection);
 		onchange?.(selection);
@@ -354,6 +356,7 @@
 		selectedPreset = 'sf_default';
 		selectedModel = normalizeSelectedModelForProvider(resolvedModelForPreset('sf_default'));
 		selectedBackup = '';
+		selectedReasoning = 'default';
 		handleSelectionChange();
 	}
 
@@ -364,8 +367,12 @@
 			selectedModel = normalizeSelectedModelForProvider(
 				selectedModel || resolvedModelForPreset(selectedPreset)
 			);
+			if (!selectedModelAllowsReasoning()) {
+				selectedReasoning = 'default';
+			}
 		} else if (!advancedMode && activePresetList().length > 0) {
 			selectedPreset = activePresetList()[0].code;
+			selectedReasoning = 'default';
 		}
 		handleSelectionChange();
 	}
@@ -384,13 +391,15 @@
 	}
 
 	function currentSelection(): ModelSelection {
+		const includeReasoning =
+			advancedMode && selectedReasoning !== 'default' && selectedModelAllowsReasoning();
 		return {
 			primary: advancedMode ? selectedModel : selectedPreset,
 			backup: selectedBackup || null,
 			is_preset: !advancedMode,
 			provider: selectedProvider,
 			credential_id: selectedCredentialId,
-			...(advancedMode && selectedReasoning !== 'default' ? { reasoning: selectedReasoning } : {})
+			...(includeReasoning ? { reasoning: selectedReasoning } : {})
 		};
 	}
 
@@ -509,6 +518,9 @@
 		}))
 	]);
 	const selectedModelInfo = $derived(activeModelList().find((m) => m.id === selectedModel) ?? null);
+	function selectedModelAllowsReasoning(): boolean {
+		return Boolean(selectedModelInfo?.capabilities.reasoning);
+	}
 	const paidModelCount = $derived(
 		activeModelList().filter(
 			(model) => model.cost_tier !== 'free' && model.id !== 'openrouter/auto'
@@ -592,6 +604,12 @@
 
 	$effect(() => {
 		void resolveSelectionPreview(currentSelection());
+	});
+
+	$effect(() => {
+		if (!selectedModelAllowsReasoning() && selectedReasoning !== 'default') {
+			selectedReasoning = 'default';
+		}
 	});
 </script>
 

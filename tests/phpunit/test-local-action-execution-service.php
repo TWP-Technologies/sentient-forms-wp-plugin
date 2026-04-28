@@ -390,7 +390,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'hook'     => 'gform_after_submission',
                 'settings' => [
                     'model_selection' => [
-                        'primary'   => 'anthropic/claude-sonnet-4.5',
+                        'primary'   => 'anthropic/claude-sonnet-4.6',
                         'is_preset' => false,
                         'reasoning' => 'high',
                     ],
@@ -399,11 +399,85 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         );
 
         $this->assertIsArray( $result );
-        $this->assertSame( 'anthropic/claude-sonnet-4.5', $result['model'] );
+        $this->assertSame( 'anthropic/claude-sonnet-4.6', $result['model'] );
         $this->assertCount( 1, $client->chat_calls );
         $payload = $client->chat_calls[0]['payload'];
-        $this->assertSame( 'anthropic/claude-sonnet-4.5', $payload['model'] );
+        $this->assertSame( 'anthropic/claude-sonnet-4.6', $payload['model'] );
         $this->assertSame( [ 'effort' => 'high' ], $payload['reasoning'] ?? null );
+    }
+
+    public function test_runtime_model_selection_drops_reasoning_for_models_without_reasoning_support(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'primary'   => 'openai/gpt-oss-20b:free',
+                        'is_preset' => false,
+                        'reasoning' => 'high',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openai/gpt-oss-20b:free', $result['model'] );
+        $this->assertCount( 1, $client->chat_calls );
+        $payload = $client->chat_calls[0]['payload'];
+        $this->assertSame( 'openai/gpt-oss-20b:free', $payload['model'] );
+        $this->assertArrayNotHasKey( 'reasoning', $payload );
+    }
+
+    public function test_saved_model_selection_drops_reasoning_for_models_without_reasoning_support(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [],
+            [
+                'model_selection_json' => [
+                    'provider'  => 'openrouter',
+                    'model'     => 'openai/gpt-oss-20b:free',
+                    'reasoning' => 'high',
+                ],
+            ]
+        );
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openai/gpt-oss-20b:free', $result['model'] );
+        $this->assertCount( 1, $client->chat_calls );
+        $payload = $client->chat_calls[0]['payload'];
+        $this->assertSame( 'openai/gpt-oss-20b:free', $payload['model'] );
+        $this->assertArrayNotHasKey( 'reasoning', $payload );
     }
 
     public function test_runtime_preset_model_selection_resolves_from_local_model_cache(): void
@@ -1681,10 +1755,10 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertTrue(
             $models->upsert(
                 'openrouter',
-                'anthropic/claude-sonnet-4.5',
+                'anthropic/claude-sonnet-4.6',
                 [
-                    'id'                   => 'anthropic/claude-sonnet-4.5',
-                    'name'                 => 'Anthropic: Claude Sonnet 4.5',
+                    'id'                   => 'anthropic/claude-sonnet-4.6',
+                    'name'                 => 'Anthropic: Claude Sonnet 4.6',
                     'free'                 => false,
                     'context_length'       => 200000,
                     'input_modalities'     => [ 'text' ],

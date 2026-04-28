@@ -79,12 +79,16 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $data      = $response->get_data();
         $model_ids = wp_list_pluck( $data['models'], 'id' );
 
-        $this->assertContains( 'openai/gpt-5.1', $model_ids );
-        $this->assertContains( 'anthropic/claude-sonnet-4.5', $model_ids );
+        $this->assertContains( 'openai/gpt-5.5', $model_ids );
+        $this->assertContains( 'openai/gpt-5.4-mini', $model_ids );
+        $this->assertContains( 'google/gemini-3.1-pro-preview', $model_ids );
+        $this->assertContains( 'google/gemini-3-flash-preview', $model_ids );
+        $this->assertContains( 'anthropic/claude-sonnet-4.6', $model_ids );
+        $this->assertContains( 'anthropic/claude-opus-4.7', $model_ids );
         $this->assertContains( 'openrouter/free', $model_ids );
         $this->assertContains( 'openrouter/auto', $model_ids );
         $this->assertContains( 'bundled-recommendation', $data['models'][0]['tags'] );
-        $this->assertSame( 'openai/gpt-5.1', $data['presets'][0]['resolved_model_id'] );
+        $this->assertSame( 'openai/gpt-5.5', $data['presets'][0]['resolved_model_id'] );
 
         $presets_by_code = [];
         foreach ( $data['presets'] as $preset )
@@ -93,7 +97,8 @@ class Tests_Models_Controller extends WP_UnitTestCase
         }
 
         $this->assertSame( 'openrouter/free', $presets_by_code['sf_free']['resolved_model_id'] );
-        $this->assertSame( 'anthropic/claude-sonnet-4.5', $presets_by_code['sf_quality']['resolved_model_id'] );
+        $this->assertSame( 'anthropic/claude-sonnet-4.6', $presets_by_code['sf_quality']['resolved_model_id'] );
+        $this->assertSame( 'openai/gpt-5.3-codex', $presets_by_code['sf_code']['resolved_model_id'] );
     }
 
     public function test_resolve_model_prefers_mapping_selection_over_lower_scopes(): void
@@ -104,12 +109,12 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $request->set_body_params(
             [
                 'global_selection' => [
-                    'primary'   => 'anthropic/claude-sonnet-4.5',
+                    'primary'   => 'anthropic/claude-sonnet-4.6',
                     'is_preset' => false,
                 ],
                 'mapping_selection' => [
                     'primary'   => 'sf_free',
-                    'backup'    => 'anthropic/claude-sonnet-4.5',
+                    'backup'    => 'anthropic/claude-sonnet-4.6',
                     'is_preset' => true,
                 ],
             ]
@@ -123,7 +128,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 'openai/gpt-oss-20b:free', $data['model_id'] );
         $this->assertSame( 'OpenAI: GPT OSS 20B (free)', $data['display_name'] );
         $this->assertSame( 'mapping', $data['resolution_source'] );
-        $this->assertSame( 'anthropic/claude-sonnet-4.5', $data['backup_model_id'] );
+        $this->assertSame( 'anthropic/claude-sonnet-4.6', $data['backup_model_id'] );
 
         $applied = array_values(
             array_filter(
@@ -178,14 +183,14 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->seed_model_cache();
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' );
-        $request->set_body_params( [ 'template_model_hint' => 'anthropic/claude-sonnet-4.5' ] );
+        $request->set_body_params( [ 'template_model_hint' => 'anthropic/claude-sonnet-4.6' ] );
 
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 200, $response->get_status() );
 
         $data = $response->get_data();
-        $this->assertSame( 'anthropic/claude-sonnet-4.5', $data['model_id'] );
+        $this->assertSame( 'anthropic/claude-sonnet-4.6', $data['model_id'] );
         $this->assertSame( 'template', $data['resolution_source'] );
     }
 
@@ -197,9 +202,9 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
 
         $data = $response->get_data();
-        $this->assertSame( 'openai/gpt-5.1', $data['model_id'] );
+        $this->assertSame( 'openai/gpt-5.5', $data['model_id'] );
         $this->assertSame( 'fallback', $data['resolution_source'] );
-        $this->assertSame( 'OpenAI: GPT-5.1', $data['display_name'] );
+        $this->assertSame( 'OpenAI: GPT-5.5', $data['display_name'] );
     }
 
     public function test_estimate_model_reports_no_sentient_debit_for_local_openrouter(): void
@@ -212,7 +217,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
                 'action_id'        => 'entry_summary',
                 'base_credit_cost' => 7,
                 'mapping_selection' => [
-                    'primary'   => 'anthropic/claude-sonnet-4.5',
+                    'primary'   => 'anthropic/claude-sonnet-4.6',
                     'is_preset' => false,
                 ],
             ]
@@ -223,7 +228,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
 
         $data = $response->get_data();
-        $this->assertSame( 'anthropic/claude-sonnet-4.5', $data['resolved_model']['model_id'] );
+        $this->assertSame( 'anthropic/claude-sonnet-4.6', $data['resolved_model']['model_id'] );
         $this->assertSame( 'entry_summary', $data['pricing_estimate']['action_id'] );
         $this->assertSame( 7, $data['pricing_estimate']['base_floor_credits'] );
         $this->assertSame( 7, $data['pricing_estimate']['normalized_actual_credits'] );
@@ -262,10 +267,10 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertTrue(
             $models->upsert(
                 'openrouter',
-                'anthropic/claude-sonnet-4.5',
+                'anthropic/claude-sonnet-4.6',
                 [
-                    'id'                   => 'anthropic/claude-sonnet-4.5',
-                    'name'                 => 'Anthropic: Claude Sonnet 4.5',
+                    'id'                   => 'anthropic/claude-sonnet-4.6',
+                    'name'                 => 'Anthropic: Claude Sonnet 4.6',
                     'free'                 => false,
                     'context_length'       => 200000,
                     'input_modalities'     => [ 'text' ],

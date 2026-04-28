@@ -17,10 +17,11 @@
 	// Static model options - TODO: fetch from the local provider model registry when available
 	const modelOptions = [
 		{ value: '', label: 'Default (template decides)' },
-		{ value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro (Preview)' },
-		{ value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (Preview)' },
-		{ value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-		{ value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+		{ value: 'openai/gpt-5.5', label: 'GPT-5.5' },
+		{ value: 'openai/gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+		{ value: 'google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
+		{ value: 'google/gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
+		{ value: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6' },
 		{ value: 'custom', label: 'Custom model...' }
 	] as const;
 
@@ -90,7 +91,7 @@
 			type="text"
 			value={customValue}
 			oninput={handleCustomInput}
-			placeholder="e.g., models/gemini-pro"
+			placeholder="e.g., openai/gpt-5.5"
 			class="sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:font-mono
 				   sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 		/>

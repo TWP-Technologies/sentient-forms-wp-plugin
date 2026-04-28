@@ -344,14 +344,14 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertTrue(
             $models->upsert(
                 'openrouter',
-                'anthropic/claude-sonnet-4.5',
+                'openai/gpt-5.5',
                 [
-                    'id'     => 'anthropic/claude-sonnet-4.5',
-                    'name'   => 'Anthropic: Claude Sonnet 4.5',
+                    'id'     => 'openai/gpt-5.5',
+                    'name'   => 'OpenAI: GPT-5.5',
                     'free'   => false,
                     'pricing' => [
-                        'prompt'     => '0.000003',
-                        'completion' => '0.000015',
+                        'prompt'     => '0.000005',
+                        'completion' => '0.00003',
                     ],
                 ],
                 $expires_at
