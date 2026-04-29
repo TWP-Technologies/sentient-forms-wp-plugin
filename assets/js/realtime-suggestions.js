@@ -35,7 +35,8 @@
 			lastGlobalError: null,
 			lastUpdatedAt: null,
 			lastObservedPage: 1,
-			pageProbeTimerId: null
+			pageProbeTimerId: null,
+			preSubmissionFilterRegistered: false
 		};
 	}
 
@@ -64,6 +65,7 @@
 				'<p class="sentient-forms-realtime-widget__metering" data-role="metering" hidden></p>' +
 				'<div class="sentient-forms-realtime-widget__error" data-role="error" hidden></div>' +
 				'<ul class="sentient-forms-realtime-widget__list" data-role="list"></ul>' +
+				'<div class="sentient-forms-realtime-widget__questions" data-role="questions"></div>' +
 				'<p class="sentient-forms-realtime-widget__empty" data-role="empty">No visible suggestions right now.</p>' +
 			'</div>';
 
@@ -103,6 +105,33 @@
 
 			focusField(formState.formElement, formState.config.form_id, fieldId);
 		});
+
+		function handleAnswerInput(event) {
+			var target = event.target;
+			if (
+				!(
+					target instanceof HTMLTextAreaElement ||
+					target instanceof HTMLInputElement ||
+					target instanceof HTMLSelectElement
+				) ||
+				!target.matches('[data-role="answer-question"]')
+			) {
+				return;
+			}
+
+			var mappingId = normalizeFieldId(target.getAttribute('data-mapping-id'));
+			var questionId = normalizeFieldId(target.getAttribute('data-question-id'));
+			if (!mappingId || !questionId) {
+				return;
+			}
+
+			var state = mappingStateFor(formState, mappingId);
+			state.virtualAnswers[questionId] = target.value;
+			persistQuestionAnswers(formState);
+		}
+
+		widget.addEventListener('input', handleAnswerInput);
+		widget.addEventListener('change', handleAnswerInput);
 
 		return widget;
 	}
@@ -283,11 +312,174 @@
 				lastRunAt: 0,
 				timerId: null,
 				suggestions: [],
+				virtualQuestions: [],
+				virtualQuestionHistory: {},
+				virtualQuestionOrder: [],
+				virtualAnswers: {},
+				conditionalDecisions: [],
+				conditionalDecisionHistory: {},
+				conditionalDecisionOrder: [],
 				error: null,
 				meta: null
 			};
 		}
 		return formState.mappingStates[mappingId];
+	}
+
+	function questionIdFor(mappingId, question, index) {
+		var raw = normalizeFieldId(question && question.question_id);
+		if (raw) {
+			return raw;
+		}
+		var text = normalizeFieldId(question && question.question).toLowerCase();
+		var hash = 0;
+		for (var i = 0; i < text.length; i += 1) {
+			hash = ((hash << 5) - hash) + text.charCodeAt(i);
+			hash |= 0;
+		}
+		return mappingId + '-q-' + index + '-' + Math.abs(hash);
+	}
+
+	function normalizeVirtualQuestions(value, mappingId, previousAnswers) {
+		return asArray(value).map(function (item, index) {
+			if (!item || typeof item !== 'object') {
+				return null;
+			}
+			var question = normalizeFieldId(item.question);
+			if (!question) {
+				return null;
+			}
+			var questionId = questionIdFor(mappingId, item, index);
+			return {
+				question_id: questionId,
+				question: question,
+				reason: normalizeFieldId(item.reason),
+				target_field_id: normalizeFieldId(item.target_field_id),
+				required: item.required === true,
+				answer_type: ['short_text', 'long_text', 'choice'].indexOf(normalizeFieldId(item.answer_type)) >= 0
+					? normalizeFieldId(item.answer_type)
+					: 'long_text',
+				choices: asArray(item.choices).map(normalizeFieldId).filter(Boolean),
+				answer: previousAnswers[questionId] || ''
+			};
+		}).filter(Boolean);
+	}
+
+	function normalizeConditionalDecisions(value) {
+		return asArray(value).map(function (item) {
+			if (!item || typeof item !== 'object') {
+				return null;
+			}
+			var conditionKey = normalizeFieldId(item.condition_key);
+			if (!conditionKey) {
+				return null;
+			}
+			return {
+				decision_id: normalizeFieldId(item.decision_id) || conditionKey,
+				condition_key: conditionKey,
+				met: item.met === true,
+				confidence: typeof item.confidence === 'number' ? item.confidence : null,
+				reason: normalizeFieldId(item.reason)
+			};
+		}).filter(Boolean);
+	}
+
+	function rememberVirtualQuestions(state, questions) {
+		asArray(questions).forEach(function (question) {
+			if (!question || !question.question_id) {
+				return;
+			}
+
+			if (state.virtualQuestionOrder.indexOf(question.question_id) < 0) {
+				state.virtualQuestionOrder.push(question.question_id);
+			}
+
+			state.virtualQuestionHistory[question.question_id] = {
+				question_id: question.question_id,
+				question: question.question,
+				reason: question.reason || '',
+				target_field_id: question.target_field_id || '',
+				required: question.required === true,
+				answer_type: question.answer_type || 'long_text',
+				choices: asArray(question.choices)
+			};
+		});
+	}
+
+	function rememberConditionalDecisions(state, decisions) {
+		asArray(decisions).forEach(function (decision) {
+			if (!decision || !decision.decision_id) {
+				return;
+			}
+
+			if (state.conditionalDecisionOrder.indexOf(decision.decision_id) < 0) {
+				state.conditionalDecisionOrder.push(decision.decision_id);
+			}
+
+			state.conditionalDecisionHistory[decision.decision_id] = decision;
+		});
+	}
+
+	function hydrateQuestionAnswers(formState) {
+		asArray(formState.config.mappings).forEach(function (mapping) {
+			var mappingId = normalizeFieldId(mapping.mapping_id);
+			var targetFieldId = normalizeFieldId(mapping.storage_target_field_id);
+			if (!mappingId || !targetFieldId) {
+				return;
+			}
+
+			var target = findInputForFieldId(formState.formElement, formState.config.form_id, targetFieldId);
+			if (!target || !target.value) {
+				return;
+			}
+
+			var stored;
+			try {
+				stored = JSON.parse(target.value);
+			} catch (error) {
+				return;
+			}
+
+			if (!stored || stored.schema !== 'sentient_forms_realtime_clarification_qna.v1') {
+				return;
+			}
+
+			var storedMapping = asArray(stored.mappings).find(function (item) {
+				return item && normalizeFieldId(item.mapping_id) === mappingId;
+			});
+			if (!storedMapping) {
+				return;
+			}
+
+			var state = mappingStateFor(formState, mappingId);
+			rememberVirtualQuestions(state, asArray(storedMapping.questions));
+			asArray(storedMapping.questions).forEach(function (question) {
+				if (!question || !question.question_id) {
+					return;
+				}
+
+				if (typeof question.answer === 'string') {
+					state.virtualAnswers[question.question_id] = question.answer;
+				}
+			});
+			rememberConditionalDecisions(state, asArray(storedMapping.conditional_decisions));
+		});
+	}
+
+	function dispatchConditionalDecisions(formState, mapping, decisions) {
+		if (!decisions.length) {
+			return;
+		}
+		formState.formElement.dispatchEvent(new CustomEvent('sentientforms:conditional-decisions', {
+			bubbles: true,
+			detail: {
+				form_id: formState.config.form_id,
+				source: formState.config.source || 'gravity_forms',
+				mapping_id: normalizeFieldId(mapping.mapping_id),
+				central_action_id: mapping.central_action_id || '',
+				decisions: decisions
+			}
+		}));
 	}
 
 	function scheduleMapping(formState, mapping, triggerContext) {
@@ -354,12 +546,17 @@
 			future_field_manifest: futureFieldManifest
 		};
 
+		var headers = {
+			'Content-Type': 'application/json',
+			'X-Sentient-Forms-Suggest-Nonce': formState.config.nonce
+		};
+		if (formState.config.rest_nonce) {
+			headers['X-WP-Nonce'] = formState.config.rest_nonce;
+		}
+
 		window.fetch(formState.config.suggest_endpoint_url, {
 			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'X-Sentient-Forms-Suggest-Nonce': formState.config.nonce
-			},
+			headers: headers,
 			credentials: 'same-origin',
 			body: JSON.stringify(payload)
 		})
@@ -374,10 +571,23 @@
 			})
 			.then(function (payload) {
 				var suggestions = payload && Array.isArray(payload.suggestions) ? payload.suggestions : [];
+				var virtualQuestions = payload && Array.isArray(payload.virtual_questions) ? payload.virtual_questions : [];
+				var conditionalDecisions = payload && Array.isArray(payload.conditional_decisions) ? payload.conditional_decisions : [];
 				state.suggestions = suggestions;
+				state.virtualQuestions = normalizeVirtualQuestions(virtualQuestions, mappingId, state.virtualAnswers);
+				state.conditionalDecisions = normalizeConditionalDecisions(conditionalDecisions);
+				state.virtualQuestions.forEach(function (question) {
+					if (typeof state.virtualAnswers[question.question_id] !== 'string') {
+						state.virtualAnswers[question.question_id] = question.answer || '';
+					}
+				});
+				rememberVirtualQuestions(state, state.virtualQuestions);
+				rememberConditionalDecisions(state, state.conditionalDecisions);
 				state.meta = payload && payload.meta ? payload.meta : null;
 				state.lastRunAt = Date.now();
 				formState.lastUpdatedAt = state.lastRunAt;
+				persistQuestionAnswers(formState);
+				dispatchConditionalDecisions(formState, mapping, state.conditionalDecisions);
 			})
 			.catch(function (error) {
 				state.error = error && error.message ? error.message : 'Suggestion request failed.';
@@ -407,6 +617,155 @@
 		}
 	}
 
+	function findInputForFieldId(formElement, formId, fieldId) {
+		var normalized = normalizeFieldId(fieldId);
+		if (!normalized) {
+			return null;
+		}
+
+		var idCandidates = [
+			'input_' + formId + '_' + normalized.replace('.', '_'),
+			'input_' + formId + '_' + normalized
+		];
+		for (var i = 0; i < idCandidates.length; i += 1) {
+			var byId = document.getElementById(idCandidates[i]);
+			if (byId instanceof HTMLInputElement || byId instanceof HTMLTextAreaElement) {
+				return byId;
+			}
+		}
+
+		var nameCandidates = [
+			'input_' + normalized,
+			'input_' + normalized.replace('.', '_')
+		];
+		var fields = formElement.querySelectorAll('input, textarea');
+		for (var j = 0; j < fields.length; j += 1) {
+			var field = fields[j];
+			if (
+				(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) &&
+				nameCandidates.indexOf(field.getAttribute('name') || '') >= 0
+			) {
+				return field;
+			}
+		}
+
+		return null;
+	}
+
+	function serializeQuestionAnswers(formState, mapping) {
+		var mappingId = normalizeFieldId(mapping.mapping_id);
+		var state = mappingStateFor(formState, mappingId);
+		var questions = asArray(state.virtualQuestionOrder).map(function (questionId) {
+			return state.virtualQuestionHistory[questionId] || null;
+		}).filter(Boolean);
+
+		if (!questions.length) {
+			questions = asArray(state.virtualQuestions);
+		}
+
+		questions = questions.map(function (question) {
+			var answer = state.virtualAnswers[question.question_id] || '';
+			return {
+				question_id: question.question_id,
+				question: question.question,
+				reason: question.reason || '',
+				target_field_id: question.target_field_id || '',
+				required: question.required === true,
+				answer_type: question.answer_type || 'long_text',
+				choices: asArray(question.choices),
+				answer: answer
+			};
+		});
+
+		var conditionalDecisions = asArray(state.conditionalDecisionOrder).map(function (decisionId) {
+			return state.conditionalDecisionHistory[decisionId] || null;
+		}).filter(Boolean);
+
+		if (!conditionalDecisions.length) {
+			conditionalDecisions = asArray(state.conditionalDecisions);
+		}
+
+		return {
+			mapping_id: mappingId,
+			central_action_id: mapping.central_action_id || '',
+			action_name_label: mapping.action_name_label || '',
+			questions: questions,
+			conditional_decisions: conditionalDecisions
+		};
+	}
+
+	function persistQuestionAnswers(formState) {
+		var byTargetField = {};
+		asArray(formState.config.mappings).forEach(function (mapping) {
+			var targetFieldId = normalizeFieldId(mapping.storage_target_field_id);
+			if (!targetFieldId) {
+				return;
+			}
+
+			if (!byTargetField[targetFieldId]) {
+				byTargetField[targetFieldId] = [];
+			}
+			byTargetField[targetFieldId].push(serializeQuestionAnswers(formState, mapping));
+		});
+
+		Object.keys(byTargetField).forEach(function (targetFieldId) {
+			var target = findInputForFieldId(formState.formElement, formState.config.form_id, targetFieldId);
+			if (!target) {
+				return;
+			}
+
+			var payload = {
+				schema: 'sentient_forms_realtime_clarification_qna.v1',
+				form_id: String(formState.config.form_id),
+				source: formState.config.source || 'gravity_forms',
+				updated_at: new Date().toISOString(),
+				mappings: byTargetField[targetFieldId]
+			};
+			target.value = JSON.stringify(payload);
+			target.dispatchEvent(new Event('input', { bubbles: true }));
+		});
+	}
+
+	function getRequiredVirtualQuestionGaps(formState) {
+		var gaps = [];
+		asArray(formState.config.mappings).forEach(function (mapping) {
+			if (mapping.blocking_mode !== 'require_answers') {
+				return;
+			}
+
+			var mappingId = normalizeFieldId(mapping.mapping_id);
+			var state = mappingStateFor(formState, mappingId);
+			asArray(state.virtualQuestions).forEach(function (question) {
+				var answer = normalizeFieldId(state.virtualAnswers[question.question_id]);
+				if (question.required === true && !answer) {
+					gaps.push({
+						mapping_id: mappingId,
+						question_id: question.question_id,
+						question: question.question
+					});
+				}
+			});
+		});
+		return gaps;
+	}
+
+	function guardRequiredVirtualAnswers(formState) {
+		persistQuestionAnswers(formState);
+		var gaps = getRequiredVirtualQuestionGaps(formState);
+		if (!gaps.length) {
+			return true;
+		}
+
+		formState.lastGlobalError = 'Answer the required follow-up questions before continuing.';
+		formState.isOpen = true;
+		renderWidget(formState);
+		var firstAnswerInput = formState.widget && formState.widget.querySelector('[data-role="answer-question"]');
+		if (firstAnswerInput instanceof HTMLElement) {
+			firstAnswerInput.focus();
+		}
+		return false;
+	}
+
 	function flattenVisibleSuggestions(formState) {
 		var visibleFieldIds = collectVisibleFieldIds(formState.formElement, formState.config.form_id);
 		var visibleSet = new Set(visibleFieldIds.map(normalizeFieldId));
@@ -434,6 +793,27 @@
 			});
 		});
 
+		return items;
+	}
+
+	function flattenVirtualQuestions(formState) {
+		var items = [];
+		asArray(formState.config.mappings).forEach(function (mapping) {
+			var mappingId = normalizeFieldId(mapping.mapping_id);
+			var state = mappingStateFor(formState, mappingId);
+			asArray(state.virtualQuestions).forEach(function (question) {
+				if (!question || typeof question !== 'object') {
+					return;
+				}
+
+				items.push({
+					mappingId: mappingId,
+					mappingLabel: mapping.action_name_label || mapping.central_action_id || mappingId,
+					question: question,
+					answer: state.virtualAnswers[question.question_id] || ''
+				});
+			});
+		});
 		return items;
 	}
 
@@ -488,6 +868,7 @@
 		var toggleButton = widget.querySelector('[data-role="toggle"]');
 		var metering = widget.querySelector('[data-role="metering"]');
 		var list = widget.querySelector('[data-role="list"]');
+		var questions = widget.querySelector('[data-role="questions"]');
 		var empty = widget.querySelector('[data-role="empty"]');
 		var error = widget.querySelector('[data-role="error"]');
 
@@ -518,9 +899,11 @@
 		}
 
 		var suggestions = flattenVisibleSuggestions(formState);
+		var virtualQuestions = flattenVirtualQuestions(formState);
 		list.innerHTML = '';
+		questions.innerHTML = '';
 
-		if (!suggestions.length) {
+		if (!suggestions.length && !virtualQuestions.length) {
 			empty.hidden = false;
 			return;
 		}
@@ -534,19 +917,92 @@
 
 			var listItem = document.createElement('li');
 			listItem.className = 'sentient-forms-realtime-widget__item';
-			listItem.innerHTML = '' +
-				'<span class="sentient-forms-realtime-widget__severity sentient-forms-realtime-widget__severity--' + severity + '">' + severity + '</span>' +
-				'<div class="sentient-forms-realtime-widget__content">' +
-					'<p class="sentient-forms-realtime-widget__mapping">' + item.mappingLabel + '</p>' +
-					'<p class="sentient-forms-realtime-widget__message"></p>' +
-				'</div>' +
-				'<button type="button" class="sentient-forms-realtime-widget__focus" data-role="focus-field" data-field-id="' +
-					String(item.suggestion.jump_target_field_id || item.suggestion.field_id || '').replace(/"/g, '&quot;') +
-				'">Focus</button>';
 
-			var message = listItem.querySelector('.sentient-forms-realtime-widget__message');
+			var severityLabel = document.createElement('span');
+			severityLabel.className = 'sentient-forms-realtime-widget__severity sentient-forms-realtime-widget__severity--' + severity;
+			severityLabel.textContent = severity;
+			listItem.appendChild(severityLabel);
+
+			var content = document.createElement('div');
+			content.className = 'sentient-forms-realtime-widget__content';
+			var mapping = document.createElement('p');
+			mapping.className = 'sentient-forms-realtime-widget__mapping';
+			mapping.textContent = item.mappingLabel;
+			var message = document.createElement('p');
+			message.className = 'sentient-forms-realtime-widget__message';
 			message.textContent = item.suggestion.message || '';
+			content.appendChild(mapping);
+			content.appendChild(message);
+			listItem.appendChild(content);
+
+			var focusButton = document.createElement('button');
+			focusButton.type = 'button';
+			focusButton.className = 'sentient-forms-realtime-widget__focus';
+			focusButton.dataset.role = 'focus-field';
+			focusButton.dataset.fieldId = String(item.suggestion.jump_target_field_id || item.suggestion.field_id || '');
+			focusButton.textContent = 'Focus';
+			listItem.appendChild(focusButton);
+
 			list.appendChild(listItem);
+		});
+
+		if (virtualQuestions.length) {
+			var heading = document.createElement('h4');
+			heading.className = 'sentient-forms-realtime-widget__questions-title';
+			heading.textContent = 'Follow-up questions';
+			questions.appendChild(heading);
+		}
+
+		virtualQuestions.forEach(function (item) {
+			var question = item.question;
+			var wrapper = document.createElement('div');
+			wrapper.className = 'sentient-forms-realtime-widget__question';
+
+			var label = document.createElement('label');
+			label.className = 'sentient-forms-realtime-widget__question-label';
+			label.setAttribute('for', 'sentient-forms-rt-question-' + item.mappingId + '-' + question.question_id);
+			label.textContent = question.question + (question.required ? ' *' : '');
+			wrapper.appendChild(label);
+
+			if (question.reason) {
+				var reason = document.createElement('p');
+				reason.className = 'sentient-forms-realtime-widget__question-reason';
+				reason.textContent = question.reason;
+				wrapper.appendChild(reason);
+			}
+
+			var inputId = 'sentient-forms-rt-question-' + item.mappingId + '-' + question.question_id;
+			var answerInput;
+			if (question.answer_type === 'choice' && asArray(question.choices).length) {
+				answerInput = document.createElement('select');
+				var blankOption = document.createElement('option');
+				blankOption.value = '';
+				blankOption.textContent = 'Select an answer';
+				answerInput.appendChild(blankOption);
+				asArray(question.choices).forEach(function (choice) {
+					var option = document.createElement('option');
+					option.value = choice;
+					option.textContent = choice;
+					answerInput.appendChild(option);
+				});
+			} else if (question.answer_type === 'short_text') {
+				answerInput = document.createElement('input');
+				answerInput.type = 'text';
+			} else {
+				answerInput = document.createElement('textarea');
+				answerInput.rows = 4;
+			}
+
+			answerInput.className = 'sentient-forms-realtime-widget__answer';
+			answerInput.id = inputId;
+			answerInput.dataset.role = 'answer-question';
+			answerInput.dataset.mappingId = item.mappingId;
+			answerInput.dataset.questionId = question.question_id;
+			answerInput.value = item.answer;
+			answerInput.required = question.required === true;
+			wrapper.appendChild(answerInput);
+
+			questions.appendChild(wrapper);
 		});
 	}
 
@@ -600,6 +1056,39 @@
 		formState.pageProbeTimerId = window.setTimeout(probe, 80);
 	}
 
+	function registerPreSubmissionFilter(formState) {
+		if (formState.preSubmissionFilterRegistered) {
+			return;
+		}
+
+		function attachFilter() {
+			if (
+				formState.preSubmissionFilterRegistered ||
+				!window.gform ||
+				!window.gform.utils ||
+				typeof window.gform.utils.addAsyncFilter !== 'function'
+			) {
+				return;
+			}
+
+			window.gform.utils.addAsyncFilter('gform/submission/pre_submission', async function (data) {
+				if (!data || data.form !== formState.formElement) {
+					return data;
+				}
+
+				if (!guardRequiredVirtualAnswers(formState)) {
+					data.abort = true;
+				}
+
+				return data;
+			});
+			formState.preSubmissionFilterRegistered = true;
+		}
+
+		attachFilter();
+		document.addEventListener('gform/theme/scripts_loaded', attachFilter, { once: true });
+	}
+
 	function initializeForm(config) {
 		if (!config || typeof config !== 'object') {
 			return;
@@ -622,8 +1111,10 @@
 		var formState = createFormState(config, formElement);
 		formState.lastObservedPage = collectCurrentPage(formElement, formId);
 		window[RUNTIME_KEY].forms[formId] = formState;
+		hydrateQuestionAnswers(formState);
 		ensureWidget(formState);
 		renderWidget(formState);
+		registerPreSubmissionFilter(formState);
 
 		// Gravity Forms preview/page navigation can reload the document on non-initial pages.
 		// If runtime boots on page > 1, trigger a page_change run immediately.
@@ -670,11 +1161,24 @@
 				if (!target.matches('.gform_next_button, .gform_previous_button')) {
 					return;
 				}
+				if (target.matches('.gform_next_button') && !guardRequiredVirtualAnswers(formState)) {
+					event.preventDefault();
+					event.stopPropagation();
+					event.stopImmediatePropagation();
+					return;
+				}
 
 				schedulePageChangeProbe(formState);
 			},
 			true
 		);
+
+		formElement.addEventListener('submit', function (event) {
+			if (!guardRequiredVirtualAnswers(formState)) {
+				event.preventDefault();
+				event.stopPropagation();
+			}
+		}, true);
 
 		if (window.jQuery) {
 			window.jQuery(document).on('gform_page_loaded.sentientFormsRealtime', function (_event, loadedFormId) {

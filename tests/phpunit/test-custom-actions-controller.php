@@ -60,7 +60,7 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $request->set_param( 'display_name', 'Renamed Action' );
         $request->set_param( 'description', 'Updated description.' );
         $request->set_param( 'prompt_overrides', [ 'strictness' => 'high' ] );
-        $request->set_param( 'model_hint', 'google/gemini-3-flash-preview' );
+        $request->set_param( 'model_hint', 'openai/gpt-5.5' );
         $request->set_param( 'base_credit_cost', 5 );
 
         $payload = $this->invoke_private( 'build_update_payload', [ $request ] );
@@ -68,7 +68,7 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $this->assertIsArray( $payload );
         $this->assertArrayNotHasKey( 'base_credit_cost', $payload );
         $this->assertSame( 'Renamed Action', $payload['display_name'] ?? null );
-        $this->assertSame( 'google/gemini-3-flash-preview', $payload['model_hint'] ?? null );
+        $this->assertSame( 'openai/gpt-5.5', $payload['model_hint'] ?? null );
         $this->assertSame( 'template_override', $payload['action_kind'] ?? null );
         $this->assertSame( 1, $payload['definition_version'] ?? null );
         $this->assertSame( [ 'after_submission' ], $payload['supported_execution_modes'] ?? [] );

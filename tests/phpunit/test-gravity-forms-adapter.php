@@ -343,6 +343,8 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                             'debounce_ms' => 700,
                             'cooldown_ms' => 9000,
                             'manual_refresh_enabled' => true,
+                            'storage_target_field_id' => '4',
+                            'blocking_mode' => 'require_answers',
                         ],
                     ],
                 ],
@@ -356,6 +358,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'gravity_forms', $runtime['source'] ?? null );
         $this->assertSame( 2, $runtime['total_pages'] ?? null );
         $this->assertNotEmpty( $runtime['nonce'] ?? '' );
+        $this->assertNotEmpty( $runtime['rest_nonce'] ?? '' );
         $this->assertStringContainsString(
             '/sentient-forms/v1/gravity_forms/forms/14/actions/suggest',
             (string) ( $runtime['suggest_endpoint_url'] ?? '' )
@@ -364,7 +367,20 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 700, $runtime['mappings'][0]['debounce_ms'] ?? null );
         $this->assertSame( 9000, $runtime['mappings'][0]['cooldown_ms'] ?? null );
         $this->assertSame( [ '1' ], $runtime['mappings'][0]['checkpoint_field_ids'] ?? [] );
+        $this->assertSame( '4', $runtime['mappings'][0]['storage_target_field_id'] ?? null );
+        $this->assertSame( 'require_answers', $runtime['mappings'][0]['blocking_mode'] ?? null );
         $this->assertCount( 2, $runtime['field_manifest'] ?? [] );
+    }
+
+    public function test_frontend_realtime_asset_version_uses_file_mtime_for_cache_busting(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'get_frontend_asset_version' );
+        $method->setAccessible( true );
+
+        $version = (string) $method->invoke( $this->adapter, 'assets/js/realtime-suggestions.js' );
+
+        $this->assertStringStartsWith( SENTIENT_FORMS_VERSION . '-', $version );
+        $this->assertNotSame( SENTIENT_FORMS_VERSION, $version );
     }
 
     public function test_maps_insufficient_credits_error_to_friendly_message(): void
@@ -3241,7 +3257,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'succeeded', $recent_events[0]['status'] ?? null );
         $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
         $this->assertSame( 'sentient_managed', $recent_events[0]['provider'] ?? null );
-        $this->assertSame( 'gemini-3-flash-preview', $recent_events[0]['model'] ?? null );
+        $this->assertSame( 'openai/gpt-5.5', $recent_events[0]['model'] ?? null );
         $this->assertSame( 1000, $recent_events[0]['cost_json']['billed_amount_microusd'] ?? null );
         $this->assertSame( 'sentient_forms_metering', $recent_events[0]['cost_json']['source'] ?? null );
 
@@ -3916,6 +3932,125 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 $http_urls
             )
         );
+    }
+
+    public function test_entry_post_save_replays_failed_validation_action_with_action_label_note(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $credentials    = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents       = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $vault          = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted      = $vault->encrypt( 'sk-or-gf-local-validation-failure-secret' );
+
+        $this->assertIsString( $encrypted );
+
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Validation failure OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+        $this->assertIsInt( $consents->record( 'openrouter', '2026-04-28', 0 ) );
+
+        $template = Sentient_Forms_Bundled_Action_Templates::get( 'content_validation_v1' );
+        $this->assertIsArray( $template );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => Sentient_Forms_Bundled_Action_Templates::build_managed_custom_action_code( 'content_validation_v1' ),
+                'display_name'         => 'Content Quality Validation',
+                'definition_json'      => array_merge(
+                    $template['definition_json'],
+                    [
+                        'template_code'   => 'content_validation_v1',
+                        'prompt_template' => $template['prompt_template'],
+                    ]
+                ),
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '326',
+                'hook'                => 'gform_validation',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'sync',
+                'effect_mapping_json' => $template['effect_mapping_json'],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $http_filter = static function ( $preempt, array $args, string $url ): mixed {
+            if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+            {
+                return new WP_Error( 'openrouter_http_error', 'Missing Authentication header', [ 'status' => 401 ] );
+            }
+
+            return $preempt;
+        };
+
+        add_filter( 'pre_http_request', $http_filter, 10, 3 );
+        $result = $this->adapter->handle_validation(
+            [
+                'is_valid' => true,
+                'form'     => [
+                    'id'                => 326,
+                    'failed_validation' => false,
+                    'fields'            => [],
+                ],
+            ]
+        );
+        $this->adapter->handle_after_submission_entry_post_save(
+            [
+                'id'      => 812,
+                'form_id' => 326,
+                '3'       => 'This entry should save even though validation analysis failed.',
+            ],
+            [
+                'id'     => 326,
+                'title'  => 'Content Validation Failure Replay Form',
+                'fields' => [],
+            ]
+        );
+        remove_filter( 'pre_http_request', $http_filter, 10 );
+
+        $this->assertTrue( $result['is_valid'] );
+
+        $notes = gform_get_meta( 812, 'sentient_forms_notes' );
+        $this->assertIsArray( $notes );
+        $note_content = implode( "\n\n", array_map( static fn ( array $note ): string => (string) ( $note['content'] ?? '' ), $notes ) );
+        $this->assertStringContainsString( 'Sentient Forms could not complete Content Quality Validation.', $note_content );
+        $this->assertStringContainsString( 'Missing Authentication header', $note_content );
+        $this->assertStringNotContainsString( 'Local OpenRouter action', $note_content );
+
+        $recent_events = $events->list_recent( 1 );
+        $this->assertCount( 1, $recent_events );
+        $this->assertSame( 'failed', $recent_events[0]['status'] ?? null );
+        $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
+        $this->assertSame( '812', $recent_events[0]['entry_id'] ?? null );
     }
 
     public function test_handle_after_submission_local_spam_mapping_suppresses_notifications(): void

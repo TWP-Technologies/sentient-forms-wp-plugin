@@ -16,11 +16,25 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 
 	private Sentient_Forms_Plugin $plugin;
 	private Sentient_Forms_Form_Adapter_Registry $adapter_registry;
+	private Sentient_Forms_Form_Mappings_Repository $local_form_mappings;
+	private Sentient_Forms_Local_Action_Execution_Service $local_execution;
 
-	public function __construct() {
+	public function __construct(
+		?Sentient_Forms_Form_Mappings_Repository $local_form_mappings = null,
+		?Sentient_Forms_Local_Action_Execution_Service $local_execution = null
+	) {
 		parent::__construct();
+		global $wpdb;
+
 		$this->plugin = Sentient_Forms_Plugin::instance();
 		$this->adapter_registry = $this->plugin->get_form_adapter_registry();
+		$this->local_form_mappings = $local_form_mappings ?? new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+		$this->local_execution = $local_execution ?? new Sentient_Forms_Local_Action_Execution_Service(
+			$this->local_form_mappings,
+			null,
+			null,
+			null
+		);
 	}
 
 	public function register_routes(): void {
@@ -173,6 +187,14 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 			$context['execution_request_id'] = $execution_request_id;
 		}
 
+		$local_response = $this->execute_local_first_suggestion_mapping( $mapping, $form, $known_values, $context, $suggestion_context );
+		if ( is_wp_error( $local_response ) ) {
+			return $local_response;
+		}
+		if ( null !== $local_response ) {
+			return $this->prepare_item_for_response( $local_response );
+		}
+
 		$response = $this->plugin->get_action_executor()->suggest(
 			$central_action_id,
 			$form,
@@ -191,6 +213,324 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 		}
 
 		return $this->prepare_item_for_response( $response );
+	}
+
+	/**
+	 * @param array<string,mixed>  $mapping
+	 * @param array<string,mixed>  $form
+	 * @param array<string,string> $known_values
+	 * @param array<string,mixed>  $context
+	 * @param array<string,mixed>  $suggestion_context
+	 *
+	 * @return array<string,mixed>|WP_Error|null
+	 */
+	private function execute_local_first_suggestion_mapping(
+		array $mapping,
+		array $form,
+		array $known_values,
+		array $context,
+		array $suggestion_context
+	): array | WP_Error | null {
+		$local_mapping_id = $this->resolve_local_mapping_id( $mapping );
+		if ( $local_mapping_id <= 0 ) {
+			return null;
+		}
+
+		$local_mapping = $this->local_form_mappings->get( $local_mapping_id );
+		if ( ! is_array( $local_mapping ) ) {
+			return $this->prepare_error_response(
+				'sentient_forms_local_mapping_not_found',
+				__( 'Local real-time action mapping could not be found.', 'sentient-forms' ),
+				404
+			);
+		}
+
+		if (
+			sanitize_key( (string) ( $local_mapping['form_source'] ?? '' ) ) !== sanitize_key( (string) ( $context['form_source'] ?? '' ) )
+			|| sanitize_text_field( (string) ( $local_mapping['form_id'] ?? '' ) ) !== sanitize_text_field( (string) ( $context['form_id'] ?? '' ) )
+			|| 'real_time' !== sanitize_key( (string) ( $local_mapping['execution_mode'] ?? $local_mapping['hook'] ?? '' ) )
+		) {
+			return $this->prepare_error_response(
+				'sentient_forms_local_mapping_mismatch',
+				__( 'Local real-time action mapping does not match this form.', 'sentient-forms' ),
+				404
+			);
+		}
+
+		$local_context = array_merge(
+			$context,
+			[
+				'hook'                  => 'real_time',
+				'local_form_mapping_id' => $local_mapping_id,
+				'suggestion_context'    => $suggestion_context,
+			]
+		);
+
+		$result = $this->local_execution->execute_mapping( $local_mapping_id, $form, $known_values, $local_context );
+		if ( is_wp_error( $result ) ) {
+			if ( ! is_array( $result->get_error_data() ) || ! isset( $result->get_error_data()['status'] ) ) {
+				$result->add_data( [ 'status' => 502 ] );
+			}
+
+			return $result;
+		}
+
+		return $this->format_local_suggestion_response( $result, $suggestion_context );
+	}
+
+	/**
+	 * @param array<string,mixed> $mapping
+	 */
+	private function resolve_local_mapping_id( array $mapping ): int {
+		if ( isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ) {
+			$settings = $mapping['settings'];
+			if ( isset( $settings['local_form_mapping_id'] ) && is_numeric( $settings['local_form_mapping_id'] ) ) {
+				return absint( $settings['local_form_mapping_id'] );
+			}
+		}
+
+		if ( isset( $mapping['local_form_mapping_id'] ) && is_numeric( $mapping['local_form_mapping_id'] ) ) {
+			return absint( $mapping['local_form_mapping_id'] );
+		}
+
+		foreach ( [ 'id', 'local_mapping_id' ] as $key ) {
+			if ( ! isset( $mapping[ $key ] ) || ! is_scalar( $mapping[ $key ] ) ) {
+				continue;
+			}
+
+			$mapping_id = sanitize_text_field( (string) $mapping[ $key ] );
+			if ( str_starts_with( $mapping_id, 'local_first_' ) ) {
+				return absint( substr( $mapping_id, strlen( 'local_first_' ) ) );
+			}
+		}
+
+		return 0;
+	}
+
+	/**
+	 * @param array<string,mixed> $result
+	 * @param array<string,mixed> $suggestion_context
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function format_local_suggestion_response( array $result, array $suggestion_context ): array {
+		$structured = $this->extract_local_suggestion_payload( $result );
+
+		return [
+			'status'                => 'success',
+			'suggestions'           => $this->normalize_local_suggestions( $structured['suggestions'] ?? [], $suggestion_context ),
+			'virtual_questions'     => $this->normalize_local_virtual_questions( $structured['virtual_questions'] ?? [] ),
+			'conditional_decisions' => $this->normalize_local_conditional_decisions( $structured['conditional_decisions'] ?? [] ),
+			'meta'                  => array_filter(
+				[
+					'execution_request_id' => isset( $result['execution_request_id'] ) && is_scalar( $result['execution_request_id'] ) ? (string) $result['execution_request_id'] : null,
+					'provider'             => isset( $result['provider'] ) && is_scalar( $result['provider'] ) ? (string) $result['provider'] : null,
+					'model'                => isset( $result['model'] ) && is_scalar( $result['model'] ) ? (string) $result['model'] : null,
+					'cached'               => ! empty( $result['cached'] ),
+				],
+				static fn( mixed $value ): bool => null !== $value
+			),
+		];
+	}
+
+	/**
+	 * @param array<string,mixed> $result
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function extract_local_suggestion_payload( array $result ): array {
+		$candidates = [];
+		if ( isset( $result['result'] ) && is_array( $result['result'] ) ) {
+			$candidates[] = $result['result'];
+			if ( isset( $result['result']['structured'] ) && is_array( $result['result']['structured'] ) ) {
+				$candidates[] = $result['result']['structured'];
+			}
+		}
+		if ( isset( $result['structured'] ) && is_array( $result['structured'] ) ) {
+			$candidates[] = $result['structured'];
+		}
+
+		foreach ( $candidates as $candidate ) {
+			if (
+				array_key_exists( 'suggestions', $candidate )
+				|| array_key_exists( 'virtual_questions', $candidate )
+				|| array_key_exists( 'conditional_decisions', $candidate )
+			) {
+				return $candidate;
+			}
+		}
+
+		return [];
+	}
+
+	/**
+	 * @param mixed               $raw
+	 * @param array<string,mixed> $suggestion_context
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function normalize_local_suggestions( mixed $raw, array $suggestion_context ): array {
+		if ( ! is_array( $raw ) ) {
+			return [];
+		}
+
+		$visible_field_ids = array_fill_keys(
+			array_values(
+				array_filter(
+					array_map(
+						static fn( mixed $field_id ): string => is_scalar( $field_id ) ? sanitize_text_field( (string) $field_id ) : '',
+						is_array( $suggestion_context['visible_field_ids'] ?? null ) ? $suggestion_context['visible_field_ids'] : []
+					),
+					static fn( string $field_id ): bool => '' !== $field_id
+				)
+			),
+			true
+		);
+		$future_field_ids = [];
+		foreach ( is_array( $suggestion_context['future_field_manifest'] ?? null ) ? $suggestion_context['future_field_manifest'] : [] as $future_field ) {
+			if ( is_array( $future_field ) && isset( $future_field['field_id'] ) && is_scalar( $future_field['field_id'] ) ) {
+				$future_field_ids[ sanitize_text_field( (string) $future_field['field_id'] ) ] = true;
+			}
+		}
+
+		$suggestions = [];
+		foreach ( $raw as $item ) {
+			if ( ! is_array( $item ) ) {
+				continue;
+			}
+
+			$message = isset( $item['message'] ) && is_scalar( $item['message'] ) ? trim( sanitize_textarea_field( (string) $item['message'] ) ) : '';
+			if ( '' === $message ) {
+				continue;
+			}
+
+			$field_id = isset( $item['field_id'] ) && is_scalar( $item['field_id'] ) ? sanitize_text_field( (string) $item['field_id'] ) : '';
+			if ( '' !== $field_id && [] !== $visible_field_ids && ! isset( $visible_field_ids[ $field_id ] ) ) {
+				continue;
+			}
+
+			$depends_on_future_field_ids = [];
+			if ( isset( $item['depends_on_future_field_ids'] ) && is_array( $item['depends_on_future_field_ids'] ) ) {
+				foreach ( $item['depends_on_future_field_ids'] as $future_field_id ) {
+					if ( is_scalar( $future_field_id ) ) {
+						$future_field_id = sanitize_text_field( (string) $future_field_id );
+						if ( '' !== $future_field_id && isset( $future_field_ids[ $future_field_id ] ) ) {
+							$depends_on_future_field_ids[] = $future_field_id;
+						}
+					}
+				}
+			}
+			if ( [] !== $depends_on_future_field_ids ) {
+				continue;
+			}
+
+			$severity = isset( $item['severity'] ) && is_scalar( $item['severity'] ) ? sanitize_key( (string) $item['severity'] ) : 'info';
+			if ( ! in_array( $severity, [ 'info', 'warning', 'critical' ], true ) ) {
+				$severity = 'info';
+			}
+
+			$suggestions[] = [
+				'suggestion_id'           => isset( $item['suggestion_id'] ) && is_scalar( $item['suggestion_id'] ) ? sanitize_text_field( (string) $item['suggestion_id'] ) : wp_generate_uuid4(),
+				'field_id'                => $field_id,
+				'severity'                => $severity,
+				'message'                 => $message,
+				'jump_target_field_id'    => isset( $item['jump_target_field_id'] ) && is_scalar( $item['jump_target_field_id'] ) ? sanitize_text_field( (string) $item['jump_target_field_id'] ) : $field_id,
+				'is_suppressed'           => rest_sanitize_boolean( $item['is_suppressed'] ?? false ),
+				'depends_on_future_field_ids' => [],
+			];
+		}
+
+		return $suggestions;
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function normalize_local_virtual_questions( mixed $raw ): array {
+		if ( ! is_array( $raw ) ) {
+			return [];
+		}
+
+		$questions = [];
+		foreach ( $raw as $item ) {
+			if ( ! is_array( $item ) ) {
+				continue;
+			}
+
+			$question = isset( $item['question'] ) && is_scalar( $item['question'] ) ? trim( sanitize_text_field( (string) $item['question'] ) ) : '';
+			if ( '' === $question ) {
+				continue;
+			}
+
+			$answer_type = isset( $item['answer_type'] ) && is_scalar( $item['answer_type'] ) ? sanitize_key( (string) $item['answer_type'] ) : 'long_text';
+			if ( ! in_array( $answer_type, [ 'short_text', 'long_text', 'choice' ], true ) ) {
+				$answer_type = 'long_text';
+			}
+
+			$choices = [];
+			if ( isset( $item['choices'] ) && is_array( $item['choices'] ) ) {
+				foreach ( $item['choices'] as $choice ) {
+					if ( is_scalar( $choice ) ) {
+						$choice = trim( sanitize_text_field( (string) $choice ) );
+						if ( '' !== $choice ) {
+							$choices[] = $choice;
+						}
+					}
+				}
+			}
+
+			$questions[] = [
+				'question_id'     => isset( $item['question_id'] ) && is_scalar( $item['question_id'] ) ? sanitize_text_field( (string) $item['question_id'] ) : wp_generate_uuid4(),
+				'question'        => $question,
+				'reason'          => isset( $item['reason'] ) && is_scalar( $item['reason'] ) ? sanitize_text_field( (string) $item['reason'] ) : null,
+				'target_field_id' => isset( $item['target_field_id'] ) && is_scalar( $item['target_field_id'] ) ? sanitize_text_field( (string) $item['target_field_id'] ) : null,
+				'required'        => rest_sanitize_boolean( $item['required'] ?? false ),
+				'answer_type'     => $answer_type,
+				'choices'         => $choices,
+			];
+
+			if ( count( $questions ) >= 5 ) {
+				break;
+			}
+		}
+
+		return $questions;
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function normalize_local_conditional_decisions( mixed $raw ): array {
+		if ( ! is_array( $raw ) ) {
+			return [];
+		}
+
+		$decisions = [];
+		foreach ( $raw as $item ) {
+			if ( ! is_array( $item ) ) {
+				continue;
+			}
+
+			$condition_key = isset( $item['condition_key'] ) && is_scalar( $item['condition_key'] ) ? sanitize_key( (string) $item['condition_key'] ) : '';
+			if ( '' === $condition_key ) {
+				continue;
+			}
+
+			$decision = [
+				'decision_id'   => isset( $item['decision_id'] ) && is_scalar( $item['decision_id'] ) ? sanitize_text_field( (string) $item['decision_id'] ) : wp_generate_uuid4(),
+				'condition_key' => $condition_key,
+				'met'           => rest_sanitize_boolean( $item['met'] ?? false ),
+				'reason'        => isset( $item['reason'] ) && is_scalar( $item['reason'] ) ? sanitize_text_field( (string) $item['reason'] ) : null,
+			];
+
+			if ( isset( $item['confidence'] ) && is_numeric( $item['confidence'] ) ) {
+				$decision['confidence'] = max( 0.0, min( 1.0, (float) $item['confidence'] ) );
+			}
+
+			$decisions[] = $decision;
+		}
+
+		return $decisions;
 	}
 
 	/**
@@ -268,9 +608,13 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 				continue;
 			}
 
-			$candidate_id = isset( $candidate['id'] ) && is_scalar( $candidate['id'] )
-				? sanitize_text_field( (string) $candidate['id'] )
-				: '';
+			$candidate_id = '';
+			foreach ( [ 'id', 'local_mapping_id' ] as $candidate_id_key ) {
+				if ( isset( $candidate[ $candidate_id_key ] ) && is_scalar( $candidate[ $candidate_id_key ] ) ) {
+					$candidate_id = sanitize_text_field( (string) $candidate[ $candidate_id_key ] );
+					break;
+				}
+			}
 			if ( '' !== $mapping_id && $candidate_id !== $mapping_id ) {
 				continue;
 			}

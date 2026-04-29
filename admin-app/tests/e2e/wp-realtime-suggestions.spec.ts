@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import {
 	configureGravityActionMapping,
 	ensureGravityForm,
+	type RealtimeSettings,
 	requireWpRestHealthy,
 	waitForPreviewInputs
 } from './utils/wp-e2e-helpers';
@@ -13,13 +14,18 @@ const formTitle = `Playwright Realtime Suggestions ${Date.now()}`;
 const fields = [
 	{ type: 'text', id: 1, label: 'Issue summary', isRequired: true },
 	{ type: 'text', id: 2, label: 'Current context', isRequired: false },
+	{ type: 'hidden', id: 9, label: 'Sentient Forms Clarification Q&A', isRequired: false },
 	{ type: 'page', id: 3, label: 'Page break' },
 	{ type: 'textarea', id: 4, label: 'Mitigation details', isRequired: false }
 ];
 
 let formId = 0;
 
-async function openRealtimePreview(page: Parameters<typeof test>[0]['page'], manualRefreshEnabled = true) {
+async function openRealtimePreview(
+	page: Parameters<typeof test>[0]['page'],
+	manualRefreshEnabled = true,
+	realtimeOverrides: Partial<RealtimeSettings> = {}
+) {
 	if (!formId) {
 		formId = ensureGravityForm(formTitle, fields);
 	}
@@ -41,7 +47,8 @@ async function openRealtimePreview(page: Parameters<typeof test>[0]['page'], man
 			checkpointFieldIds: ['1'],
 			debounceMs: 300,
 			cooldownMs: 1000,
-			manualRefreshEnabled
+			manualRefreshEnabled,
+			...realtimeOverrides
 		}
 	});
 
@@ -185,6 +192,64 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await page.locator('.sentient-forms-realtime-widget__refresh').click();
 		await page.waitForTimeout(700);
 		expect(requests.length).toBe(1);
+	});
+
+	test('virtual questions persist exact Q&A and can block next-page navigation', async ({ page }) => {
+		await page.route('**/actions/suggest*', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					status: 'success',
+					suggestions: [],
+					virtual_questions: [
+						{
+							question_id: 'url-context',
+							question: 'What page URL did this occur on?',
+							reason: 'The site owner needs the exact page to reproduce the issue.',
+							target_field_id: '1',
+							required: true,
+							answer_type: 'short_text'
+						}
+					],
+					meta: { execution_request_id: 'rt-virtual-qna' }
+				})
+			});
+		});
+
+		await openRealtimePreview(page, true, {
+			storageTargetFieldId: '9',
+			blockingMode: 'require_answers'
+		});
+
+		await page.fill('input[name="input_1"]', 'The button is broken.');
+		await page.locator('input[name="input_2"]').click();
+		await expect(page.locator('.sentient-forms-realtime-widget')).toContainText(
+			'What page URL did this occur on?'
+		);
+
+		const nextButton = page.locator('.gform_next_button').first();
+		await nextButton.click();
+		await expect(page.locator('input[name="input_1"]')).toBeVisible();
+		await expect(page.locator('textarea[name="input_4"]')).toBeHidden();
+		await expect(page.locator('.sentient-forms-realtime-widget__error')).toContainText(
+			'Answer the required follow-up questions before continuing.'
+		);
+
+		await page
+			.locator('[data-role="answer-question"][data-question-id="url-context"]')
+			.fill('https://example.test/support');
+		const stored = await page.locator('input[name="input_9"], textarea[name="input_9"]').inputValue();
+		const parsed = JSON.parse(stored) as {
+			schema: string;
+			mappings: Array<{ questions: Array<{ question: string; answer: string }> }>;
+		};
+		expect(parsed.schema).toBe('sentient_forms_realtime_clarification_qna.v1');
+		expect(parsed.mappings[0]?.questions[0]?.question).toBe('What page URL did this occur on?');
+		expect(parsed.mappings[0]?.questions[0]?.answer).toBe('https://example.test/support');
+
+		await nextButton.click();
+		await expect(page.locator('textarea[name="input_4"]')).toBeVisible();
 	});
 
 	test('429 suggest response is non-blocking and surfaces retry feedback', async ({ page }) => {

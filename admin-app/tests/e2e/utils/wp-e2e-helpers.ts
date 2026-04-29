@@ -48,6 +48,8 @@ export type RealtimeSettings = {
 	debounceMs?: number;
 	cooldownMs?: number;
 	manualRefreshEnabled?: boolean;
+	storageTargetFieldId?: string;
+	blockingMode?: 'advisory' | 'require_answers';
 };
 
 export type ExecutionMode = 'validation' | 'after_submission' | 'real_time';
@@ -1168,7 +1170,9 @@ export function configureGravityActionMapping(args: ActionMappingArgs): void {
 				checkpoint_field_ids: args.realtimeSettings.checkpointFieldIds ?? [],
 				debounce_ms: args.realtimeSettings.debounceMs ?? 600,
 				cooldown_ms: args.realtimeSettings.cooldownMs ?? 8000,
-				manual_refresh_enabled: args.realtimeSettings.manualRefreshEnabled ?? true
+				manual_refresh_enabled: args.realtimeSettings.manualRefreshEnabled ?? true,
+				storage_target_field_id: args.realtimeSettings.storageTargetFieldId ?? '',
+				blocking_mode: args.realtimeSettings.blockingMode ?? 'advisory'
 			}
 		: undefined;
 	const mappingSettings: Record<string, unknown> = {

@@ -392,6 +392,7 @@ class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_For
             'spam_detection_v1'    => [ 'gform_validation', 'gform_after_submission' ],
             'content_validation_v1'=> [ 'gform_validation' ],
             'entry_summary_v1'     => [ 'gform_after_submission' ],
+            'clarification_assistant_v1' => [ 'real_time' ],
             default                => [],
         };
     }

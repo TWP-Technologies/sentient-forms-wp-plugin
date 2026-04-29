@@ -108,7 +108,7 @@ class Sentient_Forms_Local_Result_Applier
             }
 
             $path  = is_array( $path_config ) ? (string) ( $path_config['path'] ?? '' ) : (string) $path_config;
-            $value = $this->resolve_path( $result, $path );
+            $value = $this->resolve_effect_value( $result, $path );
             if ( null === $value )
             {
                 $skipped[] = [
@@ -225,7 +225,7 @@ class Sentient_Forms_Local_Result_Applier
         }
 
         $path = is_array( $config ) ? (string) ( $config['path'] ?? $config['content_path'] ?? 'content' ) : 'content';
-        $body = $this->resolve_path( $result, $path );
+        $body = $this->resolve_effect_value( $result, $path );
         if ( null === $body )
         {
             return 'path_not_found';
@@ -245,6 +245,48 @@ class Sentient_Forms_Local_Result_Applier
         GFFormsModel::add_note( $entry_id, 0, 'Sentient Forms AI', $note, 'sentient_forms_local_action' );
 
         return true;
+    }
+
+    /**
+     * Resolve an effect path and prefer the useful scalar inside JSON model output
+     * when a text-oriented built-in action receives structured content.
+     *
+     * @param array<string, mixed> $result Normalized provider result.
+     */
+    private function resolve_effect_value( array $result, string $path ): mixed
+    {
+        $value = $this->resolve_path( $result, $path );
+        if ( null === $value || 'content' !== trim( $path ) )
+        {
+            return $value;
+        }
+
+        $structured_summary = $this->resolve_path( $result, 'structured.summary' );
+        if ( is_scalar( $structured_summary ) && '' !== trim( (string) $structured_summary ) )
+        {
+            return $structured_summary;
+        }
+
+        if ( ! is_scalar( $value ) )
+        {
+            return $value;
+        }
+
+        $decoded = json_decode( (string) $value, true );
+        if ( JSON_ERROR_NONE !== json_last_error() || ! is_array( $decoded ) )
+        {
+            return $value;
+        }
+
+        foreach ( [ 'summary', 'message', 'justification', 'reasoning' ] as $summary_key )
+        {
+            if ( isset( $decoded[ $summary_key ] ) && is_scalar( $decoded[ $summary_key ] ) && '' !== trim( (string) $decoded[ $summary_key ] ) )
+            {
+                return $decoded[ $summary_key ];
+            }
+        }
+
+        return $value;
     }
 
     private function apply_spam_note( int $entry_id, array $effects, array $result ): true | string

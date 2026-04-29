@@ -72,8 +72,8 @@ const defaultModelCatalog = {
 			recommended_for: ['Free testing']
 		},
 		{
-			id: 'openai/gpt-5.1',
-			display_name: 'OpenAI: GPT-5.1',
+			id: 'openai/gpt-5.5',
+			display_name: 'OpenAI: GPT-5.5',
 			provider: 'openrouter',
 			speed_tier: 'balanced',
 			cost_tier: 'medium',
@@ -100,7 +100,7 @@ const defaultModelCatalog = {
 			display_name: 'Recommended',
 			description: 'Recommended paid model for production workflows.',
 			category: 'local',
-			resolved_model_id: 'openai/gpt-5.1',
+			resolved_model_id: 'openai/gpt-5.5',
 			auto_upgrade: true
 		},
 		{
@@ -335,9 +335,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			const mapping = payload.mapping_selection as Record<string, unknown> | undefined;
 			const action = payload.action_selection as Record<string, unknown> | undefined;
-			const primary = String(mapping?.primary ?? action?.primary ?? payload.template_model_hint ?? 'openai/gpt-5.1');
+			const primary = String(mapping?.primary ?? action?.primary ?? payload.template_model_hint ?? 'openai/gpt-5.5');
 			const resolvedModelId =
-				primary === 'sf_default' ? 'openai/gpt-5.1' : primary === 'sf_free' ? 'openrouter/free' : primary;
+				primary === 'sf_default' ? 'openai/gpt-5.5' : primary === 'sf_free' ? 'openrouter/free' : primary;
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -355,9 +355,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			const mapping = payload.mapping_selection as Record<string, unknown> | undefined;
 			const action = payload.action_selection as Record<string, unknown> | undefined;
-			const primary = String(mapping?.primary ?? action?.primary ?? payload.template_model_hint ?? 'openai/gpt-5.1');
+			const primary = String(mapping?.primary ?? action?.primary ?? payload.template_model_hint ?? 'openai/gpt-5.5');
 			const resolvedModelId =
-				primary === 'sf_default' ? 'openai/gpt-5.1' : primary === 'sf_free' ? 'openrouter/free' : primary;
+				primary === 'sf_default' ? 'openai/gpt-5.5' : primary === 'sf_free' ? 'openrouter/free' : primary;
 			const actionId = String(payload.action_id ?? 'mock_action');
 			return route.fulfill({
 				status: 200,

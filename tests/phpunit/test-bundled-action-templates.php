@@ -14,7 +14,7 @@ class Tests_Bundled_Action_Templates extends WP_UnitTestCase
 
     public function test_bundled_provider_prompts_include_submission_context_placeholders(): void
     {
-        foreach ( [ 'spam_detection_v1', 'content_validation_v1', 'entry_summary_v1' ] as $template_code )
+        foreach ( [ 'spam_detection_v1', 'content_validation_v1', 'entry_summary_v1', 'clarification_assistant_v1' ] as $template_code )
         {
             $definition = Sentient_Forms_Bundled_Action_Templates::get( $template_code );
 
@@ -62,5 +62,19 @@ class Tests_Bundled_Action_Templates extends WP_UnitTestCase
             'Do not use content validation as spam moderation.',
             $prompt
         );
+    }
+
+    public function test_clarification_assistant_template_is_realtime_json_with_virtual_questions(): void
+    {
+        $definition = Sentient_Forms_Bundled_Action_Templates::get( 'clarification_assistant_v1' );
+
+        $this->assertIsArray( $definition );
+        $this->assertSame( [ 'real_time' ], $definition['hooks'] ?? null );
+        $this->assertSame( 'real_time', $definition['default_execution_mode'] ?? null );
+        $this->assertSame( [ 'real_time' ], $definition['definition_json']['supported_execution_modes'] ?? null );
+        $this->assertSame( [ 'type' => 'json_object' ], $definition['definition_json']['response_format'] ?? null );
+        $this->assertStringContainsString( 'Prefer 0-3 virtual questions; never exceed 5.', $definition['prompt_template'] ?? '' );
+        $this->assertArrayHasKey( 'virtual_questions', $definition['structured_output_schema']['properties'] ?? [] );
+        $this->assertArrayHasKey( 'conditional_decisions', $definition['structured_output_schema']['properties'] ?? [] );
     }
 }

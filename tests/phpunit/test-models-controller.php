@@ -47,13 +47,22 @@ class Tests_Models_Controller extends WP_UnitTestCase
 
         $data = $response->get_data();
         $this->assertSame( 'local-openrouter-v1', $data['pricing_policy_version'] );
-        $this->assertCount( 2, $data['models'] );
+        $this->assertGreaterThanOrEqual( 20, count( $data['models'] ) );
         $this->assertGreaterThanOrEqual( 8, count( $data['presets'] ) );
 
-        $this->assertSame( 'openai/gpt-oss-20b:free', $data['models'][0]['id'] );
-        $this->assertSame( 'free', $data['models'][0]['cost_tier'] );
-        $this->assertTrue( $data['models'][0]['capabilities']['long_context'] );
-        $this->assertContains( 'structured-output', $data['models'][0]['tags'] );
+        $model_ids = wp_list_pluck( $data['models'], 'id' );
+        $this->assertContains( 'openai/gpt-oss-20b:free', $model_ids );
+        $this->assertContains( 'openai/gpt-5.5', $model_ids );
+        $this->assertContains( 'anthropic/claude-sonnet-4.6', $model_ids );
+
+        $models_by_id = [];
+        foreach ( $data['models'] as $model )
+        {
+            $models_by_id[ $model['id'] ] = $model;
+        }
+        $this->assertSame( 'free', $models_by_id['openai/gpt-oss-20b:free']['cost_tier'] );
+        $this->assertTrue( $models_by_id['openai/gpt-oss-20b:free']['capabilities']['long_context'] );
+        $this->assertContains( 'structured-output', $models_by_id['openai/gpt-oss-20b:free']['tags'] );
 
         $preset_codes = wp_list_pluck( $data['presets'], 'code' );
         $this->assertContains( 'sf_default', $preset_codes );
@@ -66,7 +75,10 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertContains( 'sf_long_context', $preset_codes );
         $this->assertContains( 'sf_reasoning', $preset_codes );
         $this->assertContains( 'sf_code', $preset_codes );
-        $this->assertSame( 'openai/gpt-oss-20b:free', $data['presets'][0]['resolved_model_id'] );
+        $this->assertContains( 'sf_legal', $preset_codes );
+        $this->assertContains( 'sf_financial', $preset_codes );
+        $this->assertContains( 'sf_realtime', $preset_codes );
+        $this->assertSame( 'openai/gpt-5.5', $data['presets'][0]['resolved_model_id'] );
     }
 
     public function test_list_models_returns_bundled_recommendations_when_cache_empty(): void
@@ -80,11 +92,16 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $model_ids = wp_list_pluck( $data['models'], 'id' );
 
         $this->assertContains( 'openai/gpt-5.5', $model_ids );
+        $this->assertContains( 'openai/gpt-5.4', $model_ids );
         $this->assertContains( 'openai/gpt-5.4-mini', $model_ids );
         $this->assertContains( 'google/gemini-3.1-pro-preview', $model_ids );
         $this->assertContains( 'google/gemini-3-flash-preview', $model_ids );
         $this->assertContains( 'anthropic/claude-sonnet-4.6', $model_ids );
         $this->assertContains( 'anthropic/claude-opus-4.7', $model_ids );
+        $this->assertContains( 'deepseek/deepseek-v4-flash', $model_ids );
+        $this->assertContains( 'moonshotai/kimi-k2.6', $model_ids );
+        $this->assertContains( 'qwen/qwen3.6-max-preview', $model_ids );
+        $this->assertContains( 'poolside/laguna-m.1:free', $model_ids );
         $this->assertContains( 'openrouter/free', $model_ids );
         $this->assertContains( 'openrouter/auto', $model_ids );
         $this->assertContains( 'bundled-recommendation', $data['models'][0]['tags'] );
@@ -97,8 +114,11 @@ class Tests_Models_Controller extends WP_UnitTestCase
         }
 
         $this->assertSame( 'openrouter/free', $presets_by_code['sf_free']['resolved_model_id'] );
-        $this->assertSame( 'anthropic/claude-sonnet-4.6', $presets_by_code['sf_quality']['resolved_model_id'] );
-        $this->assertSame( 'openai/gpt-5.3-codex', $presets_by_code['sf_code']['resolved_model_id'] );
+        $this->assertSame( 'openai/gpt-5.5-pro', $presets_by_code['sf_quality']['resolved_model_id'] );
+        $this->assertSame( 'anthropic/claude-opus-4.7', $presets_by_code['sf_code']['resolved_model_id'] );
+        $this->assertSame( 'anthropic/claude-sonnet-4.6', $presets_by_code['sf_legal']['resolved_model_id'] );
+        $this->assertSame( 'anthropic/claude-sonnet-4.6', $presets_by_code['sf_financial']['resolved_model_id'] );
+        $this->assertSame( 'google/gemini-3-flash-preview', $presets_by_code['sf_realtime']['resolved_model_id'] );
     }
 
     public function test_resolve_model_prefers_mapping_selection_over_lower_scopes(): void
@@ -125,8 +145,8 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
 
         $data = $response->get_data();
-        $this->assertSame( 'openai/gpt-oss-20b:free', $data['model_id'] );
-        $this->assertSame( 'OpenAI: GPT OSS 20B (free)', $data['display_name'] );
+        $this->assertSame( 'openrouter/free', $data['model_id'] );
+        $this->assertSame( 'OpenRouter Free Models Router', $data['display_name'] );
         $this->assertSame( 'mapping', $data['resolution_source'] );
         $this->assertSame( 'anthropic/claude-sonnet-4.6', $data['backup_model_id'] );
 
@@ -162,8 +182,8 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
 
         $data = $response->get_data();
-        $this->assertSame( 'gemini-3-flash-preview', $data['model_id'] );
-        $this->assertSame( 'Sentient Forms managed default', $data['display_name'] );
+        $this->assertSame( 'openai/gpt-5.5', $data['model_id'] );
+        $this->assertSame( 'OpenAI: GPT-5.5', $data['display_name'] );
         $this->assertSame( 'mapping', $data['resolution_source'] );
 
         $applied = array_values(
@@ -176,6 +196,31 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertCount( 1, $applied );
         $this->assertSame( 'mapping', $applied[0]['level'] );
         $this->assertStringContainsString( 'managed service', $applied[0]['reason'] );
+    }
+
+    public function test_resolve_model_accepts_custom_openrouter_model_id_outside_cached_catalog(): void
+    {
+        $this->seed_model_cache();
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' );
+        $request->set_body_params(
+            [
+                'mapping_selection' => [
+                    'primary'   => 'moonshotai/new-model-preview',
+                    'is_preset' => false,
+                    'provider'  => 'openrouter',
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'moonshotai/new-model-preview', $data['model_id'] );
+        $this->assertSame( 'moonshotai/new-model-preview', $data['display_name'] );
+        $this->assertSame( 'mapping', $data['resolution_source'] );
     }
 
     public function test_resolve_model_uses_template_hint_when_no_override_exists(): void

@@ -513,7 +513,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
         $selection = [
             'provider' => $provider,
-            'model'    => '' !== $model ? $model : ( 'sentient_managed' === $provider ? 'gemini-3-flash-preview' : 'openrouter/auto' ),
+            'model'    => '' !== $model ? $model : 'openrouter/auto',
         ];
 
         if ( is_array( $runtime_selection ) )

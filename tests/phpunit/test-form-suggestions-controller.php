@@ -56,9 +56,94 @@ final class Sentient_Forms_Test_Suggest_Executor extends Sentient_Forms_Action_E
 					'is_suppressed' => false,
 				],
 			],
+			'virtual_questions' => [
+				[
+					'question_id' => 'details-url',
+					'question' => 'What URL did this happen on?',
+					'target_field_id' => '1',
+					'required' => true,
+					'answer_type' => 'short_text',
+				],
+			],
 			'meta' => [
 				'execution_request_id' => $context['execution_request_id'] ?? 'generated',
 				'credits_debited' => 3,
+			],
+		];
+	}
+}
+
+final class Sentient_Forms_Test_Local_Form_Mappings_Repository extends Sentient_Forms_Form_Mappings_Repository {
+	/** @var array<int,array<string,mixed>> */
+	private array $rows;
+
+	/** @param array<int,array<string,mixed>> $rows */
+	public function __construct( array $rows ) {
+		$this->rows = $rows;
+	}
+
+	public function get( int $id ): ?array {
+		return $this->rows[ $id ] ?? null;
+	}
+}
+
+final class Sentient_Forms_Test_Local_Suggest_Execution_Service extends Sentient_Forms_Local_Action_Execution_Service {
+	public array $calls = [];
+
+	public function __construct() {}
+
+	public function execute_mapping( int $mapping_id, array $form, array $entry, array $context = [] ): array | WP_Error {
+		$this->calls[] = [
+			'mapping_id' => $mapping_id,
+			'form'       => $form,
+			'entry'      => $entry,
+			'context'    => $context,
+		];
+
+		return [
+			'execution_request_id' => $context['execution_request_id'] ?? 'rt-local-first-test',
+			'status'               => 'succeeded',
+			'provider'             => 'openrouter',
+			'model'                => 'openrouter/auto',
+			'cached'               => false,
+			'result'               => [
+				'structured' => [
+					'suggestions' => [
+						[
+							'suggestion_id'        => 'suggest-visible',
+							'field_id'             => '1',
+							'severity'             => 'warning',
+							'message'              => 'Add the product number and quantity.',
+							'jump_target_field_id' => '1',
+						],
+						[
+							'suggestion_id'        => 'suggest-hidden',
+							'field_id'             => '4',
+							'severity'             => 'warning',
+							'message'              => 'Hidden field should not render.',
+							'jump_target_field_id' => '4',
+						],
+					],
+					'virtual_questions' => [
+						[
+							'question_id'     => 'need-date',
+							'question'        => 'When do you need this quote returned?',
+							'reason'          => 'The site owner can prioritize the request.',
+							'target_field_id' => '1',
+							'required'        => true,
+							'answer_type'     => 'short_text',
+						],
+					],
+					'conditional_decisions' => [
+						[
+							'decision_id'   => 'quote-request',
+							'condition_key' => 'quote_request',
+							'met'           => true,
+							'confidence'    => 0.91,
+							'reason'        => 'The visitor asked for a quote.',
+						],
+					],
+				],
 			],
 		];
 	}
@@ -209,10 +294,88 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$data = $response->get_data();
 		$this->assertSame( 'success', $data['status'] ?? null );
 		$this->assertCount( 1, $data['suggestions'] ?? [] );
+		$this->assertSame( 'What URL did this happen on?', $data['virtual_questions'][0]['question'] ?? null );
 		$this->assertCount( 1, $stub_executor->calls );
 		$this->assertSame( 'central_rt_1', $stub_executor->calls[0]['central_action_id'] );
 		$this->assertSame( 'rt-request-42', $stub_executor->calls[0]['context']['execution_request_id'] ?? null );
 		$this->assertSame( [ '1' ], $stub_executor->calls[0]['suggestion_context']['visible_field_ids'] ?? [] );
+	}
+
+	public function test_suggest_endpoint_executes_local_first_realtime_mapping_without_cps_fallback(): void {
+		update_option(
+			'sentient_forms_actions_gravity_forms_42',
+			[
+				'actions' => [
+					[
+						'id' => 'local_first_99',
+						'central_action_id' => 'clarification_assistant_v1',
+						'action_name_label' => 'Realtime Clarification Assistant',
+						'action_type_indicator' => 'master',
+						'is_action_enabled_for_form' => true,
+						'settings' => [
+							'execution_mode' => 'real_time',
+							'realtime_settings' => [
+								'checkpoint_field_ids' => [ '1' ],
+							],
+						],
+					],
+				],
+			]
+		);
+
+		$legacy_executor = new Sentient_Forms_Test_Suggest_Executor();
+		$this->executor_property->setValue( $this->plugin, $legacy_executor );
+
+		$local_repository = new Sentient_Forms_Test_Local_Form_Mappings_Repository(
+			[
+				99 => [
+					'id' => 99,
+					'form_source' => 'gravity_forms',
+					'form_id' => '42',
+					'hook' => 'real_time',
+					'execution_mode' => 'real_time',
+					'enabled' => 1,
+				],
+			]
+		);
+		$local_execution = new Sentient_Forms_Test_Local_Suggest_Execution_Service();
+		$controller = new Sentient_Forms_Form_Suggestions_Controller( $local_repository, $local_execution );
+
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_param( 'mapping_id', 'local_first_99' );
+		$request->set_param( 'execution_request_id', 'rt-local-first-42' );
+		$request->set_param( 'all_known_field_values', [ '1' => 'Quote product 183671 at 500pcs' ] );
+		$request->set_param( 'visible_field_ids', [ '1' ] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 2 );
+		$request->set_param(
+			'future_field_manifest',
+			[
+				[
+					'field_id' => '4',
+					'type' => 'textarea',
+					'page_index' => 2,
+				],
+			]
+		);
+
+		$response = $controller->suggest( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$data = $response->get_data();
+		$this->assertSame( 'success', $data['status'] ?? null );
+		$this->assertCount( 1, $local_execution->calls );
+		$this->assertSame( 99, $local_execution->calls[0]['mapping_id'] );
+		$this->assertSame( 'real_time', $local_execution->calls[0]['context']['hook'] ?? null );
+		$this->assertSame( [ '1' => 'Quote product 183671 at 500pcs' ], $local_execution->calls[0]['entry'] );
+		$this->assertSame( [], $legacy_executor->calls );
+		$this->assertSame( 'Add the product number and quantity.', $data['suggestions'][0]['message'] ?? null );
+		$this->assertCount( 1, $data['suggestions'] ?? [] );
+		$this->assertSame( 'When do you need this quote returned?', $data['virtual_questions'][0]['question'] ?? null );
+		$this->assertSame( 'quote_request', $data['conditional_decisions'][0]['condition_key'] ?? null );
+		$this->assertSame( 'rt-local-first-42', $data['meta']['execution_request_id'] ?? null );
 	}
 
 	public function test_suggest_endpoint_falls_back_to_known_values_for_visible_fields_and_builds_future_manifest(): void {

@@ -254,23 +254,25 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             }
         }
 
-        if ( [] === $models )
+        foreach ( Sentient_Forms_OpenRouter_Model_Recommendations::all() as $model_id => $metadata )
         {
-            foreach ( Sentient_Forms_OpenRouter_Model_Recommendations::all() as $model_id => $metadata )
+            if ( isset( $models[ $model_id ] ) )
             {
-                $model = $this->format_openrouter_model_info(
-                    [
-                        'model_id'      => $model_id,
-                        'metadata_json' => $metadata,
-                        'expires_at'    => gmdate( 'Y-m-d H:i:s', time() + MONTH_IN_SECONDS ),
-                    ]
-                );
+                continue;
+            }
 
-                if ( '' !== $model['id'] )
-                {
-                    $model['tags'][] = 'bundled-recommendation';
-                    $models[ $model['id'] ] = $model;
-                }
+            $model = $this->format_openrouter_model_info(
+                [
+                    'model_id'      => $model_id,
+                    'metadata_json' => $metadata,
+                    'expires_at'    => gmdate( 'Y-m-d H:i:s', time() + MONTH_IN_SECONDS ),
+                ]
+            );
+
+            if ( '' !== $model['id'] )
+            {
+                $model['tags'][] = 'bundled-recommendation';
+                $models[ $model['id'] ] = $model;
             }
         }
 
@@ -299,18 +301,23 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
         $model_id             = sanitize_text_field( (string) ( $row['model_id'] ?? $metadata['id'] ?? '' ) );
         $name                 = isset( $metadata['name'] ) ? sanitize_text_field( (string) $metadata['name'] ) : $model_id;
         $pricing              = isset( $metadata['pricing'] ) && is_array( $metadata['pricing'] ) ? $metadata['pricing'] : [];
-        $input_modalities     = $this->sanitize_string_list( $metadata['input_modalities'] ?? [] );
-        $output_modalities    = $this->sanitize_string_list( $metadata['output_modalities'] ?? [] );
+        $architecture         = isset( $metadata['architecture'] ) && is_array( $metadata['architecture'] ) ? $metadata['architecture'] : [];
+        $input_modalities     = $this->sanitize_string_list( $metadata['input_modalities'] ?? $architecture['input_modalities'] ?? [] );
+        $output_modalities    = $this->sanitize_string_list( $metadata['output_modalities'] ?? $architecture['output_modalities'] ?? [] );
         $supported_parameters = $this->sanitize_string_list( $metadata['supported_parameters'] ?? [] );
         $context_window       = isset( $metadata['context_length'] ) ? absint( $metadata['context_length'] ) : 0;
         $is_free              = ! empty( $metadata['free'] );
         $is_preview           = str_contains( strtolower( $model_id . ' ' . $name ), 'preview' );
         $is_stale             = isset( $row['expires_at'] ) && (string) $row['expires_at'] < current_time( 'mysql', true );
+        $provider_family      = str_contains( $model_id, '/' ) ? sanitize_key( strtok( $model_id, '/' ) ) : '';
 
         $capabilities = [
             'reasoning'    => $this->model_has_reasoning( $model_id, $name, $supported_parameters ),
             'code'         => (bool) preg_match( '/code|coder|coding/i', $model_id . ' ' . $name ),
             'vision'       => in_array( 'image', $input_modalities, true ),
+            'files'        => in_array( 'file', $input_modalities, true ),
+            'audio'        => in_array( 'audio', $input_modalities, true ),
+            'video'        => in_array( 'video', $input_modalities, true ),
             'tools'        => (bool) array_intersect( $supported_parameters, [ 'tools', 'tool_choice', 'function_call' ] ),
             'structured'   => (bool) array_intersect( $supported_parameters, [ 'response_format', 'structured_outputs' ] ),
             'web_search'   => array_key_exists( 'web_search', $pricing ),
@@ -339,6 +346,11 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             'id'              => $model_id,
             'display_name'    => '' !== $name ? $name : $model_id,
             'provider'        => 'openrouter',
+            'provider_family' => $provider_family,
+            'developer'       => $this->developer_label_for_provider( $provider_family ),
+            'description'     => isset( $metadata['description'] ) && is_scalar( $metadata['description'] )
+                ? sanitize_textarea_field( (string) $metadata['description'] )
+                : '',
             'speed_tier'      => $this->infer_speed_tier( $model_id, $name ),
             'cost_tier'       => $is_free ? 'free' : $this->infer_cost_tier( $pricing ),
             'capabilities'    => $capabilities,
@@ -346,24 +358,44 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             'is_preview'      => $is_preview,
             'tags'            => $tags,
             'supported_parameters' => $supported_parameters,
+            'input_modalities' => $input_modalities,
+            'output_modalities' => $output_modalities,
             'pricing'         => $this->sanitize_pricing_map( $pricing ),
             'recommended_for' => $this->recommended_for( $is_free, $capabilities, $supported_parameters, $metadata ),
+            'recommendation_categories' => $this->sanitize_string_list( $metadata['recommendation_categories'] ?? [] ),
+            'benchmark_notes' => $this->sanitize_string_label_list( $metadata['benchmark_notes'] ?? [] ),
+            'source_urls'     => $this->sanitize_url_list( $metadata['source_urls'] ?? [] ),
+            'created'         => isset( $metadata['created'] ) && is_scalar( $metadata['created'] ) ? sanitize_text_field( (string) $metadata['created'] ) : null,
+            'knowledge_cutoff' => isset( $metadata['knowledge_cutoff'] ) && is_scalar( $metadata['knowledge_cutoff'] ) ? sanitize_text_field( (string) $metadata['knowledge_cutoff'] ) : null,
         ];
     }
 
     private function build_presets( array $models ): array
     {
         $recommended_model = $this->pick_default_model_id( $models );
-        $quality_model     = $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'High-quality analysis', $model['recommended_for'] ?? [], true ) ) ?: $recommended_model;
+        $quality_model     = $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5-pro', 'anthropic/claude-opus-4.7', 'anthropic/claude-sonnet-4.6', 'openai/gpt-5.5' ] ) ?: $recommended_model;
         $free_model        = isset( $models['openrouter/free'] )
             ? 'openrouter/free'
             : ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' === $model['cost_tier'] ) ?: $recommended_model );
-        $structured_model  = $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'structured-output', $model['tags'], true ) ) ?: $recommended_model;
-        $fast_model        = $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( (string) ( $model['speed_tier'] ?? '' ), [ 'fastest', 'fast' ], true ) ) ?: $recommended_model;
-        $low_cost_model    = $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' !== (string) ( $model['cost_tier'] ?? '' ) && in_array( (string) ( $model['cost_tier'] ?? '' ), [ 'low', 'medium' ], true ) ) ?: $free_model;
-        $long_model        = $this->pick_long_context_model_id( $models ) ?: $recommended_model;
-        $reasoning_model   = $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['reasoning'] ) ) ?: $recommended_model;
-        $code_model        = $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['code'] ) ) ?: $recommended_model;
+        $structured_model  = $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5', 'google/gemini-3-flash-preview', 'nvidia/nemotron-3-super-120b-a12b:free', 'openrouter/free' ] )
+            ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'structured-output', $model['tags'], true ) ) ?: $recommended_model );
+        $fast_model        = $this->pick_preferred_model_id( $models, [ 'google/gemini-3-flash-preview', 'google/gemini-3.1-flash-lite-preview', 'openai/gpt-5.4', 'openai/gpt-5.4-mini' ] )
+            ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( (string) ( $model['speed_tier'] ?? '' ), [ 'fastest', 'fast' ], true ) ) ?: $recommended_model );
+        $low_cost_model    = $this->pick_preferred_model_id( $models, [ 'deepseek/deepseek-v4-flash', 'google/gemini-3.1-flash-lite-preview', 'deepseek/deepseek-v4-pro', 'openai/gpt-5.4-mini' ] )
+            ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' !== (string) ( $model['cost_tier'] ?? '' ) && in_array( (string) ( $model['cost_tier'] ?? '' ), [ 'low', 'medium' ], true ) ) ?: $free_model );
+        $long_model        = $this->pick_preferred_model_id( $models, [ 'moonshotai/kimi-k2.5', 'google/gemini-3.1-pro-preview', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] )
+            ?: ( $this->pick_long_context_model_id( $models ) ?: $recommended_model );
+        $reasoning_model   = $this->pick_preferred_model_id( $models, [ 'anthropic/claude-opus-4.7', 'openai/gpt-5.5-pro', 'z-ai/glm-5.1', 'google/gemini-3.1-pro-preview' ] )
+            ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['reasoning'] ) ) ?: $recommended_model );
+        $code_model        = $this->pick_preferred_model_id( $models, [ 'anthropic/claude-opus-4.7', 'anthropic/claude-sonnet-4.6', 'moonshotai/kimi-k2.6', 'qwen/qwen3.6-max-preview', 'openai/gpt-5.5' ] )
+            ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['code'] ) ) ?: $recommended_model );
+        $legal_model       = $this->pick_preferred_model_id( $models, [ 'anthropic/claude-sonnet-4.6', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] ) ?: $recommended_model;
+        $financial_model   = $this->pick_preferred_model_id( $models, [ 'anthropic/claude-sonnet-4.6', 'anthropic/claude-opus-4.7', 'openai/gpt-5.5' ] ) ?: $recommended_model;
+        $privacy_model     = $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5', 'anthropic/claude-sonnet-4.6', 'google/gemini-3.1-pro-preview' ] ) ?: $recommended_model;
+        $realtime_model    = $this->pick_preferred_model_id( $models, [ 'google/gemini-3-flash-preview', 'google/gemini-3.1-flash-lite-preview', 'deepseek/deepseek-v4-flash' ] ) ?: $fast_model;
+        $multimodal_model  = $this->pick_preferred_model_id( $models, [ 'google/gemini-3.1-pro-preview', 'google/gemini-3-flash-preview', 'openai/gpt-5.5' ] ) ?: $recommended_model;
+        $research_model    = $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5', 'anthropic/claude-opus-4.7', 'google/gemini-3.1-pro-preview' ] ) ?: $recommended_model;
+        $agentic_model     = $this->pick_preferred_model_id( $models, [ 'google/gemini-3.1-pro-preview', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] ) ?: $recommended_model;
 
         return [
             [
@@ -441,9 +473,65 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             [
                 'code'              => 'sf_code',
                 'display_name'      => __( 'Code generation', 'sentient-forms' ),
-                'description'       => __( 'Prefers cached models whose metadata indicates coding strength.', 'sentient-forms' ),
+                'description'       => __( 'Prefers current OpenRouter-available leaders for coding and software-engineering tasks.', 'sentient-forms' ),
                 'category'          => 'local',
                 'resolved_model_id' => $code_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_legal',
+                'display_name'      => __( 'Legal', 'sentient-forms' ),
+                'description'       => __( 'Prefers models with current legal-reasoning benchmark strength. Always require human review for legal advice.', 'sentient-forms' ),
+                'category'          => 'domain',
+                'resolved_model_id' => $legal_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_financial',
+                'display_name'      => __( 'Financial', 'sentient-forms' ),
+                'description'       => __( 'Prefers models with current finance and accounting benchmark strength. Always require human review for financial decisions.', 'sentient-forms' ),
+                'category'          => 'domain',
+                'resolved_model_id' => $financial_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_privacy',
+                'display_name'      => __( 'Privacy-sensitive', 'sentient-forms' ),
+                'description'       => __( 'Prefers a strong model, but privacy depends on the selected route and upstream provider retention policy.', 'sentient-forms' ),
+                'category'          => 'domain',
+                'resolved_model_id' => $privacy_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_realtime',
+                'display_name'      => __( 'Realtime', 'sentient-forms' ),
+                'description'       => __( 'Prefers low-latency models for visitor-facing form feedback.', 'sentient-forms' ),
+                'category'          => 'local',
+                'resolved_model_id' => $realtime_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_multimodal',
+                'display_name'      => __( 'Vision and files', 'sentient-forms' ),
+                'description'       => __( 'Prefers models with strong multimodal metadata for uploads, screenshots, and rich form context.', 'sentient-forms' ),
+                'category'          => 'capability',
+                'resolved_model_id' => $multimodal_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_research',
+                'display_name'      => __( 'Search and research', 'sentient-forms' ),
+                'description'       => __( 'Prefers models suited to research-style tasks and optional web-search routes when enabled.', 'sentient-forms' ),
+                'category'          => 'capability',
+                'resolved_model_id' => $research_model,
+                'auto_upgrade'      => true,
+            ],
+            [
+                'code'              => 'sf_agentic',
+                'display_name'      => __( 'Tool calling', 'sentient-forms' ),
+                'description'       => __( 'Prefers models with tool-calling and structured-parameter strength for agentic workflows.', 'sentient-forms' ),
+                'category'          => 'capability',
+                'resolved_model_id' => $agentic_model,
                 'auto_upgrade'      => true,
             ],
         ];
@@ -538,7 +626,7 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
                 && self::MANAGED_PROVIDER === sanitize_key( (string) $selection['provider'] )
             )
             {
-                $model_id = $is_preset && $allow_presets ? self::MANAGED_DEFAULT_MODEL : $primary;
+                $model_id = $is_preset && $allow_presets ? $this->resolve_preset_model_id( $primary, $presets ) : $primary;
 
                 return [
                     'level'           => $level,
@@ -548,7 +636,7 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
                     'applied'         => false,
                     'reason'          => '' !== $model_id
                         ? __( 'Selection resolves through the Sentient Forms managed service route.', 'sentient-forms' )
-                        : __( 'No managed model selection configured at this level.', 'sentient-forms' ),
+                        : __( 'The selected managed preset is not available in the local model policy.', 'sentient-forms' ),
                 ];
             }
         }
@@ -600,6 +688,12 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
 
     private function pick_default_model_id( array $models ): string
     {
+        $preferred_default = $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5', 'anthropic/claude-sonnet-4.6', 'google/gemini-3-flash-preview', 'openai/gpt-5.4' ] );
+        if ( $preferred_default )
+        {
+            return $preferred_default;
+        }
+
         $paid_general = $this->pick_first_model_id(
             $models,
             static fn ( array $model ): bool => 'free' !== (string) ( $model['cost_tier'] ?? '' )
@@ -625,6 +719,23 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             if ( $matches( $model ) )
             {
                 return (string) $model['id'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $models
+     * @param array<int, string>                  $preferred_model_ids
+     */
+    private function pick_preferred_model_id( array $models, array $preferred_model_ids ): ?string
+    {
+        foreach ( $preferred_model_ids as $model_id )
+        {
+            if ( isset( $models[ $model_id ] ) )
+            {
+                return $model_id;
             }
         }
 
@@ -699,6 +810,45 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
         }
 
         return array_values( array_filter( array_map( 'sanitize_key', $value ) ) );
+    }
+
+    private function sanitize_url_list( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $urls = [];
+        foreach ( $value as $item )
+        {
+            if ( is_scalar( $item ) )
+            {
+                $url = esc_url_raw( (string) $item );
+                if ( '' !== $url )
+                {
+                    $urls[] = $url;
+                }
+            }
+        }
+
+        return array_values( array_unique( $urls ) );
+    }
+
+    private function developer_label_for_provider( string $provider_family ): string
+    {
+        return match ( $provider_family ) {
+            'openai'     => 'OpenAI',
+            'anthropic'  => 'Anthropic',
+            'google'     => 'Google',
+            'moonshotai' => 'Moonshot AI',
+            'qwen'       => 'Qwen',
+            'deepseek'   => 'DeepSeek',
+            'z-ai'       => 'Z.ai',
+            'poolside'   => 'Poolside',
+            'nvidia'     => 'NVIDIA',
+            default      => $provider_family,
+        };
     }
 
     private function model_has_reasoning( string $model_id, string $name, array $supported_parameters ): bool

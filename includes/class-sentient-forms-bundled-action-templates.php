@@ -313,6 +313,167 @@ PROMPT,
                     ],
                 ],
             ],
+            'clarification_assistant_v1' => [
+                'source'                   => 'bundled',
+                'code'                     => 'clarification_assistant_v1',
+                'display_name'             => 'Realtime Clarification Assistant',
+                'description'              => 'Analyze visible in-progress answers and ask targeted clarification questions before the visitor leaves the form.',
+                'prompt_template'          => <<<'PROMPT'
+You are Sentient Forms' realtime clarification assistant. You help a visitor improve a form submission while they are still present.
+
+Your goals are:
+1. Decide whether visible answers actually answer the visible questions.
+2. Point to existing fields that need better detail, screenshots, URLs, or evidence.
+3. Ask only the smallest set of additional questions that would materially improve the site owner's ability to understand and act on the submission.
+4. Do not ask about future hidden fields when the supplied future_field_manifest shows the form will already ask for that information later.
+5. Keep the visitor's cognitive load low. Prefer 0-3 virtual questions; never exceed 5.
+
+Return only valid JSON in this exact shape:
+{
+  "suggestions": [
+    {
+      "field_id": "1",
+      "severity": "info|warning|critical",
+      "message": "Specific, visitor-facing improvement guidance",
+      "jump_target_field_id": "1",
+      "depends_on_future_field_ids": [],
+      "is_suppressed": false
+    }
+  ],
+  "virtual_questions": [
+    {
+      "question_id": "stable_slug_or_uuid",
+      "question": "A concise follow-up question",
+      "reason": "Why the answer helps the form owner",
+      "target_field_id": "1",
+      "required": false,
+      "answer_type": "long_text",
+      "choices": []
+    }
+  ],
+  "conditional_decisions": [
+    {
+      "decision_id": "stable_slug_or_uuid",
+      "condition_key": "short_decision_key",
+      "met": true,
+      "confidence": 0.85,
+      "reason": "Short rationale"
+    }
+  ]
+}
+
+Form context:
+{{form}}
+
+Known answers:
+{{entry}}
+
+Realtime runtime context is supplied to the action as suggestion_context. Use current_page_index, visible_field_ids, all_known_field_values, and future_field_manifest to avoid criticizing fields the visitor cannot see yet.
+PROMPT,
+                'default_model'            => 'openrouter/auto',
+                'structured_output_schema' => [
+                    'type'                 => 'object',
+                    'required'             => [ 'suggestions', 'virtual_questions', 'conditional_decisions' ],
+                    'additionalProperties' => true,
+                    'properties'           => [
+                        'suggestions' => [
+                            'type'  => 'array',
+                            'items' => [
+                                'type'                 => 'object',
+                                'required'             => [ 'field_id', 'severity', 'message', 'jump_target_field_id' ],
+                                'additionalProperties' => true,
+                                'properties'           => [
+                                    'field_id'                    => [ 'type' => 'string' ],
+                                    'severity'                    => [
+                                        'type' => 'string',
+                                        'enum' => [ 'info', 'warning', 'critical' ],
+                                    ],
+                                    'message'                     => [ 'type' => 'string' ],
+                                    'jump_target_field_id'        => [ 'type' => 'string' ],
+                                    'depends_on_future_field_ids' => [
+                                        'type'  => 'array',
+                                        'items' => [ 'type' => 'string' ],
+                                    ],
+                                    'is_suppressed'               => [ 'type' => 'boolean' ],
+                                ],
+                            ],
+                        ],
+                        'virtual_questions' => [
+                            'type'  => 'array',
+                            'items' => [
+                                'type'                 => 'object',
+                                'required'             => [ 'question_id', 'question', 'required', 'answer_type' ],
+                                'additionalProperties' => true,
+                                'properties'           => [
+                                    'question_id'     => [ 'type' => 'string' ],
+                                    'question'        => [ 'type' => 'string' ],
+                                    'reason'          => [ 'type' => 'string' ],
+                                    'target_field_id' => [ 'type' => 'string' ],
+                                    'required'        => [ 'type' => 'boolean' ],
+                                    'answer_type'     => [
+                                        'type' => 'string',
+                                        'enum' => [ 'short_text', 'long_text', 'choice' ],
+                                    ],
+                                    'choices'         => [
+                                        'type'  => 'array',
+                                        'items' => [ 'type' => 'string' ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                        'conditional_decisions' => [
+                            'type'  => 'array',
+                            'items' => [
+                                'type'                 => 'object',
+                                'required'             => [ 'decision_id', 'condition_key', 'met' ],
+                                'additionalProperties' => true,
+                                'properties'           => [
+                                    'decision_id'   => [ 'type' => 'string' ],
+                                    'condition_key' => [ 'type' => 'string' ],
+                                    'met'           => [ 'type' => 'boolean' ],
+                                    'confidence'    => [ 'type' => 'number' ],
+                                    'reason'        => [ 'type' => 'string' ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+                'override_schema'          => [
+                    'clarification_goal' => [
+                        'type'        => 'string',
+                        'default'     => 'Help the visitor provide complete, actionable answers without unnecessary friction.',
+                        'description' => 'Form-specific guidance for what complete answers must include.',
+                    ],
+                    'max_virtual_questions' => [
+                        'type'        => 'number',
+                        'min'         => 0,
+                        'max'         => 5,
+                        'default'     => 3,
+                        'description' => 'Maximum number of AI-created follow-up questions.',
+                    ],
+                    'allow_conditional_decisions' => [
+                        'type'        => 'boolean',
+                        'default'     => true,
+                        'description' => 'Allow this action to return boolean decision keys for conditional form behavior.',
+                    ],
+                ],
+                'version'                  => '1',
+                'is_active'                => true,
+                'hooks'                    => [ 'real_time' ],
+                'definition_json'          => [
+                    'action_kind'               => 'template_override',
+                    'version'                   => 1,
+                    'response_format'           => [ 'type' => 'json_object' ],
+                    'max_tokens'                => 900,
+                    'temperature'               => 0.2,
+                    'supported_execution_modes' => [ 'real_time' ],
+                    'builder_template'          => 'clarification_assistant',
+                ],
+                'default_execution_mode'   => 'real_time',
+                'effect_mapping_json'      => [
+                    'store_result' => true,
+                ],
+            ],
         ];
 
         return $definitions;

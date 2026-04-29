@@ -86,6 +86,7 @@ export interface DependencyExecutionPreview {
 
 const COLUMN_GAP = 420;
 const KNOWN_HOOK_ORDER: Record<string, number> = {
+	real_time: 5,
 	gform_validation: 10,
 	gform_after_submission: 20
 };
@@ -551,8 +552,13 @@ function hookRootNodeId(hook: string): string {
 
 function isMappingAsync(linkage: FormActionLinkage): boolean {
 	const hooks = getMappingTriggerHooks(linkage);
+	const hasRealtimeHook = hooks.includes('real_time');
 	const hasValidationHook = hooks.includes('gform_validation');
 	const hasAfterSubmissionHook = hooks.includes('gform_after_submission');
+
+	if (hasRealtimeHook && !hasValidationHook && !hasAfterSubmissionHook) {
+		return false;
+	}
 
 	if (hasValidationHook && !hasAfterSubmissionHook) {
 		return false;
@@ -564,6 +570,9 @@ function isMappingAsync(linkage: FormActionLinkage): boolean {
 	}
 
 	const executionMode = linkage.settings?.execution_mode;
+	if (executionMode === 'real_time') {
+		return false;
+	}
 	if (executionMode === 'after_submission') {
 		return true;
 	}
@@ -572,6 +581,9 @@ function isMappingAsync(linkage: FormActionLinkage): boolean {
 	}
 
 	const topLevelExecutionMode = linkage.execution_mode;
+	if (topLevelExecutionMode === 'real_time') {
+		return false;
+	}
 	if (topLevelExecutionMode === 'after_submission') {
 		return true;
 	}

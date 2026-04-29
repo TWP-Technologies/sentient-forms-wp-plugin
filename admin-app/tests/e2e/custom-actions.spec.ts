@@ -75,7 +75,7 @@ test.describe('Custom actions admin view', () => {
 							description: 'Detects spam submissions',
 							form_sources: ['gravity_forms'],
 							baseCreditCost: 10,
-							modelHint: 'gemini-3-flash-preview',
+							modelHint: 'openai/gpt-5.5',
 							source: 'cps'
 						}
 					])
@@ -91,8 +91,8 @@ test.describe('Custom actions admin view', () => {
 						data: {
 							models: [
 								{
-									id: 'openai/gpt-5.1',
-									display_name: 'OpenAI: GPT-5.1',
+									id: 'openai/gpt-5.5',
+									display_name: 'OpenAI: GPT-5.5',
 									provider: 'openrouter',
 									speed_tier: 'balanced',
 									cost_tier: 'medium',
@@ -137,7 +137,7 @@ test.describe('Custom actions admin view', () => {
 									display_name: 'Recommended',
 									description: 'Recommended paid model.',
 									category: 'local',
-									resolved_model_id: 'openai/gpt-5.1',
+									resolved_model_id: 'openai/gpt-5.5',
 									auto_upgrade: true
 								},
 								{
@@ -159,7 +159,7 @@ test.describe('Custom actions admin view', () => {
 				const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 				const actionSelection = payload.action_selection as Record<string, unknown> | undefined;
 				const primary = String(actionSelection?.primary ?? 'sf_default');
-				const resolvedModelId = primary === 'sf_free' ? 'openrouter/free' : 'openai/gpt-5.1';
+				const resolvedModelId = primary === 'sf_free' ? 'openrouter/free' : 'openai/gpt-5.5';
 				return route.fulfill({
 					status: 200,
 					headers: { 'content-type': 'application/json' },
@@ -313,6 +313,16 @@ test.describe('Custom actions admin view', () => {
 		const createForm = page.getByTestId('custom-action-form');
 		await expect(createForm.getByLabel('Template ID')).toHaveCount(0);
 		await expect(createForm.getByLabel('Code')).toHaveCount(0);
+		await expect(createForm.getByTestId('model-selector')).toBeVisible();
+		await createForm.getByTestId('model-selector-tab-models').click();
+		await expect(createForm.getByTestId('model-selector-catalog')).toBeVisible();
+		await expect(createForm.getByTestId('model-search-input')).toBeVisible();
+		await expect(
+			createForm.getByTestId('model-row-openai/gpt-5.5').getByText('Paid model')
+		).toBeVisible();
+		await createForm.getByTestId('model-selector-tab-custom').click();
+		await expect(createForm.getByTestId('model-custom-input')).toBeVisible();
+		await createForm.getByTestId('model-selector-tab-presets').click();
 		await createForm.getByLabel('Display Name').fill('Beta action');
 		await expect(createForm.getByTestId('custom-action-generated-code')).toContainText(
 			'beta-action'

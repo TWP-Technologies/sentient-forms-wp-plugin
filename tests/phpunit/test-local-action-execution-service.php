@@ -249,6 +249,70 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertContains( 'entry_note', $event['result_json']['effects']['applied'] ?? [] );
     }
 
+    public function test_entry_summary_effect_uses_structured_summary_when_content_is_json(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'source'          => 'cps_template_mapping_import',
+                'template_code'   => 'entry_summary_v1',
+                'prompt_template' => 'Provide a brief, human-readable summary of this form submission.',
+            ],
+            [
+                'code'                 => 'imported_entry_summary_json_v1',
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => 'openrouter/auto',
+                ],
+            ]
+        );
+        $summary = 'The visitor requested a 500-piece quote and disclosed a spam-like sales pitch.';
+        $client  = new Sentient_Forms_Test_OpenRouter_Client(
+            [
+                'id'      => 'chatcmpl-local-json-summary-test',
+                'model'   => 'openrouter/auto',
+                'choices' => [
+                    [
+                        'message'       => [
+                            'role'    => 'assistant',
+                            'content' => wp_json_encode(
+                                [
+                                    'summary' => $summary,
+                                    'classification' => 'spam',
+                                ]
+                            ),
+                        ],
+                        'finish_reason' => 'stop',
+                    ],
+                ],
+                'usage'   => [
+                    'prompt_tokens'     => 8,
+                    'completion_tokens' => 5,
+                    'total_tokens'      => 13,
+                ],
+            ]
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( $summary, gform_get_meta( 99, 'sentient_forms_summary' ) );
+        $this->assertCount( 1, GFFormsModel::$notes );
+        $this->assertStringContainsString( "Sentient Forms entry summary:\n\n" . $summary, GFFormsModel::$notes[0]['note'] ?? '' );
+        $this->assertStringNotContainsString( '"classification":"spam"', GFFormsModel::$notes[0]['note'] ?? '' );
+    }
+
     public function test_includes_site_context_from_runtime_settings_when_enabled(): void
     {
         update_option(
@@ -508,9 +572,9 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         );
 
         $this->assertIsArray( $result );
-        $this->assertSame( 'openai/gpt-oss-20b:free', $result['model'] );
+        $this->assertSame( 'openrouter/free', $result['model'] );
         $this->assertCount( 1, $client->chat_calls );
-        $this->assertSame( 'openai/gpt-oss-20b:free', $client->chat_calls[0]['payload']['model'] );
+        $this->assertSame( 'openrouter/free', $client->chat_calls[0]['payload']['model'] );
     }
 
     public function test_runtime_model_selection_can_route_openrouter_action_through_sentient_managed(): void
@@ -523,7 +587,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             [
                 'execution_request_id' => 'runtime-managed-req',
                 'provider'             => 'sentient_managed',
-                'model'                => 'gemini-3-flash-preview',
+                'model'                => 'openai/gpt-5.5',
                 'status'               => 'succeeded',
                 'output'               => [
                     'text' => 'Managed runtime route succeeded.',
@@ -568,7 +632,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertIsArray( $result );
         $this->assertSame( 'succeeded', $result['status'] );
         $this->assertSame( 'sentient_managed', $result['provider'] );
-        $this->assertSame( 'gemini-3-flash-preview', $result['model'] );
+        $this->assertSame( 'openai/gpt-5.5', $result['model'] );
         $this->assertCount( 0, $openrouter->chat_calls );
         $this->assertCount( 1, $managed_proxy->execute_calls );
         $this->assertSame( $managed['proxy_api_key'], $managed_proxy->execute_calls[0]['proxy_api_key'] );
@@ -577,7 +641,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'sentient_managed', $payload['provider'] );
         $this->assertSame( $managed['site_id'], $payload['site_id'] );
         $this->assertSame( 'runtime-managed-req', $payload['execution_request_id'] );
-        $this->assertSame( 'gemini-3-flash-preview', $payload['model'] );
+        $this->assertSame( 'openai/gpt-5.5', $payload['model'] );
         $this->assertSame( 'contact_spam_triage', $payload['action_code'] );
     }
 

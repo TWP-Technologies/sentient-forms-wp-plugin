@@ -49,6 +49,7 @@
 		CustomAction,
 		CustomActionPostExecutionActionPayload,
 		DuplicateParentSelection,
+		ExecutionMode,
 		ExecutionStatus,
 		FormActionConfig,
 		FormActionLinkage,
@@ -61,6 +62,8 @@
 		LocalFormMappingRecord,
 		LocalProviderCredential,
 		ModelSelection,
+		RealtimeBlockingMode,
+		RealtimeSettings,
 		RepairState,
 		ResolvedModelSelection,
 		SpamIndicatorsDisplayMode,
@@ -272,6 +275,14 @@
 			source: 'bundled',
 			hooks: ['gform_after_submission'],
 			modelHint: 'openrouter/auto'
+		},
+		{
+			id: 'clarification_assistant_v1',
+			label: 'Realtime Clarification Assistant',
+			description: 'Analyze visible answers while a visitor is filling out the form.',
+			source: 'bundled',
+			hooks: ['real_time'],
+			modelHint: 'openrouter/auto'
 		}
 	];
 	const SPAM_RESULT_DISPLAY_OPTIONS = [
@@ -286,8 +297,13 @@
 
 	const FALLBACK_HOOK_LABELS: Record<string, string> = {
 		gform_validation: '🔄 During Validation (Blocking)',
-		gform_after_submission: '📝 After Submission (Background)'
+		gform_after_submission: '📝 After Submission (Background)',
+		real_time: 'Realtime (Form Page)'
 	};
+	const REALTIME_BLOCKING_OPTIONS = [
+		{ value: 'advisory', label: 'Advisory: never block submit' },
+		{ value: 'require_answers', label: 'Require answers to required AI questions' }
+	];
 
 	const providerEditUrl = $derived(
 		data.formSourceSlug === 'gravity_forms'
@@ -387,6 +403,88 @@
 	// CA-MAP-001: Field selection state (loaded from API)
 	let formFields = $state<FormFieldInfo[]>([]);
 	let fieldsLoading = $state(false);
+
+	function createDefaultRealtimeSettings(): RealtimeSettings {
+		return {
+			checkpoint_field_ids: [],
+			storage_target_field_id: '',
+			debounce_ms: 900,
+			cooldown_ms: 8000,
+			manual_refresh_enabled: true,
+			blocking_mode: 'advisory'
+		};
+	}
+
+	function normalizeRealtimeSettings(value: unknown): RealtimeSettings {
+		const defaults = createDefaultRealtimeSettings();
+		if (!value || typeof value !== 'object' || Array.isArray(value)) {
+			return defaults;
+		}
+
+		const candidate = value as Record<string, unknown>;
+		const checkpointFieldIds = Array.isArray(candidate.checkpoint_field_ids)
+			? candidate.checkpoint_field_ids
+					.map((fieldId) => fieldId?.toString().trim())
+					.filter(Boolean)
+			: defaults.checkpoint_field_ids;
+		const debounceMs = Number.parseInt(String(candidate.debounce_ms ?? defaults.debounce_ms), 10);
+		const cooldownMs = Number.parseInt(String(candidate.cooldown_ms ?? defaults.cooldown_ms), 10);
+		const blockingMode =
+			candidate.blocking_mode === 'require_answers' ? 'require_answers' : 'advisory';
+
+		return {
+			checkpoint_field_ids: Array.from(new Set(checkpointFieldIds)),
+			storage_target_field_id:
+				typeof candidate.storage_target_field_id === 'string'
+					? candidate.storage_target_field_id.trim()
+					: defaults.storage_target_field_id,
+			debounce_ms: Number.isFinite(debounceMs) ? Math.min(5000, Math.max(250, debounceMs)) : 900,
+			cooldown_ms: Number.isFinite(cooldownMs)
+				? Math.min(60000, Math.max(0, cooldownMs))
+				: 8000,
+			manual_refresh_enabled:
+				typeof candidate.manual_refresh_enabled === 'boolean'
+					? candidate.manual_refresh_enabled
+					: defaults.manual_refresh_enabled,
+			blocking_mode: blockingMode
+		};
+	}
+
+	function deriveExecutionModeForHooks(hooks: Iterable<string>, current?: unknown): ExecutionMode {
+		const normalizedHooks = normalizeHookIds(hooks);
+		if (normalizedHooks.includes('real_time')) {
+			return 'real_time';
+		}
+
+		if (current === 'validation' || current === 'after_submission') {
+			return current;
+		}
+
+		return normalizedHooks.includes('gform_validation') ? 'validation' : 'after_submission';
+	}
+
+	function updateRealtimeSettings(partial: Partial<RealtimeSettings>) {
+		const current = normalizeRealtimeSettings(draftSettings.realtime_settings);
+		draftSettings = {
+			...draftSettings,
+			execution_mode: 'real_time',
+			realtime_settings: {
+				...current,
+				...partial
+			}
+		};
+	}
+
+	function toggleRealtimeCheckpointField(fieldId: string) {
+		const current = normalizeRealtimeSettings(draftSettings.realtime_settings);
+		const next = new Set(current.checkpoint_field_ids ?? []);
+		if (next.has(fieldId)) {
+			next.delete(fieldId);
+		} else {
+			next.add(fieldId);
+		}
+		updateRealtimeSettings({ checkpoint_field_ids: Array.from(next) });
+	}
 
 	function createBlankFormActionConfig(): FormActionConfig {
 		return normalizeFormActionConfig({});
@@ -940,6 +1038,22 @@
 	const effectiveDraftExecutionKind = $derived(
 		deriveDraftExecutionKind(draftHooks, draftSettings.execution_mode)
 	);
+	const isRealtimeDraft = $derived(
+		draftHooks.has('real_time') || draftSettings.execution_mode === 'real_time'
+	);
+	const realtimeSettings = $derived.by(() =>
+		normalizeRealtimeSettings(draftSettings.realtime_settings)
+	);
+	const realtimeStorageFields = $derived.by(() =>
+		formFields.filter((field) => ['hidden', 'textarea'].includes(field.type.toLowerCase()))
+	);
+	const realtimeStorageFieldOptions = $derived.by(() => [
+		{ value: '', label: 'Do not persist virtual Q&A' },
+		...realtimeStorageFields.map((field) => ({
+			value: field.id,
+			label: `${field.adminLabel || field.label || `Field ${field.id}`} (${field.id})`
+		}))
+	]);
 	const isDraftAfterSubmissionOnly = $derived(effectiveDraftExecutionKind === 'background');
 	const isBlockingSpamMapping = $derived(
 		isSpamMapping && effectiveDraftExecutionKind !== 'background'
@@ -1114,6 +1228,16 @@
 		}
 		return `${uploadCount} upload field${uploadCount === 1 ? '' : 's'} + ${mediaCount} media item${mediaCount === 1 ? '' : 's'}`;
 	});
+	const realtimeSummary = $derived.by(() => {
+		if (!isRealtimeDraft) return 'Disabled';
+		const checkpointCount = realtimeSettings.checkpoint_field_ids?.length ?? 0;
+		const storageLabel = realtimeSettings.storage_target_field_id
+			? `stores in ${realtimeSettings.storage_target_field_id}`
+			: 'no Q&A storage';
+		const submitPolicy =
+			realtimeSettings.blocking_mode === 'require_answers' ? 'required answers' : 'advisory';
+		return `${checkpointCount || 'all'} checkpoint${checkpointCount === 1 ? '' : 's'} · ${storageLabel} · ${submitPolicy}`;
+	});
 	const conditionsSummary = $derived.by(() => {
 		const conditions = (draftSettings.conditions ?? createDefaultConditionConfig()) as Record<
 			string,
@@ -1128,7 +1252,9 @@
 	const modelExecutionSummary = $derived.by(() => {
 		const selection = effectiveMappingModelSelection;
 		const executionMode =
-			effectiveDraftExecutionKind === 'background'
+			isRealtimeDraft
+				? 'Realtime'
+				: effectiveDraftExecutionKind === 'background'
 				? 'Background'
 				: effectiveDraftExecutionKind === 'mixed'
 					? 'Mixed hooks'
@@ -1396,6 +1522,9 @@
 		if (definition.id === 'entry_summary_v1') {
 			return ['gform_after_submission'];
 		}
+		if (definition.id === 'clarification_assistant_v1') {
+			return ['real_time'];
+		}
 		return normalizeDefinitionHooks(definition.hooks);
 	}
 
@@ -1620,9 +1749,11 @@
 	}
 
 	function resetMappingSectionExpansion(linkage: FormActionLinkage | null | undefined) {
-		mappingSectionExpansion = createInitialMappingModalSectionExpansion(
-			isSpamMappingLinkage(linkage)
-		);
+		const next = createInitialMappingModalSectionExpansion(isSpamMappingLinkage(linkage));
+		const hooks = linkage ? normalizeHookIds(getMappingTriggerHooks(linkage)) : [];
+		const settings = linkage?.settings ?? {};
+		next.realtime = hooks.includes('real_time') || settings.execution_mode === 'real_time';
+		mappingSectionExpansion = next;
 	}
 
 	function toggleMappingSection(sectionId: MappingModalSectionId) {
@@ -2273,6 +2404,10 @@
 		const baseBatchSettings = isPlainObject(baseSettings.batch_settings)
 			? baseSettings.batch_settings
 			: {};
+		const executionMode = deriveExecutionModeForHooks(
+			initialHooks,
+			baseSettings.execution_mode ?? linkage.execution_mode
+		);
 		const nextDraftSettings = {
 			...baseSettings,
 			spam_confidence_threshold: baseSettings.spam_confidence_threshold ?? 0.8,
@@ -2291,8 +2426,12 @@
 			include_site_context: baseSettings.include_site_context ?? 'global',
 			spam_positive_examples: cloneDraftValue(baseSettings.spam_positive_examples ?? []),
 			spam_negative_examples: cloneDraftValue(baseSettings.spam_negative_examples ?? []),
-			// CB-EXEC-002: Execution mode - default to after_submission (async) for safety
-			execution_mode: baseSettings.execution_mode ?? 'after_submission',
+			// CB-EXEC-002: Execution mode - default to after_submission (async) for safety.
+			execution_mode: executionMode,
+			realtime_settings:
+				executionMode === 'real_time'
+					? normalizeRealtimeSettings(baseSettings.realtime_settings)
+					: baseSettings.realtime_settings,
 			// CB-EXEC-003/004: Batch settings with sensible defaults.
 			batch_settings: sanitizeBatchSettings(baseBatchSettings),
 			dependency_ids: cloneDraftValue(draftSnapshot.dependencyIds),
@@ -2417,8 +2556,14 @@
 			normalizeDependencyIds(draftSettings.dependency_ids),
 			normalizeDraftTriggerSources(draftSettings.trigger_sources, nextHooks)
 		);
+		const executionMode = deriveExecutionModeForHooks(nextHooks, draftSettings.execution_mode);
 		draftSettings = {
 			...draftSettings,
+			execution_mode: executionMode,
+			realtime_settings:
+				executionMode === 'real_time'
+					? normalizeRealtimeSettings(draftSettings.realtime_settings)
+					: draftSettings.realtime_settings,
 			trigger_sources: nextSources,
 			dependency_ids: deriveDependencyIdsForDraft(nextSources)
 		};
@@ -2772,11 +2917,21 @@
 					: { type: 'hook_root' as const }
 			])
 		);
+		const executionMode = deriveExecutionModeForHooks(
+			normalizedHooks,
+			draftSettings.execution_mode
+		);
 		const nextSettings: Record<string, unknown> = {
 			...draftSettings,
+			execution_mode: executionMode,
 			dependency_ids: normalizedDependencyIds,
 			trigger_sources: persistableTriggerSources
 		};
+		if (executionMode === 'real_time') {
+			nextSettings.realtime_settings = normalizeRealtimeSettings(draftSettings.realtime_settings);
+		} else {
+			delete nextSettings.realtime_settings;
+		}
 		if (normalizedDependencyIds.length === 0) {
 			delete nextSettings.dependency_ids;
 		}
@@ -2918,12 +3073,17 @@
 				);
 			const customPostExecutionActions =
 				createKind === 'custom' ? getCustomActionPostExecutionActions(chosenCustom) : [];
+			const executionMode = deriveExecutionModeForHooks(hooks);
 			await formActionsStore.create(data.formSourceSlug, data.formId, {
 				central_action_id: centralActionId,
 				action_type_indicator: createKind === 'template' ? 'master' : 'custom',
 				trigger_hooks: hooks,
 				action_name_label: label,
 				settings: {
+					execution_mode: executionMode,
+					...(executionMode === 'real_time'
+						? { realtime_settings: createDefaultRealtimeSettings() }
+						: {}),
 					...(dependencyIds.length > 0 ? { dependency_ids: dependencyIds } : {}),
 					trigger_sources: triggerSources,
 					...(customPostExecutionActions.length > 0
@@ -4377,6 +4537,141 @@
 						</div>
 					</section>
 
+					{#if isRealtimeDraft}
+						<section class="sf:border sf:border-slate-200 sf:rounded-md">
+							<button
+								type="button"
+								class="sf:flex sf:w-full sf:items-center sf:justify-between sf:gap-4 sf:px-4 sf:py-3 sf:text-left sf:hover:bg-slate-50 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-inset"
+								aria-expanded={mappingSectionExpansion.realtime}
+								aria-controls="mapping-section-content-realtime"
+								data-testid="mapping-section-toggle-realtime"
+								onclick={() => toggleMappingSection('realtime')}
+							>
+								<span class="sf:flex sf:flex-col">
+									<span class="sf:text-sm sf:font-semibold sf:text-slate-800">
+										Realtime clarification
+									</span>
+									<span class="sf:text-xs sf:text-slate-500">{realtimeSummary}</span>
+								</span>
+								<span class="sf:text-xs sf:text-slate-500">
+									{mappingSectionExpansion.realtime ? 'Hide' : 'Show'}
+								</span>
+							</button>
+							<div
+								id="mapping-section-content-realtime"
+								class="sf:border-t sf:border-slate-200 sf:px-4 sf:py-4 sf:space-y-4"
+								hidden={!mappingSectionExpansion.realtime}
+							>
+								{#if mappingSectionExpansion.realtime}
+									<Alert variant="warning">
+										<p class="sf:text-sm">
+											Real-time analysis holds the visitor on the form while the selected model responds.
+											Use faster models unless the form is important enough to justify the wait.
+										</p>
+									</Alert>
+									<div class="sf:grid sf:gap-4 sf:lg:grid-cols-2">
+										<InputField
+											id="realtime-debounce"
+											label="Debounce (ms)"
+											type="number"
+											min="250"
+											max="5000"
+											placeholder="900"
+											value={realtimeSettings.debounce_ms}
+											oninput={(event) =>
+												updateRealtimeSettings({
+													debounce_ms: Number.parseInt(
+														(event.currentTarget as HTMLInputElement).value || '900',
+														10
+													)
+												})}
+										/>
+										<InputField
+											id="realtime-cooldown"
+											label="Cooldown (ms)"
+											type="number"
+											min="0"
+											max="60000"
+											placeholder="8000"
+											value={realtimeSettings.cooldown_ms}
+											oninput={(event) =>
+												updateRealtimeSettings({
+													cooldown_ms: Number.parseInt(
+														(event.currentTarget as HTMLInputElement).value || '8000',
+														10
+													)
+												})}
+										/>
+											<SelectField
+												id="realtime-storage-target"
+												label="Virtual Q&A storage field"
+												description="Use a dedicated hidden field or textarea so Sentient Forms does not overwrite a visitor's normal answer."
+												value={realtimeSettings.storage_target_field_id}
+												options={realtimeStorageFieldOptions}
+												onchange={(event) =>
+												updateRealtimeSettings({
+													storage_target_field_id: event.currentTarget.value
+												})}
+										/>
+										<SelectField
+											id="realtime-submit-policy"
+											label="Submit policy"
+											value={realtimeSettings.blocking_mode}
+											options={REALTIME_BLOCKING_OPTIONS}
+											onchange={(event) =>
+												updateRealtimeSettings({
+													blocking_mode: event.currentTarget.value as RealtimeBlockingMode
+												})}
+										/>
+									</div>
+									<Toggle
+										checked={realtimeSettings.manual_refresh_enabled}
+										label="Manual refresh"
+										description="Show a refresh control in the visitor-facing suggestion panel."
+										onchange={(event) =>
+											updateRealtimeSettings({
+												manual_refresh_enabled: event.detail.checked
+											})}
+									/>
+									<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+										<p
+											class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
+										>
+											Checkpoint fields
+										</p>
+										{#if formFields.length === 0}
+											<p class="sf:text-sm sf:text-slate-500">
+												No fields loaded for this form yet.
+											</p>
+										{:else}
+											<div class="sf:grid sf:gap-2 sf:sm:grid-cols-2">
+												{#each formFields as field (field.id)}
+													<label
+														class="sf:flex sf:items-center sf:gap-2 sf:p-2 sf:rounded sf:border sf:border-slate-100 hover:sf:bg-slate-50 sf:cursor-pointer"
+													>
+														<input
+															type="checkbox"
+															class="sf:w-4 sf:h-4 sf:text-primary-600 sf:rounded sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+															checked={realtimeSettings.checkpoint_field_ids?.includes(field.id)}
+															onchange={() => toggleRealtimeCheckpointField(field.id)}
+															data-testid={`realtime-checkpoint-${field.id}`}
+														/>
+														<span class="sf:text-sm sf:text-slate-700">
+															{field.adminLabel || field.label} ({field.id})
+														</span>
+													</label>
+												{/each}
+											</div>
+											<p class="sf:mt-2 sf:text-xs sf:text-slate-500">
+												If no checkpoints are selected, visible field changes can trigger this action.
+											</p>
+										{/if}
+									</div>
+								{/if}
+							</div>
+						</section>
+					{/if}
+
 					<section class="sf:border sf:border-slate-200 sf:rounded-md">
 						<button
 							type="button"
@@ -4598,19 +4893,22 @@
 									<p class="sf:text-xs sf:text-slate-500">
 										Changing the selector below creates or updates a mapping-specific override.
 									</p>
-									{#if draftSettings.model_selection}
-										<Button size="sm" variant="ghost" onclick={clearMappingModelSelection}>
-											Use inherited defaults
-										</Button>
-									{:else if editingLinkage}
-										<Button
-											size="sm"
-											variant="ghost"
-											onclick={() => loadFormLevelConfig(editingLinkage.central_action_id)}
-										>
-											Edit Form Defaults
-										</Button>
-									{/if}
+									<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+										{#if draftSettings.model_selection}
+											<Button size="sm" variant="ghost" onclick={clearMappingModelSelection}>
+												Use inherited defaults
+											</Button>
+										{/if}
+										{#if editingLinkage}
+											<Button
+												size="sm"
+												variant="ghost"
+												onclick={() => loadFormLevelConfig(editingLinkage.central_action_id)}
+											>
+												Edit Form Defaults
+											</Button>
+										{/if}
+									</div>
 								</div>
 								<ModelSelector
 									level="mapping"
@@ -5074,11 +5372,12 @@
 									<ModelSelector
 										value={localBuilderModelSelection}
 										label="Local model policy"
-										level="action"
-										templateModelHint="openrouter/auto"
-										{providerCredentials}
-										onchange={handleLocalBuilderModelSelectionChange}
-									/>
+											level="action"
+											templateModelHint="openrouter/auto"
+											{providerCredentials}
+											allowedProviders={['openrouter']}
+											onchange={handleLocalBuilderModelSelectionChange}
+										/>
 								</div>
 							{/if}
 						</div>

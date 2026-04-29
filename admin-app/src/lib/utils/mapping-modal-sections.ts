@@ -4,6 +4,7 @@ export const MAPPING_MODAL_SECTION_IDS = [
 	'spam_advanced',
 	'input_mapping',
 	'attachment_mapping',
+	'realtime',
 	'conditions',
 	'model_execution'
 ] as const;
@@ -21,6 +22,7 @@ export function createInitialMappingModalSectionExpansion(
 		spam_advanced: false,
 		input_mapping: false,
 		attachment_mapping: false,
+		realtime: false,
 		conditions: false,
 		model_execution: false
 	};

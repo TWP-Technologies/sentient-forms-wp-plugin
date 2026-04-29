@@ -14,6 +14,7 @@ describe('mapping modal section expansion helpers', () => {
 			spam_advanced: false,
 			input_mapping: false,
 			attachment_mapping: false,
+			realtime: false,
 			conditions: false,
 			model_execution: false
 		});
@@ -26,6 +27,7 @@ describe('mapping modal section expansion helpers', () => {
 			spam_advanced: false,
 			input_mapping: false,
 			attachment_mapping: false,
+			realtime: false,
 			conditions: false,
 			model_execution: false
 		});
@@ -58,6 +60,7 @@ describe('mapping modal section expansion helpers', () => {
 			spam_advanced: false,
 			input_mapping: false,
 			attachment_mapping: false,
+			realtime: false,
 			conditions: true,
 			model_execution: false
 		});

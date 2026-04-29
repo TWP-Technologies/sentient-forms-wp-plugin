@@ -44,7 +44,7 @@ export class MockSentientFormsApiClient {
 			source: 'cps',
 			hooks: { gform_validation: 'Gravity validation' },
 			baseCreditCost: 2,
-			modelHint: 'gemini-1.5-flash'
+			modelHint: 'openai/gpt-5.5'
 		},
 		{
 			id: 'summarize',
@@ -52,7 +52,7 @@ export class MockSentientFormsApiClient {
 			source: 'bundled',
 			hooks: { gform_after_submission: 'After submission' },
 			baseCreditCost: 6,
-			modelHint: 'gemini-1.5-pro'
+			modelHint: 'anthropic/claude-sonnet-4.6'
 		}
 	];
 

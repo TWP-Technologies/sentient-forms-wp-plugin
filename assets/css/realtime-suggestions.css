@@ -9,9 +9,9 @@
 	flex-direction: column;
 	background: #ffffff;
 	border: 1px solid #dbe3ef;
-	border-radius: 0.75rem;
+	border-radius: 0.5rem;
 	box-shadow: 0 12px 34px rgba(15, 23, 42, 0.18);
-	font-family: "Inter", "Segoe UI", sans-serif;
+	font-family: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
 	color: #0f172a;
 }
 
@@ -22,7 +22,7 @@
 	gap: 0.75rem;
 	padding: 0.75rem 0.9rem;
 	border-bottom: 1px solid #e6edf5;
-	background: linear-gradient(120deg, #f9fafb, #eef6ff);
+	background: #f8fafc;
 }
 
 .sentient-forms-realtime-widget__title {
@@ -44,7 +44,7 @@
 	border: 1px solid #cbd5e1;
 	background: #ffffff;
 	color: #0f172a;
-	border-radius: 0.45rem;
+	border-radius: 0.35rem;
 	font-size: 0.74rem;
 	font-weight: 600;
 	line-height: 1;
@@ -91,7 +91,7 @@
 	background: #fef2f2;
 	border: 1px solid #fecaca;
 	padding: 0.5rem 0.6rem;
-	border-radius: 0.45rem;
+	border-radius: 0.35rem;
 	margin-bottom: 0.65rem;
 }
 
@@ -110,7 +110,7 @@
 	align-items: start;
 	padding: 0.58rem;
 	border: 1px solid #e2e8f0;
-	border-radius: 0.5rem;
+	border-radius: 0.45rem;
 	background: #f8fafc;
 }
 
@@ -160,6 +160,75 @@
 	font-size: 0.78rem;
 	line-height: 1.4;
 	color: #475569;
+}
+
+.sentient-forms-realtime-widget__questions {
+	display: grid;
+	gap: 0.65rem;
+	margin-top: 0.75rem;
+}
+
+.sentient-forms-realtime-widget__questions:empty {
+	margin-top: 0;
+}
+
+.sentient-forms-realtime-widget__questions-title {
+	margin: 0.15rem 0 0;
+	font-size: 0.76rem;
+	font-weight: 700;
+	color: #334155;
+}
+
+.sentient-forms-realtime-widget__question {
+	display: grid;
+	gap: 0.35rem;
+	padding: 0.62rem;
+	border: 1px solid #cfd8e3;
+	border-radius: 0.45rem;
+	background: #ffffff;
+}
+
+.sentient-forms-realtime-widget__question-label {
+	font-size: 0.8rem;
+	font-weight: 700;
+	line-height: 1.35;
+	color: #0f172a;
+}
+
+.sentient-forms-realtime-widget__question-reason {
+	margin: 0;
+	font-size: 0.74rem;
+	line-height: 1.35;
+	color: #475569;
+}
+
+.sentient-forms-realtime-widget__answer {
+	box-sizing: border-box;
+	width: 100%;
+	border: 1px solid #cbd5e1;
+	border-radius: 0.35rem;
+	background: #ffffff;
+	color: #0f172a;
+	font: inherit;
+	font-size: 0.82rem;
+	line-height: 1.4;
+	padding: 0.5rem 0.56rem;
+}
+
+textarea.sentient-forms-realtime-widget__answer {
+	min-height: 4.75rem;
+	resize: vertical;
+}
+
+input.sentient-forms-realtime-widget__answer,
+select.sentient-forms-realtime-widget__answer {
+	min-height: 2.35rem;
+}
+
+.sentient-forms-realtime-widget__answer:focus {
+	border-color: #2563eb;
+	outline: 2px solid rgba(37, 99, 235, 0.18);
+	outline-offset: 1px;
 }
 
 @media (max-width: 640px) {

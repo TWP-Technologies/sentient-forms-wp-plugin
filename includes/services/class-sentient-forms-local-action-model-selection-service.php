@@ -11,7 +11,7 @@ if ( ! defined( 'ABSPATH' ) )
 class Sentient_Forms_Local_Action_Model_Selection_Service
 {
     private const READY_CREDENTIAL_STATUSES = [ 'valid', 'limited' ];
-    private const EXECUTION_MODES           = [ 'sync', 'async' ];
+    private const EXECUTION_MODES           = [ 'sync', 'async', 'real_time' ];
     private const MANAGED_DEFAULT_MODEL     = 'gemini-3-flash-preview';
 
     public function __construct(
@@ -582,6 +582,11 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             return 'sync';
         }
 
+        if ( 'real_time' === sanitize_key( (string) ( $mapping['hook'] ?? '' ) ) )
+        {
+            return 'real_time';
+        }
+
         $default = sanitize_key( (string) ( $template['default_execution_mode'] ?? 'async' ) );
         return in_array( $default, self::EXECUTION_MODES, true ) ? $default : 'async';
     }
@@ -672,15 +677,6 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             return $primary;
         }
 
-        if (
-            isset( $selection['provider'] )
-            && is_scalar( $selection['provider'] )
-            && 'sentient_managed' === sanitize_key( (string) $selection['provider'] )
-        )
-        {
-            return self::MANAGED_DEFAULT_MODEL;
-        }
-
         return $this->resolve_local_preset_model_id( sanitize_key( $primary ) );
     }
 
@@ -692,17 +688,30 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         return match ( $preset_code ) {
             'sf_default',
             'sf_general'    => $recommended,
-            'sf_quality'    => $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'High-quality analysis', $model['recommended_for'] ?? [], true ) ) ?: $recommended,
+            'sf_quality'    => $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5-pro', 'anthropic/claude-opus-4.7', 'anthropic/claude-sonnet-4.6', 'openai/gpt-5.5' ] ) ?: $recommended,
             'sf_free'       => isset( $models['openrouter/free'] )
                 ? 'openrouter/free'
                 : ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' === (string) ( $model['cost_tier'] ?? '' ) ) ?: $recommended ),
-            'sf_structured' => $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'structured-output', $model['tags'] ?? [], true ) ) ?: $recommended,
-            'sf_fast'       => $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( (string) ( $model['speed_tier'] ?? '' ), [ 'fastest', 'fast' ], true ) ) ?: $recommended,
-            'sf_low_cost'   => $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' !== (string) ( $model['cost_tier'] ?? '' ) && in_array( (string) ( $model['cost_tier'] ?? '' ), [ 'low', 'medium' ], true ) )
-                ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' === (string) ( $model['cost_tier'] ?? '' ) ) ?: $recommended ),
-            'sf_long_context' => $this->pick_long_context_model_id( $models ) ?: $recommended,
-            'sf_reasoning'  => $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['reasoning'] ) ) ?: $recommended,
-            'sf_code'       => $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['code'] ) ) ?: $recommended,
+            'sf_structured' => $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5', 'google/gemini-3-flash-preview', 'nvidia/nemotron-3-super-120b-a12b:free', 'openrouter/free' ] )
+                ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( 'structured-output', $model['tags'] ?? [], true ) ) ?: $recommended ),
+            'sf_fast'       => $this->pick_preferred_model_id( $models, [ 'google/gemini-3-flash-preview', 'google/gemini-3.1-flash-lite-preview', 'openai/gpt-5.4', 'openai/gpt-5.4-mini' ] )
+                ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => in_array( (string) ( $model['speed_tier'] ?? '' ), [ 'fastest', 'fast' ], true ) ) ?: $recommended ),
+            'sf_low_cost'   => $this->pick_preferred_model_id( $models, [ 'deepseek/deepseek-v4-flash', 'google/gemini-3.1-flash-lite-preview', 'deepseek/deepseek-v4-pro', 'openai/gpt-5.4-mini' ] )
+                ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' !== (string) ( $model['cost_tier'] ?? '' ) && in_array( (string) ( $model['cost_tier'] ?? '' ), [ 'low', 'medium' ], true ) )
+                ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' === (string) ( $model['cost_tier'] ?? '' ) ) ?: $recommended ) ),
+            'sf_long_context' => $this->pick_preferred_model_id( $models, [ 'moonshotai/kimi-k2.5', 'google/gemini-3.1-pro-preview', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] )
+                ?: ( $this->pick_long_context_model_id( $models ) ?: $recommended ),
+            'sf_reasoning'  => $this->pick_preferred_model_id( $models, [ 'anthropic/claude-opus-4.7', 'openai/gpt-5.5-pro', 'z-ai/glm-5.1', 'google/gemini-3.1-pro-preview' ] )
+                ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['reasoning'] ) ) ?: $recommended ),
+            'sf_code'       => $this->pick_preferred_model_id( $models, [ 'anthropic/claude-opus-4.7', 'anthropic/claude-sonnet-4.6', 'moonshotai/kimi-k2.6', 'qwen/qwen3.6-max-preview', 'openai/gpt-5.5' ] )
+                ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['code'] ) ) ?: $recommended ),
+            'sf_legal'      => $this->pick_preferred_model_id( $models, [ 'anthropic/claude-sonnet-4.6', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] ) ?: $recommended,
+            'sf_financial'  => $this->pick_preferred_model_id( $models, [ 'anthropic/claude-sonnet-4.6', 'anthropic/claude-opus-4.7', 'openai/gpt-5.5' ] ) ?: $recommended,
+            'sf_privacy'    => $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5', 'anthropic/claude-sonnet-4.6', 'google/gemini-3.1-pro-preview' ] ) ?: $recommended,
+            'sf_realtime'   => $this->pick_preferred_model_id( $models, [ 'google/gemini-3-flash-preview', 'google/gemini-3.1-flash-lite-preview', 'deepseek/deepseek-v4-flash' ] ) ?: $recommended,
+            'sf_multimodal' => $this->pick_preferred_model_id( $models, [ 'google/gemini-3.1-pro-preview', 'google/gemini-3-flash-preview', 'openai/gpt-5.5' ] ) ?: $recommended,
+            'sf_research'   => $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5', 'anthropic/claude-opus-4.7', 'google/gemini-3.1-pro-preview' ] ) ?: $recommended,
+            'sf_agentic'    => $this->pick_preferred_model_id( $models, [ 'google/gemini-3.1-pro-preview', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] ) ?: $recommended,
             default         => '',
         };
     }
@@ -724,21 +733,23 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             }
         }
 
-        if ( [] === $models )
+        foreach ( Sentient_Forms_OpenRouter_Model_Recommendations::all() as $model_id => $metadata )
         {
-            foreach ( Sentient_Forms_OpenRouter_Model_Recommendations::all() as $model_id => $metadata )
+            if ( isset( $models[ $model_id ] ) )
             {
-                $model = $this->format_openrouter_model_info(
-                    [
-                        'model_id'      => $model_id,
-                        'metadata_json' => $metadata,
-                    ]
-                );
-                if ( '' !== $model['id'] )
-                {
-                    $model['tags'][] = 'bundled-recommendation';
-                    $models[ $model['id'] ] = $model;
-                }
+                continue;
+            }
+
+            $model = $this->format_openrouter_model_info(
+                [
+                    'model_id'      => $model_id,
+                    'metadata_json' => $metadata,
+                ]
+            );
+            if ( '' !== $model['id'] )
+            {
+                $model['tags'][] = 'bundled-recommendation';
+                $models[ $model['id'] ] = $model;
             }
         }
 
@@ -811,6 +822,12 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
      */
     private function pick_default_model_id( array $models ): string
     {
+        $preferred_default = $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5', 'anthropic/claude-sonnet-4.6', 'google/gemini-3-flash-preview', 'openai/gpt-5.4' ] );
+        if ( $preferred_default )
+        {
+            return $preferred_default;
+        }
+
         $paid_general = $this->pick_first_model_id(
             $models,
             static fn ( array $model ): bool => 'free' !== (string) ( $model['cost_tier'] ?? '' )
@@ -840,6 +857,23 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             if ( $matches( $model ) )
             {
                 return (string) $model['id'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $models
+     * @param array<int, string>                  $preferred_model_ids
+     */
+    private function pick_preferred_model_id( array $models, array $preferred_model_ids ): ?string
+    {
+        foreach ( $preferred_model_ids as $model_id )
+        {
+            if ( isset( $models[ $model_id ] ) )
+            {
+                return $model_id;
             }
         }
 

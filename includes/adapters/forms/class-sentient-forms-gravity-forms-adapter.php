@@ -305,12 +305,22 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
             if ( 'failed' === sanitize_key( (string) ( $event['status'] ?? '' ) ) )
             {
+                $action = [];
+                if ( 'custom_action' === sanitize_key( (string) ( $mapping['action_kind'] ?? '' ) ) )
+                {
+                    $action = $custom_actions->get( absint( $mapping['action_id'] ?? 0 ) ) ?? [];
+                }
+
+                $action_label = isset( $action['display_name'] ) && is_scalar( $action['display_name'] )
+                    ? sanitize_text_field( (string) $action['display_name'] )
+                    : $this->get_async_action_label( $mapping );
                 $reason = isset( $event['error_message'] ) && '' !== trim( (string) $event['error_message'] )
                     ? trim( (string) $event['error_message'] )
                     : __( 'Unknown local provider error.', 'sentient-forms' );
                 $note = sprintf(
-                    /* translators: %s: local action failure reason */
-                    __( 'Sentient Forms could not complete Local OpenRouter action. Reason: %s', 'sentient-forms' ),
+                    /* translators: 1: action label, 2: local action failure reason */
+                    __( 'Sentient Forms could not complete %1$s. Reason: %2$s', 'sentient-forms' ),
+                    $action_label,
                     $reason
                 );
                 $this->add_local_action_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $note );
@@ -2508,14 +2518,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $script_handle,
             SENTIENT_FORMS_PLUGIN_URL . 'assets/js/realtime-suggestions.js',
             [],
-            SENTIENT_FORMS_VERSION,
+            $this->get_frontend_asset_version( 'assets/js/realtime-suggestions.js' ),
             true
         );
         wp_register_style(
             $style_handle,
             SENTIENT_FORMS_PLUGIN_URL . 'assets/css/realtime-suggestions.css',
             [],
-            SENTIENT_FORMS_VERSION
+            $this->get_frontend_asset_version( 'assets/css/realtime-suggestions.css' )
         );
 
         wp_enqueue_script( $script_handle );
@@ -2533,6 +2543,24 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $json_config
         );
         wp_add_inline_script( $script_handle, $inline, 'before' );
+    }
+
+    private function get_frontend_asset_version( string $relative_path ): string
+    {
+        $fallback = defined( 'SENTIENT_FORMS_VERSION' ) ? SENTIENT_FORMS_VERSION : '0.1.0';
+        $path     = trailingslashit( SENTIENT_FORMS_PLUGIN_DIR ) . ltrim( $relative_path, '/\\' );
+        if ( ! file_exists( $path ) )
+        {
+            return $fallback;
+        }
+
+        $mtime = filemtime( $path );
+        if ( false === $mtime )
+        {
+            return $fallback;
+        }
+
+        return $fallback . '-' . base_convert( (string) $mtime, 10, 36 );
     }
 
     /**
@@ -2577,6 +2605,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             'total_pages'          => $total_pages,
             'suggest_endpoint_url' => rest_url( sprintf( 'sentient-forms/v1/gravity_forms/forms/%d/actions/suggest', $form_id ) ),
             'nonce'                => wp_create_nonce( 'sentient_forms_realtime_suggest_' . $form_id ),
+            'rest_nonce'           => wp_create_nonce( 'wp_rest' ),
             'mappings'             => $mappings,
             'field_manifest'       => $field_manifest,
         ];
@@ -2625,9 +2654,15 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
-            $mapping_id = isset( $action['id'] ) && is_scalar( $action['id'] )
-                ? sanitize_text_field( (string) $action['id'] )
-                : '';
+            $mapping_id = '';
+            foreach ( [ 'id', 'local_mapping_id' ] as $mapping_id_key )
+            {
+                if ( isset( $action[ $mapping_id_key ] ) && is_scalar( $action[ $mapping_id_key ] ) )
+                {
+                    $mapping_id = sanitize_text_field( (string) $action[ $mapping_id_key ] );
+                    break;
+                }
+            }
             if ( '' === $mapping_id )
             {
                 $mapping_id = substr( hash( 'sha256', wp_json_encode( $action ) ), 0, 16 );
@@ -2654,6 +2689,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 }
             }
             $checkpoint_field_ids = array_values( array_unique( $checkpoint_field_ids ) );
+            $storage_target_field_id = isset( $realtime_settings['storage_target_field_id'] ) && is_scalar( $realtime_settings['storage_target_field_id'] )
+                ? sanitize_text_field( (string) $realtime_settings['storage_target_field_id'] )
+                : '';
+            $blocking_mode = isset( $realtime_settings['blocking_mode'] ) && 'require_answers' === sanitize_key( (string) $realtime_settings['blocking_mode'] )
+                ? 'require_answers'
+                : 'advisory';
 
             $eligible[] = [
                 'mapping_id'            => $mapping_id,
@@ -2675,6 +2716,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                     ? rest_sanitize_boolean( $realtime_settings['manual_refresh_enabled'] )
                     : true,
                 'checkpoint_field_ids'  => $checkpoint_field_ids,
+                'storage_target_field_id' => $storage_target_field_id,
+                'blocking_mode'         => $blocking_mode,
             ];
         }
 
@@ -2928,7 +2971,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         $hook = sanitize_key( (string) ( $row['hook'] ?? '' ) );
-        if ( ! in_array( $hook, [ 'gform_validation', 'gform_after_submission' ], true ) )
+        if ( ! in_array( $hook, [ 'gform_validation', 'gform_after_submission', 'real_time' ], true ) )
         {
             return null;
         }
@@ -2940,9 +2983,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         $custom_action = $this->get_local_first_custom_action( absint( $row['action_id'] ?? 0 ) );
         $identity      = $this->resolve_local_first_action_identity( $custom_action );
-        $execution_mode = 'gform_validation' === $hook || 'sync' === sanitize_key( (string) ( $row['execution_mode'] ?? '' ) )
-            ? 'validation'
-            : 'after_submission';
+        $row_execution_mode = sanitize_key( (string) ( $row['execution_mode'] ?? '' ) );
+        $execution_mode     = match ( true ) {
+            'real_time' === $hook || 'real_time' === $row_execution_mode => 'real_time',
+            'gform_validation' === $hook || 'sync' === $row_execution_mode => 'validation',
+            default => 'after_submission',
+        };
 
         $settings = is_array( $row['settings_json'] ?? null )
             ? $row['settings_json']

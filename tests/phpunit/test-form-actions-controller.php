@@ -161,6 +161,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->truncate_local_workspace_tables();
         $this->controller = new Sentient_Forms_Form_Actions_Controller();
         GFAPI::$entries = [];
+        GFAPI::$forms = [];
         $this->reset_entry_meta_store();
         delete_option( 'sentient_forms_action_log' );
         delete_option( 'sentient_forms_form_status_gravity_forms_42' );
@@ -511,7 +512,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     public function test_validate_trigger_hooks_accepts_allowed_values(): void {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
         $result  = $this->controller->validate_trigger_hooks_param(
-            [ 'gform_validation', 'gform_after_submission' ],
+            [ 'gform_validation', 'gform_after_submission', 'real_time' ],
             $request,
             'trigger_hooks'
         );
@@ -692,6 +693,85 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         );
         $this->assertIsArray( $custom_action );
         $this->assertSame( 'active', $custom_action['status'] ?? null );
+    }
+
+    public function test_add_form_action_creates_local_first_clarification_mapping_on_realtime_hook(): void
+    {
+        GFAPI::$forms[16] = [
+            'id'     => 16,
+            'title'  => 'Realtime Clarification Test',
+            'fields' => [
+                (object) [ 'id' => 1, 'label' => 'Message', 'type' => 'textarea' ],
+                (object) [ 'id' => 9, 'label' => 'Sentient Forms Virtual Q&A', 'type' => 'hidden' ],
+            ],
+        ];
+
+        $data = $this->create_bundled_local_first_mapping(
+            16,
+            'clarification_assistant_v1',
+            [ 'gform_validation', 'real_time' ],
+            [
+                'execution_mode' => 'real_time',
+                'realtime_settings' => [
+                    'checkpoint_field_ids' => [ '1' ],
+                    'storage_target_field_id' => '9',
+                    'blocking_mode' => 'require_answers',
+                ],
+            ]
+        );
+
+        $this->assertSame( 'local_first', $data['action_type_indicator'] ?? null );
+        $this->assertSame( 'clarification_assistant_v1', $data['central_action_id'] ?? null );
+        $this->assertSame( [ 'real_time' ], $data['trigger_hooks'] ?? null );
+        $this->assertSame( 'real_time', $data['execution_mode'] ?? null );
+        $this->assertSame( 'real_time', $data['settings']['execution_mode'] ?? null );
+        $this->assertSame( [ '1' ], $data['settings']['realtime_settings']['checkpoint_field_ids'] ?? null );
+        $this->assertSame( '9', $data['settings']['realtime_settings']['storage_target_field_id'] ?? null );
+
+        global $wpdb;
+
+        $mappings        = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $stored_mappings = $mappings->list_for_form( 'gravity_forms', '16' );
+
+        $this->assertCount( 1, $stored_mappings );
+        $this->assertSame( 'real_time', $stored_mappings[0]['hook'] ?? null );
+        $this->assertSame( 'real_time', $stored_mappings[0]['execution_mode'] ?? null );
+        $this->assertSame( '9', $stored_mappings[0]['settings_json']['realtime_settings']['storage_target_field_id'] ?? null );
+    }
+
+    public function test_add_form_action_rejects_realtime_storage_target_for_normal_answer_field(): void
+    {
+        GFAPI::$forms[17] = [
+            'id'     => 17,
+            'title'  => 'Realtime Invalid Storage Test',
+            'fields' => [
+                (object) [ 'id' => 1, 'label' => 'Message', 'type' => 'textarea' ],
+                (object) [ 'id' => 2, 'label' => 'Email', 'type' => 'email' ],
+            ],
+        ];
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/17/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 17 );
+        $request->set_param( 'central_action_id', 'clarification_assistant_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
+        $request->set_param( 'trigger_hooks', [ 'real_time' ] );
+        $request->set_param(
+            'settings',
+            [
+                'execution_mode' => 'real_time',
+                'realtime_settings' => [
+                    'checkpoint_field_ids' => [ '1' ],
+                    'storage_target_field_id' => '2',
+                    'blocking_mode' => 'require_answers',
+                ],
+            ]
+        );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_realtime_storage_target', $response->get_error_code() );
     }
 
     public function test_add_form_action_rejects_bundled_mapping_with_only_unsupported_hooks(): void

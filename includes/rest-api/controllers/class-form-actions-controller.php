@@ -54,6 +54,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     private const ALLOWED_TRIGGER_HOOKS = [
         'gform_validation',
         'gform_after_submission',
+        'real_time',
     ];
 
     /** Policy version exposed to admin workflow planner clients. */
@@ -256,9 +257,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             : null;
         $identity      = $this->resolve_local_first_action_identity( $custom_action );
 
-        $execution_mode = 'sync' === sanitize_key( (string) ( $row['execution_mode'] ?? '' ) )
-            ? 'validation'
-            : 'after_submission';
+        $row_execution_mode = sanitize_key( (string) ( $row['execution_mode'] ?? '' ) );
+        $execution_mode     = match ( true ) {
+            'real_time' === $hook || 'real_time' === $row_execution_mode => 'real_time',
+            'sync' === $row_execution_mode                              => 'validation',
+            default                                                      => 'after_submission',
+        };
 
         $effect_mapping = is_array( $row['effect_mapping_json'] ?? null )
             ? $row['effect_mapping_json']
@@ -2059,6 +2063,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $form_source  = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
         $form_id      = sanitize_text_field( (string) (int) $request->get_param( 'form_id' ) );
         $settings        = $request->has_param( 'settings' ) ? $this->sanitize_settings( $request->get_param( 'settings' ) ) : [];
+        $storage_validation = $this->validate_realtime_storage_target( $form_source, $form_id, $settings );
+        if ( is_wp_error( $storage_validation ) )
+        {
+            return $storage_validation;
+        }
+
         $definition_hooks = array_values(
             array_filter(
                 array_map(
@@ -2546,6 +2556,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     private function resolve_local_first_execution_mode_for_hook( string $hook, array $settings, array $definition ): string
     {
         $hook = sanitize_key( $hook );
+        if ( 'real_time' === $hook )
+        {
+            return 'real_time';
+        }
+
         if ( 'gform_validation' === $hook )
         {
             return 'sync';
@@ -2681,6 +2696,15 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 if ( $request->has_param( 'settings' ) )
                 {
                     $settings = $this->sanitize_settings( $request->get_param( 'settings' ) );
+                    $storage_validation = $this->validate_realtime_storage_target(
+                        sanitize_key( (string) $request->get_param( 'form_source_slug' ) ),
+                        sanitize_text_field( (string) (int) $request->get_param( 'form_id' ) ),
+                        $settings
+                    );
+                    if ( is_wp_error( $storage_validation ) )
+                    {
+                        return $storage_validation;
+                    }
 
                     if ( isset( $settings['execution_mode'] ) && is_scalar( $settings['execution_mode'] ) )
                     {
@@ -2692,6 +2716,10 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                         elseif ( 'after_submission' === $execution_mode )
                         {
                             $update['execution_mode'] = 'async';
+                        }
+                        elseif ( 'real_time' === $execution_mode )
+                        {
+                            $update['execution_mode'] = 'real_time';
                         }
                     }
 
@@ -2771,7 +2799,18 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
         if ( $request->has_param( 'settings' ) )
         {
-            $linkage[ 'settings' ] = $this->sanitize_settings( $request->get_param( 'settings' ) );
+            $settings = $this->sanitize_settings( $request->get_param( 'settings' ) );
+            $storage_validation = $this->validate_realtime_storage_target(
+                sanitize_key( (string) $request->get_param( 'form_source_slug' ) ),
+                sanitize_text_field( (string) (int) $request->get_param( 'form_id' ) ),
+                $settings
+            );
+            if ( is_wp_error( $storage_validation ) )
+            {
+                return $storage_validation;
+            }
+
+            $linkage[ 'settings' ] = $settings;
         }
 
         $actions_to_validate       = $actions;
@@ -3739,7 +3778,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     'rest_invalid_hook',
                     sprintf(
                         /* translators: %s: invalid hook name */
-                        __( 'Hook %s is not supported. Allowed hooks: gform_validation, gform_after_submission.', 'sentient-forms' ),
+                        __( 'Hook %s is not supported. Allowed hooks: gform_validation, gform_after_submission, real_time.', 'sentient-forms' ),
                         esc_html( $hook )
                     ),
                     [ 'status' => 400 ],
@@ -4428,6 +4467,82 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return array_values( $violations );
+    }
+
+    /**
+     * Realtime virtual Q&A persists generated JSON into a form field. Keep that
+     * target limited to fields intended for generated/internal text so normal
+     * visitor answers are not overwritten.
+     *
+     * @param array<string, mixed> $settings
+     */
+    private function validate_realtime_storage_target( string $form_source, string $form_id, array $settings ): true | WP_Error
+    {
+        $realtime_settings = is_array( $settings['realtime_settings'] ?? null )
+            ? $settings['realtime_settings']
+            : [];
+        $target_field_id = isset( $realtime_settings['storage_target_field_id'] ) && is_scalar( $realtime_settings['storage_target_field_id'] )
+            ? trim( sanitize_text_field( (string) $realtime_settings['storage_target_field_id'] ) )
+            : '';
+
+        if ( '' === $target_field_id )
+        {
+            return true;
+        }
+
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        $adapter  = $registry ? $registry->get_adapter_by_id( $form_source ) : null;
+        if ( ! $adapter )
+        {
+            return $this->prepare_error_response(
+                'rest_invalid_realtime_storage_target',
+                __( 'Realtime storage target could not be validated because the form adapter is unavailable.', 'sentient-forms' ),
+                400
+            );
+        }
+
+        $fields = $adapter->get_form_fields( $form_id );
+        foreach ( $fields as $field )
+        {
+            $field_id = $this->extract_form_field_property( $field, 'id' );
+            if ( $target_field_id !== $field_id )
+            {
+                continue;
+            }
+
+            $field_type = strtolower( $this->extract_form_field_property( $field, 'type' ) );
+            if ( in_array( $field_type, [ 'hidden', 'textarea' ], true ) )
+            {
+                return true;
+            }
+
+            return $this->prepare_error_response(
+                'rest_invalid_realtime_storage_target',
+                __( 'Realtime virtual Q&A storage must target a dedicated hidden field or textarea.', 'sentient-forms' ),
+                400
+            );
+        }
+
+        return $this->prepare_error_response(
+            'rest_invalid_realtime_storage_target',
+            __( 'Realtime virtual Q&A storage field was not found on this form.', 'sentient-forms' ),
+            400
+        );
+    }
+
+    private function extract_form_field_property( mixed $field, string $property ): string
+    {
+        if ( is_array( $field ) && isset( $field[ $property ] ) && is_scalar( $field[ $property ] ) )
+        {
+            return sanitize_text_field( (string) $field[ $property ] );
+        }
+
+        if ( is_object( $field ) && isset( $field->{$property} ) && is_scalar( $field->{$property} ) )
+        {
+            return sanitize_text_field( (string) $field->{$property} );
+        }
+
+        return '';
     }
 
     /**

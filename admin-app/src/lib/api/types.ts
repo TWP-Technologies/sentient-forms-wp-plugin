@@ -779,6 +779,26 @@ export interface BatchSettings {
 	max_wait_seconds: number;
 }
 
+export type RealtimeBlockingMode = 'advisory' | 'require_answers';
+
+/**
+ * Runtime settings for real-time suggestion and clarification mappings.
+ */
+export interface RealtimeSettings {
+	/** Fields that trigger automatic analysis when changed or blurred */
+	checkpoint_field_ids?: string[];
+	/** Field that receives serialized virtual question/answer JSON before submit */
+	storage_target_field_id?: string;
+	/** Delay after user input before the suggestion request is sent */
+	debounce_ms?: number;
+	/** Minimum delay between non-manual suggestion runs */
+	cooldown_ms?: number;
+	/** Whether users can request a manual refresh from the frontend widget */
+	manual_refresh_enabled?: boolean;
+	/** Whether unanswered required virtual questions can block submit/next actions */
+	blocking_mode?: RealtimeBlockingMode;
+}
+
 /**
  * Strongly-typed settings for form-level action configuration
  */
@@ -809,6 +829,8 @@ export interface FormActionSettings {
 	post_execution_actions?: CustomActionPostExecutionActionPayload[];
 	/** Execution mode: validation (sync) or after_submission (async) - CB-EXEC-002 */
 	execution_mode?: ExecutionMode;
+	/** Real-time suggestion/clarification runtime controls */
+	realtime_settings?: RealtimeSettings;
 	/** Batch settings for after-submission execution (CB-EXEC-003/004) */
 	batch_settings?: BatchSettings;
 	/** Resolved status of the linked local-first custom action */
@@ -991,7 +1013,7 @@ export interface RequestTraceStep {
 	label: string;
 	dependency_ids: string[];
 	trigger_source?: { type: 'hook_root' | 'mapping' | 'unbound'; mapping_id?: string };
-	execution_mode: 'validation' | 'after_submission';
+	execution_mode: ExecutionMode;
 	is_async: boolean;
 	outcome: 'would_run' | 'would_queue' | 'blocked';
 	block_reason?: TraceBlockReason | null;
@@ -1068,6 +1090,9 @@ export interface ModelInfo {
 	id: string;
 	display_name: string;
 	provider: string;
+	provider_family?: string;
+	developer?: string;
+	description?: string;
 	speed_tier: string;
 	cost_tier: string;
 	capabilities: {
@@ -1078,13 +1103,23 @@ export interface ModelInfo {
 		structured?: boolean;
 		web_search?: boolean;
 		long_context: boolean;
+		files?: boolean;
+		audio?: boolean;
+		video?: boolean;
 	};
 	context_window: number;
 	is_preview: boolean;
 	tags: string[];
 	supported_parameters?: string[];
+	input_modalities?: string[];
+	output_modalities?: string[];
 	pricing?: Record<string, string>;
 	recommended_for: string[];
+	recommendation_categories?: string[];
+	benchmark_notes?: string[];
+	source_urls?: string[];
+	created?: number | string | null;
+	knowledge_cutoff?: string | null;
 }
 
 export interface ModelPreset {
@@ -1094,6 +1129,8 @@ export interface ModelPreset {
 	category: string;
 	resolved_model_id: string;
 	auto_upgrade: boolean;
+	rationale?: string;
+	source_urls?: string[];
 }
 
 export interface ModelResolutionStep {
