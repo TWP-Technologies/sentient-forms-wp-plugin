@@ -1311,7 +1311,9 @@ test.describe('Actions admin flows', () => {
 		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
 		await expect(drawer.getByTestId('local-builder-template')).toHaveValue('spam_filter');
 		await expect(drawer.getByTestId('local-builder-model-selector')).toBeVisible();
-		await drawer.getByLabel('Preset').selectOption('sf_free');
+		await drawer.getByTestId('model-selector-open').click();
+		await page.getByTestId('model-preset-sf_free').click();
+		await expect(page.getByTestId('model-selector-dialog')).toHaveCount(0);
 		await expect(drawer.getByTestId('local-builder-result-meta-key')).toHaveValue(
 			'sentient_forms_spam_classification'
 		);
@@ -1325,11 +1327,11 @@ test.describe('Actions admin flows', () => {
 		await expect(drawer.getByTestId('local-builder-result')).toContainText('Action #81');
 		expect(resolvePayloads).toContainEqual(
 			expect.objectContaining({
-				action_selection: {
+				action_selection: expect.objectContaining({
 					primary: 'sf_free',
 					is_preset: true,
 					backup: null
-				},
+				}),
 				template_model_hint: 'openrouter/auto'
 			})
 		);
@@ -1413,7 +1415,9 @@ test.describe('Actions admin flows', () => {
 		await expect(table.getByText('Disabled')).toBeVisible();
 	});
 
-	test('surfaces only the documented bundled built-ins in the add-action drawer', async ({ page }) => {
+	test('surfaces only the documented bundled built-ins in the add-action drawer', async ({
+		page
+	}) => {
 		await mockWpJson(page, {
 			actions: {
 				forms: { [formSource]: baseForms },
@@ -2831,10 +2835,8 @@ test.describe('Actions admin flows', () => {
 			throw new Error('Could not resolve dragged map-2 card position before edge removal.');
 		}
 		if (
-			Math.max(
-				Math.abs(draggedBox.x - beforeDragBox.x),
-				Math.abs(draggedBox.y - beforeDragBox.y)
-			) < 12
+			Math.max(Math.abs(draggedBox.x - beforeDragBox.x), Math.abs(draggedBox.y - beforeDragBox.y)) <
+			12
 		) {
 			await dragNodeCardByMouse(page, 'map-2', 180, 96);
 			draggedBox = await mapTwoCard.boundingBox();
@@ -3481,9 +3483,9 @@ test.describe('Actions admin flows', () => {
 		await expect(
 			modal.getByText('Current effective value: Suppress notifications (blocking default).')
 		).toBeVisible();
-		await expect(
-			modal.getByText('Background spam mappings do not hold notifications')
-		).toHaveCount(0);
+		await expect(modal.getByText('Background spam mappings do not hold notifications')).toHaveCount(
+			0
+		);
 		await expect(modal.getByText('1 custom example')).toBeVisible();
 	});
 

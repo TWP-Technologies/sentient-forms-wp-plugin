@@ -155,7 +155,10 @@ test.describe('Custom actions admin view', () => {
 				});
 			}
 
-			if (method === 'POST' && (url.endsWith('/models/resolve') || url.endsWith('/models/estimate'))) {
+			if (
+				method === 'POST' &&
+				(url.endsWith('/models/resolve') || url.endsWith('/models/estimate'))
+			) {
 				const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 				const actionSelection = payload.action_selection as Record<string, unknown> | undefined;
 				const primary = String(actionSelection?.primary ?? 'sf_default');
@@ -172,7 +175,7 @@ test.describe('Custom actions admin view', () => {
 									resolution_source: 'action',
 									override_chain: [],
 									backup_model_id: null
-							  }
+								}
 							: {
 									resolved_model: {
 										model_id: resolvedModelId,
@@ -190,7 +193,7 @@ test.describe('Custom actions admin view', () => {
 										pricing_policy_version: 'mock',
 										estimate_source: 'mock'
 									}
-							  }
+								}
 					})
 				});
 			}
@@ -220,7 +223,8 @@ test.describe('Custom actions admin view', () => {
 						code: String(payload.code ?? ''),
 						display_name: String(payload.display_name ?? ''),
 						description: (payload.description as string | null | undefined) ?? null,
-						prompt_overrides: (payload.prompt_overrides as Record<string, unknown> | undefined) ?? {},
+						prompt_overrides:
+							(payload.prompt_overrides as Record<string, unknown> | undefined) ?? {},
 						model_hint: (payload.model_hint as string | null | undefined) ?? null,
 						model_selection:
 							(payload.model_selection as Record<string, unknown> | null | undefined) ?? null,
@@ -232,9 +236,11 @@ test.describe('Custom actions admin view', () => {
 						action_kind: String(payload.action_kind ?? 'template_override'),
 						definition: (payload.definition as Record<string, unknown> | null | undefined) ?? null,
 						definition_version: Number(payload.definition_version ?? 1),
-						output_contract: (payload.output_contract as Record<string, unknown> | null | undefined) ?? null,
-						supported_execution_modes:
-							(payload.supported_execution_modes as string[] | undefined) ?? ['after_submission']
+						output_contract:
+							(payload.output_contract as Record<string, unknown> | null | undefined) ?? null,
+						supported_execution_modes: (payload.supported_execution_modes as
+							| string[]
+							| undefined) ?? ['after_submission']
 					};
 					actions = [newAction, ...actions];
 
@@ -253,11 +259,11 @@ test.describe('Custom actions admin view', () => {
 					actions = actions.map((action) =>
 						action.id === id
 							? {
-								...action,
-								status: 'archived',
-								archived_at: new Date().toISOString(),
-								updated_at: new Date().toISOString()
-							  }
+									...action,
+									status: 'archived',
+									archived_at: new Date().toISOString(),
+									updated_at: new Date().toISOString()
+								}
 							: action
 					);
 
@@ -277,11 +283,11 @@ test.describe('Custom actions admin view', () => {
 					actions = actions.map((action) =>
 						action.id === id
 							? {
-								...action,
-								status: 'active',
-								archived_at: null,
-								updated_at: new Date().toISOString()
-							  }
+									...action,
+									status: 'active',
+									archived_at: null,
+									updated_at: new Date().toISOString()
+								}
 							: action
 					);
 
@@ -314,15 +320,20 @@ test.describe('Custom actions admin view', () => {
 		await expect(createForm.getByLabel('Template ID')).toHaveCount(0);
 		await expect(createForm.getByLabel('Code')).toHaveCount(0);
 		await expect(createForm.getByTestId('model-selector')).toBeVisible();
-		await createForm.getByTestId('model-selector-tab-models').click();
-		await expect(createForm.getByTestId('model-selector-catalog')).toBeVisible();
-		await expect(createForm.getByTestId('model-search-input')).toBeVisible();
+		await createForm.getByTestId('model-selector-open').click();
+		await expect(page.getByTestId('model-selector-dialog')).toBeVisible();
+		await page.getByTestId('model-selector-tab-models').click();
+		await expect(page.getByTestId('model-selector-catalog')).toBeVisible();
+		await expect(page.getByTestId('model-search-input')).toBeVisible();
+		await expect(page.getByTestId('model-selector-detail')).toBeVisible();
 		await expect(
-			createForm.getByTestId('model-row-openai/gpt-5.5').getByText('Paid model')
+			page.getByTestId('model-row-openai/gpt-5.5').getByText('Paid model')
 		).toBeVisible();
-		await createForm.getByTestId('model-selector-tab-custom').click();
-		await expect(createForm.getByTestId('model-custom-input')).toBeVisible();
-		await createForm.getByTestId('model-selector-tab-presets').click();
+		await page.getByTestId('model-selector-tab-custom').click();
+		await expect(page.getByTestId('model-custom-input')).toBeVisible();
+		await page.getByTestId('model-selector-tab-presets').click();
+		await page.getByTestId('model-selector-close').click();
+		await expect(page.getByTestId('model-selector-dialog')).toHaveCount(0);
 		await createForm.getByLabel('Display Name').fill('Beta action');
 		await expect(createForm.getByTestId('custom-action-generated-code')).toContainText(
 			'beta-action'
@@ -347,9 +358,8 @@ test.describe('Custom actions admin view', () => {
 		});
 		expect(
 			(
-				(lastCreatePayload?.definition as Record<string, unknown> | undefined)?.execution_defaults as
-					| Record<string, unknown>
-					| undefined
+				(lastCreatePayload?.definition as Record<string, unknown> | undefined)
+					?.execution_defaults as Record<string, unknown> | undefined
 			)?.post_execution_actions
 		).toEqual(
 			expect.arrayContaining([
