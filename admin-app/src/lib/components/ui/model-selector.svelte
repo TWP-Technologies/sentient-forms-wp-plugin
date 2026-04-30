@@ -889,7 +889,8 @@
 
 	function modelAccessLabel(model: ModelInfo): string {
 		if (modelIsFree(model)) return 'Free';
-		return isModelLocked(model) ? 'Paid locked' : 'Paid available';
+		const cost = modelCostLabel(model);
+		return isModelLocked(model) ? `${cost} locked` : cost;
 	}
 
 	function modelDescription(model: ModelInfo | null): string {
@@ -1060,12 +1061,86 @@
 							</p>
 						{:else}
 							<p class="sf:text-xs sf:text-slate-500">
-								OpenRouter bills direct usage to the selected route.
+								Local OpenRouter runs do not spend managed credits. Provider charges are billed by
+								OpenRouter for the selected route.
 							</p>
 						{/if}
 					</div>
 				{/if}
 			</div>
+
+			<div class="sf:mt-4 sf:border-t sf:border-slate-200 sf:pt-4">
+				<div
+					class="sf:flex sf:flex-col sf:gap-2 sf:lg:flex-row sf:lg:items-start sf:lg:justify-between"
+				>
+					<div>
+						<p class="sf:text-sm sf:font-semibold sf:text-slate-800">Model tools</p>
+						<p class="sf:text-xs sf:text-slate-500">
+							Set OpenRouter server tools for this selected model only when the action needs
+							fresh or external context.
+						</p>
+					</div>
+					{#if !selectedModelSupportsTools()}
+						<p class="sf:max-w-md sf:text-xs sf:text-slate-500">
+							This cached model does not advertise tool support. Use Custom ID if OpenRouter has
+							newer capabilities than this bundled snapshot.
+						</p>
+					{/if}
+				</div>
+				<div class="sf:mt-3 sf:grid sf:gap-3 sf:md:grid-cols-2 sf:xl:grid-cols-4">
+					<SelectField
+						id={`model-summary-tool-choice-${level}`}
+						label="Tool choice"
+						options={toolChoiceOptions}
+						bind:value={toolChoiceMode}
+						disabled={readonly || (!selectedModelSupportsTools() && toolChoiceMode === 'inherit')}
+						onchange={handleSelectionChange}
+					/>
+					<SelectField
+						id={`model-summary-web-search-${level}`}
+						label="Web search"
+						options={toolModeOptions}
+						bind:value={webSearchMode}
+						disabled={readonly || (!selectedModelSupportsWebSearch() && webSearchMode === 'inherit')}
+						onchange={handleSelectionChange}
+					/>
+					<SelectField
+						id={`model-summary-web-fetch-${level}`}
+						label="Web fetch"
+						options={toolModeOptions}
+						bind:value={webFetchMode}
+						disabled={readonly || (!selectedModelSupportsWebFetch() && webFetchMode === 'inherit')}
+						onchange={handleSelectionChange}
+					/>
+					<SelectField
+						id={`model-summary-datetime-${level}`}
+						label="Current date/time"
+						options={toolModeOptions}
+						bind:value={datetimeMode}
+						disabled={readonly || (!selectedModelSupportsDatetime() && datetimeMode === 'inherit')}
+						onchange={handleSelectionChange}
+					/>
+				</div>
+				{#if webSearchMode !== 'inherit' && webSearchMode !== 'off'}
+					<label class="sf:mt-3 sf:flex sf:max-w-xs sf:flex-col sf:gap-1">
+						<span class="sf:text-xs sf:font-semibold sf:text-slate-700">
+							Search results per call
+						</span>
+						<input
+							type="number"
+							min="1"
+							max="10"
+							class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+							value={webSearchMaxResults}
+							disabled={readonly}
+							oninput={(event) => {
+								webSearchMaxResults = Number((event.currentTarget as HTMLInputElement).value);
+								handleSelectionChange();
+							}}
+						/>
+					</label>
+				{/if}
+		</div>
 		</div>
 	</div>
 
@@ -1213,11 +1288,15 @@
 													{preset.display_name}
 												</span>
 												{#if locked}
-													<Badge variant="warning">Paid model</Badge>
+													<Badge variant="warning">
+														{model ? `${modelCostLabel(model)} locked` : 'Paid'}
+													</Badge>
 												{:else if model && modelIsFree(model)}
 													<Badge variant="success">Free</Badge>
 												{:else}
-													<Badge variant="info">Paid available</Badge>
+													<Badge variant="info">
+														{model ? modelCostLabel(model) : 'Paid'}
+													</Badge>
 												{/if}
 											</span>
 											<span class="sf:text-sm sf:text-slate-600">{preset.description}</span>
@@ -1410,73 +1489,6 @@
 							</div>
 						{/if}
 
-						<div class="sf:mt-5 sf:border-t sf:border-slate-200 sf:pt-4">
-							<div class="sf:mb-3">
-								<p class="sf:text-sm sf:font-semibold sf:text-slate-800">Model tools</p>
-								<p class="sf:text-xs sf:text-slate-500">
-									Enable OpenRouter server tools only when the action benefits from fresh or
-									external context.
-								</p>
-							</div>
-							<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
-								<SelectField
-									id={`model-tool-choice-${level}`}
-									label="Tool choice"
-									options={toolChoiceOptions}
-									bind:value={toolChoiceMode}
-									disabled={!selectedModelSupportsTools() && toolChoiceMode === 'inherit'}
-									onchange={handleSelectionChange}
-								/>
-								<SelectField
-									id={`model-web-search-${level}`}
-									label="Web search"
-									options={toolModeOptions}
-									bind:value={webSearchMode}
-									disabled={!selectedModelSupportsWebSearch() && webSearchMode === 'inherit'}
-									onchange={handleSelectionChange}
-								/>
-								{#if webSearchMode !== 'inherit' && webSearchMode !== 'off'}
-									<label class="sf:flex sf:flex-col sf:gap-1">
-										<span class="sf:text-xs sf:font-semibold sf:text-slate-700">
-											Search results per call
-										</span>
-										<input
-											type="number"
-											min="1"
-											max="10"
-											class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											value={webSearchMaxResults}
-											oninput={(event) => {
-												webSearchMaxResults = Number((event.currentTarget as HTMLInputElement).value);
-												handleSelectionChange();
-											}}
-										/>
-									</label>
-								{/if}
-								<SelectField
-									id={`model-web-fetch-${level}`}
-									label="Web fetch"
-									options={toolModeOptions}
-									bind:value={webFetchMode}
-									disabled={!selectedModelSupportsWebFetch() && webFetchMode === 'inherit'}
-									onchange={handleSelectionChange}
-								/>
-								<SelectField
-									id={`model-datetime-${level}`}
-									label="Current date/time"
-									options={toolModeOptions}
-									bind:value={datetimeMode}
-									disabled={!selectedModelSupportsDatetime() && datetimeMode === 'inherit'}
-									onchange={handleSelectionChange}
-								/>
-							</div>
-							{#if !selectedModelSupportsTools()}
-								<p class="sf:mt-2 sf:text-xs sf:text-slate-500">
-									This cached model does not advertise tool support. Use Custom ID if OpenRouter
-									has newer capabilities than this bundled snapshot.
-								</p>
-							{/if}
-						</div>
 					</section>
 
 					<aside class="sf:bg-slate-50 sf:p-4 sf:sm:p-5">
