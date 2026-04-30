@@ -10,6 +10,11 @@
  * @since      0.1.0
  */
 
+if ( ! defined( 'ABSPATH' ) )
+{
+    exit;
+}
+
 /**
  * Class Sentient_Forms_Adapter_Registry
  * Responsible for discovering, storing, and providing access to instances

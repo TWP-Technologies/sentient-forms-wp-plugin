@@ -1,5 +1,10 @@
 <?php
 
+if ( ! defined( 'ABSPATH' ) )
+{
+    exit;
+}
+
 abstract class Sentient_Forms_Abstract_Llm implements Sentient_Forms_Llm_Model_Interface
 {
     protected string                       $id;

@@ -8,6 +8,11 @@
  * @package SentientForms
  */
 
+if ( ! defined( 'ABSPATH' ) )
+{
+	exit;
+}
+
 return [
 	[
 		'id' => 'anthropic/claude-haiku-4.5',

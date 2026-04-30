@@ -1,5 +1,10 @@
 <?php
 
+if ( ! defined( 'ABSPATH' ) )
+{
+    exit;
+}
+
 abstract class Sentient_Forms_Abstract_Llm_Google extends Sentient_Forms_Abstract_Llm
 {
     public function __construct(

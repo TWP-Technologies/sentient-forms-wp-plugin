@@ -205,6 +205,11 @@ foreach ( $iterator as $item )
         }
     }
 
+    if ( ! $source_tree && 'php' === $extension && ! str_starts_with( $relative, 'vendor/' ) && ! has_direct_access_guard( $contents ) )
+    {
+        $issues[] = "Missing direct access guard in PHP file: {$relative}";
+    }
+
     if ( 'php' === $extension && 'scripts/scan-wporg-package.php' !== $relative && preg_match( $direct_http_pattern, $contents, $matches ) )
     {
         $issues[] = "Potential non-WP HTTP call in {$relative}: {$matches[0]}";
@@ -280,6 +285,19 @@ function wporg_scan_parse_host( string $url ): ?string
     }
 
     return strtolower( $parts['host'] );
+}
+
+/**
+ * Return whether a runtime PHP file blocks direct web access.
+ */
+function has_direct_access_guard( string $contents ): bool
+{
+    if ( str_contains( $contents, 'defined( \'ABSPATH\' )' ) || str_contains( $contents, 'defined(\'ABSPATH\')' ) )
+    {
+        return true;
+    }
+
+    return str_contains( $contents, 'defined( "ABSPATH" )' ) || str_contains( $contents, 'defined("ABSPATH")' );
 }
 
 /**
