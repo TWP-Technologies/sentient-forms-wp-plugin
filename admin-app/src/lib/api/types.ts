@@ -1095,6 +1095,7 @@ export interface ModelInfo {
 	description?: string;
 	speed_tier: string;
 	cost_tier: string;
+	cost_symbol?: string;
 	capabilities: {
 		reasoning: boolean;
 		code: boolean;
@@ -1116,6 +1117,8 @@ export interface ModelInfo {
 	pricing?: Record<string, string>;
 	recommended_for: string[];
 	recommendation_categories?: string[];
+	category_rankings?: Record<string, number>;
+	ranking_snapshot?: Record<string, unknown>;
 	benchmark_notes?: string[];
 	source_urls?: string[];
 	created?: number | string | null;
@@ -1151,6 +1154,11 @@ export interface ResolvedModelSelection {
 export interface ModelPricingEstimate {
 	action_id: string;
 	resolved_model_id: string;
+	route?: 'openrouter' | 'sentient_managed' | string;
+	kind?: 'openrouter_free' | 'openrouter_currency' | 'openrouter_variable' | 'sentient_credits' | string;
+	label?: string;
+	amount_usd?: number | null;
+	provider_pricing?: Record<string, string>;
 	base_floor_credits: number;
 	normalized_actual_credits: number;
 	estimated_debit_credits: number;
@@ -1305,7 +1313,7 @@ export interface ActionDefinitionPayload extends Record<string, unknown> {
 
 export interface CustomAction {
 	id: string;
-	template_id: string;
+	template_id: string | null;
 	code: string;
 	display_name: string;
 	description: string | null;
@@ -1348,7 +1356,7 @@ export interface CustomActionMutationSuccess {
 }
 
 export interface CustomActionCreatePayload {
-	template_id: string;
+	template_id?: string | null;
 	code: string;
 	display_name: string;
 	description?: string | null;

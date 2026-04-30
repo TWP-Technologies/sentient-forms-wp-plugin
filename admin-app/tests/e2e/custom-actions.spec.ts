@@ -18,7 +18,21 @@ test.describe('Custom actions admin view', () => {
 				description: null,
 				prompt_overrides: {},
 				model_hint: null,
-				model_selection: null,
+				model_selection: {
+					primary: 'sf_default',
+					is_preset: true,
+					provider: 'openrouter',
+					tools: {
+						tool_choice: 'auto',
+						web_search: {
+							mode: 'auto',
+							max_results: 3
+						},
+						datetime: {
+							mode: 'auto'
+						}
+					}
+				},
 				base_credit_cost: 10,
 				status: 'active',
 				archived_at: null,
@@ -313,6 +327,25 @@ test.describe('Custom actions admin view', () => {
 		let tableRows = page.getByTestId('custom-actions-table').locator('tbody tr');
 		await expect(tableRows).toHaveCount(1);
 
+		await tableRows.first().getByRole('button', { name: 'Edit' }).click();
+		await expectAppUrl(page, '/actions/custom/action-alpha');
+		const editForm = page.getByTestId('custom-action-form');
+		await editForm.getByTestId('model-selector-open').click();
+		await expect(page.getByLabel('Tool choice', { exact: true })).toHaveValue('auto');
+		await expect(page.getByLabel('Web search', { exact: true })).toHaveValue('auto');
+		await expect(page.getByLabel('Search results per call', { exact: true })).toHaveValue('3');
+		await expect(page.getByLabel('Current date/time', { exact: true })).toHaveValue('auto');
+		await page.getByTestId('model-selector-tab-models').click();
+		await expect(page.getByTestId('model-selector-catalog')).toBeVisible();
+		await page.getByTestId('model-selector-tab-custom').click();
+		await expect(page.getByTestId('model-custom-input')).toBeVisible();
+		await page.getByTestId('model-selector-tab-presets').click();
+		await page.getByTestId('model-selector-close').click();
+		await page.getByRole('button', { name: /Back to List/i }).click();
+		await expectAppUrl(page, '/actions/custom');
+		tableRows = page.getByTestId('custom-actions-table').locator('tbody tr');
+		await expect(tableRows).toHaveCount(1);
+
 		await page.getByRole('button', { name: /Create Action/i }).click();
 		await expectAppUrl(page, '/actions/custom/new');
 
@@ -346,8 +379,9 @@ test.describe('Custom actions admin view', () => {
 
 		await expectAppUrl(page, '/actions/custom');
 		expect(lastCreatePayload).toMatchObject({
-			template_id: '11111111-1111-4111-8111-111111111111',
+			template_id: null,
 			code: 'beta-action',
+			action_kind: 'custom_definition',
 			model_selection: {
 				primary: 'sf_default',
 				is_preset: true
@@ -356,6 +390,9 @@ test.describe('Custom actions admin view', () => {
 				custom_instructions: 'Write a direct, demo-ready follow-up summary.'
 			}
 		});
+		expect(
+			(lastCreatePayload?.definition as Record<string, unknown> | undefined)?.prompt_template
+		).not.toContain('Custom webmaster instructions');
 		expect(
 			(
 				(lastCreatePayload?.definition as Record<string, unknown> | undefined)

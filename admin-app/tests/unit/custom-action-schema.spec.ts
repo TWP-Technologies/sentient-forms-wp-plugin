@@ -159,6 +159,44 @@ describe('custom action schema pricing authority', () => {
 		expect(result.success).toBe(true);
 	});
 
+	it('allows blank custom definitions without a base template and preserves tool settings', () => {
+		const result = validateCreatePayload({
+			template_id: null,
+			code: 'blank-custom-action',
+			display_name: 'Blank Custom Action',
+			action_kind: 'custom_definition',
+			definition: {
+				prompt_template: 'Review {{entry}} and summarize it.'
+			},
+			definition_version: 1,
+			supported_execution_modes: ['after_submission'],
+			model_selection: {
+				primary: 'google/gemini-3-flash-preview',
+				is_preset: false,
+				provider: 'openrouter',
+				tools: {
+					tool_choice: 'auto',
+					web_search: {
+						mode: 'auto',
+						max_results: 3
+					}
+				}
+			}
+		});
+
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.template_id).toBeNull();
+			expect(result.data.model_selection?.tools).toMatchObject({
+				tool_choice: 'auto',
+				web_search: {
+					mode: 'auto',
+					max_results: 3
+				}
+			});
+		}
+	});
+
 	it('rejects workflow edges that reference unknown nodes', () => {
 		const result = validateCreatePayload({
 			template_id: '550e8400-e29b-41d4-a716-446655440000',

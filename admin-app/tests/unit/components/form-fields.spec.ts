@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tick } from 'svelte';
 import { createClassComponent } from 'svelte/legacy';
 import InputField from '$lib/components/ui/input-field.svelte';
+import MergeTagField from '$lib/components/ui/merge-tag-field.svelte';
 import SelectField from '$lib/components/ui/select-field.svelte';
 import TextareaField from '$lib/components/ui/textarea-field.svelte';
 import Toggle from '$lib/components/ui/toggle.svelte';
@@ -124,6 +125,30 @@ describe('Form field primitives', () => {
 		await tick();
 
 		expect(textarea.value).toBe('hello');
+		dispose();
+	});
+
+	it('inserts merge tags at the cursor without replacing live textarea text', async () => {
+		const { target, dispose } = mount(MergeTagField, {
+			id: 'prompt',
+			label: 'Prompt',
+			tokens: [{ token: 'summary_text', label: 'Entry summary' }]
+		});
+
+		const textarea = target.querySelector('textarea') as HTMLTextAreaElement;
+		textarea.value = 'Write a note for ';
+		textarea.dispatchEvent(new Event('input', { bubbles: true }));
+		textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+		await tick();
+
+		(target.querySelector('summary') as HTMLElement).click();
+		await tick();
+		(Array.from(target.querySelectorAll('button')).find((button) =>
+			button.textContent?.includes('Entry summary')
+		) as HTMLButtonElement).click();
+		await tick();
+
+		expect(textarea.value).toBe('Write a note for {{summary_text}}');
 		dispose();
 	});
 

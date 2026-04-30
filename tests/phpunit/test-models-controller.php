@@ -92,20 +92,35 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $model_ids = wp_list_pluck( $data['models'], 'id' );
 
         $this->assertContains( 'openai/gpt-5.5', $model_ids );
+        $this->assertContains( 'openai/gpt-5.4-nano', $model_ids );
+        $this->assertContains( 'openai/gpt-5-nano', $model_ids );
         $this->assertContains( 'openai/gpt-5.4', $model_ids );
         $this->assertContains( 'openai/gpt-5.4-mini', $model_ids );
         $this->assertContains( 'google/gemini-3.1-pro-preview', $model_ids );
         $this->assertContains( 'google/gemini-3-flash-preview', $model_ids );
         $this->assertContains( 'anthropic/claude-sonnet-4.6', $model_ids );
+        $this->assertContains( 'anthropic/claude-haiku-4.5', $model_ids );
         $this->assertContains( 'anthropic/claude-opus-4.7', $model_ids );
         $this->assertContains( 'deepseek/deepseek-v4-flash', $model_ids );
+        $this->assertContains( 'deepseek/deepseek-v3.2', $model_ids );
         $this->assertContains( 'moonshotai/kimi-k2.6', $model_ids );
+        $this->assertContains( 'z-ai/glm-5.1', $model_ids );
         $this->assertContains( 'qwen/qwen3.6-max-preview', $model_ids );
         $this->assertContains( 'poolside/laguna-m.1:free', $model_ids );
         $this->assertContains( 'openrouter/free', $model_ids );
         $this->assertContains( 'openrouter/auto', $model_ids );
         $this->assertContains( 'bundled-recommendation', $data['models'][0]['tags'] );
         $this->assertSame( 'openai/gpt-5.5', $data['presets'][0]['resolved_model_id'] );
+
+        $models_by_id = [];
+        foreach ( $data['models'] as $model )
+        {
+            $models_by_id[ $model['id'] ] = $model;
+        }
+        $this->assertArrayHasKey( 'cost_symbol', $models_by_id['anthropic/claude-haiku-4.5'] );
+        $this->assertNotSame( 'low', $models_by_id['anthropic/claude-haiku-4.5']['cost_symbol'] );
+        $this->assertIsArray( $models_by_id['moonshotai/kimi-k2.6']['category_rankings'] ?? null );
+        $this->assertArrayHasKey( 'programming', $models_by_id['moonshotai/kimi-k2.6']['category_rankings'] );
 
         $presets_by_code = [];
         foreach ( $data['presets'] as $preset )
@@ -252,7 +267,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 'OpenAI: GPT-5.5', $data['display_name'] );
     }
 
-    public function test_estimate_model_reports_no_sentient_debit_for_local_openrouter(): void
+    public function test_estimate_model_reports_openrouter_currency_for_local_openrouter(): void
     {
         $this->seed_model_cache();
 
@@ -276,10 +291,42 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 'anthropic/claude-sonnet-4.6', $data['resolved_model']['model_id'] );
         $this->assertSame( 'entry_summary', $data['pricing_estimate']['action_id'] );
         $this->assertSame( 7, $data['pricing_estimate']['base_floor_credits'] );
-        $this->assertSame( 7, $data['pricing_estimate']['normalized_actual_credits'] );
+        $this->assertSame( 0, $data['pricing_estimate']['normalized_actual_credits'] );
         $this->assertSame( 0, $data['pricing_estimate']['estimated_debit_credits'] );
         $this->assertSame( 'local-openrouter-v1', $data['pricing_estimate']['pricing_policy_version'] );
-        $this->assertSame( 'local_cache_no_sentient_debit', $data['pricing_estimate']['estimate_source'] );
+        $this->assertSame( 'openrouter_direct_route', $data['pricing_estimate']['estimate_source'] );
+        $this->assertSame( 'openrouter', $data['pricing_estimate']['route'] );
+        $this->assertSame( 'openrouter_currency', $data['pricing_estimate']['kind'] );
+        $this->assertStringStartsWith( 'OR: $', $data['pricing_estimate']['label'] );
+    }
+
+    public function test_estimate_model_reports_managed_service_credits_for_managed_route(): void
+    {
+        $this->seed_model_cache();
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/estimate' );
+        $request->set_body_params(
+            [
+                'action_id'        => 'entry_summary',
+                'base_credit_cost' => 7,
+                'mapping_selection' => [
+                    'primary'   => 'sf_quality',
+                    'is_preset' => true,
+                    'provider'  => 'sentient_managed',
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'sentient_managed', $data['pricing_estimate']['route'] );
+        $this->assertSame( 'sentient_credits', $data['pricing_estimate']['kind'] );
+        $this->assertSame( 'SF: 7 credits', $data['pricing_estimate']['label'] );
+        $this->assertSame( 7, $data['pricing_estimate']['normalized_actual_credits'] );
+        $this->assertSame( 7, $data['pricing_estimate']['estimated_debit_credits'] );
     }
 
     private function seed_model_cache(): void

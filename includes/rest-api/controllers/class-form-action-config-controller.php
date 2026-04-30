@@ -303,7 +303,66 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
             $selection['reasoning'] = $reasoning;
         }
 
+        $tools = $this->sanitize_model_tool_settings( $value['tools'] ?? null );
+        if ( [] !== $tools )
+        {
+            $selection['tools'] = $tools;
+        }
+
         return $selection;
+    }
+
+    /**
+     * Sanitizes optional OpenRouter server-tool controls.
+     *
+     * @param mixed $value Tool settings.
+     * @return array<string, mixed>
+     */
+    private function sanitize_model_tool_settings( $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $settings = [];
+        foreach ( [ 'web_search', 'web_fetch', 'datetime' ] as $tool_key )
+        {
+            if ( ! is_array( $value[ $tool_key ] ?? null ) )
+            {
+                continue;
+            }
+
+            $mode = sanitize_key( (string) ( $value[ $tool_key ]['mode'] ?? 'inherit' ) );
+            if ( ! in_array( $mode, [ 'inherit', 'off', 'auto', 'required' ], true ) )
+            {
+                $mode = 'inherit';
+            }
+
+            if ( 'inherit' === $mode )
+            {
+                continue;
+            }
+
+            $settings[ $tool_key ] = [ 'mode' => $mode ];
+
+            if ( 'web_search' === $tool_key )
+            {
+                $max_results = absint( $value[ $tool_key ]['max_results'] ?? 0 );
+                if ( $max_results > 0 )
+                {
+                    $settings[ $tool_key ]['max_results'] = min( 10, $max_results );
+                }
+            }
+        }
+
+        $tool_choice = sanitize_key( (string) ( $value['tool_choice'] ?? 'inherit' ) );
+        if ( in_array( $tool_choice, [ 'off', 'auto', 'required' ], true ) )
+        {
+            $settings['tool_choice'] = $tool_choice;
+        }
+
+        return $settings;
     }
 
     /**

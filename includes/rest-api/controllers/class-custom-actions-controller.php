@@ -267,7 +267,8 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
         }
 
         $template_id = absint( $payload['template_id'] ?? 0 );
-        if ( $template_id <= 0 )
+        $action_kind = sanitize_key( (string) ( $payload['action_kind'] ?? 'template_override' ) );
+        if ( $template_id <= 0 && 'custom_definition' !== $action_kind )
         {
             return $this->prepare_error_response(
                 'rest_invalid_param',
@@ -277,7 +278,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
         }
 
         $id = $this->local_custom_actions->create(
-            $this->build_local_custom_action_row( $payload, null, $template_id )
+            $this->build_local_custom_action_row( $payload, null, $template_id > 0 ? $template_id : null )
         );
         if ( is_wp_error( $id ) )
         {
@@ -529,6 +530,12 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             {
                 $selection['reasoning'] = sanitize_key( (string) $runtime_selection['reasoning'] );
             }
+
+            $tools = $this->sanitize_model_tool_settings( $runtime_selection['tools'] ?? null );
+            if ( [] !== $tools )
+            {
+                $selection['tools'] = $tools;
+            }
         }
 
         $credential_id = is_array( $runtime_selection ) && isset( $runtime_selection['credential_id'] )
@@ -733,9 +740,12 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
     {
         return [
             'template_id'      => [
-                'type'              => 'string',
-                'required'          => true,
-                'sanitize_callback' => 'sanitize_text_field',
+                'type'              => [ 'string', 'null' ],
+                'required'          => false,
+                'sanitize_callback' => static function ( $value )
+                {
+                    return null === $value ? null : sanitize_text_field( (string) $value );
+                },
                 'description'       => __( 'Identifier of the base action template.', 'sentient-forms' ),
             ],
             'code'             => [
@@ -869,7 +879,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
         }
 
         return [
-            'template_id'      => sanitize_text_field( (string) $request->get_param( 'template_id' ) ),
+            'template_id'      => $request->get_param( 'template_id' ) ? sanitize_text_field( (string) $request->get_param( 'template_id' ) ) : null,
             'code'             => $code,
             'display_name'     => sanitize_text_field( (string) $request->get_param( 'display_name' ) ),
             'description'      => $request->get_param( 'description' ) ? sanitize_textarea_field( (string) $request->get_param( 'description' ) ) : null,
@@ -1011,7 +1021,63 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             }
         }
 
+        $tools = $this->sanitize_model_tool_settings( $value['tools'] ?? null );
+        if ( [] !== $tools )
+        {
+            $selection['tools'] = $tools;
+        }
+
         return $selection;
+    }
+
+    /**
+     * @param mixed $value
+     * @return array<string, mixed>
+     */
+    private function sanitize_model_tool_settings( $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $settings = [];
+        foreach ( [ 'web_search', 'web_fetch', 'datetime' ] as $tool_key )
+        {
+            if ( ! is_array( $value[ $tool_key ] ?? null ) )
+            {
+                continue;
+            }
+
+            $mode = sanitize_key( (string) ( $value[ $tool_key ]['mode'] ?? 'inherit' ) );
+            if ( ! in_array( $mode, [ 'inherit', 'off', 'auto', 'required' ], true ) )
+            {
+                $mode = 'inherit';
+            }
+
+            if ( 'inherit' === $mode )
+            {
+                continue;
+            }
+
+            $settings[ $tool_key ] = [ 'mode' => $mode ];
+            if ( 'web_search' === $tool_key )
+            {
+                $max_results = absint( $value[ $tool_key ]['max_results'] ?? 0 );
+                if ( $max_results > 0 )
+                {
+                    $settings[ $tool_key ]['max_results'] = min( 10, $max_results );
+                }
+            }
+        }
+
+        $tool_choice = sanitize_key( (string) ( $value['tool_choice'] ?? 'inherit' ) );
+        if ( in_array( $tool_choice, [ 'off', 'auto', 'required' ], true ) )
+        {
+            $settings['tool_choice'] = $tool_choice;
+        }
+
+        return $settings;
     }
 
     /**

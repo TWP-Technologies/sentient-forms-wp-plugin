@@ -138,6 +138,60 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $this->assertIsArray( $payload['definition']['workflow']['nodes'] ?? null );
     }
 
+    public function test_create_local_custom_definition_does_not_require_template_id_and_preserves_tools(): void
+    {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/custom-actions' );
+        $request->set_param( 'code', 'blank-custom-definition-' . substr( md5( (string) wp_rand() ), 0, 8 ) );
+        $request->set_param( 'display_name', 'Blank Custom Definition' );
+        $request->set_param( 'action_kind', 'custom_definition' );
+        $request->set_param( 'definition_version', 1 );
+        $request->set_param( 'supported_execution_modes', [ 'after_submission' ] );
+        $request->set_param(
+            'definition',
+            [
+                'prompt_template' => 'Review {{entry}} and return a concise summary.',
+                'execution_defaults' => [
+                    'post_execution_actions' => [
+                        [
+                            'type'    => 'entry_note',
+                            'message' => 'Result: {{llm_output}}',
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $request->set_param(
+            'model_selection',
+            [
+                'primary'   => 'google/gemini-3-flash-preview',
+                'is_preset' => false,
+                'provider'  => 'openrouter',
+                'tools'     => [
+                    'tool_choice' => 'auto',
+                    'web_search'  => [
+                        'mode'        => 'auto',
+                        'max_results' => 4,
+                    ],
+                    'datetime'    => [
+                        'mode' => 'auto',
+                    ],
+                ],
+            ]
+        );
+
+        $response = $this->controller->create_custom_action( $request );
+
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 201, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( '', $data['action']['template_id'] ?? null );
+        $this->assertSame( 'custom_definition', $data['action']['action_kind'] ?? null );
+        $this->assertSame( 'Review {{entry}} and return a concise summary.', $data['action']['definition']['prompt_template'] ?? null );
+        $this->assertSame( 'auto', $data['action']['model_selection']['tools']['tool_choice'] ?? null );
+        $this->assertSame( 'auto', $data['action']['model_selection']['tools']['web_search']['mode'] ?? null );
+        $this->assertSame( 4, $data['action']['model_selection']['tools']['web_search']['max_results'] ?? null );
+    }
+
     public function test_build_update_payload_rejects_workflow_edge_with_unknown_node(): void
     {
         $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/custom-actions/test-id' );

@@ -40,7 +40,7 @@
 
 <Section
 	heading="Create Custom Action"
-	description="Configure a new custom action based on an action template."
+	description="Create a blank action or start from a built-in action template."
 >
 	{#snippet actions()}
 		<Button variant="secondary" onclick={handleCancel}>← Back to List</Button>

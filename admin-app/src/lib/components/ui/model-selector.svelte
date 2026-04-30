@@ -34,6 +34,7 @@
 
 	type SelectionMode = 'presets' | 'models' | 'custom';
 	type CostFilter = 'all' | 'free' | 'paid' | 'locked';
+	type ToolMode = 'inherit' | 'off' | 'auto' | 'required';
 	type CapabilityItem = readonly [key: string, label: string, short: string, active: boolean];
 	type CapabilityFilter =
 		| 'all'
@@ -81,6 +82,11 @@
 	let selectedCustomModel = $state('');
 	let selectedCustomBackup = $state('');
 	let selectedReasoning = $state('default');
+	let toolChoiceMode = $state<ToolMode>('inherit');
+	let webSearchMode = $state<ToolMode>('inherit');
+	let webSearchMaxResults = $state(5);
+	let webFetchMode = $state<ToolMode>('inherit');
+	let datetimeMode = $state<ToolMode>('inherit');
 	let selectedProvider = $state(OPENROUTER_PROVIDER);
 	let selectedCredentialId = $state<number | null>(null);
 	let searchTerm = $state('');
@@ -95,6 +101,7 @@
 	let resolutionError = $state<string | null>(null);
 	let resolutionRequestToken = 0;
 	let lastEmittedSelectionSignature = '';
+	let lastSyncedExternalValueSignature = '';
 
 	const fallbackModel: ModelInfo = {
 		id: 'openrouter/auto',
@@ -102,6 +109,7 @@
 		provider: OPENROUTER_PROVIDER,
 		speed_tier: 'balanced',
 		cost_tier: 'unknown',
+		cost_symbol: 'Varies',
 		capabilities: {
 			reasoning: false,
 			code: false,
@@ -126,6 +134,20 @@
 		{ value: 'medium', label: 'Medium' },
 		{ value: 'high', label: 'High' },
 		{ value: 'xhigh', label: 'Extra high' }
+	];
+
+	const toolModeOptions = [
+		{ value: 'inherit', label: 'Use inherited setting' },
+		{ value: 'off', label: 'Off' },
+		{ value: 'auto', label: 'Let model decide' },
+		{ value: 'required', label: 'Require when available' }
+	];
+
+	const toolChoiceOptions = [
+		{ value: 'inherit', label: 'Model default' },
+		{ value: 'off', label: 'No tools' },
+		{ value: 'auto', label: 'Auto' },
+		{ value: 'required', label: 'Required' }
 	];
 
 	const costFilterOptions = [
@@ -247,6 +269,29 @@
 		return !modelIsFree(model) && model.id !== 'openrouter/auto';
 	}
 
+	function modelCostLabel(model: ModelInfo): string {
+		if (modelIsFree(model)) return 'Free';
+		const symbol = typeof model.cost_symbol === 'string' ? model.cost_symbol.trim() : '';
+		return symbol || priceSymbolFromTier(model.cost_tier);
+	}
+
+	function priceSymbolFromTier(tier: string): string {
+		switch (tier) {
+			case 'free':
+				return 'Free';
+			case 'low':
+				return '$';
+			case 'medium':
+				return '$$';
+			case 'high':
+				return '$$$';
+			case 'premium':
+				return '$$$$';
+			default:
+				return 'Varies';
+		}
+	}
+
 	function isModelLocked(model: ModelInfo): boolean {
 		return modelIsPaid(model) && !hasSelectedProviderPaidRoute();
 	}
@@ -298,7 +343,14 @@
 		return Boolean(model.capabilities[capability]);
 	}
 
-	function syncSelectionFromValue(nextValue: ModelSelection | null | undefined) {
+	function syncSelectionFromValue(
+		nextValue: ModelSelection | null | undefined,
+		{ force = false }: { force?: boolean } = {}
+	) {
+		const externalValueSignature = selectionSignature(nextValue ?? null);
+		if (!force && externalValueSignature === lastSyncedExternalValueSignature) return;
+		lastSyncedExternalValueSignature = externalValueSignature;
+
 		const providerFromValue =
 			typeof nextValue?.provider === 'string' && nextValue.provider.trim().length > 0
 				? nextValue.provider.trim()
@@ -321,6 +373,7 @@
 			selectedCustomModel = '';
 			selectedCustomBackup = '';
 			selectedReasoning = 'default';
+			syncToolSettings(null);
 			return;
 		}
 
@@ -339,9 +392,16 @@
 			selectedModel = normalizeSelectedModel(nextValue.primary);
 			selectedCustomModel = '';
 		} else {
-			selectionMode = 'custom';
-			selectedCustomModel = nextValue.primary;
-			selectedModel = normalizeSelectedModel('');
+			if (customModelAllowed(nextValue.primary)) {
+				selectionMode = 'custom';
+				selectedCustomModel = nextValue.primary;
+				selectedModel = normalizeSelectedModel('');
+			} else {
+				selectionMode = 'presets';
+				selectedPreset = defaultPresetCode();
+				selectedModel = normalizeSelectedModel(resolvedModelForPreset(selectedPreset));
+				selectedCustomModel = nextValue.primary;
+			}
 		}
 
 		if (typeof nextValue.backup === 'string' && nextValue.backup.trim().length > 0) {
@@ -358,6 +418,26 @@
 		}
 
 		selectedReasoning = typeof nextValue.reasoning === 'string' ? nextValue.reasoning : 'default';
+		syncToolSettings(nextValue.tools);
+	}
+
+	function normalizeToolMode(value: unknown): ToolMode {
+		return value === 'off' || value === 'auto' || value === 'required' ? value : 'inherit';
+	}
+
+	function syncToolSettings(value: unknown) {
+		const tools = isRecord(value) ? value : {};
+		toolChoiceMode = normalizeToolMode(tools.tool_choice);
+		const webSearch = isRecord(tools.web_search) ? tools.web_search : {};
+		const webFetch = isRecord(tools.web_fetch) ? tools.web_fetch : {};
+		const datetime = isRecord(tools.datetime) ? tools.datetime : {};
+		webSearchMode = normalizeToolMode(webSearch.mode);
+		webFetchMode = normalizeToolMode(webFetch.mode);
+		datetimeMode = normalizeToolMode(datetime.mode);
+		const maxResults = Number(webSearch.max_results);
+		webSearchMaxResults = Number.isFinite(maxResults)
+			? Math.max(1, Math.min(10, Math.round(maxResults)))
+			: 5;
 	}
 
 	async function loadModels() {
@@ -384,7 +464,7 @@
 								auto_upgrade: true
 							}
 						];
-			syncSelectionFromValue(value);
+			syncSelectionFromValue(value, { force: true });
 		} catch (e) {
 			console.error('Failed to load models', e);
 			error = e instanceof Error ? e.message : 'Failed to load models';
@@ -396,7 +476,7 @@
 	async function loadProviderCredentials() {
 		if (Array.isArray(providerCredentials)) {
 			loadedProviderCredentials = providerCredentials;
-			syncSelectionFromValue(value);
+			syncSelectionFromValue(value, { force: true });
 			return;
 		}
 
@@ -412,7 +492,7 @@
 			loadedProviderCredentials = [];
 		} finally {
 			providerLoading = false;
-			syncSelectionFromValue(value);
+			syncSelectionFromValue(value, { force: true });
 		}
 	}
 
@@ -472,21 +552,67 @@
 	}
 
 	function selectedModelAllowsReasoning(): boolean {
+		if (selectionMode === 'custom') return true;
 		return Boolean(selectedPrimaryModelInfo()?.capabilities.reasoning);
+	}
+
+	function selectedModelSupportsTools(): boolean {
+		if (selectionMode === 'custom') return true;
+		const model = selectedPrimaryModelInfo();
+		return Boolean(model?.capabilities.tools || model?.capabilities.web_search);
+	}
+
+	function selectedModelSupportsWebSearch(): boolean {
+		if (selectionMode === 'custom') return true;
+		return Boolean(selectedPrimaryModelInfo()?.capabilities.web_search);
+	}
+
+	function selectedModelSupportsWebFetch(): boolean {
+		if (selectionMode === 'custom') return true;
+		const model = selectedPrimaryModelInfo();
+		return Boolean(model?.capabilities.tools);
+	}
+
+	function selectedModelSupportsDatetime(): boolean {
+		if (selectionMode === 'custom') return true;
+		const model = selectedPrimaryModelInfo();
+		return Boolean(model?.capabilities.tools);
+	}
+
+	function currentToolSettings(): Record<string, unknown> | null {
+		const tools: Record<string, unknown> = {};
+		if (toolChoiceMode !== 'inherit') {
+			tools.tool_choice = toolChoiceMode;
+		}
+		if (webSearchMode !== 'inherit') {
+			tools.web_search = {
+				mode: webSearchMode,
+				max_results: Math.max(1, Math.min(10, Math.round(webSearchMaxResults || 5)))
+			};
+		}
+		if (webFetchMode !== 'inherit') {
+			tools.web_fetch = { mode: webFetchMode };
+		}
+		if (datetimeMode !== 'inherit') {
+			tools.datetime = { mode: datetimeMode };
+		}
+
+		return Object.keys(tools).length > 0 ? tools : null;
 	}
 
 	function currentSelection(): ModelSelection {
 		const includeReasoning =
-			selectionMode !== 'presets' &&
 			selectedReasoning !== 'default' &&
 			selectedModelAllowsReasoning();
+		const tools = currentToolSettings();
 		return {
 			primary: selectedPrimaryValue(),
 			backup: selectedBackupValue(),
 			is_preset: selectionMode === 'presets',
 			provider: selectedProvider,
 			credential_id: selectedCredentialId,
-			...(includeReasoning ? { reasoning: selectedReasoning } : {})
+			...(includeReasoning ? { reasoning: selectedReasoning } : {}),
+			...(tools ? { tools } : {})
 		};
 	}
 
@@ -532,13 +658,19 @@
 		selectedModel = model.id;
 		selectedCustomModel = '';
 		if (!model.capabilities.reasoning) selectedReasoning = 'default';
+		if (!model.capabilities.web_search && webSearchMode !== 'inherit') webSearchMode = 'inherit';
+		if (!model.capabilities.tools) {
+			if (webFetchMode !== 'inherit') webFetchMode = 'inherit';
+			if (datetimeMode !== 'inherit') datetimeMode = 'inherit';
+			if (toolChoiceMode !== 'inherit') toolChoiceMode = 'inherit';
+		}
 		highlightedModelId = model.id;
 		handleSelectionChange();
 		isPickerOpen = false;
 	}
 
 	function applyCustomModel() {
-		if (!customModelLooksValid(selectedCustomModel)) return;
+		if (!customModelLooksValid(selectedCustomModel) || !customModelAllowed(selectedCustomModel)) return;
 		selectionMode = 'custom';
 		selectedReasoning = 'default';
 		handleSelectionChange();
@@ -783,11 +915,31 @@
 		}
 	}
 
+	function categoryRankingItems(model: ModelInfo | null): Array<[string, number]> {
+		if (!model?.category_rankings) return [];
+		return Object.entries(model.category_rankings)
+			.filter(([, rank]) => Number.isFinite(rank) && rank > 0)
+			.sort((a, b) => a[1] - b[1]);
+	}
+
+	function categoryLabel(category: string): string {
+		return category
+			.replace(/_/g, ' ')
+			.replace(/\b\w/g, (letter) => letter.toUpperCase());
+	}
+
 	function customModelLooksValid(modelId: string): boolean {
 		const trimmed = modelId.trim();
 		return (
 			/^[a-z0-9_.-]+\/[a-z0-9_.:-]+$/i.test(trimmed) ||
 			/^~[a-z0-9_.-]+\/[a-z0-9_.:-]+$/i.test(trimmed)
+		);
+	}
+
+	function customModelAllowed(modelId: string): boolean {
+		const trimmed = modelId.trim();
+		return (
+			hasSelectedProviderPaidRoute() || trimmed.endsWith(':free') || trimmed === 'openrouter/free'
 		);
 	}
 
@@ -803,7 +955,7 @@
 	$effect(() => {
 		if (Array.isArray(providerCredentials)) {
 			loadedProviderCredentials = providerCredentials;
-			syncSelectionFromValue(value);
+			syncSelectionFromValue(value, { force: true });
 		}
 	});
 
@@ -812,6 +964,7 @@
 		void resolveSelectionPreview(selection);
 		if (
 			!readonly &&
+			(value === null || value === undefined) &&
 			selection.primary.trim() &&
 			selectionDiffersFromValue(selection) &&
 			selectionSignature(selection) !== lastEmittedSelectionSignature
@@ -898,11 +1051,18 @@
 					>
 						<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">Usage cost</p>
 						<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
-							{selectedProvider === MANAGED_PROVIDER ? 'SF managed' : 'OR direct'}
+							{pricingEstimate.label ??
+								(selectedProvider === MANAGED_PROVIDER ? 'SF managed' : 'OR direct')}
 						</p>
-						<p class="sf:text-xs sf:text-slate-500">
-							{pricingEstimate.estimated_debit_credits} credits
-						</p>
+						{#if pricingEstimate.kind === 'sentient_credits'}
+							<p class="sf:text-xs sf:text-slate-500">
+								Managed Service credit estimate
+							</p>
+						{:else}
+							<p class="sf:text-xs sf:text-slate-500">
+								OpenRouter bills direct usage to the selected route.
+							</p>
+						{/if}
 					</div>
 				{/if}
 			</div>
@@ -1138,7 +1298,7 @@
 															{model.display_name}
 														</span>
 														<Badge variant={costBadgeVariant(model.cost_tier)}>
-															{modelIsFree(model) ? 'Free' : model.cost_tier}
+															{modelCostLabel(model)}
 														</Badge>
 														{#if locked}
 															<Badge variant="warning">Paid model</Badge>
@@ -1196,11 +1356,17 @@
 									<Alert variant="warning"
 										>Use the OpenRouter id format, for example provider/model.</Alert
 									>
+								{:else if selectedCustomModel.trim() && !customModelAllowed(selectedCustomModel)}
+									<Alert variant="warning"
+										>Custom paid model IDs require Sentient Forms Managed Service or your own
+										paid OpenRouter key. Free custom IDs can end in :free or use openrouter/free.</Alert
+									>
 								{/if}
 								<Button
 									size="sm"
 									variant="primary"
-									disabled={!customModelLooksValid(selectedCustomModel)}
+									disabled={!customModelLooksValid(selectedCustomModel) ||
+										!customModelAllowed(selectedCustomModel)}
 									onclick={applyCustomModel}
 								>
 									Use custom model
@@ -1243,6 +1409,74 @@
 								</div>
 							</div>
 						{/if}
+
+						<div class="sf:mt-5 sf:border-t sf:border-slate-200 sf:pt-4">
+							<div class="sf:mb-3">
+								<p class="sf:text-sm sf:font-semibold sf:text-slate-800">Model tools</p>
+								<p class="sf:text-xs sf:text-slate-500">
+									Enable OpenRouter server tools only when the action benefits from fresh or
+									external context.
+								</p>
+							</div>
+							<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
+								<SelectField
+									id={`model-tool-choice-${level}`}
+									label="Tool choice"
+									options={toolChoiceOptions}
+									bind:value={toolChoiceMode}
+									disabled={!selectedModelSupportsTools() && toolChoiceMode === 'inherit'}
+									onchange={handleSelectionChange}
+								/>
+								<SelectField
+									id={`model-web-search-${level}`}
+									label="Web search"
+									options={toolModeOptions}
+									bind:value={webSearchMode}
+									disabled={!selectedModelSupportsWebSearch() && webSearchMode === 'inherit'}
+									onchange={handleSelectionChange}
+								/>
+								{#if webSearchMode !== 'inherit' && webSearchMode !== 'off'}
+									<label class="sf:flex sf:flex-col sf:gap-1">
+										<span class="sf:text-xs sf:font-semibold sf:text-slate-700">
+											Search results per call
+										</span>
+										<input
+											type="number"
+											min="1"
+											max="10"
+											class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+											value={webSearchMaxResults}
+											oninput={(event) => {
+												webSearchMaxResults = Number((event.currentTarget as HTMLInputElement).value);
+												handleSelectionChange();
+											}}
+										/>
+									</label>
+								{/if}
+								<SelectField
+									id={`model-web-fetch-${level}`}
+									label="Web fetch"
+									options={toolModeOptions}
+									bind:value={webFetchMode}
+									disabled={!selectedModelSupportsWebFetch() && webFetchMode === 'inherit'}
+									onchange={handleSelectionChange}
+								/>
+								<SelectField
+									id={`model-datetime-${level}`}
+									label="Current date/time"
+									options={toolModeOptions}
+									bind:value={datetimeMode}
+									disabled={!selectedModelSupportsDatetime() && datetimeMode === 'inherit'}
+									onchange={handleSelectionChange}
+								/>
+							</div>
+							{#if !selectedModelSupportsTools()}
+								<p class="sf:mt-2 sf:text-xs sf:text-slate-500">
+									This cached model does not advertise tool support. Use Custom ID if OpenRouter
+									has newer capabilities than this bundled snapshot.
+								</p>
+							{/if}
+						</div>
 					</section>
 
 					<aside class="sf:bg-slate-50 sf:p-4 sf:sm:p-5">
@@ -1297,6 +1531,24 @@
 								</div>
 							</div>
 
+							{#if categoryRankingItems(detailModel).length > 0}
+								<div>
+									<p class="sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-500">
+										OpenRouter category ranks
+									</p>
+									<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
+										{#each categoryRankingItems(detailModel).slice(0, 8) as [category, rank]}
+											<span
+												class="sf:inline-flex sf:items-center sf:gap-1 sf:rounded-full sf:border sf:border-slate-200 sf:bg-white sf:px-2.5 sf:py-1 sf:text-xs sf:font-medium sf:text-slate-700"
+												title={`OpenRouter ${categoryLabel(category)} rank ${rank}`}
+											>
+												#{rank} {categoryLabel(category)}
+											</span>
+										{/each}
+									</div>
+								</div>
+							{/if}
+
 							{#if detailModel}
 								<div>
 									<p class="sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-500">
@@ -1343,8 +1595,8 @@
 									</p>
 									{#if pricingEstimate}
 										<p class="sf:mt-2 sf:text-xs sf:text-slate-600">
-											SF estimate <strong>{pricingEstimate.estimated_debit_credits}</strong> credits
-											· OR estimate <strong>{pricingEstimate.normalized_actual_credits}</strong>
+											{pricingEstimate.label ??
+												`${pricingEstimate.estimated_debit_credits} credits`}
 										</p>
 									{/if}
 								</div>

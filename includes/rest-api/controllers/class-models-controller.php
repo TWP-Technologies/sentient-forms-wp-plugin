@@ -209,35 +209,131 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
      */
     public function estimate_model( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
+        $selection_payload = [
+            'global_selection'    => $request->get_param( 'global_selection' ),
+            'action_selection'    => $request->get_param( 'action_selection' ),
+            'form_selection'      => $request->get_param( 'form_selection' ),
+            'mapping_selection'   => $request->get_param( 'mapping_selection' ),
+            'template_model_hint' => $request->get_param( 'template_model_hint' ),
+        ];
+
         $resolution = $this->resolve_local_model(
-            [
-                'global_selection'    => $request->get_param( 'global_selection' ),
-                'action_selection'    => $request->get_param( 'action_selection' ),
-                'form_selection'      => $request->get_param( 'form_selection' ),
-                'mapping_selection'   => $request->get_param( 'mapping_selection' ),
-                'template_model_hint' => $request->get_param( 'template_model_hint' ),
-            ]
+            $selection_payload
         );
 
         $model    = $this->get_model_by_id( (string) $resolution['model_id'] );
-        $is_free  = is_array( $model ) && 'free' === (string) ( $model['cost_tier'] ?? '' );
+        $provider = $this->infer_selected_provider( $selection_payload, (string) ( $resolution['resolution_source'] ?? '' ) );
         $base     = absint( $request->get_param( 'base_credit_cost' ) );
-        $estimate = $is_free ? 0 : $base;
 
         return $this->prepare_item_for_response(
             [
                 'resolved_model'   => $resolution,
-                'pricing_estimate' => [
-                    'action_id'                  => sanitize_key( (string) $request->get_param( 'action_id' ) ),
-                    'resolved_model_id'          => (string) $resolution['model_id'],
-                    'base_floor_credits'         => $base,
-                    'normalized_actual_credits'  => $estimate,
-                    'estimated_debit_credits'    => 0,
-                    'pricing_policy_version'     => 'local-openrouter-v1',
-                    'estimate_source'            => 'local_cache_no_sentient_debit',
-                ],
+                'pricing_estimate' => $this->build_pricing_estimate(
+                    sanitize_key( (string) $request->get_param( 'action_id' ) ),
+                    (string) $resolution['model_id'],
+                    $model,
+                    $provider,
+                    $base
+                ),
             ]
         );
+    }
+
+    private function infer_selected_provider( array $selection_payload, string $resolution_source ): string
+    {
+        foreach ( [ 'mapping', 'form', 'action', 'global' ] as $level )
+        {
+            if ( '' !== $resolution_source && $resolution_source !== $level )
+            {
+                continue;
+            }
+
+            $selection = $selection_payload[ $level . '_selection' ] ?? null;
+            if ( is_array( $selection ) && isset( $selection['provider'] ) && is_scalar( $selection['provider'] ) )
+            {
+                $provider = sanitize_key( (string) $selection['provider'] );
+                if ( in_array( $provider, [ 'openrouter', self::MANAGED_PROVIDER ], true ) )
+                {
+                    return $provider;
+                }
+            }
+        }
+
+        return 'openrouter';
+    }
+
+    private function build_pricing_estimate( string $action_id, string $model_id, ?array $model, string $provider, int $base_credits ): array
+    {
+        if ( self::MANAGED_PROVIDER === $provider )
+        {
+            return [
+                'action_id'                 => $action_id,
+                'resolved_model_id'         => $model_id,
+                'route'                     => self::MANAGED_PROVIDER,
+                'kind'                      => 'sentient_credits',
+                'label'                     => sprintf(
+                    /* translators: %d: Sentient Forms managed service credit estimate. */
+                    __( 'SF: %d credits', 'sentient-forms' ),
+                    $base_credits
+                ),
+                'base_floor_credits'        => $base_credits,
+                'normalized_actual_credits' => $base_credits,
+                'estimated_debit_credits'   => $base_credits,
+                'pricing_policy_version'    => 'local-openrouter-v1',
+                'estimate_source'           => 'sentient_managed_route',
+            ];
+        }
+
+        $pricing = is_array( $model['pricing'] ?? null ) ? $model['pricing'] : [];
+        $is_free = is_array( $model ) && ( 'free' === (string) ( $model['cost_tier'] ?? '' ) || 'Free' === (string) ( $model['cost_symbol'] ?? '' ) );
+
+        if ( $is_free )
+        {
+            $kind  = 'openrouter_free';
+            $label = __( 'OR Free', 'sentient-forms' );
+        }
+        elseif ( [] === $pricing || (float) ( $pricing['prompt'] ?? -1 ) < 0 || (float) ( $pricing['completion'] ?? -1 ) < 0 )
+        {
+            $kind  = 'openrouter_variable';
+            $label = __( 'OR: varies', 'sentient-forms' );
+        }
+        else
+        {
+            $kind       = 'openrouter_currency';
+            $input_m    = (float) ( $pricing['prompt'] ?? 0 ) * 1000000;
+            $output_m   = (float) ( $pricing['completion'] ?? 0 ) * 1000000;
+            $label      = sprintf(
+                /* translators: 1: input token dollars per million, 2: output token dollars per million. */
+                __( 'OR: $%1$s/$%2$s per 1M', 'sentient-forms' ),
+                $this->format_usd_amount( $input_m ),
+                $this->format_usd_amount( $output_m )
+            );
+        }
+
+        return [
+            'action_id'                 => $action_id,
+            'resolved_model_id'         => $model_id,
+            'route'                     => 'openrouter',
+            'kind'                      => $kind,
+            'label'                     => $label,
+            'amount_usd'                => null,
+            'provider_pricing'          => $this->sanitize_pricing_map( $pricing ),
+            'base_floor_credits'        => $base_credits,
+            'normalized_actual_credits' => 0,
+            'estimated_debit_credits'   => 0,
+            'pricing_policy_version'    => 'local-openrouter-v1',
+            'estimate_source'           => 'openrouter_direct_route',
+        ];
+    }
+
+    private function format_usd_amount( float $amount ): string
+    {
+        if ( $amount >= 1 )
+        {
+            return number_format_i18n( $amount, 2 );
+        }
+
+        return rtrim( rtrim( number_format_i18n( $amount, 4 ), '0' ), '.' );
     }
 
     private function list_local_openrouter_models(): array
@@ -320,7 +416,7 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             'video'        => in_array( 'video', $input_modalities, true ),
             'tools'        => (bool) array_intersect( $supported_parameters, [ 'tools', 'tool_choice', 'function_call' ] ),
             'structured'   => (bool) array_intersect( $supported_parameters, [ 'response_format', 'structured_outputs' ] ),
-            'web_search'   => array_key_exists( 'web_search', $pricing ),
+            'web_search'   => array_key_exists( 'web_search', $pricing ) || in_array( 'web_search_options', $supported_parameters, true ),
             'long_context' => $context_window >= 128000,
         ];
 
@@ -353,6 +449,7 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
                 : '',
             'speed_tier'      => $this->infer_speed_tier( $model_id, $name ),
             'cost_tier'       => $is_free ? 'free' : $this->infer_cost_tier( $pricing ),
+            'cost_symbol'     => $is_free ? 'Free' : $this->cost_symbol_for_pricing( $pricing ),
             'capabilities'    => $capabilities,
             'context_window'  => $context_window,
             'is_preview'      => $is_preview,
@@ -363,6 +460,8 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             'pricing'         => $this->sanitize_pricing_map( $pricing ),
             'recommended_for' => $this->recommended_for( $is_free, $capabilities, $supported_parameters, $metadata ),
             'recommendation_categories' => $this->sanitize_string_list( $metadata['recommendation_categories'] ?? [] ),
+            'category_rankings' => $this->sanitize_category_rankings( $metadata['category_rankings'] ?? [] ),
+            'ranking_snapshot' => $this->sanitize_ranking_snapshot( $metadata['ranking_snapshot'] ?? [] ),
             'benchmark_notes' => $this->sanitize_string_label_list( $metadata['benchmark_notes'] ?? [] ),
             'source_urls'     => $this->sanitize_url_list( $metadata['source_urls'] ?? [] ),
             'created'         => isset( $metadata['created'] ) && is_scalar( $metadata['created'] ) ? sanitize_text_field( (string) $metadata['created'] ) : null,
@@ -770,6 +869,7 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             'provider'             => 'openrouter',
             'speed_tier'           => 'balanced',
             'cost_tier'            => 'unknown',
+            'cost_symbol'          => 'Varies',
             'capabilities'         => [
                 'reasoning'    => false,
                 'code'         => false,
@@ -785,6 +885,8 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             'supported_parameters' => [],
             'pricing'              => [],
             'recommended_for'      => [ __( 'Fallback until the OpenRouter catalog is refreshed', 'sentient-forms' ) ],
+            'category_rankings'    => [],
+            'ranking_snapshot'     => [],
         ];
     }
 
@@ -845,6 +947,13 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             'qwen'       => 'Qwen',
             'deepseek'   => 'DeepSeek',
             'z-ai'       => 'Z.ai',
+            'x-ai'       => 'xAI',
+            'minimax'    => 'MiniMax',
+            'stepfun'    => 'StepFun',
+            'tencent'    => 'Tencent',
+            'meta-llama' => 'Meta',
+            'inclusionai' => 'Inclusion AI',
+            'xiaomi'     => 'Xiaomi',
             'poolside'   => 'Poolside',
             'nvidia'     => 'NVIDIA',
             default      => $provider_family,
@@ -911,6 +1020,45 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
         return 'premium';
     }
 
+    private function cost_symbol_for_pricing( array $pricing ): string
+    {
+        if ( [] === $pricing )
+        {
+            return 'N/A';
+        }
+
+        $prompt     = isset( $pricing['prompt'] ) ? (float) $pricing['prompt'] : 0.0;
+        $completion = isset( $pricing['completion'] ) ? (float) $pricing['completion'] : 0.0;
+        $max        = max( $prompt, $completion );
+
+        if ( $prompt < 0 || $completion < 0 )
+        {
+            return 'Varies';
+        }
+
+        if ( 0.0 === $max )
+        {
+            return 'Free';
+        }
+
+        if ( $max <= 0.000001 )
+        {
+            return '$';
+        }
+
+        if ( $max <= 0.00001 )
+        {
+            return '$$';
+        }
+
+        if ( $max <= 0.00005 )
+        {
+            return '$$$';
+        }
+
+        return '$$$$';
+    }
+
     private function recommended_for( bool $is_free, array $capabilities, array $supported_parameters, array $metadata = [] ): array
     {
         $recommendations = $this->sanitize_string_label_list( $metadata['recommended_for'] ?? [] );
@@ -959,6 +1107,74 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
         }
 
         return array_values( array_unique( $labels ) );
+    }
+
+    private function sanitize_category_rankings( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $rankings = [];
+        foreach ( $value as $category => $rank )
+        {
+            $category_key = sanitize_key( (string) $category );
+            $rank_value   = absint( $rank );
+            if ( '' !== $category_key && $rank_value > 0 )
+            {
+                $rankings[ $category_key ] = $rank_value;
+            }
+        }
+
+        return $rankings;
+    }
+
+    private function sanitize_ranking_snapshot( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $snapshot = [];
+        foreach ( $value as $key => $item )
+        {
+            $sanitized_key = sanitize_key( (string) $key );
+            if ( '' === $sanitized_key )
+            {
+                continue;
+            }
+
+            if ( is_scalar( $item ) )
+            {
+                $snapshot[ $sanitized_key ] = sanitize_text_field( (string) $item );
+            }
+            elseif ( is_array( $item ) )
+            {
+                $snapshot[ $sanitized_key ] = $this->sanitize_string_label_map( $item );
+            }
+        }
+
+        return $snapshot;
+    }
+
+    private function sanitize_string_label_map( array $value ): array
+    {
+        $map = [];
+        foreach ( $value as $key => $item )
+        {
+            if ( is_scalar( $item ) )
+            {
+                $sanitized_key = sanitize_key( (string) $key );
+                if ( '' !== $sanitized_key )
+                {
+                    $map[ $sanitized_key ] = sanitize_text_field( (string) $item );
+                }
+            }
+        }
+
+        return $map;
     }
 
     /**

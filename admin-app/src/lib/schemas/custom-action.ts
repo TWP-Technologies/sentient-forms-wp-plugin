@@ -139,7 +139,15 @@ function validateCode(value: unknown, issues: ValidationIssue[]): string {
 	return value;
 }
 
-function validateTemplateId(value: unknown, issues: ValidationIssue[]): string {
+function validateTemplateId(
+	value: unknown,
+	issues: ValidationIssue[],
+	actionKind: ActionKind
+): string | null {
+	if (actionKind === 'custom_definition' && (value === undefined || value === null || value === '')) {
+		return null;
+	}
+
 	if (typeof value !== 'string' || value.length === 0) {
 		pushIssue(issues, ['template_id'], 'Template ID is required');
 		return '';
@@ -437,9 +445,10 @@ function result<T>(issues: ValidationIssue[], data: T): SafeParseResult<T> {
 function safeParseCreate(data: unknown): SafeParseResult<CustomActionCreateInput> {
 	const issues: ValidationIssue[] = [];
 	const source = isRecord(data) ? data : {};
+	const shared = validateSharedPayload(data, issues, { requireDisplayName: true });
 	const payload = {
-		...validateSharedPayload(data, issues, { requireDisplayName: true }),
-		template_id: validateTemplateId(source.template_id, issues),
+		...shared,
+		template_id: validateTemplateId(source.template_id, issues, shared.action_kind),
 		code: validateCode(source.code, issues)
 	};
 

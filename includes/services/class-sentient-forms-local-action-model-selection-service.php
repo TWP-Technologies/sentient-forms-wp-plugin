@@ -110,6 +110,16 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             unset( $selection['reasoning'] );
         }
 
+        $tools = $this->sanitize_tool_settings( $selection['tools'] ?? ( is_array( $saved_selection ) ? ( $saved_selection['tools'] ?? null ) : null ) );
+        if ( [] !== $tools )
+        {
+            $selection['tools'] = $tools;
+        }
+        elseif ( isset( $selection['tools'] ) )
+        {
+            unset( $selection['tools'] );
+        }
+
         return $selection;
     }
 
@@ -183,6 +193,16 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         elseif ( isset( $selection['reasoning'] ) )
         {
             unset( $selection['reasoning'] );
+        }
+
+        $tools = $this->sanitize_tool_settings( $runtime['tools'] ?? ( $selection['tools'] ?? null ) );
+        if ( [] !== $tools )
+        {
+            $selection['tools'] = $tools;
+        }
+        elseif ( isset( $selection['tools'] ) )
+        {
+            unset( $selection['tools'] );
         }
 
         return $selection;
@@ -782,13 +802,23 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         $model_id             = sanitize_text_field( (string) ( $row['model_id'] ?? $metadata['id'] ?? '' ) );
         $name                 = isset( $metadata['name'] ) ? sanitize_text_field( (string) $metadata['name'] ) : $model_id;
         $pricing              = is_array( $metadata['pricing'] ?? null ) ? $metadata['pricing'] : [];
+        $architecture         = is_array( $metadata['architecture'] ?? null ) ? $metadata['architecture'] : [];
         $supported_parameters = $this->sanitize_string_list( $metadata['supported_parameters'] ?? [] );
+        $input_modalities     = $this->sanitize_string_list( $metadata['input_modalities'] ?? $architecture['input_modalities'] ?? [] );
+        $output_modalities    = $this->sanitize_string_list( $metadata['output_modalities'] ?? $architecture['output_modalities'] ?? [] );
         $context_window       = isset( $metadata['context_length'] ) ? absint( $metadata['context_length'] ) : 0;
         $is_free              = ! empty( $metadata['free'] );
 
         $capabilities = [
             'reasoning'    => $this->model_has_reasoning( $model_id, $name, $supported_parameters ),
             'code'         => (bool) preg_match( '/code|coder|coding/i', $model_id . ' ' . $name ),
+            'vision'       => in_array( 'image', $input_modalities, true ),
+            'files'        => in_array( 'file', $input_modalities, true ),
+            'audio'        => in_array( 'audio', $input_modalities, true ),
+            'video'        => in_array( 'video', $input_modalities, true ),
+            'tools'        => (bool) array_intersect( $supported_parameters, [ 'tools', 'tool_choice', 'function_call' ] ),
+            'structured'   => (bool) array_intersect( $supported_parameters, [ 'response_format', 'structured_outputs' ] ),
+            'web_search'   => array_key_exists( 'web_search', $pricing ) || in_array( 'web_search_options', $supported_parameters, true ),
             'long_context' => $context_window >= 128000,
         ];
 
@@ -796,9 +826,12 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             array_filter(
                 [
                     $is_free ? 'free' : null,
-                    (bool) array_intersect( $supported_parameters, [ 'response_format', 'structured_outputs' ] ) ? 'structured-output' : null,
+                    $capabilities['structured'] ? 'structured-output' : null,
+                    $capabilities['tools'] ? 'tools' : null,
                     $capabilities['reasoning'] ? 'reasoning' : null,
                     $capabilities['code'] ? 'code' : null,
+                    $capabilities['web_search'] ? 'web-search' : null,
+                    $capabilities['vision'] ? 'vision' : null,
                     $capabilities['long_context'] ? 'long-context' : null,
                 ]
             )
@@ -809,11 +842,15 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             'display_name'   => '' !== $name ? $name : $model_id,
             'speed_tier'     => $this->infer_speed_tier( $model_id, $name ),
             'cost_tier'      => $is_free ? 'free' : $this->infer_cost_tier( $pricing ),
+            'cost_symbol'    => $is_free ? 'Free' : $this->cost_symbol_for_pricing( $pricing ),
             'capabilities'   => $capabilities,
             'context_window' => $context_window,
             'tags'           => $tags,
             'supported_parameters' => $supported_parameters,
+            'input_modalities' => $input_modalities,
+            'output_modalities' => $output_modalities,
             'recommended_for' => $this->sanitize_string_label_list( $metadata['recommended_for'] ?? [] ),
+            'category_rankings' => $this->sanitize_category_rankings( $metadata['category_rankings'] ?? [] ),
         ];
     }
 
@@ -927,6 +964,11 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
                 $sanitized['credential_id'] = $credential_id;
             }
         }
+        $tools = $this->sanitize_tool_settings( $selection['tools'] ?? null );
+        if ( [] !== $tools )
+        {
+            $sanitized['tools'] = $tools;
+        }
         $sanitized['is_preset'] = ! empty( $selection['is_preset'] );
 
         return $sanitized;
@@ -958,6 +1000,45 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         return preg_match( '/flash|mini|lite|fast|turbo|gpt-oss/i', $model_id . ' ' . $name )
             ? 'fast'
             : 'balanced';
+    }
+
+    private function cost_symbol_for_pricing( array $pricing ): string
+    {
+        if ( [] === $pricing )
+        {
+            return 'N/A';
+        }
+
+        $prompt     = isset( $pricing['prompt'] ) ? (float) $pricing['prompt'] : 0.0;
+        $completion = isset( $pricing['completion'] ) ? (float) $pricing['completion'] : 0.0;
+        $max        = max( $prompt, $completion );
+
+        if ( $prompt < 0 || $completion < 0 )
+        {
+            return 'Varies';
+        }
+
+        if ( 0.0 === $max )
+        {
+            return 'Free';
+        }
+
+        if ( $max <= 0.000001 )
+        {
+            return '$';
+        }
+
+        if ( $max <= 0.00001 )
+        {
+            return '$$';
+        }
+
+        if ( $max <= 0.00005 )
+        {
+            return '$$$';
+        }
+
+        return '$$$$';
     }
 
     /**
@@ -1023,6 +1104,74 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         }
 
         return array_values( array_unique( $labels ) );
+    }
+
+    private function sanitize_category_rankings( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $rankings = [];
+        foreach ( $value as $category => $rank )
+        {
+            $category_key = sanitize_key( (string) $category );
+            $rank_value   = absint( $rank );
+            if ( '' !== $category_key && $rank_value > 0 )
+            {
+                $rankings[ $category_key ] = $rank_value;
+            }
+        }
+
+        return $rankings;
+    }
+
+    private function sanitize_tool_settings( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $settings = [];
+        foreach ( [ 'web_search', 'web_fetch', 'datetime' ] as $tool_key )
+        {
+            if ( ! is_array( $value[ $tool_key ] ?? null ) )
+            {
+                continue;
+            }
+
+            $mode = sanitize_key( (string) ( $value[ $tool_key ]['mode'] ?? 'inherit' ) );
+            if ( ! in_array( $mode, [ 'inherit', 'off', 'auto', 'required' ], true ) )
+            {
+                $mode = 'inherit';
+            }
+
+            if ( 'inherit' === $mode )
+            {
+                continue;
+            }
+
+            $settings[ $tool_key ] = [ 'mode' => $mode ];
+
+            if ( 'web_search' === $tool_key )
+            {
+                $max_results = absint( $value[ $tool_key ]['max_results'] ?? 0 );
+                if ( $max_results > 0 )
+                {
+                    $settings[ $tool_key ]['max_results'] = min( 10, $max_results );
+                }
+            }
+        }
+
+        $tool_choice = sanitize_key( (string) ( $value['tool_choice'] ?? 'inherit' ) );
+        if ( in_array( $tool_choice, [ 'off', 'auto', 'required' ], true ) )
+        {
+            $settings['tool_choice'] = $tool_choice;
+        }
+
+        return $settings;
     }
 
     private function sanitize_string_list( mixed $value ): array

@@ -22,6 +22,28 @@ class Sentient_Forms_OpenRouter_Model_Recommendations
      */
     public static function all(): array
     {
+        $generated_manifest = __DIR__ . '/data/openrouter-model-recommendations.php';
+        if ( file_exists( $generated_manifest ) )
+        {
+            $generated_models = require $generated_manifest;
+            if ( is_array( $generated_models ) )
+            {
+                $keyed = [];
+                foreach ( $generated_models as $model )
+                {
+                    if ( is_array( $model ) && isset( $model['id'] ) && is_scalar( $model['id'] ) )
+                    {
+                        $keyed[ (string) $model['id'] ] = $model;
+                    }
+                }
+
+                if ( [] !== $keyed )
+                {
+                    return $keyed;
+                }
+            }
+        }
+
         // Reviewed against OpenRouter's public model catalog on 2026-04-28.
         $models = [
             [

@@ -9,6 +9,7 @@
 		Button,
 		Card,
 		InputField,
+		MergeTagField,
 		ModelSelector,
 		SelectField,
 		TextareaField,
@@ -47,6 +48,7 @@
 		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 	const LOCAL_TEMPLATE_ID_RE = /^[1-9]\d*$/;
+	type CreationMode = 'blank' | 'base';
 
 	let {
 		initialData = null,
@@ -106,7 +108,7 @@
 			value: item.templateId,
 			label: `${definitionLabel(item.definition)}${
 				item.definition.baseCreditCost !== null && item.definition.baseCreditCost !== undefined
-					? ` (${item.definition.baseCreditCost} credits)`
+					? ` (${item.definition.baseCreditCost} managed credits)`
 					: ''
 			}`
 		}))
@@ -119,12 +121,21 @@
 	const initialWebhook = firstEffect('webhook');
 
 	let templateId = $state(initialData?.template_id ?? '');
+	let creationMode = $state<CreationMode>(initialData?.template_id ? 'base' : 'blank');
 	let displayName = $state(initialData?.display_name ?? '');
 	let description = $state(initialData?.description ?? '');
 	let promptOverrides = $state<Record<string, unknown>>(initialData?.prompt_overrides ?? {});
-	let customInstructions = $state(
+	const initialCustomInstructions =
 		typeof initialData?.prompt_overrides?.custom_instructions === 'string'
 			? initialData.prompt_overrides.custom_instructions
+			: '';
+	let customInstructions = $state(initialCustomInstructions);
+	let promptTemplateDraft = $state(
+		typeof initialData?.definition?.prompt_template === 'string'
+			? stripCustomInstructionsSuffix(
+					initialData.definition.prompt_template,
+					initialCustomInstructions
+				)
 			: ''
 	);
 	let modelHint = $state<string | null>(initialData?.model_hint ?? null);
@@ -179,19 +190,53 @@
 		selectableDefinitions.find((item) => item.templateId === templateId)?.definition ?? null
 	);
 	const selectedOutputContract = $derived(
-		initialData?.output_contract ??
+		creationMode === 'blank'
+			? (initialData?.output_contract ?? null)
+			: initialData?.output_contract ??
 			(selectedDefinition?.structuredOutputSchema
 				? { schema: selectedDefinition.structuredOutputSchema }
 				: null)
 	);
 	const generatedCode = $derived(generateCustomActionCode(displayName));
-	const baseTemplateUnavailable = $derived(!isEditMode && selectableDefinitions.length === 0);
+	const baseTemplateUnavailable = $derived(
+		!isEditMode && creationMode === 'base' && selectableDefinitions.length === 0
+	);
 	const resolvedModelHint = $derived(modelSelection?.primary ?? modelHint ?? null);
+	const creationModeOptions = [
+		{ value: 'blank', label: 'Blank custom action' },
+		{ value: 'base', label: 'Start from a built-in action' }
+	];
+
+	const mergeTags = [
+		{
+			group: 'Entry',
+			token: 'entry_id',
+			label: 'Entry ID',
+			description: 'Gravity Forms entry ID.'
+		},
+		{ group: 'Entry', token: 'entry', label: 'Entry JSON', description: 'Rendered entry data.' },
+		{
+			group: 'Entry',
+			token: 'summary_text',
+			label: 'Entry summary',
+			description: 'Plain-language entry summary.'
+		},
+		{ group: 'Form', token: 'form_id', label: 'Form ID' },
+		{ group: 'Form', token: 'form.title', label: 'Form title' },
+		{ group: 'Fields', token: 'field:1', label: 'Field 1' },
+		{ group: 'Fields', token: 'field:2', label: 'Field 2' },
+		{ group: 'Action', token: 'action_label', label: 'Action label' },
+		{ group: 'Action', token: 'action_code', label: 'Action code' },
+		{ group: 'Result', token: 'llm_output', label: 'AI output' },
+		{ group: 'Result', token: 'justification', label: 'Justification' },
+		{ group: 'Result', token: 'classification', label: 'Classification' },
+		{ group: 'Result', token: 'confidence', label: 'Confidence' }
+	];
 
 	let errors = $state<Array<{ path: string; message: string }>>([]);
 
 	$effect(() => {
-		if (!isEditMode && !templateId && selectableDefinitions[0]) {
+		if (!isEditMode && creationMode === 'base' && !templateId && selectableDefinitions[0]) {
 			templateId = selectableDefinitions[0].templateId;
 		}
 	});
@@ -234,6 +279,10 @@
 	}
 
 	function basePromptTemplate(): string {
+		if (promptTemplateDraft.trim().length > 0) {
+			return promptTemplateDraft.trim();
+		}
+
 		if (
 			isRecord(initialData?.definition) &&
 			typeof initialData.definition.prompt_template === 'string' &&
@@ -250,15 +299,23 @@
 		return 'Review this WordPress form submission and return the requested structured output. Form: {{form.title}} Entry: {{entry}}';
 	}
 
+	function stripCustomInstructionsSuffix(promptTemplate: string, instructions: string): string {
+		const trimmedInstructions = instructions.trim();
+		if (!trimmedInstructions) return promptTemplate;
+
+		const suffix = `\n\nCustom webmaster instructions:\n${trimmedInstructions}`;
+		return promptTemplate.endsWith(suffix)
+			? promptTemplate.slice(0, -suffix.length).trim()
+			: promptTemplate;
+	}
+
 	function buildDefinition(): ActionDefinitionPayload {
 		const baseDefinition = isRecord(initialData?.definition) ? initialData.definition : {};
 		const executionDefaults = isRecord(baseDefinition.execution_defaults)
 			? baseDefinition.execution_defaults
 			: {};
 		const instructions = customInstructions.trim();
-		const promptTemplate = instructions
-			? `${basePromptTemplate()}\n\nCustom webmaster instructions:\n${instructions}`
-			: basePromptTemplate();
+		const promptTemplate = basePromptTemplate();
 
 		return {
 			...baseDefinition,
@@ -295,7 +352,8 @@
 			prompt_overrides: buildPromptOverrides(),
 			model_hint: resolvedModelHint?.trim() || null,
 			model_selection: modelSelection,
-			action_kind: initialData?.action_kind ?? 'template_override',
+			action_kind:
+				initialData?.action_kind ?? (creationMode === 'blank' ? 'custom_definition' : 'template_override'),
 			definition: buildDefinition(),
 			definition_version: initialData?.definition_version ?? 1,
 			output_contract: selectedOutputContract,
@@ -308,7 +366,7 @@
 
 		return {
 			...base,
-			template_id: templateId.trim(),
+			template_id: creationMode === 'base' ? templateId.trim() : null,
 			code: generatedCode
 		} as CustomActionCreateInput;
 	}
@@ -317,12 +375,11 @@
 		event.preventDefault();
 		errors = [];
 
-		if (baseTemplateUnavailable) {
+		if (baseTemplateUnavailable || (!isEditMode && creationMode === 'base' && !templateId.trim())) {
 			errors = [
 				{
 					path: 'template_id',
-					message:
-						'Action template IDs are unavailable. Refresh action templates before creating a custom action.'
+					message: 'Select a base action template or switch to a blank custom action.'
 				}
 			];
 			return;
@@ -362,7 +419,7 @@
 	<p class="sf:text-sm sf:text-slate-500 sf:mb-4">
 		{isEditMode
 			? 'Update instructions and post-execution abilities for this custom action.'
-			: 'Choose the base action template, describe what should happen, and select concrete abilities.'}
+			: 'Create a blank action or start from a built-in action, then configure the model and visible effects.'}
 	</p>
 
 	<form
@@ -372,12 +429,22 @@
 	>
 		{#if baseTemplateUnavailable}
 			<Alert variant="warning">
-				Action template IDs are not available in the current definitions response. Custom actions
-				need a base action template.
+				Built-in action template IDs are not available in the current definitions response. You
+				can still create a blank custom action.
 			</Alert>
 		{/if}
 
 		{#if !isEditMode}
+			<SelectField
+				id="custom-action-creation-mode"
+				label="Start From"
+				bind:value={creationMode}
+				options={creationModeOptions}
+				description="Blank actions are fully custom. Built-in actions inherit a shipped prompt and output contract that you can specialize."
+			/>
+		{/if}
+
+		{#if !isEditMode && creationMode === 'base'}
 			<SelectField
 				id="custom-action-base-action"
 				label="Base Action"
@@ -388,7 +455,7 @@
 				placeholder="Select a base action"
 				description="The action template this custom action extends. The technical template ID is handled automatically."
 			/>
-		{:else}
+		{:else if isEditMode && initialData?.template_id}
 			<div class="sf:flex sf:flex-col sf:gap-1">
 				<span class="sf:text-sm sf:font-medium sf:text-slate-700">Base Action</span>
 				<p
@@ -441,11 +508,24 @@
 			placeholder="Optional summary shown in the admin UI."
 		/>
 
-		<TextareaField
+		<MergeTagField
+			id="custom-action-prompt-template"
+			label="Prompt Template"
+			bind:value={promptTemplateDraft}
+			rows={6}
+			tokens={mergeTags}
+			placeholder={'Review {{form.title}} submission {{entry}} and return the requested result.'}
+			description={creationMode === 'base'
+				? 'Leave blank to use the built-in prompt, or write a full replacement prompt with merge tags.'
+				: 'Write the prompt this action sends to the selected model. Insert merge tags at the cursor instead of memorizing syntax.'}
+		/>
+
+		<MergeTagField
 			id="custom-action-instructions"
 			label="Custom Instructions"
 			bind:value={customInstructions}
 			rows={5}
+			tokens={mergeTags}
 			placeholder="Tell the AI exactly what to do, what tone to use, and what output you need."
 			description="These instructions are stored locally and appended to the base prompt for this action."
 		/>
@@ -470,11 +550,12 @@
 						description="Write the action result back to the Gravity Forms entry for demo-visible auditability."
 					/>
 					{#if addEntryNote}
-						<TextareaField
+						<MergeTagField
 							id="custom-action-entry-note-message"
 							label="Entry Note Message"
 							bind:value={entryNoteMessage}
 							rows={3}
+							tokens={mergeTags}
 							placeholder={'Follow up with {{field:1}} about {{llm_output}}.'}
 						/>
 					{/if}
@@ -488,23 +569,28 @@
 						description="Email the site admin or a configured recipient after the action completes."
 					/>
 					{#if sendEmail}
-						<InputField
+						<MergeTagField
 							id="custom-action-email-recipients"
 							label="Recipients"
 							bind:value={emailRecipients}
+							rows={2}
+							tokens={mergeTags}
 							placeholder="Leave blank for site admin, or use {{field:2}}"
 						/>
-						<InputField
+						<MergeTagField
 							id="custom-action-email-subject"
 							label="Email Subject"
 							bind:value={emailSubject}
+							rows={2}
+							tokens={mergeTags}
 							placeholder={'Sentient Forms completed {{action_label}}'}
 						/>
-						<TextareaField
+						<MergeTagField
 							id="custom-action-email-body"
 							label="Email Body"
 							bind:value={emailBody}
 							rows={4}
+							tokens={mergeTags}
 							placeholder={'{{llm_output}}'}
 						/>
 					{/if}
@@ -545,11 +631,9 @@
 					{/if}
 				</div>
 			</div>
-
 			<p class="sf:text-xs sf:text-slate-500">
-				Available placeholders include {'{{entry_id}}'}, {'{{form_id}}'},
-				{'{{action_label}}'}, {'{{llm_output}}'}, {'{{justification}}'}, and
-				{'{{field:1}}'}.
+				Merge tags are inserted from the controls above so WebMasters do not have to memorize
+				placeholder syntax.
 			</p>
 		</div>
 
@@ -578,7 +662,13 @@
 			{#if onCancel}
 				<Button type="button" variant="secondary" onclick={onCancel}>Cancel</Button>
 			{/if}
-			<Button type="submit" disabled={submitting || baseTemplateUnavailable || (!isEditMode && !generatedCode)}>
+			<Button
+				type="submit"
+				disabled={submitting ||
+					baseTemplateUnavailable ||
+					(!isEditMode && creationMode === 'base' && !templateId.trim()) ||
+					(!isEditMode && !generatedCode)}
+			>
 				{#if submitting}
 					{isEditMode ? 'Saving…' : 'Creating…'}
 				{:else}
