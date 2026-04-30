@@ -230,6 +230,7 @@ function cleanModel(model, ranks, topTenFrequency, retrievedAt) {
 
 	return {
 		...model,
+		description: cleanDescription(model.description ?? ''),
 		free: Boolean(model.free || String(model.id ?? '').endsWith(':free') || costSymbol(model) === 'Free'),
 		input_modalities: inputModalities,
 		output_modalities: outputModalities,
@@ -245,6 +246,14 @@ function cleanModel(model, ranks, topTenFrequency, retrievedAt) {
 		},
 		source_urls: sourceUrls
 	};
+}
+
+function cleanDescription(value) {
+	return asciiSafe(value)
+		.replace(/\[([^\]]+)\]\((?:https?:\/\/|\/)[^)]+\)/gi, '$1')
+		.replace(/https?:\/\/\S+/gi, '')
+		.replace(/\s+/g, ' ')
+		.trim();
 }
 
 function phpString(value) {

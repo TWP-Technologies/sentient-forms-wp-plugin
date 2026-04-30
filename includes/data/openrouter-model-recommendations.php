@@ -3,7 +3,7 @@
  * Generated OpenRouter model recommendation snapshot.
  *
  * Source: https://openrouter.ai/api/v1/models and category filters.
- * Generated: 2026-04-29T23:38:32.175Z
+ * Generated: 2026-04-30T01:23:47.543Z
  *
  * @package SentientForms
  */
@@ -90,7 +90,7 @@ return [
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -194,13 +194,13 @@ return [
 			'Finance',
 		],
 		'category_rankings' => [
-			'programming' => 10,
+			'programming' => 9,
 			'technology' => 7,
 			'finance' => 5,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -288,7 +288,6 @@ return [
 		],
 		'cost_symbol' => '$$$',
 		'recommended_for' => [
-			'Top 3 Programming',
 			'Frequent OpenRouter category top-10',
 			'Code generation',
 			'Structured output',
@@ -301,13 +300,13 @@ return [
 			'Finance',
 		],
 		'category_rankings' => [
-			'programming' => 3,
-			'technology' => 9,
-			'finance' => 7,
+			'programming' => 4,
+			'technology' => 10,
+			'finance' => 6,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -405,15 +404,13 @@ return [
 		],
 		'recommendation_categories' => [
 			'Health',
-			'Trivia',
 		],
 		'category_rankings' => [
 			'health' => 9,
-			'trivia' => 10,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -523,22 +520,20 @@ return [
 			'Legal',
 			'Finance',
 			'Health',
-			'Academia',
 		],
 		'category_rankings' => [
 			'programming' => 6,
 			'marketing' => 7,
 			'seo' => 1,
 			'technology' => 1,
-			'science' => 6,
-			'legal' => 7,
+			'science' => 5,
+			'legal' => 8,
 			'finance' => 2,
 			'health' => 7,
-			'academia' => 10,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -631,7 +626,7 @@ return [
 		'cost_symbol' => '$',
 		'recommended_for' => [
 			'Top 1 Roleplay',
-			'Top 3 Health',
+			'Top 1 Health',
 			'Frequent OpenRouter category top-10',
 			'Structured output',
 			'Tool calling',
@@ -640,7 +635,7 @@ return [
 		'recommendation_categories' => [
 			'Roleplay',
 			'Seo',
-			'Science',
+			'Translation',
 			'Health',
 			'Trivia',
 			'Academia',
@@ -648,14 +643,14 @@ return [
 		'category_rankings' => [
 			'roleplay' => 1,
 			'seo' => 7,
-			'science' => 10,
-			'health' => 3,
-			'trivia' => 4,
-			'academia' => 5,
+			'translation' => 9,
+			'health' => 1,
+			'trivia' => 5,
+			'academia' => 7,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -763,12 +758,12 @@ return [
 		],
 		'category_rankings' => [
 			'roleplay' => 2,
-			'legal' => 9,
-			'academia' => 6,
+			'legal' => 7,
+			'academia' => 5,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -870,7 +865,7 @@ return [
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -966,7 +961,7 @@ return [
 		],
 		'cost_symbol' => '$$',
 		'recommended_for' => [
-			'Top 2 Legal',
+			'Top 3 Legal',
 			'Top 3 Trivia',
 			'Top 1 Academia',
 			'Frequent OpenRouter category top-10',
@@ -978,7 +973,6 @@ return [
 		'recommendation_categories' => [
 			'Marketing',
 			'Seo',
-			'Technology',
 			'Science',
 			'Translation',
 			'Legal',
@@ -990,18 +984,17 @@ return [
 		'category_rankings' => [
 			'marketing' => 4,
 			'seo' => 5,
-			'technology' => 10,
 			'science' => 9,
 			'translation' => 4,
-			'legal' => 2,
-			'finance' => 6,
+			'legal' => 3,
+			'finance' => 7,
 			'health' => 4,
 			'trivia' => 3,
 			'academia' => 1,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -1097,9 +1090,8 @@ return [
 		],
 		'cost_symbol' => '$',
 		'recommended_for' => [
-			'Top 1 Marketing',
-			'Top 3 Translation',
-			'Top 3 Legal',
+			'Top 2 Marketing',
+			'Top 2 Translation',
 			'Frequent OpenRouter category top-10',
 			'Speed',
 			'Structured output',
@@ -1118,17 +1110,17 @@ return [
 		],
 		'category_rankings' => [
 			'roleplay' => 5,
-			'marketing' => 1,
+			'marketing' => 2,
 			'seo' => 6,
-			'translation' => 3,
-			'legal' => 3,
+			'translation' => 2,
+			'legal' => 4,
 			'health' => 5,
-			'trivia' => 5,
-			'academia' => 4,
+			'trivia' => 4,
+			'academia' => 6,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -1229,11 +1221,15 @@ return [
 			'Tool calling',
 			'Long context',
 		],
-		'recommendation_categories' => [],
-		'category_rankings' => [],
+		'recommendation_categories' => [
+			'Roleplay',
+		],
+		'category_rankings' => [
+			'roleplay' => 10,
+		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -1334,9 +1330,10 @@ return [
 		'recommended_for' => [
 			'Top 3 Marketing',
 			'Top 2 Science',
-			'Top 2 Translation',
+			'Top 3 Translation',
+			'Top 2 Legal',
 			'Top 3 Finance',
-			'Top 2 Health',
+			'Top 3 Health',
 			'Top 2 Trivia',
 			'Top 2 Academia',
 			'Frequent OpenRouter category top-10',
@@ -1359,21 +1356,21 @@ return [
 			'Academia',
 		],
 		'category_rankings' => [
-			'roleplay' => 6,
+			'roleplay' => 7,
 			'marketing' => 3,
 			'seo' => 4,
 			'technology' => 4,
 			'science' => 2,
-			'translation' => 2,
-			'legal' => 4,
+			'translation' => 3,
+			'legal' => 2,
 			'finance' => 3,
-			'health' => 2,
+			'health' => 3,
 			'trivia' => 2,
 			'academia' => 2,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -1481,7 +1478,7 @@ return [
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -1593,7 +1590,7 @@ return [
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -1697,11 +1694,11 @@ return [
 		],
 		'category_rankings' => [
 			'translation' => 8,
-			'trivia' => 7,
+			'trivia' => 6,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -1798,6 +1795,7 @@ return [
 		],
 		'cost_symbol' => '$',
 		'recommended_for' => [
+			'Frequent OpenRouter category top-10',
 			'Structured output',
 			'Tool calling',
 			'Long context',
@@ -1805,14 +1803,16 @@ return [
 		'recommendation_categories' => [
 			'Roleplay',
 			'Health',
+			'Trivia',
 		],
 		'category_rankings' => [
-			'roleplay' => 7,
-			'health' => 10,
+			'roleplay' => 6,
+			'health' => 8,
+			'trivia' => 10,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -1886,7 +1886,7 @@ return [
 			'repetition_penalty' => null,
 		],
 		'knowledge_cutoff' => null,
-		'expiration_date' => '2026-04-30',
+		'expiration_date' => '2026-05-07',
 		'links' => [
 			'details' => '/api/v1/models/inclusionai/ling-2.6-1t-20260423/endpoints',
 		],
@@ -1908,11 +1908,11 @@ return [
 			'Programming',
 		],
 		'category_rankings' => [
-			'programming' => 8,
+			'programming' => 7,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -2007,7 +2007,7 @@ return [
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -2100,11 +2100,11 @@ return [
 		],
 		'category_rankings' => [
 			'seo' => 10,
-			'translation' => 7,
+			'translation' => 6,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -2213,7 +2213,7 @@ return [
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -2306,7 +2306,7 @@ return [
 		],
 		'cost_symbol' => '$$',
 		'recommended_for' => [
-			'Top 3 Technology',
+			'Top 2 Technology',
 			'Top 1 Science',
 			'Frequent OpenRouter category top-10',
 			'Code generation',
@@ -2322,14 +2322,14 @@ return [
 			'Finance',
 		],
 		'category_rankings' => [
-			'programming' => 7,
-			'technology' => 3,
+			'programming' => 8,
+			'technology' => 2,
 			'science' => 1,
-			'finance' => 8,
+			'finance' => 9,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -2426,7 +2426,7 @@ return [
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -2536,7 +2536,7 @@ return [
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -2652,12 +2652,12 @@ return [
 			'programming' => 1,
 			'technology' => 6,
 			'science' => 4,
-			'finance' => 9,
-			'academia' => 7,
+			'finance' => 8,
+			'academia' => 8,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -2754,7 +2754,7 @@ return [
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -2781,7 +2781,7 @@ return [
 		'hugging_face_id' => null,
 		'name' => 'OpenAI: GPT-4o-mini',
 		'created' => 1721260800,
-		'description' => 'GPT-4o mini is OpenAI\'s newest model after [GPT-4 Omni](/models/openai/gpt-4o), supporting both text and image inputs with text outputs. As their most advanced small model, it is many multiples more affordable...',
+		'description' => 'GPT-4o mini is OpenAI\'s newest model after GPT-4 Omni, supporting both text and image inputs with text outputs. As their most advanced small model, it is many multiples more affordable...',
 		'context_length' => 128000,
 		'architecture' => [
 			'modality' => 'text+image+file->text',
@@ -2855,14 +2855,14 @@ return [
 			'Translation',
 		],
 		'category_rankings' => [
-			'marketing' => 9,
+			'marketing' => 10,
 			'seo' => 8,
-			'science' => 8,
-			'translation' => 10,
+			'science' => 7,
+			'translation' => 7,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -2962,11 +2962,11 @@ return [
 		],
 		'category_rankings' => [
 			'health' => 6,
-			'academia' => 9,
+			'academia' => 10,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -3062,7 +3062,7 @@ return [
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -3160,7 +3160,7 @@ return [
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -3257,16 +3257,18 @@ return [
 		'recommendation_categories' => [
 			'Technology',
 			'Science',
+			'Legal',
 			'Trivia',
 		],
 		'category_rankings' => [
-			'technology' => 8,
-			'science' => 5,
-			'trivia' => 6,
+			'technology' => 9,
+			'science' => 8,
+			'legal' => 9,
+			'trivia' => 8,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -3355,16 +3357,21 @@ return [
 		],
 		'cost_symbol' => '$$',
 		'recommended_for' => [
+			'Top 3 Academia',
 			'Speed',
 			'Structured output',
 			'Tool calling',
 			'Long context',
 		],
-		'recommendation_categories' => [],
-		'category_rankings' => [],
+		'recommendation_categories' => [
+			'Academia',
+		],
+		'category_rankings' => [
+			'academia' => 3,
+		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -3457,15 +3464,11 @@ return [
 			'Tool calling',
 			'Long context',
 		],
-		'recommendation_categories' => [
-			'Marketing',
-		],
-		'category_rankings' => [
-			'marketing' => 10,
-		],
+		'recommendation_categories' => [],
+		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -3561,7 +3564,7 @@ return [
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -3658,7 +3661,7 @@ return [
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -3753,7 +3756,7 @@ return [
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -3843,9 +3846,8 @@ return [
 		],
 		'cost_symbol' => '$',
 		'recommended_for' => [
-			'Top 2 Marketing',
-			'Top 1 Health',
-			'Top 3 Academia',
+			'Top 1 Marketing',
+			'Top 2 Health',
 			'Frequent OpenRouter category top-10',
 			'Structured output',
 			'Tool calling',
@@ -3862,16 +3864,16 @@ return [
 		],
 		'category_rankings' => [
 			'roleplay' => 8,
-			'marketing' => 2,
+			'marketing' => 1,
 			'seo' => 9,
 			'translation' => 5,
 			'legal' => 5,
-			'health' => 1,
-			'academia' => 3,
+			'health' => 2,
+			'academia' => 4,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -3974,7 +3976,7 @@ return [
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -4045,11 +4047,12 @@ return [
 			'Long context',
 		],
 		'recommendation_categories' => [],
+		'description' => '',
 		'cost_symbol' => 'Varies',
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -4103,11 +4106,12 @@ return [
 			'Long context',
 		],
 		'recommendation_categories' => [],
+		'description' => '',
 		'cost_symbol' => 'Free',
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -4134,7 +4138,7 @@ return [
 		'hugging_face_id' => null,
 		'name' => 'Poolside: Laguna M.1 (free)',
 		'created' => 1777388504,
-		'description' => 'Laguna M.1 is the flagship coding agent model from [Poolside](https://poolside.ai), optimized for complex software engineering tasks. Designed for agentic coding workflows, it supports tool calling and reasoning, with a 128K...',
+		'description' => 'Laguna M.1 is the flagship coding agent model from Poolside, optimized for complex software engineering tasks. Designed for agentic coding workflows, it supports tool calling and reasoning, with a 128K...',
 		'context_length' => 131072,
 		'architecture' => [
 			'modality' => 'text->text',
@@ -4194,7 +4198,7 @@ return [
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -4302,7 +4306,7 @@ return [
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -4403,7 +4407,7 @@ return [
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -4492,7 +4496,7 @@ return [
 		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -4590,11 +4594,11 @@ return [
 			'Legal',
 		],
 		'category_rankings' => [
-			'legal' => 8,
+			'legal' => 10,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -4681,6 +4685,7 @@ return [
 		],
 		'cost_symbol' => '$',
 		'recommended_for' => [
+			'Top 3 Programming',
 			'Top 3 Science',
 			'Frequent OpenRouter category top-10',
 			'Code generation',
@@ -4691,17 +4696,17 @@ return [
 		],
 		'recommendation_categories' => [
 			'Programming',
+			'Marketing',
 			'Science',
-			'Translation',
 		],
 		'category_rankings' => [
-			'programming' => 4,
+			'programming' => 3,
+			'marketing' => 9,
 			'science' => 3,
-			'translation' => 6,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -4787,19 +4792,24 @@ return [
 		'cost_symbol' => 'Free',
 		'recommended_for' => [
 			'Top 2 Programming',
+			'Frequent OpenRouter category top-10',
 			'Code generation',
 			'Tool calling',
 			'Long context',
 		],
 		'recommendation_categories' => [
 			'Programming',
+			'Technology',
+			'Finance',
 		],
 		'category_rankings' => [
 			'programming' => 2,
+			'technology' => 8,
+			'finance' => 10,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -4891,7 +4901,7 @@ return [
 		],
 		'cost_symbol' => '$',
 		'recommended_for' => [
-			'Top 2 Seo',
+			'Top 3 Seo',
 			'Speed',
 			'Structured output',
 			'Tool calling',
@@ -4901,11 +4911,11 @@ return [
 			'Seo',
 		],
 		'category_rankings' => [
-			'seo' => 2,
+			'seo' => 3,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -4998,8 +5008,8 @@ return [
 		'cost_symbol' => '$',
 		'recommended_for' => [
 			'Top 3 Roleplay',
-			'Top 3 Seo',
-			'Top 2 Technology',
+			'Top 2 Seo',
+			'Top 3 Technology',
 			'Top 1 Legal',
 			'Frequent OpenRouter category top-10',
 			'Speed',
@@ -5013,7 +5023,6 @@ return [
 			'Seo',
 			'Technology',
 			'Legal',
-			'Finance',
 			'Health',
 			'Trivia',
 			'Academia',
@@ -5021,17 +5030,16 @@ return [
 		'category_rankings' => [
 			'roleplay' => 3,
 			'marketing' => 5,
-			'seo' => 3,
-			'technology' => 2,
+			'seo' => 2,
+			'technology' => 3,
 			'legal' => 1,
-			'finance' => 10,
-			'health' => 8,
-			'trivia' => 8,
-			'academia' => 8,
+			'health' => 10,
+			'trivia' => 7,
+			'academia' => 9,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -5131,7 +5139,7 @@ return [
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -5227,7 +5235,7 @@ return [
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -5322,15 +5330,11 @@ return [
 			'Tool calling',
 			'Long context',
 		],
-		'recommendation_categories' => [
-			'Roleplay',
-		],
-		'category_rankings' => [
-			'roleplay' => 10,
-		],
+		'recommendation_categories' => [],
+		'category_rankings' => [],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
@@ -5435,11 +5439,11 @@ return [
 			'Programming',
 		],
 		'category_rankings' => [
-			'programming' => 9,
+			'programming' => 10,
 		],
 		'ranking_snapshot' => [
 			'source' => 'openrouter.ai category filters',
-			'retrieved_at' => '2026-04-29T23:38:32.175Z',
+			'retrieved_at' => '2026-04-30T01:23:47.543Z',
 			'categories' => [
 				'programming' => 'programming',
 				'roleplay' => 'roleplay',
