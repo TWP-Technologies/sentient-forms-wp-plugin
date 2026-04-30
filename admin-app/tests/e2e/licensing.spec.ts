@@ -626,8 +626,8 @@ test('existing subscriptions use billing portal for plan management', async ({ p
 		const body = route.request().postDataJSON() as
 			| { flow_type?: string; subscription_id?: string; return_url?: string }
 			| undefined;
-		expect(body?.flow_type).toBe('subscription_update');
-		expect(body?.subscription_id).toBe('sub_trial_next_cycle_123');
+		expect(body?.flow_type).toBe('home');
+		expect(body?.subscription_id).toBeUndefined();
 		expect(typeof body?.return_url).toBe('string');
 
 		return route.fulfill({
@@ -740,8 +740,8 @@ test('licensing billing error state maps portal failures to actionable copy', as
 		const body = route.request().postDataJSON() as
 			| { flow_type?: string; subscription_id?: string; return_url?: string }
 			| undefined;
-		expect(body?.flow_type).toBe('subscription_update');
-		expect(body?.subscription_id).toBe('sub_test_123');
+		expect(body?.flow_type).toBe('home');
+		expect(body?.subscription_id).toBeUndefined();
 		return route.fulfill({
 			status: 403,
 			body: JSON.stringify({

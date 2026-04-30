@@ -401,15 +401,6 @@
 	}
 
 	function buildPortalSessionRequest(): BillingPortalSessionRequest {
-		const subscriptionId = billingSubscription?.provider_subscription_id ?? null;
-		if (subscriptionId) {
-			return {
-				return_url: currentRouteUrl(),
-				flow_type: 'subscription_update',
-				subscription_id: subscriptionId
-			};
-		}
-
 		return {
 			return_url: currentRouteUrl(),
 			flow_type: 'home'
