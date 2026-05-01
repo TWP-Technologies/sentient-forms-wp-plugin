@@ -705,6 +705,12 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         $models      = $this->list_local_openrouter_models();
         $recommended = $this->pick_default_model_id( $models );
 
+        $evidence_model = $this->pick_evidence_model_id( $models, $preset_code );
+        if ( null !== $evidence_model )
+        {
+            return $evidence_model;
+        }
+
         return match ( $preset_code ) {
             'sf_default',
             'sf_general'    => $recommended,
@@ -719,13 +725,13 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             'sf_low_cost'   => $this->pick_preferred_model_id( $models, [ 'deepseek/deepseek-v4-flash', 'google/gemini-3.1-flash-lite-preview', 'deepseek/deepseek-v4-pro', 'openai/gpt-5.4-mini' ] )
                 ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' !== (string) ( $model['cost_tier'] ?? '' ) && in_array( (string) ( $model['cost_tier'] ?? '' ), [ 'low', 'medium' ], true ) )
                 ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => 'free' === (string) ( $model['cost_tier'] ?? '' ) ) ?: $recommended ) ),
-            'sf_long_context' => $this->pick_preferred_model_id( $models, [ 'moonshotai/kimi-k2.5', 'google/gemini-3.1-pro-preview', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] )
+            'sf_long_context' => $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5', 'google/gemini-3.1-pro-preview', 'anthropic/claude-opus-4.7', 'moonshotai/kimi-k2.6' ] )
                 ?: ( $this->pick_long_context_model_id( $models ) ?: $recommended ),
-            'sf_reasoning'  => $this->pick_preferred_model_id( $models, [ 'anthropic/claude-opus-4.7', 'openai/gpt-5.5-pro', 'z-ai/glm-5.1', 'google/gemini-3.1-pro-preview' ] )
+            'sf_reasoning'  => $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5-pro', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7', 'z-ai/glm-5.1', 'google/gemini-3.1-pro-preview' ] )
                 ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['reasoning'] ) ) ?: $recommended ),
-            'sf_code'       => $this->pick_preferred_model_id( $models, [ 'anthropic/claude-opus-4.7', 'anthropic/claude-sonnet-4.6', 'moonshotai/kimi-k2.6', 'qwen/qwen3.6-max-preview', 'openai/gpt-5.5' ] )
+            'sf_code'       => $this->pick_preferred_model_id( $models, [ 'moonshotai/kimi-k2.6', 'anthropic/claude-opus-4.7', 'anthropic/claude-sonnet-4.6', 'qwen/qwen3.6-max-preview', 'openai/gpt-5.5' ] )
                 ?: ( $this->pick_first_model_id( $models, static fn ( array $model ): bool => ! empty( $model['capabilities']['code'] ) ) ?: $recommended ),
-            'sf_legal'      => $this->pick_preferred_model_id( $models, [ 'anthropic/claude-sonnet-4.6', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] ) ?: $recommended,
+            'sf_legal'      => $this->pick_preferred_model_id( $models, [ 'google/gemini-3.1-pro-preview', 'anthropic/claude-sonnet-4.6', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] ) ?: $recommended,
             'sf_financial'  => $this->pick_preferred_model_id( $models, [ 'anthropic/claude-sonnet-4.6', 'anthropic/claude-opus-4.7', 'openai/gpt-5.5' ] ) ?: $recommended,
             'sf_privacy'    => $this->pick_preferred_model_id( $models, [ 'openai/gpt-5.5', 'anthropic/claude-sonnet-4.6', 'google/gemini-3.1-pro-preview' ] ) ?: $recommended,
             'sf_realtime'   => $this->pick_preferred_model_id( $models, [ 'google/gemini-3-flash-preview', 'google/gemini-3.1-flash-lite-preview', 'deepseek/deepseek-v4-flash' ] ) ?: $recommended,
@@ -734,6 +740,39 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             'sf_agentic'    => $this->pick_preferred_model_id( $models, [ 'google/gemini-3.1-pro-preview', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] ) ?: $recommended,
             default         => '',
         };
+    }
+
+    private function pick_evidence_model_id( array $models, string $preset_code ): ?string
+    {
+        $evidence = $this->model_preset_evidence();
+        if ( ! isset( $evidence[ $preset_code ]['preferred_model_ids'] ) || ! is_array( $evidence[ $preset_code ]['preferred_model_ids'] ) )
+        {
+            return null;
+        }
+
+        return $this->pick_preferred_model_id( $models, $this->sanitize_model_id_list( $evidence[ $preset_code ]['preferred_model_ids'] ) );
+    }
+
+    private function model_preset_evidence(): array
+    {
+        static $preset_evidence = null;
+
+        if ( null !== $preset_evidence )
+        {
+            return $preset_evidence;
+        }
+
+        $evidence_file = __DIR__ . '/../data/model-selector-preset-evidence.php';
+        if ( ! file_exists( $evidence_file ) )
+        {
+            $preset_evidence = [];
+            return [];
+        }
+
+        $evidence        = require $evidence_file;
+        $preset_evidence = is_array( $evidence ) ? $evidence : [];
+
+        return $preset_evidence;
     }
 
     /**
@@ -1182,5 +1221,30 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         }
 
         return array_values( array_filter( array_map( 'sanitize_key', $value ) ) );
+    }
+
+    private function sanitize_model_id_list( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $model_ids = [];
+        foreach ( $value as $item )
+        {
+            if ( ! is_scalar( $item ) )
+            {
+                continue;
+            }
+
+            $model_id = sanitize_text_field( (string) $item );
+            if ( '' !== $model_id )
+            {
+                $model_ids[] = $model_id;
+            }
+        }
+
+        return array_values( array_unique( $model_ids ) );
     }
 }

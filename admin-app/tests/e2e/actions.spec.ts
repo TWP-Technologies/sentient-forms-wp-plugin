@@ -1048,9 +1048,9 @@ test.describe('Actions admin flows', () => {
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
 		const drawer = page.getByTestId('link-action-form');
 		await expect(drawer).toBeVisible();
-		const firstHook = drawer.locator('input[type="checkbox"]').first();
-		await firstHook.check();
-		await expect(firstHook).toBeChecked();
+		const validationHook = drawer.getByTestId('create-trigger-hook-gform_validation');
+		await validationHook.check();
+		await expect(validationHook).toBeChecked();
 
 		// Built-in actions tab is default; wait for Spam Detection to be selected by the app.
 		const spamRadio = drawer.getByRole('radio', { name: /Spam Detection/i });
@@ -1738,7 +1738,13 @@ test.describe('Actions admin flows', () => {
 		await mockWpJson(page, {
 			actions: {
 				forms: { [formSource]: baseForms },
-				definitions: baseDefinitions,
+				definitions: [
+					{
+						...baseDefinitions[0],
+						hooks: ['gform_validation', 'gform_after_submission']
+					},
+					baseDefinitions[1]
+				],
 				status: statusUnknown,
 				formsActions: linkages,
 				formFields: baseFormFields,
@@ -1792,7 +1798,13 @@ test.describe('Actions admin flows', () => {
 		await mockWpJson(page, {
 			actions: {
 				forms: { [formSource]: baseForms },
-				definitions: baseDefinitions,
+				definitions: [
+					{
+						...baseDefinitions[0],
+						hooks: ['gform_validation', 'gform_after_submission']
+					},
+					baseDefinitions[1]
+				],
 				status: statusUnknown,
 				formsActions: linkages,
 				formFields: baseFormFields,
@@ -3557,7 +3569,13 @@ test.describe('Actions admin flows', () => {
 		await mockWpJson(page, {
 			actions: {
 				forms: { [formSource]: baseForms },
-				definitions: baseDefinitions,
+				definitions: [
+					{
+						...baseDefinitions[0],
+						hooks: ['gform_validation', 'gform_after_submission']
+					},
+					baseDefinitions[1]
+				],
 				status: statusUnknown,
 				formsActions: linkages,
 				formFields: baseFormFields,

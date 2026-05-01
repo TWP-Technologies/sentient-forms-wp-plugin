@@ -629,6 +629,39 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'openrouter/free', $client->chat_calls[0]['payload']['model'] );
     }
 
+    public function test_runtime_long_context_preset_uses_evidence_policy(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'primary'   => 'sf_long_context',
+                        'is_preset' => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openai/gpt-5.5', $result['model'] );
+        $this->assertCount( 1, $client->chat_calls );
+        $this->assertSame( 'openai/gpt-5.5', $client->chat_calls[0]['payload']['model'] );
+    }
+
     public function test_runtime_model_selection_can_route_openrouter_action_through_sentient_managed(): void
     {
         $fixture = $this->create_local_openrouter_mapping();

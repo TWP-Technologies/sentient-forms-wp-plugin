@@ -11,11 +11,7 @@
 	import { Alert, Badge, Button, StateTemplate } from '$lib/components/ui';
 	import type { FormSourceSummary, PluginSettingsResponse } from '$lib/api/types';
 
-	type PrivacyPresetId =
-		| 'balanced'
-		| 'privacy_focused'
-		| 'maximum_privacy'
-		| 'maximum_visibility';
+	type PrivacyPresetId = 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility';
 
 	interface PrivacyPresetDefinition {
 		label: string;
@@ -50,9 +46,8 @@
 	let executionEventRetentionDays = $state(90);
 	let deleteDataOnUninstall = $state(true);
 	let storeFullAiOutputs = $state(false);
-	let privacySetupProfile = $state<NonNullable<PluginSettingsResponse['privacy_setup_profile']>>(
-		'balanced'
-	);
+	let privacySetupProfile =
+		$state<NonNullable<PluginSettingsResponse['privacy_setup_profile']>>('balanced');
 	let privacySetupCompletedAt = $state<string | null>(null);
 
 	const privacyPresetDefinitions: Record<PrivacyPresetId, PrivacyPresetDefinition> = {
@@ -121,7 +116,9 @@
 			: 'Balanced'
 	);
 	let activePrivacyPreset = $derived(
-		isKnownPrivacyProfile(privacySetupProfile) ? privacyPresetDefinitions[privacySetupProfile] : null
+		isKnownPrivacyProfile(privacySetupProfile)
+			? privacyPresetDefinitions[privacySetupProfile]
+			: null
 	);
 	let privacyProfileCustomized = $derived(
 		null !== activePrivacyPreset &&
@@ -145,7 +142,10 @@
 			void logging.load();
 		};
 
-		window.addEventListener('sentient-forms:settings-updated', handleSettingsUpdate as EventListener);
+		window.addEventListener(
+			'sentient-forms:settings-updated',
+			handleSettingsUpdate as EventListener
+		);
 
 		return () => {
 			window.removeEventListener(
@@ -169,8 +169,9 @@
 		storeFullAiOutputs = Boolean(settings.store_full_ai_outputs);
 		governanceLoggingEnabled =
 			typeof settings.enable_logging === 'boolean' ? settings.enable_logging : null;
-		privacySetupProfile = (settings.privacy_setup_profile ??
-			'balanced') as NonNullable<PluginSettingsResponse['privacy_setup_profile']>;
+		privacySetupProfile = (settings.privacy_setup_profile ?? 'balanced') as NonNullable<
+			PluginSettingsResponse['privacy_setup_profile']
+		>;
 		privacySetupCompletedAt =
 			typeof settings.privacy_setup_completed_at === 'string'
 				? settings.privacy_setup_completed_at
@@ -372,7 +373,9 @@
 		</p>
 	</header>
 
-	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4">
+	<div
+		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"
+	>
 		{#if !governanceLoaded && executionLoading}
 			<StateTemplate
 				variant="loading"
@@ -392,10 +395,14 @@
 				testId="settings-governance-error-state"
 			/>
 		{:else}
-			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:lg:flex-row sf:lg:items-center">
+			<div
+				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:lg:flex-row sf:lg:items-center"
+			>
 				<div class="sf:space-y-2">
 					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-						<p class="sf:text-base sf:font-semibold sf:text-slate-900">Privacy &amp; visibility profile</p>
+						<p class="sf:text-base sf:font-semibold sf:text-slate-900">
+							Privacy &amp; visibility profile
+						</p>
 						{#if privacyProfileCustomized}
 							<span data-testid="settings-profile-customized-badge">
 								<Badge variant="neutral">Custom settings</Badge>
@@ -421,8 +428,8 @@
 							Started from {activePrivacyProfileLabel}. One or more controls below now differ from
 							that preset, so this site is using a custom privacy configuration.
 						{:else}
-							Start with a preset when you want the plugin to feel obvious instead of technical.
-							The assistant changes retention, uninstall cleanup, local logging, and whether full AI
+							Start with a preset when you want the plugin to feel obvious instead of technical. The
+							assistant changes retention, uninstall cleanup, local logging, and whether full AI
 							outputs are kept.
 						{/if}
 					</p>
@@ -477,7 +484,9 @@
 
 	{#if $asyncHealth.warnings.length}
 		<div class="sf:rounded-xl sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4 sf:space-y-2">
-			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
+			<div
+				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
+			>
 				<p class="sf:font-semibold sf:text-amber-900">Background processing warnings</p>
 				<Button
 					type="button"
@@ -500,7 +509,9 @@
 	{/if}
 
 	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm">
-		<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
+		<div
+			class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
+		>
 			<div>
 				<p class="sf:font-medium sf:text-slate-900">Enable telemetry sharing</p>
 				<p class="sf:text-sm sf:text-slate-600">
@@ -514,53 +525,55 @@
 					type="checkbox"
 					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 					checked={$telemetry.optIn}
-					disabled={$telemetry.saving}
+					disabled={$telemetry.loading || $telemetry.saving}
 					onchange={toggle}
 				/>
 			</label>
 		</div>
 
-			<div class="sf:mt-4 sf:text-xs sf:text-slate-500 sf:space-y-1">
-				{#if $telemetry.syncedAt}
-					<p>Synced {$telemetry.syncedAt}</p>
-				{/if}
-				{#if $telemetry.remoteUpdatedAt}
-					<p>Remote consent record updated {$telemetry.remoteUpdatedAt}</p>
-				{/if}
-			</div>
-			{#if $telemetry.loading}
-				<div class="sf:mt-3">
-					<StateTemplate
-						variant="loading"
-						title="Loading telemetry settings"
-						message="Syncing the latest telemetry consent state."
-						inline
-						dense
-						testId="settings-telemetry-loading-state"
-					/>
-				</div>
-			{:else if $telemetry.lastError}
-				<div class="sf:mt-3">
-					<StateTemplate
-						variant="error"
-						title="Telemetry sync issue"
-						message={$telemetry.lastError}
-						actionLabel="Retry"
-						onAction={() => {
-							void telemetry.load();
-						}}
-						inline
-						dense
-						testId="settings-telemetry-error-state"
-					/>
-				</div>
+		<div class="sf:mt-4 sf:text-xs sf:text-slate-500 sf:space-y-1">
+			{#if $telemetry.syncedAt}
+				<p>Synced {$telemetry.syncedAt}</p>
+			{/if}
+			{#if $telemetry.remoteUpdatedAt}
+				<p>Remote consent record updated {$telemetry.remoteUpdatedAt}</p>
 			{/if}
 		</div>
+		{#if $telemetry.loading}
+			<div class="sf:mt-3">
+				<StateTemplate
+					variant="loading"
+					title="Loading telemetry settings"
+					message="Syncing the latest telemetry consent state."
+					inline
+					dense
+					testId="settings-telemetry-loading-state"
+				/>
+			</div>
+		{:else if $telemetry.lastError}
+			<div class="sf:mt-3">
+				<StateTemplate
+					variant="error"
+					title="Telemetry sync issue"
+					message={$telemetry.lastError}
+					actionLabel="Retry"
+					onAction={() => {
+						void telemetry.load();
+					}}
+					inline
+					dense
+					testId="settings-telemetry-error-state"
+				/>
+			</div>
+		{/if}
+	</div>
 
 	<div
 		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-3"
 	>
-		<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
+		<div
+			class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
+		>
 			<div>
 				<p class="sf:font-medium sf:text-slate-900">Enable on-site logging</p>
 				<p class="sf:text-sm sf:text-slate-600">
@@ -648,7 +661,9 @@
 					</select>
 				</label>
 
-				<label class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3">
+				<label
+					class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3"
+				>
 					<input
 						type="checkbox"
 						class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
@@ -661,13 +676,15 @@
 							Store full AI outputs locally
 						</span>
 						<span class="sf:block sf:text-xs sf:text-slate-500">
-							Off is the safer default. Turn this on when you need to inspect full model replies while
-							building or debugging actions.
+							Off is the safer default. Turn this on when you need to inspect full model replies
+							while building or debugging actions.
 						</span>
 					</span>
 				</label>
 
-				<label class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3 sf:md:col-span-2">
+				<label
+					class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3 sf:md:col-span-2"
+				>
 					<input
 						type="checkbox"
 						class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
@@ -687,7 +704,9 @@
 
 			<Alert variant={storeFullAiOutputs ? 'warning' : 'info'}>
 				<p class="sf:font-semibold">
-					{storeFullAiOutputs ? 'Full replies will be stored locally' : 'Only derived action results are stored'}
+					{storeFullAiOutputs
+						? 'Full replies will be stored locally'
+						: 'Only derived action results are stored'}
 				</p>
 				<p class="sf:mt-1">
 					{storeFullAiOutputs
@@ -699,9 +718,9 @@
 			<Alert variant="info">
 				<p class="sf:font-semibold">High-sensitivity secret option</p>
 				<p class="sf:mt-1">
-					The default vault encrypts saved provider keys locally. If your site has stricter operational
-					controls, switch to a WordPress constant or environment variable instead of storing the key in
-					the database.
+					The default vault encrypts saved provider keys locally. If your site has stricter
+					operational controls, switch to a WordPress constant or environment variable instead of
+					storing the key in the database.
 				</p>
 			</Alert>
 
@@ -710,14 +729,16 @@
 					{retentionSaving ? 'Saving…' : 'Save retention'}
 				</Button>
 				<p class="sf:text-xs sf:text-slate-500">
-					Manual cleanup only keeps new execution logs until an administrator removes them or changes this
-					setting.
+					Manual cleanup only keeps new execution logs until an administrator removes them or
+					changes this setting.
 				</p>
 			</div>
 		{/if}
 	</form>
 
-	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4">
+	<div
+		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"
+	>
 		<div class="sf:space-y-1">
 			<p class="sf:font-medium sf:text-slate-900">Execution controls</p>
 			<p class="sf:text-sm sf:text-slate-600">
@@ -735,7 +756,9 @@
 			/>
 		{/if}
 
-		<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:p-3 sf:bg-slate-50 sf:rounded-lg">
+		<div
+			class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:p-3 sf:bg-slate-50 sf:rounded-lg"
+		>
 			<div>
 				<p class="sf:text-sm sf:font-medium sf:text-slate-700">Global execution</p>
 				<p class="sf:text-xs sf:text-slate-500">
@@ -743,7 +766,9 @@
 				</p>
 			</div>
 			<label class="sf:flex sf:items-center sf:gap-3">
-				<span class="sf:text-sm sf:font-semibold">{executionGlobalDisabled ? 'Paused' : 'Running'}</span>
+				<span class="sf:text-sm sf:font-semibold"
+					>{executionGlobalDisabled ? 'Paused' : 'Running'}</span
+				>
 				<input
 					type="checkbox"
 					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
@@ -758,7 +783,9 @@
 		{#if formSources.length > 0}
 			<div class="sf:space-y-2">
 				{#each formSources as source}
-					<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:p-3 sf:border sf:border-slate-200 sf:rounded-lg">
+					<div
+						class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:p-3 sf:border sf:border-slate-200 sf:rounded-lg"
+					>
 						<div class="sf:flex sf:items-center sf:gap-2">
 							<p class="sf:text-sm sf:text-slate-800">{source.label}</p>
 							<span class="sf:text-xs sf:text-slate-500">
@@ -793,8 +820,8 @@
 		<div class="sf:space-y-1">
 			<p class="sf:font-medium sf:text-slate-900">Background retry policy</p>
 			<p class="sf:text-sm sf:text-slate-600">
-				Configure how many times Sentient Forms retries background jobs and how long it waits between
-				attempts.
+				Configure how many times Sentient Forms retries background jobs and how long it waits
+				between attempts.
 			</p>
 		</div>
 
@@ -847,38 +874,38 @@
 			</div>
 		</form>
 
-			<div class="sf:text-xs sf:text-slate-500 sf:space-y-1">
-				{#if $asyncSettings.updatedAt}
-					<p>Last updated {$asyncSettings.updatedAt}</p>
-				{/if}
-				{#if $asyncSettings.updatedBy}
-					<p>Updated by {$asyncSettings.updatedBy}</p>
-				{/if}
-			</div>
-			{#if $asyncSettings.loading}
-				<StateTemplate
-					variant="loading"
-					title="Loading background processing settings"
-					message="Retrieving the current on-site retry policy."
-					inline
-					dense
-					testId="settings-async-settings-loading-state"
-				/>
-			{:else if $asyncSettings.lastError}
-				<StateTemplate
-					variant="error"
-					title="Background processing settings issue"
-					message={describeAsyncSettingsError($asyncSettings.lastError)}
-					actionLabel="Retry"
-					onAction={() => {
-						void asyncSettings.load();
-					}}
-					inline
-					dense
-					testId="settings-async-settings-error-state"
-				/>
+		<div class="sf:text-xs sf:text-slate-500 sf:space-y-1">
+			{#if $asyncSettings.updatedAt}
+				<p>Last updated {$asyncSettings.updatedAt}</p>
+			{/if}
+			{#if $asyncSettings.updatedBy}
+				<p>Updated by {$asyncSettings.updatedBy}</p>
 			{/if}
 		</div>
+		{#if $asyncSettings.loading}
+			<StateTemplate
+				variant="loading"
+				title="Loading background processing settings"
+				message="Retrieving the current on-site retry policy."
+				inline
+				dense
+				testId="settings-async-settings-loading-state"
+			/>
+		{:else if $asyncSettings.lastError}
+			<StateTemplate
+				variant="error"
+				title="Background processing settings issue"
+				message={describeAsyncSettingsError($asyncSettings.lastError)}
+				actionLabel="Retry"
+				onAction={() => {
+					void asyncSettings.load();
+				}}
+				inline
+				dense
+				testId="settings-async-settings-error-state"
+			/>
+		{/if}
+	</div>
 
 	<div
 		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"
@@ -891,7 +918,9 @@
 		</div>
 
 		<div class="sf:flex sf:flex-col sf:gap-3">
-			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:p-3 sf:bg-slate-50 sf:rounded-lg">
+			<div
+				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:p-3 sf:bg-slate-50 sf:rounded-lg"
+			>
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Queue depth</p>
 					<p class="sf:text-xl sf:font-semibold sf:text-slate-900">{$asyncHealth.queue_depth}</p>
@@ -946,8 +975,8 @@
 			<div class="sf:bg-white sf:rounded-xl sf:p-6 sf:max-w-sm sf:space-y-4 sf:shadow-xl">
 				<p class="sf:font-semibold sf:text-slate-900">Clear all job metadata?</p>
 				<p class="sf:text-sm sf:text-slate-600">
-					This will remove all tracked background jobs, including successful ones. This action cannot be
-					undone.
+					This will remove all tracked background jobs, including successful ones. This action
+					cannot be undone.
 				</p>
 				<div class="sf:flex sf:flex-wrap sf:gap-3 sf:justify-end">
 					<Button type="button" variant="secondary" onclick={() => (showClearConfirm = false)}>

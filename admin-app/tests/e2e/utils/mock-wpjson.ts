@@ -101,7 +101,21 @@ const defaultModelCatalog = {
 			description: 'Recommended paid model for production workflows.',
 			category: 'local',
 			resolved_model_id: 'openai/gpt-5.5',
-			auto_upgrade: true
+			auto_upgrade: true,
+			rationale:
+				'Default favors broad benchmark strength, structured/tool support, and production-stable paid routing.',
+			score: 92,
+			evidence_confidence: 'high',
+			evaluated_at: '2026-05-01',
+			score_breakdown: { category_fit: 93, operations: 86, availability: 95 },
+			top_candidates: [
+				{
+					model_id: 'openai/gpt-5.5',
+					score: 92,
+					notes: 'Best broad default among current cached paid candidates.'
+				}
+			],
+			source_urls: ['https://artificialanalysis.ai/models', 'https://openrouter.ai/models']
 		},
 		{
 			code: 'sf_free',
@@ -116,7 +130,10 @@ const defaultModelCatalog = {
 };
 
 export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
-	await page.context().unroute('**/wp-json/sentient-forms/v1/**').catch(() => {});
+	await page
+		.context()
+		.unroute('**/wp-json/sentient-forms/v1/**')
+		.catch(() => {});
 	const envelope = (data: unknown) =>
 		JSON.stringify({
 			success: true,
@@ -245,56 +262,56 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-			if (urlWithoutQuery.endsWith('/settings') && method === 'PUT') {
-				const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
-				Object.assign(settingsState, body);
-				return route.fulfill({
-					status: 200,
-					headers: { 'content-type': 'application/json' },
-					body: envelope(settingsState)
-				});
-			}
+		if (urlWithoutQuery.endsWith('/settings') && method === 'PUT') {
+			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+			Object.assign(settingsState, body);
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope(settingsState)
+			});
+		}
 
-			const actionDefaultsMatch = urlWithoutQuery.match(/\/actions\/([^/]+)\/defaults$/);
-			if (actionDefaultsMatch && method === 'GET') {
-				const actionId = decodeURIComponent(actionDefaultsMatch[1]);
-				const config = actionDefaultsState[actionId] ?? {};
-				return route.fulfill({
-					status: 200,
-					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({
-						success: true,
-						data: {
-							form_source: 'global',
-							form_id: 0,
-							action_id: actionId,
-							config
-						}
-					})
-				});
-			}
+		const actionDefaultsMatch = urlWithoutQuery.match(/\/actions\/([^/]+)\/defaults$/);
+		if (actionDefaultsMatch && method === 'GET') {
+			const actionId = decodeURIComponent(actionDefaultsMatch[1]);
+			const config = actionDefaultsState[actionId] ?? {};
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					success: true,
+					data: {
+						form_source: 'global',
+						form_id: 0,
+						action_id: actionId,
+						config
+					}
+				})
+			});
+		}
 
-			if (actionDefaultsMatch && method === 'POST') {
-				const actionId = decodeURIComponent(actionDefaultsMatch[1]);
-				const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
-				actionDefaultsState[actionId] = {
-					...(actionDefaultsState[actionId] ?? {}),
-					...body
-				};
-				return route.fulfill({
-					status: 200,
-					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({
-						success: true,
-						data: {
-							form_source: 'global',
-							form_id: 0,
-							action_id: actionId,
-							config: actionDefaultsState[actionId]
-						}
-					})
-				});
-			}
+		if (actionDefaultsMatch && method === 'POST') {
+			const actionId = decodeURIComponent(actionDefaultsMatch[1]);
+			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+			actionDefaultsState[actionId] = {
+				...(actionDefaultsState[actionId] ?? {}),
+				...body
+			};
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					success: true,
+					data: {
+						form_source: 'global',
+						form_id: 0,
+						action_id: actionId,
+						config: actionDefaultsState[actionId]
+					}
+				})
+			});
+		}
 
 		if (urlWithoutQuery.endsWith('/meta/capabilities')) {
 			return route.fulfill({
@@ -335,9 +352,15 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			const mapping = payload.mapping_selection as Record<string, unknown> | undefined;
 			const action = payload.action_selection as Record<string, unknown> | undefined;
-			const primary = String(mapping?.primary ?? action?.primary ?? payload.template_model_hint ?? 'openai/gpt-5.5');
+			const primary = String(
+				mapping?.primary ?? action?.primary ?? payload.template_model_hint ?? 'openai/gpt-5.5'
+			);
 			const resolvedModelId =
-				primary === 'sf_default' ? 'openai/gpt-5.5' : primary === 'sf_free' ? 'openrouter/free' : primary;
+				primary === 'sf_default'
+					? 'openai/gpt-5.5'
+					: primary === 'sf_free'
+						? 'openrouter/free'
+						: primary;
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -355,9 +378,15 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			const mapping = payload.mapping_selection as Record<string, unknown> | undefined;
 			const action = payload.action_selection as Record<string, unknown> | undefined;
-			const primary = String(mapping?.primary ?? action?.primary ?? payload.template_model_hint ?? 'openai/gpt-5.5');
+			const primary = String(
+				mapping?.primary ?? action?.primary ?? payload.template_model_hint ?? 'openai/gpt-5.5'
+			);
 			const resolvedModelId =
-				primary === 'sf_default' ? 'openai/gpt-5.5' : primary === 'sf_free' ? 'openrouter/free' : primary;
+				primary === 'sf_default'
+					? 'openai/gpt-5.5'
+					: primary === 'sf_free'
+						? 'openrouter/free'
+						: primary;
 			const actionId = String(payload.action_id ?? 'mock_action');
 			return route.fulfill({
 				status: 200,
@@ -414,7 +443,11 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		if (routes.actions?.formFields && /forms\/\d+\/actions\/fields$/.test(url) && method === 'GET') {
+		if (
+			routes.actions?.formFields &&
+			/forms\/\d+\/actions\/fields$/.test(url) &&
+			method === 'GET'
+		) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -442,9 +475,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			disableState.sf_disabled = Boolean(payload.sf_disabled);
 			disableState.effective_disabled = Boolean(
-				disableState.sf_disabled ||
-					disableState.global_disabled ||
-					disableState.provider_disabled
+				disableState.sf_disabled || disableState.global_disabled || disableState.provider_disabled
 			);
 			return route.fulfill({
 				status: 200,
@@ -506,7 +537,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			const responsePayload =
 				typeof routes.actions?.requestTrace === 'function'
 					? routes.actions.requestTrace(payload)
-					: routes.actions?.requestTrace ?? fallback;
+					: (routes.actions?.requestTrace ?? fallback);
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -536,7 +567,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		const actionConfigMatch = urlWithoutQuery.match(/\/forms\/[^/]+\/(\d+)\/action-config\/([^/]+)$/);
+		const actionConfigMatch = urlWithoutQuery.match(
+			/\/forms\/[^/]+\/(\d+)\/action-config\/([^/]+)$/
+		);
 		if (actionConfigMatch && method === 'GET') {
 			return route.fulfill({
 				status: 200,
@@ -559,10 +592,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			method === 'POST'
 		) {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
-			const parent =
-				(payload.parent && typeof payload.parent === 'object'
-					? payload.parent
-					: {}) as Record<string, unknown>;
+			const parent = (
+				payload.parent && typeof payload.parent === 'object' ? payload.parent : {}
+			) as Record<string, unknown>;
 			const sourceId = decodeURIComponent(url.split('/').at(-2) ?? '');
 			const source = routes.actions.formsActions.find(
 				(item) =>
@@ -611,10 +643,8 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 							) as Record<string, { type: 'hook_root' | 'mapping'; mapping_id?: string }>)
 						: {};
 
-				const normalized: Record<
-					string,
-					{ type: 'hook_root' | 'mapping'; mapping_id?: string }
-				> = {};
+				const normalized: Record<string, { type: 'hook_root' | 'mapping'; mapping_id?: string }> =
+					{};
 				for (const hook of hooks) {
 					const sourceEntry = explicit[hook];
 					if (
@@ -640,9 +670,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				Array.from(
 					new Set(
 						Object.values(sources)
-							.filter(
-								(entry) => entry.type === 'mapping' && typeof entry.mapping_id === 'string'
-							)
+							.filter((entry) => entry.type === 'mapping' && typeof entry.mapping_id === 'string')
 							.map((entry) => entry.mapping_id as string)
 					)
 				);
@@ -657,7 +685,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 					: { type: 'hook_root' };
 			const duplicateDependencyIds = deriveDependencyIds(duplicateSources);
 			duplicate.settings =
-				duplicate.settings && typeof duplicate.settings === 'object' && !Array.isArray(duplicate.settings)
+				duplicate.settings &&
+				typeof duplicate.settings === 'object' &&
+				!Array.isArray(duplicate.settings)
 					? duplicate.settings
 					: {};
 			(duplicate.settings as Record<string, unknown>).trigger_sources = duplicateSources;

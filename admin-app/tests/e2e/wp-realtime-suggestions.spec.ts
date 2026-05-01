@@ -34,8 +34,8 @@ async function openRealtimePreview(
 		formId,
 		actionId: 'realtime_suggest',
 		localMappingId: 'map_realtime_suggest',
-		centralActionId: 'spam_detection_v1',
-		actionNameLabel: 'Realtime Suggestions',
+		centralActionId: 'clarification_assistant_v1',
+		actionNameLabel: 'Realtime Clarification',
 		hooks: ['gform_validation'],
 		async: false,
 		rejectSubmission: false,
@@ -68,7 +68,9 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		}
 	});
 
-	test('checkpoint gating + visible rendering + page-change suggestions + focus hotlink', async ({ page }) => {
+	test('checkpoint gating + visible rendering + page-change suggestions + focus hotlink', async ({
+		page
+	}) => {
 		const requests: Array<Record<string, unknown>> = [];
 
 		await page.route('**/actions/suggest*', async (route, request) => {
@@ -78,54 +80,54 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 			const responseBody =
 				currentPage >= 2
 					? {
-						status: 'success',
-						suggestions: [
-							{
-								suggestion_id: 'a4017ddc-c7f9-4850-9ef0-6d58f9ecf821',
-								field_id: '4',
-								severity: 'warning',
-								message: 'Provide mitigation details on page 2.',
-								jump_target_field_id: '4',
-								is_suppressed: false
-							}
-						],
-						meta: { execution_request_id: 'rt-page-2' }
-					}
-					: {
-						status: 'success',
-						suggestions: [
-							{
-								suggestion_id: '0a0a57f6-5437-4cf9-8d57-c9cf21af9695',
-								field_id: '1',
-								severity: 'warning',
-								message: 'Please add specifics to your issue summary.',
-								jump_target_field_id: '1',
-								is_suppressed: false
-							},
-							{
-								suggestion_id: '6a08bc82-8672-4797-b6fd-8940cd95ff6b',
-								field_id: '4',
-								severity: 'info',
-								message: 'This hidden field should not render on page 1.',
-								jump_target_field_id: '4',
-								is_suppressed: false
-							},
-							{
-								suggestion_id: '7f550875-c9d7-4ef6-b1ee-9600952d1110',
-								field_id: '1',
-								severity: 'info',
-								message: 'Suppressed future-mitigated guidance.',
-								jump_target_field_id: '1',
-								is_suppressed: true,
-								suppression_reason: 'mitigated_by_future_field'
-							}
-						],
-						meta: {
-							execution_request_id: 'rt-page-1',
-							correlation_id: 'rt-page-1',
-							credits_debited: 3
+							status: 'success',
+							suggestions: [
+								{
+									suggestion_id: 'a4017ddc-c7f9-4850-9ef0-6d58f9ecf821',
+									field_id: '4',
+									severity: 'warning',
+									message: 'Provide mitigation details on page 2.',
+									jump_target_field_id: '4',
+									is_suppressed: false
+								}
+							],
+							meta: { execution_request_id: 'rt-page-2' }
 						}
-					};
+					: {
+							status: 'success',
+							suggestions: [
+								{
+									suggestion_id: '0a0a57f6-5437-4cf9-8d57-c9cf21af9695',
+									field_id: '1',
+									severity: 'warning',
+									message: 'Please add specifics to your issue summary.',
+									jump_target_field_id: '1',
+									is_suppressed: false
+								},
+								{
+									suggestion_id: '6a08bc82-8672-4797-b6fd-8940cd95ff6b',
+									field_id: '4',
+									severity: 'info',
+									message: 'This hidden field should not render on page 1.',
+									jump_target_field_id: '4',
+									is_suppressed: false
+								},
+								{
+									suggestion_id: '7f550875-c9d7-4ef6-b1ee-9600952d1110',
+									field_id: '1',
+									severity: 'info',
+									message: 'Suppressed future-mitigated guidance.',
+									jump_target_field_id: '1',
+									is_suppressed: true,
+									suppression_reason: 'mitigated_by_future_field'
+								}
+							],
+							meta: {
+								execution_request_id: 'rt-page-1',
+								correlation_id: 'rt-page-1',
+								credits_debited: 3
+							}
+						};
 
 			await route.fulfill({
 				status: 200,
@@ -194,7 +196,9 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		expect(requests.length).toBe(1);
 	});
 
-	test('virtual questions persist exact Q&A and can block next-page navigation', async ({ page }) => {
+	test('virtual questions persist exact Q&A and can block next-page navigation', async ({
+		page
+	}) => {
 		await page.route('**/actions/suggest*', async (route) => {
 			await route.fulfill({
 				status: 200,
@@ -239,7 +243,9 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await page
 			.locator('[data-role="answer-question"][data-question-id="url-context"]')
 			.fill('https://example.test/support');
-		const stored = await page.locator('input[name="input_9"], textarea[name="input_9"]').inputValue();
+		const stored = await page
+			.locator('input[name="input_9"], textarea[name="input_9"]')
+			.inputValue();
 		const parsed = JSON.parse(stored) as {
 			schema: string;
 			mappings: Array<{ questions: Array<{ question: string; answer: string }> }>;

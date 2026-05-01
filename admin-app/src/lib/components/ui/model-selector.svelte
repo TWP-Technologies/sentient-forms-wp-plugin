@@ -559,10 +559,6 @@
 		return modelById(highlightedModelId) ?? modelById(selectedConcreteModelId());
 	}
 
-	function selectedPresetInfo(): ModelPreset | null {
-		return presets.find((preset) => preset.code === selectedPreset) ?? null;
-	}
-
 	function selectedModelAllowsReasoning(): boolean {
 		if (selectionMode === 'custom') return true;
 		return Boolean(selectedPrimaryModelInfo()?.capabilities.reasoning);
@@ -961,6 +957,11 @@
 		return `${model.provider_family ?? model.provider} model`;
 	}
 
+	function presetEvidenceSummary(preset: ModelPreset | null): string {
+		if (typeof preset?.score !== 'number' || preset.score <= 0) return '';
+		return `Evidence ${preset.score}/100`;
+	}
+
 	function costBadgeVariant(tier: string) {
 		switch (tier) {
 			case 'free':
@@ -1211,9 +1212,9 @@
 			aria-labelledby={`model-selector-title-${level}`}
 			data-testid="model-selector-dialog"
 		>
-				<div
-					class="sf:flex sf:h-[calc(100dvh-1rem)] sf:w-full sf:max-w-[88rem] sf:flex-col sf:overflow-hidden sf:rounded-xl sf:bg-white sf:shadow-2xl sf:sm:h-[95vh]"
-				>
+			<div
+				class="sf:flex sf:h-[calc(100dvh-1rem)] sf:w-full sf:max-w-[88rem] sf:flex-col sf:overflow-hidden sf:rounded-xl sf:bg-white sf:shadow-2xl sf:sm:h-[95vh]"
+			>
 				<header
 					class="sf:flex-none sf:border-b sf:border-slate-200 sf:bg-slate-950 sf:px-4 sf:py-4 sf:text-white sf:sm:px-5"
 				>
@@ -1303,9 +1304,7 @@
 						class="sf:flex sf:min-h-0 sf:min-w-0 sf:flex-col sf:border-b sf:border-slate-200 sf:p-4 sf:lg:border-b-0 sf:lg:border-r sf:sm:p-5"
 					>
 						{#if selectionMode === 'presets'}
-								<div
-									class="sf:min-h-0 sf:flex-1 sf:overflow-y-auto sf:pr-1"
-								>
+							<div class="sf:min-h-0 sf:flex-1 sf:overflow-y-auto sf:pr-1">
 								<div
 									class="sf:grid sf:gap-3 sf:md:grid-cols-2"
 									data-testid="model-selector-presets"
@@ -1354,6 +1353,14 @@
 													{/if}
 												</span>
 												<span class="sf:text-sm sf:text-slate-600">{preset.description}</span>
+												{#if presetEvidenceSummary(preset)}
+													<span
+														class="sf:text-[11px] sf:font-semibold sf:text-slate-600"
+														data-testid={`model-preset-evidence-${preset.code}`}
+													>
+														{presetEvidenceSummary(preset)}
+													</span>
+												{/if}
 												<span
 													class="sf:mt-auto sf:break-all sf:font-mono sf:text-xs sf:text-slate-500"
 												>
@@ -1372,20 +1379,20 @@
 								<div class="sf:grid sf:gap-2 sf:xl:grid-cols-[minmax(0,1fr)_10rem_auto]">
 									<label class="sf:flex sf:flex-col sf:gap-1">
 										<span class="sf:text-xs sf:font-semibold sf:text-slate-700">Search models</span>
-											<input
-												class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-												value={searchTerm}
-												oninput={(event) => {
-													searchTerm = (event.currentTarget as HTMLInputElement).value;
-												}}
-											/>
-										</label>
-										<SelectField
-											id={`model-sort-${level}`}
-											label="Sort"
-											options={sortOptions}
-											bind:value={sortMode}
+										<input
+											class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+											value={searchTerm}
+											oninput={(event) => {
+												searchTerm = (event.currentTarget as HTMLInputElement).value;
+											}}
 										/>
+									</label>
+									<SelectField
+										id={`model-sort-${level}`}
+										label="Sort"
+										options={sortOptions}
+										bind:value={sortMode}
+									/>
 									<div class="sf:flex sf:flex-col sf:justify-end">
 										<Button
 											size="sm"
@@ -1796,17 +1803,6 @@
 											</span>
 										{/each}
 									</div>
-								</div>
-							{/if}
-
-							{#if selectedPresetInfo()}
-								<div class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3">
-									<p class="sf:text-xs sf:font-semibold sf:text-slate-700">
-										{selectedPresetInfo()?.display_name}
-									</p>
-									<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
-										{selectedPresetInfo()?.description}
-									</p>
 								</div>
 							{/if}
 

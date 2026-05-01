@@ -128,12 +128,82 @@ class Tests_Models_Controller extends WP_UnitTestCase
             $presets_by_code[ $preset['code'] ] = $preset;
         }
 
-        $this->assertSame( 'openrouter/free', $presets_by_code['sf_free']['resolved_model_id'] );
-        $this->assertSame( 'openai/gpt-5.5-pro', $presets_by_code['sf_quality']['resolved_model_id'] );
-        $this->assertSame( 'anthropic/claude-opus-4.7', $presets_by_code['sf_code']['resolved_model_id'] );
-        $this->assertSame( 'anthropic/claude-sonnet-4.6', $presets_by_code['sf_legal']['resolved_model_id'] );
-        $this->assertSame( 'anthropic/claude-sonnet-4.6', $presets_by_code['sf_financial']['resolved_model_id'] );
-        $this->assertSame( 'google/gemini-3-flash-preview', $presets_by_code['sf_realtime']['resolved_model_id'] );
+        $expected_preset_models = [
+            'sf_default'      => 'openai/gpt-5.5',
+            'sf_general'      => 'openai/gpt-5.5',
+            'sf_quality'      => 'openai/gpt-5.5-pro',
+            'sf_free'         => 'openrouter/free',
+            'sf_structured'   => 'openai/gpt-5.5',
+            'sf_fast'         => 'google/gemini-3-flash-preview',
+            'sf_low_cost'     => 'deepseek/deepseek-v4-flash',
+            'sf_long_context' => 'openai/gpt-5.5',
+            'sf_reasoning'    => 'openai/gpt-5.5-pro',
+            'sf_code'         => 'moonshotai/kimi-k2.6',
+            'sf_legal'        => 'google/gemini-3.1-pro-preview',
+            'sf_financial'    => 'anthropic/claude-sonnet-4.6',
+            'sf_privacy'      => 'openai/gpt-5.5',
+            'sf_realtime'     => 'google/gemini-3-flash-preview',
+            'sf_multimodal'   => 'google/gemini-3.1-pro-preview',
+            'sf_research'     => 'openai/gpt-5.5',
+            'sf_agentic'      => 'google/gemini-3.1-pro-preview',
+        ];
+        foreach ( $expected_preset_models as $preset_code => $model_id )
+        {
+            $this->assertArrayHasKey( $preset_code, $presets_by_code );
+            $this->assertSame( $model_id, $presets_by_code[ $preset_code ]['resolved_model_id'], $preset_code );
+            $this->assertArrayHasKey( 'rationale', $presets_by_code[ $preset_code ], $preset_code );
+            $this->assertArrayHasKey( 'score', $presets_by_code[ $preset_code ], $preset_code );
+            $this->assertNotEmpty( $presets_by_code[ $preset_code ]['source_urls'], $preset_code );
+        }
+
+        $this->assertSame( 93, $presets_by_code['sf_long_context']['score'] );
+        $this->assertSame( 'high', $presets_by_code['sf_long_context']['evidence_confidence'] );
+        $this->assertStringContainsString( 'context-rot', $presets_by_code['sf_long_context']['rationale'] );
+        $this->assertContains( 'https://openrouter.ai/openai/gpt-5.5', $presets_by_code['sf_long_context']['source_urls'] );
+        $this->assertArrayHasKey( 'category_fit', $presets_by_code['sf_long_context']['score_breakdown'] );
+        $this->assertIsArray( $presets_by_code['sf_code']['top_candidates'] );
+    }
+
+    public function test_long_context_preset_uses_evidence_not_largest_advertised_window(): void
+    {
+        $models     = new Sentient_Forms_Model_Cache_Repository( $GLOBALS['wpdb'] );
+        $expires_at = gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS );
+
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'moonshotai/kimi-k2.5',
+                [
+                    'id'                   => 'moonshotai/kimi-k2.5',
+                    'name'                 => 'MoonshotAI: Kimi K2.5',
+                    'free'                 => false,
+                    'context_length'       => 2000000,
+                    'input_modalities'     => [ 'text' ],
+                    'output_modalities'    => [ 'text' ],
+                    'supported_parameters' => [ 'response_format', 'tools' ],
+                    'pricing'              => [
+                        'prompt'     => '0.00000044',
+                        'completion' => '0.000002',
+                    ],
+                ],
+                $expires_at
+            )
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/models' );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data            = $response->get_data();
+        $presets_by_code = [];
+        foreach ( $data['presets'] as $preset )
+        {
+            $presets_by_code[ $preset['code'] ] = $preset;
+        }
+
+        $this->assertSame( 'openai/gpt-5.5', $presets_by_code['sf_long_context']['resolved_model_id'] );
+        $this->assertStringContainsString( 'not just the largest advertised context window', $presets_by_code['sf_long_context']['description'] );
     }
 
     public function test_resolve_model_prefers_mapping_selection_over_lower_scopes(): void

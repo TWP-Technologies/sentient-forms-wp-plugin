@@ -1133,6 +1133,15 @@ export interface ModelPreset {
 	resolved_model_id: string;
 	auto_upgrade: boolean;
 	rationale?: string;
+	score?: number;
+	evidence_confidence?: string;
+	evaluated_at?: string;
+	score_breakdown?: Record<string, number>;
+	top_candidates?: Array<{
+		model_id: string;
+		score: number;
+		notes?: string;
+	}>;
 	source_urls?: string[];
 }
 
@@ -1155,7 +1164,12 @@ export interface ModelPricingEstimate {
 	action_id: string;
 	resolved_model_id: string;
 	route?: 'openrouter' | 'sentient_managed' | string;
-	kind?: 'openrouter_free' | 'openrouter_currency' | 'openrouter_variable' | 'sentient_credits' | string;
+	kind?:
+		| 'openrouter_free'
+		| 'openrouter_currency'
+		| 'openrouter_variable'
+		| 'sentient_credits'
+		| string;
 	label?: string;
 	amount_usd?: number | null;
 	provider_pricing?: Record<string, string>;

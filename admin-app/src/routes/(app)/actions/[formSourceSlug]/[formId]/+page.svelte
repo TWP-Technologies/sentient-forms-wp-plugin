@@ -1500,6 +1500,8 @@
 	}
 
 	function restoreLastHooks() {
+		if (createKind === 'template') return;
+
 		try {
 			const raw = localStorage.getItem(LAST_HOOKS_KEY);
 			if (!raw) return;

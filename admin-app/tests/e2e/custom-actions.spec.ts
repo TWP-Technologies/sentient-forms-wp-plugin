@@ -186,7 +186,50 @@ test.describe('Custom actions admin view', () => {
 									description: 'Recommended paid model.',
 									category: 'local',
 									resolved_model_id: 'openai/gpt-5.5',
-									auto_upgrade: true
+									auto_upgrade: true,
+									rationale:
+										'Default favors broad benchmark strength, structured/tool support, and production-stable paid routing.',
+									score: 92,
+									evidence_confidence: 'high',
+									evaluated_at: '2026-05-01',
+									score_breakdown: { category_fit: 93, operations: 86, availability: 95 },
+									top_candidates: [
+										{
+											model_id: 'openai/gpt-5.5',
+											score: 92,
+											notes: 'Best broad default among current cached paid candidates.'
+										}
+									],
+									source_urls: [
+										'https://artificialanalysis.ai/models',
+										'https://openrouter.ai/models'
+									]
+								},
+								{
+									code: 'sf_long_context',
+									display_name: 'Long context',
+									description:
+										'Prefers models with benchmark-backed long-document reasoning, not just the largest advertised context window.',
+									category: 'local',
+									resolved_model_id: 'openai/gpt-5.5',
+									auto_upgrade: true,
+									rationale:
+										'Long context prioritizes effective long-document reasoning and context-rot resistance.',
+									score: 93,
+									evidence_confidence: 'high',
+									evaluated_at: '2026-05-01',
+									score_breakdown: { category_fit: 95, operations: 82, availability: 94 },
+									top_candidates: [
+										{
+											model_id: 'openai/gpt-5.5',
+											score: 93,
+											notes: 'AA-LCR leader among current selector candidates.'
+										}
+									],
+									source_urls: [
+										'https://artificialanalysis.ai/evaluations/artificial-analysis-long-context-reasoning',
+										'https://llm-stats.com/leaderboards/best-ai-for-long-context'
+									]
 								},
 								{
 									code: 'sf_free',
@@ -396,26 +439,37 @@ test.describe('Custom actions admin view', () => {
 		await expect(createForm.getByLabel('Template ID')).toHaveCount(0);
 		await expect(createForm.getByLabel('Code')).toHaveCount(0);
 		await expect(createForm.getByTestId('model-selector')).toBeVisible();
-			await createForm.getByTestId('model-selector-open').click();
-			await expect(page.getByTestId('model-selector-dialog')).toBeVisible();
-			await page.setViewportSize({ width: 1024, height: 768 });
-			const shellHeight = await page
-				.getByTestId('model-selector-dialog')
-				.locator('> div')
-				.first()
-				.boundingBox();
+		await createForm.getByTestId('model-selector-open').click();
+		await expect(page.getByTestId('model-selector-dialog')).toBeVisible();
+		await expect(page.getByTestId('model-preset-evidence-sf_default')).toContainText(
+			'Evidence 92/100'
+		);
+		await expect(page.getByTestId('model-preset-sf_long_context')).toContainText(
+			'not just the largest advertised context window'
+		);
+		await expect(page.getByTestId('model-preset-evidence-sf_long_context')).toContainText(
+			'Evidence 93/100'
+		);
+		await page.setViewportSize({ width: 1024, height: 768 });
+		const shellHeight = await page
+			.getByTestId('model-selector-dialog')
+			.locator('> div')
+			.first()
+			.boundingBox();
 		expect(shellHeight).not.toBeNull();
 		expect(shellHeight?.height ?? 0).toBeLessThanOrEqual(768 * 0.95 + 2);
-			const presetsScroll = page.getByTestId('model-selector-presets').locator('..');
+		const presetsScroll = page.getByTestId('model-selector-presets').locator('..');
 		await presetsScroll.evaluate((element) => {
 			element.scrollTop = element.scrollHeight;
 		});
 		await expect(page.getByTestId('model-preset-sf_extra_11')).toBeVisible();
-			await page.getByTestId('model-selector-tab-models').click();
-			await expect(page.getByTestId('model-selector-catalog')).toBeVisible();
-			await expect(page.getByTestId('model-selector-catalog').getByLabel('Search models')).toBeVisible();
-			await expect(page.getByTestId('model-selector-detail')).toBeVisible();
-			await expect(page.getByTestId('model-selector-advanced-filters-panel')).toHaveCount(0);
+		await page.getByTestId('model-selector-tab-models').click();
+		await expect(page.getByTestId('model-selector-catalog')).toBeVisible();
+		await expect(
+			page.getByTestId('model-selector-catalog').getByLabel('Search models')
+		).toBeVisible();
+		await expect(page.getByTestId('model-selector-detail')).toBeVisible();
+		await expect(page.getByTestId('model-selector-advanced-filters-panel')).toHaveCount(0);
 		await expect(
 			page.getByTestId('model-row-openai/gpt-5.5').getByText('Paid model').first()
 		).toBeVisible();
@@ -429,15 +483,15 @@ test.describe('Custom actions admin view', () => {
 			Math.abs((dialogHeightBefore?.height ?? 0) - (dialogHeightAfter?.height ?? 0))
 		).toBeLessThanOrEqual(2);
 		await page.getByTestId('model-selector-advanced-filters-toggle').click();
-			await expect(page.getByTestId('model-selector-advanced-filters-panel')).toBeVisible();
-			await expect(page.getByTestId('model-category-filter')).toBeVisible();
-			await expect(page.getByTestId('model-rank-filter')).toBeVisible();
-			await expect(page.getByTestId('model-selector-catalog').getByLabel('Sort')).toBeVisible();
-			await page.getByTestId('model-category-filter').selectOption('programming');
-			await page.getByTestId('model-rank-filter').selectOption('3');
-			await page.getByTestId('model-selector-advanced-filters-toggle').click();
-			await expect(page.getByTestId('model-selector-advanced-filters-panel')).toHaveCount(0);
-			await expect(page.getByTestId('model-row-deepseek/deepseek-r1-0528')).toBeVisible();
+		await expect(page.getByTestId('model-selector-advanced-filters-panel')).toBeVisible();
+		await expect(page.getByTestId('model-category-filter')).toBeVisible();
+		await expect(page.getByTestId('model-rank-filter')).toBeVisible();
+		await expect(page.getByTestId('model-selector-catalog').getByLabel('Sort')).toBeVisible();
+		await page.getByTestId('model-category-filter').selectOption('programming');
+		await page.getByTestId('model-rank-filter').selectOption('3');
+		await page.getByTestId('model-selector-advanced-filters-toggle').click();
+		await expect(page.getByTestId('model-selector-advanced-filters-panel')).toHaveCount(0);
+		await expect(page.getByTestId('model-row-deepseek/deepseek-r1-0528')).toBeVisible();
 		await expect(
 			page.getByTestId('model-selector-detail').getByText('#1 Programming')
 		).toBeVisible();

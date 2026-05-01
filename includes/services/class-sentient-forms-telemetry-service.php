@@ -110,7 +110,17 @@ class Sentient_Forms_Telemetry_Service
         $license = $this->plugin->get_license_data();
         if ( empty( $license['proxy_api_key'] ) )
         {
-            return new WP_Error( 'cps_missing_proxy_key', __( 'Proxy key missing; activate your license first.', 'sentient-forms' ) );
+            $message = __( 'Proxy key missing; telemetry consent was saved locally and will sync after license activation.', 'sentient-forms' );
+            $this->plugin->set_telemetry_settings(
+                [
+                    'telemetry_opt_in' => $opt_in,
+                    'last_error'       => $message,
+                    'updated_at'       => current_time( 'mysql' ),
+                ]
+            );
+            $this->log_debug( 'telemetry opt-in saved locally without proxy key', [ 'telemetry_opt_in' => $opt_in ] );
+
+            return $this->plugin->get_telemetry_settings();
         }
 
         $body = [
@@ -141,7 +151,8 @@ class Sentient_Forms_Telemetry_Service
                     'updated_at'       => current_time( 'mysql' ),
                 ]
             );
-            return $response;
+
+            return $this->plugin->get_telemetry_settings();
         }
 
         $data = json_decode( wp_remote_retrieve_body( $response ), true );
