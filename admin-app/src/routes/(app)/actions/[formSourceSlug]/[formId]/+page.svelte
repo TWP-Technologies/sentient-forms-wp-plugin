@@ -300,6 +300,7 @@
 		gform_after_submission: '📝 After Submission (Background)',
 		real_time: 'Realtime (Form Page)'
 	};
+	const REALTIME_ACTION_ID = 'clarification_assistant_v1';
 	const REALTIME_BLOCKING_OPTIONS = [
 		{ value: 'advisory', label: 'Advisory: never block submit' },
 		{ value: 'require_answers', label: 'Require answers to required AI questions' }
@@ -415,6 +416,46 @@
 		};
 	}
 
+	function isRealtimeEligibleActionId(actionId: string | null | undefined): boolean {
+		return actionId === REALTIME_ACTION_ID;
+	}
+
+	function hookEntriesForAction(actionId: string | null | undefined): [string, string][] {
+		const fallbackEntries = hookEntries.filter(
+			([hookKey]) => hookKey !== 'real_time' || isRealtimeEligibleActionId(actionId)
+		);
+
+		if (!actionId) return fallbackEntries;
+
+		const definition =
+			(actionsState.definitions ?? []).find((item) => item.id === actionId) ??
+			DOCUMENTED_BUILT_IN_DEFINITIONS.find((item) => item.id === actionId);
+		const definitionHooks = normalizeDefinitionHooks(definition?.hooks);
+		const allowedHooks =
+			definitionHooks.length > 0
+				? definitionHooks
+				: isRealtimeEligibleActionId(actionId)
+					? ['real_time']
+					: fallbackEntries.map(([hookKey]) => hookKey);
+		const entryByHook = new Map(hookEntries);
+
+		return normalizeHookIds(allowedHooks)
+			.filter((hookKey) => hookKey !== 'real_time' || isRealtimeEligibleActionId(actionId))
+			.map((hookKey) => [
+				hookKey,
+				entryByHook.get(hookKey) ?? FALLBACK_HOOK_LABELS[hookKey] ?? hookKey
+			]);
+	}
+
+	function sanitizeHooksForAction(
+		hooks: Iterable<string>,
+		actionId: string | null | undefined
+	): string[] {
+		const normalized = normalizeHookIds(hooks);
+		if (isRealtimeEligibleActionId(actionId)) return normalized;
+		return normalized.filter((hook) => hook !== 'real_time');
+	}
+
 	function normalizeRealtimeSettings(value: unknown): RealtimeSettings {
 		const defaults = createDefaultRealtimeSettings();
 		if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -423,9 +464,7 @@
 
 		const candidate = value as Record<string, unknown>;
 		const checkpointFieldIds = Array.isArray(candidate.checkpoint_field_ids)
-			? candidate.checkpoint_field_ids
-					.map((fieldId) => fieldId?.toString().trim())
-					.filter(Boolean)
+			? candidate.checkpoint_field_ids.map((fieldId) => fieldId?.toString().trim()).filter(Boolean)
 			: defaults.checkpoint_field_ids;
 		const debounceMs = Number.parseInt(String(candidate.debounce_ms ?? defaults.debounce_ms), 10);
 		const cooldownMs = Number.parseInt(String(candidate.cooldown_ms ?? defaults.cooldown_ms), 10);
@@ -439,9 +478,7 @@
 					? candidate.storage_target_field_id.trim()
 					: defaults.storage_target_field_id,
 			debounce_ms: Number.isFinite(debounceMs) ? Math.min(5000, Math.max(250, debounceMs)) : 900,
-			cooldown_ms: Number.isFinite(cooldownMs)
-				? Math.min(60000, Math.max(0, cooldownMs))
-				: 8000,
+			cooldown_ms: Number.isFinite(cooldownMs) ? Math.min(60000, Math.max(0, cooldownMs)) : 8000,
 			manual_refresh_enabled:
 				typeof candidate.manual_refresh_enabled === 'boolean'
 					? candidate.manual_refresh_enabled
@@ -971,10 +1008,14 @@
 	});
 
 	const hookEntries = $derived<[string, string][]>(Object.entries(hookOptions));
+	const selectedCreateActionId = $derived(createKind === 'template' ? selectedTemplateId : null);
+	const createHookEntries = $derived(hookEntriesForAction(selectedCreateActionId));
 	const editingLinkage = $derived.by(() => {
 		if (!editingLinkageId) return null;
 		return actionsState.items.find((item) => item.local_mapping_id === editingLinkageId) ?? null;
 	});
+	const editingActionId = $derived(editingLinkage?.central_action_id ?? null);
+	const mappingHookEntries = $derived(hookEntriesForAction(editingActionId));
 	const currentActionDefaults = $derived.by<FormActionConfig>(() => {
 		if (!editingLinkage?.central_action_id) {
 			return createBlankFormActionConfig();
@@ -1040,6 +1081,9 @@
 	);
 	const isRealtimeDraft = $derived(
 		draftHooks.has('real_time') || draftSettings.execution_mode === 'real_time'
+	);
+	const hasDisallowedRealtimeDraft = $derived(
+		isRealtimeDraft && !isRealtimeEligibleActionId(editingActionId)
 	);
 	const realtimeSettings = $derived.by(() =>
 		normalizeRealtimeSettings(draftSettings.realtime_settings)
@@ -1251,10 +1295,9 @@
 	});
 	const modelExecutionSummary = $derived.by(() => {
 		const selection = effectiveMappingModelSelection;
-		const executionMode =
-			isRealtimeDraft
-				? 'Realtime'
-				: effectiveDraftExecutionKind === 'background'
+		const executionMode = isRealtimeDraft
+			? 'Realtime'
+			: effectiveDraftExecutionKind === 'background'
 				? 'Background'
 				: effectiveDraftExecutionKind === 'mixed'
 					? 'Mixed hooks'
@@ -1347,7 +1390,11 @@
 						? ['gform_validation']
 						: ['gform_after_submission']
 					: ['gform_validation'];
-		const normalized = presetHooks.length > 0 ? presetHooks : ['gform_validation'];
+		const actionId = createKind === 'template' ? selectedTemplateId : null;
+		const normalized = sanitizeHooksForAction(
+			presetHooks.length > 0 ? presetHooks : ['gform_validation'],
+			actionId
+		);
 		selectedHooks = new Set(normalized);
 		lastPresetKey = selectedActionKey;
 	});
@@ -1390,10 +1437,22 @@
 	});
 
 	$effect(() => {
-		// Ensure at least one hook is preselected when opening the drawer
-		if (showAddPanel && selectedHooks.size === 0) {
-			const firstHook = Object.keys(hookOptions)[0] ?? 'gform_validation';
-			selectedHooks = new Set([firstHook]);
+		// Keep the drawer selection aligned with the selected action's supported hooks.
+		if (!showAddPanel) return;
+
+		const allowedHooks = new Set(createHookEntries.map(([hookKey]) => hookKey));
+		const nextHooks = new Set([...selectedHooks].filter((hookKey) => allowedHooks.has(hookKey)));
+		if (nextHooks.size === 0) {
+			const firstHook = createHookEntries[0]?.[0] ?? 'gform_validation';
+			nextHooks.add(firstHook);
+		}
+
+		if (
+			nextHooks.size !== selectedHooks.size ||
+			[...nextHooks].some((hookKey) => !selectedHooks.has(hookKey))
+		) {
+			selectedHooks = nextHooks;
+			persistLastHooks([...nextHooks]);
 		}
 	});
 
@@ -1446,7 +1505,7 @@
 			if (!raw) return;
 			const parsed = JSON.parse(raw);
 			if (Array.isArray(parsed) && parsed.every((h) => typeof h === 'string')) {
-				selectedHooks = new Set(parsed);
+				selectedHooks = new Set(sanitizeHooksForAction(parsed, selectedCreateActionId));
 			}
 		} catch (err) {
 			console.warn('Could not restore hooks', err);
@@ -1988,10 +2047,17 @@
 	}
 
 	function toggleHookSelection(hook: string) {
+		if (hook === 'real_time' && !isRealtimeEligibleActionId(selectedCreateActionId)) {
+			notifications.warning(
+				'Realtime triggers are only available for Realtime Clarification Assistant.'
+			);
+			return;
+		}
 		const next = new Set(selectedHooks);
 		next.has(hook) ? next.delete(hook) : next.add(hook);
-		selectedHooks = next;
-		persistLastHooks(Array.from(next));
+		const sanitized = sanitizeHooksForAction(next, selectedCreateActionId);
+		selectedHooks = new Set(sanitized);
+		persistLastHooks(sanitized);
 	}
 
 	function toggleCreateDependencySelection(mappingId: string) {
@@ -2547,10 +2613,16 @@
 	}
 
 	function toggleDraftHook(hook: string) {
+		if (hook === 'real_time' && !isRealtimeEligibleActionId(editingActionId)) {
+			notifications.warning(
+				'Realtime triggers are only available for Realtime Clarification Assistant.'
+			);
+			return;
+		}
 		const next = new Set(draftHooks);
 		next.has(hook) ? next.delete(hook) : next.add(hook);
-		draftHooks = next;
-		const nextHooks = normalizeHookIds(next);
+		draftHooks = new Set(sanitizeHooksForAction(next, editingActionId));
+		const nextHooks = normalizeHookIds(draftHooks);
 		const nextSources = deriveTriggerSourcesForDraft(
 			nextHooks,
 			normalizeDependencyIds(draftSettings.dependency_ids),
@@ -2873,6 +2945,15 @@
 			notifications.error('Select at least one trigger hook.');
 			return;
 		}
+		if (
+			(normalizedHooks.includes('real_time') || draftSettings.execution_mode === 'real_time') &&
+			!isRealtimeEligibleActionId(linkage.central_action_id)
+		) {
+			notifications.error(
+				'Realtime triggers are only available for Realtime Clarification Assistant.'
+			);
+			return;
+		}
 
 		// Ensure types are correct for spam settings
 		if (isSpamActionCode(linkage.central_action_id)) {
@@ -2984,9 +3065,13 @@
 		}
 		createError = null;
 
-		const hooks = Array.from(selectedHooks).filter(Boolean);
+		const hooks = sanitizeHooksForAction(selectedHooks, selectedCreateActionId);
 		if (hooks.length === 0) {
 			createError = 'Select at least one trigger hook.';
+			return;
+		}
+		if (hooks.includes('real_time') && !isRealtimeEligibleActionId(selectedCreateActionId)) {
+			createError = 'Realtime triggers are only available for Realtime Clarification Assistant.';
 			return;
 		}
 
@@ -3009,7 +3094,7 @@
 		const dependencyIds = normalizeDependencyIds(Array.from(selectedCreateDependencyIds));
 		const primaryDependencyId = dependencyIds[0] ?? null;
 		if (dependencyIds.length > 0) {
-			const requiredHooks = normalizeHookIds(selectedHooks);
+			const requiredHooks = normalizeHookIds(hooks);
 			const invalid = dependencyIds.filter((dependencyId) => {
 				const linkage = getLinkageById(dependencyId);
 				if (!linkage || linkage.is_action_enabled_for_form === false) {
@@ -3557,8 +3642,8 @@
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Action library</p>
 					<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
-						Use Add action to map an action to this form. Browse the catalog only when you need
-						to inspect available defaults.
+						Use Add action to map an action to this form. Browse the catalog only when you need to
+						inspect available defaults.
 					</p>
 				</div>
 			</div>
@@ -3789,7 +3874,11 @@
 								Edit defaults for active custom actions, or open the custom action library.
 							</p>
 						</div>
-						<Button size="sm" variant="secondary" onclick={() => navigateToAppPath('/actions/custom')}>
+						<Button
+							size="sm"
+							variant="secondary"
+							onclick={() => navigateToAppPath('/actions/custom')}
+						>
 							Manage
 						</Button>
 					</div>
@@ -3980,7 +4069,10 @@
 			</div>
 		{/if}
 
-		<div class="sf:mt-4 sf:border-t sf:border-slate-200 sf:pt-4" data-testid="form-execution-status">
+		<div
+			class="sf:mt-4 sf:border-t sf:border-slate-200 sf:pt-4"
+			data-testid="form-execution-status"
+		>
 			<details
 				class="sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3"
 				open={actionsState.status?.status === 'error' ||
@@ -4068,8 +4160,8 @@
 								bind:value={entryLookupId}
 							/>
 							<p class="sf:text-xs sf:text-slate-500">
-								Use an entry ID from the Sentient Forms Action Log for this Gravity Forms form,
-								not the Gravity Forms submission ID.
+								Use an entry ID from the Sentient Forms Action Log for this Gravity Forms form, not
+								the Gravity Forms submission ID.
 							</p>
 							<div class="sf:flex sf:justify-end">
 								<Button type="submit" variant="secondary" size="sm">Check log entry</Button>
@@ -4099,7 +4191,9 @@
 									{/if}
 									{#if checkedEntryStatus.metering_summary.workflow}
 										<details class="sf:pt-1">
-											<summary class="sf:cursor-pointer sf:text-xs sf:font-medium sf:text-slate-700">
+											<summary
+												class="sf:cursor-pointer sf:text-xs sf:font-medium sf:text-slate-700"
+											>
 												Workflow metering breakdown
 											</summary>
 											<div class="sf:mt-1 sf:space-y-1">
@@ -4238,8 +4332,17 @@
 									>
 										Triggers
 									</p>
+									{#if hasDisallowedRealtimeDraft}
+										<Alert variant="warning">
+											<p class="sf:text-sm">
+												This mapping has a legacy realtime trigger. Realtime is now reserved for
+												Realtime Clarification Assistant, so choose Blocking or Background before
+												saving.
+											</p>
+										</Alert>
+									{/if}
 									<div class="sf:grid sf:gap-2 sf:sm:grid-cols-2">
-										{#each hookEntries as [hookKey, hookLabel] (hookKey)}
+										{#each mappingHookEntries as [hookKey, hookLabel] (hookKey)}
 											<label class="sf:flex sf:items-center sf:gap-2 sf:text-sm">
 												<input
 													type="checkbox"
@@ -4565,8 +4668,9 @@
 								{#if mappingSectionExpansion.realtime}
 									<Alert variant="warning">
 										<p class="sf:text-sm">
-											Real-time analysis holds the visitor on the form while the selected model responds.
-											Use faster models unless the form is important enough to justify the wait.
+											Real-time analysis holds the visitor on the form while the selected model
+											responds. Use faster models unless the form is important enough to justify the
+											wait.
 										</p>
 									</Alert>
 									<div class="sf:grid sf:gap-4 sf:lg:grid-cols-2">
@@ -4602,13 +4706,13 @@
 													)
 												})}
 										/>
-											<SelectField
-												id="realtime-storage-target"
-												label="Virtual Q&A storage field"
-												description="Use a dedicated hidden field or textarea so Sentient Forms does not overwrite a visitor's normal answer."
-												value={realtimeSettings.storage_target_field_id}
-												options={realtimeStorageFieldOptions}
-												onchange={(event) =>
+										<SelectField
+											id="realtime-storage-target"
+											label="Virtual Q&A storage field"
+											description="Use a dedicated hidden field or textarea so Sentient Forms does not overwrite a visitor's normal answer."
+											value={realtimeSettings.storage_target_field_id}
+											options={realtimeStorageFieldOptions}
+											onchange={(event) =>
 												updateRealtimeSettings({
 													storage_target_field_id: event.currentTarget.value
 												})}
@@ -4663,7 +4767,8 @@
 												{/each}
 											</div>
 											<p class="sf:mt-2 sf:text-xs sf:text-slate-500">
-												If no checkpoints are selected, visible field changes can trigger this action.
+												If no checkpoints are selected, visible field changes can trigger this
+												action.
 											</p>
 										{/if}
 									</div>
@@ -5372,12 +5477,12 @@
 									<ModelSelector
 										value={localBuilderModelSelection}
 										label="Local model policy"
-											level="action"
-											templateModelHint="openrouter/auto"
-											{providerCredentials}
-											allowedProviders={['openrouter']}
-											onchange={handleLocalBuilderModelSelectionChange}
-										/>
+										level="action"
+										templateModelHint="openrouter/auto"
+										{providerCredentials}
+										allowedProviders={['openrouter']}
+										onchange={handleLocalBuilderModelSelectionChange}
+									/>
 								</div>
 							{/if}
 						</div>
@@ -5391,35 +5496,20 @@
 							{/if}
 						</div>
 						<div class="sf:flex sf:flex-wrap sf:gap-3">
-							{#if hookEntries.length === 0}
-								{#each Object.entries(FALLBACK_HOOK_LABELS) as [hookKey, hookLabel]}
-									<label
-										class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2"
-									>
-										<input
-											type="checkbox"
-											class="sf:form-checkbox sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											checked={selectedHooks.has(hookKey)}
-											onchange={() => toggleHookSelection(hookKey)}
-										/>
-										<span>{hookLabel}</span>
-									</label>
-								{/each}
-							{:else}
-								{#each hookEntries as [hookKey, hookLabel] (hookKey)}
-									<label
-										class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2"
-									>
-										<input
-											type="checkbox"
-											class="sf:form-checkbox sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											checked={selectedHooks.has(hookKey)}
-											onchange={() => toggleHookSelection(hookKey)}
-										/>
-										<span>{hookLabel}</span>
-									</label>
-								{/each}
-							{/if}
+							{#each createHookEntries as [hookKey, hookLabel] (hookKey)}
+								<label
+									class="sf:flex sf:items-center sf:gap-2 sf:text-sm sf:text-slate-700 sf:border sf:border-slate-200 sf:rounded-md sf:px-3 sf:py-2"
+								>
+									<input
+										type="checkbox"
+										class="sf:form-checkbox sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+										checked={selectedHooks.has(hookKey)}
+										onchange={() => toggleHookSelection(hookKey)}
+										data-testid={`create-trigger-hook-${hookKey}`}
+									/>
+									<span>{hookLabel}</span>
+								</label>
+							{/each}
 						</div>
 					</div>
 

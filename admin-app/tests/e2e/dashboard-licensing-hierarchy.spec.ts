@@ -48,7 +48,9 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		);
 	});
 
-	test('dashboard leads with managed service and self-managed OpenRouter state', async ({ page }) => {
+	test('dashboard leads with managed service and self-managed OpenRouter state', async ({
+		page
+	}) => {
 		let licenseRequests = 0;
 		let creditRequests = 0;
 
@@ -160,9 +162,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('dashboard-managed-status')).toContainText(
 			'Managed service not connected'
 		);
-		await expect(page.getByTestId('dashboard-openrouter-status')).toContainText(
-			'OpenRouter ready'
-		);
+		await expect(page.getByTestId('dashboard-openrouter-status')).toContainText('OpenRouter ready');
 		await expect(page.getByTestId('dashboard-free-path-card')).toContainText(
 			'Try actions with free models first'
 		);
@@ -355,7 +355,9 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		});
 	});
 
-	test('providers enables Sentient Forms managed service with disclosure acceptance', async ({ page }) => {
+	test('providers enables Sentient Forms managed service with disclosure acceptance', async ({
+		page
+	}) => {
 		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
 			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
@@ -455,9 +457,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			'Managed account ready'
 		);
 		await page.locator('#sentient-managed-label').fill('Primary managed service');
-		await page
-			.getByLabel(/I understand Sentient Forms receives the rendered prompt/)
-			.check();
+		await page.getByLabel(/I understand Sentient Forms receives the rendered prompt/).check();
 		await page.getByRole('button', { name: 'Enable managed service' }).click();
 
 		await expect(page.getByTestId('providers-managed-setup-result')).toContainText('Ready');
@@ -702,6 +702,6 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 
 		await expect(page.getByRole('heading', { name: 'Activate managed service' })).toBeVisible();
 		await expect(page.getByLabel('License key')).toBeVisible();
-		await expect(page.getByRole('button', { name: 'Activate', exact: true })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Activate license' })).toBeVisible();
 	});
 });

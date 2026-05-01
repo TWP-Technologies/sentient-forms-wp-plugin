@@ -13,6 +13,23 @@
 		ResolvedModelSelection
 	} from '$lib/api/types';
 	import { unwrapRestResponse, type RestEnvelope } from '$lib/api/response';
+	import {
+		MODEL_RANK_CATEGORIES,
+		categoryLabel,
+		categoryRankingItems,
+		filterAndSortModels,
+		isModelFree as modelIsFree,
+		modelCapabilityCount,
+		modelCostLabel,
+		modelBestRank,
+		priceSymbolFromTier,
+		providerDisplayName,
+		providerKey,
+		providerMonogram,
+		type ModelSelectorCapabilityKey,
+		type ModelSelectorCostLimit,
+		type ModelSelectorSortMode
+	} from '$lib/utils/model-selector-presentation';
 	import { wpFetch } from '$lib/wp';
 
 	interface Props {
@@ -33,19 +50,10 @@
 	}
 
 	type SelectionMode = 'presets' | 'models' | 'custom';
-	type CostFilter = 'all' | 'free' | 'paid' | 'locked';
 	type ToolMode = 'inherit' | 'off' | 'auto' | 'required';
 	type CapabilityItem = readonly [key: string, label: string, short: string, active: boolean];
-	type CapabilityFilter =
-		| 'all'
-		| 'reasoning'
-		| 'structured'
-		| 'tools'
-		| 'vision'
-		| 'files'
-		| 'web_search'
-		| 'long_context'
-		| 'code';
+	type RankLimit = '0' | '3' | '5' | '10' | '25' | '50';
+	type ContextLimit = '0' | '32000' | '128000' | '200000' | '1000000';
 
 	let {
 		value = null,
@@ -90,8 +98,13 @@
 	let selectedProvider = $state(OPENROUTER_PROVIDER);
 	let selectedCredentialId = $state<number | null>(null);
 	let searchTerm = $state('');
-	let costFilter = $state<CostFilter>('all');
-	let capabilityFilter = $state<CapabilityFilter>('all');
+	let costLimit = $state<ModelSelectorCostLimit>('all');
+	let providerFilter = $state('all');
+	let categoryFilter = $state('all');
+	let rankLimit = $state<RankLimit>('0');
+	let contextLimit = $state<ContextLimit>('0');
+	let sortMode = $state<ModelSelectorSortMode>('name');
+	let requiredCapabilities = $state<Set<ModelSelectorCapabilityKey>>(new Set());
 	let isPickerOpen = $state(false);
 	let highlightedModelId = $state<string | null>(null);
 	let error = $state<string | null>(null);
@@ -150,23 +163,55 @@
 		{ value: 'required', label: 'Required' }
 	];
 
-	const costFilterOptions = [
+	const costLimitOptions = [
 		{ value: 'all', label: 'All models' },
 		{ value: 'free', label: 'Free' },
-		{ value: 'paid', label: 'Paid' },
-		{ value: 'locked', label: 'Locked' }
+		{ value: 'low', label: '$ or less' },
+		{ value: 'medium', label: '$$ or less' },
+		{ value: 'high', label: '$$$ or less' },
+		{ value: 'premium', label: '$$$$ or less' }
 	];
 
-	const capabilityFilterOptions = [
-		{ value: 'all', label: 'All capabilities' },
-		{ value: 'reasoning', label: 'Reasoning' },
-		{ value: 'structured', label: 'Structured output' },
-		{ value: 'tools', label: 'Tool calling' },
-		{ value: 'vision', label: 'Vision' },
-		{ value: 'files', label: 'Files/PDF' },
-		{ value: 'web_search', label: 'Web search' },
-		{ value: 'long_context', label: 'Long context' },
-		{ value: 'code', label: 'Coding' }
+	const sortOptions = [
+		{ value: 'name', label: 'Name A-Z' },
+		{ value: 'provider', label: 'Provider A-Z' },
+		{ value: 'cost', label: 'Lowest cost' },
+		{ value: 'context', label: 'Largest context' },
+		{ value: 'newest', label: 'Newest' },
+		{ value: 'capabilities', label: 'Most capabilities' },
+		{ value: 'rank', label: 'Best category rank' }
+	];
+
+	const rankLimitOptions = [
+		{ value: '0', label: 'Any rank' },
+		{ value: '3', label: 'Top 3' },
+		{ value: '5', label: 'Top 5' },
+		{ value: '10', label: 'Top 10' },
+		{ value: '25', label: 'Top 25' },
+		{ value: '50', label: 'Top 50' }
+	];
+
+	const contextLimitOptions = [
+		{ value: '0', label: 'Any context' },
+		{ value: '32000', label: '32K+' },
+		{ value: '128000', label: '128K+' },
+		{ value: '200000', label: '200K+' },
+		{ value: '1000000', label: '1M+' }
+	];
+
+	const capabilityFilterOptions: Array<{
+		value: ModelSelectorCapabilityKey;
+		label: string;
+		short: string;
+	}> = [
+		{ value: 'reasoning', label: 'Reasoning', short: 'R' },
+		{ value: 'structured', label: 'Structured output', short: '{}' },
+		{ value: 'tools', label: 'Tool calling', short: 'T' },
+		{ value: 'vision', label: 'Vision', short: 'V' },
+		{ value: 'files', label: 'Files/PDF', short: 'F' },
+		{ value: 'web_search', label: 'Web search', short: 'W' },
+		{ value: 'long_context', label: 'Long context', short: 'L' },
+		{ value: 'code', label: 'Coding', short: '</>' }
 	];
 
 	function isRecord(value: unknown): value is Record<string, unknown> {
@@ -259,37 +304,8 @@
 		return credentialsForProvider(selectedProvider).length > 0;
 	}
 
-	function modelIsFree(model: ModelInfo): boolean {
-		return (
-			model.cost_tier === 'free' || model.id.endsWith(':free') || model.id === 'openrouter/free'
-		);
-	}
-
 	function modelIsPaid(model: ModelInfo): boolean {
 		return !modelIsFree(model) && model.id !== 'openrouter/auto';
-	}
-
-	function modelCostLabel(model: ModelInfo): string {
-		if (modelIsFree(model)) return 'Free';
-		const symbol = typeof model.cost_symbol === 'string' ? model.cost_symbol.trim() : '';
-		return symbol || priceSymbolFromTier(model.cost_tier);
-	}
-
-	function priceSymbolFromTier(tier: string): string {
-		switch (tier) {
-			case 'free':
-				return 'Free';
-			case 'low':
-				return '$';
-			case 'medium':
-				return '$$';
-			case 'high':
-				return '$$$';
-			case 'premium':
-				return '$$$$';
-			default:
-				return 'Varies';
-		}
 	}
 
 	function isModelLocked(model: ModelInfo): boolean {
@@ -336,11 +352,6 @@
 		const modelId = resolvedModelForPreset(code);
 		const model = models.find((candidate) => candidate.id === modelId) ?? null;
 		return model ? isModelLocked(model) : false;
-	}
-
-	function modelHasCapability(model: ModelInfo, capability: CapabilityFilter): boolean {
-		if (capability === 'all') return true;
-		return Boolean(model.capabilities[capability]);
 	}
 
 	function syncSelectionFromValue(
@@ -601,9 +612,7 @@
 	}
 
 	function currentSelection(): ModelSelection {
-		const includeReasoning =
-			selectedReasoning !== 'default' &&
-			selectedModelAllowsReasoning();
+		const includeReasoning = selectedReasoning !== 'default' && selectedModelAllowsReasoning();
 		const tools = currentToolSettings();
 		return {
 			primary: selectedPrimaryValue(),
@@ -670,7 +679,8 @@
 	}
 
 	function applyCustomModel() {
-		if (!customModelLooksValid(selectedCustomModel) || !customModelAllowed(selectedCustomModel)) return;
+		if (!customModelLooksValid(selectedCustomModel) || !customModelAllowed(selectedCustomModel))
+			return;
 		selectionMode = 'custom';
 		selectedReasoning = 'default';
 		handleSelectionChange();
@@ -806,30 +816,52 @@
 
 	const lockedModelCount = $derived(models.filter((model) => isModelLocked(model)).length);
 
-	const filteredModels = $derived.by(() => {
-		const search = searchTerm.trim().toLowerCase();
-		return models.filter((model) => {
-			const locked = isModelLocked(model);
-			if (costFilter === 'free' && !modelIsFree(model)) return false;
-			if (costFilter === 'paid' && !modelIsPaid(model)) return false;
-			if (costFilter === 'locked' && !locked) return false;
-			if (!modelHasCapability(model, capabilityFilter)) {
-				return false;
+	const providerFilterOptions = $derived.by(() => {
+		const options = new Map<string, string>();
+		for (const model of models) {
+			options.set(providerKey(model), providerDisplayName(model));
+		}
+		return [
+			{ value: 'all', label: 'All providers' },
+			...[...options.entries()]
+				.sort((left, right) => left[1].localeCompare(right[1], undefined, { sensitivity: 'base' }))
+				.map(([value, label]) => ({ value, label }))
+		];
+	});
+
+	const categoryFilterOptions = $derived.by(() => {
+		const discovered = new Set<string>();
+		for (const model of models) {
+			for (const category of Object.keys(model.category_rankings ?? {})) {
+				discovered.add(category);
 			}
-			if (!search) return true;
-			const haystack = [
-				model.id,
-				model.display_name,
-				model.provider_family,
-				model.developer,
-				...(model.recommended_for ?? []),
-				...(model.recommendation_categories ?? []),
-				...(model.tags ?? [])
-			]
-				.filter(Boolean)
-				.join(' ')
-				.toLowerCase();
-			return haystack.includes(search);
+		}
+		const ordered = [
+			...MODEL_RANK_CATEGORIES.filter((category) => discovered.has(category)),
+			...[...discovered].filter(
+				(category) =>
+					!MODEL_RANK_CATEGORIES.includes(category as (typeof MODEL_RANK_CATEGORIES)[number])
+			)
+		];
+		return [
+			{ value: 'all', label: 'All categories' },
+			...ordered.map((category) => ({ value: category, label: categoryLabel(category) }))
+		];
+	});
+
+	const activeRankLimit = $derived(Number.parseInt(rankLimit, 10) || 0);
+	const activeContextLimit = $derived(Number.parseInt(contextLimit, 10) || 0);
+
+	const filteredModels = $derived.by(() => {
+		return filterAndSortModels(models, {
+			searchTerm,
+			costLimit,
+			provider: providerFilter,
+			category: categoryFilter,
+			maxRank: activeRankLimit,
+			minContext: activeContextLimit,
+			requiredCapabilities: [...requiredCapabilities],
+			sortMode
 		});
 	});
 
@@ -856,6 +888,34 @@
 			['code', 'Coding strength', '</>', model.capabilities.code]
 		];
 		return items.filter((item) => item[3]);
+	}
+
+	function toggleCapabilityFilter(capability: ModelSelectorCapabilityKey) {
+		const next = new Set(requiredCapabilities);
+		if (next.has(capability)) {
+			next.delete(capability);
+		} else {
+			next.add(capability);
+		}
+		requiredCapabilities = next;
+	}
+
+	function providerMonogramClass(model: ModelInfo | null): string {
+		const key = model ? providerKey(model) : 'openrouter';
+		if (key.includes('anthropic')) return 'sf:bg-orange-50 sf:text-orange-700 sf:border-orange-200';
+		if (key.includes('openai')) return 'sf:bg-emerald-50 sf:text-emerald-700 sf:border-emerald-200';
+		if (key.includes('google')) return 'sf:bg-sky-50 sf:text-sky-700 sf:border-sky-200';
+		if (key.includes('moonshot')) return 'sf:bg-indigo-50 sf:text-indigo-700 sf:border-indigo-200';
+		if (key.includes('deepseek')) return 'sf:bg-cyan-50 sf:text-cyan-700 sf:border-cyan-200';
+		if (key.includes('z.ai') || key.includes('zai'))
+			return 'sf:bg-rose-50 sf:text-rose-700 sf:border-rose-200';
+		return 'sf:bg-slate-100 sf:text-slate-700 sf:border-slate-200';
+	}
+
+	function selectedCategoryHelp(): string {
+		if (categoryFilter === 'all')
+			return 'Ranks are shown across every category OpenRouter publishes.';
+		return `Ranks are filtered to ${categoryLabel(categoryFilter)}.`;
 	}
 
 	function contextLabel(model: ModelInfo): string {
@@ -914,19 +974,6 @@
 			default:
 				return 'neutral';
 		}
-	}
-
-	function categoryRankingItems(model: ModelInfo | null): Array<[string, number]> {
-		if (!model?.category_rankings) return [];
-		return Object.entries(model.category_rankings)
-			.filter(([, rank]) => Number.isFinite(rank) && rank > 0)
-			.sort((a, b) => a[1] - b[1]);
-	}
-
-	function categoryLabel(category: string): string {
-		return category
-			.replace(/_/g, ' ')
-			.replace(/\b\w/g, (letter) => letter.toUpperCase());
 	}
 
 	function customModelLooksValid(modelId: string): boolean {
@@ -1056,9 +1103,7 @@
 								(selectedProvider === MANAGED_PROVIDER ? 'SF managed' : 'OR direct')}
 						</p>
 						{#if pricingEstimate.kind === 'sentient_credits'}
-							<p class="sf:text-xs sf:text-slate-500">
-								Managed Service credit estimate
-							</p>
+							<p class="sf:text-xs sf:text-slate-500">Managed Service credit estimate</p>
 						{:else}
 							<p class="sf:text-xs sf:text-slate-500">
 								Local OpenRouter runs do not spend managed credits. Provider charges are billed by
@@ -1076,8 +1121,8 @@
 					<div>
 						<p class="sf:text-sm sf:font-semibold sf:text-slate-800">Model tools</p>
 						<p class="sf:text-xs sf:text-slate-500">
-							Set OpenRouter server tools for this selected model only when the action needs
-							fresh or external context.
+							Set OpenRouter server tools for this selected model only when the action needs fresh
+							or external context.
 						</p>
 					</div>
 					{#if !selectedModelSupportsTools()}
@@ -1101,7 +1146,8 @@
 						label="Web search"
 						options={toolModeOptions}
 						bind:value={webSearchMode}
-						disabled={readonly || (!selectedModelSupportsWebSearch() && webSearchMode === 'inherit')}
+						disabled={readonly ||
+							(!selectedModelSupportsWebSearch() && webSearchMode === 'inherit')}
 						onchange={handleSelectionChange}
 					/>
 					<SelectField
@@ -1140,7 +1186,7 @@
 						/>
 					</label>
 				{/if}
-		</div>
+			</div>
 		</div>
 	</div>
 
@@ -1156,18 +1202,19 @@
 
 	{#if isPickerOpen && !readonly}
 		{@const detailModel = activeDetailModel()}
+		{@const detailMonogram = providerMonogram(detailModel)}
 		<div
-			class="sf:fixed sf:inset-0 sf:z-[100000] sf:flex sf:items-start sf:justify-center sf:overflow-y-auto sf:bg-slate-950/55 sf:p-3 sf:pt-10 sf:sm:p-6"
+			class="sf:fixed sf:inset-0 sf:z-[100000] sf:flex sf:items-center sf:justify-center sf:overflow-hidden sf:bg-slate-950/55 sf:p-3 sf:sm:p-6"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby={`model-selector-title-${level}`}
 			data-testid="model-selector-dialog"
 		>
 			<div
-				class="sf:w-full sf:max-w-6xl sf:overflow-hidden sf:rounded-xl sf:bg-white sf:shadow-2xl"
+				class="sf:flex sf:h-[86vh] sf:max-h-[56rem] sf:w-full sf:max-w-7xl sf:flex-col sf:overflow-hidden sf:rounded-xl sf:bg-white sf:shadow-2xl"
 			>
 				<header
-					class="sf:border-b sf:border-slate-200 sf:bg-slate-950 sf:px-4 sf:py-4 sf:text-white sf:sm:px-5"
+					class="sf:flex-none sf:border-b sf:border-slate-200 sf:bg-slate-950 sf:px-4 sf:py-4 sf:text-white sf:sm:px-5"
 				>
 					<div
 						class="sf:flex sf:flex-col sf:gap-3 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
@@ -1192,7 +1239,7 @@
 					</div>
 				</header>
 
-				<div class="sf:border-b sf:border-slate-200 sf:bg-slate-50 sf:p-4 sf:sm:p-5">
+				<div class="sf:flex-none sf:border-b sf:border-slate-200 sf:bg-slate-50 sf:p-4 sf:sm:p-5">
 					<div class="sf:grid sf:gap-3 sf:lg:grid-cols-[minmax(0,1fr)_18rem] sf:lg:items-end">
 						<div
 							class="sf:flex sf:flex-wrap sf:gap-2"
@@ -1250,9 +1297,9 @@
 					{/if}
 				</div>
 
-				<div class="sf:grid sf:min-h-[34rem] sf:gap-0 sf:lg:grid-cols-[minmax(0,1fr)_22rem]">
+				<div class="sf:grid sf:min-h-0 sf:flex-1 sf:gap-0 sf:lg:grid-cols-[minmax(0,1fr)_24rem]">
 					<section
-						class="sf:min-w-0 sf:border-b sf:border-slate-200 sf:p-4 sf:lg:border-b-0 sf:lg:border-r sf:sm:p-5"
+						class="sf:flex sf:min-h-0 sf:min-w-0 sf:flex-col sf:border-b sf:border-slate-200 sf:p-4 sf:lg:border-b-0 sf:lg:border-r sf:sm:p-5"
 					>
 						{#if selectionMode === 'presets'}
 							<div class="sf:grid sf:gap-3 sf:md:grid-cols-2" data-testid="model-selector-presets">
@@ -1310,13 +1357,16 @@
 								{/each}
 							</div>
 						{:else if selectionMode === 'models'}
-							<div class="sf:space-y-4" data-testid="model-selector-catalog">
-								<div class="sf:grid sf:gap-2 sf:lg:grid-cols-[minmax(0,1fr)_12rem_12rem]">
+							<div
+								class="sf:flex sf:min-h-0 sf:flex-1 sf:flex-col sf:gap-4"
+								data-testid="model-selector-catalog"
+							>
+								<div class="sf:grid sf:gap-2 sf:xl:grid-cols-[minmax(0,1fr)_10rem_10rem_11rem]">
 									<label class="sf:flex sf:flex-col sf:gap-1">
 										<span class="sf:text-xs sf:font-semibold sf:text-slate-700">Search models</span>
 										<input
 											class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											placeholder="Search model, provider, category..."
+											placeholder="Search model, provider, category, rank..."
 											value={searchTerm}
 											oninput={(event) => {
 												searchTerm = (event.currentTarget as HTMLInputElement).value;
@@ -1325,31 +1375,107 @@
 										/>
 									</label>
 									<SelectField
-										id={`model-cost-filter-${level}`}
-										label="Cost"
-										options={costFilterOptions}
-										bind:value={costFilter}
+										id={`model-sort-${level}`}
+										label="Sort"
+										options={sortOptions}
+										bind:value={sortMode}
+										data-testid="model-sort-select"
 									/>
 									<SelectField
-										id={`model-capability-filter-${level}`}
-										label="Capability"
-										options={capabilityFilterOptions}
-										bind:value={capabilityFilter}
+										id={`model-provider-filter-${level}`}
+										label="Provider"
+										options={providerFilterOptions}
+										bind:value={providerFilter}
+										data-testid="model-provider-filter"
+									/>
+									<SelectField
+										id={`model-cost-filter-${level}`}
+										label="Max cost"
+										options={costLimitOptions}
+										bind:value={costLimit}
+										data-testid="model-cost-filter"
 									/>
 								</div>
 
-								<p class="sf:text-xs sf:text-slate-500">
-									Showing {visibleModels.length} of {filteredModels.length} matching models.
-								</p>
+								<div class="sf:grid sf:gap-2 sf:xl:grid-cols-[12rem_10rem_10rem_minmax(0,1fr)]">
+									<SelectField
+										id={`model-category-filter-${level}`}
+										label="OpenRouter category"
+										options={categoryFilterOptions}
+										bind:value={categoryFilter}
+										data-testid="model-category-filter"
+									/>
+									<SelectField
+										id={`model-rank-filter-${level}`}
+										label="Rank"
+										options={rankLimitOptions}
+										bind:value={rankLimit}
+										disabled={categoryFilter === 'all'}
+										data-testid="model-rank-filter"
+									/>
+									<SelectField
+										id={`model-context-filter-${level}`}
+										label="Context"
+										options={contextLimitOptions}
+										bind:value={contextLimit}
+										data-testid="model-context-filter"
+									/>
+									<div>
+										<p class="sf:text-xs sf:font-semibold sf:text-slate-700">
+											Required capabilities
+										</p>
+										<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1.5">
+											{#each capabilityFilterOptions as capability}
+												<Button
+													variant="secondary"
+													size="sm"
+													class={[
+														'sf:min-h-8 sf:gap-1 sf:rounded-full sf:px-2.5 sf:text-xs',
+														requiredCapabilities.has(capability.value)
+															? 'sf:border-primary-500 sf:bg-primary-50 sf:text-primary-700'
+															: 'sf:border-slate-200 sf:bg-white sf:text-slate-600 sf:hover:border-slate-300'
+													].join(' ')}
+													aria-pressed={requiredCapabilities.has(capability.value)}
+													title={capability.label}
+													onclick={() => toggleCapabilityFilter(capability.value)}
+													data-testid={`model-capability-filter-${capability.value}`}
+												>
+													<span aria-hidden="true">{capability.short}</span>
+													<span class="sf:hidden sf:2xl:inline">{capability.label}</span>
+												</Button>
+											{/each}
+										</div>
+									</div>
+								</div>
 
-								<div class="sf:max-h-[28rem] sf:space-y-2 sf:overflow-y-auto sf:pr-1">
+								<div
+									class="sf:flex sf:flex-col sf:gap-1 sf:text-xs sf:text-slate-500 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between"
+								>
+									<p>
+										Showing {visibleModels.length} of {filteredModels.length} matching models.
+									</p>
+									<p>{selectedCategoryHelp()}</p>
+								</div>
+
+								<div class="sf:min-h-0 sf:flex-1 sf:space-y-2 sf:overflow-y-auto sf:pr-1">
+									{#if visibleModels.length === 0}
+										<div
+											class="sf:rounded-lg sf:border sf:border-dashed sf:border-slate-300 sf:bg-white sf:p-6 sf:text-sm sf:text-slate-600"
+											data-testid="model-selector-empty"
+										>
+											No models match these filters. Clear a capability, rank, or cost filter to
+											widen the list.
+										</div>
+									{/if}
 									{#each visibleModels as model (model.id)}
 										{@const locked = isModelLocked(model)}
+										{@const monogram = providerMonogram(model)}
+										{@const modelRanks = categoryRankingItems(model)}
 										<Button
 											variant="secondary"
 											size="md"
 											class={[
-												'sf:h-auto sf:w-full sf:items-stretch sf:justify-start sf:rounded-lg sf:p-3 sf:text-left',
+												'sf:h-auto sf:min-h-32 sf:w-full sf:items-stretch sf:justify-start sf:rounded-lg sf:p-3 sf:text-left',
 												selectedModel === model.id
 													? 'sf:border-primary-500 sf:bg-primary-50'
 													: 'sf:border-slate-200 sf:bg-white sf:hover:border-slate-300',
@@ -1369,46 +1495,104 @@
 											data-testid={`model-row-${model.id}`}
 										>
 											<span
-												class="sf:flex sf:flex-col sf:gap-3 sf:lg:flex-row sf:lg:items-start sf:lg:justify-between"
+												class="sf:grid sf:w-full sf:gap-3 sf:xl:grid-cols-[minmax(0,1fr)_minmax(16rem,0.8fr)]"
 											>
-												<span class="sf:min-w-0 sf:space-y-2">
-													<span class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-														<span class="sf:text-sm sf:font-semibold sf:text-slate-900">
-															{model.display_name}
-														</span>
-														<Badge variant={costBadgeVariant(model.cost_tier)}>
-															{modelCostLabel(model)}
-														</Badge>
-														{#if locked}
-															<Badge variant="warning">Paid model</Badge>
-														{/if}
-														{#if model.is_preview}
-															<Badge variant="warning">Preview</Badge>
-														{/if}
-													</span>
+												<span class="sf:flex sf:min-w-0 sf:gap-3">
 													<span
-														class="sf:block sf:break-all sf:font-mono sf:text-xs sf:text-slate-600"
+														class={`sf:flex sf:h-11 sf:w-11 sf:flex-none sf:items-center sf:justify-center sf:rounded-lg sf:border sf:text-xs sf:font-bold ${providerMonogramClass(model)}`}
+														title={monogram.label}
+														aria-label={`${monogram.label} model`}
 													>
-														{model.id}
+														{monogram.initials}
 													</span>
-													<span class="sf:flex sf:flex-wrap sf:gap-1">
-														{#each capabilityItems(model) as item}
-															<span
-																class="sf:inline-flex sf:min-h-7 sf:min-w-7 sf:items-center sf:justify-center sf:rounded-full sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-2 sf:text-[11px] sf:font-semibold sf:text-slate-700"
-																title={item[1]}
-																aria-label={item[1]}
-															>
-																{item[2]}
+													<span class="sf:min-w-0 sf:space-y-2">
+														<span class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+															<span class="sf:text-sm sf:font-semibold sf:text-slate-900">
+																{model.display_name}
 															</span>
-														{/each}
+															<Badge variant={costBadgeVariant(model.cost_tier)}>
+																{modelCostLabel(model)}
+															</Badge>
+															{#if locked}
+																<Badge variant="warning">Paid model</Badge>
+															{/if}
+															{#if model.is_preview}
+																<Badge variant="warning">Preview</Badge>
+															{/if}
+														</span>
+														<span
+															class="sf:block sf:break-all sf:font-mono sf:text-xs sf:text-slate-600"
+														>
+															{model.id}
+														</span>
+														<span class="sf:flex sf:flex-wrap sf:gap-1">
+															{#each capabilityItems(model) as item}
+																<span
+																	class="sf:inline-flex sf:min-h-7 sf:min-w-7 sf:items-center sf:justify-center sf:rounded-full sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-2 sf:text-[11px] sf:font-semibold sf:text-slate-700"
+																	title={item[1]}
+																	aria-label={item[1]}
+																>
+																	{item[2]}
+																</span>
+															{/each}
+														</span>
 													</span>
 												</span>
-												<span class="sf:text-xs sf:font-semibold sf:text-slate-600">
-													{locked
-														? 'Locked'
-														: selectedModel === model.id
-															? 'Selected'
-															: 'Use model'}
+												<span class="sf:flex sf:flex-col sf:gap-2">
+													<span class="sf:grid sf:grid-cols-3 sf:gap-2 sf:text-xs">
+														<span class="sf:rounded-md sf:bg-slate-50 sf:px-2 sf:py-1">
+															<span
+																class="sf:block sf:text-[10px] sf:font-semibold sf:uppercase sf:text-slate-500"
+																>Context</span
+															>
+															<span class="sf:font-semibold sf:text-slate-800"
+																>{contextLabel(model)}</span
+															>
+														</span>
+														<span class="sf:rounded-md sf:bg-slate-50 sf:px-2 sf:py-1">
+															<span
+																class="sf:block sf:text-[10px] sf:font-semibold sf:uppercase sf:text-slate-500"
+																>Caps</span
+															>
+															<span class="sf:font-semibold sf:text-slate-800"
+																>{modelCapabilityCount(model)}</span
+															>
+														</span>
+														<span class="sf:rounded-md sf:bg-slate-50 sf:px-2 sf:py-1">
+															<span
+																class="sf:block sf:text-[10px] sf:font-semibold sf:uppercase sf:text-slate-500"
+																>Best rank</span
+															>
+															<span class="sf:font-semibold sf:text-slate-800">
+																{modelBestRank(model) ? `#${modelBestRank(model)}` : '—'}
+															</span>
+														</span>
+													</span>
+													{#if modelRanks.length > 0}
+														<span class="sf:flex sf:flex-wrap sf:gap-1">
+															{#each modelRanks.slice(0, 8) as [category, rank]}
+																<span
+																	class={[
+																		'sf:inline-flex sf:items-center sf:gap-1 sf:rounded-full sf:border sf:px-2 sf:py-0.5 sf:text-[11px] sf:font-semibold',
+																		categoryFilter === category
+																			? 'sf:border-primary-300 sf:bg-primary-50 sf:text-primary-700'
+																			: 'sf:border-slate-200 sf:bg-white sf:text-slate-600'
+																	].join(' ')}
+																	title={`OpenRouter ${categoryLabel(category)} rank ${rank}`}
+																>
+																	#{rank}
+																	{categoryLabel(category)}
+																</span>
+															{/each}
+														</span>
+													{/if}
+													<span class="sf:text-xs sf:font-semibold sf:text-slate-600">
+														{locked
+															? 'Paid model'
+															: selectedModel === model.id
+																? 'Selected'
+																: 'Use model'}
+													</span>
 												</span>
 											</span>
 										</Button>
@@ -1437,8 +1621,8 @@
 									>
 								{:else if selectedCustomModel.trim() && !customModelAllowed(selectedCustomModel)}
 									<Alert variant="warning"
-										>Custom paid model IDs require Sentient Forms Managed Service or your own
-										paid OpenRouter key. Free custom IDs can end in :free or use openrouter/free.</Alert
+										>Custom paid model IDs require Sentient Forms Managed Service or your own paid
+										OpenRouter key. Free custom IDs can end in :free or use openrouter/free.</Alert
 									>
 								{/if}
 								<Button
@@ -1488,19 +1672,29 @@
 								</div>
 							</div>
 						{/if}
-
 					</section>
 
-					<aside class="sf:bg-slate-50 sf:p-4 sf:sm:p-5">
-						<div class="sf:sticky sf:top-4 sf:space-y-4" data-testid="model-selector-detail">
-							<div>
-								<p class="sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-500">Selection</p>
-								<p class="sf:mt-1 sf:text-lg sf:font-semibold sf:text-slate-950">
-									{detailModel?.display_name ?? selectedDisplayName()}
-								</p>
-								<p class="sf:mt-1 sf:break-all sf:font-mono sf:text-xs sf:text-slate-600">
-									{detailModel?.id ?? selectedModelIdLabel()}
-								</p>
+					<aside class="sf:min-h-0 sf:overflow-y-auto sf:bg-slate-50 sf:p-4 sf:sm:p-5">
+						<div class="sf:space-y-4" data-testid="model-selector-detail">
+							<div class="sf:flex sf:items-start sf:gap-3">
+								<span
+									class={`sf:flex sf:h-12 sf:w-12 sf:flex-none sf:items-center sf:justify-center sf:rounded-xl sf:border sf:text-sm sf:font-bold ${providerMonogramClass(detailModel)}`}
+									title={detailMonogram.label}
+									aria-label={`${detailMonogram.label} model`}
+								>
+									{detailMonogram.initials}
+								</span>
+								<div class="sf:min-w-0">
+									<p class="sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-500">
+										Selection
+									</p>
+									<p class="sf:mt-1 sf:text-lg sf:font-semibold sf:text-slate-950">
+										{detailModel?.display_name ?? selectedDisplayName()}
+									</p>
+									<p class="sf:mt-1 sf:break-all sf:font-mono sf:text-xs sf:text-slate-600">
+										{detailModel?.id ?? selectedModelIdLabel()}
+									</p>
+								</div>
 							</div>
 
 							<p class="sf:text-sm sf:text-slate-600">{modelDescription(detailModel)}</p>
@@ -1511,10 +1705,7 @@
 										Provider
 									</p>
 									<p class="sf:mt-1 sf:text-sm sf:font-medium sf:text-slate-900">
-										{detailModel?.developer ??
-											detailModel?.provider_family ??
-											detailModel?.provider ??
-											'OpenRouter'}
+										{detailModel ? providerDisplayName(detailModel) : 'OpenRouter'}
 									</p>
 								</div>
 								<div class="sf:rounded-md sf:bg-white sf:p-3">
@@ -1549,12 +1740,13 @@
 										OpenRouter category ranks
 									</p>
 									<div class="sf:mt-2 sf:flex sf:flex-wrap sf:gap-2">
-										{#each categoryRankingItems(detailModel).slice(0, 8) as [category, rank]}
+										{#each categoryRankingItems(detailModel) as [category, rank]}
 											<span
 												class="sf:inline-flex sf:items-center sf:gap-1 sf:rounded-full sf:border sf:border-slate-200 sf:bg-white sf:px-2.5 sf:py-1 sf:text-xs sf:font-medium sf:text-slate-700"
 												title={`OpenRouter ${categoryLabel(category)} rank ${rank}`}
 											>
-												#{rank} {categoryLabel(category)}
+												#{rank}
+												{categoryLabel(category)}
 											</span>
 										{/each}
 									</div>

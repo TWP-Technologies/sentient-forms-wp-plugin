@@ -2649,7 +2649,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $central_action_id = isset( $action['central_action_id'] ) && is_scalar( $action['central_action_id'] )
                 ? sanitize_text_field( (string) $action['central_action_id'] )
                 : '';
-            if ( '' === $central_action_id )
+            if ( 'clarification_assistant_v1' !== sanitize_key( $central_action_id ) )
             {
                 continue;
             }

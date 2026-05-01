@@ -138,6 +138,27 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $this->assertIsArray( $payload['definition']['workflow']['nodes'] ?? null );
     }
 
+    public function test_build_create_payload_rejects_realtime_execution_mode_for_custom_actions(): void
+    {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/custom-actions' );
+        $request->set_param( 'code', 'custom-realtime-rejected' );
+        $request->set_param( 'display_name', 'Custom Realtime Rejected' );
+        $request->set_param( 'action_kind', 'custom_definition' );
+        $request->set_param( 'definition_version', 1 );
+        $request->set_param( 'supported_execution_modes', [ 'real_time' ] );
+        $request->set_param(
+            'definition',
+            [
+                'prompt_template' => 'Review {{entry}}.',
+            ]
+        );
+
+        $payload = $this->invoke_private( 'build_create_payload', [ $request ] );
+
+        $this->assertInstanceOf( WP_Error::class, $payload );
+        $this->assertSame( 'rest_invalid_param', $payload->get_error_code() );
+    }
+
     public function test_create_local_custom_definition_does_not_require_template_id_and_preserves_tools(): void
     {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/custom-actions' );

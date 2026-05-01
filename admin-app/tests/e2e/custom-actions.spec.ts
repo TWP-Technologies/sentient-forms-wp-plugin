@@ -110,6 +110,11 @@ test.describe('Custom actions admin view', () => {
 									provider: 'openrouter',
 									speed_tier: 'balanced',
 									cost_tier: 'medium',
+									category_rankings: {
+										legal: 1,
+										finance: 1,
+										programming: 4
+									},
 									capabilities: {
 										reasoning: true,
 										code: false,
@@ -125,11 +130,40 @@ test.describe('Custom actions admin view', () => {
 									recommended_for: ['General purpose']
 								},
 								{
+									id: 'deepseek/deepseek-r1-0528',
+									display_name: 'DeepSeek: R1 0528',
+									provider: 'openrouter',
+									speed_tier: 'balanced',
+									cost_tier: 'low',
+									category_rankings: {
+										programming: 1,
+										science: 2,
+										technology: 3
+									},
+									capabilities: {
+										reasoning: true,
+										code: true,
+										vision: false,
+										tools: true,
+										structured: true,
+										web_search: false,
+										long_context: true
+									},
+									context_window: 128000,
+									is_preview: false,
+									tags: ['coding', 'reasoning'],
+									recommended_for: ['Programming', 'Science']
+								},
+								{
 									id: 'openrouter/free',
 									display_name: 'OpenRouter Free Models Router',
 									provider: 'openrouter',
 									speed_tier: 'fast',
 									cost_tier: 'free',
+									category_rankings: {
+										programming: 20,
+										trivia: 8
+									},
 									capabilities: {
 										reasoning: true,
 										code: false,
@@ -360,7 +394,22 @@ test.describe('Custom actions admin view', () => {
 		await expect(page.getByTestId('model-search-input')).toBeVisible();
 		await expect(page.getByTestId('model-selector-detail')).toBeVisible();
 		await expect(
-			page.getByTestId('model-row-openai/gpt-5.5').getByText('Paid model')
+			page.getByTestId('model-row-openai/gpt-5.5').getByText('Paid model').first()
+		).toBeVisible();
+		const dialogHeightBefore = await page.getByTestId('model-selector-dialog').boundingBox();
+		await page.getByTestId('model-row-openai/gpt-5.5').hover();
+		await page.getByTestId('model-row-deepseek/deepseek-r1-0528').hover();
+		const dialogHeightAfter = await page.getByTestId('model-selector-dialog').boundingBox();
+		expect(dialogHeightBefore).not.toBeNull();
+		expect(dialogHeightAfter).not.toBeNull();
+		expect(
+			Math.abs((dialogHeightBefore?.height ?? 0) - (dialogHeightAfter?.height ?? 0))
+		).toBeLessThanOrEqual(2);
+		await expect(page.getByTestId('model-category-filter')).toBeVisible();
+		await expect(page.getByTestId('model-rank-filter')).toBeVisible();
+		await expect(page.getByTestId('model-sort-select')).toBeVisible();
+		await expect(
+			page.getByTestId('model-selector-detail').getByText('#1 Programming')
 		).toBeVisible();
 		await page.getByTestId('model-selector-tab-custom').click();
 		await expect(page.getByTestId('model-custom-input')).toBeVisible();

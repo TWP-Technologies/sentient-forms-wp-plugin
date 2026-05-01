@@ -333,7 +333,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             'actions' => [
                 [
                     'id' => 'map_rt',
-                    'central_action_id' => 'central_rt',
+                    'central_action_id' => 'clarification_assistant_v1',
                     'action_name_label' => 'Realtime Action',
                     'is_action_enabled_for_form' => true,
                     'settings' => [
@@ -370,6 +370,35 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( '4', $runtime['mappings'][0]['storage_target_field_id'] ?? null );
         $this->assertSame( 'require_answers', $runtime['mappings'][0]['blocking_mode'] ?? null );
         $this->assertCount( 2, $runtime['field_manifest'] ?? [] );
+    }
+
+    public function test_build_realtime_runtime_config_ignores_non_clarification_realtime_mapping(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'build_realtime_runtime_config' );
+        $method->setAccessible( true );
+
+        $form = [
+            'id' => 15,
+            'title' => 'Realtime restricted',
+            'fields' => [],
+        ];
+        $settings = [
+            'actions' => [
+                [
+                    'id' => 'map_rt_wrong_action',
+                    'central_action_id' => 'sentient_forms_local_custom_action',
+                    'action_name_label' => 'Wrong realtime action',
+                    'is_action_enabled_for_form' => true,
+                    'settings' => [
+                        'execution_mode' => 'real_time',
+                    ],
+                ],
+            ],
+        ];
+
+        $runtime = $method->invoke( $this->adapter, $form, $settings );
+
+        $this->assertNull( $runtime );
     }
 
     public function test_frontend_realtime_asset_version_uses_file_mtime_for_cache_busting(): void

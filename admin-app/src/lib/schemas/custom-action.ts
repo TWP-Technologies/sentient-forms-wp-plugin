@@ -52,11 +52,10 @@ export type CustomActionCreateInput = CustomActionCreatePayload;
 export type CustomActionUpdateInput = CustomActionUpdatePayload;
 
 const ACTION_KINDS = new Set<ActionKind>(['template_override', 'custom_definition']);
-const EXECUTION_MODES = new Set<ExecutionMode>(['validation', 'after_submission', 'real_time']);
+const EXECUTION_MODES = new Set<ExecutionMode>(['validation', 'after_submission']);
 const STATUSES = new Set<CustomActionStatus>(['active', 'archived']);
 const WORKFLOW_NODE_KINDS = new Set(['llm_step', 'transform_step', 'decision_step']);
-const UUID_RE =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LOCAL_TEMPLATE_ID_RE = /^[1-9]\d*$/;
 const CODE_RE = /^[a-z0-9-]+$/;
 
@@ -78,7 +77,10 @@ function normalizeOptionalTrimmedString(value: unknown): string | null | undefin
 	return typeof value === 'string' ? value.trim() : undefined;
 }
 
-function validateModelSelection(value: unknown, issues: ValidationIssue[]): ModelSelection | null | undefined {
+function validateModelSelection(
+	value: unknown,
+	issues: ValidationIssue[]
+): ModelSelection | null | undefined {
 	if (value === undefined) return undefined;
 	if (value === null) return null;
 	if (!isRecord(value)) {
@@ -144,7 +146,10 @@ function validateTemplateId(
 	issues: ValidationIssue[],
 	actionKind: ActionKind
 ): string | null {
-	if (actionKind === 'custom_definition' && (value === undefined || value === null || value === '')) {
+	if (
+		actionKind === 'custom_definition' &&
+		(value === undefined || value === null || value === '')
+	) {
 		return null;
 	}
 
@@ -197,7 +202,10 @@ function validateDefinitionVersion(value: unknown, issues: ValidationIssue[]): n
 	return 1;
 }
 
-function validateOutputContract(value: unknown, issues: ValidationIssue[]): OutputContract | null | undefined {
+function validateOutputContract(
+	value: unknown,
+	issues: ValidationIssue[]
+): OutputContract | null | undefined {
 	if (value === undefined) return undefined;
 	if (value === null) return null;
 	if (isRecord(value)) return value as OutputContract;
@@ -206,7 +214,10 @@ function validateOutputContract(value: unknown, issues: ValidationIssue[]): Outp
 	return undefined;
 }
 
-function validateSupportedExecutionModes(value: unknown, issues: ValidationIssue[]): ExecutionMode[] {
+function validateSupportedExecutionModes(
+	value: unknown,
+	issues: ValidationIssue[]
+): ExecutionMode[] {
 	if (!Array.isArray(value) || value.length === 0) {
 		pushIssue(issues, ['supported_execution_modes'], 'At least one execution mode is required');
 		return [];
@@ -231,7 +242,11 @@ function validateWorkflowNode(
 	issues: ValidationIssue[]
 ): WorkflowNodePayload | null {
 	if (!isRecord(value)) {
-		pushIssue(issues, ['definition', 'workflow', 'nodes', index], 'Workflow node must be an object');
+		pushIssue(
+			issues,
+			['definition', 'workflow', 'nodes', index],
+			'Workflow node must be an object'
+		);
 		return null;
 	}
 
@@ -240,11 +255,19 @@ function validateWorkflowNode(
 	const outputKey = typeof value.output_key === 'string' ? value.output_key.trim() : '';
 
 	if (!nodeId) {
-		pushIssue(issues, ['definition', 'workflow', 'nodes', index, 'node_id'], 'Workflow node_id is required');
+		pushIssue(
+			issues,
+			['definition', 'workflow', 'nodes', index, 'node_id'],
+			'Workflow node_id is required'
+		);
 	}
 
 	if (!WORKFLOW_NODE_KINDS.has(kind)) {
-		pushIssue(issues, ['definition', 'workflow', 'nodes', index, 'kind'], 'Unsupported workflow node kind');
+		pushIssue(
+			issues,
+			['definition', 'workflow', 'nodes', index, 'kind'],
+			'Unsupported workflow node kind'
+		);
 	}
 
 	if (!outputKey) {
@@ -294,7 +317,11 @@ function validateWorkflowEdge(
 	issues: ValidationIssue[]
 ): WorkflowEdgePayload | null {
 	if (!isRecord(value)) {
-		pushIssue(issues, ['definition', 'workflow', 'edges', index], 'Workflow edge must be an object');
+		pushIssue(
+			issues,
+			['definition', 'workflow', 'edges', index],
+			'Workflow edge must be an object'
+		);
 		return null;
 	}
 
@@ -302,25 +329,48 @@ function validateWorkflowEdge(
 	const to = typeof value.to === 'string' ? value.to.trim() : '';
 
 	if (!from) {
-		pushIssue(issues, ['definition', 'workflow', 'edges', index, 'from'], 'Workflow edge.from is required');
+		pushIssue(
+			issues,
+			['definition', 'workflow', 'edges', index, 'from'],
+			'Workflow edge.from is required'
+		);
 	}
 	if (!to) {
-		pushIssue(issues, ['definition', 'workflow', 'edges', index, 'to'], 'Workflow edge.to is required');
+		pushIssue(
+			issues,
+			['definition', 'workflow', 'edges', index, 'to'],
+			'Workflow edge.to is required'
+		);
 	}
 	if (from && to && from === to) {
-		pushIssue(issues, ['definition', 'workflow', 'edges', index], 'Workflow edges cannot be self-referential');
+		pushIssue(
+			issues,
+			['definition', 'workflow', 'edges', index],
+			'Workflow edges cannot be self-referential'
+		);
 	}
 	if (from && !nodeIds.has(from)) {
-		pushIssue(issues, ['definition', 'workflow', 'edges', index, 'from'], `Unknown workflow node_id '${from}'`);
+		pushIssue(
+			issues,
+			['definition', 'workflow', 'edges', index, 'from'],
+			`Unknown workflow node_id '${from}'`
+		);
 	}
 	if (to && !nodeIds.has(to)) {
-		pushIssue(issues, ['definition', 'workflow', 'edges', index, 'to'], `Unknown workflow node_id '${to}'`);
+		pushIssue(
+			issues,
+			['definition', 'workflow', 'edges', index, 'to'],
+			`Unknown workflow node_id '${to}'`
+		);
 	}
 
 	return { from, to };
 }
 
-function validateWorkflow(value: unknown, issues: ValidationIssue[]): WorkflowDefinitionPayload | undefined {
+function validateWorkflow(
+	value: unknown,
+	issues: ValidationIssue[]
+): WorkflowDefinitionPayload | undefined {
 	if (value === undefined) return undefined;
 	if (!isRecord(value)) {
 		pushIssue(issues, ['definition', 'workflow'], 'Workflow must be a JSON object');
@@ -328,7 +378,11 @@ function validateWorkflow(value: unknown, issues: ValidationIssue[]): WorkflowDe
 	}
 
 	if (!Array.isArray(value.nodes) || value.nodes.length === 0) {
-		pushIssue(issues, ['definition', 'workflow', 'nodes'], 'Workflow must include at least one node');
+		pushIssue(
+			issues,
+			['definition', 'workflow', 'nodes'],
+			'Workflow must include at least one node'
+		);
 		return { ...value, nodes: [] } as WorkflowDefinitionPayload;
 	}
 
@@ -338,7 +392,11 @@ function validateWorkflow(value: unknown, issues: ValidationIssue[]): WorkflowDe
 	const nodeIds = nodes.map((node) => node.node_id);
 	const uniqueNodeIds = new Set(nodeIds);
 	if (uniqueNodeIds.size !== nodeIds.length) {
-		pushIssue(issues, ['definition', 'workflow', 'nodes'], 'Workflow node_id values must be unique');
+		pushIssue(
+			issues,
+			['definition', 'workflow', 'nodes'],
+			'Workflow node_id values must be unique'
+		);
 	}
 
 	const edges = Array.isArray(value.edges)
@@ -407,7 +465,11 @@ function validateSharedPayload(
 	const definition = validateDefinition(source.definition, actionKind, issues);
 
 	if (actionKind === 'custom_definition' && !definition) {
-		pushIssue(issues, ['definition'], 'definition is required when action_kind is custom_definition');
+		pushIssue(
+			issues,
+			['definition'],
+			'definition is required when action_kind is custom_definition'
+		);
 	}
 
 	const payload: Partial<Omit<CustomActionCreatePayload, 'template_id' | 'code'>> = {
@@ -514,10 +576,14 @@ export const customActionUpdateSchema = {
 	}
 };
 
-export function validateCreatePayload(data: unknown): PayloadValidationResult<CustomActionCreateInput> {
+export function validateCreatePayload(
+	data: unknown
+): PayloadValidationResult<CustomActionCreateInput> {
 	return validatePayload(safeParseCreate(data));
 }
 
-export function validateUpdatePayload(data: unknown): PayloadValidationResult<CustomActionUpdateInput> {
+export function validateUpdatePayload(
+	data: unknown
+): PayloadValidationResult<CustomActionUpdateInput> {
 	return validatePayload(safeParseUpdate(data));
 }

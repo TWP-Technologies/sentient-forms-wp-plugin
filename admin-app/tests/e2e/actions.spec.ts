@@ -1070,6 +1070,64 @@ test.describe('Actions admin flows', () => {
 		await expect(table.getByText('Spam Detection')).toBeVisible();
 	});
 
+	test('only exposes realtime trigger for the Realtime Clarification Assistant', async ({
+		page
+	}) => {
+		await page.addInitScript(() => {
+			try {
+				localStorage.setItem('sentient_forms_last_hooks', '["real_time"]');
+			} catch {}
+		});
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam Detection',
+						source: 'bundled',
+						hooks: ['gform_validation'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					},
+					{
+						id: 'clarification_assistant_v1',
+						label: 'Realtime Clarification Assistant',
+						source: 'bundled',
+						hooks: ['real_time'],
+						base_credit_cost: 4,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: [],
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
+
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await expect(drawer.getByRole('radio', { name: /Spam Detection/i })).toBeChecked();
+		await expect(drawer.getByTestId('create-trigger-hook-gform_validation')).toBeVisible();
+		await expect(drawer.getByTestId('create-trigger-hook-gform_after_submission')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toHaveCount(0);
+
+		await drawer.getByRole('radio', { name: /Realtime Clarification Assistant/i }).check();
+		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toBeVisible();
+		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toBeChecked();
+		await expect(drawer.getByTestId('create-trigger-hook-gform_validation')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-gform_after_submission')).toHaveCount(0);
+
+		await page.getByRole('button', { name: 'Custom actions' }).click();
+		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toHaveCount(0);
+	});
+
 	test('creates a custom action mapping from the drawer', async ({ page }) => {
 		await page.addInitScript(() => {
 			try {

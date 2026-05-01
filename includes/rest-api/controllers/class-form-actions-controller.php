@@ -57,6 +57,9 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         'real_time',
     ];
 
+    /** The only bundled action currently allowed to use the visitor-facing realtime hook. */
+    private const REALTIME_ACTION_ID = 'clarification_assistant_v1';
+
     /** Policy version exposed to admin workflow planner clients. */
     private const WORKFLOW_POLICY_VERSION = '2026-02-mixed-sync-async-v1';
 
@@ -1975,11 +1978,25 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $new_id = uniqid( 'map_', false );
         }
 
+        $trigger_hooks = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
+        $settings      = $request->has_param( 'settings' )
+            ? $this->sanitize_settings( $request->get_param( 'settings' ) )
+            : [];
+        $realtime_policy = $this->validate_realtime_trigger_policy(
+            $trigger_hooks,
+            $request->get_param( 'central_action_id' ),
+            $settings
+        );
+        if ( is_wp_error( $realtime_policy ) )
+        {
+            return $realtime_policy;
+        }
+
         $action = [
             'local_mapping_id'           => $new_id,
             'central_action_id'          => $request->get_param( 'central_action_id' ),
             'action_type_indicator'      => $request->get_param( 'action_type_indicator' ),
-            'trigger_hooks'              => $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) ),
+            'trigger_hooks'              => $trigger_hooks,
             'is_action_enabled_for_form' => $request->get_param( 'is_action_enabled_for_form' ) ?? true,
             'execution_priority'         => $request->get_param( 'execution_priority' ) ?? 10,
         ];
@@ -1989,9 +2006,9 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $action[ 'action_name_label' ] = $request->get_param( 'action_name_label' );
         }
 
-        if ( $request->has_param( 'settings' ) )
+        if ( [] !== $settings )
         {
-            $action[ 'settings' ] = $this->sanitize_settings( $request->get_param( 'settings' ) );
+            $action[ 'settings' ] = $settings;
         }
 
         $actions_to_validate            = $actions;
@@ -2105,6 +2122,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 __( 'Bundled action template does not expose any supported trigger hooks.', 'sentient-forms' ),
                 400
             );
+        }
+
+        $realtime_policy = $this->validate_realtime_trigger_policy( $trigger_hooks, $template_code, $settings );
+        if ( is_wp_error( $realtime_policy ) )
+        {
+            return $realtime_policy;
         }
 
         $enabled    = $request->has_param( 'is_action_enabled_for_form' )
@@ -2751,6 +2774,24 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     $update['settings_json'] = $this->build_local_first_runtime_settings( $settings );
                 }
 
+                $policy_linkage = $this->transform_local_first_mapping_to_linkage( $local_first_row );
+                $policy_action_id = is_array( $policy_linkage ) ? ( $policy_linkage['central_action_id'] ?? '' ) : '';
+                $policy_trigger_hooks = $request->has_param( 'trigger_hooks' )
+                    ? ( $trigger_hooks ?? [] )
+                    : [ sanitize_key( (string) ( $local_first_row['hook'] ?? '' ) ) ];
+                $policy_settings = $request->has_param( 'settings' )
+                    ? ( $settings ?? [] )
+                    : ( is_array( $local_first_row['settings_json'] ?? null ) ? $local_first_row['settings_json'] : [] );
+                $realtime_policy = $this->validate_realtime_trigger_policy(
+                    $policy_trigger_hooks,
+                    $policy_action_id,
+                    $policy_settings
+                );
+                if ( is_wp_error( $realtime_policy ) )
+                {
+                    return $realtime_policy;
+                }
+
                 $updated = $this->local_form_mappings->update(
                     absint( $local_first_row['id'] ?? 0 ),
                     $update
@@ -2811,6 +2852,16 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             }
 
             $linkage[ 'settings' ] = $settings;
+        }
+
+        $realtime_policy = $this->validate_realtime_trigger_policy(
+            isset( $linkage['trigger_hooks'] ) && is_array( $linkage['trigger_hooks'] ) ? $linkage['trigger_hooks'] : [],
+            $linkage['central_action_id'] ?? '',
+            isset( $linkage['settings'] ) && is_array( $linkage['settings'] ) ? $linkage['settings'] : []
+        );
+        if ( is_wp_error( $realtime_policy ) )
+        {
+            return $realtime_policy;
         }
 
         $actions_to_validate       = $actions;
@@ -3806,6 +3857,31 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         );
 
         return array_values( array_unique( $normalized ) );
+    }
+
+    private function action_allows_realtime_hook( mixed $central_action_id ): bool
+    {
+        return self::REALTIME_ACTION_ID === sanitize_key( (string) $central_action_id );
+    }
+
+    private function validate_realtime_trigger_policy( array $trigger_hooks, mixed $central_action_id, array $settings = [] ): true | WP_Error
+    {
+        $has_realtime = in_array( 'real_time', $this->sanitize_trigger_hooks( $trigger_hooks ), true );
+        if ( isset( $settings['execution_mode'] ) && is_scalar( $settings['execution_mode'] ) )
+        {
+            $has_realtime = $has_realtime || 'real_time' === sanitize_key( (string) $settings['execution_mode'] );
+        }
+
+        if ( ! $has_realtime || $this->action_allows_realtime_hook( $central_action_id ) )
+        {
+            return true;
+        }
+
+        return $this->prepare_error_response(
+            'rest_invalid_realtime_action',
+            __( 'Realtime triggers are only supported by the Realtime Clarification Assistant action.', 'sentient-forms' ),
+            400
+        );
     }
 
     /**

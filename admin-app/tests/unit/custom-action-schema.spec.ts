@@ -197,6 +197,31 @@ describe('custom action schema pricing authority', () => {
 		}
 	});
 
+	it('rejects realtime execution mode for custom actions', () => {
+		const result = validateCreatePayload({
+			template_id: null,
+			code: 'custom-realtime-rejected',
+			display_name: 'Custom Realtime Rejected',
+			action_kind: 'custom_definition',
+			definition: {
+				prompt_template: 'Review {{entry}}.'
+			},
+			definition_version: 1,
+			supported_execution_modes: ['real_time']
+		});
+
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(
+				result.errors.some(
+					(error) =>
+						error.path === 'supported_execution_modes.0' &&
+						error.message === 'Unsupported execution mode'
+				)
+			).toBe(true);
+		}
+	});
+
 	it('rejects workflow edges that reference unknown nodes', () => {
 		const result = validateCreatePayload({
 			template_id: '550e8400-e29b-41d4-a716-446655440000',

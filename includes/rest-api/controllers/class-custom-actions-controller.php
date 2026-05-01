@@ -1222,7 +1222,7 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
             );
         }
 
-        $allowed   = [ 'validation', 'after_submission', 'real_time' ];
+        $allowed   = [ 'validation', 'after_submission' ];
         $sanitized = [];
 
         foreach ( $value as $mode )

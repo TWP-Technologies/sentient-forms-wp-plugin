@@ -739,6 +739,42 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( '9', $stored_mappings[0]['settings_json']['realtime_settings']['storage_target_field_id'] ?? null );
     }
 
+    public function test_add_form_action_rejects_non_clarification_realtime_trigger(): void
+    {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/18/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 18 );
+        $request->set_param( 'central_action_id', 'sentient_forms_local_custom_action' );
+        $request->set_param( 'action_type_indicator', 'custom' );
+        $request->set_param( 'trigger_hooks', [ 'real_time' ] );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_realtime_action', $response->get_error_code() );
+    }
+
+    public function test_add_form_action_rejects_non_clarification_realtime_execution_mode(): void
+    {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/19/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 19 );
+        $request->set_param( 'central_action_id', 'spam_detection_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
+        $request->set_param( 'trigger_hooks', [ 'gform_validation' ] );
+        $request->set_param(
+            'settings',
+            [
+                'execution_mode' => 'real_time',
+            ]
+        );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_realtime_action', $response->get_error_code() );
+    }
+
     public function test_add_form_action_rejects_realtime_storage_target_for_normal_answer_field(): void
     {
         GFAPI::$forms[17] = [
@@ -1963,6 +1999,28 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'yes', $stored['settings_json']['include_site_context'] ?? null );
         $this->assertTrue( $stored['conditions_json']['enabled'] ?? false );
         $this->assertSame( 'enterprise', $stored['conditions_json']['root']['value'] ?? null );
+    }
+
+    public function test_update_form_action_item_rejects_realtime_for_non_clarification_local_first_mapping(): void
+    {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $request->set_param( 'trigger_hooks', [ 'real_time' ] );
+        $request->set_param(
+            'settings',
+            [
+                'execution_mode' => 'real_time',
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_realtime_action', $response->get_error_code() );
     }
 
     public function test_update_form_action_item_reactivates_archived_local_action_when_enabled(): void
