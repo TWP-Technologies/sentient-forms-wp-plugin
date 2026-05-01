@@ -237,7 +237,15 @@ test('first-time managed checkout starts from the recommended license path with 
 	await page.goto('/#/licensing');
 
 	await expect(page.getByRole('heading', { name: 'Let Sentient Forms manage model access' })).toBeVisible();
+	await expect(page.getByTestId('licensing-managed-checkout-disclosure')).toContainText(
+		'Recommended: check this before choosing a managed-service plan.'
+	);
+	await expect(page.getByTestId('licensing-managed-checkout-disclosure')).toContainText(
+		'Sentient Forms does not store prompt or response payloads for these runs.'
+	);
+	await expect(page.getByRole('button', { name: 'Choose Starter' })).toBeDisabled();
 	await page.getByTestId('licensing-managed-checkout-disclosure').locator('input').check();
+	await expect(page.getByRole('button', { name: 'Choose Starter' })).toBeEnabled();
 	await page.getByRole('button', { name: 'Choose Starter' }).click();
 
 	await expect.poll(() => checkoutRequests).toBe(1);

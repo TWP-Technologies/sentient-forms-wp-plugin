@@ -703,19 +703,26 @@
 						handled from one subscription. Each license covers this WordPress site only.
 					</p>
 					<label
-						class="sf:flex sf:items-start sf:gap-3 sf:rounded-md sf:border sf:border-blue-200 sf:bg-white sf:p-3 sf:text-sm sf:text-slate-700"
+						class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-blue-300 sf:bg-white sf:p-4 sf:text-sm sf:text-slate-700 sf:shadow-[0_0_22px_rgba(37,99,235,0.10)] sf:focus-within:ring-2 sf:focus-within:ring-blue-500"
 						data-testid="licensing-managed-checkout-disclosure"
 					>
 						<input
 							type="checkbox"
-							class="sf:mt-1"
+							class="sf:mt-1 sf:h-5 sf:w-5"
 							bind:checked={acceptedManagedCheckoutDisclosure}
 							aria-describedby="managed-checkout-disclosure-copy"
 						/>
-						<span id="managed-checkout-disclosure-copy">
-							I understand managed-service runs send required prompts and form fields to Sentient
-							Forms for model execution and metering. Sentient Forms does not store prompt or
-							response payloads for these runs.
+						<span id="managed-checkout-disclosure-copy" class="sf:space-y-1">
+							<span class="sf:block sf:font-semibold sf:text-slate-900">
+								Recommended: check this before choosing a managed-service plan.
+							</span>
+							<span class="sf:block">
+								I understand managed-service runs send required prompts and form fields to
+								Sentient Forms for model execution and metering.
+								<strong class="sf:font-semibold sf:underline">
+									Sentient Forms does not store prompt or response payloads for these runs.
+								</strong>
+							</span>
 						</span>
 					</label>
 					{#if managedCheckoutCompletionMessage}
@@ -755,7 +762,9 @@
 							</div>
 							<Button
 								class="sf:mt-auto sf:w-full"
-								disabled={Boolean(checkoutPlanPending) || checkoutCompletionLoading}
+								disabled={Boolean(checkoutPlanPending) ||
+									checkoutCompletionLoading ||
+									(!hasConnectedLicense && !acceptedManagedCheckoutDisclosure)}
 								onclick={() => {
 									void handleCheckout(plan);
 								}}

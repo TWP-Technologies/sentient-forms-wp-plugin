@@ -195,7 +195,16 @@ test.describe('Custom actions admin view', () => {
 									category: 'local',
 									resolved_model_id: 'openrouter/free',
 									auto_upgrade: true
-								}
+								},
+								...Array.from({ length: 12 }, (_, index) => ({
+									code: `sf_extra_${index}`,
+									display_name: `Specialized preset ${index + 1}`,
+									description: `Scrollable recommended preset ${index + 1}.`,
+									category: 'local',
+									resolved_model_id:
+										index % 2 === 0 ? 'openai/gpt-5.5' : 'deepseek/deepseek-r1-0528',
+									auto_upgrade: true
+								}))
 							],
 							pricing_policy_version: 'mock'
 						}
@@ -387,12 +396,26 @@ test.describe('Custom actions admin view', () => {
 		await expect(createForm.getByLabel('Template ID')).toHaveCount(0);
 		await expect(createForm.getByLabel('Code')).toHaveCount(0);
 		await expect(createForm.getByTestId('model-selector')).toBeVisible();
-		await createForm.getByTestId('model-selector-open').click();
-		await expect(page.getByTestId('model-selector-dialog')).toBeVisible();
-		await page.getByTestId('model-selector-tab-models').click();
-		await expect(page.getByTestId('model-selector-catalog')).toBeVisible();
-		await expect(page.getByTestId('model-search-input')).toBeVisible();
-		await expect(page.getByTestId('model-selector-detail')).toBeVisible();
+			await createForm.getByTestId('model-selector-open').click();
+			await expect(page.getByTestId('model-selector-dialog')).toBeVisible();
+			await page.setViewportSize({ width: 1024, height: 768 });
+			const shellHeight = await page
+				.getByTestId('model-selector-dialog')
+				.locator('> div')
+				.first()
+				.boundingBox();
+		expect(shellHeight).not.toBeNull();
+		expect(shellHeight?.height ?? 0).toBeLessThanOrEqual(768 * 0.95 + 2);
+			const presetsScroll = page.getByTestId('model-selector-presets').locator('..');
+		await presetsScroll.evaluate((element) => {
+			element.scrollTop = element.scrollHeight;
+		});
+		await expect(page.getByTestId('model-preset-sf_extra_11')).toBeVisible();
+			await page.getByTestId('model-selector-tab-models').click();
+			await expect(page.getByTestId('model-selector-catalog')).toBeVisible();
+			await expect(page.getByTestId('model-selector-catalog').getByLabel('Search models')).toBeVisible();
+			await expect(page.getByTestId('model-selector-detail')).toBeVisible();
+			await expect(page.getByTestId('model-selector-advanced-filters-panel')).toHaveCount(0);
 		await expect(
 			page.getByTestId('model-row-openai/gpt-5.5').getByText('Paid model').first()
 		).toBeVisible();
@@ -405,9 +428,16 @@ test.describe('Custom actions admin view', () => {
 		expect(
 			Math.abs((dialogHeightBefore?.height ?? 0) - (dialogHeightAfter?.height ?? 0))
 		).toBeLessThanOrEqual(2);
-		await expect(page.getByTestId('model-category-filter')).toBeVisible();
-		await expect(page.getByTestId('model-rank-filter')).toBeVisible();
-		await expect(page.getByTestId('model-sort-select')).toBeVisible();
+		await page.getByTestId('model-selector-advanced-filters-toggle').click();
+			await expect(page.getByTestId('model-selector-advanced-filters-panel')).toBeVisible();
+			await expect(page.getByTestId('model-category-filter')).toBeVisible();
+			await expect(page.getByTestId('model-rank-filter')).toBeVisible();
+			await expect(page.getByTestId('model-selector-catalog').getByLabel('Sort')).toBeVisible();
+			await page.getByTestId('model-category-filter').selectOption('programming');
+			await page.getByTestId('model-rank-filter').selectOption('3');
+			await page.getByTestId('model-selector-advanced-filters-toggle').click();
+			await expect(page.getByTestId('model-selector-advanced-filters-panel')).toHaveCount(0);
+			await expect(page.getByTestId('model-row-deepseek/deepseek-r1-0528')).toBeVisible();
 		await expect(
 			page.getByTestId('model-selector-detail').getByText('#1 Programming')
 		).toBeVisible();

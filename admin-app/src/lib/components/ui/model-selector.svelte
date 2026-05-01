@@ -105,6 +105,7 @@
 	let contextLimit = $state<ContextLimit>('0');
 	let sortMode = $state<ModelSelectorSortMode>('name');
 	let requiredCapabilities = $state<Set<ModelSelectorCapabilityKey>>(new Set());
+	let advancedFiltersOpen = $state(false);
 	let isPickerOpen = $state(false);
 	let highlightedModelId = $state<string | null>(null);
 	let error = $state<string | null>(null);
@@ -475,7 +476,7 @@
 								auto_upgrade: true
 							}
 						];
-			syncSelectionFromValue(value, { force: true });
+			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
 		} catch (e) {
 			console.error('Failed to load models', e);
 			error = e instanceof Error ? e.message : 'Failed to load models';
@@ -487,7 +488,7 @@
 	async function loadProviderCredentials() {
 		if (Array.isArray(providerCredentials)) {
 			loadedProviderCredentials = providerCredentials;
-			syncSelectionFromValue(value, { force: true });
+			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
 			return;
 		}
 
@@ -503,7 +504,7 @@
 			loadedProviderCredentials = [];
 		} finally {
 			providerLoading = false;
-			syncSelectionFromValue(value, { force: true });
+			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
 		}
 	}
 
@@ -997,13 +998,13 @@
 	});
 
 	$effect(() => {
-		syncSelectionFromValue(value);
+		if (!isPickerOpen) syncSelectionFromValue(value);
 	});
 
 	$effect(() => {
 		if (Array.isArray(providerCredentials)) {
 			loadedProviderCredentials = providerCredentials;
-			syncSelectionFromValue(value, { force: true });
+			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
 		}
 	});
 
@@ -1210,9 +1211,9 @@
 			aria-labelledby={`model-selector-title-${level}`}
 			data-testid="model-selector-dialog"
 		>
-			<div
-				class="sf:flex sf:h-[86vh] sf:max-h-[56rem] sf:w-full sf:max-w-7xl sf:flex-col sf:overflow-hidden sf:rounded-xl sf:bg-white sf:shadow-2xl"
-			>
+				<div
+					class="sf:flex sf:h-[calc(100dvh-1rem)] sf:w-full sf:max-w-[88rem] sf:flex-col sf:overflow-hidden sf:rounded-xl sf:bg-white sf:shadow-2xl sf:sm:h-[95vh]"
+				>
 				<header
 					class="sf:flex-none sf:border-b sf:border-slate-200 sf:bg-slate-950 sf:px-4 sf:py-4 sf:text-white sf:sm:px-5"
 				>
@@ -1302,151 +1303,177 @@
 						class="sf:flex sf:min-h-0 sf:min-w-0 sf:flex-col sf:border-b sf:border-slate-200 sf:p-4 sf:lg:border-b-0 sf:lg:border-r sf:sm:p-5"
 					>
 						{#if selectionMode === 'presets'}
-							<div class="sf:grid sf:gap-3 sf:md:grid-cols-2" data-testid="model-selector-presets">
-								{#each presets as preset}
-									{@const model = modelById(preset.resolved_model_id)}
-									{@const locked = model ? isModelLocked(model) : false}
-									<Button
-										variant="secondary"
-										size="md"
-										class={[
-											'sf:h-auto sf:min-h-36 sf:w-full sf:items-stretch sf:justify-start sf:rounded-lg sf:p-4 sf:text-left',
-											selectedPreset === preset.code
-												? 'sf:border-primary-500 sf:bg-primary-50'
-												: 'sf:border-slate-200 sf:bg-white sf:hover:border-slate-300',
-											locked ? 'sf:cursor-not-allowed sf:bg-slate-50 sf:opacity-75' : ''
-										].join(' ')}
-										title={model ? lockTitle(model) : preset.description}
-										aria-disabled={locked}
-										onfocus={() => {
-											highlightedModelId = preset.resolved_model_id;
-										}}
-										onmouseover={() => {
-											highlightedModelId = preset.resolved_model_id;
-										}}
-										onclick={() => {
-											if (!locked) choosePreset(preset);
-										}}
-										data-testid={`model-preset-${preset.code}`}
-									>
-										<span class="sf:flex sf:h-full sf:flex-col sf:gap-3">
-											<span class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-												<span class="sf:text-sm sf:font-semibold sf:text-slate-900">
-													{preset.display_name}
+								<div
+									class="sf:min-h-0 sf:flex-1 sf:overflow-y-auto sf:pr-1"
+								>
+								<div
+									class="sf:grid sf:gap-3 sf:md:grid-cols-2"
+									data-testid="model-selector-presets"
+								>
+									{#each presets as preset}
+										{@const model = modelById(preset.resolved_model_id)}
+										{@const locked = model ? isModelLocked(model) : false}
+										<Button
+											variant="secondary"
+											size="md"
+											class={[
+												'sf:h-auto sf:min-h-36 sf:w-full sf:items-stretch sf:justify-start sf:rounded-lg sf:p-4 sf:text-left',
+												selectedPreset === preset.code
+													? 'sf:border-primary-500 sf:bg-primary-50'
+													: 'sf:border-slate-200 sf:bg-white sf:hover:border-slate-300',
+												locked ? 'sf:cursor-not-allowed sf:bg-slate-50 sf:opacity-75' : ''
+											].join(' ')}
+											title={model ? lockTitle(model) : preset.description}
+											aria-disabled={locked}
+											onfocus={() => {
+												highlightedModelId = preset.resolved_model_id;
+											}}
+											onmouseover={() => {
+												highlightedModelId = preset.resolved_model_id;
+											}}
+											onclick={() => {
+												if (!locked) choosePreset(preset);
+											}}
+											data-testid={`model-preset-${preset.code}`}
+										>
+											<span class="sf:flex sf:h-full sf:flex-col sf:gap-3">
+												<span class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+													<span class="sf:text-sm sf:font-semibold sf:text-slate-900">
+														{preset.display_name}
+													</span>
+													{#if locked}
+														<Badge variant="warning">
+															{model ? `${modelCostLabel(model)} locked` : 'Paid'}
+														</Badge>
+													{:else if model && modelIsFree(model)}
+														<Badge variant="success">Free</Badge>
+													{:else}
+														<Badge variant="info">
+															{model ? modelCostLabel(model) : 'Paid'}
+														</Badge>
+													{/if}
 												</span>
-												{#if locked}
-													<Badge variant="warning">
-														{model ? `${modelCostLabel(model)} locked` : 'Paid'}
-													</Badge>
-												{:else if model && modelIsFree(model)}
-													<Badge variant="success">Free</Badge>
-												{:else}
-													<Badge variant="info">
-														{model ? modelCostLabel(model) : 'Paid'}
-													</Badge>
-												{/if}
+												<span class="sf:text-sm sf:text-slate-600">{preset.description}</span>
+												<span
+													class="sf:mt-auto sf:break-all sf:font-mono sf:text-xs sf:text-slate-500"
+												>
+													{preset.resolved_model_id}
+												</span>
 											</span>
-											<span class="sf:text-sm sf:text-slate-600">{preset.description}</span>
-											<span
-												class="sf:mt-auto sf:break-all sf:font-mono sf:text-xs sf:text-slate-500"
-											>
-												{preset.resolved_model_id}
-											</span>
-										</span>
-									</Button>
-								{/each}
+										</Button>
+									{/each}
+								</div>
 							</div>
 						{:else if selectionMode === 'models'}
 							<div
 								class="sf:flex sf:min-h-0 sf:flex-1 sf:flex-col sf:gap-4"
 								data-testid="model-selector-catalog"
 							>
-								<div class="sf:grid sf:gap-2 sf:xl:grid-cols-[minmax(0,1fr)_10rem_10rem_11rem]">
+								<div class="sf:grid sf:gap-2 sf:xl:grid-cols-[minmax(0,1fr)_10rem_auto]">
 									<label class="sf:flex sf:flex-col sf:gap-1">
 										<span class="sf:text-xs sf:font-semibold sf:text-slate-700">Search models</span>
-										<input
-											class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-											placeholder="Search model, provider, category, rank..."
-											value={searchTerm}
-											oninput={(event) => {
-												searchTerm = (event.currentTarget as HTMLInputElement).value;
-											}}
-											data-testid="model-search-input"
+											<input
+												class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+												value={searchTerm}
+												oninput={(event) => {
+													searchTerm = (event.currentTarget as HTMLInputElement).value;
+												}}
+											/>
+										</label>
+										<SelectField
+											id={`model-sort-${level}`}
+											label="Sort"
+											options={sortOptions}
+											bind:value={sortMode}
 										/>
-									</label>
-									<SelectField
-										id={`model-sort-${level}`}
-										label="Sort"
-										options={sortOptions}
-										bind:value={sortMode}
-										data-testid="model-sort-select"
-									/>
-									<SelectField
-										id={`model-provider-filter-${level}`}
-										label="Provider"
-										options={providerFilterOptions}
-										bind:value={providerFilter}
-										data-testid="model-provider-filter"
-									/>
-									<SelectField
-										id={`model-cost-filter-${level}`}
-										label="Max cost"
-										options={costLimitOptions}
-										bind:value={costLimit}
-										data-testid="model-cost-filter"
-									/>
-								</div>
-
-								<div class="sf:grid sf:gap-2 sf:xl:grid-cols-[12rem_10rem_10rem_minmax(0,1fr)]">
-									<SelectField
-										id={`model-category-filter-${level}`}
-										label="OpenRouter category"
-										options={categoryFilterOptions}
-										bind:value={categoryFilter}
-										data-testid="model-category-filter"
-									/>
-									<SelectField
-										id={`model-rank-filter-${level}`}
-										label="Rank"
-										options={rankLimitOptions}
-										bind:value={rankLimit}
-										disabled={categoryFilter === 'all'}
-										data-testid="model-rank-filter"
-									/>
-									<SelectField
-										id={`model-context-filter-${level}`}
-										label="Context"
-										options={contextLimitOptions}
-										bind:value={contextLimit}
-										data-testid="model-context-filter"
-									/>
-									<div>
-										<p class="sf:text-xs sf:font-semibold sf:text-slate-700">
-											Required capabilities
-										</p>
-										<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1.5">
-											{#each capabilityFilterOptions as capability}
-												<Button
-													variant="secondary"
-													size="sm"
-													class={[
-														'sf:min-h-8 sf:gap-1 sf:rounded-full sf:px-2.5 sf:text-xs',
-														requiredCapabilities.has(capability.value)
-															? 'sf:border-primary-500 sf:bg-primary-50 sf:text-primary-700'
-															: 'sf:border-slate-200 sf:bg-white sf:text-slate-600 sf:hover:border-slate-300'
-													].join(' ')}
-													aria-pressed={requiredCapabilities.has(capability.value)}
-													title={capability.label}
-													onclick={() => toggleCapabilityFilter(capability.value)}
-													data-testid={`model-capability-filter-${capability.value}`}
-												>
-													<span aria-hidden="true">{capability.short}</span>
-													<span class="sf:hidden sf:2xl:inline">{capability.label}</span>
-												</Button>
-											{/each}
-										</div>
+									<div class="sf:flex sf:flex-col sf:justify-end">
+										<Button
+											size="sm"
+											variant="secondary"
+											class="sf:min-h-10 sf:whitespace-nowrap sf:border-slate-300 sf:bg-white"
+											aria-expanded={advancedFiltersOpen}
+											onclick={() => {
+												advancedFiltersOpen = !advancedFiltersOpen;
+											}}
+											data-testid="model-selector-advanced-filters-toggle"
+										>
+											{advancedFiltersOpen ? 'Hide filters' : 'Advanced filters'}
+										</Button>
 									</div>
 								</div>
+
+								{#if advancedFiltersOpen}
+									<div
+										class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3 sf:shadow-inner"
+										data-testid="model-selector-advanced-filters-panel"
+									>
+										<div class="sf:grid sf:gap-3 sf:xl:grid-cols-[10rem_10rem_12rem_10rem_10rem]">
+											<SelectField
+												id={`model-provider-filter-${level}`}
+												label="Provider"
+												options={providerFilterOptions}
+												bind:value={providerFilter}
+												data-testid="model-provider-filter"
+											/>
+											<SelectField
+												id={`model-cost-filter-${level}`}
+												label="Max cost"
+												options={costLimitOptions}
+												bind:value={costLimit}
+												data-testid="model-cost-filter"
+											/>
+											<SelectField
+												id={`model-category-filter-${level}`}
+												label="OpenRouter category"
+												options={categoryFilterOptions}
+												bind:value={categoryFilter}
+												data-testid="model-category-filter"
+											/>
+											<SelectField
+												id={`model-rank-filter-${level}`}
+												label="Rank"
+												options={rankLimitOptions}
+												bind:value={rankLimit}
+												disabled={categoryFilter === 'all'}
+												data-testid="model-rank-filter"
+											/>
+											<SelectField
+												id={`model-context-filter-${level}`}
+												label="Context"
+												options={contextLimitOptions}
+												bind:value={contextLimit}
+												data-testid="model-context-filter"
+											/>
+										</div>
+
+										<div class="sf:mt-3">
+											<p class="sf:text-xs sf:font-semibold sf:text-slate-700">
+												Required capabilities
+											</p>
+											<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1.5">
+												{#each capabilityFilterOptions as capability}
+													<Button
+														variant="secondary"
+														size="sm"
+														class={[
+															'sf:min-h-8 sf:gap-1 sf:rounded-full sf:px-2.5 sf:text-xs',
+															requiredCapabilities.has(capability.value)
+																? 'sf:border-primary-500 sf:bg-primary-50 sf:text-primary-700'
+																: 'sf:border-slate-200 sf:bg-white sf:text-slate-600 sf:hover:border-slate-300'
+														].join(' ')}
+														aria-pressed={requiredCapabilities.has(capability.value)}
+														title={capability.label}
+														onclick={() => toggleCapabilityFilter(capability.value)}
+														data-testid={`model-capability-filter-${capability.value}`}
+													>
+														<span aria-hidden="true">{capability.short}</span>
+														<span class="sf:hidden sf:2xl:inline">{capability.label}</span>
+													</Button>
+												{/each}
+											</div>
+										</div>
+									</div>
+								{/if}
 
 								<div
 									class="sf:flex sf:flex-col sf:gap-1 sf:text-xs sf:text-slate-500 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between"
