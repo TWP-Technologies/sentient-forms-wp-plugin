@@ -730,8 +730,17 @@
 		})
 			.then(function (response) {
 				if (!response.ok) {
-					return response.json().then(function (payload) {
-						var message = payload && payload.message ? payload.message : 'Suggestion request failed.';
+					return response.text().then(function (bodyText) {
+						var payload = null;
+						try {
+							payload = JSON.parse(bodyText);
+						} catch (error) {
+							payload = null;
+						}
+
+						var message = payload && payload.message
+							? payload.message
+							: 'Suggestion request failed with HTTP ' + response.status + '.';
 						throw new Error(message);
 					});
 				}

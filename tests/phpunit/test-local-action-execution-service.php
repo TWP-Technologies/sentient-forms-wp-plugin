@@ -1140,7 +1140,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                     'post_execution_actions' => [
                         [
                             'type'    => 'entry_note',
-	                            'message' => 'Follow up with {{field:type:name.first}} about {{structured.summary}} from {{action_label}}.',
+                            'message' => 'Follow up with {{field:type:name.first}} about {{structured.summary}} from {{action_label}}.',
                         ],
                         [
                             'type'      => 'wp_hook',
@@ -1181,23 +1181,23 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         {
             $result = $service->execute_mapping(
                 $fixture['mapping_id'],
-	                [
-	                    'id' => 7,
-	                    'title' => 'Contact Form',
-	                    'fields' => [
-	                        (object) [
-	                            'id' => 1,
-	                            'type' => 'name',
-	                            'label' => 'Your name',
-	                        ],
-	                    ],
-	                ],
-	                [
-	                    'id' => 99,
-	                    '1.3'=> 'Ada',
-	                    '1.6'=> 'Lovelace',
-	                    '2'  => 'ada@example.test',
-	                ],
+                [
+                    'id'     => 7,
+                    'title'  => 'Contact Form',
+                    'fields' => [
+                        (object) [
+                            'id'    => 1,
+                            'type'  => 'name',
+                            'label' => 'Your name',
+                        ],
+                    ],
+                ],
+                [
+                    'id'  => 99,
+                    '1.3' => 'Ada',
+                    '1.6' => 'Lovelace',
+                    '2'   => 'ada@example.test',
+                ],
                 [ 'hook' => 'gform_after_submission' ]
             );
         }
@@ -1213,10 +1213,10 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertCount( 1, GFFormsModel::$notes );
         $this->assertSame( 99, GFFormsModel::$notes[0]['entry_id'] );
         $this->assertSame( 'sentient_forms_local_post_execution', GFFormsModel::$notes[0]['note_type'] );
-	        $this->assertStringContainsString(
-	            'Follow up with Ada about enterprise support plan from Local follow-up router.',
-	            GFFormsModel::$notes[0]['note']
-	        );
+        $this->assertStringContainsString(
+            'Follow up with Ada about enterprise support plan from Local follow-up router.',
+            GFFormsModel::$notes[0]['note']
+        );
 
         $this->assertCount( 1, $hook_calls );
         $this->assertSame( 99, $hook_calls[0]['entry_id'] );
@@ -1383,6 +1383,57 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'succeeded', $event['status'] );
         $this->assertTrue( $event['result_json']['structured_output_valid'] );
         $this->assertSame( 'custom_action', $event['result_json']['structured_output_schema_source'] );
+    }
+
+    public function test_normalizes_realtime_question_answer_type_aliases_before_schema_validation(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [ 'structured_output_schema' => $this->realtime_suggestion_schema() ]
+        );
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'suggestions'           => [],
+                    'virtual_questions'     => [
+                        [
+                            'question_id'     => 'preferred_contact',
+                            'question'        => 'Which contact method should the team use?',
+                            'target_field_id' => '2',
+                            'required'        => 'false',
+                            'answer_type'     => 'email',
+                            'choices'         => [],
+                        ],
+                    ],
+                    'conditional_decisions' => [
+                        [
+                            'condition_key' => 'has_contact_preference',
+                            'met'           => 'true',
+                        ],
+                    ],
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'real_time' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertTrue( $result['result']['structured_output_valid'] );
+        $this->assertSame( 'short_text', $result['result']['structured']['virtual_questions'][0]['answer_type'] );
+        $this->assertFalse( $result['result']['structured']['virtual_questions'][0]['required'] );
+        $this->assertSame( 'has_contact_preference', $result['result']['structured']['conditional_decisions'][0]['decision_id'] );
+        $this->assertTrue( $result['result']['structured']['conditional_decisions'][0]['met'] );
     }
 
     public function test_uses_template_structured_output_schema_when_custom_action_has_no_schema(): void
@@ -1924,6 +1975,75 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'summary'        => [
                     'type'      => 'string',
                     'minLength' => 1,
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function realtime_suggestion_schema(): array
+    {
+        return [
+            'type'                 => 'object',
+            'required'             => [ 'suggestions', 'virtual_questions', 'conditional_decisions' ],
+            'additionalProperties' => true,
+            'properties'           => [
+                'suggestions'           => [
+                    'type'  => 'array',
+                    'items' => [
+                        'type'                 => 'object',
+                        'required'             => [ 'field_id', 'severity', 'message', 'jump_target_field_id' ],
+                        'additionalProperties' => true,
+                        'properties'           => [
+                            'field_id'             => [ 'type' => 'string' ],
+                            'severity'             => [
+                                'type' => 'string',
+                                'enum' => [ 'info', 'warning', 'critical' ],
+                            ],
+                            'message'              => [ 'type' => 'string' ],
+                            'jump_target_field_id' => [ 'type' => 'string' ],
+                            'is_suppressed'        => [ 'type' => 'boolean' ],
+                        ],
+                    ],
+                ],
+                'virtual_questions'     => [
+                    'type'  => 'array',
+                    'items' => [
+                        'type'                 => 'object',
+                        'required'             => [ 'question_id', 'question', 'required', 'answer_type' ],
+                        'additionalProperties' => true,
+                        'properties'           => [
+                            'question_id'     => [ 'type' => 'string' ],
+                            'question'        => [ 'type' => 'string' ],
+                            'target_field_id' => [ 'type' => 'string' ],
+                            'required'        => [ 'type' => 'boolean' ],
+                            'answer_type'     => [
+                                'type' => 'string',
+                                'enum' => [ 'short_text', 'long_text', 'choice' ],
+                            ],
+                            'choices'         => [
+                                'type'  => 'array',
+                                'items' => [ 'type' => 'string' ],
+                            ],
+                        ],
+                    ],
+                ],
+                'conditional_decisions' => [
+                    'type'  => 'array',
+                    'items' => [
+                        'type'                 => 'object',
+                        'required'             => [ 'decision_id', 'condition_key', 'met' ],
+                        'additionalProperties' => true,
+                        'properties'           => [
+                            'decision_id'   => [ 'type' => 'string' ],
+                            'condition_key' => [ 'type' => 'string' ],
+                            'met'           => [ 'type' => 'boolean' ],
+                            'confidence'    => [ 'type' => 'number' ],
+                            'reason'        => [ 'type' => 'string' ],
+                        ],
+                    ],
                 ],
             ],
         ];

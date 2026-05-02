@@ -197,6 +197,26 @@ describe('realtime suggestions runtime', () => {
 		expect(metering?.textContent).toContain('Run: rt-corr-123');
 	});
 
+	it('shows HTTP status when suggestion endpoint returns non-JSON error markup', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 502,
+			text: async () => '<html><body>Bad Gateway</body></html>'
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig();
+		evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		const error = document.querySelector<HTMLElement>('[data-role="error"]');
+		expect(error).not.toBeNull();
+		expect(error?.hidden).toBe(false);
+		expect(error?.textContent).toContain('Suggestion request failed with HTTP 502.');
+		expect(error?.textContent).not.toContain('Unexpected token');
+	});
+
 	it('dispatches conditional decision events with mapping context', async () => {
 		const fetchMock = vi.fn().mockResolvedValue({
 			ok: true,

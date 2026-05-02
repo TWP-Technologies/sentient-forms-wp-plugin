@@ -51,10 +51,22 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             $model      = isset( $selection['model'] ) && is_scalar( $selection['model'] )
                 ? trim( (string) $selection['model'] )
                 : '';
+            $default_model = sanitize_text_field( (string) ( $definition['default_model'] ?? 'openrouter/auto' ) );
 
-            if ( '' === $model || ! str_contains( $model, '/' ) )
+            if ( $this->should_repair_realtime_auto_default( $template_code, $selection ) )
             {
-                $selection['model'] = sanitize_text_field( (string) ( $definition['default_model'] ?? 'openrouter/auto' ) );
+                $selection['model'] = '' !== $default_model ? $default_model : 'sf_realtime';
+                $managed_credential = $this->find_single_ready_credential_for_provider( 'sentient_managed' );
+                if ( is_array( $managed_credential ) )
+                {
+                    $provider                   = 'sentient_managed';
+                    $selection['provider']      = 'sentient_managed';
+                    $selection['credential_id'] = absint( $managed_credential['id'] ?? 0 );
+                }
+            }
+            elseif ( '' === $model || ! str_contains( $model, '/' ) )
+            {
+                $selection['model'] = '' !== $default_model ? $default_model : 'openrouter/auto';
             }
         }
         elseif ( empty( $selection['model'] ) )
@@ -121,6 +133,32 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         }
 
         return $selection;
+    }
+
+    /**
+     * Visitor-facing realtime suggestions must not inherit OpenRouter Auto. On older installs the
+     * bundled clarification action was seeded with openrouter/auto, which can select slow routes
+     * and surface as gateway timeouts in form previews.
+     *
+     * @param array<string, mixed> $selection
+     */
+    private function should_repair_realtime_auto_default( string $template_code, array $selection ): bool
+    {
+        if ( 'clarification_assistant_v1' !== $template_code )
+        {
+            return false;
+        }
+
+        if ( is_array( $selection['selection'] ?? null ) )
+        {
+            return false;
+        }
+
+        $model = isset( $selection['model'] ) && is_scalar( $selection['model'] )
+            ? trim( sanitize_text_field( (string) $selection['model'] ) )
+            : '';
+
+        return '' === $model || 'openrouter/auto' === $model;
     }
 
     /**

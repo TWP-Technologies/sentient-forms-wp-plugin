@@ -71,6 +71,7 @@ class Tests_Bundled_Action_Templates extends WP_UnitTestCase
         $this->assertIsArray( $definition );
         $this->assertSame( [ 'real_time' ], $definition['hooks'] ?? null );
         $this->assertSame( 'real_time', $definition['default_execution_mode'] ?? null );
+        $this->assertSame( 'sf_realtime', $definition['default_model'] ?? null );
         $this->assertSame( [ 'real_time' ], $definition['definition_json']['supported_execution_modes'] ?? null );
         $this->assertSame( [ 'type' => 'json_object' ], $definition['definition_json']['response_format'] ?? null );
         $this->assertStringContainsString( 'Prefer 0-3 virtual questions; never exceed 5.', $definition['prompt_template'] ?? '' );

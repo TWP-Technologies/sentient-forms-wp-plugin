@@ -1276,6 +1276,8 @@ class Sentient_Forms_Local_Action_Execution_Service
             );
         }
 
+        $result['structured'] = $this->normalize_realtime_structured_output_for_validation( $result['structured'], $contract );
+
         $validation = rest_validate_value_from_schema( $result['structured'], $contract['schema'], 'structured_output' );
         if ( is_wp_error( $validation ) )
         {
@@ -1297,6 +1299,237 @@ class Sentient_Forms_Local_Action_Execution_Service
         $result['structured_output_schema_source'] = $contract['source'];
 
         return $result;
+    }
+
+    /**
+     * Realtime suggestions are visitor-facing and should tolerate harmless model enum aliases before
+     * strict schema validation. The REST controller still returns only the supported public values.
+     *
+     * @param array<string, mixed> $structured
+     * @param array{schema: array<string, mixed>, source: string} $contract
+     * @return array<string, mixed>
+     */
+    private function normalize_realtime_structured_output_for_validation( array $structured, array $contract ): array
+    {
+        if ( ! $this->is_realtime_suggestion_schema( $contract['schema'] ) )
+        {
+            return $structured;
+        }
+
+        if ( isset( $structured['suggestions'] ) )
+        {
+            $structured['suggestions'] = $this->normalize_realtime_suggestions_for_validation( $structured['suggestions'] );
+        }
+
+        if ( isset( $structured['virtual_questions'] ) )
+        {
+            $structured['virtual_questions'] = $this->normalize_realtime_questions_for_validation( $structured['virtual_questions'] );
+        }
+
+        if ( isset( $structured['conditional_decisions'] ) )
+        {
+            $structured['conditional_decisions'] = $this->normalize_realtime_decisions_for_validation( $structured['conditional_decisions'] );
+        }
+
+        return $structured;
+    }
+
+    /**
+     * @param array<string, mixed> $schema
+     */
+    private function is_realtime_suggestion_schema( array $schema ): bool
+    {
+        $properties = is_array( $schema['properties'] ?? null ) ? $schema['properties'] : [];
+
+        return isset( $properties['suggestions'], $properties['virtual_questions'], $properties['conditional_decisions'] );
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalize_realtime_suggestions_for_validation( mixed $raw ): array
+    {
+        if ( ! is_array( $raw ) )
+        {
+            return [];
+        }
+
+        $suggestions = [];
+        foreach ( $raw as $item )
+        {
+            if ( ! is_array( $item ) )
+            {
+                continue;
+            }
+
+            $message = isset( $item['message'] ) && is_scalar( $item['message'] )
+                ? trim( sanitize_textarea_field( (string) $item['message'] ) )
+                : '';
+            if ( '' === $message )
+            {
+                continue;
+            }
+
+            $field_id = isset( $item['field_id'] ) && is_scalar( $item['field_id'] )
+                ? sanitize_text_field( (string) $item['field_id'] )
+                : '';
+            $severity = isset( $item['severity'] ) && is_scalar( $item['severity'] )
+                ? sanitize_key( (string) $item['severity'] )
+                : 'info';
+            if ( ! in_array( $severity, [ 'info', 'warning', 'critical' ], true ) )
+            {
+                $severity = 'info';
+            }
+
+            $suggestions[] = array_merge(
+                $item,
+                [
+                    'field_id'                    => $field_id,
+                    'severity'                    => $severity,
+                    'message'                     => $message,
+                    'jump_target_field_id'        => isset( $item['jump_target_field_id'] ) && is_scalar( $item['jump_target_field_id'] )
+                        ? sanitize_text_field( (string) $item['jump_target_field_id'] )
+                        : $field_id,
+                    'depends_on_future_field_ids' => isset( $item['depends_on_future_field_ids'] ) && is_array( $item['depends_on_future_field_ids'] )
+                        ? array_values( array_filter( array_map( static fn( mixed $field ): string => is_scalar( $field ) ? sanitize_text_field( (string) $field ) : '', $item['depends_on_future_field_ids'] ) ) )
+                        : [],
+                    'is_suppressed'               => rest_sanitize_boolean( $item['is_suppressed'] ?? false ),
+                ]
+            );
+        }
+
+        return $suggestions;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalize_realtime_questions_for_validation( mixed $raw ): array
+    {
+        if ( ! is_array( $raw ) )
+        {
+            return [];
+        }
+
+        $questions = [];
+        foreach ( $raw as $item )
+        {
+            if ( ! is_array( $item ) )
+            {
+                continue;
+            }
+
+            $question = isset( $item['question'] ) && is_scalar( $item['question'] )
+                ? trim( sanitize_text_field( (string) $item['question'] ) )
+                : '';
+            if ( '' === $question )
+            {
+                continue;
+            }
+
+            $question_id = isset( $item['question_id'] ) && is_scalar( $item['question_id'] )
+                ? sanitize_key( (string) $item['question_id'] )
+                : '';
+            if ( '' === $question_id )
+            {
+                $question_id = sanitize_key( substr( $question, 0, 80 ) ) ?: wp_generate_uuid4();
+            }
+
+            $questions[] = array_merge(
+                $item,
+                [
+                    'question_id'     => $question_id,
+                    'question'        => $question,
+                    'target_field_id' => isset( $item['target_field_id'] ) && is_scalar( $item['target_field_id'] )
+                        ? sanitize_text_field( (string) $item['target_field_id'] )
+                        : '',
+                    'required'        => rest_sanitize_boolean( $item['required'] ?? false ),
+                    'answer_type'     => $this->normalize_realtime_answer_type_for_validation( $item['answer_type'] ?? null ),
+                    'choices'         => isset( $item['choices'] ) && is_array( $item['choices'] )
+                        ? array_values( array_filter( array_map( static fn( mixed $choice ): string => is_scalar( $choice ) ? trim( sanitize_text_field( (string) $choice ) ) : '', $item['choices'] ) ) )
+                        : [],
+                ]
+            );
+        }
+
+        return $questions;
+    }
+
+    private function normalize_realtime_answer_type_for_validation( mixed $raw ): string
+    {
+        $answer_type = is_scalar( $raw ) ? sanitize_key( (string) $raw ) : '';
+
+        return match ( $answer_type )
+        {
+            'short',
+            'short_text',
+            'single_line',
+            'text',
+            'email',
+            'phone',
+            'url',
+            'number',
+            'date' => 'short_text',
+            'choice',
+            'choices',
+            'select',
+            'dropdown',
+            'radio',
+            'checkbox',
+            'multiple_choice' => 'choice',
+            default => 'long_text',
+        };
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalize_realtime_decisions_for_validation( mixed $raw ): array
+    {
+        if ( ! is_array( $raw ) )
+        {
+            return [];
+        }
+
+        $decisions = [];
+        foreach ( $raw as $item )
+        {
+            if ( ! is_array( $item ) )
+            {
+                continue;
+            }
+
+            $condition_key = isset( $item['condition_key'] ) && is_scalar( $item['condition_key'] )
+                ? sanitize_key( (string) $item['condition_key'] )
+                : '';
+            if ( '' === $condition_key )
+            {
+                continue;
+            }
+
+            $decision_id = isset( $item['decision_id'] ) && is_scalar( $item['decision_id'] )
+                ? sanitize_key( (string) $item['decision_id'] )
+                : '';
+            if ( '' === $decision_id )
+            {
+                $decision_id = $condition_key;
+            }
+
+            $decisions[] = array_merge(
+                $item,
+                [
+                    'decision_id'   => $decision_id,
+                    'condition_key' => $condition_key,
+                    'met'           => rest_sanitize_boolean( $item['met'] ?? false ),
+                    'confidence'    => is_numeric( $item['confidence'] ?? null ) ? (float) $item['confidence'] : 0.0,
+                    'reason'        => isset( $item['reason'] ) && is_scalar( $item['reason'] )
+                        ? sanitize_text_field( (string) $item['reason'] )
+                        : '',
+                ]
+            );
+        }
+
+        return $decisions;
     }
 
     private function update_credential_status_after_error( int $credential_id, WP_Error $error, string $redacted_message ): void
