@@ -1508,6 +1508,61 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertStringContainsString( 'Only return a concise internal note.', $payload['messages'][1]['content'] );
     }
 
+    public function test_resolves_human_readable_field_merge_tags_in_custom_action_prompt(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'prompt_template' => 'Lead {{field:type:name.first}} {{field:type:name.last}} <{{field:type:email}}> needs help with {{field:label_contains:reason for calling}}.',
+            ]
+        );
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [
+                'id'     => 7,
+                'title'  => 'Contact Form',
+                'fields' => [
+                    (object) [
+                        'id'    => 1,
+                        'type'  => 'name',
+                        'label' => 'Your name',
+                    ],
+                    (object) [
+                        'id'    => 2,
+                        'type'  => 'email',
+                        'label' => 'Email',
+                    ],
+                    (object) [
+                        'id'    => 3,
+                        'type'  => 'textarea',
+                        'label' => 'Reason for calling?',
+                    ],
+                ],
+            ],
+            [
+                'id'  => 99,
+                '1.3'=> 'Ada',
+                '1.6'=> 'Lovelace',
+                '2'  => 'ada@example.test',
+                '3'  => 'enterprise support',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $client->chat_calls );
+        $payload = $client->chat_calls[0]['payload'];
+        $this->assertStringContainsString(
+            'Lead Ada Lovelace <ada@example.test> needs help with enterprise support.',
+            $payload['messages'][1]['content']
+        );
+        $this->assertStringNotContainsString( '{{', wp_json_encode( $payload ) );
+    }
+
     public function test_fails_structured_result_when_schema_required_property_is_missing(): void
     {
         $fixture = $this->create_local_openrouter_mapping(

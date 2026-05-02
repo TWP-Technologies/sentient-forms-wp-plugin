@@ -4425,10 +4425,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $entry = $this->get_entry_record( $entry_id ) ?? [];
 
         return (string) preg_replace_callback(
-            '/{{\s*([A-Za-z0-9_.:-]+)\s*}}/',
+            '/{{\s*([^{}]+?)\s*}}/',
             function ( array $matches ) use ( $entry_id, $entry, $context, $result ): string
             {
-                $key = strtolower( (string) $matches[1] );
+                $key = strtolower( trim( (string) $matches[1] ) );
 
 	                if ( str_starts_with( $key, 'field:' ) )
 	                {

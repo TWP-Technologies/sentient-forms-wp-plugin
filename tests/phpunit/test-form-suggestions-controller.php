@@ -291,6 +291,20 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$request->set_param( 'visible_field_ids', [ '1' ] );
 		$request->set_param( 'current_page_index', 1 );
 		$request->set_param( 'total_pages', 2 );
+		$request->set_param( 'request_reason', 'manual_refresh' );
+		$request->set_param(
+			'panel_state',
+			[
+				'virtual_questions' => [
+					[
+						'question_id' => 'affected-url',
+						'question' => 'What page URL did this happen on?',
+						'answer' => 'https://example.test/pricing',
+						'completed' => true,
+					],
+				],
+			]
+		);
 		$request->set_param(
 			'future_field_manifest',
 			[

@@ -64,10 +64,12 @@ class Sentient_Forms_Local_Prompt_Renderer
         $errors = [];
 
         $rendered = preg_replace_callback(
-            '/{{\s*([A-Za-z0-9_.-]+)\s*}}/',
+            '/{{\s*([^{}]+?)\s*}}/',
             function ( array $matches ) use ( $variables, &$errors ): string {
-                $placeholder = (string) ( $matches[1] ?? '' );
-                $value       = $this->resolve_path( $variables, $placeholder, false );
+                $placeholder = trim( (string) ( $matches[1] ?? '' ) );
+                $value       = str_starts_with( strtolower( $placeholder ), 'field:' )
+                    ? $this->resolve_field_placeholder_value( substr( $placeholder, strlen( 'field:' ) ), $variables )
+                    : $this->resolve_path( $variables, $placeholder, false );
 
                 if ( null === $value )
                 {
@@ -203,7 +205,7 @@ class Sentient_Forms_Local_Prompt_Renderer
             }
         }
 
-        return $this->resolve_gravity_entry_value( $path, $entry );
+        return $this->resolve_gravity_entry_value( $path, $entry, $form );
     }
 
     private function resolve_from_source( string $source, string $path, array $form, array $entry, array $context ): mixed
@@ -218,7 +220,7 @@ class Sentient_Forms_Local_Prompt_Renderer
         return $this->resolve_path( $root, $path );
     }
 
-    private function resolve_gravity_entry_value( string $path, array $entry ): mixed
+    private function resolve_gravity_entry_value( string $path, array $entry, array $form ): mixed
     {
         if ( array_key_exists( $path, $entry ) )
         {
@@ -231,7 +233,188 @@ class Sentient_Forms_Local_Prompt_Renderer
             return $entry[ $field_key ];
         }
 
+        $field = $this->find_form_field_by_id( $path, $form );
+        if ( null !== $field )
+        {
+            return $this->field_value_from_entry( $this->field_id( $field ), $entry, $this->field_type( $field ), '' );
+        }
+
         return $this->resolve_path( $entry, $path );
+    }
+
+    /**
+     * Resolve field merge tags that target either a concrete field id or a human-friendly selector.
+     *
+     * @param array<string, mixed> $variables Prompt variables containing form and entry roots.
+     */
+    private function resolve_field_placeholder_value( string $selector, array $variables ): string
+    {
+        $selector = trim( strtolower( $selector ) );
+        if ( '' === $selector )
+        {
+            return '';
+        }
+
+        $form  = is_array( $variables['form'] ?? null ) ? $variables['form'] : [];
+        $entry = is_array( $variables['entry'] ?? null ) ? $variables['entry'] : [];
+
+        if ( str_starts_with( $selector, 'type:' ) )
+        {
+            return $this->resolve_field_selector_by_type( substr( $selector, strlen( 'type:' ) ), $entry, $form );
+        }
+
+        if ( str_starts_with( $selector, 'label_contains:' ) )
+        {
+            return $this->resolve_field_selector_by_label(
+                substr( $selector, strlen( 'label_contains:' ) ),
+                $entry,
+                $form
+            );
+        }
+
+        return $this->stringify_value( $entry[ $selector ] ?? '' );
+    }
+
+    /**
+     * @param array<string, mixed> $entry Form entry values.
+     * @param array<string, mixed> $form  Form metadata.
+     */
+    private function resolve_field_selector_by_type( string $selector, array $entry, array $form ): string
+    {
+        $parts = explode( '.', strtolower( trim( $selector ) ), 2 );
+        $type  = sanitize_key( $parts[0] ?? '' );
+        $part  = sanitize_key( $parts[1] ?? '' );
+        if ( '' === $type )
+        {
+            return '';
+        }
+
+        foreach ( $this->form_fields( $form ) as $field )
+        {
+            if ( $this->field_type( $field ) !== $type )
+            {
+                continue;
+            }
+
+            return $this->field_value_from_entry( $this->field_id( $field ), $entry, $type, $part );
+        }
+
+        return '';
+    }
+
+    /**
+     * @param array<string, mixed> $entry Form entry values.
+     * @param array<string, mixed> $form  Form metadata.
+     */
+    private function resolve_field_selector_by_label( string $label_fragment, array $entry, array $form ): string
+    {
+        $needle = strtolower( trim( $label_fragment ) );
+        if ( '' === $needle )
+        {
+            return '';
+        }
+
+        foreach ( $this->form_fields( $form ) as $field )
+        {
+            $label = strtolower( $this->field_label( $field ) );
+            if ( '' === $label || ! str_contains( $label, $needle ) )
+            {
+                continue;
+            }
+
+            return $this->field_value_from_entry(
+                $this->field_id( $field ),
+                $entry,
+                $this->field_type( $field ),
+                ''
+            );
+        }
+
+        return '';
+    }
+
+    /**
+     * @param array<string, mixed> $form Form metadata.
+     * @return array<int, mixed>
+     */
+    private function form_fields( array $form ): array
+    {
+        return isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
+    }
+
+    /**
+     * @param array<string, mixed> $form Form metadata.
+     */
+    private function find_form_field_by_id( string $field_id, array $form ): mixed
+    {
+        foreach ( $this->form_fields( $form ) as $field )
+        {
+            if ( $this->field_id( $field ) === $field_id )
+            {
+                return $field;
+            }
+        }
+
+        return null;
+    }
+
+    private function field_id( mixed $field ): string
+    {
+        if ( is_array( $field ) )
+        {
+            return isset( $field['id'] ) ? (string) $field['id'] : '';
+        }
+
+        return is_object( $field ) && isset( $field->id ) ? (string) $field->id : '';
+    }
+
+    private function field_type( mixed $field ): string
+    {
+        if ( is_array( $field ) )
+        {
+            return isset( $field['type'] ) ? sanitize_key( (string) $field['type'] ) : '';
+        }
+
+        return is_object( $field ) && isset( $field->type ) ? sanitize_key( (string) $field->type ) : '';
+    }
+
+    private function field_label( mixed $field ): string
+    {
+        if ( is_array( $field ) )
+        {
+            return isset( $field['label'] ) ? (string) $field['label'] : '';
+        }
+
+        return is_object( $field ) && isset( $field->label ) ? (string) $field->label : '';
+    }
+
+    /**
+     * @param array<string, mixed> $entry Form entry values.
+     */
+    private function field_value_from_entry( string $field_id, array $entry, string $field_type, string $part ): string
+    {
+        if ( '' === $field_id )
+        {
+            return '';
+        }
+
+        if ( 'name' === $field_type )
+        {
+            $first = $this->stringify_value( $entry[ $field_id . '.3' ] ?? $entry[ $field_id . '.1' ] ?? '' );
+            $last  = $this->stringify_value( $entry[ $field_id . '.6' ] ?? $entry[ $field_id . '.2' ] ?? '' );
+            if ( 'first' === $part )
+            {
+                return $first;
+            }
+            if ( 'last' === $part )
+            {
+                return $last;
+            }
+            $full = trim( $this->stringify_value( $entry[ $field_id ] ?? '' ) );
+            return '' !== $full ? $full : trim( $first . ' ' . $last );
+        }
+
+        return $this->stringify_value( $entry[ $field_id ] ?? '' );
     }
 
     private function resolve_path( array $root, string $path, bool $allow_empty_path = true ): mixed

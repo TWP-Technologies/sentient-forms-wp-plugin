@@ -1159,10 +1159,10 @@ class Sentient_Forms_Local_Result_Applier
         $result = is_array( $execution_result['result'] ?? null ) ? $execution_result['result'] : [];
 
         return (string) preg_replace_callback(
-            '/{{\s*([A-Za-z0-9_.:-]+)\s*}}/',
+            '/{{\s*([^{}]+?)\s*}}/',
             function ( array $matches ) use ( $mapping, $form, $entry, $execution_result, $action, $result ): string
             {
-                $key = strtolower( (string) $matches[1] );
+                $key = strtolower( trim( (string) $matches[1] ) );
 
                 if ( str_starts_with( $key, 'field:' ) )
                 {

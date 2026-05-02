@@ -758,7 +758,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 			}
 			$request_reason = isset( $request['request_reason'] ) && is_scalar( $request['request_reason'] )
 				? sanitize_key( (string) $request['request_reason'] )
-				: 'field_change';
+				: 'manual_refresh';
 			$panel_state = $this->sanitize_panel_state( $request['panel_state'] ?? [] );
 
 			return [
