@@ -3,11 +3,11 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 // This totals all JS emitted by the static admin SPA, including lazy route
-// chunks. The all-model selector, action log, managed-service setup, and
-// dependency-graph UX currently sit at ~849 KB with the expanded model catalog
-// and inline model-tool controls; keep a hard ceiling with narrow headroom so
-// accidental payload growth still fails.
-const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 860);
+// chunks. The all-model selector, action log, managed-service setup, realtime
+// assistant controls, model ranking metadata, and dependency-graph UX currently
+// sit at ~865 KB; keep a hard ceiling with narrow headroom so accidental
+// payload growth still fails.
+const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 875);
 const distRoot = path.resolve('..', 'assets', 'dist', '_app', 'immutable');
 
 async function collectSizes(dir) {

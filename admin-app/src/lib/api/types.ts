@@ -780,6 +780,8 @@ export interface BatchSettings {
 }
 
 export type RealtimeBlockingMode = 'advisory' | 'require_answers';
+export type RealtimeRefreshMode = 'auto' | 'checkpoint' | 'manual';
+export type RealtimeInitialPanelState = 'open' | 'minimized' | 'hidden_until_interaction';
 
 /**
  * Runtime settings for real-time suggestion and clarification mappings.
@@ -797,6 +799,10 @@ export interface RealtimeSettings {
 	manual_refresh_enabled?: boolean;
 	/** Whether unanswered required virtual questions can block submit/next actions */
 	blocking_mode?: RealtimeBlockingMode;
+	/** How automatic refreshes are triggered in the visitor-facing assistant */
+	refresh_mode?: RealtimeRefreshMode;
+	/** Initial visitor-facing assistant panel visibility */
+	initial_panel_state?: RealtimeInitialPanelState;
 }
 
 /**

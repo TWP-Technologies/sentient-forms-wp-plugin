@@ -25,13 +25,33 @@
 		return String(value).trim();
 	}
 
+	function normalizePanelInitialState(value) {
+		var normalized = normalizeFieldId(value).toLowerCase();
+		return ['open', 'minimized', 'hidden_until_interaction'].indexOf(normalized) >= 0
+			? normalized
+			: 'minimized';
+	}
+
+	function hashString(value) {
+		var text = normalizeFieldId(value).toLowerCase();
+		var hash = 0;
+		for (var i = 0; i < text.length; i += 1) {
+			hash = ((hash << 5) - hash) + text.charCodeAt(i);
+			hash |= 0;
+		}
+		return String(Math.abs(hash));
+	}
+
 	function createFormState(config, formElement) {
+		var initialPanelState = normalizePanelInitialState(config.initial_panel_state);
 		return {
 			config: config,
 			formElement: formElement,
 			mappingStates: {},
 			widget: null,
-			isOpen: true,
+			isOpen: initialPanelState === 'open',
+			initialPanelState: initialPanelState,
+			hasUserInteracted: false,
 			lastGlobalError: null,
 			lastUpdatedAt: null,
 			lastObservedPage: 1,
@@ -56,7 +76,7 @@
 					'<h3 class="sentient-forms-realtime-widget__title">Suggestions</h3>' +
 					'<p class="sentient-forms-realtime-widget__subtitle" data-role="subtitle">Idle</p>' +
 				'</div>' +
-				'<button type="button" class="sentient-forms-realtime-widget__toggle" data-role="toggle" aria-expanded="true">Hide</button>' +
+					'<button type="button" class="sentient-forms-realtime-widget__toggle" data-role="toggle" aria-expanded="false">Show</button>' +
 			'</header>' +
 			'<div class="sentient-forms-realtime-widget__body" data-role="body">' +
 				'<div class="sentient-forms-realtime-widget__actions">' +
@@ -94,17 +114,31 @@
 				return;
 			}
 
-			if (!target.matches('[data-role="focus-field"]')) {
-				return;
-			}
+				if (target.matches('[data-role="focus-field"]')) {
+					var fieldId = normalizeFieldId(target.getAttribute('data-field-id'));
+					if (!fieldId) {
+						return;
+					}
 
-			var fieldId = normalizeFieldId(target.getAttribute('data-field-id'));
-			if (!fieldId) {
-				return;
-			}
+					focusField(formState.formElement, formState.config.form_id, fieldId);
+					return;
+				}
 
-			focusField(formState.formElement, formState.config.form_id, fieldId);
-		});
+				if (target.matches('[data-role="complete-item"]')) {
+					var mappingId = normalizeFieldId(target.getAttribute('data-mapping-id'));
+					var itemId = normalizeFieldId(target.getAttribute('data-item-id'));
+					if (!mappingId || !itemId) {
+						return;
+					}
+
+					var state = mappingStateFor(formState, mappingId);
+					state.completedItems[itemId] = !state.completedItems[itemId];
+					state.suggestions = suggestionsFromHistory(state);
+					state.virtualQuestions = virtualQuestionsFromHistory(state);
+					persistQuestionAnswers(formState);
+					renderWidget(formState);
+				}
+			});
 
 		function handleAnswerInput(event) {
 			var target = event.target;
@@ -125,10 +159,12 @@
 				return;
 			}
 
-			var state = mappingStateFor(formState, mappingId);
-			state.virtualAnswers[questionId] = target.value;
-			persistQuestionAnswers(formState);
-		}
+				var state = mappingStateFor(formState, mappingId);
+				state.virtualAnswers[questionId] = target.value;
+				state.completedItems[questionId] = normalizeFieldId(target.value).length > 0;
+				state.virtualQuestions = virtualQuestionsFromHistory(state);
+				persistQuestionAnswers(formState);
+			}
 
 		widget.addEventListener('input', handleAnswerInput);
 		widget.addEventListener('change', handleAnswerInput);
@@ -289,11 +325,22 @@
 			return true;
 		}
 
+		var refreshMode = normalizeFieldId(mapping.refresh_mode || 'auto').toLowerCase();
+		if (['auto', 'checkpoint', 'manual'].indexOf(refreshMode) < 0) {
+			refreshMode = 'auto';
+		}
+		if (refreshMode === 'manual') {
+			return false;
+		}
+
 		if (reason === 'page_change') {
 			return true;
 		}
 
 		var checkpoints = asArray(mapping.checkpoint_field_ids).map(normalizeFieldId).filter(Boolean);
+		if (refreshMode === 'checkpoint' && !checkpoints.length) {
+			return false;
+		}
 		if (!checkpoints.length) {
 			return true;
 		}
@@ -308,20 +355,23 @@
 	function mappingStateFor(formState, mappingId) {
 		if (!formState.mappingStates[mappingId]) {
 			formState.mappingStates[mappingId] = {
-				inFlight: false,
-				lastRunAt: 0,
-				timerId: null,
-				suggestions: [],
-				virtualQuestions: [],
-				virtualQuestionHistory: {},
-				virtualQuestionOrder: [],
-				virtualAnswers: {},
-				conditionalDecisions: [],
-				conditionalDecisionHistory: {},
-				conditionalDecisionOrder: [],
-				error: null,
-				meta: null
-			};
+					inFlight: false,
+					lastRunAt: 0,
+					timerId: null,
+					suggestions: [],
+					suggestionHistory: {},
+					suggestionOrder: [],
+					virtualQuestions: [],
+					virtualQuestionHistory: {},
+					virtualQuestionOrder: [],
+					virtualAnswers: {},
+					conditionalDecisions: [],
+					conditionalDecisionHistory: {},
+					conditionalDecisionOrder: [],
+					completedItems: {},
+					error: null,
+					meta: null
+				};
 		}
 		return formState.mappingStates[mappingId];
 	}
@@ -361,6 +411,43 @@
 					: 'long_text',
 				choices: asArray(item.choices).map(normalizeFieldId).filter(Boolean),
 				answer: previousAnswers[questionId] || ''
+			};
+			}).filter(Boolean);
+	}
+
+	function suggestionIdFor(mappingId, suggestion, index) {
+		var raw = normalizeFieldId(suggestion && suggestion.suggestion_id);
+		if (raw) {
+			return raw;
+		}
+		var source = [
+			suggestion && (suggestion.field_id || suggestion.jump_target_field_id),
+			suggestion && suggestion.severity,
+			suggestion && suggestion.message
+		].map(normalizeFieldId).join(':');
+		return mappingId + '-s-' + index + '-' + hashString(source);
+	}
+
+	function normalizeSuggestions(value, mappingId, completedItems, executionRequestId) {
+		return asArray(value).map(function (item, index) {
+			if (!item || typeof item !== 'object') {
+				return null;
+			}
+			var message = normalizeFieldId(item.message);
+			var fieldId = normalizeFieldId(item.field_id || item.jump_target_field_id);
+			if (!message && !fieldId) {
+				return null;
+			}
+			var suggestionId = suggestionIdFor(mappingId, item, index);
+			return {
+				...item,
+				suggestion_id: suggestionId,
+				field_id: fieldId,
+				jump_target_field_id: normalizeFieldId(item.jump_target_field_id || fieldId),
+				severity: normalizeFieldId(item.severity || 'info').toLowerCase(),
+				message: message,
+				completed: completedItems[suggestionId] === true,
+				last_execution_request_id: executionRequestId || ''
 			};
 		}).filter(Boolean);
 	}
@@ -406,6 +493,50 @@
 		});
 	}
 
+	function rememberSuggestions(state, suggestions) {
+		asArray(suggestions).forEach(function (suggestion) {
+			if (!suggestion || !suggestion.suggestion_id) {
+				return;
+			}
+
+			if (state.suggestionOrder.indexOf(suggestion.suggestion_id) < 0) {
+				state.suggestionOrder.push(suggestion.suggestion_id);
+			}
+
+			state.suggestionHistory[suggestion.suggestion_id] = {
+				...suggestion,
+				completed: state.completedItems[suggestion.suggestion_id] === true
+			};
+		});
+	}
+
+	function suggestionsFromHistory(state) {
+		return asArray(state.suggestionOrder).map(function (suggestionId) {
+			var suggestion = state.suggestionHistory[suggestionId];
+			if (!suggestion) {
+				return null;
+			}
+			return {
+				...suggestion,
+				completed: state.completedItems[suggestionId] === true
+			};
+		}).filter(Boolean);
+	}
+
+	function virtualQuestionsFromHistory(state) {
+		return asArray(state.virtualQuestionOrder).map(function (questionId) {
+			var question = state.virtualQuestionHistory[questionId];
+			if (!question) {
+				return null;
+			}
+			return {
+				...question,
+				answer: state.virtualAnswers[questionId] || '',
+				completed: state.completedItems[questionId] === true
+			};
+		}).filter(Boolean);
+	}
+
 	function rememberConditionalDecisions(state, decisions) {
 		asArray(decisions).forEach(function (decision) {
 			if (!decision || !decision.decision_id) {
@@ -420,15 +551,46 @@
 		});
 	}
 
+	function serializePanelStateForRequest(formState, mappingId) {
+		var state = mappingStateFor(formState, mappingId);
+		return {
+			suggestions: asArray(state.suggestions).map(function (suggestion) {
+				return {
+					suggestion_id: suggestion.suggestion_id || '',
+					field_id: suggestion.field_id || '',
+					message: suggestion.message || '',
+					severity: suggestion.severity || '',
+					completed: state.completedItems[suggestion.suggestion_id] === true
+				};
+			}),
+			virtual_questions: virtualQuestionsFromHistory(state).map(function (question) {
+				return {
+					question_id: question.question_id,
+					question: question.question,
+					reason: question.reason || '',
+					target_field_id: question.target_field_id || '',
+					required: question.required === true,
+					answer_type: question.answer_type || 'long_text',
+					choices: asArray(question.choices),
+					answer: state.virtualAnswers[question.question_id] || '',
+					completed: state.completedItems[question.question_id] === true
+				};
+			}),
+			conditional_decisions: asArray(state.conditionalDecisions)
+		};
+	}
+
 	function hydrateQuestionAnswers(formState) {
 		asArray(formState.config.mappings).forEach(function (mapping) {
 			var mappingId = normalizeFieldId(mapping.mapping_id);
 			var targetFieldId = normalizeFieldId(mapping.storage_target_field_id);
-			if (!mappingId || !targetFieldId) {
+			if (!mappingId) {
 				return;
 			}
 
-			var target = findInputForFieldId(formState.formElement, formState.config.form_id, targetFieldId);
+			var target = targetFieldId
+				? findInputForFieldId(formState.formElement, formState.config.form_id, targetFieldId)
+				: findOrCreatePersistenceTarget(formState, '');
 			if (!target || !target.value) {
 				return;
 			}
@@ -451,19 +613,23 @@
 				return;
 			}
 
-			var state = mappingStateFor(formState, mappingId);
-			rememberVirtualQuestions(state, asArray(storedMapping.questions));
-			asArray(storedMapping.questions).forEach(function (question) {
+				var state = mappingStateFor(formState, mappingId);
+				rememberVirtualQuestions(state, asArray(storedMapping.questions));
+				asArray(storedMapping.questions).forEach(function (question) {
 				if (!question || !question.question_id) {
 					return;
 				}
 
-				if (typeof question.answer === 'string') {
-					state.virtualAnswers[question.question_id] = question.answer;
-				}
+					if (typeof question.answer === 'string') {
+						state.virtualAnswers[question.question_id] = question.answer;
+					}
+					if (question.completed === true) {
+						state.completedItems[question.question_id] = true;
+					}
+				});
+				rememberConditionalDecisions(state, asArray(storedMapping.conditional_decisions));
+				state.virtualQuestions = virtualQuestionsFromHistory(state);
 			});
-			rememberConditionalDecisions(state, asArray(storedMapping.conditional_decisions));
-		});
 	}
 
 	function dispatchConditionalDecisions(formState, mapping, decisions) {
@@ -536,15 +702,17 @@
 		var totalPages = parseInt(formState.config.total_pages, 10) || 1;
 		var executionRequestId = 'rt-' + mappingId + '-' + now + '-' + Math.random().toString(16).slice(2, 10);
 
-		var payload = {
-			mapping_id: mappingId,
-			execution_request_id: executionRequestId,
-			all_known_field_values: knownValues,
-			visible_field_ids: visibleFieldIds,
-			current_page_index: currentPage,
-			total_pages: totalPages,
-			future_field_manifest: futureFieldManifest
-		};
+			var payload = {
+				mapping_id: mappingId,
+				execution_request_id: executionRequestId,
+				request_reason: reason || 'field_change',
+				all_known_field_values: knownValues,
+				visible_field_ids: visibleFieldIds,
+				current_page_index: currentPage,
+				total_pages: totalPages,
+				future_field_manifest: futureFieldManifest,
+				panel_state: serializePanelStateForRequest(formState, mappingId)
+			};
 
 		var headers = {
 			'Content-Type': 'application/json',
@@ -570,19 +738,27 @@
 				return response.json();
 			})
 			.then(function (payload) {
-				var suggestions = payload && Array.isArray(payload.suggestions) ? payload.suggestions : [];
-				var virtualQuestions = payload && Array.isArray(payload.virtual_questions) ? payload.virtual_questions : [];
-				var conditionalDecisions = payload && Array.isArray(payload.conditional_decisions) ? payload.conditional_decisions : [];
-				state.suggestions = suggestions;
-				state.virtualQuestions = normalizeVirtualQuestions(virtualQuestions, mappingId, state.virtualAnswers);
-				state.conditionalDecisions = normalizeConditionalDecisions(conditionalDecisions);
-				state.virtualQuestions.forEach(function (question) {
-					if (typeof state.virtualAnswers[question.question_id] !== 'string') {
-						state.virtualAnswers[question.question_id] = question.answer || '';
-					}
-				});
-				rememberVirtualQuestions(state, state.virtualQuestions);
-				rememberConditionalDecisions(state, state.conditionalDecisions);
+					var suggestions = payload && Array.isArray(payload.suggestions) ? payload.suggestions : [];
+					var virtualQuestions = payload && Array.isArray(payload.virtual_questions) ? payload.virtual_questions : [];
+					var conditionalDecisions = payload && Array.isArray(payload.conditional_decisions) ? payload.conditional_decisions : [];
+					var normalizedSuggestions = normalizeSuggestions(
+						suggestions,
+						mappingId,
+						state.completedItems,
+						executionRequestId
+					);
+					rememberSuggestions(state, normalizedSuggestions);
+					state.suggestions = suggestionsFromHistory(state);
+					var normalizedQuestions = normalizeVirtualQuestions(virtualQuestions, mappingId, state.virtualAnswers);
+					rememberVirtualQuestions(state, normalizedQuestions);
+					state.virtualQuestions = virtualQuestionsFromHistory(state);
+					state.conditionalDecisions = normalizeConditionalDecisions(conditionalDecisions);
+					state.virtualQuestions.forEach(function (question) {
+						if (typeof state.virtualAnswers[question.question_id] !== 'string') {
+							state.virtualAnswers[question.question_id] = question.answer || '';
+						}
+					});
+					rememberConditionalDecisions(state, state.conditionalDecisions);
 				state.meta = payload && payload.meta ? payload.meta : null;
 				state.lastRunAt = Date.now();
 				formState.lastUpdatedAt = state.lastRunAt;
@@ -652,6 +828,41 @@
 		return null;
 	}
 
+	function fallbackStorageKey(formState, targetFieldId) {
+		var normalized = normalizeFieldId(targetFieldId);
+		return normalized ? normalized : '__sentient_forms_realtime_qna';
+	}
+
+	function findOrCreatePersistenceTarget(formState, targetFieldId) {
+		var normalized = normalizeFieldId(targetFieldId);
+		var target = normalized
+			? findInputForFieldId(formState.formElement, formState.config.form_id, normalized)
+			: null;
+		if (target) {
+			return target;
+		}
+
+		var key = fallbackStorageKey(formState, normalized);
+		var existing = formState.formElement.querySelector(
+			'input[data-sentient-forms-realtime-storage="' + key + '"]'
+		);
+		if (existing instanceof HTMLInputElement) {
+			return existing;
+		}
+
+		var input = document.createElement('input');
+		input.type = 'hidden';
+		input.dataset.sentientFormsRealtimeStorage = key;
+		input.name = normalized
+			? 'input_' + normalized.replace(/\./g, '_')
+			: 'sentient_forms_realtime_qna_' + String(formState.config.form_id);
+		input.id = normalized
+			? 'input_' + String(formState.config.form_id) + '_' + normalized.replace(/\./g, '_')
+			: 'sentient_forms_realtime_qna_' + String(formState.config.form_id);
+		formState.formElement.appendChild(input);
+		return input;
+	}
+
 	function serializeQuestionAnswers(formState, mapping) {
 		var mappingId = normalizeFieldId(mapping.mapping_id);
 		var state = mappingStateFor(formState, mappingId);
@@ -671,11 +882,12 @@
 				reason: question.reason || '',
 				target_field_id: question.target_field_id || '',
 				required: question.required === true,
-				answer_type: question.answer_type || 'long_text',
-				choices: asArray(question.choices),
-				answer: answer
-			};
-		});
+					answer_type: question.answer_type || 'long_text',
+					choices: asArray(question.choices),
+					answer: answer,
+					completed: state.completedItems[question.question_id] === true
+				};
+			});
 
 		var conditionalDecisions = asArray(state.conditionalDecisionOrder).map(function (decisionId) {
 			return state.conditionalDecisionHistory[decisionId] || null;
@@ -696,23 +908,23 @@
 
 	function persistQuestionAnswers(formState) {
 		var byTargetField = {};
-		asArray(formState.config.mappings).forEach(function (mapping) {
-			var targetFieldId = normalizeFieldId(mapping.storage_target_field_id);
-			if (!targetFieldId) {
-				return;
-			}
+			asArray(formState.config.mappings).forEach(function (mapping) {
+				var targetFieldId = fallbackStorageKey(formState, mapping.storage_target_field_id);
 
-			if (!byTargetField[targetFieldId]) {
-				byTargetField[targetFieldId] = [];
+				if (!byTargetField[targetFieldId]) {
+					byTargetField[targetFieldId] = [];
 			}
 			byTargetField[targetFieldId].push(serializeQuestionAnswers(formState, mapping));
 		});
 
-		Object.keys(byTargetField).forEach(function (targetFieldId) {
-			var target = findInputForFieldId(formState.formElement, formState.config.form_id, targetFieldId);
-			if (!target) {
-				return;
-			}
+			Object.keys(byTargetField).forEach(function (targetFieldId) {
+				var target = findOrCreatePersistenceTarget(
+					formState,
+					targetFieldId === '__sentient_forms_realtime_qna' ? '' : targetFieldId
+				);
+				if (!target) {
+					return;
+				}
 
 			var payload = {
 				schema: 'sentient_forms_realtime_clarification_qna.v1',
@@ -872,12 +1084,14 @@
 		var empty = widget.querySelector('[data-role="empty"]');
 		var error = widget.querySelector('[data-role="error"]');
 
-		var anyInFlight = Object.values(formState.mappingStates).some(function (state) {
-			return state.inFlight;
-		});
+			var anyInFlight = Object.values(formState.mappingStates).some(function (state) {
+				return state.inFlight;
+			});
 
-		subtitle.textContent = anyInFlight ? 'Checking...' : formatTimestamp(formState.lastUpdatedAt);
-		toggleButton.textContent = formState.isOpen ? 'Hide' : 'Show';
+			widget.hidden =
+				formState.initialPanelState === 'hidden_until_interaction' && !formState.hasUserInteracted;
+			subtitle.textContent = anyInFlight ? 'Checking...' : formatTimestamp(formState.lastUpdatedAt);
+			toggleButton.textContent = formState.isOpen ? 'Hide' : 'Show';
 		toggleButton.setAttribute('aria-expanded', formState.isOpen ? 'true' : 'false');
 		body.hidden = !formState.isOpen;
 
@@ -915,8 +1129,9 @@
 				severity = 'info';
 			}
 
-			var listItem = document.createElement('li');
-			listItem.className = 'sentient-forms-realtime-widget__item';
+				var listItem = document.createElement('li');
+				listItem.className = 'sentient-forms-realtime-widget__item' +
+					(item.suggestion.completed ? ' sentient-forms-realtime-widget__item--completed' : '');
 
 			var severityLabel = document.createElement('span');
 			severityLabel.className = 'sentient-forms-realtime-widget__severity sentient-forms-realtime-widget__severity--' + severity;
@@ -935,15 +1150,24 @@
 			content.appendChild(message);
 			listItem.appendChild(content);
 
-			var focusButton = document.createElement('button');
-			focusButton.type = 'button';
-			focusButton.className = 'sentient-forms-realtime-widget__focus';
-			focusButton.dataset.role = 'focus-field';
-			focusButton.dataset.fieldId = String(item.suggestion.jump_target_field_id || item.suggestion.field_id || '');
-			focusButton.textContent = 'Focus';
-			listItem.appendChild(focusButton);
+				var focusButton = document.createElement('button');
+				focusButton.type = 'button';
+				focusButton.className = 'sentient-forms-realtime-widget__focus';
+				focusButton.dataset.role = 'focus-field';
+				focusButton.dataset.fieldId = String(item.suggestion.jump_target_field_id || item.suggestion.field_id || '');
+				focusButton.textContent = 'Focus';
+				listItem.appendChild(focusButton);
 
-			list.appendChild(listItem);
+				var completeButton = document.createElement('button');
+				completeButton.type = 'button';
+				completeButton.className = 'sentient-forms-realtime-widget__complete';
+				completeButton.dataset.role = 'complete-item';
+				completeButton.dataset.mappingId = item.mappingId;
+				completeButton.dataset.itemId = item.suggestion.suggestion_id || '';
+				completeButton.textContent = item.suggestion.completed ? 'Done' : 'Mark done';
+				listItem.appendChild(completeButton);
+
+				list.appendChild(listItem);
 		});
 
 		if (virtualQuestions.length) {
@@ -956,7 +1180,10 @@
 		virtualQuestions.forEach(function (item) {
 			var question = item.question;
 			var wrapper = document.createElement('div');
-			wrapper.className = 'sentient-forms-realtime-widget__question';
+				wrapper.className = 'sentient-forms-realtime-widget__question';
+				if (item.question.completed) {
+					wrapper.className += ' sentient-forms-realtime-widget__question--completed';
+				}
 
 			var label = document.createElement('label');
 			label.className = 'sentient-forms-realtime-widget__question-label';
@@ -999,10 +1226,19 @@
 			answerInput.dataset.mappingId = item.mappingId;
 			answerInput.dataset.questionId = question.question_id;
 			answerInput.value = item.answer;
-			answerInput.required = question.required === true;
-			wrapper.appendChild(answerInput);
+				answerInput.required = question.required === true;
+				wrapper.appendChild(answerInput);
 
-			questions.appendChild(wrapper);
+				var questionCompleteButton = document.createElement('button');
+				questionCompleteButton.type = 'button';
+				questionCompleteButton.className = 'sentient-forms-realtime-widget__complete';
+				questionCompleteButton.dataset.role = 'complete-item';
+				questionCompleteButton.dataset.mappingId = item.mappingId;
+				questionCompleteButton.dataset.itemId = question.question_id;
+				questionCompleteButton.textContent = item.question.completed ? 'Done' : 'Mark done';
+				wrapper.appendChild(questionCompleteButton);
+
+				questions.appendChild(wrapper);
 		});
 	}
 
@@ -1016,6 +1252,14 @@
 			}
 			scheduleMapping(formState, mapping, triggerContext);
 		});
+	}
+
+	function markFormInteraction(formState) {
+		if (formState.hasUserInteracted) {
+			return;
+		}
+		formState.hasUserInteracted = true;
+		renderWidget(formState);
 	}
 
 	function runPageChangeMappingsIfNeeded(formState) {
@@ -1128,11 +1372,12 @@
 			}, 0);
 		}
 
-		formElement.addEventListener(
-			'blur',
-			function (event) {
-				runMappings(formState, {
-					reason: 'field_blur',
+			formElement.addEventListener(
+				'blur',
+				function (event) {
+					markFormInteraction(formState);
+					runMappings(formState, {
+						reason: 'field_blur',
 					manual: false,
 					eventFieldId: extractEventFieldId(event.target, formId)
 				});
@@ -1140,16 +1385,25 @@
 			true
 		);
 
-		formElement.addEventListener(
-			'change',
-			function (event) {
-				runMappings(formState, {
+			formElement.addEventListener(
+				'change',
+				function (event) {
+					markFormInteraction(formState);
+					runMappings(formState, {
 					reason: 'field_change',
 					manual: false,
 					eventFieldId: extractEventFieldId(event.target, formId)
 				});
-			}
-		);
+				}
+			);
+
+			formElement.addEventListener(
+				'input',
+				function () {
+					markFormInteraction(formState);
+				},
+				true
+			);
 
 		formElement.addEventListener(
 			'click',
@@ -1158,10 +1412,11 @@
 				if (!(target instanceof HTMLElement)) {
 					return;
 				}
-				if (!target.matches('.gform_next_button, .gform_previous_button')) {
-					return;
-				}
-				if (target.matches('.gform_next_button') && !guardRequiredVirtualAnswers(formState)) {
+					if (!target.matches('.gform_next_button, .gform_previous_button')) {
+						return;
+					}
+					markFormInteraction(formState);
+					if (target.matches('.gform_next_button') && !guardRequiredVirtualAnswers(formState)) {
 					event.preventDefault();
 					event.stopPropagation();
 					event.stopImmediatePropagation();

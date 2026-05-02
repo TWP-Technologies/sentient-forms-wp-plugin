@@ -244,6 +244,20 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$request->set_param( 'visible_field_ids', [ '1' ] );
 		$request->set_param( 'current_page_index', 1 );
 		$request->set_param( 'total_pages', 2 );
+		$request->set_param( 'request_reason', 'manual_refresh' );
+		$request->set_param(
+			'panel_state',
+			[
+				'virtual_questions' => [
+					[
+						'question_id' => 'affected-url',
+						'question' => 'What page URL did this happen on?',
+						'answer' => 'https://example.test/pricing',
+						'completed' => true,
+					],
+				],
+			]
+		);
 		$request->set_param(
 			'future_field_manifest',
 			[
@@ -299,6 +313,12 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$this->assertSame( 'central_rt_1', $stub_executor->calls[0]['central_action_id'] );
 		$this->assertSame( 'rt-request-42', $stub_executor->calls[0]['context']['execution_request_id'] ?? null );
 		$this->assertSame( [ '1' ], $stub_executor->calls[0]['suggestion_context']['visible_field_ids'] ?? [] );
+		$this->assertSame( 'manual_refresh', $stub_executor->calls[0]['suggestion_context']['request_reason'] ?? null );
+		$this->assertSame(
+			'https://example.test/pricing',
+			$stub_executor->calls[0]['suggestion_context']['panel_state']['virtual_questions'][0]['answer'] ?? null
+		);
+		$this->assertTrue( $stub_executor->calls[0]['context']['suggestion_context']['panel_state']['virtual_questions'][0]['completed'] ?? false );
 	}
 
 	public function test_suggest_endpoint_executes_local_first_realtime_mapping_without_cps_fallback(): void {

@@ -537,21 +537,32 @@ class Sentient_Forms_Action_Executor {
 			}
 		}
 
-		$all_known_field_values = isset( $suggestion_context['all_known_field_values'] ) && is_array( $suggestion_context['all_known_field_values'] )
-			? $suggestion_context['all_known_field_values']
-			: $entry;
+			$all_known_field_values = isset( $suggestion_context['all_known_field_values'] ) && is_array( $suggestion_context['all_known_field_values'] )
+				? $suggestion_context['all_known_field_values']
+				: $entry;
+			$request_reason = isset( $suggestion_context['request_reason'] ) && is_scalar( $suggestion_context['request_reason'] )
+				? sanitize_key( (string) $suggestion_context['request_reason'] )
+				: 'field_change';
+			$panel_state = isset( $suggestion_context['panel_state'] ) && is_array( $suggestion_context['panel_state'] )
+				? $suggestion_context['panel_state']
+				: array(
+					'suggestions'       => array(),
+					'virtual_questions' => array(),
+				);
 
-		return array(
-			'form_id'               => $form_id,
-			'source'                => $source,
-			'current_page_index'    => $current_page_index,
-			'total_pages'           => $total_pages,
-			'visible_field_ids'     => $visible_field_ids,
-			'checkpoint_field_ids'  => $checkpoint_field_ids,
-			'all_known_field_values'=> $all_known_field_values,
-			'future_field_manifest' => $future_field_manifest,
-		);
-	}
+			return array(
+				'form_id'               => $form_id,
+				'source'                => $source,
+				'request_reason'        => $request_reason,
+				'current_page_index'    => $current_page_index,
+				'total_pages'           => $total_pages,
+				'visible_field_ids'     => $visible_field_ids,
+				'checkpoint_field_ids'  => $checkpoint_field_ids,
+				'all_known_field_values'=> $all_known_field_values,
+				'future_field_manifest' => $future_field_manifest,
+				'panel_state'           => $panel_state,
+			);
+		}
 
 	/**
 	 * Resolve async queue options from linkage settings and explicit overrides.

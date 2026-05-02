@@ -68,16 +68,21 @@
 		{
 			code: 'pro',
 			label: 'Pro',
-			priceDescription: '$39/month for this WordPress site, 4,000 monthly managed credits.',
+			priceDescription: '$39/month for this WordPress site, 3,900 monthly managed credits.',
 			ctaLabel: 'Choose Pro'
 		},
 		{
 			code: 'business',
 			label: 'Business',
-			priceDescription: '$99/month for this WordPress site, 12,000 monthly managed credits.',
+			priceDescription: '$99/month for this WordPress site, 9,900 monthly managed credits.',
 			ctaLabel: 'Choose Business'
 		}
 	] as const;
+	const checkoutPlanRank: Record<string, number> = {
+		starter: 1,
+		pro: 2,
+		business: 3
+	};
 
 	const MANAGED_DISCLOSURE_VERSION = 'managed-service-v1';
 
@@ -279,6 +284,28 @@
 	let directOpenRouterBoundaryLabel = $derived(
 		formatBillingBoundaryValue(billingBoundary?.direct_openrouter_billed_by_sentient)
 	);
+
+	function isCurrentCheckoutPlan(plan: CheckoutPlanOption): boolean {
+		return plan.code === billingTier?.code;
+	}
+
+	function checkoutPlanActionLabel(plan: CheckoutPlanOption): string {
+		if (checkoutPlanPending === plan.code) {
+			return 'Redirecting…';
+		}
+		if (!hasExistingSubscription) {
+			return plan.ctaLabel;
+		}
+		if (portalLoading) {
+			return 'Opening…';
+		}
+		if (isCurrentCheckoutPlan(plan)) {
+			return 'Current plan';
+		}
+		const currentRank = checkoutPlanRank[billingTier?.code ?? ''] ?? 0;
+		const nextRank = checkoutPlanRank[plan.code] ?? currentRank;
+		return nextRank > currentRank ? `Upgrade to ${plan.label}` : `Downgrade to ${plan.label}`;
+	}
 	let managedProxyBoundaryLabel = $derived(
 		formatBillingBoundaryValue(billingBoundary?.managed_proxy_billed_by_sentient)
 	);
@@ -760,17 +787,18 @@
 								<p class="sf:text-sm sf:font-semibold sf:text-slate-950">{plan.label}</p>
 								<p class="sf:text-xs sf:text-slate-600">{plan.description}</p>
 							</div>
-							<Button
-								class="sf:mt-auto sf:w-full"
-								disabled={Boolean(checkoutPlanPending) ||
-									checkoutCompletionLoading ||
-									(!hasConnectedLicense && !acceptedManagedCheckoutDisclosure)}
-								onclick={() => {
-									void handleCheckout(plan);
-								}}
-							>
-								{checkoutPlanPending === plan.code ? 'Redirecting…' : plan.ctaLabel}
-							</Button>
+								<Button
+									class="sf:mt-auto sf:w-full"
+									disabled={Boolean(checkoutPlanPending) ||
+										isCurrentCheckoutPlan(plan) ||
+										checkoutCompletionLoading ||
+										(!hasConnectedLicense && !acceptedManagedCheckoutDisclosure)}
+									onclick={() => {
+										void handleCheckout(plan);
+									}}
+								>
+									{checkoutPlanActionLabel(plan)}
+								</Button>
 						</div>
 					{/each}
 				</div>
@@ -1035,20 +1063,16 @@
 						>
 							<p class="sf:text-sm sf:font-semibold sf:text-slate-900">{plan.label}</p>
 							<p class="sf:text-xs sf:text-slate-600">{plan.description}</p>
-							<Button
-								variant="secondary"
-								class="sf:w-full"
-								disabled={billingBusy}
-								onclick={() => {
-									void handleCheckout(plan);
-								}}
-							>
-								{#if hasExistingSubscription}
-									{portalLoading ? 'Opening…' : 'Manage in billing portal'}
-								{:else}
-									{checkoutPlanPending === plan.code ? 'Redirecting…' : plan.ctaLabel}
-								{/if}
-							</Button>
+								<Button
+									variant="secondary"
+									class="sf:w-full"
+									disabled={billingBusy || isCurrentCheckoutPlan(plan)}
+									onclick={() => {
+										void handleCheckout(plan);
+									}}
+								>
+									{checkoutPlanActionLabel(plan)}
+								</Button>
 						</div>
 					{/each}
 				</div>

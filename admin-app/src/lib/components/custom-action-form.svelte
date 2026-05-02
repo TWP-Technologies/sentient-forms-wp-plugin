@@ -29,7 +29,10 @@
 		CustomActionPostExecutionActionPayload,
 		ModelSelection
 	} from '$lib/api/types';
-	import { generateCustomActionCode } from '$lib/utils/custom-actions';
+	import {
+		buildDefaultCustomActionMergeTags,
+		generateCustomActionCode
+	} from '$lib/utils/custom-actions';
 
 	interface Props {
 		/** Existing action data for edit mode */
@@ -207,31 +210,7 @@
 		{ value: 'base', label: 'Start from a built-in action' }
 	];
 
-	const mergeTags = [
-		{
-			group: 'Entry',
-			token: 'entry_id',
-			label: 'Entry ID',
-			description: 'Gravity Forms entry ID.'
-		},
-		{ group: 'Entry', token: 'entry', label: 'Entry JSON', description: 'Rendered entry data.' },
-		{
-			group: 'Entry',
-			token: 'summary_text',
-			label: 'Entry summary',
-			description: 'Plain-language entry summary.'
-		},
-		{ group: 'Form', token: 'form_id', label: 'Form ID' },
-		{ group: 'Form', token: 'form.title', label: 'Form title' },
-		{ group: 'Fields', token: 'field:1', label: 'Field 1' },
-		{ group: 'Fields', token: 'field:2', label: 'Field 2' },
-		{ group: 'Action', token: 'action_label', label: 'Action label' },
-		{ group: 'Action', token: 'action_code', label: 'Action code' },
-		{ group: 'Result', token: 'llm_output', label: 'AI output' },
-		{ group: 'Result', token: 'justification', label: 'Justification' },
-		{ group: 'Result', token: 'classification', label: 'Classification' },
-		{ group: 'Result', token: 'confidence', label: 'Confidence' }
-	];
+	const mergeTags = buildDefaultCustomActionMergeTags();
 
 	let errors = $state<Array<{ path: string; message: string }>>([]);
 
@@ -550,15 +529,15 @@
 						description="Write the action result back to the Gravity Forms entry for demo-visible auditability."
 					/>
 					{#if addEntryNote}
-						<MergeTagField
-							id="custom-action-entry-note-message"
-							label="Entry Note Message"
-							bind:value={entryNoteMessage}
-							rows={3}
-							tokens={mergeTags}
-							placeholder={'Follow up with {{field:1}} about {{llm_output}}.'}
-						/>
-					{/if}
+							<MergeTagField
+								id="custom-action-entry-note-message"
+								label="Entry Note Message"
+								bind:value={entryNoteMessage}
+								rows={3}
+								tokens={mergeTags}
+								placeholder={'Follow up with {{field:type:name.first}} about {{llm_output}}.'}
+							/>
+						{/if}
 				</div>
 
 				<div class="sf:rounded-md sf:border sf:border-white sf:bg-white sf:p-3 sf:space-y-3">
@@ -569,14 +548,14 @@
 						description="Email the site admin or a configured recipient after the action completes."
 					/>
 					{#if sendEmail}
-						<MergeTagField
-							id="custom-action-email-recipients"
-							label="Recipients"
-							bind:value={emailRecipients}
-							rows={2}
-							tokens={mergeTags}
-							placeholder="Leave blank for site admin, or use {{field:2}}"
-						/>
+							<MergeTagField
+								id="custom-action-email-recipients"
+								label="Recipients"
+								bind:value={emailRecipients}
+								rows={2}
+								tokens={mergeTags}
+								placeholder={'Leave blank for site admin, or use {{field:type:email}}'}
+							/>
 						<MergeTagField
 							id="custom-action-email-subject"
 							label="Email Subject"

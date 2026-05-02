@@ -136,6 +136,42 @@ describe('realtime suggestions runtime', () => {
 		expect(headers['X-WP-Nonce']).toBe('rest-nonce-42');
 	});
 
+	it('starts minimized by default so embedded forms are not covered on first paint', () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({ suggestions: [] })
+			})
+		);
+		setupRuntimeConfig();
+		evaluateRuntimeScript();
+
+		const body = document.querySelector<HTMLElement>('[data-role="body"]');
+		const toggle = document.querySelector<HTMLButtonElement>('[data-role="toggle"]');
+		expect(body?.hidden).toBe(true);
+		expect(toggle?.textContent).toBe('Show');
+	});
+
+	it('can hide the assistant until a visitor starts interacting with the form', () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({ suggestions: [] })
+			})
+		);
+		setupRuntimeConfig({ initial_panel_state: 'hidden_until_interaction' });
+		evaluateRuntimeScript();
+
+		const widget = document.querySelector<HTMLElement>('.sentient-forms-realtime-widget');
+		expect(widget?.hidden).toBe(true);
+
+		const input = document.querySelector<HTMLInputElement>('[name="input_1"]');
+		input?.dispatchEvent(new Event('input', { bubbles: true }));
+		expect(widget?.hidden).toBe(false);
+	});
+
 	it('renders metering summary with credits and correlation id', async () => {
 		const fetchMock = vi.fn().mockResolvedValue({
 			ok: true,
@@ -462,6 +498,56 @@ describe('realtime suggestions runtime', () => {
 		expect(stored.mappings[0].questions[0].answer).toBe('Chrome on Windows 11');
 	});
 
+	it('creates a real fallback hidden input when no storage target is configured', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				suggestions: [],
+				virtual_questions: [
+					{
+						question_id: 'fallback-context',
+						question: 'What should support know?',
+						answer_type: 'short_text'
+					}
+				]
+			})
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+					action_name_label: 'Realtime Action',
+					debounce_ms: 100,
+					cooldown_ms: 0,
+					manual_refresh_enabled: true,
+					storage_target_field_id: '',
+					blocking_mode: 'advisory',
+					checkpoint_field_ids: ['1']
+				}
+			]
+		});
+		evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		const answer = document.querySelector<HTMLInputElement>(
+			'[data-role="answer-question"][data-question-id="fallback-context"]'
+		);
+		expect(answer).not.toBeNull();
+		answer!.value = 'Please call tomorrow.';
+		answer?.dispatchEvent(new Event('input', { bubbles: true }));
+
+		const fallback = document.querySelector<HTMLInputElement>(
+			'input[name="sentient_forms_realtime_qna_42"]'
+		);
+		expect(fallback).not.toBeNull();
+		const stored = JSON.parse(fallback?.value ?? '{}');
+		expect(stored.mappings[0].questions[0].answer).toBe('Please call tomorrow.');
+	});
+
 	it('preserves answered virtual questions when a later run asks new questions', async () => {
 		const fetchMock = vi
 			.fn()
@@ -531,6 +617,13 @@ describe('realtime suggestions runtime', () => {
 			.querySelector<HTMLButtonElement>('[data-role="refresh"]')
 			?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 		await flushRuntime();
+
+		const secondRequestInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+		const secondPayload = JSON.parse(String(secondRequestInit.body));
+		expect(secondPayload.panel_state.virtual_questions[0]).toMatchObject({
+			question_id: 'affected-url',
+			answer: 'https://example.test/pricing'
+		});
 
 		const storage = document.querySelector<HTMLTextAreaElement>('[name="input_9"]');
 		const stored = JSON.parse(storage?.value ?? '{}');

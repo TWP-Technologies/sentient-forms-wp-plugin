@@ -660,7 +660,7 @@ test('existing subscriptions use billing portal for plan management', async ({ p
 		'Use the Stripe billing portal'
 	);
 
-	await page.getByRole('button', { name: 'Manage in billing portal' }).first().click();
+	await page.getByRole('button', { name: 'Manage billing' }).first().click();
 
 	await expect.poll(() => portalAttempts).toBe(1);
 	await expect(page).toHaveURL(/about:blank#stripe-plan-management/);

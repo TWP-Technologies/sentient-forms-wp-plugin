@@ -3,15 +3,15 @@
 - paragraph: Managed service
 - paragraph: Active and connected
 - text: "active Tier: Pro"
-- paragraph: "/Last synced: Jan 5, \\d+, 4:\\d+ AM/"
+- paragraph: "Last synced: Jan 5, 2030, 4:00 AM"
 - paragraph: Managed service credits
-- paragraph: /\d+ \/ \d+ managed credits remaining/
+- paragraph: 875 / 1000 managed credits remaining
 - text: Healthy Resets May 1 (9 days)
 - paragraph: Resets May 1 (9 days). Managed usage is healthy.
 - paragraph: Subscription
 - paragraph: "Subscription status: active"
 - paragraph: "Billing provider: stripe"
-- paragraph: /Current period ends Jan \d+, \d+, 6:\d+ PM/
+- paragraph: Current period ends Jan 31, 2030, 6:00 PM
 - paragraph: "Licensed WordPress site: 1 / 1"
 - paragraph: Managed-service allocation for this WordPress install.
 - button "Manage billing"
@@ -24,16 +24,16 @@
 - paragraph: Use the Stripe billing portal to change, cancel, or authenticate this managed-service subscription. Direct OpenRouter remains separate.
 - paragraph: Each Sentient Forms managed-service license covers one WordPress site. Use a separate license for each additional site.
 - paragraph: Starter
-- paragraph: /\$\d+\/month for this WordPress site, \d+,\d+ monthly managed credits\./
-- button "Manage in billing portal"
+- paragraph: $15/month for this WordPress site, 1,500 monthly managed credits.
+- button "Upgrade to Starter"
 - paragraph: Pro
-- paragraph: /\$\d+\/month for this WordPress site, \d+,\d+ monthly managed credits\./
-- button "Manage in billing portal"
+- paragraph: $39/month for this WordPress site, 3,900 monthly managed credits.
+- button "Upgrade to Pro"
 - paragraph: Business
-- paragraph: /\$\d+\/month for this WordPress site, \d+,\d+ monthly managed credits\./
-- button "Manage in billing portal"
+- paragraph: $99/month for this WordPress site, 9,900 monthly managed credits.
+- button "Upgrade to Business"
 - paragraph: Managed usage
 - paragraph: Managed-service usage is governed by the active Sentient Forms plan for this WordPress site. Direct OpenRouter credentials remain available for runs that are not billed by Sentient Forms.
 - heading "License details" [level=2]
-- text: /License status active Managed service key stored Yes Tier Pro Subscription status active Site capacity 1 \/ 1 Billing period end Jan \d+, \d+, 6:\d+ PM Direct OpenRouter billing Not configured Managed service billing Not configured Capacity policy tier_x_quantity_v1 Over-limit grace — Credits reset May 1, \d+ Expires Dec \d+, \d+, 6:\d+ PM Last synced Jan 5, \d+, 4:\d+ AM/
+- text: License status active Managed service key stored Yes Tier Pro Subscription status active Site capacity 1 / 1 Billing period end Jan 31, 2030, 6:00 PM Direct OpenRouter billing Not configured Managed service billing Not configured Capacity policy tier_x_quantity_v1 Over-limit grace — Credits reset May 1, 2026 Expires Dec 31, 2029, 6:00 PM Last synced Jan 5, 2030, 4:00 AM
 - button "Deactivate license"

@@ -96,6 +96,31 @@ test.describe('Custom actions admin view', () => {
 				});
 			}
 
+			if (method === 'GET' && url.includes('/local/providers/credentials')) {
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						success: true,
+						data: [
+							{
+								id: 1,
+								provider: 'openrouter',
+								label: 'OpenRouter test key',
+								auth_mode: 'constant',
+								constant_name: 'SENTIENT_FORMS_OPENROUTER_API_KEY',
+								status: 'valid',
+								status_json: null,
+								last_validated_at: '2026-05-01T12:00:00Z',
+								created_at: '2026-05-01T12:00:00Z',
+								updated_at: '2026-05-01T12:00:00Z',
+								secret_configured: true
+							}
+						]
+					})
+				});
+			}
+
 			if (method === 'GET' && url.endsWith('/models')) {
 				return route.fulfill({
 					status: 200,
@@ -441,15 +466,14 @@ test.describe('Custom actions admin view', () => {
 		await expect(createForm.getByTestId('model-selector')).toBeVisible();
 		await createForm.getByTestId('model-selector-open').click();
 		await expect(page.getByTestId('model-selector-dialog')).toBeVisible();
-		await expect(page.getByTestId('model-preset-evidence-sf_default')).toContainText(
-			'Evidence 92/100'
-		);
+		const presetRanking = page.getByTestId('model-preset-top-candidates');
+		await expect(presetRanking).toContainText('Recommendation ranking');
+		await expect(presetRanking).toContainText('92/100');
 		await expect(page.getByTestId('model-preset-sf_long_context')).toContainText(
 			'not just the largest advertised context window'
 		);
-		await expect(page.getByTestId('model-preset-evidence-sf_long_context')).toContainText(
-			'Evidence 93/100'
-		);
+		await page.getByTestId('model-preset-sf_long_context').hover();
+		await expect(presetRanking).toContainText('93/100');
 		await page.setViewportSize({ width: 1024, height: 768 });
 		const shellHeight = await page
 			.getByTestId('model-selector-dialog')
@@ -470,8 +494,9 @@ test.describe('Custom actions admin view', () => {
 		).toBeVisible();
 		await expect(page.getByTestId('model-selector-detail')).toBeVisible();
 		await expect(page.getByTestId('model-selector-advanced-filters-panel')).toHaveCount(0);
+		await expect(page.getByTestId('model-row-openai/gpt-5.5')).toBeVisible();
 		await expect(
-			page.getByTestId('model-row-openai/gpt-5.5').getByText('Paid model').first()
+			page.getByTestId('model-row-openai/gpt-5.5').getByText(/Selected|Use model/).first()
 		).toBeVisible();
 		const dialogHeightBefore = await page.getByTestId('model-selector-dialog').boundingBox();
 		await page.getByTestId('model-row-openai/gpt-5.5').hover();

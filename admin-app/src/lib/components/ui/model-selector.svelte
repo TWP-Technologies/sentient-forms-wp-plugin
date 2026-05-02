@@ -108,6 +108,7 @@
 	let advancedFiltersOpen = $state(false);
 	let isPickerOpen = $state(false);
 	let highlightedModelId = $state<string | null>(null);
+	let highlightedPresetCode = $state<string | null>(null);
 	let error = $state<string | null>(null);
 	let resolved = $state<ResolvedModelSelection | null>(null);
 	let pricingEstimate = $state<ModelPricingEstimate | null>(null);
@@ -559,6 +560,24 @@
 		return modelById(highlightedModelId) ?? modelById(selectedConcreteModelId());
 	}
 
+	function activePreset(): ModelPreset | null {
+		return (
+			presets.find((preset) => preset.code === highlightedPresetCode) ??
+			presets.find((preset) => preset.code === selectedPreset) ??
+			null
+		);
+	}
+
+	function presetTopCandidates(preset: ModelPreset | null) {
+		return (preset?.top_candidates ?? [])
+			.filter((candidate) => typeof candidate.score === 'number' && Number.isFinite(candidate.score))
+			.slice(0, 3);
+	}
+
+	function candidateModelLabel(modelId: string): string {
+		return modelById(modelId)?.display_name ?? modelId;
+	}
+
 	function selectedModelAllowsReasoning(): boolean {
 		if (selectionMode === 'custom') return true;
 		return Boolean(selectedPrimaryModelInfo()?.capabilities.reasoning);
@@ -651,6 +670,7 @@
 	function choosePreset(preset: ModelPreset) {
 		selectionMode = 'presets';
 		selectedPreset = preset.code;
+		highlightedPresetCode = preset.code;
 		selectedModel = normalizeSelectedModel(preset.resolved_model_id);
 		selectedReasoning = 'default';
 		highlightedModelId = preset.resolved_model_id;
@@ -687,6 +707,7 @@
 	function openPicker() {
 		if (readonly) return;
 		highlightedModelId = selectedConcreteModelId();
+		highlightedPresetCode = selectionMode === 'presets' ? selectedPreset : null;
 		isPickerOpen = true;
 	}
 
@@ -704,13 +725,16 @@
 	function setMode(mode: SelectionMode) {
 		selectionMode = mode;
 		if (mode === 'models') {
+			highlightedPresetCode = null;
 			selectedModel = normalizeSelectedModel(
 				selectedModel || resolvedModelForPreset(selectedPreset)
 			);
 			highlightedModelId = selectedModel;
 		} else if (mode === 'presets') {
+			highlightedPresetCode = selectedPreset;
 			highlightedModelId = resolvedModelForPreset(selectedPreset);
 		} else {
+			highlightedPresetCode = null;
 			highlightedModelId = selectedConcreteModelId();
 		}
 	}
@@ -957,11 +981,6 @@
 		return `${model.provider_family ?? model.provider} model`;
 	}
 
-	function presetEvidenceSummary(preset: ModelPreset | null): string {
-		if (typeof preset?.score !== 'number' || preset.score <= 0) return '';
-		return `Evidence ${preset.score}/100`;
-	}
-
 	function costBadgeVariant(tier: string) {
 		switch (tier) {
 			case 'free':
@@ -1134,7 +1153,7 @@
 						</p>
 					{/if}
 				</div>
-				<div class="sf:mt-3 sf:grid sf:gap-3 sf:md:grid-cols-2 sf:xl:grid-cols-4">
+					<div class="sf:mt-3 sf:grid sf:grid-cols-1 sf:gap-3 sf:sm:grid-cols-2">
 					<SelectField
 						id={`model-summary-tool-choice-${level}`}
 						label="Tool choice"
@@ -1325,9 +1344,11 @@
 											title={model ? lockTitle(model) : preset.description}
 											aria-disabled={locked}
 											onfocus={() => {
+												highlightedPresetCode = preset.code;
 												highlightedModelId = preset.resolved_model_id;
 											}}
 											onmouseover={() => {
+												highlightedPresetCode = preset.code;
 												highlightedModelId = preset.resolved_model_id;
 											}}
 											onclick={() => {
@@ -1352,15 +1373,7 @@
 														</Badge>
 													{/if}
 												</span>
-												<span class="sf:text-sm sf:text-slate-600">{preset.description}</span>
-												{#if presetEvidenceSummary(preset)}
-													<span
-														class="sf:text-[11px] sf:font-semibold sf:text-slate-600"
-														data-testid={`model-preset-evidence-${preset.code}`}
-													>
-														{presetEvidenceSummary(preset)}
-													</span>
-												{/if}
+													<span class="sf:text-sm sf:text-slate-600">{preset.description}</span>
 												<span
 													class="sf:mt-auto sf:break-all sf:font-mono sf:text-xs sf:text-slate-500"
 												>
@@ -1729,11 +1742,42 @@
 										{detailModel?.id ?? selectedModelIdLabel()}
 									</p>
 								</div>
-							</div>
+								</div>
 
-							<p class="sf:text-sm sf:text-slate-600">{modelDescription(detailModel)}</p>
+								<p class="sf:text-sm sf:text-slate-600">{modelDescription(detailModel)}</p>
 
-							<div class="sf:grid sf:grid-cols-2 sf:gap-2">
+								{#if selectionMode === 'presets'}
+									{@const selectedPresetDetails = activePreset()}
+									{@const topCandidates = presetTopCandidates(selectedPresetDetails)}
+									{#if topCandidates.length > 0}
+										<div
+											class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3"
+											data-testid="model-preset-top-candidates"
+										>
+											<p class="sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-500">
+												Recommendation ranking
+											</p>
+											<div class="sf:mt-3 sf:space-y-1.5">
+												{#each topCandidates as candidate, index}
+													<div
+														class="sf:flex sf:items-start sf:justify-between sf:gap-3"
+														data-testid={`model-preset-candidate-${index + 1}`}
+													>
+														<p class="sf:min-w-0 sf:text-xs sf:font-medium sf:text-slate-800">
+															<span class="sf:font-semibold">#{index + 1}</span>
+															{candidateModelLabel(candidate.model_id)}
+														</p>
+														<p class="sf:flex-none sf:text-xs sf:font-semibold sf:text-slate-700">
+															{Math.round(candidate.score)}/100
+														</p>
+													</div>
+												{/each}
+											</div>
+										</div>
+									{/if}
+								{/if}
+
+								<div class="sf:grid sf:grid-cols-2 sf:gap-2">
 								<div class="sf:rounded-md sf:bg-white sf:p-3">
 									<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">
 										Provider

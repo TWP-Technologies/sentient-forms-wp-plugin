@@ -183,7 +183,9 @@
 		<Button variant="secondary" onclick={loadDashboardData} disabled={loading}>
 			{loading ? 'Refreshing...' : 'Refresh'}
 		</Button>
-		<Button onclick={() => navigateToAppPath('/licensing')}>Set up managed service</Button>
+			<Button onclick={() => navigateToAppPath('/licensing')}>
+				{managedCredential ? 'Manage managed service' : 'Set up managed service'}
+			</Button>
 	{/snippet}
 
 	{#if errors.length > 0}

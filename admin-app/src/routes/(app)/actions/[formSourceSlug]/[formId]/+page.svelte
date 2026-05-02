@@ -63,6 +63,8 @@
 		LocalProviderCredential,
 		ModelSelection,
 		RealtimeBlockingMode,
+		RealtimeInitialPanelState,
+		RealtimeRefreshMode,
 		RealtimeSettings,
 		RepairState,
 		ResolvedModelSelection,
@@ -84,6 +86,7 @@
 		normalizeSpamResultDisplayMode,
 		resolveInheritableBoolean,
 		resolveInheritableBooleanSource,
+		resolveModelSelectionChain,
 		type InheritableBooleanMode
 	} from '$lib/utils/action-config';
 	import {
@@ -305,6 +308,16 @@
 		{ value: 'advisory', label: 'Advisory: never block submit' },
 		{ value: 'require_answers', label: 'Require answers to required AI questions' }
 	];
+	const REALTIME_REFRESH_MODE_OPTIONS = [
+		{ value: 'auto', label: 'Auto-refresh after input' },
+		{ value: 'checkpoint', label: 'Only configured checkpoints' },
+		{ value: 'manual', label: 'Only manual refresh' }
+	];
+	const REALTIME_INITIAL_PANEL_OPTIONS = [
+		{ value: 'minimized', label: 'Minimized on form start' },
+		{ value: 'hidden_until_interaction', label: 'Hidden until visitor starts' },
+		{ value: 'open', label: 'Open on form start' }
+	];
 
 	const providerEditUrl = $derived(
 		data.formSourceSlug === 'gravity_forms'
@@ -410,11 +423,13 @@
 			checkpoint_field_ids: [],
 			storage_target_field_id: '',
 			debounce_ms: 900,
-			cooldown_ms: 8000,
-			manual_refresh_enabled: true,
-			blocking_mode: 'advisory'
-		};
-	}
+				cooldown_ms: 8000,
+				manual_refresh_enabled: true,
+				blocking_mode: 'advisory',
+				refresh_mode: 'auto',
+				initial_panel_state: 'minimized'
+			};
+		}
 
 	function isRealtimeEligibleActionId(actionId: string | null | undefined): boolean {
 		return actionId === REALTIME_ACTION_ID;
@@ -468,10 +483,20 @@
 			: defaults.checkpoint_field_ids;
 		const debounceMs = Number.parseInt(String(candidate.debounce_ms ?? defaults.debounce_ms), 10);
 		const cooldownMs = Number.parseInt(String(candidate.cooldown_ms ?? defaults.cooldown_ms), 10);
-		const blockingMode =
-			candidate.blocking_mode === 'require_answers' ? 'require_answers' : 'advisory';
+			const blockingMode =
+				candidate.blocking_mode === 'require_answers' ? 'require_answers' : 'advisory';
+			const refreshMode = ['auto', 'checkpoint', 'manual'].includes(
+				String(candidate.refresh_mode ?? '')
+			)
+				? (candidate.refresh_mode as RealtimeRefreshMode)
+				: defaults.refresh_mode;
+			const initialPanelState = ['open', 'minimized', 'hidden_until_interaction'].includes(
+				String(candidate.initial_panel_state ?? '')
+			)
+				? (candidate.initial_panel_state as RealtimeInitialPanelState)
+				: defaults.initial_panel_state;
 
-		return {
+			return {
 			checkpoint_field_ids: Array.from(new Set(checkpointFieldIds)),
 			storage_target_field_id:
 				typeof candidate.storage_target_field_id === 'string'
@@ -479,13 +504,15 @@
 					: defaults.storage_target_field_id,
 			debounce_ms: Number.isFinite(debounceMs) ? Math.min(5000, Math.max(250, debounceMs)) : 900,
 			cooldown_ms: Number.isFinite(cooldownMs) ? Math.min(60000, Math.max(0, cooldownMs)) : 8000,
-			manual_refresh_enabled:
-				typeof candidate.manual_refresh_enabled === 'boolean'
-					? candidate.manual_refresh_enabled
-					: defaults.manual_refresh_enabled,
-			blocking_mode: blockingMode
-		};
-	}
+				manual_refresh_enabled:
+					typeof candidate.manual_refresh_enabled === 'boolean'
+						? candidate.manual_refresh_enabled
+						: defaults.manual_refresh_enabled,
+				blocking_mode: blockingMode,
+				refresh_mode: refreshMode,
+				initial_panel_state: initialPanelState
+			};
+		}
 
 	function deriveExecutionModeForHooks(hooks: Iterable<string>, current?: unknown): ExecutionMode {
 		const normalizedHooks = normalizeHookIds(hooks);
@@ -1050,31 +1077,27 @@
 			!Array.isArray(draftSettings.model_selection)
 				? (draftSettings.model_selection as ModelSelection)
 				: null;
-		if (mappingSelection?.primary) {
-			return mappingSelection;
-		}
-
-		if (currentFormActionConfig.model_selection?.primary) {
-			return currentFormActionConfig.model_selection;
-		}
-
-		if (currentActionDefaults.model_selection?.primary) {
-			return currentActionDefaults.model_selection;
-		}
-
-		return cloneDefaultModelSelection();
+		return resolveModelSelectionChain({
+			platform: cloneDefaultModelSelection(),
+			action: currentActionDefaults.model_selection ?? null,
+			form: currentFormActionConfig.model_selection ?? null,
+			mapping: mappingSelection
+		}).selection;
 	});
 	const effectiveMappingModelSource = $derived.by(() => {
-		if (draftSettings.model_selection?.primary) {
-			return 'mapping';
-		}
-		if (currentFormActionConfig.model_selection?.primary) {
-			return 'form';
-		}
-		if (currentActionDefaults.model_selection?.primary) {
-			return 'action';
-		}
-		return 'system';
+		const mappingSelection =
+			draftSettings.model_selection &&
+			typeof draftSettings.model_selection === 'object' &&
+			!Array.isArray(draftSettings.model_selection)
+				? (draftSettings.model_selection as ModelSelection)
+				: null;
+		const resolved = resolveModelSelectionChain({
+			platform: cloneDefaultModelSelection(),
+			action: currentActionDefaults.model_selection ?? null,
+			form: currentFormActionConfig.model_selection ?? null,
+			mapping: mappingSelection
+		});
+		return resolved.source === 'platform' ? 'system' : resolved.source;
 	});
 	const effectiveDraftExecutionKind = $derived(
 		deriveDraftExecutionKind(draftHooks, draftSettings.execution_mode)
@@ -1275,13 +1298,19 @@
 	const realtimeSummary = $derived.by(() => {
 		if (!isRealtimeDraft) return 'Disabled';
 		const checkpointCount = realtimeSettings.checkpoint_field_ids?.length ?? 0;
-		const storageLabel = realtimeSettings.storage_target_field_id
-			? `stores in ${realtimeSettings.storage_target_field_id}`
-			: 'no Q&A storage';
-		const submitPolicy =
-			realtimeSettings.blocking_mode === 'require_answers' ? 'required answers' : 'advisory';
-		return `${checkpointCount || 'all'} checkpoint${checkpointCount === 1 ? '' : 's'} · ${storageLabel} · ${submitPolicy}`;
-	});
+			const storageLabel = realtimeSettings.storage_target_field_id
+				? `stores in ${realtimeSettings.storage_target_field_id}`
+				: 'no Q&A storage';
+			const submitPolicy =
+				realtimeSettings.blocking_mode === 'require_answers' ? 'required answers' : 'advisory';
+			const refresh =
+				realtimeSettings.refresh_mode === 'manual'
+					? 'manual'
+					: realtimeSettings.refresh_mode === 'checkpoint'
+						? 'checkpoints'
+						: 'auto';
+			return `${refresh} · ${checkpointCount || 'all'} checkpoint${checkpointCount === 1 ? '' : 's'} · ${storageLabel} · ${submitPolicy}`;
+		});
 	const conditionsSummary = $derived.by(() => {
 		const conditions = (draftSettings.conditions ?? createDefaultConditionConfig()) as Record<
 			string,
@@ -2457,7 +2486,7 @@
 		}
 	}
 
-	function startEditingAction(linkage: FormActionLinkage, openModal = true) {
+	async function startEditingAction(linkage: FormActionLinkage, openModal = true) {
 		const draftSnapshot = readEffectiveDraftForMapping(linkage.local_mapping_id);
 		const initialHooks =
 			draftSnapshot.triggerHooks.length > 0
@@ -2465,6 +2494,10 @@
 				: [hookEntries[0]?.[0] ?? 'gform_validation'];
 		draftHooks = new Set(initialHooks);
 		const baseSettings = cloneDraftValue(linkage.settings ?? {});
+		await Promise.allSettled([
+			loadActionDefaultsForAction(linkage.central_action_id, { force: false }),
+			loadFormLevelConfig(linkage.central_action_id, { openModal: false, force: false })
+		]);
 		const inheritedFormConfig =
 			formLevelConfigByActionId[linkage.central_action_id] ?? createBlankFormActionConfig();
 		const inheritedActionConfig =
@@ -2511,9 +2544,8 @@
 		resetMappingSectionExpansion(linkage);
 		showMappingConfigModal = openModal;
 		editBaselineSignature = createDraftSignature(initialHooks, nextDraftSettings);
-		clearRootAttachUndoState();
-		preloadActionHierarchy(linkage.central_action_id);
-	}
+			clearRootAttachUndoState();
+		}
 
 	function cancelEditingAction() {
 		const cancelledMappingId = editingLinkageId;
@@ -4719,17 +4751,40 @@
 													storage_target_field_id: event.currentTarget.value
 												})}
 										/>
-										<SelectField
-											id="realtime-submit-policy"
-											label="Submit policy"
-											value={realtimeSettings.blocking_mode}
-											options={REALTIME_BLOCKING_OPTIONS}
+											<SelectField
+												id="realtime-submit-policy"
+												label="Submit policy"
+												value={realtimeSettings.blocking_mode}
+												options={REALTIME_BLOCKING_OPTIONS}
 											onchange={(event) =>
 												updateRealtimeSettings({
 													blocking_mode: event.currentTarget.value as RealtimeBlockingMode
-												})}
-										/>
-									</div>
+													})}
+											/>
+											<SelectField
+												id="realtime-refresh-mode"
+												label="Refresh mode"
+												description="Choose whether recommendations update continuously, only at checkpoint fields, or only when the visitor clicks refresh."
+												value={realtimeSettings.refresh_mode}
+												options={REALTIME_REFRESH_MODE_OPTIONS}
+												onchange={(event) =>
+													updateRealtimeSettings({
+														refresh_mode: event.currentTarget.value as RealtimeRefreshMode
+													})}
+											/>
+											<SelectField
+												id="realtime-initial-panel-state"
+												label="Initial panel"
+												description="Keep embedded forms quiet by default, then let the assistant appear after the visitor starts."
+												value={realtimeSettings.initial_panel_state}
+												options={REALTIME_INITIAL_PANEL_OPTIONS}
+												onchange={(event) =>
+													updateRealtimeSettings({
+														initial_panel_state: event.currentTarget
+															.value as RealtimeInitialPanelState
+													})}
+											/>
+										</div>
 									<Toggle
 										checked={realtimeSettings.manual_refresh_enabled}
 										label="Manual refresh"

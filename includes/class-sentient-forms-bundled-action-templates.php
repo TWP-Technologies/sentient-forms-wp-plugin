@@ -368,7 +368,7 @@ Form context:
 Known answers:
 {{entry}}
 
-Realtime runtime context is supplied to the action as suggestion_context. Use current_page_index, visible_field_ids, all_known_field_values, and future_field_manifest to avoid criticizing fields the visitor cannot see yet.
+Realtime runtime context is supplied to the action as suggestion_context. Use current_page_index, visible_field_ids, all_known_field_values, future_field_manifest, request_reason, and panel_state. panel_state contains existing suggestions, follow-up questions, visitor answers, and completed flags; preserve in-progress answers, avoid asking duplicates, and update prior guidance when that is better than replacing it.
 PROMPT,
                 'default_model'            => 'openrouter/auto',
                 'structured_output_schema' => [

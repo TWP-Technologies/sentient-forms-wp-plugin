@@ -75,14 +75,23 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 							'type'              => 'integer',
 							'sanitize_callback' => 'absint',
 						],
-						'total_pages' => [
-							'required'          => true,
-							'type'              => 'integer',
-							'sanitize_callback' => 'absint',
+							'total_pages' => [
+								'required'          => true,
+								'type'              => 'integer',
+								'sanitize_callback' => 'absint',
+							],
+							'request_reason' => [
+								'required'          => false,
+								'type'              => 'string',
+								'sanitize_callback' => 'sanitize_key',
+							],
+							'panel_state' => [
+								'required' => false,
+								'type'     => 'object',
+							],
 						],
 					],
-				],
-			]
+				]
 		);
 	}
 
@@ -181,8 +190,9 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 			'action_type_indicator' => isset( $mapping['action_type_indicator'] ) ? sanitize_key( (string) $mapping['action_type_indicator'] ) : 'master',
 			'local_mapping_id'      => $mapping_id,
 			'mapping_id'            => $mapping_id,
-			'settings'              => isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [],
-		];
+				'settings'              => isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [],
+				'suggestion_context'    => $suggestion_context,
+			];
 		if ( '' !== $execution_request_id ) {
 			$context['execution_request_id'] = $execution_request_id;
 		}
@@ -743,23 +753,82 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 				$future_field_manifest[] = $manifest_entry;
 			}
 		}
-		if ( empty( $future_field_manifest ) ) {
-			$future_field_manifest = $this->build_future_field_manifest( $form, $current_page_index );
+			if ( empty( $future_field_manifest ) ) {
+				$future_field_manifest = $this->build_future_field_manifest( $form, $current_page_index );
+			}
+			$request_reason = isset( $request['request_reason'] ) && is_scalar( $request['request_reason'] )
+				? sanitize_key( (string) $request['request_reason'] )
+				: 'field_change';
+			$panel_state = $this->sanitize_panel_state( $request['panel_state'] ?? [] );
+
+			return [
+				'form_id'               => (string) $form_id,
+				'source'                => $form_source_slug,
+				'request_reason'        => $request_reason,
+				'current_page_index'    => $current_page_index,
+				'total_pages'           => $total_pages,
+				'visible_field_ids'     => $visible_field_ids,
+				'checkpoint_field_ids'  => $checkpoint_field_ids,
+				'all_known_field_values'=> $known_values,
+				'future_field_manifest' => $future_field_manifest,
+				'panel_state'           => $panel_state,
+			];
 		}
 
-		return [
-			'form_id'               => (string) $form_id,
-			'source'                => $form_source_slug,
-			'current_page_index'    => $current_page_index,
-			'total_pages'           => $total_pages,
-			'visible_field_ids'     => $visible_field_ids,
-			'checkpoint_field_ids'  => $checkpoint_field_ids,
-			'all_known_field_values'=> $known_values,
-			'future_field_manifest' => $future_field_manifest,
-		];
-	}
+		/**
+		 * @param mixed $raw
+		 *
+		 * @return array<string,mixed>
+		 */
+		private function sanitize_panel_state( mixed $raw ): array {
+			if ( ! is_array( $raw ) ) {
+				return [
+					'suggestions'       => [],
+					'virtual_questions' => [],
+				];
+			}
 
-	/**
+			$suggestions = [];
+			foreach ( is_array( $raw['suggestions'] ?? null ) ? $raw['suggestions'] : [] as $item ) {
+				if ( ! is_array( $item ) ) {
+					continue;
+				}
+				$suggestions[] = [
+					'suggestion_id' => isset( $item['suggestion_id'] ) && is_scalar( $item['suggestion_id'] ) ? sanitize_text_field( (string) $item['suggestion_id'] ) : '',
+					'field_id'      => isset( $item['field_id'] ) && is_scalar( $item['field_id'] ) ? sanitize_text_field( (string) $item['field_id'] ) : '',
+					'message'       => isset( $item['message'] ) && is_scalar( $item['message'] ) ? sanitize_textarea_field( (string) $item['message'] ) : '',
+					'severity'      => isset( $item['severity'] ) && is_scalar( $item['severity'] ) ? sanitize_key( (string) $item['severity'] ) : 'info',
+					'completed'     => rest_sanitize_boolean( $item['completed'] ?? false ),
+				];
+				if ( count( $suggestions ) >= 20 ) {
+					break;
+				}
+			}
+
+			$questions = [];
+			foreach ( is_array( $raw['virtual_questions'] ?? null ) ? $raw['virtual_questions'] : [] as $item ) {
+				if ( ! is_array( $item ) ) {
+					continue;
+				}
+				$questions[] = [
+					'question_id'     => isset( $item['question_id'] ) && is_scalar( $item['question_id'] ) ? sanitize_text_field( (string) $item['question_id'] ) : '',
+					'question'        => isset( $item['question'] ) && is_scalar( $item['question'] ) ? sanitize_text_field( (string) $item['question'] ) : '',
+					'answer'          => isset( $item['answer'] ) && is_scalar( $item['answer'] ) ? sanitize_textarea_field( (string) $item['answer'] ) : '',
+					'target_field_id' => isset( $item['target_field_id'] ) && is_scalar( $item['target_field_id'] ) ? sanitize_text_field( (string) $item['target_field_id'] ) : '',
+					'completed'       => rest_sanitize_boolean( $item['completed'] ?? false ),
+				];
+				if ( count( $questions ) >= 20 ) {
+					break;
+				}
+			}
+
+			return [
+				'suggestions'       => $suggestions,
+				'virtual_questions' => $questions,
+			];
+		}
+
+		/**
 	 * @param array<string,mixed> $form
 	 * @return array<int,array<string,mixed>>
 	 */

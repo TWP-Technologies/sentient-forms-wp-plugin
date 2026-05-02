@@ -131,6 +131,7 @@ export function normalizeModelSelection(value: unknown): ModelSelection | undefi
 		typeof candidate.provider === 'string' && candidate.provider.trim().length > 0
 			? candidate.provider.trim()
 			: null;
+	const tools = normalizeModelToolSettings(candidate.tools);
 	const credentialId =
 		typeof candidate.credential_id === 'number' && Number.isFinite(candidate.credential_id)
 			? candidate.credential_id
@@ -144,11 +145,94 @@ export function normalizeModelSelection(value: unknown): ModelSelection | undefi
 		is_preset: candidate.is_preset === true,
 		...(provider ? { provider } : {}),
 		...(credentialId && credentialId > 0 ? { credential_id: credentialId } : {}),
+		...(tools ? { tools } : {}),
 		...(typeof candidate.reasoning === 'string' &&
 		['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(candidate.reasoning)
 			? { reasoning: candidate.reasoning }
 			: {})
 	};
+}
+
+function normalizeModelToolMode(value: unknown): string | undefined {
+	if (typeof value !== 'string') {
+		return undefined;
+	}
+
+	const normalized = value.trim().toLowerCase();
+	return ['inherit', 'off', 'auto', 'required'].includes(normalized) ? normalized : undefined;
+}
+
+function normalizeModelToolSettings(value: unknown): Record<string, unknown> | null {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		return null;
+	}
+
+	const candidate = value as Record<string, unknown>;
+	const tools: Record<string, unknown> = {};
+	const toolChoice = normalizeModelToolMode(candidate.tool_choice);
+	if (toolChoice && toolChoice !== 'inherit') {
+		tools.tool_choice = toolChoice;
+	}
+
+	const webSearch =
+		candidate.web_search && typeof candidate.web_search === 'object' && !Array.isArray(candidate.web_search)
+			? (candidate.web_search as Record<string, unknown>)
+			: null;
+	const webSearchMode = normalizeModelToolMode(webSearch?.mode);
+	if (webSearchMode && webSearchMode !== 'inherit') {
+		const maxResults = Number(webSearch?.max_results);
+		tools.web_search = {
+			mode: webSearchMode,
+			...(Number.isFinite(maxResults)
+				? { max_results: Math.max(1, Math.min(10, Math.round(maxResults))) }
+				: {})
+		};
+	}
+
+	for (const key of ['web_fetch', 'datetime']) {
+		const raw = candidate[key];
+		const record = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+		const mode = normalizeModelToolMode((record as Record<string, unknown> | null)?.mode);
+		if (mode && mode !== 'inherit') {
+			tools[key] = { mode };
+		}
+	}
+
+	return Object.keys(tools).length > 0 ? tools : null;
+}
+
+export type ModelSelectionResolutionLevel = 'platform' | 'action' | 'form' | 'mapping';
+
+export interface ModelSelectionResolutionInput {
+	platform?: ModelSelection | null;
+	action?: ModelSelection | null;
+	form?: ModelSelection | null;
+	mapping?: ModelSelection | null;
+}
+
+export interface ModelSelectionResolution {
+	selection: ModelSelection;
+	source: ModelSelectionResolutionLevel;
+}
+
+export function resolveModelSelectionChain(
+	input: ModelSelectionResolutionInput
+): ModelSelectionResolution {
+	const candidates: Array<[ModelSelectionResolutionLevel, ModelSelection | null | undefined]> = [
+		['mapping', input.mapping],
+		['form', input.form],
+		['action', input.action],
+		['platform', input.platform]
+	];
+
+	for (const [source, selection] of candidates) {
+		const normalized = normalizeModelSelection(selection);
+		if (normalized?.primary) {
+			return { selection: normalized, source };
+		}
+	}
+
+	return { selection: cloneDefaultModelSelection(), source: 'platform' };
 }
 
 export function normalizeFormActionConfig(value: unknown): FormActionConfig {

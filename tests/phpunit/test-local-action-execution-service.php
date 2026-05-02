@@ -1140,7 +1140,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                     'post_execution_actions' => [
                         [
                             'type'    => 'entry_note',
-                            'message' => 'Follow up with {{field:1}} about {{structured.summary}} from {{action_label}}.',
+	                            'message' => 'Follow up with {{field:type:name.first}} about {{structured.summary}} from {{action_label}}.',
                         ],
                         [
                             'type'      => 'wp_hook',
@@ -1181,12 +1181,23 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         {
             $result = $service->execute_mapping(
                 $fixture['mapping_id'],
-                [ 'id' => 7, 'title' => 'Contact Form' ],
-                [
-                    'id' => 99,
-                    '1'  => 'Ada Lovelace',
-                    '2'  => 'ada@example.test',
-                ],
+	                [
+	                    'id' => 7,
+	                    'title' => 'Contact Form',
+	                    'fields' => [
+	                        (object) [
+	                            'id' => 1,
+	                            'type' => 'name',
+	                            'label' => 'Your name',
+	                        ],
+	                    ],
+	                ],
+	                [
+	                    'id' => 99,
+	                    '1.3'=> 'Ada',
+	                    '1.6'=> 'Lovelace',
+	                    '2'  => 'ada@example.test',
+	                ],
                 [ 'hook' => 'gform_after_submission' ]
             );
         }
@@ -1202,10 +1213,10 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertCount( 1, GFFormsModel::$notes );
         $this->assertSame( 99, GFFormsModel::$notes[0]['entry_id'] );
         $this->assertSame( 'sentient_forms_local_post_execution', GFFormsModel::$notes[0]['note_type'] );
-        $this->assertStringContainsString(
-            'Follow up with Ada Lovelace about enterprise support plan from Local follow-up router.',
-            GFFormsModel::$notes[0]['note']
-        );
+	        $this->assertStringContainsString(
+	            'Follow up with Ada about enterprise support plan from Local follow-up router.',
+	            GFFormsModel::$notes[0]['note']
+	        );
 
         $this->assertCount( 1, $hook_calls );
         $this->assertSame( 99, $hook_calls[0]['entry_id'] );

@@ -39,7 +39,8 @@
 
 .sentient-forms-realtime-widget__toggle,
 .sentient-forms-realtime-widget__refresh,
-.sentient-forms-realtime-widget__focus {
+.sentient-forms-realtime-widget__focus,
+.sentient-forms-realtime-widget__complete {
 	appearance: none;
 	border: 1px solid #cbd5e1;
 	background: #ffffff;
@@ -54,14 +55,16 @@
 
 .sentient-forms-realtime-widget__toggle:focus-visible,
 .sentient-forms-realtime-widget__refresh:focus-visible,
-.sentient-forms-realtime-widget__focus:focus-visible {
+.sentient-forms-realtime-widget__focus:focus-visible,
+.sentient-forms-realtime-widget__complete:focus-visible {
 	outline: 2px solid #2563eb;
 	outline-offset: 2px;
 }
 
 .sentient-forms-realtime-widget__toggle:hover,
 .sentient-forms-realtime-widget__refresh:hover,
-.sentient-forms-realtime-widget__focus:hover {
+.sentient-forms-realtime-widget__focus:hover,
+.sentient-forms-realtime-widget__complete:hover {
 	background: #f8fafc;
 }
 
@@ -105,13 +108,31 @@
 
 .sentient-forms-realtime-widget__item {
 	display: grid;
-	grid-template-columns: auto 1fr auto;
+	grid-template-columns: auto 1fr auto auto;
 	gap: 0.55rem;
 	align-items: start;
 	padding: 0.58rem;
 	border: 1px solid #e2e8f0;
 	border-radius: 0.45rem;
 	background: #f8fafc;
+}
+
+.sentient-forms-realtime-widget__item--completed,
+.sentient-forms-realtime-widget__question--completed {
+	border-color: #bbf7d0;
+	background: #f0fdf4;
+}
+
+.sentient-forms-realtime-widget__item--completed .sentient-forms-realtime-widget__message,
+.sentient-forms-realtime-widget__question--completed .sentient-forms-realtime-widget__question-label {
+	color: #166534;
+}
+
+.sentient-forms-realtime-widget__complete {
+	color: #166534;
+	border-color: #bbf7d0;
+	background: #ffffff;
+	white-space: nowrap;
 }
 
 .sentient-forms-realtime-widget__severity {

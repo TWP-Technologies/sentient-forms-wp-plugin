@@ -1,12 +1,13 @@
 <script lang="ts">
 	import FormField from './form-field.svelte';
 	import Button from './button.svelte';
+	import { coerceDisplayString } from '$lib/utils/custom-actions';
 
 	interface MergeTagOption {
-		token: string;
-		label: string;
-		group?: string;
-		description?: string;
+		token: unknown;
+		label: unknown;
+		group?: unknown;
+		description?: unknown;
 	}
 
 	interface Props {
@@ -34,12 +35,17 @@
 
 	const groupedTokens = $derived.by(() => {
 		const search = tokenSearch.trim().toLowerCase();
-		const groups = new Map<string, MergeTagOption[]>();
+		const groups = new Map<string, Array<{ token: string; label: string; group: string; description: string }>>();
 		for (const token of tokens) {
-			const haystack = `${token.token} ${token.label} ${token.description ?? ''}`.toLowerCase();
+			const normalizedToken = coerceDisplayString(token.token).trim();
+			if (!normalizedToken) continue;
+			const label = coerceDisplayString(token.label, normalizedToken).trim() || normalizedToken;
+			const description = coerceDisplayString(token.description).trim();
+			const group = coerceDisplayString(token.group, 'Common').trim() || 'Common';
+			const normalized = { token: normalizedToken, label, group, description };
+			const haystack = `${normalized.token} ${normalized.label} ${normalized.description}`.toLowerCase();
 			if (search && !haystack.includes(search)) continue;
-			const group = token.group ?? 'Common';
-			groups.set(group, [...(groups.get(group) ?? []), token]);
+			groups.set(group, [...(groups.get(group) ?? []), normalized]);
 		}
 
 		return [...groups.entries()];
@@ -121,7 +127,7 @@
 								type="button"
 								size="sm"
 								variant="secondary"
-								title={token.description ?? mergeTag(token.token)}
+								title={token.description || mergeTag(token.token)}
 								onclick={() => insertToken(token.token)}
 							>
 								{token.label}

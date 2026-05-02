@@ -5,7 +5,8 @@ import {
 	normalizeFormActionConfig,
 	normalizeModelSelection,
 	normalizeSpamIndicatorsDisplay,
-	normalizeSpamResultDisplayMode
+	normalizeSpamResultDisplayMode,
+	resolveModelSelectionChain
 } from '$lib/utils/action-config';
 
 describe('action config helpers', () => {
@@ -66,6 +67,41 @@ describe('action config helpers', () => {
 			provider: 'sentient_managed',
 			credential_id: 42,
 			reasoning: 'high'
+		});
+	});
+
+	it('preserves model tool settings without leaking inherited defaults', () => {
+		expect(
+			normalizeModelSelection({
+				primary: 'google/gemini-3-flash-preview',
+				is_preset: false,
+				tools: {
+					tool_choice: 'auto',
+					web_search: { mode: 'required', max_results: 25 },
+					web_fetch: { mode: 'inherit' },
+					datetime: { mode: 'off' }
+				}
+			})
+		).toMatchObject({
+			primary: 'google/gemini-3-flash-preview',
+			tools: {
+				tool_choice: 'auto',
+				web_search: { mode: 'required', max_results: 10 },
+				datetime: { mode: 'off' }
+			}
+		});
+	});
+
+	it('resolves model defaults from most local to most global scope', () => {
+		const action = { primary: 'openai/gpt-5.5', backup: null, is_preset: false };
+		const form = { primary: 'google/gemini-3-flash-preview', backup: null, is_preset: false };
+		const mapping = { primary: 'anthropic/claude-opus-4.7', backup: null, is_preset: false };
+
+		expect(resolveModelSelectionChain({ action }).source).toBe('action');
+		expect(resolveModelSelectionChain({ action, form }).selection.primary).toBe(form.primary);
+		expect(resolveModelSelectionChain({ action, form, mapping })).toEqual({
+			selection: mapping,
+			source: 'mapping'
 		});
 	});
 });
