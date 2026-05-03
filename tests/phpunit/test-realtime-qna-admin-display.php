@@ -225,6 +225,48 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertStringContainsString( "Question\tAnswer\tStatus", $html );
     }
 
+    public function test_entry_detail_high_volume_qna_gets_review_controls_without_losing_questions(): void
+    {
+        $form    = $this->form_fixture();
+        $payload = $this->high_volume_payload_fixture( 19 );
+        $entry   = [
+            'id'      => 242,
+            'form_id' => 4,
+            '1'       => 'High Volume Example',
+            '5'       => $payload,
+        ];
+
+        $html = $this->display->format_entry_detail_field_value(
+            $payload,
+            $form['fields'][1],
+            $entry,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $this->assertStringContainsString( 'sentient-forms-qna-panel--high-volume', $html );
+        $this->assertStringContainsString( 'data-sf-qna-total-questions="19"', $html );
+        $this->assertStringContainsString( 'data-sf-qna-review-toolbar', $html );
+        $this->assertStringContainsString( 'data-sf-qna-filter="open"', $html );
+        $this->assertStringContainsString( 'data-sf-qna-search-input', $html );
+        $this->assertStringContainsString( 'data-sf-qna-sort', $html );
+        $this->assertStringContainsString( 'data-sf-qna-density', $html );
+        $this->assertStringContainsString( 'data-sf-qna-expand-all', $html );
+        $this->assertStringContainsString( 'data-sf-qna-card-toggle', $html );
+        $this->assertSame( 19, substr_count( $html, 'data-sf-qna-card ' ) );
+        $this->assertStringContainsString( 'Synthetic stress question 19?', $html );
+        $this->assertStringContainsString( 'data-sf-qna-copy-source="csv"', $html );
+        $this->assertStringContainsString( 'Synthetic answer 19', $html );
+        $this->assertStringNotContainsString( 'data-sf-qna-card-body hidden', $html );
+
+        $priority_position = strpos( $html, 'Synthetic stress question 4?' );
+        $original_position = strpos( $html, 'Synthetic stress question 1?' );
+
+        $this->assertIsInt( $priority_position );
+        $this->assertIsInt( $original_position );
+        $this->assertLessThan( $original_position, $priority_position );
+    }
+
     public function test_entry_detail_action_falls_back_when_hidden_field_row_is_not_rendered(): void
     {
         $form  = $this->form_fixture();
@@ -283,6 +325,34 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $footer = ob_get_clean();
 
         $this->assertSame( '', $footer );
+    }
+
+    public function test_print_view_high_volume_qna_remains_complete_without_review_controls(): void
+    {
+        $form    = $this->form_fixture();
+        $payload = $this->high_volume_payload_fixture( 19 );
+        $entry   = [
+            'id'      => 243,
+            'form_id' => 4,
+            '1'       => 'High Volume Print Example',
+            '5'       => $payload,
+        ];
+        $_GET['gf_page'] = 'print-entry';
+
+        $html = $this->display->format_entry_detail_field_value(
+            $payload,
+            $form['fields'][1],
+            $entry,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $this->assertStringContainsString( 'sentient-forms-qna-panel--print', $html );
+        $this->assertStringContainsString( 'Synthetic stress question 19?', $html );
+        $this->assertStringNotContainsString( 'data-sf-qna-review-toolbar', $html );
+        $this->assertStringNotContainsString( 'data-sf-qna-card-toggle', $html );
+        $this->assertStringNotContainsString( 'data-sf-qna-filter', $html );
+        $this->assertStringNotContainsString( 'data-sf-qna-export', $html );
     }
 
     public function test_print_footer_falls_back_when_hidden_field_row_is_not_rendered(): void
@@ -405,6 +475,47 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
                                 'completed'       => false,
                             ],
                         ],
+                    ],
+                ],
+            ]
+        );
+    }
+
+    private function high_volume_payload_fixture( int $count ): string
+    {
+        $questions = [];
+
+        for ( $index = 1; $index <= $count; $index++ )
+        {
+            $required_open = 0 === $index % 4;
+            $plain_open    = 0 === $index % 7;
+            $completed     = ! $required_open && ! $plain_open && 1 === $index % 3;
+            $answer        = $required_open || $plain_open ? '' : sprintf( 'Synthetic answer %d', $index );
+
+            $questions[] = [
+                'question_id'     => sprintf( 'stress-%d', $index ),
+                'question'        => sprintf( 'Synthetic stress question %d?', $index ),
+                'reason'          => sprintf( 'Synthetic reason %d keeps this card representative of real assistant context.', $index ),
+                'target_field_id' => (string) ( 10 + $index ),
+                'required'        => $required_open,
+                'answer_type'     => 'short_text',
+                'answer'          => $answer,
+                'completed'       => $completed,
+            ];
+        }
+
+        return (string) wp_json_encode(
+            [
+                'schema'     => 'sentient_forms_realtime_clarification_qna.v1',
+                'form_id'    => '4',
+                'source'     => 'gravity_forms',
+                'updated_at' => '2026-05-03T19:30:00Z',
+                'mappings'   => [
+                    [
+                        'mapping_id'        => 'mapping-stress-1',
+                        'central_action_id' => 'clarification_assistant_v1',
+                        'action_name_label' => 'Realtime verification assistant',
+                        'questions'         => $questions,
                     ],
                 ],
             ]

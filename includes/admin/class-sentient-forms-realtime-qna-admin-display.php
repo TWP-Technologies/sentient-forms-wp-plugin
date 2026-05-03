@@ -1156,8 +1156,13 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
      */
     private function render_entry_detail_panel( array $summary ): string
     {
+        $high_volume = $this->is_high_volume_summary( $summary );
+
         return sprintf(
-            '<section class="sentient-forms-qna-panel" data-sf-qna-panel>%s%s%s%s%s%s</section>',
+            '<section class="sentient-forms-qna-panel%s" data-sf-qna-panel data-sf-qna-total-questions="%d" data-sf-qna-high-volume="%s">%s%s%s%s%s%s</section>',
+            $high_volume ? ' sentient-forms-qna-panel--high-volume' : '',
+            (int) $summary['total_questions'],
+            $high_volume ? 'true' : 'false',
             $this->render_panel_header( $summary ),
             $this->render_view_tabs(),
             $this->render_cards_view( $summary ),
@@ -1333,9 +1338,12 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
      */
     private function render_cards_view( array $summary ): string
     {
+        $review_mode = $this->is_high_volume_summary( $summary );
+
         return sprintf(
-            '<div class="sentient-forms-qna-view" data-sf-qna-view-panel="cards">%s</div>',
-            $this->render_question_cards( $summary )
+            '<div class="sentient-forms-qna-view" data-sf-qna-view-panel="cards">%s%s</div>',
+            $review_mode ? $this->render_review_toolbar( $summary ) : '',
+            $this->render_question_cards( $summary, $review_mode )
         );
     }
 
@@ -1367,7 +1375,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
     /**
      * @param array<string,mixed> $summary
      */
-    private function render_question_cards( array $summary ): string
+    private function render_question_cards( array $summary, bool $review_mode = false ): string
     {
         if ( empty( $summary['questions'] ) )
         {
@@ -1377,12 +1385,17 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             );
         }
 
+        $questions = $review_mode ? $this->get_review_questions( $summary ) : $summary['questions'];
         $cards = array_map(
-            fn ( array $question ): string => $this->render_question_card( $question ),
-            $summary['questions']
+            fn ( array $question ): string => $this->render_question_card( $question, false, $review_mode ),
+            $questions
         );
 
-        return '<div class="sentient-forms-qna-cards">' . implode( '', $cards ) . '</div>';
+        return sprintf(
+            '<div class="sentient-forms-qna-cards%s" data-sf-qna-cards>%s</div>',
+            $review_mode ? ' sentient-forms-qna-cards--review' : '',
+            implode( '', $cards )
+        );
     }
 
     /**
@@ -1417,7 +1430,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
     /**
      * @param array<string,mixed> $question
      */
-    private function render_question_card( array $question, bool $compact = false ): string
+    private function render_question_card( array $question, bool $compact = false, bool $review_mode = false ): string
     {
         $answer = '' === $question['answer']
             ? esc_html__( 'Not answered', 'sentient-forms' )
@@ -1428,18 +1441,163 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         $target = ! $compact && '' !== $question['target_field_id']
             ? sprintf( '<span class="sentient-forms-qna-card__target">%s</span>', esc_html( sprintf( __( 'Field %s', 'sentient-forms' ), $question['target_field_id'] ) ) )
             : '';
+        $toggle = $review_mode
+            ? sprintf(
+                '<button type="button" class="sentient-forms-qna-card__toggle" data-sf-qna-card-toggle aria-expanded="true">%s</button>',
+                esc_html__( 'Hide details', 'sentient-forms' )
+            )
+            : '';
+        $body   = sprintf(
+            '<div class="sentient-forms-qna-card__body" data-sf-qna-card-body><p class="sentient-forms-qna-card__answer">%s</p>%s</div>',
+            $answer,
+            $reason
+        );
 
         return sprintf(
-            '<article class="sentient-forms-qna-card sentient-forms-qna-card--%s"><div class="sentient-forms-qna-card__meta"><span class="sentient-forms-qna-status sentient-forms-qna-status--%s">%s</span><span class="sentient-forms-qna-card__action">%s</span>%s</div><p class="sentient-forms-qna-card__question">%s</p><p class="sentient-forms-qna-card__answer">%s</p>%s</article>',
+            '<article class="sentient-forms-qna-card sentient-forms-qna-card--%s%s"%s><div class="sentient-forms-qna-card__meta"><span class="sentient-forms-qna-status sentient-forms-qna-status--%s">%s</span><span class="sentient-forms-qna-card__action">%s</span>%s%s</div><p class="sentient-forms-qna-card__question">%s</p>%s</article>',
             esc_attr( $question['status'] ),
+            $review_mode ? ' sentient-forms-qna-card--review' : '',
+            $review_mode
+                ? sprintf(
+                    ' data-sf-qna-card data-sf-qna-status="%s" data-sf-qna-required-open="%s" data-sf-qna-priority="%d" data-sf-qna-original-index="%d" data-sf-qna-search="%s"',
+                    esc_attr( $question['status'] ),
+                    ! empty( $question['required'] ) && empty( $question['has_answer'] ) ? 'true' : 'false',
+                    $this->get_question_review_priority( $question ),
+                    (int) $question['index'],
+                    esc_attr( $this->build_question_search_text( $question ) )
+                )
+                : '',
             esc_attr( $question['status'] ),
             esc_html( $this->get_status_label( $question ) ),
             esc_html( $question['action_label'] ),
             $target,
+            $toggle,
             esc_html( $question['question'] ),
-            $answer,
-            $reason
+            $body
         );
+    }
+
+    /**
+     * @param array<string,mixed> $summary
+     */
+    private function render_review_toolbar( array $summary ): string
+    {
+        $filter_buttons = [
+            $this->render_review_filter_button( 'all', __( 'All', 'sentient-forms' ), (int) $summary['total_questions'], true ),
+            $this->render_review_filter_button( 'open', __( 'Open', 'sentient-forms' ), (int) $summary['open_count'], false ),
+            $this->render_review_filter_button( 'answered', __( 'Answered', 'sentient-forms' ), max( 0, (int) $summary['answered_count'] - (int) $summary['completed_count'] ), false ),
+            $this->render_review_filter_button( 'completed', __( 'Completed', 'sentient-forms' ), (int) $summary['completed_count'], false ),
+        ];
+
+        return sprintf(
+            '<div class="sentient-forms-qna-review-toolbar" data-sf-qna-review-toolbar><div class="sentient-forms-qna-review-toolbar__summary"><span class="sentient-forms-qna-review-toolbar__label">%s</span><strong>%s</strong><span>%s</span></div><div class="sentient-forms-qna-review-toolbar__controls"><div class="sentient-forms-qna-review-filter" role="group" aria-label="%s">%s</div><label class="sentient-forms-qna-review-search"><span class="screen-reader-text">%s</span><input type="search" data-sf-qna-search-input placeholder="%s" autocomplete="off"></label><label class="sentient-forms-qna-review-sort"><span class="screen-reader-text">%s</span><select data-sf-qna-sort><option value="priority">%s</option><option value="original">%s</option><option value="status">%s</option></select></label><button type="button" class="sentient-forms-qna-review-button" data-sf-qna-density aria-pressed="false">%s</button><button type="button" class="sentient-forms-qna-review-button" data-sf-qna-expand-all aria-pressed="false">%s</button></div><p class="sentient-forms-qna-review-empty" data-sf-qna-empty-results hidden>%s</p></div>',
+            esc_html__( 'Review mode', 'sentient-forms' ),
+            esc_html(
+                sprintf(
+                    /* translators: %d: total question count */
+                    _n( '%d question', '%d questions', (int) $summary['total_questions'], 'sentient-forms' ),
+                    (int) $summary['total_questions']
+                )
+            ),
+            esc_html__( 'open items stay first', 'sentient-forms' ),
+            esc_attr__( 'Filter realtime Q&A cards', 'sentient-forms' ),
+            implode( '', $filter_buttons ),
+            esc_html__( 'Search realtime Q&A cards', 'sentient-forms' ),
+            esc_attr__( 'Search Q&A', 'sentient-forms' ),
+            esc_html__( 'Sort realtime Q&A cards', 'sentient-forms' ),
+            esc_html__( 'Priority', 'sentient-forms' ),
+            esc_html__( 'Original order', 'sentient-forms' ),
+            esc_html__( 'Status', 'sentient-forms' ),
+            esc_html__( 'Compact', 'sentient-forms' ),
+            esc_html__( 'Expand all', 'sentient-forms' ),
+            esc_html__( 'No questions match the current review filters.', 'sentient-forms' )
+        );
+    }
+
+    private function render_review_filter_button( string $filter, string $label, int $count, bool $active ): string
+    {
+        return sprintf(
+            '<button type="button" class="sentient-forms-qna-review-filter__button%s" data-sf-qna-filter="%s" aria-pressed="%s"><span>%s</span><strong>%d</strong></button>',
+            $active ? ' is-active' : '',
+            esc_attr( $filter ),
+            $active ? 'true' : 'false',
+            esc_html( $label ),
+            $count
+        );
+    }
+
+    /**
+     * @param array<string,mixed> $summary
+     */
+    private function is_high_volume_summary( array $summary ): bool
+    {
+        return (int) ( $summary['total_questions'] ?? 0 ) > 6;
+    }
+
+    /**
+     * @param array<string,mixed> $summary
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function get_review_questions( array $summary ): array
+    {
+        $questions = $summary['questions'];
+        usort(
+            $questions,
+            function ( array $left, array $right ): int {
+                $priority = $this->get_question_review_priority( $left ) <=> $this->get_question_review_priority( $right );
+
+                return 0 !== $priority ? $priority : ( (int) $left['index'] <=> (int) $right['index'] );
+            }
+        );
+
+        return $questions;
+    }
+
+    /**
+     * @param array<string,mixed> $question
+     */
+    private function get_question_review_priority( array $question ): int
+    {
+        if ( ! empty( $question['required'] ) && empty( $question['has_answer'] ) )
+        {
+            return 0;
+        }
+
+        if ( 'open' === $question['status'] )
+        {
+            return 1;
+        }
+
+        if ( 'answered' === $question['status'] )
+        {
+            return 2;
+        }
+
+        if ( 'completed' === $question['status'] )
+        {
+            return 3;
+        }
+
+        return 4;
+    }
+
+    /**
+     * @param array<string,mixed> $question
+     */
+    private function build_question_search_text( array $question ): string
+    {
+        $parts = [
+            $question['question'] ?? '',
+            $question['answer'] ?? '',
+            $question['reason'] ?? '',
+            $question['action_label'] ?? '',
+            $question['target_field_id'] ?? '',
+            $question['status'] ?? '',
+            $this->get_status_label( $question ),
+        ];
+
+        return strtolower( implode( ' ', array_map( 'strval', $parts ) ) );
     }
 
     /**

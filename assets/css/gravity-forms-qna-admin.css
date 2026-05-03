@@ -171,6 +171,11 @@
 .sentient-forms-qna-action-button:focus-visible,
 .sentient-forms-qna-copy:focus-visible,
 .sentient-forms-qna-export:focus-visible,
+.sentient-forms-qna-review-filter__button:focus-visible,
+.sentient-forms-qna-review-button:focus-visible,
+.sentient-forms-qna-review-search input:focus-visible,
+.sentient-forms-qna-review-sort select:focus-visible,
+.sentient-forms-qna-card__toggle:focus-visible,
 .sentient-forms-qna-row__toggle:focus-visible,
 .sentient-forms-qna-row__detail:focus-visible {
 	outline: 2px solid #2271b1;
@@ -183,8 +188,12 @@
 
 .sentient-forms-qna-cards {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
 	gap: 12px;
+}
+
+.sentient-forms-qna-cards--review {
+	align-items: start;
 }
 
 .sentient-forms-qna-cards--compact {
@@ -199,6 +208,10 @@
 	border-radius: 6px;
 	background: #fff;
 	padding: 11px 12px;
+}
+
+.sentient-forms-qna-card[hidden] {
+	display: none !important;
 }
 
 .sentient-forms-qna-card--completed {
@@ -228,6 +241,21 @@
 	line-height: 1.35;
 }
 
+.sentient-forms-qna-card__toggle {
+	appearance: none;
+	margin-left: auto;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: #0a4b78;
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 700;
+	line-height: 1.35;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
 .sentient-forms-qna-card__question {
 	margin: 0 0 8px;
 	color: #1d2327;
@@ -245,6 +273,30 @@
 	overflow-wrap: anywhere;
 }
 
+.sentient-forms-qna-card__body[hidden] {
+	display: none !important;
+}
+
+.sentient-forms-qna-panel.is-compact-density .sentient-forms-qna-cards--review {
+	gap: 8px;
+}
+
+.sentient-forms-qna-panel.is-compact-density .sentient-forms-qna-card--review {
+	padding: 8px 10px;
+}
+
+.sentient-forms-qna-panel.is-compact-density .sentient-forms-qna-card__meta {
+	margin-bottom: 6px;
+}
+
+.sentient-forms-qna-panel.is-compact-density .sentient-forms-qna-card__question {
+	margin-bottom: 6px;
+}
+
+.sentient-forms-qna-panel.is-compact-density .sentient-forms-qna-card__reason {
+	display: none;
+}
+
 .sentient-forms-qna-card__reason,
 .sentient-forms-qna-more,
 .sentient-forms-qna-empty {
@@ -252,6 +304,176 @@
 	color: #646970;
 	font-size: 12px;
 	line-height: 1.45;
+}
+
+.sentient-forms-qna-review-toolbar {
+	display: grid;
+	gap: 12px;
+	margin-bottom: 14px;
+	padding: 12px;
+	border: 1px solid #dcdcde;
+	border-radius: 6px;
+	background: #fbfcfd;
+}
+
+.sentient-forms-qna-review-toolbar__summary {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 7px;
+	color: #50575e;
+	font-size: 12px;
+	line-height: 1.35;
+}
+
+.sentient-forms-qna-review-toolbar__summary strong {
+	color: #1d2327;
+	font-size: 13px;
+}
+
+.sentient-forms-qna-review-toolbar__label {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	padding: 4px 7px;
+	border-radius: 999px;
+	background: #e7f5f8;
+	color: #0a4b78;
+	font-weight: 700;
+	line-height: 1;
+}
+
+.sentient-forms-qna-review-toolbar__controls {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+}
+
+.sentient-forms-qna-review-filter {
+	display: inline-flex;
+	flex: 1 1 260px;
+	width: auto;
+	max-width: 100%;
+	overflow-x: auto;
+	border: 1px solid #d8dee7;
+	border-radius: 6px;
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+}
+
+.sentient-forms-qna-review-filter__button {
+	appearance: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 34px;
+	padding: 0 10px;
+	border: 0;
+	border-right: 1px solid #e3e7ee;
+	background: transparent;
+	color: #2c3338;
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 700;
+	line-height: 1;
+	white-space: nowrap;
+}
+
+.sentient-forms-qna-review-filter__button:last-child {
+	border-right: 0;
+}
+
+.sentient-forms-qna-review-filter__button strong {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 20px;
+	padding: 3px 6px;
+	border-radius: 999px;
+	background: #edf1f5;
+	color: #50575e;
+	font-size: 11px;
+	line-height: 1;
+}
+
+.sentient-forms-qna-review-filter__button.is-active {
+	background: #f0f6fc;
+	color: #0a4b78;
+}
+
+.sentient-forms-qna-review-filter__button.is-active strong {
+	background: #dbeafe;
+	color: #0a4b78;
+}
+
+.sentient-forms-qna-review-search {
+	flex: 1 1 180px;
+	min-width: min(100%, 180px);
+}
+
+.sentient-forms-qna-review-sort {
+	flex: 0 1 150px;
+	min-width: min(100%, 140px);
+}
+
+.sentient-forms-qna-review-search input,
+.sentient-forms-qna-review-sort select {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 34px;
+	margin: 0;
+	border: 1px solid #d8dee7;
+	border-radius: 6px;
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+	color: #1d2327;
+	font-size: 13px;
+	line-height: 1.2;
+}
+
+.sentient-forms-qna-review-search input {
+	padding: 0 10px;
+}
+
+.sentient-forms-qna-review-sort select {
+	padding: 0 28px 0 10px;
+}
+
+.sentient-forms-qna-review-button {
+	appearance: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 34px;
+	padding: 0 11px;
+	border: 1px solid #d8dee7;
+	border-radius: 6px;
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+	color: #0f172a;
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 700;
+	line-height: 1;
+	white-space: nowrap;
+}
+
+.sentient-forms-qna-review-button[aria-pressed="true"] {
+	border-color: #9ec2e6;
+	background: #f0f6fc;
+	color: #0a4b78;
+}
+
+.sentient-forms-qna-review-empty {
+	margin: 0;
+	padding: 8px 10px;
+	border-radius: 6px;
+	background: #fff8e5;
+	color: #7a3b00;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.4;
 }
 
 .sentient-forms-qna-table {
@@ -365,6 +587,15 @@
 		grid-template-columns: 1fr;
 	}
 
+	.sentient-forms-qna-review-filter {
+		width: 100%;
+	}
+
+	.sentient-forms-qna-review-filter__button {
+		flex: 1 0 auto;
+		justify-content: center;
+	}
+
 	.sentient-forms-qna-table {
 		display: block;
 		overflow-x: auto;
@@ -380,7 +611,9 @@
 
 	.sentient-forms-qna-panel__actions,
 	.sentient-forms-qna-tabs,
-	.sentient-forms-qna-row__actions {
+	.sentient-forms-qna-row__actions,
+	.sentient-forms-qna-review-toolbar,
+	.sentient-forms-qna-card__toggle {
 		display: none !important;
 	}
 
