@@ -132,6 +132,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         add_filter( 'gform_pre_submission_filter', [ $this, 'ensure_realtime_storage_field_for_rendered_form' ], 9, 1 );
         add_action( 'gform_enqueue_scripts', [ $this, 'enqueue_realtime_suggestions_runtime' ], 20, 2 );
 
+        if ( class_exists( 'Sentient_Forms_Realtime_Qna_Admin_Display' ) )
+        {
+            ( new Sentient_Forms_Realtime_Qna_Admin_Display() )->register_hooks();
+        }
+
         add_filter( 'sentient_forms_async_evaluation_jobs', [ $this, 'filter_async_evaluation_jobs' ], 10, 3 );
     }
 

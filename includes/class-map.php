@@ -106,6 +106,7 @@ return [
 	'Sentient_Forms_Pull_Token_Service' => __DIR__ . '/services/class-sentient-forms-pull-token-service.php',
 	'Sentient_Forms_REST_API' => __DIR__ . '/rest-api/class-rest-api.php',
 	'Sentient_Forms_REST_Argument_Utils' => __DIR__ . '/rest-api/utilities.php',
+	'Sentient_Forms_Realtime_Qna_Admin_Display' => __DIR__ . '/admin/class-sentient-forms-realtime-qna-admin-display.php',
 	'Sentient_Forms_Request_Tracer' => __DIR__ . '/services/class-sentient-forms-request-tracer.php',
 	'Sentient_Forms_Settings_Controller' => __DIR__ . '/rest-api/controllers/class-settings-controller.php',
 	'Sentient_Forms_Settings_Validator' => __DIR__ . '/rest-api/validators/class-settings-validator.php',
