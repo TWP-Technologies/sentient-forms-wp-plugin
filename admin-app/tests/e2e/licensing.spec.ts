@@ -114,25 +114,32 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	);
 
 	await page.route('**/wp-json/sentient-forms/v1/license/billing/checkout-session', (route) => {
+		throw new Error(`Legacy checkout route was called: ${route.request().url()}`);
+	});
+
+	await page.route('**/wp-json/sentient-forms/v1/license/managed-checkout/start', (route) => {
 		checkoutRequests += 1;
 		const body = route.request().postDataJSON() as
 			| {
 					plan_code?: string;
-					trial_period_days?: number;
+					success_url?: string;
+					cancel_url?: string;
+					accepted_managed_service_terms?: boolean;
 			  }
 			| undefined;
 		expect(body?.plan_code).toBe('starter');
-		expect(body?.trial_period_days).toBeUndefined();
+		expect(body?.accepted_managed_service_terms).toBe(true);
 
 		return route.fulfill({
 			status: 200,
 			body: JSON.stringify({
 				success: true,
 				data: {
-					session_id: 'cs_checkout_123',
-					checkout_url: `${process.env.PREVIEW_ORIGIN ?? 'http://127.0.0.1:4175'}/#/licensing?checkout=starter`,
-					customer_id: 'cus_checkout_123',
-					subscription_id: 'sub_checkout_123'
+					checkout_intent_id: 'mci_checkout_123',
+					checkout_session_id: 'cs_checkout_123',
+					checkout_url: `${process.env.PREVIEW_ORIGIN ?? 'http://127.0.0.1:4175'}/#/licensing?managed-checkout-started=1`,
+					status: 'open',
+					provider: 'stripe'
 				}
 			}),
 			headers: { 'content-type': 'application/json' }
@@ -154,9 +161,11 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	await expect(page.getByTestId('licensing-business-cap-note')).toContainText(
 		'Each Sentient Forms managed-service license covers one WordPress site'
 	);
+	await expect(page.getByRole('button', { name: 'Choose Starter' })).toBeDisabled();
+	await page.getByTestId('licensing-managed-checkout-disclosure').locator('input').check();
 	await page.getByRole('button', { name: 'Choose Starter' }).click();
 	await expect.poll(() => checkoutRequests).toBe(1);
-	await expect(page).toHaveURL(/checkout=starter/);
+	await expect(page).toHaveURL(/managed-checkout-started=1/);
 
 	const deactivateButton = page.getByRole('button', { name: 'Deactivate license' });
 	await expect(deactivateButton).toBeVisible();
@@ -236,7 +245,9 @@ test('first-time managed checkout starts from the recommended license path with 
 
 	await page.goto('/#/licensing');
 
-	await expect(page.getByRole('heading', { name: 'Let Sentient Forms manage model access' })).toBeVisible();
+	await expect(
+		page.getByRole('heading', { name: 'Let Sentient Forms manage model access' })
+	).toBeVisible();
 	await expect(page.getByTestId('licensing-managed-checkout-disclosure')).toContainText(
 		'Recommended: check this before choosing a managed-service plan.'
 	);

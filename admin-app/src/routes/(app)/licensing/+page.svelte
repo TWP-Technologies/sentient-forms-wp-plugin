@@ -634,7 +634,7 @@
 			return;
 		}
 
-		if (!hasConnectedLicense && !acceptedManagedCheckoutDisclosure) {
+		if (!hasExistingSubscription && !acceptedManagedCheckoutDisclosure) {
 			issues = [
 				{
 					id: 'managed-checkout-disclosure',
@@ -649,26 +649,16 @@
 		issues = [];
 
 		try {
-			const session = hasConnectedLicense
-				? await client.createCheckoutSession(
-						{
-							plan_code: plan.code,
-							success_url: currentRouteUrl(),
-							cancel_url: currentRouteUrl(),
-							quantity: plan.quantity ?? 1
-						},
-						{ showNotifications: false }
-					)
-				: await client.startManagedCheckout(
-						{
-							plan_code: plan.code,
-							success_url: managedCheckoutReturnUrl(),
-							cancel_url: managedCheckoutReturnUrl(),
-							disclosure_version: MANAGED_DISCLOSURE_VERSION,
-							accepted_managed_service_terms: acceptedManagedCheckoutDisclosure
-						},
-						{ showNotifications: false }
-					);
+			const session = await client.startManagedCheckout(
+				{
+					plan_code: plan.code,
+					success_url: managedCheckoutReturnUrl(),
+					cancel_url: managedCheckoutReturnUrl(),
+					disclosure_version: MANAGED_DISCLOSURE_VERSION,
+					accepted_managed_service_terms: acceptedManagedCheckoutDisclosure
+				},
+				{ showNotifications: false }
+			);
 			if (typeof window !== 'undefined') {
 				window.location.assign(session.checkout_url);
 			}
@@ -744,8 +734,8 @@
 								Recommended: check this before choosing a managed-service plan.
 							</span>
 							<span class="sf:block">
-								I understand managed-service runs send required prompts and form fields to
-								Sentient Forms for model execution and metering.
+								I understand managed-service runs send required prompts and form fields to Sentient
+								Forms for model execution and metering.
 								<strong class="sf:font-semibold sf:underline">
 									Sentient Forms does not store prompt or response payloads for these runs.
 								</strong>
@@ -787,18 +777,18 @@
 								<p class="sf:text-sm sf:font-semibold sf:text-slate-950">{plan.label}</p>
 								<p class="sf:text-xs sf:text-slate-600">{plan.description}</p>
 							</div>
-								<Button
-									class="sf:mt-auto sf:w-full"
-									disabled={Boolean(checkoutPlanPending) ||
-										isCurrentCheckoutPlan(plan) ||
-										checkoutCompletionLoading ||
-										(!hasConnectedLicense && !acceptedManagedCheckoutDisclosure)}
-									onclick={() => {
-										void handleCheckout(plan);
-									}}
-								>
-									{checkoutPlanActionLabel(plan)}
-								</Button>
+							<Button
+								class="sf:mt-auto sf:w-full"
+								disabled={Boolean(checkoutPlanPending) ||
+									isCurrentCheckoutPlan(plan) ||
+									checkoutCompletionLoading ||
+									!acceptedManagedCheckoutDisclosure}
+								onclick={() => {
+									void handleCheckout(plan);
+								}}
+							>
+								{checkoutPlanActionLabel(plan)}
+							</Button>
 						</div>
 					{/each}
 				</div>
@@ -1033,6 +1023,27 @@
 					</div>
 				</div>
 
+				{#if !hasExistingSubscription}
+					<label
+						class="sf:flex sf:items-start sf:gap-3 sf:rounded-md sf:border sf:border-blue-200 sf:bg-blue-50 sf:p-3 sf:text-sm sf:text-blue-950"
+						data-testid="licensing-managed-checkout-disclosure"
+					>
+						<input
+							type="checkbox"
+							class="sf:mt-1"
+							bind:checked={acceptedManagedCheckoutDisclosure}
+							aria-describedby="managed-checkout-disclosure-copy-connected"
+						/>
+						<span id="managed-checkout-disclosure-copy-connected" class="sf:space-y-1">
+							<span class="sf:block sf:font-semibold">Use Sentient Forms managed execution</span>
+							<span class="sf:block">
+								I understand Sentient Forms will provision managed OpenRouter access, apply the plan
+								spending cap for this WordPress site, and bill usage as Sentient Forms credits.
+							</span>
+						</span>
+					</label>
+				{/if}
+
 				<div class="sf:grid sf:gap-3 sf:md:grid-cols-3">
 					{#if hasExistingSubscription}
 						<div
@@ -1063,16 +1074,18 @@
 						>
 							<p class="sf:text-sm sf:font-semibold sf:text-slate-900">{plan.label}</p>
 							<p class="sf:text-xs sf:text-slate-600">{plan.description}</p>
-								<Button
-									variant="secondary"
-									class="sf:w-full"
-									disabled={billingBusy || isCurrentCheckoutPlan(plan)}
-									onclick={() => {
-										void handleCheckout(plan);
-									}}
-								>
-									{checkoutPlanActionLabel(plan)}
-								</Button>
+							<Button
+								variant="secondary"
+								class="sf:w-full"
+								disabled={billingBusy ||
+									isCurrentCheckoutPlan(plan) ||
+									(!hasExistingSubscription && !acceptedManagedCheckoutDisclosure)}
+								onclick={() => {
+									void handleCheckout(plan);
+								}}
+							>
+								{checkoutPlanActionLabel(plan)}
+							</Button>
 						</div>
 					{/each}
 				</div>

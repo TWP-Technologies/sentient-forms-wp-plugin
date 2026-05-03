@@ -1115,7 +1115,7 @@
 		formFields.filter((field) => ['hidden', 'textarea'].includes(field.type.toLowerCase()))
 	);
 	const realtimeStorageFieldOptions = $derived.by(() => [
-		{ value: '', label: 'Do not persist virtual Q&A' },
+		{ value: '', label: 'Automatic hidden field (recommended)' },
 		...realtimeStorageFields.map((field) => ({
 			value: field.id,
 			label: `${field.adminLabel || field.label || `Field ${field.id}`} (${field.id})`
@@ -4743,7 +4743,7 @@
 										<SelectField
 											id="realtime-storage-target"
 											label="Virtual Q&A storage field"
-											description="Use a dedicated hidden field or textarea so Sentient Forms does not overwrite a visitor's normal answer."
+											description="Sentient Forms automatically creates a dedicated hidden Gravity Forms field. Choose another hidden field or textarea only if you want to control where the JSON is stored."
 											value={realtimeSettings.storage_target_field_id}
 											options={realtimeStorageFieldOptions}
 											onchange={(event) =>

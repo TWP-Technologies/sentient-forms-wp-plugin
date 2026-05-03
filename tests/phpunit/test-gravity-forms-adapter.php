@@ -80,6 +80,27 @@ if ( ! class_exists( 'GFAPI' ) )
             return array_values( self::$forms );
         }
 
+        public static function update_form( $form, $form_id = null )
+        {
+            $form_id = null === $form_id && is_array( $form ) && isset( $form['id'] )
+                ? (int) $form['id']
+                : (int) $form_id;
+
+            if ( $form_id <= 0 )
+            {
+                return new WP_Error( 'missing_form_id', 'Missing form id.' );
+            }
+
+            if ( is_array( $form ) )
+            {
+                $form['id'] = $form_id;
+            }
+
+            self::$forms[ $form_id ] = $form;
+
+            return true;
+        }
+
         public static function update_entry_property( $entry_id, $property, $value )
         {
             $entry_id = (int) $entry_id;
@@ -380,6 +401,136 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 	        $this->assertCount( 2, $runtime['field_manifest'] ?? [] );
 	        $this->assertSame( [ '1.3', '1.6' ], $runtime['field_manifest'][0]['input_ids'] ?? [] );
 	    }
+
+    public function test_build_realtime_runtime_config_auto_provisions_native_storage_field_without_mapping_setting(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'build_realtime_runtime_config' );
+        $method->setAccessible( true );
+
+        $form = [
+            'id'     => 20,
+            'title'  => 'Realtime Auto Storage',
+            'fields' => [
+                (object) [
+                    'id'     => 1,
+                    'label'  => 'Message',
+                    'type'   => 'textarea',
+                    'pageNumber' => 1,
+                ],
+            ],
+        ];
+        GFAPI::$forms[20] = $form;
+
+        $settings = [
+            'actions' => [
+                [
+                    'id' => 'map_rt_auto',
+                    'central_action_id' => 'clarification_assistant_v1',
+                    'action_name_label' => 'Realtime Action',
+                    'is_action_enabled_for_form' => true,
+                    'settings' => [
+                        'execution_mode' => 'real_time',
+                        'realtime_settings' => [
+                            'checkpoint_field_ids' => [ '1' ],
+                            'blocking_mode' => 'require_answers',
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $runtime = $method->invoke( $this->adapter, $form, $settings );
+
+        $this->assertSame( '2', $runtime['mappings'][0]['storage_target_field_id'] ?? null );
+        $this->assertSame( '2', $runtime['field_manifest'][1]['field_id'] ?? null );
+        $this->assertSame( 'hidden', $runtime['field_manifest'][1]['type'] ?? null );
+        $this->assertCount( 2, GFAPI::$forms[20]['fields'] ?? [] );
+
+        $storage_field = GFAPI::$forms[20]['fields'][1] ?? null;
+        $this->assertIsObject( $storage_field );
+        $this->assertSame( 2, $storage_field->id ?? null );
+        $this->assertSame( 'hidden', $storage_field->type ?? null );
+        $this->assertSame( 'Sentient Forms Realtime Q&A', $storage_field->label ?? null );
+        $this->assertSame( 'sentient_forms_realtime_qna', $storage_field->inputName ?? null );
+    }
+
+    public function test_build_realtime_runtime_config_reuses_existing_auto_storage_field(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'build_realtime_runtime_config' );
+        $method->setAccessible( true );
+
+        $form = [
+            'id'     => 21,
+            'title'  => 'Realtime Existing Auto Storage',
+            'fields' => [
+                (object) [ 'id' => 1, 'label' => 'Message', 'type' => 'textarea', 'pageNumber' => 1 ],
+                (object) [
+                    'id'        => 7,
+                    'label'     => 'Sentient Forms Realtime Q&A',
+                    'adminLabel'=> 'Sentient Forms Realtime Q&A',
+                    'type'      => 'hidden',
+                    'inputName' => 'sentient_forms_realtime_qna',
+                    'pageNumber'=> 1,
+                ],
+            ],
+        ];
+        GFAPI::$forms[21] = $form;
+
+        $settings = [
+            'actions' => [
+                [
+                    'id' => 'map_rt_existing_auto',
+                    'central_action_id' => 'clarification_assistant_v1',
+                    'is_action_enabled_for_form' => true,
+                    'settings' => [
+                        'execution_mode' => 'real_time',
+                        'realtime_settings' => [],
+                    ],
+                ],
+            ],
+        ];
+
+        $runtime = $method->invoke( $this->adapter, $form, $settings );
+
+        $this->assertSame( '7', $runtime['mappings'][0]['storage_target_field_id'] ?? null );
+        $this->assertCount( 2, GFAPI::$forms[21]['fields'] ?? [] );
+    }
+
+    public function test_build_realtime_runtime_config_falls_back_when_configured_storage_field_is_missing(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'build_realtime_runtime_config' );
+        $method->setAccessible( true );
+
+        $form = [
+            'id'     => 22,
+            'title'  => 'Realtime Missing Storage',
+            'fields' => [
+                (object) [ 'id' => 1, 'label' => 'Message', 'type' => 'textarea', 'pageNumber' => 1 ],
+            ],
+        ];
+        GFAPI::$forms[22] = $form;
+
+        $settings = [
+            'actions' => [
+                [
+                    'id' => 'map_rt_missing_storage',
+                    'central_action_id' => 'clarification_assistant_v1',
+                    'is_action_enabled_for_form' => true,
+                    'settings' => [
+                        'execution_mode' => 'real_time',
+                        'realtime_settings' => [
+                            'storage_target_field_id' => '99',
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $runtime = $method->invoke( $this->adapter, $form, $settings );
+
+        $this->assertSame( '2', $runtime['mappings'][0]['storage_target_field_id'] ?? null );
+        $this->assertCount( 2, GFAPI::$forms[22]['fields'] ?? [] );
+    }
 
     public function test_build_realtime_runtime_config_ignores_non_clarification_realtime_mapping(): void
     {

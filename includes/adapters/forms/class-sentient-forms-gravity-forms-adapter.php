@@ -35,6 +35,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     private const DEFERRED_NOTIFICATION_DECISION_SUPPRESS = 'suppress';
     private const DEFERRED_NOTIFICATION_REPLAY_FLAG = 'sentient_forms_async_spam_notification_replay';
     private const DEFERRED_NOTIFICATION_ALLOWED_IDS = 'sentient_forms_allowed_notification_ids';
+    private const REALTIME_QNA_STORAGE_FIELD_LABEL = 'Sentient Forms Realtime Q&A';
+    private const REALTIME_QNA_STORAGE_FIELD_INPUT_NAME = 'sentient_forms_realtime_qna';
+    private const REALTIME_QNA_STORAGE_FIELD_CLASS = 'sentient-forms-realtime-qna-storage';
 
     /**
      * Plugin instance
@@ -124,6 +127,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         add_action( 'gform_editor_js', [ $this, 'editor_js' ] );
         add_filter( 'gform_tooltips', [ $this, 'add_tooltips' ] );
         add_action( 'gform_field_standard_settings', [ $this, 'field_settings' ], 10, 2 );
+        add_filter( 'gform_pre_render', [ $this, 'ensure_realtime_storage_field_for_rendered_form' ], 9, 1 );
+        add_filter( 'gform_pre_validation', [ $this, 'ensure_realtime_storage_field_for_rendered_form' ], 9, 1 );
+        add_filter( 'gform_pre_submission_filter', [ $this, 'ensure_realtime_storage_field_for_rendered_form' ], 9, 1 );
         add_action( 'gform_enqueue_scripts', [ $this, 'enqueue_realtime_suggestions_runtime' ], 20, 2 );
 
         add_filter( 'sentient_forms_async_evaluation_jobs', [ $this, 'filter_async_evaluation_jobs' ], 10, 3 );
@@ -2490,6 +2496,35 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     }
 
     /**
+     * Ensure realtime assistant virtual Q&A has a native Gravity Forms field.
+     *
+     * @param array<string,mixed> $form Gravity Forms form object as an array.
+     *
+     * @return array<string,mixed>
+     */
+    public function ensure_realtime_storage_field_for_rendered_form( array $form ): array
+    {
+        $form_id = isset( $form['id'] ) ? absint( $form['id'] ) : 0;
+        if ( $form_id <= 0 )
+        {
+            return $form;
+        }
+
+        $settings = $this->get_form_settings( $form_id );
+        $actions  = isset( $settings['actions'] ) && is_array( $settings['actions'] )
+            ? $settings['actions']
+            : [];
+
+        $mappings = $this->collect_realtime_mappings( $actions );
+        if ( empty( $mappings ) )
+        {
+            return $form;
+        }
+
+        return $this->resolve_realtime_mapping_storage_fields( $form, $mappings )['form'];
+    }
+
+    /**
      * Enqueue frontend real-time suggestion runtime for eligible mappings.
      *
      * @param array     $form    Gravity Forms form object/array.
@@ -2587,6 +2622,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         {
             return null;
         }
+        $storage_resolution = $this->resolve_realtime_mapping_storage_fields( $form, $mappings );
+        $form               = $storage_resolution['form'];
+        $mappings           = $storage_resolution['mappings'];
 
         $field_manifest = $this->build_form_field_manifest( $form );
         $total_pages    = 1;
@@ -2609,6 +2647,285 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             'mappings'             => $mappings,
             'field_manifest'       => $field_manifest,
         ];
+    }
+
+    /**
+     * @param array<string,mixed>              $form
+     * @param array<int,array<string,mixed>>   $mappings
+     *
+     * @return array{form: array<string,mixed>, mappings: array<int,array<string,mixed>>}
+     */
+    private function resolve_realtime_mapping_storage_fields( array $form, array $mappings ): array
+    {
+        $needs_auto_storage = false;
+        foreach ( $mappings as $mapping )
+        {
+            $target_field_id = isset( $mapping['storage_target_field_id'] ) && is_scalar( $mapping['storage_target_field_id'] )
+                ? sanitize_text_field( (string) $mapping['storage_target_field_id'] )
+                : '';
+
+            if ( '' === $target_field_id || ! $this->form_has_realtime_storage_target( $form, $target_field_id ) )
+            {
+                $needs_auto_storage = true;
+                break;
+            }
+        }
+
+        if ( ! $needs_auto_storage )
+        {
+            return [
+                'form'     => $form,
+                'mappings' => $mappings,
+            ];
+        }
+
+        $storage = $this->ensure_realtime_storage_field( $form );
+        $form    = $storage['form'];
+
+        if ( '' === $storage['field_id'] )
+        {
+            return [
+                'form'     => $form,
+                'mappings' => $mappings,
+            ];
+        }
+
+        foreach ( $mappings as $index => $mapping )
+        {
+            $target_field_id = isset( $mapping['storage_target_field_id'] ) && is_scalar( $mapping['storage_target_field_id'] )
+                ? sanitize_text_field( (string) $mapping['storage_target_field_id'] )
+                : '';
+
+            if ( '' !== $target_field_id && $this->form_has_realtime_storage_target( $form, $target_field_id ) )
+            {
+                continue;
+            }
+
+            $mappings[ $index ]['storage_target_field_id'] = $storage['field_id'];
+        }
+
+        return [
+            'form'     => $form,
+            'mappings' => $mappings,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $form
+     *
+     * @return array{form: array<string,mixed>, field_id: string, created: bool}
+     */
+    private function ensure_realtime_storage_field( array $form ): array
+    {
+        $existing_field_id = $this->find_realtime_storage_field_id( $form );
+        if ( '' !== $existing_field_id )
+        {
+            return [
+                'form'     => $form,
+                'field_id' => $existing_field_id,
+                'created'  => false,
+            ];
+        }
+
+        $form_id = isset( $form['id'] ) ? absint( $form['id'] ) : 0;
+        if ( $form_id <= 0 )
+        {
+            return [
+                'form'     => $form,
+                'field_id' => '',
+                'created'  => false,
+            ];
+        }
+
+        $fields       = isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
+        $new_field_id = $this->next_realtime_storage_field_id( $fields );
+        $fields[]     = $this->create_realtime_storage_field( $new_field_id, $form );
+        $form['fields'] = $fields;
+
+        if ( class_exists( 'GFAPI' ) && method_exists( 'GFAPI', 'update_form' ) )
+        {
+            $updated = GFAPI::update_form( $form, $form_id );
+            if ( is_wp_error( $updated ) )
+            {
+                do_action(
+                    'sentient_forms_realtime_storage_field_update_failed',
+                    $form_id,
+                    $new_field_id,
+                    $updated
+                );
+            }
+        }
+
+        return [
+            'form'     => $form,
+            'field_id' => (string) $new_field_id,
+            'created'  => true,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $form
+     */
+    private function find_realtime_storage_field_id( array $form ): string
+    {
+        $fields = isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
+        foreach ( $fields as $field )
+        {
+            $field_id = $this->extract_gravity_field_property( $field, 'id' );
+            if ( '' === $field_id || ! $this->is_realtime_storage_field( $field ) )
+            {
+                continue;
+            }
+
+            return $field_id;
+        }
+
+        return '';
+    }
+
+    private function is_realtime_storage_field( mixed $field ): bool
+    {
+        $field_type = strtolower( $this->extract_gravity_field_property( $field, 'type' ) );
+        if ( ! in_array( $field_type, [ 'hidden', 'textarea' ], true ) )
+        {
+            return false;
+        }
+
+        $input_name = $this->extract_gravity_field_property( $field, 'inputName' );
+        if ( self::REALTIME_QNA_STORAGE_FIELD_INPUT_NAME === $input_name )
+        {
+            return true;
+        }
+
+        if ( $this->extract_gravity_field_property( $field, 'sentientFormsRealtimeStorage' ) === '1' )
+        {
+            return true;
+        }
+
+        $css_class = $this->extract_gravity_field_property( $field, 'cssClass' );
+        if ( str_contains( ' ' . $css_class . ' ', ' ' . self::REALTIME_QNA_STORAGE_FIELD_CLASS . ' ' ) )
+        {
+            return true;
+        }
+
+        $admin_label = $this->extract_gravity_field_property( $field, 'adminLabel' );
+        $label       = $this->extract_gravity_field_property( $field, 'label' );
+
+        return self::REALTIME_QNA_STORAGE_FIELD_LABEL === $admin_label
+            || self::REALTIME_QNA_STORAGE_FIELD_LABEL === $label;
+    }
+
+    /**
+     * @param array<string,mixed> $form
+     */
+    private function form_has_realtime_storage_target( array $form, string $field_id ): bool
+    {
+        if ( '' === trim( $field_id ) )
+        {
+            return false;
+        }
+
+        $fields = isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
+        foreach ( $fields as $field )
+        {
+            if ( $field_id !== $this->extract_gravity_field_property( $field, 'id' ) )
+            {
+                continue;
+            }
+
+            return in_array(
+                strtolower( $this->extract_gravity_field_property( $field, 'type' ) ),
+                [ 'hidden', 'textarea' ],
+                true
+            );
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array<int,mixed> $fields
+     */
+    private function next_realtime_storage_field_id( array $fields ): int
+    {
+        $max_id = 0;
+        foreach ( $fields as $field )
+        {
+            $field_id = $this->extract_gravity_field_property( $field, 'id' );
+            if ( '' === $field_id || ! is_numeric( $field_id ) )
+            {
+                continue;
+            }
+
+            $max_id = max( $max_id, (int) floor( (float) $field_id ) );
+        }
+
+        return $max_id + 1;
+    }
+
+    /**
+     * @param array<string,mixed> $form
+     */
+    private function create_realtime_storage_field( int $field_id, array $form ): mixed
+    {
+        $page_number = 1;
+        $fields      = isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
+        foreach ( $fields as $field )
+        {
+            $field_page_number = $this->extract_gravity_field_property( $field, 'pageNumber' );
+            if ( '' !== $field_page_number && is_numeric( $field_page_number ) )
+            {
+                $page_number = max( $page_number, (int) $field_page_number );
+            }
+        }
+
+        $properties = [
+            'id'                           => $field_id,
+            'type'                         => 'hidden',
+            'label'                        => self::REALTIME_QNA_STORAGE_FIELD_LABEL,
+            'adminLabel'                   => self::REALTIME_QNA_STORAGE_FIELD_LABEL,
+            'inputName'                    => self::REALTIME_QNA_STORAGE_FIELD_INPUT_NAME,
+            'defaultValue'                 => '',
+            'description'                  => __( 'Stores Sentient Forms realtime clarification questions and visitor answers as native Gravity Forms entry data.', 'sentient-forms' ),
+            'isRequired'                   => false,
+            'allowsPrepopulate'            => false,
+            'visibility'                   => 'visible',
+            'cssClass'                     => self::REALTIME_QNA_STORAGE_FIELD_CLASS,
+            'pageNumber'                   => $page_number,
+            'sentientFormsRealtimeStorage' => true,
+        ];
+
+        if ( class_exists( 'GF_Fields' ) && method_exists( 'GF_Fields', 'create' ) )
+        {
+            return GF_Fields::create( $properties );
+        }
+
+        return (object) $properties;
+    }
+
+    private function extract_gravity_field_property( mixed $field, string $property ): string
+    {
+        if ( is_array( $field ) && isset( $field[ $property ] ) && is_scalar( $field[ $property ] ) )
+        {
+            if ( is_bool( $field[ $property ] ) )
+            {
+                return $field[ $property ] ? '1' : '0';
+            }
+
+            return sanitize_text_field( (string) $field[ $property ] );
+        }
+
+        if ( is_object( $field ) && isset( $field->{$property} ) && is_scalar( $field->{$property} ) )
+        {
+            if ( is_bool( $field->{$property} ) )
+            {
+                return $field->{$property} ? '1' : '0';
+            }
+
+            return sanitize_text_field( (string) $field->{$property} );
+        }
+
+        return '';
     }
 
     /**

@@ -1,7 +1,11 @@
 import { expect, test } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 import {
 	configureGravityActionMapping,
 	ensureGravityForm,
+	getGravityEntryFieldValue,
+	getGravityFormFields,
+	getLatestEntryId,
 	type RealtimeSettings,
 	requireWpRestHealthy,
 	waitForPreviewInputs
@@ -21,8 +25,32 @@ const fields = [
 
 let formId = 0;
 
+function isSuggestRequestUrl(url: URL): boolean {
+	const decodedSearch = decodeURIComponent(url.search);
+	return url.pathname.includes('/actions/suggest') || decodedSearch.includes('/actions/suggest');
+}
+
+async function routeSuggestRequests(
+	page: Page,
+	handler: (route: Route) => Promise<void>
+): Promise<void> {
+	await page.route((url) => isSuggestRequestUrl(url), handler);
+}
+
+async function openRealtimeWidget(page: Page) {
+	const widget = page.locator('.sentient-forms-realtime-widget');
+	const toggle = widget.locator('[data-role="toggle"]');
+	await expect(widget).toBeVisible();
+	if ((await toggle.textContent())?.trim() === 'Show') {
+		await toggle.click();
+	}
+	await expect(toggle).toHaveText('Hide');
+	await expect(widget.locator('[data-role="body"]')).toBeVisible();
+	return widget;
+}
+
 async function openRealtimePreview(
-	page: Parameters<typeof test>[0]['page'],
+	page: Page,
 	manualRefreshEnabled = true,
 	realtimeOverrides: Partial<RealtimeSettings> = {}
 ) {
@@ -30,8 +58,17 @@ async function openRealtimePreview(
 		formId = ensureGravityForm(formTitle, fields);
 	}
 
+	await openRealtimePreviewForForm(page, formId, manualRefreshEnabled, realtimeOverrides);
+}
+
+async function openRealtimePreviewForForm(
+	page: Page,
+	targetFormId: number,
+	manualRefreshEnabled = true,
+	realtimeOverrides: Partial<RealtimeSettings> = {}
+) {
 	configureGravityActionMapping({
-		formId,
+		formId: targetFormId,
 		actionId: 'realtime_suggest',
 		localMappingId: 'map_realtime_suggest',
 		centralActionId: 'clarification_assistant_v1',
@@ -53,9 +90,15 @@ async function openRealtimePreview(
 	});
 
 	await loginToWpAdmin(page);
-	await page.goto(`${wpBaseUrl}/?gf_page=preview&id=${formId}`, { waitUntil: 'domcontentloaded' });
-	await waitForPreviewInputs(page, formId);
+	await page.goto(`${wpBaseUrl}/?gf_page=preview&id=${targetFormId}`, {
+		waitUntil: 'domcontentloaded'
+	});
+	await waitForPreviewInputs(page, targetFormId);
 	await expect(page.locator('.sentient-forms-realtime-widget')).toBeVisible();
+	await expect(page.locator('.sentient-forms-realtime-widget [data-role="toggle"]')).toHaveText(
+		'Show'
+	);
+	await expect(page.locator('.sentient-forms-realtime-widget [data-role="body"]')).toBeHidden();
 }
 
 test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => {
@@ -73,7 +116,8 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 	}) => {
 		const requests: Array<Record<string, unknown>> = [];
 
-		await page.route('**/actions/suggest*', async (route, request) => {
+		await routeSuggestRequests(page, async (route) => {
+			const request = route.request();
 			const payload = JSON.parse(request.postData() ?? '{}') as Record<string, unknown>;
 			requests.push(payload);
 			const currentPage = Number(payload.current_page_index ?? 1);
@@ -149,7 +193,7 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await expect.poll(() => requests.length, { timeout: 4000 }).toBe(1);
 		expect(requests[0]?.mapping_id).toBe('map_realtime_suggest');
 
-		const widget = page.locator('.sentient-forms-realtime-widget');
+		const widget = await openRealtimeWidget(page);
 		await expect(widget).toContainText('Please add specifics to your issue summary.');
 		await expect(widget).not.toContainText('This hidden field should not render on page 1.');
 		await expect(widget).not.toContainText('Suppressed future-mitigated guidance.');
@@ -163,6 +207,7 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await expect(page.locator('textarea[name="input_4"]')).toBeVisible();
 		await expect.poll(() => requests.length, { timeout: 4000 }).toBe(2);
 		expect(requests[1]?.current_page_index).toBe(2);
+		await openRealtimeWidget(page);
 		await expect(widget).toContainText('Provide mitigation details on page 2.');
 
 		const focusButton = widget.locator('.sentient-forms-realtime-widget__focus[data-field-id="4"]');
@@ -172,7 +217,8 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 
 	test('manual refresh button respects mapping policy when disabled', async ({ page }) => {
 		const requests: Array<Record<string, unknown>> = [];
-		await page.route('**/actions/suggest*', async (route, request) => {
+		await routeSuggestRequests(page, async (route) => {
+			const request = route.request();
 			requests.push(JSON.parse(request.postData() ?? '{}') as Record<string, unknown>);
 			await route.fulfill({
 				status: 200,
@@ -191,7 +237,8 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await page.locator('input[name="input_2"]').click();
 		await expect.poll(() => requests.length, { timeout: 4000 }).toBe(1);
 
-		await page.locator('.sentient-forms-realtime-widget__refresh').click();
+		const widget = await openRealtimeWidget(page);
+		await widget.locator('.sentient-forms-realtime-widget__refresh').click();
 		await page.waitForTimeout(700);
 		expect(requests.length).toBe(1);
 	});
@@ -199,7 +246,7 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 	test('virtual questions persist exact Q&A and can block next-page navigation', async ({
 		page
 	}) => {
-		await page.route('**/actions/suggest*', async (route) => {
+		await routeSuggestRequests(page, async (route) => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
@@ -228,15 +275,14 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 
 		await page.fill('input[name="input_1"]', 'The button is broken.');
 		await page.locator('input[name="input_2"]').click();
-		await expect(page.locator('.sentient-forms-realtime-widget')).toContainText(
-			'What page URL did this occur on?'
-		);
+		const widget = await openRealtimeWidget(page);
+		await expect(widget).toContainText('What page URL did this occur on?');
 
 		const nextButton = page.locator('.gform_next_button').first();
 		await nextButton.click();
 		await expect(page.locator('input[name="input_1"]')).toBeVisible();
 		await expect(page.locator('textarea[name="input_4"]')).toBeHidden();
-		await expect(page.locator('.sentient-forms-realtime-widget__error')).toContainText(
+		await expect(widget.locator('.sentient-forms-realtime-widget__error')).toContainText(
 			'Answer the required follow-up questions before continuing.'
 		);
 
@@ -258,8 +304,93 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await expect(page.locator('textarea[name="input_4"]')).toBeVisible();
 	});
 
+	test('virtual questions are submitted as native Gravity Forms data without manual storage setup', async ({
+		page
+	}) => {
+		const autoStorageFormId = ensureGravityForm(`Playwright Realtime Auto Storage ${Date.now()}`, [
+			{ type: 'text', id: 1, label: 'Issue summary', isRequired: true },
+			{ type: 'text', id: 2, label: 'Current context', isRequired: false },
+			{ type: 'page', id: 3, label: 'Page break' },
+			{ type: 'textarea', id: 4, label: 'Mitigation details', isRequired: false }
+		]);
+		const baselineEntryId = getLatestEntryId(autoStorageFormId);
+
+		await routeSuggestRequests(page, async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					status: 'success',
+					suggestions: [],
+					virtual_questions: [
+						{
+							question_id: 'preferred-contact-window',
+							question: 'What is the best time for us to follow up?',
+							reason: 'The site owner needs an actionable callback window.',
+							target_field_id: '2',
+							required: true,
+							answer_type: 'short_text'
+						}
+					],
+					meta: { execution_request_id: 'rt-auto-native-qna' }
+				})
+			});
+		});
+
+		await openRealtimePreviewForForm(page, autoStorageFormId, true, {
+			blockingMode: 'require_answers'
+		});
+
+		const storageField = getGravityFormFields(autoStorageFormId).find(
+			(field) =>
+				field.type === 'hidden' &&
+				field.inputName === 'sentient_forms_realtime_qna' &&
+				field.label === 'Sentient Forms Realtime Q&A'
+		);
+		expect(storageField, 'auto-provisioned native Gravity Forms storage field').toBeTruthy();
+		expect(storageField?.id).toMatch(/^\d+$/);
+		if (!storageField) {
+			throw new Error('Realtime storage field was not auto-provisioned.');
+		}
+		const storageFieldId = storageField.id;
+
+		await page.fill('input[name="input_1"]', 'The signup flow needs help.');
+		await page.locator('input[name="input_2"]').click();
+		const widget = await openRealtimeWidget(page);
+		await expect(widget).toContainText('What is the best time for us to follow up?');
+
+		await page
+			.locator('[data-role="answer-question"][data-question-id="preferred-contact-window"]')
+			.fill('Weekdays after 2 PM Central');
+
+		const storageInput = page.locator(`input[name="input_${storageFieldId}"]`);
+		await expect(storageInput).toHaveValue(/sentient_forms_realtime_clarification_qna\.v1/);
+
+		await page.locator('.gform_next_button').first().click();
+		await expect(page.locator('textarea[name="input_4"]')).toBeVisible();
+		await page.fill('textarea[name="input_4"]', 'Please route this to the implementation team.');
+		await page.locator('input[type="submit"], button[type="submit"]').last().click();
+
+		await expect
+			.poll(() => getLatestEntryId(autoStorageFormId), { timeout: 8000 })
+			.toBeGreaterThan(baselineEntryId);
+		const entryId = getLatestEntryId(autoStorageFormId);
+		const storedValue = getGravityEntryFieldValue(entryId, storageFieldId);
+		expect(storedValue, 'native Gravity Forms entry field value').toBeTruthy();
+
+		const parsed = JSON.parse(storedValue ?? '') as {
+			schema: string;
+			mappings: Array<{ questions: Array<{ question: string; answer: string }> }>;
+		};
+		expect(parsed.schema).toBe('sentient_forms_realtime_clarification_qna.v1');
+		expect(parsed.mappings[0]?.questions[0]?.question).toBe(
+			'What is the best time for us to follow up?'
+		);
+		expect(parsed.mappings[0]?.questions[0]?.answer).toBe('Weekdays after 2 PM Central');
+	});
+
 	test('429 suggest response is non-blocking and surfaces retry feedback', async ({ page }) => {
-		await page.route('**/actions/suggest*', async (route) => {
+		await routeSuggestRequests(page, async (route) => {
 			await route.fulfill({
 				status: 429,
 				contentType: 'application/json',
@@ -271,7 +402,8 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 
 		await page.fill('input[name="input_1"]', 'checkpoint trigger');
 		await page.locator('input[name="input_2"]').click();
-		await expect(page.locator('.sentient-forms-realtime-widget__error')).toContainText(
+		const widget = await openRealtimeWidget(page);
+		await expect(widget.locator('.sentient-forms-realtime-widget__error')).toContainText(
 			'Suggestion rate limit exceeded. Please wait and retry.'
 		);
 

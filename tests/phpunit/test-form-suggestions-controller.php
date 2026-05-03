@@ -21,6 +21,24 @@ if ( ! class_exists( 'GFAPI' ) ) {
 		public static function get_forms(): array {
 			return array_values( self::$forms );
 		}
+
+		public static function update_form( $form, $form_id = null ) {
+			$form_id = null === $form_id && is_array( $form ) && isset( $form['id'] )
+				? (int) $form['id']
+				: (int) $form_id;
+
+			if ( $form_id <= 0 ) {
+				return new WP_Error( 'missing_form_id', 'Missing form id.' );
+			}
+
+			if ( is_array( $form ) ) {
+				$form['id'] = $form_id;
+			}
+
+			self::$forms[ $form_id ] = $form;
+
+			return true;
+		}
 	}
 }
 

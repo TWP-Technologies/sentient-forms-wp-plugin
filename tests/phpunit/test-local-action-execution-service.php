@@ -68,6 +68,48 @@ if ( ! class_exists( 'GFAPI' ) )
     class GFAPI
     {
         public static array $entry_property_updates = [];
+        public static array $forms = [];
+        public static array $entries = [];
+
+        public static function get_entry( $entry_id )
+        {
+            $entry_id = (int) $entry_id;
+
+            return self::$entries[ $entry_id ] ?? new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+        }
+
+        public static function get_form( $form_id )
+        {
+            $form_id = (int) $form_id;
+
+            return self::$forms[ $form_id ] ?? false;
+        }
+
+        public static function get_forms(): array
+        {
+            return array_values( self::$forms );
+        }
+
+        public static function update_form( $form, $form_id = null )
+        {
+            $form_id = null === $form_id && is_array( $form ) && isset( $form['id'] )
+                ? (int) $form['id']
+                : (int) $form_id;
+
+            if ( $form_id <= 0 )
+            {
+                return new WP_Error( 'missing_form_id', 'Missing form id.' );
+            }
+
+            if ( is_array( $form ) )
+            {
+                $form['id'] = $form_id;
+            }
+
+            self::$forms[ $form_id ] = $form;
+
+            return true;
+        }
 
         public static function update_entry_property( $entry_id, $property_name, $property_value ): void
         {

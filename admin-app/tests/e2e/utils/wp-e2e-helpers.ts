@@ -110,6 +110,15 @@ export type GravityEntryNoteRecord = {
 	sub_type: string | null;
 };
 
+export type GravityFormFieldRecord = {
+	id: string;
+	type: string;
+	label: string;
+	adminLabel: string;
+	inputName: string;
+	cssClass: string;
+};
+
 function currentWpPluginMode(): 'source' | 'package' {
 	return process.env.SENTIENT_WP_PLUGIN_MODE === 'package' ? 'package' : 'source';
 }
@@ -1614,6 +1623,69 @@ echo $entry_id ?: 0;
 	}
 
 	return Number.parseInt(stripCliNoise(result.stdout), 10) || 0;
+}
+
+export function getGravityFormFields(formId: number): GravityFormFieldRecord[] {
+	const payload = runWpEval(
+		`
+$form_id = (int) getenv( 'FORM_ID' );
+$form = GFAPI::get_form( $form_id );
+if ( ! is_array( $form ) ) {
+    echo '{"fields":[]}';
+    return;
+}
+
+$fields = [];
+foreach ( $form['fields'] ?? [] as $field ) {
+    $fields[] = [
+        'id'         => isset( $field->id ) ? (string) $field->id : '',
+        'type'       => isset( $field->type ) ? (string) $field->type : '',
+        'label'      => isset( $field->label ) ? (string) $field->label : '',
+        'adminLabel' => isset( $field->adminLabel ) ? (string) $field->adminLabel : '',
+        'inputName'  => isset( $field->inputName ) ? (string) $field->inputName : '',
+        'cssClass'   => isset( $field->cssClass ) ? (string) $field->cssClass : '',
+    ];
+}
+echo wp_json_encode( [ 'fields' => $fields ] );
+`,
+		{
+			FORM_ID: String(formId)
+		}
+	);
+
+	try {
+		const decoded = JSON.parse(payload) as { fields?: GravityFormFieldRecord[] };
+		return Array.isArray(decoded.fields) ? decoded.fields : [];
+	} catch (_error) {
+		throw new Error(`Failed to parse Gravity Forms fields for form ${formId}: ${payload}`);
+	}
+}
+
+export function getGravityEntryFieldValue(entryId: number, fieldId: string): string | null {
+	const payload = runWpEval(
+		`
+$entry_id = (int) getenv( 'ENTRY_ID' );
+$field_id = getenv( 'FIELD_ID' ) ?: '';
+$entry = GFAPI::get_entry( $entry_id );
+if ( is_wp_error( $entry ) || '' === $field_id || ! array_key_exists( $field_id, $entry ) ) {
+    echo '';
+    return;
+}
+
+$value = $entry[ $field_id ];
+if ( is_scalar( $value ) ) {
+    echo (string) $value;
+    return;
+}
+echo wp_json_encode( $value );
+`,
+		{
+			ENTRY_ID: String(entryId),
+			FIELD_ID: fieldId
+		}
+	);
+
+	return payload === '' ? null : payload;
 }
 
 export function findEntryIdByEmail(formId: number, email: string, emailField = '2'): number {
