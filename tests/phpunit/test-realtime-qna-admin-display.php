@@ -215,7 +215,13 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertStringContainsString( 'data-sf-qna-view-panel="json" hidden', $html );
         $this->assertStringContainsString( 'What budget range should we plan around?', $html );
         $this->assertStringContainsString( 'Blue widgets under $5,000', $html );
-        $this->assertStringContainsString( 'Download CSV', $html );
+        $this->assertStringContainsString( 'sentient-forms-qna-action-button', $html );
+        $this->assertStringContainsString( 'data-sf-qna-button-label>Summary</span>', $html );
+        $this->assertStringContainsString( 'data-sf-qna-button-label>Table</span>', $html );
+        $this->assertStringContainsString( 'data-sf-qna-button-label>CSV</span>', $html );
+        $this->assertStringContainsString( 'aria-label="Copy Q&amp;A summary"', $html );
+        $this->assertStringContainsString( 'aria-label="Copy Q&amp;A table"', $html );
+        $this->assertStringContainsString( 'aria-label="Download Q&amp;A CSV"', $html );
         $this->assertStringContainsString( "Question\tAnswer\tStatus", $html );
     }
 
@@ -270,7 +276,7 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertStringContainsString( 'sentient-forms-qna-panel--print', $html );
         $this->assertStringContainsString( '<table', $html );
         $this->assertStringNotContainsString( 'data-sf-qna-view-tab', $html );
-        $this->assertStringNotContainsString( 'Download CSV', $html );
+        $this->assertStringNotContainsString( 'data-sf-qna-export', $html );
 
         ob_start();
         $this->display->render_print_entry_footer( $form, $entry );

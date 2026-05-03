@@ -10,10 +10,21 @@
 	}
 
 	function setTemporaryLabel(button, label) {
-		var previous = button.getAttribute('data-sf-qna-default-label') || button.textContent;
-		button.textContent = label;
+		var labelTarget = button.querySelector('[data-sf-qna-button-label]');
+		var previous = button.getAttribute('data-sf-qna-default-label') || (labelTarget ? labelTarget.textContent : button.textContent);
+
+		if (labelTarget) {
+			labelTarget.textContent = label;
+		} else {
+			button.textContent = label;
+		}
+
 		window.setTimeout(function () {
-			button.textContent = previous;
+			if (labelTarget) {
+				labelTarget.textContent = previous;
+			} else {
+				button.textContent = previous;
+			}
 		}, 1400);
 	}
 
@@ -123,4 +134,3 @@
 		}
 	});
 }());
-

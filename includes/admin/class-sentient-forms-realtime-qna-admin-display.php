@@ -1228,23 +1228,43 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         return sprintf(
             '<header class="sentient-forms-qna-panel__header">%s<div class="sentient-forms-qna-panel__actions">%s%s%s</div></header>',
             $this->render_summary_header( $summary, 'detail' ),
-            $this->render_panel_button( __( 'Copy summary', 'sentient-forms' ), 'summary', 'sentient-forms-qna-copy' ),
-            $this->render_panel_button( __( 'Copy table', 'sentient-forms' ), 'table', 'sentient-forms-qna-copy' ),
-            $this->render_panel_button( __( 'Download CSV', 'sentient-forms' ), 'csv', 'sentient-forms-qna-export' )
+            $this->render_panel_button( __( 'Summary', 'sentient-forms' ), __( 'Copy Q&A summary', 'sentient-forms' ), 'summary', 'sentient-forms-qna-copy', 'copy' ),
+            $this->render_panel_button( __( 'Table', 'sentient-forms' ), __( 'Copy Q&A table', 'sentient-forms' ), 'table', 'sentient-forms-qna-copy', 'copy' ),
+            $this->render_panel_button( __( 'CSV', 'sentient-forms' ), __( 'Download Q&A CSV', 'sentient-forms' ), 'csv', 'sentient-forms-qna-export', 'download' )
         );
     }
 
-    private function render_panel_button( string $label, string $target, string $class ): string
+    private function render_panel_button( string $label, string $accessible_label, string $target, string $class, string $icon ): string
     {
         $attribute = str_contains( $class, 'export' ) ? 'data-sf-qna-export' : 'data-sf-qna-copy';
 
         return sprintf(
-            '<button type="button" class="button %s" %s="%s" data-sf-qna-default-label="%s">%s</button>',
+            '<button type="button" class="sentient-forms-qna-action-button %s" %s="%s" data-sf-qna-default-label="%s" aria-label="%s">%s<span class="sentient-forms-qna-action-button__label" data-sf-qna-button-label>%s</span></button>',
             esc_attr( $class ),
             esc_attr( $attribute ),
             esc_attr( $target ),
             esc_attr( $label ),
+            esc_attr( $accessible_label ),
+            $this->render_panel_button_icon( $icon ),
             esc_html( $label )
+        );
+    }
+
+    private function render_panel_button_icon( string $icon ): string
+    {
+        $icons = [
+            'copy'     => '<rect x="7" y="5" width="9" height="11" rx="1.5"></rect><path d="M4 12.5V3.75C4 2.78 4.78 2 5.75 2h7.75"></path>',
+            'download' => '<path d="M10 3v9"></path><path d="m6.75 8.75 3.25 3.25 3.25-3.25"></path><path d="M4 16.5h12"></path>',
+        ];
+
+        if ( ! isset( $icons[ $icon ] ) )
+        {
+            return '';
+        }
+
+        return sprintf(
+            '<svg class="sentient-forms-qna-action-button__icon" aria-hidden="true" focusable="false" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">%s</svg>',
+            $icons[ $icon ]
         );
     }
 

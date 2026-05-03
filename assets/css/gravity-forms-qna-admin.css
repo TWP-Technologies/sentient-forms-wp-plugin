@@ -25,8 +25,53 @@
 .sentient-forms-qna-panel__actions {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 8px;
+	align-items: center;
+	gap: 10px;
+	flex: 0 0 auto;
 	justify-content: flex-end;
+}
+
+.sentient-forms-qna-action-button {
+	appearance: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	min-height: 36px;
+	padding: 0 14px;
+	border: 1px solid #d8dee7;
+	border-radius: 6px;
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+	color: #0f172a;
+	cursor: pointer;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1;
+	text-decoration: none;
+	transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.sentient-forms-qna-action-button:hover {
+	border-color: #c5d0df;
+	background: #fbfcfe;
+	box-shadow: 0 2px 4px rgba(16, 24, 40, 0.1);
+	color: #0f172a;
+}
+
+.sentient-forms-qna-action-button:active {
+	box-shadow: 0 1px 1px rgba(16, 24, 40, 0.08);
+	transform: translateY(1px);
+}
+
+.sentient-forms-qna-action-button__icon {
+	width: 16px;
+	height: 16px;
+	flex: 0 0 16px;
+}
+
+.sentient-forms-qna-action-button__label {
+	white-space: nowrap;
 }
 
 .sentient-forms-qna-summary {
@@ -123,6 +168,7 @@
 }
 
 .sentient-forms-qna-tab:focus-visible,
+.sentient-forms-qna-action-button:focus-visible,
 .sentient-forms-qna-copy:focus-visible,
 .sentient-forms-qna-export:focus-visible,
 .sentient-forms-qna-row__toggle:focus-visible,
