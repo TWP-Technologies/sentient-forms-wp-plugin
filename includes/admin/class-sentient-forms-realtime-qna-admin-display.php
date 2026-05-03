@@ -1326,11 +1326,32 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
 
     private function render_view_tabs(): string
     {
-        return '<div class="sentient-forms-qna-tabs" role="tablist" aria-label="' . esc_attr__( 'Realtime Q&A views', 'sentient-forms' ) . '">'
-            . '<button type="button" class="sentient-forms-qna-tab is-active" role="tab" aria-selected="true" data-sf-qna-view-tab="cards">' . esc_html__( 'Cards', 'sentient-forms' ) . '</button>'
-            . '<button type="button" class="sentient-forms-qna-tab" role="tab" aria-selected="false" data-sf-qna-view-tab="table">' . esc_html__( 'Table', 'sentient-forms' ) . '</button>'
-            . '<button type="button" class="sentient-forms-qna-tab" role="tab" aria-selected="false" data-sf-qna-view-tab="json">' . esc_html__( 'JSON', 'sentient-forms' ) . '</button>'
-            . '</div>';
+        $tabs = [
+            [ 'cards', __( 'Cards', 'sentient-forms' ), 'cards', true ],
+            [ 'table', __( 'Table', 'sentient-forms' ), 'table', false ],
+            [ 'json', __( 'JSON', 'sentient-forms' ), 'code', false ],
+        ];
+
+        $buttons = array_map(
+            function ( array $tab ): string {
+                [ $view, $label, $icon, $active ] = $tab;
+
+                return sprintf(
+                    '<button type="button" class="sentient-forms-qna-tab sentient-forms-qna-icon-button%s" role="tab" aria-selected="%s" data-sf-qna-view-tab="%s" aria-label="%s" title="%s" data-sf-qna-tooltip="%s">%s<span class="screen-reader-text">%s</span></button>',
+                    $active ? ' is-active' : '',
+                    $active ? 'true' : 'false',
+                    esc_attr( $view ),
+                    esc_attr( $label ),
+                    esc_attr( $label ),
+                    esc_attr( $label ),
+                    $this->render_qna_icon( $icon ),
+                    esc_html( $label )
+                );
+            },
+            $tabs
+        );
+
+        return '<div class="sentient-forms-qna-tabs" role="tablist" aria-label="' . esc_attr__( 'Realtime Q&A views', 'sentient-forms' ) . '">' . implode( '', $buttons ) . '</div>';
     }
 
     /**
@@ -1443,7 +1464,16 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             : '';
         $toggle = $review_mode
             ? sprintf(
-                '<button type="button" class="sentient-forms-qna-card__toggle" data-sf-qna-card-toggle aria-expanded="true">%s</button>',
+                '<button type="button" class="sentient-forms-qna-card__toggle sentient-forms-qna-icon-button" data-sf-qna-card-toggle aria-expanded="true" aria-label="%s" title="%s" data-sf-qna-active-label="%s" data-sf-qna-inactive-label="%s" data-sf-qna-active-aria-label="%s" data-sf-qna-inactive-aria-label="%s" data-sf-qna-active-title="%s" data-sf-qna-inactive-title="%s">%s<span class="screen-reader-text" data-sf-qna-button-label>%s</span></button>',
+                esc_attr( $this->get_card_toggle_aria_label( $question, true ) ),
+                esc_attr__( 'Hide details', 'sentient-forms' ),
+                esc_attr__( 'Hide details', 'sentient-forms' ),
+                esc_attr__( 'Show details', 'sentient-forms' ),
+                esc_attr( $this->get_card_toggle_aria_label( $question, true ) ),
+                esc_attr( $this->get_card_toggle_aria_label( $question, false ) ),
+                esc_attr__( 'Hide details', 'sentient-forms' ),
+                esc_attr__( 'Show details', 'sentient-forms' ),
+                $this->render_icon_state_pair( 'chevron-up', 'chevron-down' ),
                 esc_html__( 'Hide details', 'sentient-forms' )
             )
             : '';
@@ -1483,14 +1513,14 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
     private function render_review_toolbar( array $summary ): string
     {
         $filter_buttons = [
-            $this->render_review_filter_button( 'all', __( 'All', 'sentient-forms' ), (int) $summary['total_questions'], true ),
-            $this->render_review_filter_button( 'open', __( 'Open', 'sentient-forms' ), (int) $summary['open_count'], false ),
-            $this->render_review_filter_button( 'answered', __( 'Answered', 'sentient-forms' ), max( 0, (int) $summary['answered_count'] - (int) $summary['completed_count'] ), false ),
-            $this->render_review_filter_button( 'completed', __( 'Completed', 'sentient-forms' ), (int) $summary['completed_count'], false ),
+            $this->render_review_filter_button( 'all', __( 'All', 'sentient-forms' ), 'list', (int) $summary['total_questions'], true ),
+            $this->render_review_filter_button( 'open', __( 'Open', 'sentient-forms' ), 'alert', (int) $summary['open_count'], false ),
+            $this->render_review_filter_button( 'answered', __( 'Answered', 'sentient-forms' ), 'message-check', max( 0, (int) $summary['answered_count'] - (int) $summary['completed_count'] ), false ),
+            $this->render_review_filter_button( 'completed', __( 'Completed', 'sentient-forms' ), 'check-circle', (int) $summary['completed_count'], false ),
         ];
 
         return sprintf(
-            '<div class="sentient-forms-qna-review-toolbar" data-sf-qna-review-toolbar><div class="sentient-forms-qna-review-toolbar__summary"><span class="sentient-forms-qna-review-toolbar__label">%s</span><strong>%s</strong><span>%s</span></div><div class="sentient-forms-qna-review-toolbar__controls"><div class="sentient-forms-qna-review-filter" role="group" aria-label="%s">%s</div><label class="sentient-forms-qna-review-search"><span class="screen-reader-text">%s</span><input type="search" data-sf-qna-search-input placeholder="%s" autocomplete="off"></label><label class="sentient-forms-qna-review-sort"><span class="screen-reader-text">%s</span><select data-sf-qna-sort><option value="priority">%s</option><option value="original">%s</option><option value="status">%s</option></select></label><button type="button" class="sentient-forms-qna-review-button" data-sf-qna-density aria-pressed="false">%s</button><button type="button" class="sentient-forms-qna-review-button" data-sf-qna-expand-all aria-pressed="false">%s</button></div><p class="sentient-forms-qna-review-empty" data-sf-qna-empty-results hidden>%s</p></div>',
+            '<div class="sentient-forms-qna-review-toolbar" data-sf-qna-review-toolbar><div class="sentient-forms-qna-review-toolbar__summary"><span class="sentient-forms-qna-review-toolbar__label">%s</span><strong>%s</strong><span>%s</span></div><div class="sentient-forms-qna-review-toolbar__controls"><div class="sentient-forms-qna-review-filter" role="group" aria-label="%s">%s</div><label class="sentient-forms-qna-review-field sentient-forms-qna-review-search">%s<span class="screen-reader-text">%s</span><input type="search" data-sf-qna-search-input placeholder="%s" autocomplete="off"></label><label class="sentient-forms-qna-review-field sentient-forms-qna-review-sort">%s<span class="screen-reader-text">%s</span><select data-sf-qna-sort><option value="priority">%s</option><option value="original">%s</option><option value="status">%s</option></select></label>%s%s</div><p class="sentient-forms-qna-review-empty" data-sf-qna-empty-results hidden>%s</p></div>',
             esc_html__( 'Review mode', 'sentient-forms' ),
             esc_html(
                 sprintf(
@@ -1502,27 +1532,131 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             esc_html__( 'open items stay first', 'sentient-forms' ),
             esc_attr__( 'Filter realtime Q&A cards', 'sentient-forms' ),
             implode( '', $filter_buttons ),
+            $this->render_qna_icon( 'search', 'sentient-forms-qna-review-field__icon' ),
             esc_html__( 'Search realtime Q&A cards', 'sentient-forms' ),
             esc_attr__( 'Search Q&A', 'sentient-forms' ),
+            $this->render_qna_icon( 'sort', 'sentient-forms-qna-review-field__icon' ),
             esc_html__( 'Sort realtime Q&A cards', 'sentient-forms' ),
             esc_html__( 'Priority', 'sentient-forms' ),
             esc_html__( 'Original order', 'sentient-forms' ),
             esc_html__( 'Status', 'sentient-forms' ),
-            esc_html__( 'Compact', 'sentient-forms' ),
-            esc_html__( 'Expand all', 'sentient-forms' ),
+            $this->render_review_toggle_button(
+                'sentient-forms-qna-review-button--density',
+                'data-sf-qna-density',
+                __( 'Compact density', 'sentient-forms' ),
+                __( 'Comfortable density', 'sentient-forms' ),
+                'density',
+                'density'
+            ),
+            $this->render_review_toggle_button(
+                'sentient-forms-qna-review-button--expand',
+                'data-sf-qna-expand-all',
+                __( 'Expand all', 'sentient-forms' ),
+                __( 'Collapse all', 'sentient-forms' ),
+                'expand',
+                'collapse'
+            ),
             esc_html__( 'No questions match the current review filters.', 'sentient-forms' )
         );
     }
 
-    private function render_review_filter_button( string $filter, string $label, int $count, bool $active ): string
+    private function render_review_filter_button( string $filter, string $label, string $icon, int $count, bool $active ): string
     {
+        $accessible_label = sprintf(
+            /* translators: 1: filter label, 2: question count */
+            __( '%1$s: %2$d', 'sentient-forms' ),
+            $label,
+            $count
+        );
+
         return sprintf(
-            '<button type="button" class="sentient-forms-qna-review-filter__button%s" data-sf-qna-filter="%s" aria-pressed="%s"><span>%s</span><strong>%d</strong></button>',
+            '<button type="button" class="sentient-forms-qna-review-filter__button%s" data-sf-qna-filter="%s" aria-pressed="%s" aria-label="%s" title="%s" data-sf-qna-tooltip="%s">%s<span class="screen-reader-text">%s</span><strong aria-hidden="true">%d</strong></button>',
             $active ? ' is-active' : '',
             esc_attr( $filter ),
             $active ? 'true' : 'false',
+            esc_attr( $accessible_label ),
+            esc_attr( $label ),
+            esc_attr( $label ),
+            $this->render_qna_icon( $icon ),
             esc_html( $label ),
             $count
+        );
+    }
+
+    private function render_review_toggle_button( string $class, string $data_attribute, string $inactive_label, string $active_label, string $inactive_icon, string $active_icon ): string
+    {
+        return sprintf(
+            '<button type="button" class="sentient-forms-qna-review-button sentient-forms-qna-icon-button %s" %s aria-pressed="false" aria-label="%s" title="%s" data-sf-qna-tooltip="%s" data-sf-qna-inactive-label="%s" data-sf-qna-active-label="%s" data-sf-qna-inactive-aria-label="%s" data-sf-qna-active-aria-label="%s" data-sf-qna-inactive-title="%s" data-sf-qna-active-title="%s">%s<span class="screen-reader-text" data-sf-qna-button-label>%s</span></button>',
+            esc_attr( $class ),
+            esc_attr( $data_attribute ),
+            esc_attr( $inactive_label ),
+            esc_attr( $inactive_label ),
+            esc_attr( $inactive_label ),
+            esc_attr( $inactive_label ),
+            esc_attr( $active_label ),
+            esc_attr( $inactive_label ),
+            esc_attr( $active_label ),
+            esc_attr( $inactive_label ),
+            esc_attr( $active_label ),
+            $this->render_icon_state_pair( $active_icon, $inactive_icon, false ),
+            esc_html( $inactive_label )
+        );
+    }
+
+    private function render_icon_state_pair( string $active_icon, string $inactive_icon, bool $active = true ): string
+    {
+        return sprintf(
+            '<span class="sentient-forms-qna-icon-state" data-sf-qna-icon-active%s>%s</span><span class="sentient-forms-qna-icon-state" data-sf-qna-icon-inactive%s>%s</span>',
+            $active ? '' : ' hidden',
+            $this->render_qna_icon( $active_icon ),
+            $active ? ' hidden' : '',
+            $this->render_qna_icon( $inactive_icon )
+        );
+    }
+
+    private function render_qna_icon( string $icon, string $class = 'sentient-forms-qna-icon' ): string
+    {
+        $icons = [
+            'alert'         => '<circle cx="10" cy="10" r="7"></circle><path d="M10 5.8v5"></path><path d="M10 14.3h.01"></path>',
+            'cards'         => '<rect x="4" y="5" width="10" height="8" rx="1.5"></rect><path d="M7 15h7.5A1.5 1.5 0 0 0 16 13.5V8"></path>',
+            'check-circle'  => '<circle cx="10" cy="10" r="7"></circle><path d="m6.7 10.2 2.1 2.1 4.5-4.6"></path>',
+            'chevron-down'  => '<path d="m5.5 8 4.5 4.5L14.5 8"></path>',
+            'chevron-up'    => '<path d="m5.5 12 4.5-4.5 4.5 4.5"></path>',
+            'code'          => '<path d="m7.2 6.8-3.2 3.2 3.2 3.2"></path><path d="m12.8 6.8 3.2 3.2-3.2 3.2"></path><path d="m11 5.8-2 8.4"></path>',
+            'collapse'      => '<path d="M7.3 4.8v3h-3"></path><path d="m4.4 4.4 3 3"></path><path d="M12.7 15.2v-3h3"></path><path d="m15.6 15.6-3-3"></path>',
+            'density'       => '<path d="M4 6h12"></path><path d="M4 10h12"></path><path d="M4 14h12"></path>',
+            'expand'        => '<path d="M7.3 7.8h-3v-3"></path><path d="m4.4 7.6 3-3"></path><path d="M12.7 12.2h3v3"></path><path d="m15.6 12.4-3 3"></path>',
+            'list'          => '<path d="M7 5.5h9"></path><path d="M7 10h9"></path><path d="M7 14.5h9"></path><path d="M4 5.5h.01"></path><path d="M4 10h.01"></path><path d="M4 14.5h.01"></path>',
+            'message-check' => '<path d="M4.5 5.5A2.5 2.5 0 0 1 7 3h6a2.5 2.5 0 0 1 2.5 2.5v4A2.5 2.5 0 0 1 13 12H9l-4.5 3v-9.5Z"></path><path d="m7.4 7.6 1.5 1.5 3.5-3.5"></path>',
+            'search'        => '<circle cx="8.8" cy="8.8" r="4.8"></circle><path d="m12.5 12.5 3.5 3.5"></path>',
+            'sort'          => '<path d="M6 4v10"></path><path d="m3.8 11.8 2.2 2.2 2.2-2.2"></path><path d="M14 16V6"></path><path d="m11.8 8.2L14 6l2.2 2.2"></path>',
+            'table'         => '<rect x="4" y="5" width="12" height="10" rx="1.5"></rect><path d="M4 8.5h12"></path><path d="M8 5v10"></path>',
+        ];
+
+        if ( ! isset( $icons[ $icon ] ) )
+        {
+            return '';
+        }
+
+        return sprintf(
+            '<svg class="%s" aria-hidden="true" focusable="false" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">%s</svg>',
+            esc_attr( $class ),
+            $icons[ $icon ]
+        );
+    }
+
+    /**
+     * @param array<string,mixed> $question
+     */
+    private function get_card_toggle_aria_label( array $question, bool $expanded ): string
+    {
+        $question_text = '' !== $question['question'] ? $question['question'] : __( 'this question', 'sentient-forms' );
+
+        return sprintf(
+            $expanded
+                ? /* translators: %s: question text */ __( 'Hide details for %s', 'sentient-forms' )
+                : /* translators: %s: question text */ __( 'Show details for %s', 'sentient-forms' ),
+            $question_text
         );
     }
 
@@ -1643,7 +1777,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
     private function render_copy_sources( array $summary ): string
     {
         return sprintf(
-            '<textarea class="sentient-forms-qna-copy-source" data-sf-qna-copy-source="summary" readonly hidden>%s</textarea><textarea class="sentient-forms-qna-copy-source" data-sf-qna-copy-source="table" readonly hidden>%s</textarea><textarea class="sentient-forms-qna-copy-source" data-sf-qna-copy-source="csv" readonly hidden>%s</textarea>',
+            '<textarea class="sentient-forms-qna-copy-source" data-sf-qna-copy-source="summary" readonly hidden>%s</textarea><textarea class="sentient-forms-qna-copy-source" data-sf-qna-copy-source="table" readonly hidden>%s</textarea><textarea class="sentient-forms-qna-copy-source" data-sf-qna-copy-source="csv" readonly hidden>%s</textarea><span class="screen-reader-text" data-sf-qna-live-status aria-live="polite" aria-atomic="true"></span>',
             esc_textarea( $summary['summary_text'] ),
             esc_textarea( $summary['table_text'] ),
             esc_textarea( $summary['csv_text'] )

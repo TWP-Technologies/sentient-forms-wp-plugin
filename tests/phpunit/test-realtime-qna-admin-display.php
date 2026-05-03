@@ -211,6 +211,8 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertIsString( $html );
         $this->assertStringContainsString( 'data-sf-qna-panel', $html );
         $this->assertStringContainsString( 'data-sf-qna-view-tab="cards"', $html );
+        $this->assertStringContainsString( 'sentient-forms-qna-tab sentient-forms-qna-icon-button is-active', $html );
+        $this->assertStringContainsString( 'aria-label="Cards"', $html );
         $this->assertStringContainsString( 'data-sf-qna-view-panel="table" hidden', $html );
         $this->assertStringContainsString( 'data-sf-qna-view-panel="json" hidden', $html );
         $this->assertStringContainsString( 'What budget range should we plan around?', $html );
@@ -248,11 +250,19 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertStringContainsString( 'data-sf-qna-total-questions="19"', $html );
         $this->assertStringContainsString( 'data-sf-qna-review-toolbar', $html );
         $this->assertStringContainsString( 'data-sf-qna-filter="open"', $html );
+        $this->assertStringContainsString( 'aria-label="Open: 6"', $html );
+        $this->assertStringContainsString( 'data-sf-qna-tooltip="Open"', $html );
         $this->assertStringContainsString( 'data-sf-qna-search-input', $html );
         $this->assertStringContainsString( 'data-sf-qna-sort', $html );
         $this->assertStringContainsString( 'data-sf-qna-density', $html );
+        $this->assertStringContainsString( 'data-sf-qna-inactive-label="Compact density"', $html );
+        $this->assertStringContainsString( 'data-sf-qna-active-label="Comfortable density"', $html );
         $this->assertStringContainsString( 'data-sf-qna-expand-all', $html );
+        $this->assertStringContainsString( 'data-sf-qna-active-label="Collapse all"', $html );
         $this->assertStringContainsString( 'data-sf-qna-card-toggle', $html );
+        $this->assertStringContainsString( 'aria-label="Hide details for Synthetic stress question 4?"', $html );
+        $this->assertStringContainsString( 'data-sf-qna-icon-active', $html );
+        $this->assertStringContainsString( 'data-sf-qna-icon-inactive', $html );
         $this->assertSame( 19, substr_count( $html, 'data-sf-qna-card ' ) );
         $this->assertStringContainsString( 'Synthetic stress question 19?', $html );
         $this->assertStringContainsString( 'data-sf-qna-copy-source="csv"', $html );
@@ -351,6 +361,7 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertStringContainsString( 'Synthetic stress question 19?', $html );
         $this->assertStringNotContainsString( 'data-sf-qna-review-toolbar', $html );
         $this->assertStringNotContainsString( 'data-sf-qna-card-toggle', $html );
+        $this->assertStringNotContainsString( 'sentient-forms-qna-icon-button', $html );
         $this->assertStringNotContainsString( 'data-sf-qna-filter', $html );
         $this->assertStringNotContainsString( 'data-sf-qna-export', $html );
     }

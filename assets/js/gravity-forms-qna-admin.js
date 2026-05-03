@@ -12,11 +12,17 @@
 	function setTemporaryLabel(button, label) {
 		var labelTarget = button.querySelector('[data-sf-qna-button-label]');
 		var previous = button.getAttribute('data-sf-qna-default-label') || (labelTarget ? labelTarget.textContent : button.textContent);
+		var container = closest(button, '[data-sf-qna-panel]') || closest(button, '[data-sf-qna-row]');
+		var liveStatus = container ? container.querySelector('[data-sf-qna-live-status]') : null;
 
 		if (labelTarget) {
 			labelTarget.textContent = label;
 		} else {
 			button.textContent = label;
+		}
+
+		if (liveStatus) {
+			liveStatus.textContent = label;
 		}
 
 		window.setTimeout(function () {
@@ -26,6 +32,36 @@
 				button.textContent = previous;
 			}
 		}, 1400);
+	}
+
+	function setIconButtonState(button, active) {
+		var activeIcon = button.querySelector('[data-sf-qna-icon-active]');
+		var inactiveIcon = button.querySelector('[data-sf-qna-icon-inactive]');
+		var labelTarget = button.querySelector('[data-sf-qna-button-label]');
+		var label = button.getAttribute(active ? 'data-sf-qna-active-label' : 'data-sf-qna-inactive-label');
+		var ariaLabel = button.getAttribute(active ? 'data-sf-qna-active-aria-label' : 'data-sf-qna-inactive-aria-label') || label;
+		var title = button.getAttribute(active ? 'data-sf-qna-active-title' : 'data-sf-qna-inactive-title') || label;
+
+		if (activeIcon) {
+			activeIcon.hidden = !active;
+		}
+
+		if (inactiveIcon) {
+			inactiveIcon.hidden = active;
+		}
+
+		if (labelTarget && label) {
+			labelTarget.textContent = label;
+		}
+
+		if (ariaLabel) {
+			button.setAttribute('aria-label', ariaLabel);
+		}
+
+		if (title) {
+			button.setAttribute('title', title);
+			button.setAttribute('data-sf-qna-tooltip', title);
+		}
 	}
 
 	function findSource(container, sourceName) {
@@ -95,8 +131,28 @@
 
 		if (toggle) {
 			toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-			toggle.textContent = expanded ? 'Hide details' : 'Show details';
+			setIconButtonState(toggle, expanded);
 		}
+	}
+
+	function updateExpandAllButtonState(panel) {
+		var expandAllButton = panel ? panel.querySelector('[data-sf-qna-expand-all]') : null;
+		var visibleCards;
+		var allExpanded;
+
+		if (!expandAllButton) {
+			return;
+		}
+
+		visibleCards = getCards(panel).filter(function (card) {
+			return !card.hidden;
+		});
+		allExpanded = visibleCards.length > 0 && visibleCards.every(function (card) {
+			return !card.classList.contains('is-collapsed');
+		});
+
+		expandAllButton.setAttribute('aria-pressed', allExpanded ? 'true' : 'false');
+		setIconButtonState(expandAllButton, allExpanded);
 	}
 
 	function cardMatchesFilter(card, filter) {
@@ -167,6 +223,8 @@
 		if (empty) {
 			empty.hidden = visibleCount !== 0;
 		}
+
+		updateExpandAllButtonState(panel);
 	}
 
 	function initializeReviewPanel(panel) {
@@ -222,6 +280,7 @@
 			var card = closest(cardToggle, '[data-sf-qna-card]');
 			if (card) {
 				setCardExpanded(card, cardToggle.getAttribute('aria-expanded') !== 'true');
+				updateExpandAllButtonState(closest(card, '[data-sf-qna-panel]'));
 			}
 			return;
 		}
@@ -233,6 +292,7 @@
 				var compact = !densityPanel.classList.contains('is-compact-density');
 				densityPanel.classList.toggle('is-compact-density', compact);
 				densityButton.setAttribute('aria-pressed', compact ? 'true' : 'false');
+				setIconButtonState(densityButton, compact);
 			}
 			return;
 		}
@@ -248,7 +308,7 @@
 					}
 				});
 				expandAllButton.setAttribute('aria-pressed', expanding ? 'true' : 'false');
-				expandAllButton.textContent = expanding ? 'Collapse all' : 'Expand all';
+				setIconButtonState(expandAllButton, expanding);
 			}
 			return;
 		}
