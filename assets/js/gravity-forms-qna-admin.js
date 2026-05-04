@@ -107,6 +107,10 @@
 		panel.querySelectorAll('[data-sf-qna-view-panel]').forEach(function (view) {
 			view.hidden = view.getAttribute('data-sf-qna-view-panel') !== viewName;
 		});
+
+		panel.querySelectorAll('[data-sf-qna-card-view-actions]').forEach(function (actions) {
+			actions.hidden = viewName !== 'cards';
+		});
 	}
 
 	function getCards(panel) {
@@ -246,7 +250,12 @@
 	}
 
 	function initializeDetailPanels(root) {
-		root.querySelectorAll('[data-sf-qna-panel]').forEach(updateExpandAllButtonState);
+		root.querySelectorAll('[data-sf-qna-panel]').forEach(function (panel) {
+			updateExpandAllButtonState(panel);
+			panel.querySelectorAll('[data-sf-qna-card-view-actions]').forEach(function (actions) {
+				actions.hidden = panel.querySelector('[data-sf-qna-view-tab="cards"].is-active') === null;
+			});
+		});
 	}
 
 	function downloadCsv(button, text) {

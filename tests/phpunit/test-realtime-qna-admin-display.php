@@ -227,8 +227,11 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertStringContainsString( "Question\tAnswer\tStatus", $html );
         $this->assertStringNotContainsString( 'sentient-forms-qna-panel--high-volume', $html );
         $this->assertStringNotContainsString( 'data-sf-qna-review-toolbar', $html );
-        $this->assertStringContainsString( 'data-sf-qna-detail-toolbar', $html );
+        $this->assertStringNotContainsString( 'data-sf-qna-detail-toolbar', $html );
+        $this->assertStringContainsString( 'sentient-forms-qna-tabs-row', $html );
+        $this->assertStringContainsString( 'data-sf-qna-card-view-actions', $html );
         $this->assertStringContainsString( 'data-sf-qna-expand-all', $html );
+        $this->assertSame( 1, substr_count( $html, 'data-sf-qna-expand-all' ) );
         $this->assertStringContainsString( 'sentient-forms-qna-review-button__label" data-sf-qna-button-label>Expand all', $html );
         $this->assertStringContainsString( 'data-sf-qna-card-toggle', $html );
         $this->assertStringContainsString( 'aria-label="Hide details for What budget range should we plan around?"', $html );
@@ -265,7 +268,9 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertStringContainsString( 'data-sf-qna-density', $html );
         $this->assertStringContainsString( 'data-sf-qna-inactive-label="Compact density"', $html );
         $this->assertStringContainsString( 'data-sf-qna-active-label="Comfortable density"', $html );
+        $this->assertStringContainsString( 'data-sf-qna-card-view-actions', $html );
         $this->assertStringContainsString( 'data-sf-qna-expand-all', $html );
+        $this->assertSame( 1, substr_count( $html, 'data-sf-qna-expand-all' ) );
         $this->assertStringContainsString( 'data-sf-qna-active-label="Collapse all"', $html );
         $this->assertStringContainsString( 'sentient-forms-qna-review-button__label" data-sf-qna-button-label>Expand all', $html );
         $this->assertStringContainsString( 'data-sf-qna-card-toggle', $html );

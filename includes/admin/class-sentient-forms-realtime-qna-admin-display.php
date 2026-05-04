@@ -1164,7 +1164,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             (int) $summary['total_questions'],
             $high_volume ? 'true' : 'false',
             $this->render_panel_header( $summary ),
-            $this->render_view_tabs(),
+            $this->render_view_tabs( $summary ),
             $this->render_cards_view( $summary ),
             $this->render_table_view( $summary ),
             $this->render_json_view( $summary ),
@@ -1324,7 +1324,10 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         );
     }
 
-    private function render_view_tabs(): string
+    /**
+     * @param array<string,mixed> $summary
+     */
+    private function render_view_tabs( array $summary ): string
     {
         $tabs = [
             [ 'cards', __( 'Cards', 'sentient-forms' ), 'cards', true ],
@@ -1351,7 +1354,29 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             $tabs
         );
 
-        return '<div class="sentient-forms-qna-tabs" role="tablist" aria-label="' . esc_attr__( 'Realtime Q&A views', 'sentient-forms' ) . '">' . implode( '', $buttons ) . '</div>';
+        $card_actions = '';
+        if ( (int) $summary['total_questions'] >= 2 )
+        {
+            $card_actions = sprintf(
+                '<div class="sentient-forms-qna-tabs__actions" data-sf-qna-card-view-actions>%s</div>',
+                $this->render_review_toggle_button(
+                    'sentient-forms-qna-review-button--expand',
+                    'data-sf-qna-expand-all',
+                    __( 'Expand all', 'sentient-forms' ),
+                    __( 'Collapse all', 'sentient-forms' ),
+                    'expand',
+                    'collapse',
+                    true
+                )
+            );
+        }
+
+        return sprintf(
+            '<div class="sentient-forms-qna-tabs-row"><div class="sentient-forms-qna-tabs" role="tablist" aria-label="%s">%s</div>%s</div>',
+            esc_attr__( 'Realtime Q&A views', 'sentient-forms' ),
+            implode( '', $buttons ),
+            $card_actions
+        );
     }
 
     /**
@@ -1363,7 +1388,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
 
         return sprintf(
             '<div class="sentient-forms-qna-view" data-sf-qna-view-panel="cards">%s%s</div>',
-            $review_mode ? $this->render_review_toolbar( $summary ) : $this->render_detail_toolbar( $summary ),
+            $review_mode ? $this->render_review_toolbar( $summary ) : '',
             $this->render_question_cards( $summary, $review_mode, true )
         );
     }
@@ -1522,30 +1547,6 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
     /**
      * @param array<string,mixed> $summary
      */
-    private function render_detail_toolbar( array $summary ): string
-    {
-        if ( (int) $summary['total_questions'] < 2 )
-        {
-            return '';
-        }
-
-        return sprintf(
-            '<div class="sentient-forms-qna-detail-toolbar" data-sf-qna-detail-toolbar>%s</div>',
-            $this->render_review_toggle_button(
-                'sentient-forms-qna-review-button--expand',
-                'data-sf-qna-expand-all',
-                __( 'Expand all', 'sentient-forms' ),
-                __( 'Collapse all', 'sentient-forms' ),
-                'expand',
-                'collapse',
-                true
-            )
-        );
-    }
-
-    /**
-     * @param array<string,mixed> $summary
-     */
     private function render_review_toolbar( array $summary ): string
     {
         $filter_buttons = [
@@ -1556,7 +1557,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         ];
 
         return sprintf(
-            '<div class="sentient-forms-qna-review-toolbar" data-sf-qna-review-toolbar><div class="sentient-forms-qna-review-toolbar__summary"><span class="sentient-forms-qna-review-toolbar__label">%s</span><strong>%s</strong><span>%s</span></div><div class="sentient-forms-qna-review-toolbar__controls"><div class="sentient-forms-qna-review-filter" role="group" aria-label="%s">%s</div><label class="sentient-forms-qna-review-field sentient-forms-qna-review-search">%s<span class="screen-reader-text">%s</span><input type="search" data-sf-qna-search-input placeholder="%s" autocomplete="off"></label><label class="sentient-forms-qna-review-field sentient-forms-qna-review-sort">%s<span class="screen-reader-text">%s</span><select data-sf-qna-sort><option value="priority">%s</option><option value="original">%s</option><option value="status">%s</option></select></label>%s%s</div><p class="sentient-forms-qna-review-empty" data-sf-qna-empty-results hidden>%s</p></div>',
+            '<div class="sentient-forms-qna-review-toolbar" data-sf-qna-review-toolbar><div class="sentient-forms-qna-review-toolbar__summary"><span class="sentient-forms-qna-review-toolbar__label">%s</span><strong>%s</strong><span>%s</span></div><div class="sentient-forms-qna-review-toolbar__controls"><div class="sentient-forms-qna-review-filter" role="group" aria-label="%s">%s</div><label class="sentient-forms-qna-review-field sentient-forms-qna-review-search">%s<span class="screen-reader-text">%s</span><input type="search" data-sf-qna-search-input placeholder="%s" autocomplete="off"></label><label class="sentient-forms-qna-review-field sentient-forms-qna-review-sort">%s<span class="screen-reader-text">%s</span><select data-sf-qna-sort><option value="priority">%s</option><option value="original">%s</option><option value="status">%s</option></select></label>%s</div><p class="sentient-forms-qna-review-empty" data-sf-qna-empty-results hidden>%s</p></div>',
             esc_html__( 'Review mode', 'sentient-forms' ),
             esc_html(
                 sprintf(
@@ -1583,15 +1584,6 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
                 __( 'Comfortable density', 'sentient-forms' ),
                 'density',
                 'density'
-            ),
-            $this->render_review_toggle_button(
-                'sentient-forms-qna-review-button--expand',
-                'data-sf-qna-expand-all',
-                __( 'Expand all', 'sentient-forms' ),
-                __( 'Collapse all', 'sentient-forms' ),
-                'expand',
-                'collapse',
-                true
             ),
             esc_html__( 'No questions match the current review filters.', 'sentient-forms' )
         );

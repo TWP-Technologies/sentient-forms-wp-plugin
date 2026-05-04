@@ -196,12 +196,29 @@
 	color: #7a3b00;
 }
 
-.sentient-forms-qna-tabs {
+.sentient-forms-qna-tabs-row {
 	display: flex;
-	gap: 6px;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
 	padding: 10px 16px;
 	border-bottom: 1px solid #dcdcde;
 	background: #fff;
+}
+
+.sentient-forms-qna-tabs {
+	display: flex;
+	gap: 6px;
+}
+
+.sentient-forms-qna-tabs__actions {
+	display: flex;
+	justify-content: flex-end;
+	margin-left: auto;
+}
+
+.sentient-forms-qna-tabs__actions[hidden] {
+	display: none !important;
 }
 
 .sentient-forms-qna-tab {
@@ -237,13 +254,6 @@
 
 .sentient-forms-qna-view {
 	padding: 16px;
-}
-
-.sentient-forms-qna-detail-toolbar {
-	display: flex;
-	justify-content: flex-end;
-	gap: 8px;
-	margin-bottom: 12px;
 }
 
 .sentient-forms-qna-cards {
