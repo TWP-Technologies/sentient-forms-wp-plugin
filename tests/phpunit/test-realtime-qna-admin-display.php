@@ -259,8 +259,10 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertStringContainsString( 'data-sf-qna-active-label="Comfortable density"', $html );
         $this->assertStringContainsString( 'data-sf-qna-expand-all', $html );
         $this->assertStringContainsString( 'data-sf-qna-active-label="Collapse all"', $html );
+        $this->assertStringContainsString( 'sentient-forms-qna-review-button__label" data-sf-qna-button-label>Expand all', $html );
         $this->assertStringContainsString( 'data-sf-qna-card-toggle', $html );
         $this->assertStringContainsString( 'aria-label="Hide details for Synthetic stress question 4?"', $html );
+        $this->assertStringContainsString( 'data-sf-qna-tooltip="Hide details"', $html );
         $this->assertStringContainsString( 'data-sf-qna-icon-active', $html );
         $this->assertStringContainsString( 'data-sf-qna-icon-inactive', $html );
         $this->assertSame( 19, substr_count( $html, 'data-sf-qna-card ' ) );

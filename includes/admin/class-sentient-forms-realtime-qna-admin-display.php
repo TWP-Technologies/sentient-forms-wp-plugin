@@ -1464,8 +1464,9 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             : '';
         $toggle = $review_mode
             ? sprintf(
-                '<button type="button" class="sentient-forms-qna-card__toggle sentient-forms-qna-icon-button" data-sf-qna-card-toggle aria-expanded="true" aria-label="%s" title="%s" data-sf-qna-active-label="%s" data-sf-qna-inactive-label="%s" data-sf-qna-active-aria-label="%s" data-sf-qna-inactive-aria-label="%s" data-sf-qna-active-title="%s" data-sf-qna-inactive-title="%s">%s<span class="screen-reader-text" data-sf-qna-button-label>%s</span></button>',
+                '<button type="button" class="sentient-forms-qna-card__toggle sentient-forms-qna-icon-button" data-sf-qna-card-toggle aria-expanded="true" aria-label="%s" title="%s" data-sf-qna-tooltip="%s" data-sf-qna-active-label="%s" data-sf-qna-inactive-label="%s" data-sf-qna-active-aria-label="%s" data-sf-qna-inactive-aria-label="%s" data-sf-qna-active-title="%s" data-sf-qna-inactive-title="%s">%s<span class="screen-reader-text" data-sf-qna-button-label>%s</span></button>',
                 esc_attr( $this->get_card_toggle_aria_label( $question, true ) ),
+                esc_attr__( 'Hide details', 'sentient-forms' ),
                 esc_attr__( 'Hide details', 'sentient-forms' ),
                 esc_attr__( 'Hide details', 'sentient-forms' ),
                 esc_attr__( 'Show details', 'sentient-forms' ),
@@ -1554,7 +1555,8 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
                 __( 'Expand all', 'sentient-forms' ),
                 __( 'Collapse all', 'sentient-forms' ),
                 'expand',
-                'collapse'
+                'collapse',
+                true
             ),
             esc_html__( 'No questions match the current review filters.', 'sentient-forms' )
         );
@@ -1583,10 +1585,14 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         );
     }
 
-    private function render_review_toggle_button( string $class, string $data_attribute, string $inactive_label, string $active_label, string $inactive_icon, string $active_icon ): string
+    private function render_review_toggle_button( string $class, string $data_attribute, string $inactive_label, string $active_label, string $inactive_icon, string $active_icon, bool $show_label = false ): string
     {
+        $label_class = $show_label
+            ? 'sentient-forms-qna-review-button__label'
+            : 'screen-reader-text';
+
         return sprintf(
-            '<button type="button" class="sentient-forms-qna-review-button sentient-forms-qna-icon-button %s" %s aria-pressed="false" aria-label="%s" title="%s" data-sf-qna-tooltip="%s" data-sf-qna-inactive-label="%s" data-sf-qna-active-label="%s" data-sf-qna-inactive-aria-label="%s" data-sf-qna-active-aria-label="%s" data-sf-qna-inactive-title="%s" data-sf-qna-active-title="%s">%s<span class="screen-reader-text" data-sf-qna-button-label>%s</span></button>',
+            '<button type="button" class="sentient-forms-qna-review-button sentient-forms-qna-icon-button %s" %s aria-pressed="false" aria-label="%s" title="%s" data-sf-qna-tooltip="%s" data-sf-qna-inactive-label="%s" data-sf-qna-active-label="%s" data-sf-qna-inactive-aria-label="%s" data-sf-qna-active-aria-label="%s" data-sf-qna-inactive-title="%s" data-sf-qna-active-title="%s">%s<span class="%s" data-sf-qna-button-label>%s</span></button>',
             esc_attr( $class ),
             esc_attr( $data_attribute ),
             esc_attr( $inactive_label ),
@@ -1599,6 +1605,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             esc_attr( $inactive_label ),
             esc_attr( $active_label ),
             $this->render_icon_state_pair( $active_icon, $inactive_icon, false ),
+            esc_attr( $label_class ),
             esc_html( $inactive_label )
         );
     }

@@ -296,12 +296,29 @@
 
 .sentient-forms-qna-card__toggle {
 	margin-left: auto;
-	width: 28px;
-	height: 28px;
-	min-width: 28px;
-	border-color: transparent;
-	box-shadow: none;
+	width: 32px;
+	height: 32px;
+	min-width: 32px;
+	border-color: #cfd8e3;
+	background: #f8fafc;
+	box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
 	color: #0a4b78;
+}
+
+.sentient-forms-qna-card__toggle:hover {
+	border-color: #8bb7df;
+	background: #eef6fd;
+	box-shadow: 0 2px 5px rgba(16, 24, 40, 0.12);
+}
+
+.sentient-forms-qna-card__toggle[aria-expanded="false"] {
+	color: #42526a;
+}
+
+.sentient-forms-qna-card__toggle .sentient-forms-qna-icon {
+	width: 18px;
+	height: 18px;
+	flex-basis: 18px;
 }
 
 .sentient-forms-qna-card__question {
@@ -517,6 +534,22 @@
 .sentient-forms-qna-review-button {
 	flex: 0 0 34px;
 	white-space: nowrap;
+}
+
+.sentient-forms-qna-review-button--expand {
+	gap: 7px;
+	width: auto;
+	min-width: 104px;
+	flex: 0 0 auto;
+	padding: 0 12px;
+	justify-content: center;
+}
+
+.sentient-forms-qna-review-button__label {
+	color: inherit;
+	font-size: 12px;
+	font-weight: 700;
+	line-height: 1;
 }
 
 .sentient-forms-qna-review-empty {
