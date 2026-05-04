@@ -1557,7 +1557,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         ];
 
         return sprintf(
-            '<div class="sentient-forms-qna-review-toolbar" data-sf-qna-review-toolbar><div class="sentient-forms-qna-review-toolbar__summary"><span class="sentient-forms-qna-review-toolbar__label">%s</span><strong>%s</strong><span>%s</span></div><div class="sentient-forms-qna-review-toolbar__controls"><div class="sentient-forms-qna-review-filter" role="group" aria-label="%s">%s</div><label class="sentient-forms-qna-review-field sentient-forms-qna-review-search">%s<span class="screen-reader-text">%s</span><input type="search" data-sf-qna-search-input placeholder="%s" autocomplete="off"></label><label class="sentient-forms-qna-review-field sentient-forms-qna-review-sort">%s<span class="screen-reader-text">%s</span><select data-sf-qna-sort><option value="priority">%s</option><option value="original">%s</option><option value="status">%s</option></select></label>%s</div><p class="sentient-forms-qna-review-empty" data-sf-qna-empty-results hidden>%s</p></div>',
+            '<div class="sentient-forms-qna-review-toolbar" data-sf-qna-review-toolbar><div class="sentient-forms-qna-review-toolbar__summary"><span class="sentient-forms-qna-review-toolbar__label">%s</span><strong>%s</strong><span>%s</span></div><div class="sentient-forms-qna-review-toolbar__controls"><div class="sentient-forms-qna-review-filter" role="group" aria-label="%s">%s</div><label class="sentient-forms-qna-review-field sentient-forms-qna-review-search">%s<span class="screen-reader-text">%s</span><input type="search" data-sf-qna-search-input placeholder="%s" autocomplete="off"></label><label class="sentient-forms-qna-review-field sentient-forms-qna-review-sort">%s<span class="screen-reader-text">%s</span><select data-sf-qna-sort><option value="priority">%s</option><option value="original">%s</option><option value="status">%s</option></select></label></div><p class="sentient-forms-qna-review-empty" data-sf-qna-empty-results hidden>%s</p></div>',
             esc_html__( 'Review mode', 'sentient-forms' ),
             esc_html(
                 sprintf(
@@ -1577,14 +1577,6 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             esc_html__( 'Priority', 'sentient-forms' ),
             esc_html__( 'Original order', 'sentient-forms' ),
             esc_html__( 'Status', 'sentient-forms' ),
-            $this->render_review_toggle_button(
-                'sentient-forms-qna-review-button--density',
-                'data-sf-qna-density',
-                __( 'Compact density', 'sentient-forms' ),
-                __( 'Comfortable density', 'sentient-forms' ),
-                'density',
-                'density'
-            ),
             esc_html__( 'No questions match the current review filters.', 'sentient-forms' )
         );
     }
@@ -1658,7 +1650,6 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             'chevron-up'    => '<path d="m5.5 12 4.5-4.5 4.5 4.5"></path>',
             'code'          => '<path d="m7.2 6.8-3.2 3.2 3.2 3.2"></path><path d="m12.8 6.8 3.2 3.2-3.2 3.2"></path><path d="m11 5.8-2 8.4"></path>',
             'collapse'      => '<path d="M7.3 4.8v3h-3"></path><path d="m4.4 4.4 3 3"></path><path d="M12.7 15.2v-3h3"></path><path d="m15.6 15.6-3-3"></path>',
-            'density'       => '<path d="M4 6h12"></path><path d="M4 10h12"></path><path d="M4 14h12"></path>',
             'expand'        => '<path d="M7.3 7.8h-3v-3"></path><path d="m4.4 7.6 3-3"></path><path d="M12.7 12.2h3v3"></path><path d="m15.6 12.4-3 3"></path>',
             'list'          => '<path d="M7 5.5h9"></path><path d="M7 10h9"></path><path d="M7 14.5h9"></path><path d="M4 5.5h.01"></path><path d="M4 10h.01"></path><path d="M4 14.5h.01"></path>',
             'message-check' => '<path d="M4.5 5.5A2.5 2.5 0 0 1 7 3h6a2.5 2.5 0 0 1 2.5 2.5v4A2.5 2.5 0 0 1 13 12H9l-4.5 3v-9.5Z"></path><path d="m7.4 7.6 1.5 1.5 3.5-3.5"></path>',

@@ -359,26 +359,6 @@
 	display: none !important;
 }
 
-.sentient-forms-qna-panel.is-compact-density .sentient-forms-qna-cards--review {
-	gap: 8px;
-}
-
-.sentient-forms-qna-panel.is-compact-density .sentient-forms-qna-card--review {
-	padding: 8px 10px;
-}
-
-.sentient-forms-qna-panel.is-compact-density .sentient-forms-qna-card__meta {
-	margin-bottom: 6px;
-}
-
-.sentient-forms-qna-panel.is-compact-density .sentient-forms-qna-card__question {
-	margin-bottom: 6px;
-}
-
-.sentient-forms-qna-panel.is-compact-density .sentient-forms-qna-card__reason {
-	display: none;
-}
-
 .sentient-forms-qna-card__reason,
 .sentient-forms-qna-more,
 .sentient-forms-qna-empty {
@@ -521,7 +501,8 @@
 .sentient-forms-qna-review-sort select {
 	box-sizing: border-box;
 	width: 100%;
-	min-height: 34px;
+	height: 42px;
+	min-height: 42px;
 	margin: 0;
 	border: 1px solid #d8dee7;
 	border-radius: 6px;

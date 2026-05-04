@@ -298,18 +298,6 @@
 			return;
 		}
 
-		var densityButton = closest(event.target, '[data-sf-qna-density]');
-		if (densityButton) {
-			var densityPanel = closest(densityButton, '[data-sf-qna-panel]');
-			if (densityPanel) {
-				var compact = !densityPanel.classList.contains('is-compact-density');
-				densityPanel.classList.toggle('is-compact-density', compact);
-				densityButton.setAttribute('aria-pressed', compact ? 'true' : 'false');
-				setIconButtonState(densityButton, compact);
-			}
-			return;
-		}
-
 		var expandAllButton = closest(event.target, '[data-sf-qna-expand-all]');
 		if (expandAllButton) {
 			var expandPanel = closest(expandAllButton, '[data-sf-qna-panel]');
