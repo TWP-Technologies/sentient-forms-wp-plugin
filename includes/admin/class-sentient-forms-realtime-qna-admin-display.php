@@ -1363,8 +1363,8 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
 
         return sprintf(
             '<div class="sentient-forms-qna-view" data-sf-qna-view-panel="cards">%s%s</div>',
-            $review_mode ? $this->render_review_toolbar( $summary ) : '',
-            $this->render_question_cards( $summary, $review_mode )
+            $review_mode ? $this->render_review_toolbar( $summary ) : $this->render_detail_toolbar( $summary ),
+            $this->render_question_cards( $summary, $review_mode, true )
         );
     }
 
@@ -1396,7 +1396,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
     /**
      * @param array<string,mixed> $summary
      */
-    private function render_question_cards( array $summary, bool $review_mode = false ): string
+    private function render_question_cards( array $summary, bool $review_mode = false, bool $show_detail_controls = false ): string
     {
         if ( empty( $summary['questions'] ) )
         {
@@ -1408,7 +1408,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
 
         $questions = $review_mode ? $this->get_review_questions( $summary ) : $summary['questions'];
         $cards = array_map(
-            fn ( array $question ): string => $this->render_question_card( $question, false, $review_mode ),
+            fn ( array $question ): string => $this->render_question_card( $question, false, $review_mode, $show_detail_controls ),
             $questions
         );
 
@@ -1451,7 +1451,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
     /**
      * @param array<string,mixed> $question
      */
-    private function render_question_card( array $question, bool $compact = false, bool $review_mode = false ): string
+    private function render_question_card( array $question, bool $compact = false, bool $review_mode = false, bool $show_detail_toggle = false ): string
     {
         $answer = '' === $question['answer']
             ? esc_html__( 'Not answered', 'sentient-forms' )
@@ -1462,7 +1462,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         $target = ! $compact && '' !== $question['target_field_id']
             ? sprintf( '<span class="sentient-forms-qna-card__target">%s</span>', esc_html( sprintf( __( 'Field %s', 'sentient-forms' ), $question['target_field_id'] ) ) )
             : '';
-        $toggle = $review_mode
+        $toggle = $show_detail_toggle
             ? sprintf(
                 '<button type="button" class="sentient-forms-qna-card__toggle sentient-forms-qna-icon-button" data-sf-qna-card-toggle aria-expanded="true" aria-label="%s" title="%s" data-sf-qna-tooltip="%s" data-sf-qna-active-label="%s" data-sf-qna-inactive-label="%s" data-sf-qna-active-aria-label="%s" data-sf-qna-inactive-aria-label="%s" data-sf-qna-active-title="%s" data-sf-qna-inactive-title="%s">%s<span class="screen-reader-text" data-sf-qna-button-label>%s</span></button>',
                 esc_attr( $this->get_card_toggle_aria_label( $question, true ) ),
@@ -1478,6 +1478,26 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
                 esc_html__( 'Hide details', 'sentient-forms' )
             )
             : '';
+        $data_attributes = '';
+        if ( $show_detail_toggle )
+        {
+            $data_attributes = sprintf(
+                ' data-sf-qna-card data-sf-qna-status="%s" data-sf-qna-original-index="%d"',
+                esc_attr( $question['status'] ),
+                (int) $question['index']
+            );
+        }
+        if ( $review_mode )
+        {
+            $data_attributes = sprintf(
+                ' data-sf-qna-card data-sf-qna-status="%s" data-sf-qna-required-open="%s" data-sf-qna-priority="%d" data-sf-qna-original-index="%d" data-sf-qna-search="%s"',
+                esc_attr( $question['status'] ),
+                ! empty( $question['required'] ) && empty( $question['has_answer'] ) ? 'true' : 'false',
+                $this->get_question_review_priority( $question ),
+                (int) $question['index'],
+                esc_attr( $this->build_question_search_text( $question ) )
+            );
+        }
         $body   = sprintf(
             '<div class="sentient-forms-qna-card__body" data-sf-qna-card-body><p class="sentient-forms-qna-card__answer">%s</p>%s</div>',
             $answer,
@@ -1488,16 +1508,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             '<article class="sentient-forms-qna-card sentient-forms-qna-card--%s%s"%s><div class="sentient-forms-qna-card__meta"><span class="sentient-forms-qna-status sentient-forms-qna-status--%s">%s</span><span class="sentient-forms-qna-card__action">%s</span>%s%s</div><p class="sentient-forms-qna-card__question">%s</p>%s</article>',
             esc_attr( $question['status'] ),
             $review_mode ? ' sentient-forms-qna-card--review' : '',
-            $review_mode
-                ? sprintf(
-                    ' data-sf-qna-card data-sf-qna-status="%s" data-sf-qna-required-open="%s" data-sf-qna-priority="%d" data-sf-qna-original-index="%d" data-sf-qna-search="%s"',
-                    esc_attr( $question['status'] ),
-                    ! empty( $question['required'] ) && empty( $question['has_answer'] ) ? 'true' : 'false',
-                    $this->get_question_review_priority( $question ),
-                    (int) $question['index'],
-                    esc_attr( $this->build_question_search_text( $question ) )
-                )
-                : '',
+            $data_attributes,
             esc_attr( $question['status'] ),
             esc_html( $this->get_status_label( $question ) ),
             esc_html( $question['action_label'] ),
@@ -1505,6 +1516,30 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             $toggle,
             esc_html( $question['question'] ),
             $body
+        );
+    }
+
+    /**
+     * @param array<string,mixed> $summary
+     */
+    private function render_detail_toolbar( array $summary ): string
+    {
+        if ( (int) $summary['total_questions'] < 2 )
+        {
+            return '';
+        }
+
+        return sprintf(
+            '<div class="sentient-forms-qna-detail-toolbar" data-sf-qna-detail-toolbar>%s</div>',
+            $this->render_review_toggle_button(
+                'sentient-forms-qna-review-button--expand',
+                'data-sf-qna-expand-all',
+                __( 'Expand all', 'sentient-forms' ),
+                __( 'Collapse all', 'sentient-forms' ),
+                'expand',
+                'collapse',
+                true
+            )
         );
     }
 

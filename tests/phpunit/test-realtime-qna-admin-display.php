@@ -225,6 +225,14 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertStringContainsString( 'aria-label="Copy Q&amp;A table"', $html );
         $this->assertStringContainsString( 'aria-label="Download Q&amp;A CSV"', $html );
         $this->assertStringContainsString( "Question\tAnswer\tStatus", $html );
+        $this->assertStringNotContainsString( 'sentient-forms-qna-panel--high-volume', $html );
+        $this->assertStringNotContainsString( 'data-sf-qna-review-toolbar', $html );
+        $this->assertStringContainsString( 'data-sf-qna-detail-toolbar', $html );
+        $this->assertStringContainsString( 'data-sf-qna-expand-all', $html );
+        $this->assertStringContainsString( 'sentient-forms-qna-review-button__label" data-sf-qna-button-label>Expand all', $html );
+        $this->assertStringContainsString( 'data-sf-qna-card-toggle', $html );
+        $this->assertStringContainsString( 'aria-label="Hide details for What budget range should we plan around?"', $html );
+        $this->assertSame( 2, substr_count( $html, 'data-sf-qna-card ' ) );
     }
 
     public function test_entry_detail_high_volume_qna_gets_review_controls_without_losing_questions(): void

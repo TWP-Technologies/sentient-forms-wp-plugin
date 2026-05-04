@@ -245,6 +245,10 @@
 		root.querySelectorAll('[data-sf-qna-panel][data-sf-qna-high-volume="true"]').forEach(initializeReviewPanel);
 	}
 
+	function initializeDetailPanels(root) {
+		root.querySelectorAll('[data-sf-qna-panel]').forEach(updateExpandAllButtonState);
+	}
+
 	function downloadCsv(button, text) {
 		var blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
 		var url = URL.createObjectURL(blob);
@@ -381,8 +385,10 @@
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', function () {
 			initializeReviewPanels(document);
+			initializeDetailPanels(document);
 		});
 	} else {
 		initializeReviewPanels(document);
+		initializeDetailPanels(document);
 	}
 }());

@@ -239,6 +239,13 @@
 	padding: 16px;
 }
 
+.sentient-forms-qna-detail-toolbar {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+
 .sentient-forms-qna-cards {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
