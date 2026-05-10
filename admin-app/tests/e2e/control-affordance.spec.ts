@@ -76,8 +76,18 @@ test.describe('Control affordance normalization', () => {
 				actionDefaultsById: {
 					spam_detection_v1: {
 						include_site_context: 'always',
-						spam_positive_examples: ['Known customer request'],
-						spam_negative_examples: ['Bulk SEO outreach']
+						spam_positive_examples: [
+							{
+								text: 'Known customer request',
+								rationale: 'Existing customers sometimes ask terse follow-up questions.'
+							}
+						],
+						spam_negative_examples: [
+							{
+								text: 'Bulk SEO outreach',
+								rationale: 'Generic agency pitch unrelated to the form purpose.'
+							}
+						]
 					}
 				}
 			},

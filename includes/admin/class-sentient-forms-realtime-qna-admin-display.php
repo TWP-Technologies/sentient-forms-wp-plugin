@@ -102,7 +102,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
 
     public function maybe_prune_storage_columns_for_column_picker(): void
     {
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only page detection; pruning hides an internal storage column from Gravity Forms' picker.
+        // phpcs:disable WordPress.Security.NonceVerification.Recommended -- Read-only page detection; pruning hides an internal storage column from Gravity Forms' picker.
         $gf_page = isset( $_GET['gf_page'] ) && is_scalar( $_GET['gf_page'] )
             ? sanitize_key( wp_unslash( $_GET['gf_page'] ) )
             : '';
@@ -111,8 +111,8 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             return;
         }
 
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only page detection; see note above.
         $form_id = isset( $_GET['id'] ) && is_scalar( $_GET['id'] ) ? absint( wp_unslash( $_GET['id'] ) ) : 0;
+        // phpcs:enable WordPress.Security.NonceVerification.Recommended
         $form    = $this->get_form( $form_id );
         if ( null === $form )
         {
@@ -481,20 +481,22 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             return false;
         }
 
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only admin page detection for scoped asset loading.
+        // phpcs:disable WordPress.Security.NonceVerification.Recommended -- Read-only admin page detection for scoped asset loading.
         $page = isset( $_GET['page'] ) && is_scalar( $_GET['page'] )
             ? sanitize_key( wp_unslash( $_GET['page'] ) )
             : '';
+        // phpcs:enable WordPress.Security.NonceVerification.Recommended
 
         return 'gf_entries' === $page;
     }
 
     private function is_print_entry_request(): bool
     {
-        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only Gravity Forms print page detection.
+        // phpcs:disable WordPress.Security.NonceVerification.Recommended -- Read-only Gravity Forms print page detection.
         $gf_page = isset( $_GET['gf_page'] ) && is_scalar( $_GET['gf_page'] )
             ? sanitize_key( wp_unslash( $_GET['gf_page'] ) )
             : '';
+        // phpcs:enable WordPress.Security.NonceVerification.Recommended
 
         return 'print-entry' === $gf_page;
     }
@@ -1485,7 +1487,16 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             ? sprintf( '<p class="sentient-forms-qna-card__reason">%s</p>', esc_html( $question['reason'] ) )
             : '';
         $target = ! $compact && '' !== $question['target_field_id']
-            ? sprintf( '<span class="sentient-forms-qna-card__target">%s</span>', esc_html( sprintf( __( 'Field %s', 'sentient-forms' ), $question['target_field_id'] ) ) )
+            ? sprintf(
+                '<span class="sentient-forms-qna-card__target">%s</span>',
+                esc_html(
+                    sprintf(
+                        /* translators: %s: Gravity Forms field ID. */
+                        __( 'Field %s', 'sentient-forms' ),
+                        $question['target_field_id']
+                    )
+                )
+            )
             : '';
         $toggle = $show_detail_toggle
             ? sprintf(

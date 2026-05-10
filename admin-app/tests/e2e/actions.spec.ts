@@ -659,6 +659,59 @@ test.describe('Actions admin flows', () => {
 		await expect(builtInCard.getByText(/^Managed$/)).toHaveCount(0);
 	});
 
+	test('shows effective saved global model defaults on action overview cards', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam detection',
+						source: 'bundled',
+						hooks: ['gform_validation'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance,
+				actionDefaultsById: {
+					spam_detection_v1: {
+						model_selection: {
+							primary: '~google/gemini-flash-latest',
+							is_preset: false,
+							provider: 'sentient_managed',
+							reasoning: 'low'
+						}
+					}
+				}
+			},
+			customActions: {
+				list: {
+					actions: [
+						{
+							...baseCustomActions[0],
+							code: 'hello',
+							display_name: 'Hello action',
+							model_hint: 'openrouter/auto'
+						}
+					],
+					quota
+				}
+			}
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		const spamCard = page.getByTestId('actions-built-in-action-spam_detection_v1');
+		await expect(spamCard).toContainText('Default model: ~google/gemini-flash-latest');
+		await expect(spamCard).not.toContainText('Default model: Recommended preset');
+
+		const customCard = page.getByTestId('actions-custom-action-custom-hello');
+		await expect(customCard).toContainText('Default model: Recommended preset');
+	});
+
 	test('surfaces degraded OpenRouter health on overview and form mapping views', async ({
 		page
 	}) => {
@@ -991,8 +1044,18 @@ test.describe('Actions admin flows', () => {
 				actionDefaultsById: {
 					spam_detection_v1: {
 						include_site_context: 'always',
-						spam_positive_examples: ['Known customer request'],
-						spam_negative_examples: ['Bulk SEO outreach']
+						spam_positive_examples: [
+							{
+								text: 'Known customer request',
+								rationale: 'Existing customers sometimes ask terse follow-up questions.'
+							}
+						],
+						spam_negative_examples: [
+							{
+								text: 'Bulk SEO outreach',
+								rationale: 'Generic agency pitch unrelated to the form purpose.'
+							}
+						]
 					}
 				}
 			},
@@ -1005,10 +1068,225 @@ test.describe('Actions admin flows', () => {
 		const modal = page.getByTestId('action-defaults-modal');
 		await expect(modal).toBeVisible();
 		await expect(modal.getByRole('button', { name: /Classification Guidance/i })).toBeVisible();
-		await expect(modal.locator('#new-positive')).toBeVisible();
-		await expect(modal.getByText('Known customer request')).toBeVisible();
-		await expect(modal.getByText('Bulk SEO outreach')).toBeVisible();
+		await expect(modal.locator('#positive-example-0')).toHaveValue('Known customer request');
+		await expect(modal.locator('#positive-rationale-0')).toHaveValue(
+			'Existing customers sometimes ask terse follow-up questions.'
+		);
+		await expect(modal.locator('#negative-example-0')).toHaveValue('Bulk SEO outreach');
+		await expect(modal.locator('#negative-rationale-0')).toHaveValue(
+			'Generic agency pitch unrelated to the form purpose.'
+		);
 		await expect(modal.locator('#action-level-context')).toHaveValue('always');
+	});
+
+	test('saves spam defaults as strict structured config and reloads them', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam detection',
+						source: 'cps',
+						hooks: ['gform_validation'],
+						base_credit_cost: 2,
+						model_hint: 'gemini-1.5-flash'
+					}
+				],
+				status: statusUnknown,
+				creditBalance,
+				actionDefaultsById: {
+					spam_detection_v1: {
+						include_site_context: 'global',
+						spam_positive_examples: [
+							{
+								text: 'Known customer request',
+								rationale: 'Existing customers sometimes ask terse follow-up questions.'
+							}
+						],
+						spam_negative_examples: [
+							{
+								text: 'Bulk SEO outreach',
+								rationale: 'Generic agency pitch unrelated to the form purpose.'
+							}
+						]
+					}
+				}
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+		await page.getByTestId('action-defaults-button-spam_detection_v1').click();
+
+		const modal = page.getByTestId('action-defaults-modal');
+		await expect(modal).toBeVisible();
+		await modal.locator('#positive-example-0').fill('Warranty help for order SF-42.');
+		await modal
+			.locator('#positive-rationale-0')
+			.fill('Specific existing customer support request.');
+		await modal
+			.locator('#negative-example-0')
+			.fill('hey I am interested can you send me a catalog and your phone number');
+		await modal
+			.locator('#negative-rationale-0')
+			.fill('Known vague lead-harvesting pattern for this customer.');
+		await modal
+			.locator('#action-level-customization')
+			.fill('Catalog and phone-number requests are spam for this site.');
+		await expect(modal.getByText(/trusted/i)).toHaveCount(0);
+		await modal.locator('#action-level-spam-notifications').selectOption('enabled');
+		await modal.locator('#action-level-spam-webhooks').selectOption('enabled');
+		await modal.locator('#action-level-context').selectOption('always');
+
+		const saveRequestPromise = page.waitForRequest(
+			(request) =>
+				request.method() === 'POST' && /\/actions\/spam_detection_v1\/defaults$/.test(request.url())
+		);
+		await modal.getByRole('button', { name: 'Save Global Defaults' }).click();
+		const saveRequest = await saveRequestPromise;
+		const payload = saveRequest.postDataJSON() as Record<string, unknown>;
+
+		expect(payload).toMatchObject({
+			include_site_context: 'always',
+			action_customization: 'Catalog and phone-number requests are spam for this site.',
+			suppress_notifications_on_spam: true,
+			suppress_webhooks_on_spam: true
+		});
+		expect(payload.spam_positive_examples).toEqual([
+			{
+				text: 'Warranty help for order SF-42.',
+				rationale: 'Specific existing customer support request.'
+			}
+		]);
+		expect(payload.spam_negative_examples).toEqual([
+			{
+				text: 'hey I am interested can you send me a catalog and your phone number',
+				rationale: 'Known vague lead-harvesting pattern for this customer.'
+			}
+		]);
+
+		await expect(modal).toBeHidden();
+		await page.getByTestId('action-defaults-button-spam_detection_v1').click();
+		await expect(
+			page.getByTestId('action-defaults-modal').locator('#negative-rationale-0')
+		).toHaveValue('Known vague lead-harvesting pattern for this customer.');
+		await expect(
+			page.getByTestId('action-defaults-modal').locator('#action-level-spam-webhooks')
+		).toHaveValue('enabled');
+	});
+
+	test('exposes action customization for non-spam built-in defaults', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'entry_summary_v1',
+						label: 'Entry Summary',
+						source: 'bundled',
+						hooks: ['gform_after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				creditBalance,
+				actionDefaultsById: {
+					entry_summary_v1: {
+						action_customization: 'Start with lead intent and keep the summary concise.'
+					}
+				}
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+		await page.getByTestId('action-defaults-button-entry_summary_v1').click();
+
+		const modal = page.getByTestId('action-defaults-modal');
+		await expect(modal).toBeVisible();
+		await expect(modal.getByLabel('Action customization')).toHaveValue(
+			'Start with lead intent and keep the summary concise.'
+		);
+		await expect(modal.getByText(/trusted/i)).toHaveCount(0);
+		await modal
+			.locator('#action-level-customization')
+			.fill('Mention budget and urgency when either detail is present.');
+
+		const saveRequestPromise = page.waitForRequest(
+			(request) =>
+				request.method() === 'POST' && /\/actions\/entry_summary_v1\/defaults$/.test(request.url())
+		);
+		await modal.getByRole('button', { name: 'Save Global Defaults' }).click();
+		const saveRequest = await saveRequestPromise;
+		const payload = saveRequest.postDataJSON() as Record<string, unknown>;
+		expect(payload.action_customization).toBe(
+			'Mention budget and urgency when either detail is present.'
+		);
+	});
+
+	test('shows inherited action customization in form-level defaults', async ({ page }) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'entry_summary_v1',
+						label: 'Entry Summary',
+						source: 'bundled',
+						hooks: ['gform_after_submission'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				formsActions: [],
+				status: statusUnknown,
+				creditBalance,
+				actionDefaultsById: {
+					entry_summary_v1: {
+						action_customization: 'Global summary rule: lead intent first.'
+					}
+				},
+				formActionConfigById: {
+					entry_summary_v1: {}
+				}
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto(`/#/actions/${formSource}/${formId}`, { waitUntil: 'networkidle' });
+		await page.getByText('Action defaults and library').click();
+		await expect(
+			page.getByText('Configure form-level defaults without moving the execution-order graph.')
+		).toBeVisible();
+		await page
+			.getByRole('listitem')
+			.filter({ hasText: /Entry Summary/ })
+			.getByRole('button', { name: 'Defaults' })
+			.click();
+
+		const modal = page.getByTestId('form-defaults-modal');
+		await expect(modal).toBeVisible();
+		await expect(modal.locator('#form-level-customization')).toHaveAttribute(
+			'placeholder',
+			'Global summary rule: lead intent first.'
+		);
+		await expect(modal.getByText('Inheriting action customization.')).toBeVisible();
+		await expect(modal.getByText(/trusted/i)).toHaveCount(0);
+		await modal
+			.locator('#form-level-customization')
+			.fill('Form summary rule: include budget before urgency.');
+
+		const saveRequestPromise = page.waitForRequest(
+			(request) =>
+				request.method() === 'POST' &&
+				/\/forms\/gravity_forms\/123\/action-config\/entry_summary_v1$/.test(request.url())
+		);
+		await modal.getByRole('button', { name: 'Save Defaults' }).click();
+		const saveRequest = await saveRequestPromise;
+		const payload = saveRequest.postDataJSON() as Record<string, unknown>;
+		expect(payload.action_customization).toBe('Form summary rule: include budget before urgency.');
 	});
 
 	test('creates a built-in action mapping from the drawer', async ({ page }) => {
@@ -1254,7 +1532,7 @@ test.describe('Actions admin flows', () => {
 							auto_upgrade: false
 						}
 					],
-					pricing_policy_version: 'local-openrouter-v1'
+					pricing_policy_version: 'local-openrouter-v2'
 				})
 			})
 		);
@@ -1377,7 +1655,7 @@ test.describe('Actions admin flows', () => {
 		);
 		await expect(drawer.getByTestId('local-builder-execution-mode')).toHaveValue('sync');
 		await expect(drawer.getByTestId('local-builder-spam-result-display')).toHaveValue('spam_only');
-		await drawer.getByTestId('local-builder-spam-result-display').selectOption('entry_note');
+		await drawer.getByTestId('local-builder-spam-result-display').selectOption('all_results');
 		await drawer.getByTestId('local-builder-spam-indicators-display').selectOption('detailed');
 		await drawer.getByTestId('local-builder-action-name').fill('Local drawer spam filter');
 		await drawer.getByRole('button', { name: 'Create Direct OpenRouter action' }).click();
@@ -1437,7 +1715,7 @@ test.describe('Actions admin flows', () => {
 					min_confidence: 0.8,
 					suppress_notifications_on_spam: true,
 					note: {
-						result_display_mode: 'entry_note',
+						result_display_mode: 'all_results',
 						indicators_display: 'detailed'
 					}
 				}
@@ -3492,7 +3770,12 @@ test.describe('Actions admin flows', () => {
 				is_action_enabled_for_form: true,
 				settings: {
 					execution_mode: 'after_submission',
-					spam_positive_examples: ['Known customer request']
+					spam_positive_examples: [
+						{
+							text: 'Known customer request',
+							rationale: 'Existing customers sometimes ask terse follow-up questions.'
+						}
+					]
 				}
 			}
 		];
@@ -3543,7 +3826,7 @@ test.describe('Actions admin flows', () => {
 			'false'
 		);
 		await expect(modal.getByTestId('mapping-section-toggle-model_execution')).toContainText(
-			'Blocking · sf_default'
+			'Blocking · Recommended preset'
 		);
 		await modal.getByTestId('mapping-section-toggle-spam_advanced').click();
 		await expect(modal.getByTestId('mapping-section-toggle-spam_advanced')).toContainText(

@@ -1,4 +1,5 @@
 import type { SentientFormsConfig } from '$lib/api/http';
+import { safeParseFormActionConfigPayload } from '$lib/schemas/action-config';
 import {
 	announceWordPressSessionExpired,
 	isWordPressSessionExpired
@@ -636,7 +637,7 @@ export class SentientFormsApiClient {
 				hookScope
 			});
 			return {
-				authority: 'local_fallback',
+				authority: 'local',
 				authority_reason: 'invalid_request',
 				cps_unreachable: true,
 				policy_version: '2026-02-mixed-sync-async-v1',
@@ -936,9 +937,10 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<FormActionConfig> {
 		const slug = encodeURIComponent(formSourceSlug);
+		const payload = this.validateFormActionConfigPayload(config);
 		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
 			`forms/${slug}/${formId}/action-config/${encodeURIComponent(actionId)}`,
-			{ method: 'POST', body: config, ...options }
+			{ method: 'POST', body: payload, ...options }
 		);
 		return this.unwrap<FormActionConfigResponse>(response).config;
 	}
@@ -990,11 +992,24 @@ export class SentientFormsApiClient {
 		config: Partial<FormActionConfig>,
 		options: RequestOptions = {}
 	): Promise<FormActionConfig> {
+		const payload = this.validateFormActionConfigPayload(config);
 		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
 			`actions/${encodeURIComponent(actionId)}/defaults`,
-			{ method: 'POST', body: config, ...options }
+			{ method: 'POST', body: payload, ...options }
 		);
 		return this.unwrap<FormActionConfigResponse>(response).config;
+	}
+
+	private validateFormActionConfigPayload(config: Partial<FormActionConfig>): Partial<FormActionConfig> {
+		const result = safeParseFormActionConfigPayload(config);
+		if (result.success === false) {
+			const message = result.error.issues
+				.map((issue) => `${issue.path.join('.') || 'config'}: ${issue.message}`)
+				.join('; ');
+			throw new Error(`Invalid action configuration: ${message}`);
+		}
+
+		return result.data as Partial<FormActionConfig>;
 	}
 
 	async getCustomActions(

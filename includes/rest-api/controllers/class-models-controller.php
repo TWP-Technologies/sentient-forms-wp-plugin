@@ -31,6 +31,7 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
 
     private const MANAGED_PROVIDER      = 'sentient_managed';
     private const MANAGED_DEFAULT_MODEL = 'gemini-3-flash-preview';
+    private const PRICING_POLICY_VERSION = 'local-openrouter-v2';
 
     /**
      * Local OpenRouter model metadata cache.
@@ -40,16 +41,27 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
     private Sentient_Forms_Model_Cache_Repository $model_cache;
 
     /**
+     * Local execution-event repository used for estimate calibration.
+     *
+     * @var Sentient_Forms_Execution_Events_Repository
+     */
+    private Sentient_Forms_Execution_Events_Repository $execution_events;
+
+    /**
      * Constructor.
      *
      * @param Sentient_Forms_Model_Cache_Repository|null $model_cache Optional repository for tests.
      */
-    public function __construct( ?Sentient_Forms_Model_Cache_Repository $model_cache = null )
+    public function __construct(
+        ?Sentient_Forms_Model_Cache_Repository $model_cache = null,
+        ?Sentient_Forms_Execution_Events_Repository $execution_events = null
+    )
     {
         parent::__construct();
 
         global $wpdb;
-        $this->model_cache = $model_cache ?? new Sentient_Forms_Model_Cache_Repository( $wpdb );
+        $this->model_cache      = $model_cache ?? new Sentient_Forms_Model_Cache_Repository( $wpdb );
+        $this->execution_events = $execution_events ?? new Sentient_Forms_Execution_Events_Repository( $wpdb );
     }
 
     /**
@@ -173,7 +185,7 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             [
                 'models'                 => array_values( $models ),
                 'presets'                => $this->build_presets( $models ),
-                'pricing_policy_version' => 'local-openrouter-v1',
+                'pricing_policy_version' => self::PRICING_POLICY_VERSION,
             ]
         );
     }
@@ -233,7 +245,8 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
                     (string) $resolution['model_id'],
                     $model,
                     $provider,
-                    $base
+                    $base,
+                    $selection_payload
                 ),
             ]
         );
@@ -262,10 +275,23 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
         return 'openrouter';
     }
 
-    private function build_pricing_estimate( string $action_id, string $model_id, ?array $model, string $provider, int $base_credits ): array
+    private function build_pricing_estimate( string $action_id, string $model_id, ?array $model, string $provider, int $base_credits, array $selection_payload = [] ): array
     {
+        $profile            = $this->action_cost_profile( $action_id );
+        $effective_selection = $this->effective_model_selection( $selection_payload );
+        $reasoning_effort   = $this->selected_reasoning_effort( $effective_selection );
+        $input_tokens       = absint( $profile['input_tokens'] );
+        $output_tokens      = absint( $profile['output_tokens'] );
+        $reasoning_tokens   = $this->estimated_reasoning_tokens( absint( $profile['reasoning_tokens'] ), $reasoning_effort );
+
         if ( self::MANAGED_PROVIDER === $provider )
         {
+            $base_floor_credits        = max( 1, $base_credits, absint( $profile['base_credits'] ) );
+            $normalized_actual_credits = $this->managed_credit_baseline( $model_id, $input_tokens + $output_tokens + $reasoning_tokens, absint( $profile['credit_weight'] ) );
+            $estimated_debit_credits   = max( $base_floor_credits, $normalized_actual_credits );
+            $calibration               = $this->calibrate_credit_estimate( $model_id, $estimated_debit_credits );
+            $estimated_debit_credits   = max( 1, (int) round( $calibration['estimate'] ) );
+
             return [
                 'action_id'                 => $action_id,
                 'resolved_model_id'         => $model_id,
@@ -274,39 +300,68 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
                 'label'                     => sprintf(
                     /* translators: %d: Sentient Forms managed service credit estimate. */
                     __( 'SF: %d credits', 'sentient-forms' ),
-                    $base_credits
+                    $estimated_debit_credits
                 ),
-                'base_floor_credits'        => $base_credits,
-                'normalized_actual_credits' => $base_credits,
-                'estimated_debit_credits'   => $base_credits,
-                'pricing_policy_version'    => 'local-openrouter-v1',
-                'estimate_source'           => 'sentient_managed_route',
+                'amount_usd'                => null,
+                'estimate_range'            => [
+                    'low'  => max( 1, (int) floor( $calibration['low'] ) ),
+                    'high' => max( 1, (int) ceil( $calibration['high'] ) ),
+                    'unit' => 'credits',
+                ],
+                'estimated_input_tokens'    => $input_tokens,
+                'estimated_output_tokens'   => $output_tokens,
+                'estimated_reasoning_tokens' => $reasoning_tokens,
+                'sample_count'              => $calibration['sample_count'],
+                'confidence'                => $calibration['confidence'],
+                'calibration_source'        => $calibration['source'],
+                'base_floor_credits'        => $base_floor_credits,
+                'normalized_actual_credits' => $normalized_actual_credits,
+                'estimated_debit_credits'   => $estimated_debit_credits,
+                'pricing_policy_version'    => self::PRICING_POLICY_VERSION,
+                'estimate_source'           => $calibration['source'],
             ];
         }
 
-        $pricing = is_array( $model['pricing'] ?? null ) ? $model['pricing'] : [];
+        $pricing = is_array( $model ) && is_array( $model['pricing'] ?? null ) ? $model['pricing'] : [];
         $is_free = is_array( $model ) && ( 'free' === (string) ( $model['cost_tier'] ?? '' ) || 'Free' === (string) ( $model['cost_symbol'] ?? '' ) );
 
         if ( $is_free )
         {
             $kind  = 'openrouter_free';
-            $label = __( 'OR Free', 'sentient-forms' );
-        }
-        elseif ( [] === $pricing || (float) ( $pricing['prompt'] ?? -1 ) < 0 || (float) ( $pricing['completion'] ?? -1 ) < 0 )
-        {
-            $kind  = 'openrouter_variable';
-            $label = __( 'OR: varies', 'sentient-forms' );
+            $amount_usd = 0.0;
         }
         else
         {
-            $kind       = 'openrouter_currency';
-            $input_m    = (float) ( $pricing['prompt'] ?? 0 ) * 1000000;
-            $output_m   = (float) ( $pricing['completion'] ?? 0 ) * 1000000;
-            $label      = sprintf(
-                /* translators: 1: input token dollars per million, 2: output token dollars per million. */
-                __( 'OR: $%1$s/$%2$s per 1M', 'sentient-forms' ),
-                $this->format_usd_amount( $input_m ),
-                $this->format_usd_amount( $output_m )
+            $pricing_is_known = [] !== $pricing && (float) ( $pricing['prompt'] ?? -1 ) >= 0 && (float) ( $pricing['completion'] ?? -1 ) >= 0;
+            if ( ! $pricing_is_known )
+            {
+                $pricing = $this->fallback_catalog_pricing();
+                $kind    = 'openrouter_variable';
+            }
+            else
+            {
+                $kind = 'openrouter_currency';
+            }
+
+            $amount_usd = $this->estimate_openrouter_amount_usd( $pricing, $input_tokens, $output_tokens, $reasoning_tokens );
+        }
+
+        $calibration = $this->calibrate_usd_estimate( $model_id, $pricing, $amount_usd );
+        $amount_usd  = (float) $calibration['estimate'];
+        $label       = 'openrouter_free' === $kind
+            ? __( 'OR est. $0.00', 'sentient-forms' )
+            : sprintf(
+                /* translators: %s: OpenRouter provider dollar estimate. */
+                __( 'OR est. %s', 'sentient-forms' ),
+                $this->format_usd_estimate( $amount_usd )
+            );
+
+        if ( 'openrouter_variable' === $kind && $calibration['sample_count'] <= 0 )
+        {
+            $label = sprintf(
+                /* translators: %s: OpenRouter provider dollar estimate. */
+                __( 'OR est. %s baseline', 'sentient-forms' ),
+                $this->format_usd_estimate( $amount_usd )
             );
         }
 
@@ -316,14 +371,380 @@ class Sentient_Forms_Models_Controller extends Abstract_Sentient_Forms_Base_Cont
             'route'                     => 'openrouter',
             'kind'                      => $kind,
             'label'                     => $label,
-            'amount_usd'                => null,
+            'amount_usd'                => $amount_usd,
+            'estimate_range'            => [
+                'low'      => $calibration['low'],
+                'high'     => $calibration['high'],
+                'currency' => 'USD',
+                'unit'     => 'usd',
+            ],
+            'estimated_input_tokens'    => $input_tokens,
+            'estimated_output_tokens'   => $output_tokens,
+            'estimated_reasoning_tokens' => $reasoning_tokens,
+            'sample_count'              => $calibration['sample_count'],
+            'confidence'                => $calibration['confidence'],
+            'calibration_source'        => $calibration['source'],
             'provider_pricing'          => $this->sanitize_pricing_map( $pricing ),
             'base_floor_credits'        => $base_credits,
             'normalized_actual_credits' => 0,
             'estimated_debit_credits'   => 0,
-            'pricing_policy_version'    => 'local-openrouter-v1',
-            'estimate_source'           => 'openrouter_direct_route',
+            'pricing_policy_version'    => self::PRICING_POLICY_VERSION,
+            'estimate_source'           => $calibration['source'],
         ];
+    }
+
+    private function action_cost_profile( string $action_id ): array
+    {
+        $action_id = sanitize_key( $action_id );
+        $profiles  = [
+            'spam_detection_v1'          => [ 'input_tokens' => 1800, 'output_tokens' => 90, 'reasoning_tokens' => 700, 'base_credits' => 1, 'credit_weight' => 1 ],
+            'spam_analysis'              => [ 'input_tokens' => 1800, 'output_tokens' => 90, 'reasoning_tokens' => 700, 'base_credits' => 1, 'credit_weight' => 1 ],
+            'content_validation_v1'      => [ 'input_tokens' => 2200, 'output_tokens' => 260, 'reasoning_tokens' => 900, 'base_credits' => 2, 'credit_weight' => 2 ],
+            'entry_summary_v1'           => [ 'input_tokens' => 1900, 'output_tokens' => 320, 'reasoning_tokens' => 500, 'base_credits' => 1, 'credit_weight' => 1 ],
+            'entry_summary'              => [ 'input_tokens' => 1900, 'output_tokens' => 320, 'reasoning_tokens' => 500, 'base_credits' => 1, 'credit_weight' => 1 ],
+            'clarification_assistant_v1' => [ 'input_tokens' => 1700, 'output_tokens' => 420, 'reasoning_tokens' => 500, 'base_credits' => 1, 'credit_weight' => 1 ],
+        ];
+
+        return $profiles[ $action_id ] ?? [ 'input_tokens' => 2000, 'output_tokens' => 300, 'reasoning_tokens' => 600, 'base_credits' => 1, 'credit_weight' => 1 ];
+    }
+
+    private function effective_model_selection( array $selection_payload ): array
+    {
+        foreach ( [ 'mapping_selection', 'form_selection', 'action_selection', 'global_selection' ] as $key )
+        {
+            $selection = $selection_payload[ $key ] ?? null;
+            if ( is_array( $selection ) && isset( $selection['primary'] ) )
+            {
+                return $selection;
+            }
+        }
+
+        return [];
+    }
+
+    private function selected_reasoning_effort( array $selection ): string
+    {
+        $effort = isset( $selection['reasoning'] ) && is_scalar( $selection['reasoning'] )
+            ? sanitize_key( (string) $selection['reasoning'] )
+            : 'default';
+
+        return in_array( $effort, [ 'none', 'minimal', 'low', 'medium', 'high', 'xhigh' ], true )
+            ? $effort
+            : 'default';
+    }
+
+    private function estimated_reasoning_tokens( int $basis, string $effort ): int
+    {
+        $ratio = match ( $effort ) {
+            'none'    => 0.0,
+            'minimal' => 0.10,
+            'low'     => 0.20,
+            'medium'  => 0.50,
+            'high'    => 0.80,
+            'xhigh'   => 0.95,
+            default   => 0.0,
+        };
+
+        return (int) ceil( max( 0, $basis ) * $ratio );
+    }
+
+    private function managed_credit_baseline( string $model_id, int $estimated_tokens, int $action_weight ): int
+    {
+        $token_blocks = max( 1, (int) ceil( max( 1, $estimated_tokens ) / 1600 ) );
+        $model_rate   = $this->managed_model_credit_rate( $model_id );
+
+        return max( 1, $token_blocks * $model_rate * max( 1, $action_weight ) );
+    }
+
+    private function managed_model_credit_rate( string $model_id ): int
+    {
+        $model_id = strtolower( $model_id );
+        if ( str_contains( $model_id, 'opus' ) || str_contains( $model_id, 'pro' ) )
+        {
+            return 3;
+        }
+
+        if ( str_contains( $model_id, 'sonnet' ) || str_contains( $model_id, 'gpt-5.5' ) )
+        {
+            return 2;
+        }
+
+        return 1;
+    }
+
+    private function estimate_openrouter_amount_usd( array $pricing, int $input_tokens, int $output_tokens, int $reasoning_tokens ): float
+    {
+        $prompt_price     = max( 0.0, (float) ( $pricing['prompt'] ?? 0 ) );
+        $completion_price = max( 0.0, (float) ( $pricing['completion'] ?? 0 ) );
+        $request_price    = max( 0.0, (float) ( $pricing['request'] ?? 0 ) );
+        $reasoning_price  = isset( $pricing['internal_reasoning'] )
+            ? max( 0.0, (float) $pricing['internal_reasoning'] )
+            : $completion_price;
+
+        return round(
+            ( max( 0, $input_tokens ) * $prompt_price )
+            + ( max( 0, $output_tokens ) * $completion_price )
+            + ( max( 0, $reasoning_tokens ) * $reasoning_price )
+            + $request_price,
+            8
+        );
+    }
+
+    private function fallback_catalog_pricing(): array
+    {
+        $prompt_prices     = [];
+        $completion_prices = [];
+
+        foreach ( $this->list_local_openrouter_models() as $model )
+        {
+            $pricing = is_array( $model['pricing'] ?? null ) ? $model['pricing'] : [];
+            $prompt  = (float) ( $pricing['prompt'] ?? -1 );
+            $output  = (float) ( $pricing['completion'] ?? -1 );
+            if ( $prompt > 0 && $output > 0 )
+            {
+                $prompt_prices[]     = $prompt;
+                $completion_prices[] = $output;
+            }
+        }
+
+        return [
+            'prompt'     => (string) ( $this->median_float( $prompt_prices ) ?? 0.000001 ),
+            'completion' => (string) ( $this->median_float( $completion_prices ) ?? 0.000003 ),
+            'request'    => '0',
+        ];
+    }
+
+    private function median_float( array $values ): ?float
+    {
+        $values = array_values(
+            array_filter(
+                array_map( 'floatval', $values ),
+                static fn ( float $value ): bool => $value >= 0
+            )
+        );
+        if ( [] === $values )
+        {
+            return null;
+        }
+
+        sort( $values, SORT_NUMERIC );
+        $count  = count( $values );
+        $middle = intdiv( $count, 2 );
+
+        return 0 === $count % 2
+            ? ( $values[ $middle - 1 ] + $values[ $middle ] ) / 2
+            : $values[ $middle ];
+    }
+
+    private function calibrate_usd_estimate( string $model_id, array $pricing, float $baseline ): array
+    {
+        if ( $baseline <= 0 )
+        {
+            return $this->estimate_calibration_payload( 0.0, 0.0, 0.0, 0, 'baseline', 'baseline_profile' );
+        }
+
+        $ratios = [];
+        foreach ( array_reverse( $this->execution_events->list_recent_for_action_log( 500 ) ) as $event )
+        {
+            if ( ! $this->event_matches_estimate_route( $event, 'openrouter', $model_id ) )
+            {
+                continue;
+            }
+
+            $actual = $this->extract_event_usd_cost( $event );
+            if ( null === $actual )
+            {
+                continue;
+            }
+
+            $event_tokens   = is_array( $event['token_usage_json'] ?? null ) ? $event['token_usage_json'] : [];
+            $event_baseline = $this->estimate_openrouter_amount_usd(
+                $pricing,
+                $this->token_count_from_usage( $event_tokens, [ 'input_tokens', 'prompt_tokens', 'tokens_prompt', 'native_tokens_prompt' ] ),
+                $this->token_count_from_usage( $event_tokens, [ 'output_tokens', 'completion_tokens', 'tokens_completion', 'native_tokens_completion' ] ),
+                $this->reasoning_token_count_from_usage( $event_tokens )
+            );
+            $denominator = $event_baseline > 0 ? $event_baseline : $baseline;
+            if ( $denominator <= 0 )
+            {
+                continue;
+            }
+
+            $ratios[] = max( 0.25, min( 4.0, $actual / $denominator ) );
+        }
+
+        return $this->calibrate_with_ratios( $baseline, $ratios, 'action_log_openrouter_cost' );
+    }
+
+    private function calibrate_credit_estimate( string $model_id, int $baseline ): array
+    {
+        $ratios = [];
+        foreach ( array_reverse( $this->execution_events->list_recent_for_action_log( 500 ) ) as $event )
+        {
+            if ( ! $this->event_matches_estimate_route( $event, self::MANAGED_PROVIDER, $model_id ) )
+            {
+                continue;
+            }
+
+            $actual = $this->extract_event_credit_cost( $event );
+            if ( null === $actual || $actual <= 0 )
+            {
+                continue;
+            }
+
+            $ratios[] = max( 0.25, min( 4.0, $actual / max( 1, $baseline ) ) );
+        }
+
+        return $this->calibrate_with_ratios( (float) max( 1, $baseline ), $ratios, 'action_log_managed_credits' );
+    }
+
+    private function calibrate_with_ratios( float $baseline, array $ratios, string $source ): array
+    {
+        $count = count( $ratios );
+        if ( 0 === $count )
+        {
+            $spread = max( 0.01, $baseline * 0.35 );
+            return $this->estimate_calibration_payload( $baseline, max( 0.0, $baseline - $spread ), $baseline + $spread, 0, 'baseline', 'baseline_profile' );
+        }
+
+        $ewma = 1.0;
+        foreach ( $ratios as $ratio )
+        {
+            $ewma = ( 0.35 * (float) $ratio ) + ( 0.65 * $ewma );
+        }
+
+        $shrinkage = $count / ( $count + 6 );
+        $factor    = 1 + ( $shrinkage * ( $ewma - 1 ) );
+        $estimate  = max( 0.0, $baseline * $factor );
+        $spread    = max( 0.01, $estimate * ( $count >= 8 ? 0.18 : 0.28 ) );
+
+        return $this->estimate_calibration_payload(
+            $estimate,
+            max( 0.0, $estimate - $spread ),
+            $estimate + $spread,
+            $count,
+            $this->confidence_for_sample_count( $count ),
+            $source
+        );
+    }
+
+    private function estimate_calibration_payload( float $estimate, float $low, float $high, int $sample_count, string $confidence, string $source ): array
+    {
+        return [
+            'estimate'     => round( $estimate, 8 ),
+            'low'          => round( $low, 8 ),
+            'high'         => round( $high, 8 ),
+            'sample_count' => $sample_count,
+            'confidence'   => $confidence,
+            'source'       => $source,
+        ];
+    }
+
+    private function confidence_for_sample_count( int $sample_count ): string
+    {
+        if ( $sample_count >= 20 )
+        {
+            return 'high';
+        }
+
+        if ( $sample_count >= 8 )
+        {
+            return 'medium';
+        }
+
+        return 'low';
+    }
+
+    private function event_matches_estimate_route( array $event, string $provider, string $model_id ): bool
+    {
+        $status = sanitize_key( (string) ( $event['status'] ?? '' ) );
+        if ( ! in_array( $status, [ 'succeeded', 'success', 'completed' ], true ) )
+        {
+            return false;
+        }
+
+        if ( sanitize_key( (string) ( $event['provider'] ?? '' ) ) !== $provider )
+        {
+            return false;
+        }
+
+        $event_model = isset( $event['model'] ) && is_scalar( $event['model'] ) ? (string) $event['model'] : '';
+        return '' === $event_model || 'openrouter/auto' === $model_id || $event_model === $model_id;
+    }
+
+    private function extract_event_usd_cost( array $event ): ?float
+    {
+        $cost = is_array( $event['cost_json'] ?? null ) ? $event['cost_json'] : [];
+        if ( isset( $cost['amount_usd'] ) && is_numeric( $cost['amount_usd'] ) )
+        {
+            return max( 0.0, (float) $cost['amount_usd'] );
+        }
+
+        return null;
+    }
+
+    private function extract_event_credit_cost( array $event ): ?int
+    {
+        $cost = is_array( $event['cost_json'] ?? null ) ? $event['cost_json'] : [];
+        if ( isset( $cost['debited_credits'] ) && is_numeric( $cost['debited_credits'] ) )
+        {
+            return absint( $cost['debited_credits'] );
+        }
+
+        $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
+        if ( isset( $result['metering']['debited_credits'] ) && is_numeric( $result['metering']['debited_credits'] ) )
+        {
+            return absint( $result['metering']['debited_credits'] );
+        }
+
+        return null;
+    }
+
+    private function token_count_from_usage( array $usage, array $keys ): int
+    {
+        foreach ( $keys as $key )
+        {
+            if ( isset( $usage[ $key ] ) && is_numeric( $usage[ $key ] ) )
+            {
+                return max( 0, (int) $usage[ $key ] );
+            }
+        }
+
+        return 0;
+    }
+
+    private function reasoning_token_count_from_usage( array $usage ): int
+    {
+        if ( isset( $usage['native_tokens_reasoning'] ) && is_numeric( $usage['native_tokens_reasoning'] ) )
+        {
+            return max( 0, (int) $usage['native_tokens_reasoning'] );
+        }
+
+        foreach ( [ 'output_tokens_details', 'completion_tokens_details' ] as $details_key )
+        {
+            $details = is_array( $usage[ $details_key ] ?? null ) ? $usage[ $details_key ] : [];
+            if ( isset( $details['reasoning_tokens'] ) && is_numeric( $details['reasoning_tokens'] ) )
+            {
+                return max( 0, (int) $details['reasoning_tokens'] );
+            }
+        }
+
+        return 0;
+    }
+
+    private function format_usd_estimate( float $amount ): string
+    {
+        if ( $amount <= 0 )
+        {
+            return '$0.00';
+        }
+
+        if ( $amount < 0.01 )
+        {
+            return '$' . rtrim( rtrim( number_format_i18n( $amount, 6 ), '0' ), '.' );
+        }
+
+        return '$' . rtrim( rtrim( number_format_i18n( $amount, 4 ), '0' ), '.' );
     }
 
     private function format_usd_amount( float $amount ): string

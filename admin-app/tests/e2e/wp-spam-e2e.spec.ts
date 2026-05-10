@@ -195,11 +195,11 @@ test.describe('Gravity Forms spam e2e @spam-e2e', () => {
 			async: true,
 			rejectSubmission: false,
 			markAsSpam: true,
-			executionPriority: 10,
-			additionalSettings: {
-				spam_result_display_mode: 'entry_note',
-				spam_indicators_display: 'detailed'
-			}
+				executionPriority: 10,
+				additionalSettings: {
+					spam_result_display_mode: 'all_results',
+					spam_indicators_display: 'detailed'
+				}
 		});
 		const proxyKey = ensureCpsSeeded();
 		ensureCreditBalanceAtLeast(20);

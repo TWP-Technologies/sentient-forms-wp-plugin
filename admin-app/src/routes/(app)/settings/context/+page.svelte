@@ -1,238 +1,191 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Section, Card, Button, Alert, Toggle, StateTemplate } from '$lib/components/ui';
-	import { wpFetch } from '$lib/wp';
+	import {
+		Alert,
+		Badge,
+		Button,
+		Card,
+		ModelSelector,
+		Section,
+		StateTemplate,
+		Toggle
+	} from '$lib/components/ui';
+	import type {
+		ModelSelection,
+		SiteContextStatusResponse,
+		SiteContextUpdateRequest
+	} from '$lib/api/types';
 	import { notifications } from '$lib/stores/notifications';
 	import {
-		canConfirmSiteContextRegeneration,
-		resolveSiteContextRegenerationMode
-	} from '$lib/utils/site-context-refresh';
+		DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
+		DEFAULT_SITE_CONTEXT_REFRESH_DAYS,
+		SITE_CONTEXT_REFRESH_DAY_OPTIONS,
+		normalizeSiteContextResponse,
+		siteContextStatusLabel
+	} from '$lib/utils/site-context';
+	import { wpFetch } from '$lib/wp';
 
-	/**
-	 * Site Context Management Page (CB-SA-001)
-	 * Allows webmasters to generate, view, and edit their site context summary
-	 * for personalized spam detection.
-	 */
-	// CB-SA-006: Context length guard thresholds
 	const CONTEXT_SOFT_LIMIT = 2000;
 	const CONTEXT_WARN_LIMIT = 4500;
 	const CONTEXT_HARD_LIMIT = 5000;
 
-	interface SiteContext {
-		id: string;
-		license_id: string;
-		summary_text: string;
-		source: string;
-		auto_include: boolean;
-		pii_ack: boolean;
-		free_refresh_available: boolean;
-		next_free_refresh_at: string | null;
-		created_at: string;
-		updated_at: string;
-	}
-
-	type SiteContextResponse =
-		| SiteContext
-		| null
-		| {
-				context?: SiteContext | null;
-				data?: SiteContext | null;
-		  };
-
 	let loading = $state(true);
 	let saving = $state(false);
 	let generating = $state(false);
-	let context = $state<SiteContext | null>(null);
+	let withdrawing = $state(false);
+	let error = $state<string | null>(null);
+	let status = $state<SiteContextStatusResponse | null>(null);
 	let editedText = $state('');
 	let autoInclude = $state(true);
-	let piiAck = $state(false);
-	let error = $state<string | null>(null);
-	let showPiiWarning = $state(false);
-	let showRegenConfirm = $state(false);
+	let generationConsent = $state(false);
+	let autoRefreshEnabled = $state(false);
+	let autoRefreshDays = $state(DEFAULT_SITE_CONTEXT_REFRESH_DAYS);
+	let generationModelSelection = $state<ModelSelection>(DEFAULT_SITE_CONTEXT_MODEL_SELECTION);
+	let showWithdrawConfirm = $state(false);
 
-	function normalizeSiteContextResponse(response: SiteContextResponse): SiteContext | null {
-		if (!response) {
-			return null;
-		}
+	const characterCount = $derived(editedText.length);
+	const isOverLimit = $derived(characterCount > CONTEXT_HARD_LIMIT);
+	const limitPercent = $derived(Math.min((characterCount / CONTEXT_HARD_LIMIT) * 100, 100));
+	const hasContext = $derived(Boolean(status?.has_context));
+	const statusLabel = $derived(status ? siteContextStatusLabel(status) : 'Loading');
+	const canGenerate = $derived(generationConsent && !generating);
+	const canWithdraw = $derived(status?.settings.consent_status === 'granted' || hasContext);
+	const hasChanges = $derived.by(() => {
+		if (!status) return false;
+		const context = status.context;
+		return (
+			editedText !== (context?.summary_text ?? '') ||
+			autoInclude !== (context?.auto_include ?? true) ||
+			generationConsent !== (status.settings.consent_status === 'granted') ||
+			autoRefreshEnabled !== status.settings.auto_refresh_enabled ||
+			autoRefreshDays !== status.settings.auto_refresh_days ||
+			JSON.stringify(generationModelSelection) !==
+				JSON.stringify(status.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION)
+		);
+	});
 
-		if ('summary_text' in response) {
-			return response;
-		}
-
-		if ('context' in response) {
-			return response.context ?? null;
-		}
-
-		if ('data' in response) {
-			return response.data ?? null;
-		}
-
-		return null;
+	function syncFromStatus(next: SiteContextStatusResponse): void {
+		status = next;
+		editedText = next.context?.summary_text ?? '';
+		autoInclude = next.context?.auto_include ?? true;
+		generationConsent = next.settings.consent_status === 'granted';
+		autoRefreshEnabled = next.settings.auto_refresh_enabled;
+		autoRefreshDays = next.settings.auto_refresh_days || DEFAULT_SITE_CONTEXT_REFRESH_DAYS;
+		generationModelSelection =
+			next.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION;
 	}
 
-	async function loadContext() {
+	async function loadContext(): Promise<void> {
 		loading = true;
 		error = null;
 		try {
-			const response = normalizeSiteContextResponse(await wpFetch<SiteContextResponse>('site-context'));
-			context = response;
-			if (context) {
-				editedText = context.summary_text;
-				autoInclude = context.auto_include;
-				piiAck = context.pii_ack;
-			} else {
-				editedText = '';
-				autoInclude = true;
-			}
+			syncFromStatus(
+				normalizeSiteContextResponse(await wpFetch<SiteContextStatusResponse>('site-context'))
+			);
 		} catch (e) {
-			console.error('Failed to load site context', e);
-			error = e instanceof Error ? e.message : 'Failed to load site context';
+			console.error('Failed to load Site Context', e);
+			error = e instanceof Error ? e.message : 'Failed to load Site Context';
 		} finally {
 			loading = false;
 		}
 	}
 
-	/** Prompt user for regeneration confirmation. */
-	function promptRegenerate() {
-		if (!piiAck) {
-			showPiiWarning = true;
-			return;
-		}
-		showRegenConfirm = true;
+	function buildSettingsPayload(): SiteContextUpdateRequest {
+		return {
+			summary_text: editedText,
+			auto_include: autoInclude,
+			pii_ack: true,
+			consent_status: generationConsent ? 'granted' : 'unset',
+			auto_refresh_enabled: generationConsent && autoRefreshEnabled,
+			auto_refresh_days: autoRefreshDays,
+			generation_model_selection: generationModelSelection
+		};
 	}
 
-	async function generateContext() {
-		if (!piiAck) {
-			showPiiWarning = true;
-			return;
-		}
-		showPiiWarning = false;
-		showRegenConfirm = false;
-		generating = true;
-		error = null;
-		try {
-			const response = await wpFetch<SiteContext>('site-context', {
-				method: 'POST',
-				body: JSON.stringify({ pii_ack: piiAck })
-			});
-			if (response) {
-				context = response;
-				editedText = context.summary_text;
-				autoInclude = context.auto_include;
-				notifications.success('Site context generated');
-			}
-		} catch (e) {
-			console.error('Failed to generate site context', e);
-			error = e instanceof Error ? e.message : 'Failed to generate site context';
-		} finally {
-			generating = false;
-		}
-	}
-
-	async function saveContext() {
+	async function saveContext(): Promise<void> {
 		saving = true;
 		error = null;
 		try {
-			const response = await wpFetch<SiteContext>('site-context', {
+			const response = await wpFetch<SiteContextStatusResponse>('site-context', {
 				method: 'PUT',
-				body: JSON.stringify({
-					summary_text: editedText,
-					auto_include: autoInclude,
-					pii_ack: piiAck
-				})
+				body: JSON.stringify(buildSettingsPayload())
 			});
-			if (response) {
-				context = response;
-				notifications.success('Site context saved');
-			}
+			syncFromStatus(normalizeSiteContextResponse(response));
+			notifications.success('Site Context saved');
 		} catch (e) {
-			console.error('Failed to save site context', e);
-			error = e instanceof Error ? e.message : 'Failed to save site context';
+			console.error('Failed to save Site Context', e);
+			error = e instanceof Error ? e.message : 'Failed to save Site Context';
 		} finally {
 			saving = false;
 		}
 	}
 
-	function confirmPii() {
-		piiAck = true;
-		showPiiWarning = false;
+	async function generateContext(): Promise<void> {
+		if (!generationConsent) {
+			notifications.warning('Allow AI-generated Site Context before generating.');
+			return;
+		}
+		generating = true;
+		error = null;
+		try {
+			const response = await wpFetch<SiteContextStatusResponse>('site-context/generate', {
+				method: 'POST',
+				body: JSON.stringify(buildSettingsPayload())
+			});
+			syncFromStatus(normalizeSiteContextResponse(response));
+			notifications.success('Site Context generated');
+		} catch (e) {
+			console.error('Failed to generate Site Context', e);
+			error = e instanceof Error ? e.message : 'Failed to generate Site Context';
+		} finally {
+			generating = false;
+		}
 	}
 
-	const characterCount = $derived(editedText?.length ?? 0);
-	const isOverLimit = $derived(characterCount > CONTEXT_HARD_LIMIT);
-	const limitPercent = $derived(Math.min((characterCount / CONTEXT_HARD_LIMIT) * 100, 100));
-	const hasChanges = $derived(
-		context && (editedText !== context.summary_text || autoInclude !== context.auto_include)
-	);
-
-	/**
-	 * Safely format a date string from the API.
-	 * Handles the time crate's default format (e.g., "2024-01-15 2:30:00.123456 +00:00:00")
-	 * which JavaScript's Date cannot parse directly due to:
-	 * - Space instead of 'T' separator
-	 * - Single-digit hours (e.g., "2:30" instead of "02:30")
-	 * - Non-standard timezone offset format
-	 */
-	function formatDate(dateStr: string | null | undefined): string {
-		if (!dateStr) return 'Never';
-
-		// Try parsing as-is first (works for ISO 8601 formats)
-		let date = new Date(dateStr);
-
-		// If invalid, try normalizing the time crate format
-		if (isNaN(date.getTime())) {
-			// Match the time crate format: "2024-01-15 2:30:00.123456 +00:00:00"
-			const match = dateStr.match(
-				/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{1,2}):(\d{1,2})(?:\.(\d+))?\s+([+-]\d{2}:\d{2}(?::\d{2})?)?$/
-			);
-
-			if (match) {
-				const [, datePart, hour, minute, second, , timezone] = match;
-				// Pad time components to 2 digits
-				const paddedTime = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}:${second.padStart(2, '0')}`;
-				// Build ISO 8601 format: 2024-01-15T02:30:00Z
-				const normalized = `${datePart}T${paddedTime}${timezone ? 'Z' : ''}`;
-				date = new Date(normalized);
-			} else {
-				// Fallback: simple replacement approach
-				const normalized = dateStr.replace(' ', 'T').replace(/\s*\+\d{2}:\d{2}(:\d{2})?$/, 'Z');
-				date = new Date(normalized);
-			}
+	async function withdrawConsent(): Promise<void> {
+		withdrawing = true;
+		error = null;
+		try {
+			const response = await wpFetch<SiteContextStatusResponse>('site-context', {
+				method: 'DELETE'
+			});
+			syncFromStatus(normalizeSiteContextResponse(response));
+			showWithdrawConfirm = false;
+			notifications.success('Site Context consent withdrawn');
+		} catch (e) {
+			console.error('Failed to withdraw Site Context consent', e);
+			error = e instanceof Error ? e.message : 'Failed to withdraw Site Context consent';
+		} finally {
+			withdrawing = false;
 		}
+	}
 
-		if (isNaN(date.getTime())) return 'Unknown';
-
+	function formatDate(value: string | null | undefined): string {
+		if (!value) return 'Never';
+		const date = new Date(value.replace(' ', 'T'));
+		if (Number.isNaN(date.getTime())) return 'Unknown';
 		return date.toLocaleDateString();
 	}
 
-	const freeRefreshAvailable = $derived(context?.free_refresh_available ?? false);
-	const regenerationMode = $derived(resolveSiteContextRegenerationMode(context));
-	const canConfirmRegeneration = $derived(
-		canConfirmSiteContextRegeneration(regenerationMode)
-	);
-	const nextFreeRefreshLabel = $derived(
-		context?.next_free_refresh_at ? formatDate(context.next_free_refresh_at) : null
-	);
-
 	onMount(() => {
-		loadContext();
+		void loadContext();
 	});
 </script>
 
 <Section
 	heading="Site Context"
-	description="Configure your site's context to improve spam detection accuracy. This summary helps the AI understand your business and typical form submissions."
+	description="Describe this site so form actions can make more correct decisions about legitimate submissions, spam, summaries, and follow-up work."
 >
 	{#snippet actions()}
 		<Button variant="secondary" onclick={loadContext} disabled={loading}>
-			{loading ? 'Loading...' : 'Refresh'}
+			{loading ? 'Loading…' : 'Refresh'}
 		</Button>
 	{/snippet}
 
 	{#if error}
 		<StateTemplate
 			variant="error"
-			title="Site context request failed"
+			title="Site Context request failed"
 			message={error}
 			actionLabel="Retry"
 			onAction={() => {
@@ -242,212 +195,209 @@
 		/>
 	{/if}
 
-	{#if showPiiWarning}
-		<Alert variant="warning" class="sf:mb-4">
-			<div class="sf:space-y-3">
-				<p class="sf:font-medium">⚠️ Privacy Notice</p>
-				<p>
-					Sentient Forms will create the starter summary locally from this WordPress site's public
-					metadata. When auto-include is enabled, this context can be included in future provider
-					prompts for enabled actions.
-				</p>
-				<p class="sf:text-sm">
-					No personal customer data or form submissions are included in context generation.
-				</p>
-				<div class="sf:flex sf:flex-wrap sf:gap-2 sf:mt-3">
-					<Button size="sm" onclick={confirmPii}>I Understand, Continue</Button>
-					<Button size="sm" variant="secondary" onclick={() => (showPiiWarning = false)}>
-						Cancel
-					</Button>
-				</div>
-			</div>
-		</Alert>
-	{/if}
-
-	<div class="sf:grid sf:gap-6">
-		{#if loading}
-			<StateTemplate
-				variant="loading"
-				title="Loading site context"
-				message="Fetching your current context summary and refresh settings."
-				testId="site-context-loading-state"
-			/>
-		{:else if !context}
+	{#if loading}
+		<StateTemplate
+			variant="loading"
+			title="Loading Site Context"
+			message="Fetching saved context, consent, model, and refresh settings."
+			testId="site-context-loading-state"
+		/>
+	{:else if status}
+		<div class="sf:grid sf:gap-5 sf:xl:grid-cols-[minmax(0,1fr)_minmax(28rem,0.72fr)]">
 			<Card>
-				<div class="sf:space-y-4">
-					<StateTemplate
-						variant="empty"
-						title="No site context configured"
-						message="Generate a context summary to help the AI understand your site and improve spam detection accuracy."
-						inline
-						dense
-						testId="site-context-empty-state"
-					/>
-
-					<Alert variant="info">
-						<p>
-							<strong>What is site context?</strong> A brief summary describing your business, target
-							audience, and typical form submissions. This helps the AI distinguish between legitimate
-							inquiries and spam.
-						</p>
-					</Alert>
-
-					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3 sf:pt-2">
-						<label class="sf:flex sf:items-start sf:gap-2 sf:text-sm">
-							<input
-								type="checkbox"
-								bind:checked={piiAck}
-								class="sf:form-checkbox sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-							/>
-							<span>
-								I understand this local context can be included in future provider prompts for
-								enabled actions
-							</span>
-						</label>
-					</div>
-
-					<Button onclick={generateContext} disabled={generating}>
-						{generating ? 'Generating...' : 'Generate Site Context'}
-					</Button>
-					<p class="sf:text-xs sf:text-green-700">
-						The starter summary is generated locally and does not call OpenRouter or Sentient Forms.
-					</p>
-				</div>
-			</Card>
-		{:else}
-			<Card>
-				<div class="sf:space-y-4">
-					<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
-						<div>
-							<p class="sf:font-medium sf:text-slate-800">Site Context Summary</p>
-							<p class="sf:text-xs sf:text-slate-600">
-								Source: {context.source} · Last updated: {formatDate(context.updated_at)}
-								{#if context.free_refresh_available}
-									· Local refresh available
-								{:else if nextFreeRefreshLabel}
-									· Next free refresh: {nextFreeRefreshLabel}
-								{/if}
+				<div class="sf:space-y-5">
+					<div class="sf:flex sf:flex-col sf:gap-3 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between">
+						<div class="sf:space-y-2">
+							<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+								<p class="sf:text-base sf:font-semibold sf:text-slate-900">Context summary</p>
+								<Badge
+									variant={status.status === 'ready'
+										? 'success'
+										: status.status === 'declined'
+											? 'neutral'
+											: 'warning'}
+								>
+									{statusLabel}
+								</Badge>
+							</div>
+							<p class="sf:text-sm sf:text-slate-600">
+								Last updated: {formatDate(status.context?.updated_at)}
 							</p>
 						</div>
-						<Button size="sm" variant="secondary" onclick={promptRegenerate} disabled={generating}>
-							{generating ? 'Regenerating...' : 'Regenerate'}
-						</Button>
+						<div class="sf:flex sf:flex-wrap sf:gap-2">
+							<Button
+								variant="secondary"
+								disabled={!canWithdraw || withdrawing}
+								onclick={() => (showWithdrawConfirm = true)}
+							>
+								Withdraw consent
+							</Button>
+							<Button disabled={saving || !hasChanges || isOverLimit} onclick={saveContext}>
+								{saving ? 'Saving…' : 'Save changes'}
+							</Button>
+						</div>
 					</div>
 
-					{#if showRegenConfirm}
-						<Alert variant="warning">
-							<div class="sf:space-y-3">
-								<p class="sf:font-medium">⚡ Confirm Regeneration</p>
-								{#if freeRefreshAvailable}
-									<p class="sf:text-sm">
-										This regeneration will refresh the local starter summary.
-									</p>
-										<p class="sf:text-sm sf:text-slate-700">
-											Your saved edits will be replaced by the newly generated local summary.
-										</p>
-								{:else}
-									<p class="sf:text-sm">
-										This regeneration updates the local starter summary.
-									</p>
-										<p class="sf:text-sm sf:text-slate-700">
-											Edit the saved text after regeneration when you want business-specific detail
-											that WordPress metadata cannot infer.
-										</p>
-									{#if nextFreeRefreshLabel}
-											<p class="sf:text-xs sf:text-slate-600">
-												Next free refresh: {nextFreeRefreshLabel}
-											</p>
-										{:else}
-											<p class="sf:text-xs sf:text-slate-600">Free refresh status unavailable.</p>
-										{/if}
-								{/if}
-								<div class="sf:flex sf:flex-wrap sf:gap-2">
-									<Button
-										size="sm"
-										onclick={generateContext}
-										disabled={generating || !canConfirmRegeneration}
-									>
-										{#if generating}
-											Regenerating…
-										{:else if freeRefreshAvailable}
-											Confirm Refresh
-										{:else}
-											Confirm Regeneration
-										{/if}
-									</Button>
-									<Button size="sm" variant="secondary" onclick={() => (showRegenConfirm = false)}>
-										Cancel
-									</Button>
-								</div>
-							</div>
+					{#if status.is_empty && generationConsent}
+						<Alert variant="warning" data-testid="site-context-empty-consented-warning">
+							Consent is enabled, but Site Context is empty. Generate or write context before relying on
+							site-specific action decisions.
+						</Alert>
+					{:else if status.is_stale}
+						<Alert variant="warning" data-testid="site-context-stale-warning">
+							Site Context looks older than {status.stale_after_days} days. Refresh it before using it
+							for high-confidence spam decisions.
+						</Alert>
+					{:else if status.settings.consent_status === 'declined'}
+						<Alert variant="info" data-testid="site-context-declined-warning">
+							AI-generated Site Context is off. You can still write context manually; better context
+							usually improves correct action resolution.
 						</Alert>
 					{/if}
 
 					<div>
-						<label
-							for="context-text"
-							class="sf:block sf:text-sm sf:font-medium sf:text-slate-700 sf:mb-1"
-						>
-							Context Text
+						<label for="context-text" class="sf:block sf:text-sm sf:font-semibold sf:text-slate-900">
+							Site Context text
 						</label>
+						<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
+							Keep this useful to a model: what the site does, who normally contacts you, what a good
+							lead looks like, and what should be suspicious for this site.
+						</p>
 						<textarea
 							id="context-text"
 							bind:value={editedText}
-							rows={8}
+							rows={10}
 							maxlength={CONTEXT_HARD_LIMIT}
-							class="sf:w-full sf:rounded-md sf:border sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:border-danger-500 sf:focus-visible:border-danger-500 sf:focus-visible:ring-danger-500' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:border-warning-600 sf:focus-visible:border-warning-600 sf:focus-visible:ring-warning-600' : 'sf:border-slate-300 sf:focus-visible:border-primary-600 sf:focus-visible:ring-primary-500'}"
-							placeholder="Describe your business, services, and typical customer inquiries..."
+							class="sf:mt-3 sf:w-full sf:rounded-md sf:border sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:border-danger-500 sf:focus-visible:border-danger-500 sf:focus-visible:ring-danger-500' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:border-warning-600 sf:focus-visible:border-warning-600 sf:focus-visible:ring-warning-600' : 'sf:border-slate-300 sf:focus-visible:border-primary-600 sf:focus-visible:ring-primary-500'}"
+							placeholder="Example: This site sells commercial HVAC maintenance in Austin. Legitimate leads usually ask about service plans, emergency repairs, rooftop units, or commercial quotes..."
+							data-testid="site-context-textarea"
 						></textarea>
-						<!-- CB-SA-006: Progress bar -->
-						<div class="sf:mt-1 sf:h-1 sf:w-full sf:rounded-full sf:bg-slate-100 sf:overflow-hidden">
+						<div class="sf:mt-1 sf:h-1 sf:w-full sf:overflow-hidden sf:rounded-full sf:bg-slate-100">
 							<div
-								class="sf:h-full sf:rounded-full sf:transition-all sf:duration-300 {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:bg-red-500' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:bg-amber-500' : 'sf:bg-indigo-500'}"
-								style="width: {limitPercent}%"
+								class="sf:h-full sf:rounded-full sf:transition-all {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:bg-red-500' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:bg-amber-500' : 'sf:bg-indigo-500'}"
+								style={`width: ${limitPercent}%`}
 							></div>
 						</div>
-						<!-- CB-SA-006: Escalating character count warnings -->
-							<p class="sf:mt-1 sf:text-xs {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:text-red-600 sf:font-medium' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:text-amber-700' : 'sf:text-slate-600'}">
+						<p
+							class="sf:mt-1 sf:text-xs {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:font-medium sf:text-red-600' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:text-amber-700' : 'sf:text-slate-600'}"
+						>
 							{characterCount} / {CONTEXT_HARD_LIMIT} characters
-							{#if characterCount >= CONTEXT_HARD_LIMIT}
-								— <strong>Maximum limit reached</strong>
-							{:else if characterCount >= CONTEXT_WARN_LIMIT}
-								— Approaching {CONTEXT_HARD_LIMIT} character limit
-							{:else if characterCount > CONTEXT_SOFT_LIMIT}
-								— Consider keeping under {CONTEXT_SOFT_LIMIT} for optimal performance
-							{/if}
 						</p>
 					</div>
 
-					<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-						<Toggle
-							label="Auto-include in spam detection"
-							description="When enabled, this context will be automatically included in spam analysis prompts."
-							bind:checked={autoInclude}
-						/>
-					</div>
-
-					<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:pt-2">
-						<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-							{#if context.pii_ack}
-									<span class="sf:text-xs sf:text-green-700">✓ PII acknowledgment on file</span>
-							{/if}
-						</div>
-						<Button onclick={saveContext} disabled={saving || !hasChanges || isOverLimit}>
-							{saving ? 'Saving...' : 'Save Changes'}
-						</Button>
-					</div>
+					<Toggle
+						label="Include Site Context by default"
+						description="When actions use their global setting, this context can be included in model prompts."
+						bind:checked={autoInclude}
+					/>
 				</div>
 			</Card>
 
-			<Card>
-				<p class="sf:text-sm sf:font-medium sf:text-slate-700">Usage Tips</p>
-				<ul class="sf:mt-2 sf:space-y-1 sf:text-sm sf:text-slate-600">
-					<li>• Include your business industry and primary services</li>
-					<li>• Mention typical customer types (B2B, B2C, etc.)</li>
-					<li>• Describe common legitimate form submissions</li>
-					<li>• Note any specific keywords that are always legitimate</li>
-				</ul>
-			</Card>
+			<div class="sf:space-y-5">
+				<Card>
+					<div class="sf:space-y-4">
+						<div>
+							<p class="sf:text-base sf:font-semibold sf:text-slate-900">AI generation</p>
+							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
+								Generate context from public website evidence. Website content is treated as
+								untrusted evidence, not instructions.
+							</p>
+						</div>
+
+						<label class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3">
+							<input
+								type="checkbox"
+								class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+								bind:checked={generationConsent}
+								data-testid="site-context-generation-consent"
+							/>
+							<span>
+								<span class="sf:block sf:text-sm sf:font-semibold sf:text-slate-900">
+									Allow AI to generate Site Context
+								</span>
+								<span class="sf:block sf:text-xs sf:text-slate-600">
+									This may use web search or website fetching through the selected route.
+								</span>
+							</span>
+						</label>
+
+						<Toggle
+							label="Refresh automatically"
+							description="Use WordPress scheduled tasks to refresh context at the selected cadence."
+							bind:checked={autoRefreshEnabled}
+							disabled={!generationConsent}
+						/>
+
+						<label class="sf:block">
+							<span class="sf:text-sm sf:font-semibold sf:text-slate-900">Refresh cadence</span>
+							<select
+								class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+								bind:value={autoRefreshDays}
+								disabled={!generationConsent || !autoRefreshEnabled}
+							>
+								{#each SITE_CONTEXT_REFRESH_DAY_OPTIONS as days}
+									<option value={days}>{days} days</option>
+								{/each}
+							</select>
+						</label>
+
+						<Button
+							class="sf:w-full"
+							disabled={!canGenerate}
+							loading={generating}
+							onclick={generateContext}
+							data-testid="site-context-generate-now"
+						>
+							{generating ? 'Generating…' : 'Generate now'}
+						</Button>
+					</div>
+				</Card>
+
+				<Card>
+					<ModelSelector
+						label="Generation model"
+						level="global"
+						value={generationModelSelection}
+						readonly={!generationConsent}
+						requiredCapabilities={['web_search']}
+						lockRequiredCapabilities={true}
+						onchange={(selection) => {
+							generationModelSelection = selection;
+						}}
+					/>
+				</Card>
+			</div>
+		</div>
+
+		{#if showWithdrawConfirm}
+			<div
+				class="sf:fixed sf:inset-0 sf:z-[1300] sf:flex sf:items-center sf:justify-center sf:bg-slate-950/50 sf:p-4"
+				role="presentation"
+				data-testid="site-context-withdraw-backdrop"
+			>
+				<div
+					class="sf:w-full sf:max-w-md sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-5 sf:shadow-2xl"
+					role="dialog"
+					aria-modal="true"
+					aria-labelledby="site-context-withdraw-title"
+				>
+					<h2 id="site-context-withdraw-title" class="sf:text-lg sf:font-semibold sf:text-slate-900">
+						Withdraw Site Context consent?
+					</h2>
+					<p class="sf:mt-2 sf:text-sm sf:text-slate-600">
+						This deletes saved Site Context, disables automatic refresh, and future action prompts will
+						not include Site Context until you enable it again.
+					</p>
+					<div class="sf:mt-5 sf:flex sf:flex-wrap sf:justify-end sf:gap-2">
+						<Button variant="secondary" disabled={withdrawing} onclick={() => (showWithdrawConfirm = false)}>
+							Cancel
+						</Button>
+						<Button variant="danger" loading={withdrawing} onclick={withdrawConsent}>
+							Withdraw and delete
+						</Button>
+					</div>
+				</div>
+			</div>
 		{/if}
-	</div>
+	{/if}
 </Section>

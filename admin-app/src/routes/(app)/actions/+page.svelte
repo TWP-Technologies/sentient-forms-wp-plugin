@@ -11,6 +11,9 @@
 		ModelSelector,
 		StateTemplate
 	} from '$lib/components/ui';
+	import AlignedSelectGrid from '$lib/components/aligned-select-grid.svelte';
+	import ActionCustomizationEditor from '$lib/components/action-customization-editor.svelte';
+	import SiteContextWarning from '$lib/components/site-context-warning.svelte';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { notifications } from '$lib/stores/notifications';
 	import { navigateToAppPath } from '$lib/navigation';
@@ -42,6 +45,7 @@
 		providerStatusLabel,
 		providerStatusVariant
 	} from '$lib/utils/provider-health';
+	import { formatModelSelectionPrimary, formatTemplateModelHint } from '$lib/utils/model-selection';
 
 	const client = createClientFromConfig();
 	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
@@ -74,6 +78,8 @@
 	let actionDefaults = $state<FormActionConfig>(createBlankActionDefaults());
 	let actionDefaultsLoading = $state(false);
 	let actionDefaultsSaving = $state(false);
+	let actionDefaultsById = $state<Map<string, FormActionConfig>>(new Map());
+	const actionDefaultsSummaryRequests = new Set<string>();
 
 	// CB-FORMS-002: Execution disable controls (global + provider)
 	let executionSettingsLoading = $state(false);
@@ -229,6 +235,45 @@
 		};
 	}
 
+	function upsertActionDefaultsSummary(actionId: string, config: FormActionConfig) {
+		actionDefaultsById = new Map(actionDefaultsById).set(actionId, normalizeFormActionConfig(config));
+	}
+
+	function actionDefaultModelSummary(actionId: string, fallbackHint: string | null | undefined): string {
+		const savedDefaults = actionDefaultsById.get(actionId);
+		if (savedDefaults?.model_selection) {
+			return formatModelSelectionPrimary(savedDefaults.model_selection);
+		}
+		return formatTemplateModelHint(fallbackHint ?? null);
+	}
+
+	async function loadActionDefaultsSummaries(actionIds: string[]) {
+		const ids = [...new Set(actionIds.map((id) => id.trim()).filter(Boolean))].filter(
+			(id) => !actionDefaultsSummaryRequests.has(id)
+		);
+		if (ids.length === 0) return;
+
+		for (const id of ids) {
+			actionDefaultsSummaryRequests.add(id);
+		}
+
+		const results = await Promise.allSettled(
+			ids.map(async (id) => [id, await client.getActionDefaults(id)] as const)
+		);
+
+		let nextDefaults = new Map(actionDefaultsById);
+		results.forEach((result, index) => {
+			const id = ids[index];
+			if (!id) return;
+			if (result.status === 'fulfilled') {
+				nextDefaults.set(id, normalizeFormActionConfig(result.value[1]));
+				return;
+			}
+			actionDefaultsSummaryRequests.delete(id);
+		});
+		actionDefaultsById = nextDefaults;
+	}
+
 	function clearActionModelSelection() {
 		const nextDefaults = { ...actionDefaults };
 		delete nextDefaults.model_selection;
@@ -240,7 +285,10 @@
 	}
 
 	function handleActionSpamPolicyChange(
-		field: 'suppress_notifications_on_spam' | 'skip_downstream_on_spam',
+		field:
+			| 'suppress_notifications_on_spam'
+			| 'suppress_webhooks_on_spam'
+			| 'skip_downstream_on_spam',
 		mode: string
 	) {
 		actionDefaults = applyInheritableBooleanToConfig(
@@ -377,6 +425,7 @@
 		error = null;
 		try {
 			definitions = await client.getActionDefinitions({ showNotifications: false });
+			void loadActionDefaultsSummaries(definitions.map((definition) => definition.id));
 		} catch (err) {
 			error = friendlyMessageFromError(err, 'Failed to load action templates');
 			definitions = [];
@@ -545,15 +594,20 @@
 	function refreshAll() {
 		loadDefinitions();
 		loadForms(); // CB-FORMS-003: also triggers loadFormHealthStatuses()
-		customActionsStore.reload();
+		void loadCustomActions();
 		loadExecutionSettings();
 		loadProviderCredentials();
+	}
+
+	async function loadCustomActions() {
+		await customActionsStore.load({ status: 'active' });
+		void loadActionDefaultsSummaries(customActionsState.actions.map((action) => action.code));
 	}
 
 	onMount(() => {
 		loadDefinitions();
 		loadForms();
-		customActionsStore.load({ status: 'active' });
+		void loadCustomActions();
 		loadExecutionSettings();
 		loadProviderCredentials();
 	});
@@ -571,6 +625,7 @@
 		try {
 			const result = await client.getActionDefaults(actionId);
 			actionDefaults = normalizeFormActionConfig(result);
+			upsertActionDefaultsSummary(actionId, actionDefaults);
 		} catch (error) {
 			console.warn('[ActionDefaults] Failed to load action defaults:', error);
 			notifications.warning('Could not load saved defaults. Starting fresh.');
@@ -581,9 +636,11 @@
 
 	async function saveActionDefaults() {
 		if (!configuringActionId) return;
+		const actionId = configuringActionId;
 		actionDefaultsSaving = true;
 		try {
-			await client.updateActionDefaults(configuringActionId, actionDefaults);
+			const savedDefaults = await client.updateActionDefaults(actionId, actionDefaults);
+			upsertActionDefaultsSummary(actionId, savedDefaults);
 			notifications.success('Global action defaults saved successfully.');
 			configuringActionId = null;
 		} catch (error) {
@@ -620,41 +677,41 @@
 
 	<div class="sf:grid sf:gap-4 sf:lg:grid-cols-3">
 		<Card data-testid="actions-built-in-card">
-			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
+			<div
+				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
+			>
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Built-in actions</p>
-					<p class="sf:text-xs sf:text-slate-600">
-						Included with Sentient Forms and ready to map.
-					</p>
+					<p class="sf:text-xs sf:text-slate-600">Included with Sentient Forms and ready to map.</p>
 				</div>
 			</div>
-				{#if definitionsLoading}
-					<div class="sf:mt-3">
-						<StateTemplate
-							variant="loading"
-							title="Loading built-in actions"
-							message="Fetching available built-in actions."
-							inline
-							dense
-							testId="actions-definitions-loading-state"
-						/>
-					</div>
-				{:else if builtInDefinitions.length === 0}
-					<div class="sf:mt-3">
-						<StateTemplate
-							variant="empty"
-							title="No built-in actions loaded yet"
-							message="Refresh and try again."
-							actionLabel="Refresh actions"
-							onAction={() => {
-								void loadDefinitions();
-							}}
-							inline
-							dense
-							testId="actions-definitions-empty-state"
-						/>
-					</div>
-				{:else}
+			{#if definitionsLoading}
+				<div class="sf:mt-3">
+					<StateTemplate
+						variant="loading"
+						title="Loading built-in actions"
+						message="Fetching available built-in actions."
+						inline
+						dense
+						testId="actions-definitions-loading-state"
+					/>
+				</div>
+			{:else if builtInDefinitions.length === 0}
+				<div class="sf:mt-3">
+					<StateTemplate
+						variant="empty"
+						title="No built-in actions loaded yet"
+						message="Refresh and try again."
+						actionLabel="Refresh actions"
+						onAction={() => {
+							void loadDefinitions();
+						}}
+						inline
+						dense
+						testId="actions-definitions-empty-state"
+					/>
+				</div>
+			{:else}
 				<div class="sf:mt-3 sf:space-y-3">
 					{#each categoryOrder as category}
 						{@const items = groupedDefinitions.get(category) ?? []}
@@ -668,30 +725,39 @@
 									{meta.label}
 								</p>
 								<ul class="sf:space-y-1">
-										{#each items.slice(0, 3) as definition (definition.id)}
-											{@const formCount = formsPerAction.get(definition.id) ?? 0}
-											<li class="sf:flex sf:flex-col sf:items-start sf:gap-2">
-												<div class="sf:min-w-0 sf:flex-1">
-													<p class="sf:text-sm sf:font-semibold sf:text-slate-800 sf:break-words">
-														{definition.label ?? definition.id}
-													</p>
-												</div>
-												<div class="sf:flex sf:w-full sf:flex-wrap sf:items-center sf:gap-2">
-													<Button
-														size="sm"
-														variant="ghost"
-														onclick={() => loadActionDefaults(definition.id)}
-														disabled={actionDefaultsLoading}
-														data-testid={`action-defaults-button-${definition.id}`}
-													>
-														Defaults
-													</Button>
-													<Badge variant={formCount > 0 ? 'info' : 'neutral'}>
-														{formCount} form{formCount !== 1 ? 's' : ''}
-													</Badge>
-												</div>
-											</li>
-										{/each}
+									{#each items.slice(0, 3) as definition (definition.id)}
+										{@const formCount = formsPerAction.get(definition.id) ?? 0}
+										<li
+											class="sf:flex sf:flex-col sf:items-start sf:gap-2"
+											data-testid={`actions-built-in-action-${definition.id}`}
+										>
+											<div class="sf:min-w-0 sf:flex-1">
+												<p class="sf:text-sm sf:font-semibold sf:text-slate-800 sf:break-words">
+													{definition.label ?? definition.id}
+												</p>
+												<p class="sf:text-xs sf:text-slate-600">
+													Default model: {actionDefaultModelSummary(
+														definition.id,
+														definition.modelHint ?? null
+													)}
+												</p>
+											</div>
+											<div class="sf:flex sf:w-full sf:flex-wrap sf:items-center sf:gap-2">
+												<Button
+													size="sm"
+													variant="ghost"
+													onclick={() => loadActionDefaults(definition.id)}
+													disabled={actionDefaultsLoading}
+													data-testid={`action-defaults-button-${definition.id}`}
+												>
+													Defaults
+												</Button>
+												<Badge variant={formCount > 0 ? 'info' : 'neutral'}>
+													{formCount} form{formCount !== 1 ? 's' : ''}
+												</Badge>
+											</div>
+										</li>
+									{/each}
 								</ul>
 							</div>
 						{/if}
@@ -701,29 +767,31 @@
 		</Card>
 
 		<Card data-testid="actions-custom-actions-card">
-			<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
+			<div
+				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
+			>
 				<div>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Custom actions</p>
 					<p class="sf:text-xs sf:text-slate-600">Tenant-specific automations.</p>
 				</div>
 				<Badge variant="info">{customActions.length} active</Badge>
 			</div>
-				{#if customActions.length === 0}
-					<div class="sf:mt-3">
-						<StateTemplate
-							variant="empty"
-							title="No custom actions yet"
-							message="Create a custom action to tailor responses for this site."
-							actionLabel="Manage custom actions"
-							onAction={() => {
-								void navigateToAppPath('/actions/custom');
-							}}
-							inline
-							dense
-							testId="actions-custom-actions-empty-state"
-						/>
-					</div>
-				{:else}
+			{#if customActions.length === 0}
+				<div class="sf:mt-3">
+					<StateTemplate
+						variant="empty"
+						title="No custom actions yet"
+						message="Create a custom action to tailor responses for this site."
+						actionLabel="Manage custom actions"
+						onAction={() => {
+							void navigateToAppPath('/actions/custom');
+						}}
+						inline
+						dense
+						testId="actions-custom-actions-empty-state"
+					/>
+				</div>
+			{:else}
 				<ul class="sf:mt-3 sf:space-y-2">
 					{#each customActions.slice(0, 4) as action (action.id)}
 						{@const customFormCount = formsPerAction.get(action.code) ?? 0}
@@ -736,6 +804,9 @@
 									{action.display_name}
 								</p>
 								<p class="sf:text-xs sf:text-slate-600 sf:break-all">Code: {action.code}</p>
+								<p class="sf:text-xs sf:text-slate-600">
+									Default model: {actionDefaultModelSummary(action.code, action.model_hint ?? null)}
+								</p>
 							</div>
 							<div class="sf:flex sf:w-full sf:flex-wrap sf:items-center sf:gap-2">
 								<Button
@@ -767,7 +838,9 @@
 				</p>
 			{:else}
 				<div class="sf:mt-3 sf:space-y-3">
-					<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
+					<div
+						class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
+					>
 						<div>
 							<p class="sf:text-sm sf:font-medium sf:text-slate-700">Global execution</p>
 							<p class="sf:text-xs sf:text-slate-600">
@@ -790,10 +863,14 @@
 						class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3"
 						data-testid="actions-openrouter-health"
 					>
-						<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
+						<div
+							class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
+						>
 							<div>
 								<p class="sf:text-sm sf:font-medium sf:text-slate-700">
-									{providerCredentialsLoading ? 'Checking OpenRouter status' : openRouterHealth.title}
+									{providerCredentialsLoading
+										? 'Checking OpenRouter status'
+										: openRouterHealth.title}
 								</p>
 								<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
 									{providerCredentialsError ?? openRouterHealth.message}
@@ -827,7 +904,9 @@
 					</div>
 
 					{#each formSources as source}
-						<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center">
+						<div
+							class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
+						>
 							<div class="sf:flex sf:items-center sf:gap-2">
 								<span class="sf:text-sm sf:text-slate-800">{source.label}</span>
 								<Badge variant={source.isActive ? 'success' : 'warning'}>
@@ -836,7 +915,9 @@
 							</div>
 							<div class="sf:flex sf:items-center sf:gap-2">
 								<Badge variant={providerExecutionIsPaused(source.slug) ? 'warning' : 'success'}>
-									{providerExecutionIsPaused(source.slug) ? 'Execution paused' : 'Execution running'}
+									{providerExecutionIsPaused(source.slug)
+										? 'Execution paused'
+										: 'Execution running'}
 								</Badge>
 								<Toggle
 									checked={!Boolean(executionProviderDisabled[source.slug])}
@@ -918,31 +999,31 @@
 				</span>
 			</div>
 
-				{#if formsLoading}
-					<div class="sf:mt-4">
-						<StateTemplate
-							variant="loading"
-							title="Loading forms"
-							message="Retrieving forms for the selected provider."
-							inline
-							testId="actions-forms-loading-state"
-						/>
-					</div>
-				{:else if displayedForms.length === 0}
-					<div class="sf:mt-4">
-						<StateTemplate
-							variant="empty"
-							title="No forms detected"
-							message={`No forms were detected for ${selectedSource?.label ?? 'this provider'}. Create a form first, then refresh this page.`}
-							actionLabel="Refresh forms"
-							onAction={() => {
-								void loadForms();
-							}}
-							inline
-							testId="actions-forms-empty-state"
-						/>
-					</div>
-				{:else}
+			{#if formsLoading}
+				<div class="sf:mt-4">
+					<StateTemplate
+						variant="loading"
+						title="Loading forms"
+						message="Retrieving forms for the selected provider."
+						inline
+						testId="actions-forms-loading-state"
+					/>
+				</div>
+			{:else if displayedForms.length === 0}
+				<div class="sf:mt-4">
+					<StateTemplate
+						variant="empty"
+						title="No forms detected"
+						message={`No forms were detected for ${selectedSource?.label ?? 'this provider'}. Create a form first, then refresh this page.`}
+						actionLabel="Refresh forms"
+						onAction={() => {
+							void loadForms();
+						}}
+						inline
+						testId="actions-forms-empty-state"
+					/>
+				</div>
+			{:else}
 				<div class="sf:mt-4 sf:grid sf:gap-4 sf:lg:grid-cols-2 sf:2xl:grid-cols-3">
 					{#each displayedForms as form (form.id)}
 						{@const actionCount = configuredActionCount(form)}
@@ -996,7 +1077,7 @@
 								{#if form.provider_edit_url}
 									<a
 										href={form.provider_edit_url}
-											class="sf:mt-2 sf:block sf:text-center sf:text-xs sf:font-medium sf:text-slate-700 hover:sf:text-slate-900"
+										class="sf:mt-2 sf:block sf:text-center sf:text-xs sf:font-medium sf:text-slate-700 hover:sf:text-slate-900"
 										data-sveltekit-reload
 										rel="external"
 										data-testid={`actions-provider-edit-link-${form.id}`}
@@ -1035,7 +1116,7 @@
 <!-- Action-Level Defaults Modal (global configuration) -->
 {#if configuringActionId}
 	<div
-		class="sf:fixed sf:inset-0 sf:bg-black/50 sf:flex sf:items-center sf:justify-center sf:z-50 sf:p-2 sf:sm:p-4"
+		class="sf-wp-modal-backdrop sf:bg-black/50 sf:flex sf:items-center sf:justify-center sf:p-2 sf:sm:p-4"
 		onclick={handleActionDefaultsBackdropClick}
 		onkeydown={(event) => {
 			if (event.key === 'Escape') cancelActionDefaults();
@@ -1079,7 +1160,7 @@
 
 			<div class="sf:p-4 sf:sm:p-6 sf:space-y-6">
 				{#if actionDefaultsLoading}
-						<p class="sf:text-sm sf:text-slate-600">Loading configuration...</p>
+					<p class="sf:text-sm sf:text-slate-600">Loading configuration...</p>
 				{:else}
 					<Alert variant="info">
 						<p class="sf:text-sm">
@@ -1089,12 +1170,14 @@
 					</Alert>
 
 					<div class="sf:space-y-3">
-						<div class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center">
+						<div
+							class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-2 sf:sm:flex-row sf:sm:items-center"
+						>
 							<div>
 								<p class="sf:text-sm sf:font-medium sf:text-slate-800">Default model</p>
-									<p class="sf:text-xs sf:text-slate-600">
-										Set the default model selection for this action across all forms.
-									</p>
+								<p class="sf:text-xs sf:text-slate-600">
+									Set the default model selection for this action across all forms.
+								</p>
 							</div>
 							{#if actionDefaults.model_selection}
 								<Button size="sm" variant="ghost" onclick={clearActionModelSelection}>
@@ -1114,6 +1197,13 @@
 						/>
 					</div>
 
+					<ActionCustomizationEditor
+						id="action-level-customization"
+						actionId={configuringActionId}
+						level="action"
+						bind:value={actionDefaults.action_customization}
+					/>
+
 					{#if configuringActionId && isSpamActionCode(configuringActionId)}
 						<SpamCriteriaEditor
 							initiallyExpanded={true}
@@ -1128,57 +1218,82 @@
 							}}
 						/>
 
-						<div class="sf:grid sf:gap-4 sf:md:grid-cols-2">
-							<SelectField
-								id="action-level-spam-notifications"
-								label="Spam notification policy"
-								description="Applies to Blocking spam mappings. Background mappings always allow notifications to send immediately."
-								value={getInheritableBooleanMode(actionDefaults.suppress_notifications_on_spam)}
-								options={[
-									{ value: 'inherit', label: 'Use platform default' },
-									{ value: 'enabled', label: 'Suppress notifications' },
-									{ value: 'disabled', label: 'Allow notifications' }
-								]}
-								onchange={(event) =>
-									handleActionSpamPolicyChange(
-										'suppress_notifications_on_spam',
-										event.currentTarget.value
-									)}
-							/>
-							<SelectField
-								id="action-level-spam-downstream"
-								label="Downstream spam gate"
-								description="Controls whether downstream work should stop when this spam action confirms spam."
-								value={getInheritableBooleanMode(actionDefaults.skip_downstream_on_spam)}
-								options={[
-									{ value: 'inherit', label: 'Use platform default' },
-									{ value: 'enabled', label: 'Skip downstream actions' },
-									{ value: 'disabled', label: 'Allow downstream actions' }
-								]}
-								onchange={(event) =>
-									handleActionSpamPolicyChange(
-										'skip_downstream_on_spam',
-										event.currentTarget.value
-									)}
-							/>
-						</div>
+						<AlignedSelectGrid
+							columns={3}
+							items={[
+								{
+									id: 'action-level-spam-notifications',
+									label: 'Spam notification policy',
+									description:
+										'Applies to Blocking spam mappings. Background mappings always allow notifications to send immediately.',
+									value: getInheritableBooleanMode(actionDefaults.suppress_notifications_on_spam),
+									options: [
+										{ value: 'inherit', label: 'Use platform default' },
+										{ value: 'enabled', label: 'Suppress notifications' },
+										{ value: 'disabled', label: 'Allow notifications' }
+									],
+									onchange: (event) =>
+										handleActionSpamPolicyChange(
+											'suppress_notifications_on_spam',
+											event.currentTarget.value
+										)
+								},
+								{
+									id: 'action-level-spam-webhooks',
+									label: 'Spam Webhooks policy',
+									description:
+										'Applies when the Gravity Forms Webhooks add-on and feed replay APIs are available.',
+									value: getInheritableBooleanMode(actionDefaults.suppress_webhooks_on_spam),
+									options: [
+										{ value: 'inherit', label: 'Use platform default' },
+										{ value: 'enabled', label: 'Suppress Webhooks' },
+										{ value: 'disabled', label: 'Allow Webhooks' }
+									],
+									onchange: (event) =>
+										handleActionSpamPolicyChange(
+											'suppress_webhooks_on_spam',
+											event.currentTarget.value
+										)
+								},
+								{
+									id: 'action-level-spam-downstream',
+									label: 'Downstream spam gate',
+									description:
+										'Controls whether downstream work should stop when this spam action confirms spam.',
+									value: getInheritableBooleanMode(actionDefaults.skip_downstream_on_spam),
+									options: [
+										{ value: 'inherit', label: 'Use platform default' },
+										{ value: 'enabled', label: 'Skip downstream actions' },
+										{ value: 'disabled', label: 'Allow downstream actions' }
+									],
+									onchange: (event) =>
+										handleActionSpamPolicyChange(
+											'skip_downstream_on_spam',
+											event.currentTarget.value
+										)
+								}
+							]}
+						/>
 					{/if}
 
-					<SelectField
-						id="action-level-context"
-						label="Include Site Context"
-						bind:value={actionDefaults.include_site_context}
-						options={[
-							{ value: 'global', label: 'Use global setting' },
-							{ value: 'always', label: 'Always include' },
-							{ value: 'never', label: 'Never include' }
-						]}
-					/>
+					<div class="sf:grid sf:gap-3 sf:lg:grid-cols-[minmax(16rem,0.9fr)_minmax(0,1.1fr)] sf:lg:items-end">
+						<SelectField
+							id="action-level-context"
+							label="Include Site Context"
+							bind:value={actionDefaults.include_site_context}
+							options={[
+								{ value: 'global', label: 'Use global setting' },
+								{ value: 'always', label: 'Always include' },
+								{ value: 'never', label: 'Never include' }
+							]}
+						/>
+						<SiteContextWarning includeMode={actionDefaults.include_site_context} />
+					</div>
 
 					<p class="sf:text-xs sf:text-slate-500 sf:pt-2 sf:flex sf:items-center sf:gap-1">
 						<span class="sf:text-amber-500">⚠</span>
-						These settings apply globally. Override them per form or per mapping when the workflow
-						needs something different.
+						These settings apply globally. Override them per form or per mapping when the workflow needs
+						something different.
 					</p>
 				{/if}
 			</div>

@@ -138,7 +138,7 @@ test.describe('Custom actions admin view', () => {
 									category_rankings: {
 										legal: 1,
 										finance: 1,
-										programming: 4
+										programming: 3
 									},
 									capabilities: {
 										reasoning: true,
@@ -202,6 +202,29 @@ test.describe('Custom actions admin view', () => {
 									is_preview: false,
 									tags: ['free', 'structured-output'],
 									recommended_for: ['Free testing']
+								},
+								{
+									id: 'openai/gpt-oss-20b:free',
+									display_name: 'OpenAI GPT OSS 20B Free',
+									provider: 'openrouter',
+									speed_tier: 'fast',
+									cost_tier: 'free',
+									category_rankings: {
+										programming: 2
+									},
+									capabilities: {
+										reasoning: false,
+										code: false,
+										vision: false,
+										tools: false,
+										structured: false,
+										web_search: false,
+										long_context: true
+									},
+									context_window: 131072,
+									is_preview: false,
+									tags: ['free'],
+									recommended_for: ['Cheap smoke tests']
 								}
 							],
 							presets: [
@@ -312,11 +335,31 @@ test.describe('Custom actions admin view', () => {
 									pricing_estimate: {
 										action_id: String(payload.action_id ?? 'custom'),
 										resolved_model_id: resolvedModelId,
+										route: 'openrouter',
+										kind:
+											resolvedModelId === 'openrouter/free'
+												? 'openrouter_free'
+												: 'openrouter_currency',
+										label:
+											resolvedModelId === 'openrouter/free' ? 'OR est. $0.00' : 'OR est. $0.01',
+										amount_usd: resolvedModelId === 'openrouter/free' ? 0 : 0.01,
+										estimate_range: {
+											low: 0,
+											high: resolvedModelId === 'openrouter/free' ? 0 : 0.02,
+											currency: 'USD',
+											unit: 'usd'
+										},
+										estimated_input_tokens: 1900,
+										estimated_output_tokens: 320,
+										estimated_reasoning_tokens: 0,
+										sample_count: 0,
+										confidence: 'baseline',
+										calibration_source: 'baseline_profile',
 										base_floor_credits: 0,
 										normalized_actual_credits: 0,
 										estimated_debit_credits: 0,
 										pricing_policy_version: 'mock',
-										estimate_source: 'mock'
+										estimate_source: 'baseline_profile'
 									}
 								}
 					})
@@ -466,6 +509,9 @@ test.describe('Custom actions admin view', () => {
 		await expect(createForm.getByTestId('model-selector')).toBeVisible();
 		await createForm.getByTestId('model-selector-open').click();
 		await expect(page.getByTestId('model-selector-dialog')).toBeVisible();
+		await expect(
+			page.getByTestId('model-selector-dialog').getByLabel('Reasoning effort')
+		).toBeVisible();
 		const presetRanking = page.getByTestId('model-preset-top-candidates');
 		await expect(presetRanking).toContainText('Recommendation ranking');
 		await expect(presetRanking).toContainText('92/100');
@@ -481,6 +527,7 @@ test.describe('Custom actions admin view', () => {
 			.first()
 			.boundingBox();
 		expect(shellHeight).not.toBeNull();
+		expect(shellHeight?.height ?? 0).toBeGreaterThanOrEqual(768 * 0.9 - 2);
 		expect(shellHeight?.height ?? 0).toBeLessThanOrEqual(768 * 0.95 + 2);
 		const presetsScroll = page.getByTestId('model-selector-presets').locator('..');
 		await presetsScroll.evaluate((element) => {
@@ -496,7 +543,10 @@ test.describe('Custom actions admin view', () => {
 		await expect(page.getByTestId('model-selector-advanced-filters-panel')).toHaveCount(0);
 		await expect(page.getByTestId('model-row-openai/gpt-5.5')).toBeVisible();
 		await expect(
-			page.getByTestId('model-row-openai/gpt-5.5').getByText(/Selected|Use model/).first()
+			page
+				.getByTestId('model-row-openai/gpt-5.5')
+				.getByText(/Selected|Use model/)
+				.first()
 		).toBeVisible();
 		const dialogHeightBefore = await page.getByTestId('model-selector-dialog').boundingBox();
 		await page.getByTestId('model-row-openai/gpt-5.5').hover();
@@ -522,8 +572,120 @@ test.describe('Custom actions admin view', () => {
 		).toBeVisible();
 		await page.getByTestId('model-selector-tab-custom').click();
 		await expect(page.getByTestId('model-custom-input')).toBeVisible();
-		await page.getByTestId('model-selector-tab-presets').click();
-		await page.getByTestId('model-selector-close').click();
+		await page.getByTestId('model-custom-input').fill('provider/new-non-catalog-model');
+		await expect(
+			page.getByTestId('model-selector-dialog').getByText(/matches a cached OpenRouter model/)
+		).toBeVisible();
+		await expect(
+			page.getByTestId('model-selector-dialog').getByLabel('Reasoning effort')
+		).toHaveCount(0);
+		await page.getByTestId('model-custom-input').fill('openai/gpt-5.5');
+		await expect(
+			page.getByTestId('model-selector-dialog').getByLabel('Reasoning effort')
+		).toBeVisible();
+		await page.getByTestId('model-selector-tab-models').click();
+		await page.getByTestId('model-row-openai/gpt-oss-20b:free').click();
+		await expect(createForm.getByTestId('model-reasoning-summary')).toHaveCount(0);
+		await createForm.getByTestId('model-selector-open').click();
+		await page.getByTestId('model-selector-tab-models').click();
+		await page.getByTestId('model-row-openai/gpt-5.5').click();
+		await expect(createForm.getByTestId('model-reasoning-summary')).toBeVisible();
+		await expect(createForm.getByTestId('reasoning-effort-rail')).toBeVisible();
+		await expect(createForm.getByTestId('reasoning-effort-default')).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+		const summaryBox = await createForm.getByTestId('model-selector-summary').boundingBox();
+		const railBox = await createForm.getByTestId('model-reasoning-summary').boundingBox();
+		expect(summaryBox).not.toBeNull();
+		expect(railBox).not.toBeNull();
+		expect(railBox?.width ?? 0).toBeGreaterThan((summaryBox?.width ?? 0) * 0.95);
+		await page.emulateMedia({ reducedMotion: 'no-preference' });
+		await createForm.getByTestId('reasoning-effort-default').hover();
+		await expect(createForm.getByTestId('reasoning-effort-default')).toHaveCSS(
+			'color',
+			'rgb(255, 255, 255)'
+		);
+		await expect(createForm.getByTestId('reasoning-effort-default')).not.toHaveCSS(
+			'animation-name',
+			'none'
+		);
+		await page.emulateMedia({ reducedMotion: 'reduce' });
+		await expect(createForm.getByTestId('reasoning-effort-default')).toHaveCSS(
+			'animation-name',
+			'none'
+		);
+		await page.emulateMedia({ reducedMotion: 'no-preference' });
+
+		for (const [effort, progress] of [
+			['none', 0],
+			['minimal', 0.2],
+			['low', 0.4],
+			['medium', 0.6],
+			['high', 0.8],
+			['xhigh', 1]
+		] as const) {
+			await createForm.getByTestId(`reasoning-effort-${effort}`).click();
+			await expect(createForm.getByTestId(`reasoning-effort-${effort}`)).toHaveAttribute(
+				'aria-pressed',
+				'true'
+			);
+			const geometry = await createForm
+				.getByTestId('reasoning-effort-rail')
+				.evaluate((rail, activeEffort) => {
+					const track = rail.querySelector<HTMLElement>('[data-testid="reasoning-effort-track"]');
+					const dot = rail.querySelector<HTMLElement>(
+						`[data-testid="reasoning-effort-${activeEffort}"] .sf-reasoning-rail__dot`
+					);
+					if (!track || !dot) {
+						throw new Error(`Missing rail geometry element for ${activeEffort}`);
+					}
+					const trackRect = track.getBoundingClientRect();
+					const dotRect = dot.getBoundingClientRect();
+					return {
+						trackLeft: trackRect.left,
+						trackRight: trackRect.right,
+						trackWidth: trackRect.width,
+						dotCenter: dotRect.left + dotRect.width / 2
+					};
+				}, effort);
+			const fillEnd = geometry.trackLeft + geometry.trackWidth * progress;
+			expect(Math.abs(geometry.dotCenter - fillEnd)).toBeLessThanOrEqual(2);
+			if (effort === 'none') {
+				expect(Math.abs(geometry.dotCenter - geometry.trackLeft)).toBeLessThanOrEqual(2);
+			}
+			if (effort === 'xhigh') {
+				expect(Math.abs(geometry.dotCenter - geometry.trackRight)).toBeLessThanOrEqual(2);
+			}
+		}
+
+		const modelToolRects = await createForm
+			.getByTestId('model-tools-layout')
+			.evaluate((layout) =>
+				Array.from(layout.querySelectorAll<HTMLElement>('.sf-model-tools-select')).map((select) => {
+					const rect = select.getBoundingClientRect();
+					return {
+						left: rect.left,
+						right: rect.right,
+						width: rect.width
+					};
+				})
+			);
+		expect(modelToolRects).toHaveLength(4);
+		expect(Math.abs(modelToolRects[0].left - modelToolRects[2].left)).toBeLessThanOrEqual(2);
+		expect(Math.abs(modelToolRects[0].right - modelToolRects[2].right)).toBeLessThanOrEqual(2);
+		expect(Math.abs(modelToolRects[1].left - modelToolRects[3].left)).toBeLessThanOrEqual(2);
+		expect(Math.abs(modelToolRects[1].right - modelToolRects[3].right)).toBeLessThanOrEqual(2);
+		expect(
+			Math.max(...modelToolRects.map((rect) => rect.width)) -
+				Math.min(...modelToolRects.map((rect) => rect.width))
+		).toBeLessThanOrEqual(2);
+
+		await createForm.getByTestId('reasoning-effort-medium').click();
+		await expect(createForm.getByTestId('reasoning-effort-medium')).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
 		await expect(page.getByTestId('model-selector-dialog')).toHaveCount(0);
 		await createForm.getByLabel('Display Name').fill('Beta action');
 		await expect(createForm.getByTestId('custom-action-generated-code')).toContainText(
@@ -541,8 +703,9 @@ test.describe('Custom actions admin view', () => {
 			code: 'beta-action',
 			action_kind: 'custom_definition',
 			model_selection: {
-				primary: 'sf_default',
-				is_preset: true
+				primary: 'openai/gpt-5.5',
+				is_preset: false,
+				reasoning: 'medium'
 			},
 			prompt_overrides: {
 				custom_instructions: 'Write a direct, demo-ready follow-up summary.'

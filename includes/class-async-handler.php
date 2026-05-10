@@ -571,7 +571,7 @@ class Sentient_Forms_Async_Handler
             ? $this->get_form_action_config( $form_source, $form_id, $action_id )
             : [];
 
-        foreach ( [ 'model_selection', 'include_site_context' ] as $field )
+        foreach ( [ 'model_selection', 'include_site_context', 'action_customization' ] as $field )
         {
             $resolved = $this->merge_inherited_field( $resolved, $field, $form_config, $action_defaults );
         }
@@ -583,7 +583,7 @@ class Sentient_Forms_Async_Handler
                 $resolved = $this->merge_inherited_field( $resolved, $field, $form_config, $action_defaults );
             }
 
-            foreach ( [ 'suppress_notifications_on_spam', 'skip_downstream_on_spam' ] as $field )
+            foreach ( [ 'suppress_notifications_on_spam', 'suppress_webhooks_on_spam', 'skip_downstream_on_spam' ] as $field )
             {
                 $resolved = $this->merge_inherited_boolean_field( $resolved, $field, $form_config, $action_defaults );
             }
@@ -653,7 +653,7 @@ class Sentient_Forms_Async_Handler
             ];
         }
 
-        foreach ( [ 'suppress_notifications_on_spam', 'skip_downstream_on_spam' ] as $field )
+        foreach ( [ 'suppress_notifications_on_spam', 'suppress_webhooks_on_spam', 'skip_downstream_on_spam' ] as $field )
         {
             if ( array_key_exists( $field, $config ) )
             {

@@ -13,6 +13,71 @@ test.describe('Settings context state templates', () => {
 		await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) => {
 			throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
 		});
+
+		await page.route('**/wp-json/sentient-forms/v1/settings', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					enable_logging: false,
+					execution_global_disabled: false,
+					execution_provider_disabled: {},
+					execution_event_retention_days: 90,
+					delete_data_on_uninstall: true,
+					store_full_ai_outputs: false,
+					privacy_setup_profile: 'balanced',
+					privacy_setup_completed_at: '2026-04-21T00:00:00Z'
+				})
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ success: true, data: [] })
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/models**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						models: [
+							{
+								id: 'openai/gpt-5.5',
+								display_name: 'OpenAI: GPT-5.5',
+								provider: 'openrouter',
+								speed_tier: 'balanced',
+								cost_tier: 'medium',
+								capabilities: {
+									reasoning: true,
+									tools: true,
+									structured: true,
+									web_search: true,
+									long_context: true
+								},
+								context_window: 400000,
+								tags: ['reasoning', 'structured-output'],
+								supported_parameters: ['reasoning', 'tools']
+							}
+						],
+						presets: [
+							{
+								code: 'sf_research',
+								display_name: 'Research',
+								category: 'local',
+								resolved_model_id: 'openai/gpt-5.5',
+								auto_upgrade: true
+							}
+						]
+					}
+				})
+			})
+		);
 	});
 
 	test('shows empty template when no context is configured', async ({ page }) => {
@@ -26,7 +91,10 @@ test.describe('Settings context state templates', () => {
 
 		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Site Context' })).toBeVisible();
-		await expect(page.getByTestId('site-context-empty-state')).toBeVisible();
+		await expect(page.getByText('Context summary')).toBeVisible();
+		await expect(page.getByText('Empty')).toBeVisible();
+		await expect(page.getByTestId('site-context-textarea')).toBeVisible();
+		await expect(page.getByTestId('site-context-generate-now')).toBeDisabled();
 	});
 
 	test('shows empty template when backend returns an explicit empty context envelope', async ({
@@ -36,13 +104,36 @@ test.describe('Settings context state templates', () => {
 			route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({ context: null })
+				body: JSON.stringify({
+					context: null,
+					settings: {
+						consent_status: 'granted',
+						consented_at: '2026-04-21T00:00:00Z',
+						declined_at: null,
+						auto_refresh_enabled: true,
+						auto_refresh_days: 30,
+						next_refresh_at: null,
+						last_generated_at: null,
+						last_error: null,
+						generation_model_selection: {
+							primary: 'sf_research',
+							is_preset: true,
+							provider: 'sentient_managed'
+						}
+					},
+					has_context: false,
+					is_empty: true,
+					is_stale: false,
+					stale_after_days: 90,
+					status: 'empty'
+				})
 			})
 		);
 
 		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Site Context' })).toBeVisible();
-		await expect(page.getByTestId('site-context-empty-state')).toBeVisible();
+		await expect(page.getByTestId('site-context-empty-consented-warning')).toBeVisible();
+		await expect(page.getByTestId('site-context-generation-consent')).toBeChecked();
 	});
 
 	test('shows error template and recovers on retry', async ({ page }) => {
@@ -81,7 +172,7 @@ test.describe('Settings context state templates', () => {
 		await page.getByTestId('site-context-error-state').getByRole('button', { name: 'Retry' }).click();
 
 		await expect(page.getByTestId('site-context-error-state')).toHaveCount(0);
-		await expect(page.getByText('Site Context Summary')).toBeVisible();
+		await expect(page.getByTestId('site-context-textarea')).toHaveValue('Context text');
 		expect(attempts).toBeGreaterThanOrEqual(2);
 	});
 });

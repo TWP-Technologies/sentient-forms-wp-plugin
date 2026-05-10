@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Alert, Badge, Button, SelectField } from '$lib/components/ui';
+	import { Alert, Badge, Button, ReasoningEffortRail, SelectField } from '$lib/components/ui';
 	import type {
 		LocalProvider,
 		LocalProviderCredential,
@@ -30,6 +30,13 @@
 		type ModelSelectorCostLimit,
 		type ModelSelectorSortMode
 	} from '$lib/utils/model-selector-presentation';
+	import {
+		reasoningOptionsForModel,
+		modelSupportsReasoning,
+		normalizeModelReasoningEffort,
+		type ModelReasoningControlValue,
+		type ModelReasoningEffort
+	} from '$lib/utils/model-selection';
 	import { wpFetch } from '$lib/wp';
 
 	interface Props {
@@ -46,6 +53,8 @@
 		mappingSelection?: ModelSelection | null;
 		providerCredentials?: LocalProviderCredential[] | null;
 		allowedProviders?: LocalProvider[] | null;
+		requiredCapabilities?: ModelSelectorCapabilityKey[] | null;
+		lockRequiredCapabilities?: boolean;
 		onchange?: (selection: ModelSelection) => void;
 	}
 
@@ -69,6 +78,8 @@
 		mappingSelection = null,
 		providerCredentials = null,
 		allowedProviders = null,
+		requiredCapabilities: requiredCapabilitiesProp = null,
+		lockRequiredCapabilities = false,
 		onchange
 	}: Props = $props();
 
@@ -89,7 +100,7 @@
 	let selectedBackup = $state('');
 	let selectedCustomModel = $state('');
 	let selectedCustomBackup = $state('');
-	let selectedReasoning = $state('default');
+	let selectedReasoning = $state<ModelReasoningControlValue>('default');
 	let toolChoiceMode = $state<ToolMode>('inherit');
 	let webSearchMode = $state<ToolMode>('inherit');
 	let webSearchMaxResults = $state(5);
@@ -104,7 +115,9 @@
 	let rankLimit = $state<RankLimit>('0');
 	let contextLimit = $state<ContextLimit>('0');
 	let sortMode = $state<ModelSelectorSortMode>('name');
-	let requiredCapabilities = $state<Set<ModelSelectorCapabilityKey>>(new Set());
+	let requiredCapabilities = $state<Set<ModelSelectorCapabilityKey>>(
+		new Set(requiredCapabilitiesProp ?? [])
+	);
 	let advancedFiltersOpen = $state(false);
 	let isPickerOpen = $state(false);
 	let highlightedModelId = $state<string | null>(null);
@@ -141,9 +154,12 @@
 		recommended_for: ['Fallback until the OpenRouter catalog is refreshed']
 	};
 
-	const reasoningOptions = [
+	const fallbackReasoningOptions: Array<{
+		value: 'default' | ModelReasoningEffort;
+		label: string;
+	}> = [
 		{ value: 'default', label: 'Model default' },
-		{ value: 'none', label: 'None' },
+		{ value: 'none', label: 'Off' },
 		{ value: 'minimal', label: 'Minimal' },
 		{ value: 'low', label: 'Low' },
 		{ value: 'medium', label: 'Medium' },
@@ -152,7 +168,7 @@
 	];
 
 	const toolModeOptions = [
-		{ value: 'inherit', label: 'Use inherited setting' },
+		{ value: 'inherit', label: 'Inherit' },
 		{ value: 'off', label: 'Off' },
 		{ value: 'auto', label: 'Let model decide' },
 		{ value: 'required', label: 'Require when available' }
@@ -430,7 +446,7 @@
 			selectedCustomBackup = '';
 		}
 
-		selectedReasoning = typeof nextValue.reasoning === 'string' ? nextValue.reasoning : 'default';
+		selectedReasoning = normalizeModelReasoningEffort(nextValue.reasoning) ?? 'default';
 		syncToolSettings(nextValue.tools);
 	}
 
@@ -525,7 +541,11 @@
 
 	function selectedPrimaryModelInfo(): ModelInfo | null {
 		const primary =
-			selectionMode === 'presets' ? resolvedModelForPreset(selectedPreset) : selectedModel;
+			selectionMode === 'presets'
+				? resolvedModelForPreset(selectedPreset)
+				: selectionMode === 'custom'
+					? selectedCustomModel.trim()
+					: selectedModel;
 		return models.find((model) => model.id === primary) ?? null;
 	}
 
@@ -540,11 +560,28 @@
 		return selectedModel;
 	}
 
+	function presetDisplayName(code: string): string {
+		const preset = presets.find((candidate) => candidate.code === code);
+		if (preset?.display_name) return preset.display_name;
+		if (code === 'sf_default') return 'Recommended';
+		if (code === 'sf_free') return 'Free model';
+		if (code.startsWith('sf_')) return `${code.replace(/^sf_/, '').replaceAll('_', ' ')} preset`;
+		return code;
+	}
+
+	function catalogPresetModelId(code: string): string | null {
+		return presets.find((preset) => preset.code === code)?.resolved_model_id ?? null;
+	}
+
+	function displayModelId(modelId: string | null | undefined): string {
+		if (!modelId) return 'No model selected';
+		if (modelId === 'openrouter/auto') return 'OpenRouter Auto';
+		return modelId;
+	}
+
 	function selectedDisplayName(): string {
 		if (selectionMode === 'presets') {
-			return (
-				presets.find((preset) => preset.code === selectedPreset)?.display_name ?? selectedPreset
-			);
+			return presetDisplayName(selectedPreset);
 		}
 
 		const model = modelById(selectedConcreteModelId());
@@ -552,8 +589,14 @@
 	}
 
 	function selectedModelIdLabel(): string {
-		if (selectionMode === 'presets') return resolvedModelForPreset(selectedPreset);
-		return selectedConcreteModelId() || 'No model selected';
+		if (selectionMode === 'presets') {
+			const catalogModelId = catalogPresetModelId(selectedPreset);
+			if (catalogModelId) return displayModelId(catalogModelId);
+			if (resolved?.model_id) return displayModelId(resolved.model_id);
+			if (loading) return 'Resolving preset...';
+			return displayModelId(resolvedModelForPreset(selectedPreset));
+		}
+		return displayModelId(selectedConcreteModelId());
 	}
 
 	function activeDetailModel(): ModelInfo | null {
@@ -570,7 +613,9 @@
 
 	function presetTopCandidates(preset: ModelPreset | null) {
 		return (preset?.top_candidates ?? [])
-			.filter((candidate) => typeof candidate.score === 'number' && Number.isFinite(candidate.score))
+			.filter(
+				(candidate) => typeof candidate.score === 'number' && Number.isFinite(candidate.score)
+			)
 			.slice(0, 3);
 	}
 
@@ -579,8 +624,20 @@
 	}
 
 	function selectedModelAllowsReasoning(): boolean {
-		if (selectionMode === 'custom') return true;
-		return Boolean(selectedPrimaryModelInfo()?.capabilities.reasoning);
+		return modelSupportsReasoning(selectedPrimaryModelInfo());
+	}
+
+	function modelIdAllowsReasoning(modelId: string | null | undefined): boolean {
+		return modelSupportsReasoning(modelById(modelId));
+	}
+
+	function selectedModelNeedsReasoningMetadataHint(): boolean {
+		return (
+			selectionMode === 'custom' &&
+			selectedCustomModel.trim().length > 0 &&
+			customModelLooksValid(selectedCustomModel) &&
+			!selectedModelAllowsReasoning()
+		);
 	}
 
 	function selectedModelSupportsTools(): boolean {
@@ -672,7 +729,7 @@
 		selectedPreset = preset.code;
 		highlightedPresetCode = preset.code;
 		selectedModel = normalizeSelectedModel(preset.resolved_model_id);
-		selectedReasoning = 'default';
+		if (!modelIdAllowsReasoning(preset.resolved_model_id)) selectedReasoning = 'default';
 		highlightedModelId = preset.resolved_model_id;
 		handleSelectionChange();
 		isPickerOpen = false;
@@ -683,7 +740,7 @@
 		selectionMode = 'models';
 		selectedModel = model.id;
 		selectedCustomModel = '';
-		if (!model.capabilities.reasoning) selectedReasoning = 'default';
+		if (!modelSupportsReasoning(model)) selectedReasoning = 'default';
 		if (!model.capabilities.web_search && webSearchMode !== 'inherit') webSearchMode = 'inherit';
 		if (!model.capabilities.tools) {
 			if (webFetchMode !== 'inherit') webFetchMode = 'inherit';
@@ -699,7 +756,7 @@
 		if (!customModelLooksValid(selectedCustomModel) || !customModelAllowed(selectedCustomModel))
 			return;
 		selectionMode = 'custom';
-		selectedReasoning = 'default';
+		if (!modelIdAllowsReasoning(selectedCustomModel.trim())) selectedReasoning = 'default';
 		handleSelectionChange();
 		isPickerOpen = false;
 	}
@@ -874,6 +931,9 @@
 	const activeContextLimit = $derived(Number.parseInt(contextLimit, 10) || 0);
 
 	const filteredModels = $derived.by(() => {
+		const effectiveRequiredCapabilities = [
+			...new Set([...(requiredCapabilitiesProp ?? []), ...requiredCapabilities])
+		];
 		return filterAndSortModels(models, {
 			searchTerm,
 			costLimit,
@@ -881,12 +941,17 @@
 			category: categoryFilter,
 			maxRank: activeRankLimit,
 			minContext: activeContextLimit,
-			requiredCapabilities: [...requiredCapabilities],
+			requiredCapabilities: effectiveRequiredCapabilities,
 			sortMode
 		});
 	});
 
 	const visibleModels = $derived(filteredModels.slice(0, MAX_VISIBLE_MODELS));
+	const selectedReasoningOptions = $derived.by(() =>
+		selectedModelAllowsReasoning()
+			? reasoningOptionsForModel(selectedPrimaryModelInfo())
+			: fallbackReasoningOptions
+	);
 	const backupOptions = $derived([
 		{ value: '', label: 'No backup' },
 		...models.map((model) => ({
@@ -912,6 +977,7 @@
 	}
 
 	function toggleCapabilityFilter(capability: ModelSelectorCapabilityKey) {
+		if (lockRequiredCapabilities && requiredCapabilitiesProp?.includes(capability)) return;
 		const next = new Set(requiredCapabilities);
 		if (next.has(capability)) {
 			next.delete(capability);
@@ -981,6 +1047,59 @@
 		return `${model.provider_family ?? model.provider} model`;
 	}
 
+	function pricingEstimateLabel(): string {
+		if (!pricingEstimate) {
+			return selectedProvider === MANAGED_PROVIDER ? 'SF managed estimate' : 'OR direct estimate';
+		}
+
+		if (pricingEstimate.label) return pricingEstimate.label;
+		if (typeof pricingEstimate.amount_usd === 'number')
+			return `OR est. ${formatUsd(pricingEstimate.amount_usd)}`;
+		if (pricingEstimate.kind === 'sentient_credits') {
+			return `SF: ${pricingEstimate.estimated_debit_credits} credits`;
+		}
+
+		return selectedProvider === MANAGED_PROVIDER ? 'SF managed estimate' : 'OR direct estimate';
+	}
+
+	function pricingEstimateDetail(): string {
+		if (!pricingEstimate) {
+			return 'Estimate unavailable until the model policy resolves.';
+		}
+
+		const confidence =
+			typeof pricingEstimate.confidence === 'string' ? pricingEstimate.confidence : null;
+		const sampleCount =
+			typeof pricingEstimate.sample_count === 'number' ? pricingEstimate.sample_count : 0;
+		const source =
+			sampleCount > 0
+				? `${sampleCount} recent run${sampleCount === 1 ? '' : 's'}`
+				: 'baseline profile';
+		const suffix = confidence ? ` · ${confidence} confidence` : '';
+
+		if (pricingEstimate.kind === 'sentient_credits') {
+			return `Managed Service credit estimate from ${source}${suffix}.`;
+		}
+
+		return `Provider-cost estimate from ${source}${suffix}. Direct OpenRouter runs do not spend managed credits.`;
+	}
+
+	function formatUsd(amount: number): string {
+		if (!Number.isFinite(amount)) return '$0.00';
+		if (amount === 0) return '$0.00';
+		if (amount < 0.01) {
+			return `$${amount.toLocaleString(undefined, {
+				minimumFractionDigits: 4,
+				maximumFractionDigits: 6
+			})}`;
+		}
+
+		return `$${amount.toLocaleString(undefined, {
+			minimumFractionDigits: 2,
+			maximumFractionDigits: 4
+		})}`;
+	}
+
 	function costBadgeVariant(tier: string) {
 		switch (tier) {
 			case 'free':
@@ -1044,6 +1163,12 @@
 
 	$effect(() => {
 		if (!selectedModelAllowsReasoning() && selectedReasoning !== 'default') {
+			selectedReasoning = 'default';
+		}
+		if (
+			selectedModelAllowsReasoning() &&
+			!selectedReasoningOptions.some((option) => option.value === selectedReasoning)
+		) {
 			selectedReasoning = 'default';
 		}
 	});
@@ -1115,25 +1240,31 @@
 					{/if}
 				</div>
 				{#if pricingEstimate}
-					<div
-						class="sf:min-w-36 sf:rounded-md sf:bg-slate-50 sf:px-3 sf:py-2 sf:text-left sf:lg:text-right"
-					>
-						<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">Usage cost</p>
-						<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
-							{pricingEstimate.label ??
-								(selectedProvider === MANAGED_PROVIDER ? 'SF managed' : 'OR direct')}
-						</p>
-						{#if pricingEstimate.kind === 'sentient_credits'}
-							<p class="sf:text-xs sf:text-slate-500">Managed Service credit estimate</p>
-						{:else}
-							<p class="sf:text-xs sf:text-slate-500">
-								Local OpenRouter runs do not spend managed credits. Provider charges are billed by
-								OpenRouter for the selected route.
+					<div class="sf:w-full sf:min-w-0 sf:lg:w-80 sf:lg:flex-none">
+						<div class="sf:rounded-md sf:bg-slate-50 sf:px-3 sf:py-2 sf:text-left sf:lg:text-right">
+							<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">
+								Usage cost
 							</p>
-						{/if}
+							<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
+								{pricingEstimateLabel()}
+							</p>
+							<p class="sf:text-xs sf:text-slate-500">{pricingEstimateDetail()}</p>
+						</div>
 					</div>
 				{/if}
 			</div>
+
+			{#if selectedModelAllowsReasoning()}
+				<div class="sf:mt-4 sf:w-full sf:min-w-0" data-testid="model-reasoning-summary">
+					<ReasoningEffortRail
+						id={`model-summary-reasoning-${level}`}
+						options={selectedReasoningOptions}
+						bind:value={selectedReasoning}
+						disabled={readonly}
+						onchange={() => handleSelectionChange()}
+					/>
+				</div>
+			{/if}
 
 			<div class="sf:mt-4 sf:border-t sf:border-slate-200 sf:pt-4">
 				<div
@@ -1153,40 +1284,78 @@
 						</p>
 					{/if}
 				</div>
-					<div class="sf:mt-3 sf:grid sf:grid-cols-1 sf:gap-3 sf:sm:grid-cols-2">
-					<SelectField
-						id={`model-summary-tool-choice-${level}`}
-						label="Tool choice"
-						options={toolChoiceOptions}
-						bind:value={toolChoiceMode}
-						disabled={readonly || (!selectedModelSupportsTools() && toolChoiceMode === 'inherit')}
-						onchange={handleSelectionChange}
-					/>
-					<SelectField
-						id={`model-summary-web-search-${level}`}
-						label="Web search"
-						options={toolModeOptions}
-						bind:value={webSearchMode}
-						disabled={readonly ||
-							(!selectedModelSupportsWebSearch() && webSearchMode === 'inherit')}
-						onchange={handleSelectionChange}
-					/>
-					<SelectField
-						id={`model-summary-web-fetch-${level}`}
-						label="Web fetch"
-						options={toolModeOptions}
-						bind:value={webFetchMode}
-						disabled={readonly || (!selectedModelSupportsWebFetch() && webFetchMode === 'inherit')}
-						onchange={handleSelectionChange}
-					/>
-					<SelectField
-						id={`model-summary-datetime-${level}`}
-						label="Current date/time"
-						options={toolModeOptions}
-						bind:value={datetimeMode}
-						disabled={readonly || (!selectedModelSupportsDatetime() && datetimeMode === 'inherit')}
-						onchange={handleSelectionChange}
-					/>
+				<div class="sf-model-tools-layout sf:mt-3" data-testid="model-tools-layout">
+					<div class="sf-model-tools-grid">
+						<div class="sf-model-tools-field">
+							<label class="sf-model-tools-label" for={`model-summary-tool-choice-${level}`}>
+								Tool choice
+							</label>
+							<select
+								id={`model-summary-tool-choice-${level}`}
+								class="sf-model-tools-select"
+								bind:value={toolChoiceMode}
+								disabled={readonly || (!selectedModelSupportsTools() && toolChoiceMode === 'inherit')}
+								onchange={handleSelectionChange}
+								data-testid="model-summary-tool-choice"
+							>
+								{#each toolChoiceOptions as option}
+									<option value={option.value}>{option.label}</option>
+								{/each}
+							</select>
+						</div>
+						<div class="sf-model-tools-field">
+							<label class="sf-model-tools-label" for={`model-summary-web-search-${level}`}>
+								Web search
+							</label>
+							<select
+								id={`model-summary-web-search-${level}`}
+								class="sf-model-tools-select"
+								bind:value={webSearchMode}
+								disabled={readonly ||
+									(!selectedModelSupportsWebSearch() && webSearchMode === 'inherit')}
+								onchange={handleSelectionChange}
+								data-testid="model-summary-web-search"
+							>
+								{#each toolModeOptions as option}
+									<option value={option.value}>{option.label}</option>
+								{/each}
+							</select>
+						</div>
+						<div class="sf-model-tools-field">
+							<label class="sf-model-tools-label" for={`model-summary-web-fetch-${level}`}>
+								Web fetch
+							</label>
+							<select
+								id={`model-summary-web-fetch-${level}`}
+								class="sf-model-tools-select"
+								bind:value={webFetchMode}
+								disabled={readonly || (!selectedModelSupportsWebFetch() && webFetchMode === 'inherit')}
+								onchange={handleSelectionChange}
+								data-testid="model-summary-web-fetch"
+							>
+								{#each toolModeOptions as option}
+									<option value={option.value}>{option.label}</option>
+								{/each}
+							</select>
+						</div>
+						<div class="sf-model-tools-field">
+							<label class="sf-model-tools-label" for={`model-summary-datetime-${level}`}>
+								Current date/time
+							</label>
+							<select
+								id={`model-summary-datetime-${level}`}
+								class="sf-model-tools-select"
+								bind:value={datetimeMode}
+								disabled={readonly || (!selectedModelSupportsDatetime() && datetimeMode === 'inherit')}
+								onchange={handleSelectionChange}
+								data-testid="model-summary-datetime"
+							>
+								{#each toolModeOptions as option}
+									<option value={option.value}>{option.label}</option>
+								{/each}
+							</select>
+						</div>
+					</div>
 				</div>
 				{#if webSearchMode !== 'inherit' && webSearchMode !== 'off'}
 					<label class="sf:mt-3 sf:flex sf:max-w-xs sf:flex-col sf:gap-1">
@@ -1225,14 +1394,14 @@
 		{@const detailModel = activeDetailModel()}
 		{@const detailMonogram = providerMonogram(detailModel)}
 		<div
-			class="sf:fixed sf:inset-0 sf:z-[100000] sf:flex sf:items-center sf:justify-center sf:overflow-hidden sf:bg-slate-950/55 sf:p-3 sf:sm:p-6"
+			class="sf-wp-modal-backdrop sf:flex sf:items-center sf:justify-center sf:overflow-hidden sf:bg-slate-950/55 sf:p-3 sf:sm:p-6"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby={`model-selector-title-${level}`}
 			data-testid="model-selector-dialog"
 		>
 			<div
-				class="sf:flex sf:h-[calc(100dvh-1rem)] sf:w-full sf:max-w-[88rem] sf:flex-col sf:overflow-hidden sf:rounded-xl sf:bg-white sf:shadow-2xl sf:sm:h-[95vh]"
+				class="sf-model-selector-shell sf:flex sf:w-full sf:max-w-[88rem] sf:flex-col sf:overflow-hidden sf:rounded-xl sf:bg-white sf:shadow-2xl"
 			>
 				<header
 					class="sf:flex-none sf:border-b sf:border-slate-200 sf:bg-slate-950 sf:px-4 sf:py-4 sf:text-white sf:sm:px-5"
@@ -1373,7 +1542,7 @@
 														</Badge>
 													{/if}
 												</span>
-													<span class="sf:text-sm sf:text-slate-600">{preset.description}</span>
+												<span class="sf:text-sm sf:text-slate-600">{preset.description}</span>
 												<span
 													class="sf:mt-auto sf:break-all sf:font-mono sf:text-xs sf:text-slate-500"
 												>
@@ -1472,16 +1641,23 @@
 											</p>
 											<div class="sf:mt-1 sf:flex sf:flex-wrap sf:gap-1.5">
 												{#each capabilityFilterOptions as capability}
+													{@const capabilityLocked =
+														lockRequiredCapabilities &&
+														(requiredCapabilitiesProp ?? []).includes(capability.value)}
+													{@const capabilityActive =
+														requiredCapabilities.has(capability.value) ||
+														(requiredCapabilitiesProp ?? []).includes(capability.value)}
 													<Button
 														variant="secondary"
 														size="sm"
 														class={[
 															'sf:min-h-8 sf:gap-1 sf:rounded-full sf:px-2.5 sf:text-xs',
-															requiredCapabilities.has(capability.value)
+															capabilityActive
 																? 'sf:border-primary-500 sf:bg-primary-50 sf:text-primary-700'
 																: 'sf:border-slate-200 sf:bg-white sf:text-slate-600 sf:hover:border-slate-300'
 														].join(' ')}
-														aria-pressed={requiredCapabilities.has(capability.value)}
+														aria-pressed={capabilityActive}
+														disabled={capabilityLocked}
 														title={capability.label}
 														onclick={() => toggleCapabilityFilter(capability.value)}
 														data-testid={`model-capability-filter-${capability.value}`}
@@ -1684,19 +1860,25 @@
 							</div>
 						{/if}
 
-						{#if selectionMode !== 'presets'}
-							<div
-								class="sf:mt-5 sf:grid sf:gap-3 sf:border-t sf:border-slate-200 sf:pt-4 sf:lg:grid-cols-2"
-							>
-								{#if selectedModelAllowsReasoning()}
-									<SelectField
-										id={`model-reasoning-${level}`}
-										label="Reasoning effort"
-										options={reasoningOptions}
-										bind:value={selectedReasoning}
-										onchange={handleSelectionChange}
-									/>
-								{/if}
+						<div
+							class="sf:mt-5 sf:grid sf:gap-3 sf:border-t sf:border-slate-200 sf:pt-4 sf:lg:grid-cols-2"
+						>
+							{#if selectedModelAllowsReasoning()}
+								<SelectField
+									id={`model-reasoning-${level}`}
+									label="Reasoning effort"
+									description="Requested through OpenRouter for this model."
+									options={selectedReasoningOptions}
+									bind:value={selectedReasoning}
+									onchange={handleSelectionChange}
+								/>
+							{:else if selectedModelNeedsReasoningMetadataHint()}
+								<Alert variant="info">
+									Reasoning options appear when the custom ID matches a cached OpenRouter model that
+									advertises reasoning support.
+								</Alert>
+							{/if}
+							{#if selectionMode !== 'presets'}
 								<div class="sf:space-y-2">
 									<SelectField
 										id={`model-backup-${level}`}
@@ -1717,8 +1899,8 @@
 										/>
 									{/if}
 								</div>
-							</div>
-						{/if}
+							{/if}
+						</div>
 					</section>
 
 					<aside class="sf:min-h-0 sf:overflow-y-auto sf:bg-slate-50 sf:p-4 sf:sm:p-5">
@@ -1742,42 +1924,42 @@
 										{detailModel?.id ?? selectedModelIdLabel()}
 									</p>
 								</div>
-								</div>
+							</div>
 
-								<p class="sf:text-sm sf:text-slate-600">{modelDescription(detailModel)}</p>
+							<p class="sf:text-sm sf:text-slate-600">{modelDescription(detailModel)}</p>
 
-								{#if selectionMode === 'presets'}
-									{@const selectedPresetDetails = activePreset()}
-									{@const topCandidates = presetTopCandidates(selectedPresetDetails)}
-									{#if topCandidates.length > 0}
-										<div
-											class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3"
-											data-testid="model-preset-top-candidates"
-										>
-											<p class="sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-500">
-												Recommendation ranking
-											</p>
-											<div class="sf:mt-3 sf:space-y-1.5">
-												{#each topCandidates as candidate, index}
-													<div
-														class="sf:flex sf:items-start sf:justify-between sf:gap-3"
-														data-testid={`model-preset-candidate-${index + 1}`}
-													>
-														<p class="sf:min-w-0 sf:text-xs sf:font-medium sf:text-slate-800">
-															<span class="sf:font-semibold">#{index + 1}</span>
-															{candidateModelLabel(candidate.model_id)}
-														</p>
-														<p class="sf:flex-none sf:text-xs sf:font-semibold sf:text-slate-700">
-															{Math.round(candidate.score)}/100
-														</p>
-													</div>
-												{/each}
-											</div>
+							{#if selectionMode === 'presets'}
+								{@const selectedPresetDetails = activePreset()}
+								{@const topCandidates = presetTopCandidates(selectedPresetDetails)}
+								{#if topCandidates.length > 0}
+									<div
+										class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3"
+										data-testid="model-preset-top-candidates"
+									>
+										<p class="sf:text-xs sf:font-semibold sf:uppercase sf:text-slate-500">
+											Recommendation ranking
+										</p>
+										<div class="sf:mt-3 sf:space-y-1.5">
+											{#each topCandidates as candidate, index}
+												<div
+													class="sf:flex sf:items-start sf:justify-between sf:gap-3"
+													data-testid={`model-preset-candidate-${index + 1}`}
+												>
+													<p class="sf:min-w-0 sf:text-xs sf:font-medium sf:text-slate-800">
+														<span class="sf:font-semibold">#{index + 1}</span>
+														{candidateModelLabel(candidate.model_id)}
+													</p>
+													<p class="sf:flex-none sf:text-xs sf:font-semibold sf:text-slate-700">
+														{Math.round(candidate.score)}/100
+													</p>
+												</div>
+											{/each}
 										</div>
-									{/if}
+									</div>
 								{/if}
+							{/if}
 
-								<div class="sf:grid sf:grid-cols-2 sf:gap-2">
+							<div class="sf:grid sf:grid-cols-2 sf:gap-2">
 								<div class="sf:rounded-md sf:bg-white sf:p-3">
 									<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">
 										Provider
@@ -1879,3 +2061,72 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.sf-model-tools-layout {
+		container-type: inline-size;
+	}
+
+	.sf-model-tools-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.75rem;
+	}
+
+	.sf-model-tools-field {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.35rem;
+		min-width: 0;
+	}
+
+	.sf-model-tools-label {
+		color: rgb(51 65 85);
+		font-size: 0.875rem;
+		font-weight: 600;
+		line-height: 1.25rem;
+	}
+
+	.sf-model-tools-select {
+		width: 100%;
+		min-width: 0;
+		border: 1px solid rgb(203 213 225);
+		border-radius: 0.25rem;
+		background-color: rgb(255 255 255);
+		padding: 0.5rem 0.75rem;
+		color: rgb(15 23 42);
+		font-size: 0.875rem;
+		line-height: 1.25rem;
+	}
+
+	.sf-model-tools-select:focus-visible {
+		border-color: rgb(37 99 235);
+		outline: none;
+		box-shadow:
+			0 0 0 1px rgb(37 99 235),
+			0 0 0 3px rgb(191 219 254);
+	}
+
+	.sf-model-tools-select:disabled {
+		background-color: rgb(241 245 249);
+		color: rgb(148 163 184);
+	}
+
+	@container (min-width: 36rem) {
+		.sf-model-tools-grid {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			column-gap: clamp(1.5rem, 6cqi, 5rem);
+			row-gap: 0.75rem;
+		}
+
+		.sf-model-tools-field {
+			grid-template-columns: minmax(6.75rem, 0.44fr) minmax(10rem, 1fr);
+			align-items: center;
+			gap: 0.75rem;
+		}
+
+		.sf-model-tools-label {
+			white-space: nowrap;
+		}
+	}
+</style>

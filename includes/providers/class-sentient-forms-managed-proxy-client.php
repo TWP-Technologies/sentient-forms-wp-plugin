@@ -25,6 +25,9 @@ class Sentient_Forms_Managed_Proxy_Client
         'metadata'             => true,
         'temperature'          => true,
         'max_output_tokens'    => true,
+        'reasoning'            => true,
+        'tools'                => true,
+        'tool_choice'          => true,
     ];
 
     private string $base_url;
@@ -275,7 +278,140 @@ class Sentient_Forms_Managed_Proxy_Client
             $normalized['metadata'] = $metadata;
         }
 
+        if ( isset( $payload['reasoning'] ) )
+        {
+            $reasoning = $this->normalize_reasoning_payload( $payload['reasoning'] );
+            if ( is_wp_error( $reasoning ) )
+            {
+                return $reasoning;
+            }
+
+            $normalized['reasoning'] = $reasoning;
+        }
+
+        if ( isset( $payload['tools'] ) )
+        {
+            $tools = $this->normalize_openrouter_tools( $payload['tools'] );
+            if ( is_wp_error( $tools ) )
+            {
+                return $tools;
+            }
+            if ( [] !== $tools )
+            {
+                $normalized['tools'] = $tools;
+            }
+        }
+
+        if ( isset( $payload['tool_choice'] ) && is_scalar( $payload['tool_choice'] ) )
+        {
+            $tool_choice = sanitize_key( (string) $payload['tool_choice'] );
+            if ( in_array( $tool_choice, [ 'auto', 'required', 'none' ], true ) )
+            {
+                $normalized['tool_choice'] = $tool_choice;
+            }
+        }
+
         return $normalized;
+    }
+
+    /**
+     * @param mixed $tools
+     *
+     * @return array<int, array<string, mixed>>|WP_Error
+     */
+    private function normalize_openrouter_tools( mixed $tools ): array | WP_Error
+    {
+        if ( ! is_array( $tools ) )
+        {
+            return new WP_Error(
+                'sentient_managed_invalid_tools',
+                __( 'Managed execution tools must be an array.', 'sentient-forms' )
+            );
+        }
+
+        $normalized = [];
+        foreach ( $tools as $tool )
+        {
+            if ( ! is_array( $tool ) || ! isset( $tool['type'] ) || ! is_scalar( $tool['type'] ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_invalid_tools',
+                    __( 'Managed execution tools must include a tool type.', 'sentient-forms' )
+                );
+            }
+
+            $type = sanitize_text_field( (string) $tool['type'] );
+            if ( ! in_array( $type, [ 'openrouter:web_search', 'openrouter:web_fetch', 'openrouter:datetime' ], true ) )
+            {
+                return new WP_Error(
+                    'sentient_managed_invalid_tools',
+                    __( 'Managed execution only supports OpenRouter server tools.', 'sentient-forms' )
+                );
+            }
+
+            $next = [ 'type' => $type ];
+            if ( isset( $tool['parameters'] ) )
+            {
+                if ( ! is_array( $tool['parameters'] ) )
+                {
+                    return new WP_Error(
+                        'sentient_managed_invalid_tools',
+                        __( 'Managed execution tool parameters must be an object.', 'sentient-forms' )
+                    );
+                }
+                $parameters = [];
+                foreach ( $tool['parameters'] as $key => $value )
+                {
+                    $key = sanitize_key( (string) $key );
+                    if ( '' === $key || is_array( $value ) || is_object( $value ) )
+                    {
+                        continue;
+                    }
+                    $parameters[ $key ] = is_numeric( $value ) ? (int) $value : sanitize_text_field( (string) $value );
+                }
+                if ( [] !== $parameters )
+                {
+                    $next['parameters'] = $parameters;
+                }
+            }
+
+            $normalized[] = $next;
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param mixed $reasoning
+     *
+     * @return array{effort: string, exclude: bool}|WP_Error
+     */
+    private function normalize_reasoning_payload( mixed $reasoning ): array | WP_Error
+    {
+        if ( ! is_array( $reasoning ) || array_is_list( $reasoning ) )
+        {
+            return new WP_Error(
+                'sentient_managed_invalid_reasoning',
+                __( 'Managed execution reasoning must be an object.', 'sentient-forms' )
+            );
+        }
+
+        $effort = isset( $reasoning['effort'] ) && is_scalar( $reasoning['effort'] )
+            ? sanitize_key( (string) $reasoning['effort'] )
+            : '';
+        if ( ! in_array( $effort, [ 'none', 'minimal', 'low', 'medium', 'high', 'xhigh' ], true ) )
+        {
+            return new WP_Error(
+                'sentient_managed_invalid_reasoning',
+                __( 'Managed execution reasoning effort must be none, minimal, low, medium, high, or xhigh.', 'sentient-forms' )
+            );
+        }
+
+        return [
+            'effort'  => $effort,
+            // phpcs:ignore WordPressVIPMinimum.Performance.WPQueryParams.PostNotIn_exclude -- OpenRouter reasoning payload key, not a WP_Query parameter.
+            'exclude' => true,
+        ];
     }
 
     /**

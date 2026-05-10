@@ -79,6 +79,27 @@ describe('custom action schema pricing authority', () => {
 		}
 	});
 
+	it('rejects invalid reasoning efforts in model selections', () => {
+		const result = validateCreatePayload({
+			template_id: '42',
+			code: 'invalid-reasoning',
+			display_name: 'Invalid Reasoning',
+			action_kind: 'template_override',
+			definition_version: 1,
+			supported_execution_modes: ['after_submission'],
+			model_selection: {
+				primary: 'openai/gpt-5.5',
+				is_preset: false,
+				reasoning: 'extreme'
+			}
+		});
+
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.errors.some((error) => error.path === 'model_selection.reasoning')).toBe(true);
+		}
+	});
+
 	it('accepts local numeric template IDs for local-first action templates', () => {
 		const result = validateCreatePayload({
 			template_id: '42',

@@ -302,7 +302,7 @@ export class MockSentientFormsApiClient {
 		hookScope: 'all' | string = 'all'
 	): Promise<WorkflowPlanResponse> {
 		return {
-			authority: 'local_fallback',
+			authority: 'local',
 			authority_reason: 'mock',
 			cps_unreachable: true,
 			policy_version: '2026-02-mixed-sync-async-v1',

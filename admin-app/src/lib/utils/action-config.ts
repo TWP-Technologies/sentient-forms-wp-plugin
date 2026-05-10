@@ -4,6 +4,8 @@ import type {
 	SpamIndicatorsDisplayMode,
 	SpamResultDisplayMode
 } from '$lib/api/types';
+import { normalizeSpamGuidanceExamples } from '$lib/schemas/action-config';
+import { normalizeModelReasoningEffort } from '$lib/utils/model-selection';
 
 export const DEFAULT_MODEL_SELECTION: ModelSelection = {
 	primary: 'sf_default',
@@ -12,13 +14,7 @@ export const DEFAULT_MODEL_SELECTION: ModelSelection = {
 };
 
 const VALID_SITE_CONTEXT_VALUES = new Set(['global', 'always', 'never']);
-const VALID_SPAM_RESULT_DISPLAY_MODES = new Set([
-	'none',
-	'spam_only',
-	'all_results',
-	'entry_note',
-	'silent'
-]);
+const VALID_SPAM_RESULT_DISPLAY_MODES = new Set(['none', 'spam_only', 'all_results']);
 const VALID_SPAM_INDICATORS_DISPLAY = new Set(['simple', 'detailed']);
 const SPAM_ACTION_CODES = new Set(['spam_detection_v1', 'spam_analysis']);
 export const INHERITABLE_BOOLEAN_MODES = ['inherit', 'enabled', 'disabled'] as const;
@@ -60,7 +56,7 @@ export function deriveDraftExecutionKind(
 
 export function normalizeSpamResultDisplayMode(
 	value: unknown,
-	fallback: SpamResultDisplayMode = 'entry_note'
+	fallback: SpamResultDisplayMode = 'all_results'
 ): SpamResultDisplayMode {
 	if (typeof value !== 'string') {
 		return fallback;
@@ -69,14 +65,6 @@ export function normalizeSpamResultDisplayMode(
 	const normalized = value.trim().toLowerCase();
 	if (!VALID_SPAM_RESULT_DISPLAY_MODES.has(normalized)) {
 		return fallback;
-	}
-
-	if (normalized === 'all_results') {
-		return 'entry_note';
-	}
-
-	if (normalized === 'none') {
-		return 'silent';
 	}
 
 	return normalized as SpamResultDisplayMode;
@@ -139,6 +127,8 @@ export function normalizeModelSelection(value: unknown): ModelSelection | undefi
 				? Number.parseInt(candidate.credential_id, 10)
 				: null;
 
+	const reasoning = normalizeModelReasoningEffort(candidate.reasoning);
+
 	return {
 		primary,
 		backup,
@@ -146,10 +136,7 @@ export function normalizeModelSelection(value: unknown): ModelSelection | undefi
 		...(provider ? { provider } : {}),
 		...(credentialId && credentialId > 0 ? { credential_id: credentialId } : {}),
 		...(tools ? { tools } : {}),
-		...(typeof candidate.reasoning === 'string' &&
-		['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(candidate.reasoning)
-			? { reasoning: candidate.reasoning }
-			: {})
+		...(reasoning ? { reasoning } : {})
 	};
 }
 
@@ -175,7 +162,9 @@ function normalizeModelToolSettings(value: unknown): Record<string, unknown> | n
 	}
 
 	const webSearch =
-		candidate.web_search && typeof candidate.web_search === 'object' && !Array.isArray(candidate.web_search)
+		candidate.web_search &&
+		typeof candidate.web_search === 'object' &&
+		!Array.isArray(candidate.web_search)
 			? (candidate.web_search as Record<string, unknown>)
 			: null;
 	const webSearchMode = normalizeModelToolMode(webSearch?.mode);
@@ -261,19 +250,16 @@ export function normalizeFormActionConfig(value: unknown): FormActionConfig {
 		suppress_notifications_on_spam: normalizeOptionalBoolean(
 			candidate.suppress_notifications_on_spam
 		),
+		suppress_webhooks_on_spam: normalizeOptionalBoolean(candidate.suppress_webhooks_on_spam),
 		skip_downstream_on_spam: normalizeOptionalBoolean(candidate.skip_downstream_on_spam),
 		spam_result_display_mode: normalizeSpamResultDisplayMode(candidate.spam_result_display_mode),
 		spam_indicators_display: normalizeSpamIndicatorsDisplay(candidate.spam_indicators_display),
-		spam_positive_examples: Array.isArray(candidate.spam_positive_examples)
-			? candidate.spam_positive_examples
-					.map((entry) => entry?.toString().trim())
-					.filter((entry): entry is string => Boolean(entry))
-			: [],
-		spam_negative_examples: Array.isArray(candidate.spam_negative_examples)
-			? candidate.spam_negative_examples
-					.map((entry) => entry?.toString().trim())
-					.filter((entry): entry is string => Boolean(entry))
-			: [],
+		spam_positive_examples: normalizeSpamGuidanceExamples(candidate.spam_positive_examples),
+		spam_negative_examples: normalizeSpamGuidanceExamples(candidate.spam_negative_examples),
+		action_customization:
+			typeof candidate.action_customization === 'string'
+				? candidate.action_customization.trim().slice(0, 2000)
+				: undefined,
 		model_selection: normalizeModelSelection(
 			candidate.model_selection ?? candidate.model_override ?? null
 		),
@@ -325,7 +311,7 @@ export function modeToOptionalBoolean(mode: InheritableBooleanMode): boolean | u
 
 export function applyInheritableBooleanToConfig(
 	config: FormActionConfig,
-	field: 'suppress_notifications_on_spam' | 'skip_downstream_on_spam',
+	field: 'suppress_notifications_on_spam' | 'suppress_webhooks_on_spam' | 'skip_downstream_on_spam',
 	mode: InheritableBooleanMode
 ): FormActionConfig {
 	const nextConfig = { ...config };

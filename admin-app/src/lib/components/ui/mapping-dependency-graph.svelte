@@ -418,7 +418,7 @@
 		return getMappingDependencyIds(target);
 	});
 
-	const plannerAuthority = $derived.by(() => workflowPlan?.authority ?? 'local_fallback');
+	const plannerAuthority = $derived.by(() => workflowPlan?.authority ?? 'local');
 	const plannerAuthorityReason = $derived.by(() => workflowPlan?.authority_reason ?? null);
 	const policyVersion = $derived.by(
 		() => workflowPlan?.policy_version ?? '2026-02-mixed-sync-async-v1'
@@ -491,8 +491,8 @@
 	const previewSourceLabel = $derived.by(() => {
 		if (useRemotePreview) return 'Preview source: managed planner';
 		if (hasUnsavedChanges) return 'Preview source: local draft (unsaved edits)';
-		if (plannerAuthority === 'cps') return 'Preview source: local fallback (managed planner mismatch)';
-		return 'Preview source: local fallback';
+		if (plannerAuthority === 'cps') return 'Preview source: local planner (managed planner mismatch)';
+		return 'Preview source: local planner';
 	});
 
 	const normalizedHookPreviews = $derived.by(() => {
@@ -1808,10 +1808,10 @@
 			</div>
 		</div>
 		<div class="sf:flex sf:items-center sf:gap-2 sf:flex-wrap">
-			<Badge variant={plannerAuthority === 'cps' ? 'success' : 'warning'}>
+			<Badge variant={plannerAuthority === 'cps' ? 'success' : 'neutral'}>
 				{plannerAuthority === 'cps'
 					? 'Planner authority: managed'
-					: 'Planner authority: local fallback'}
+					: 'Planner authority: local'}
 			</Badge>
 			{#if graph.cycleIds.length > 0}
 				<Badge variant="danger">Cycle detected</Badge>
@@ -1929,7 +1929,7 @@
 		</div>
 	{/if}
 
-	{#if plannerAuthority !== 'cps'}
+	{#if plannerAuthority !== 'cps' && plannerAuthority !== 'local'}
 		<p
 			class="sf:text-xs sf:rounded-md sf:border sf:border-amber-300 sf:bg-amber-50 sf:px-3 sf:py-2 sf:text-amber-800"
 		>

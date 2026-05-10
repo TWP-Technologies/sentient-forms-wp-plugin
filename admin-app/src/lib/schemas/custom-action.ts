@@ -11,6 +11,7 @@ import type {
 	WorkflowEdgePayload,
 	WorkflowNodePayload
 } from '$lib/api/types';
+import { normalizeModelReasoningEffort } from '$lib/utils/model-selection';
 
 type IssuePath = Array<string | number>;
 
@@ -104,8 +105,15 @@ function validateModelSelection(
 		selection.backup = null;
 	}
 
-	if (typeof value.reasoning === 'string' && value.reasoning.trim().length > 0) {
-		selection.reasoning = value.reasoning.trim();
+	const reasoning = normalizeModelReasoningEffort(value.reasoning);
+	if (reasoning) {
+		selection.reasoning = reasoning;
+	} else if (typeof value.reasoning === 'string' && value.reasoning.trim().length > 0) {
+		pushIssue(
+			issues,
+			['model_selection', 'reasoning'],
+			'Reasoning effort must be one of none, minimal, low, medium, high, or xhigh'
+		);
 	}
 
 	if (typeof value.provider === 'string' && value.provider.trim().length > 0) {

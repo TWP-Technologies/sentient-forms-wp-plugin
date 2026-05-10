@@ -46,7 +46,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
 
         $data = $response->get_data();
-        $this->assertSame( 'local-openrouter-v1', $data['pricing_policy_version'] );
+        $this->assertSame( 'local-openrouter-v2', $data['pricing_policy_version'] );
         $this->assertGreaterThanOrEqual( 20, count( $data['models'] ) );
         $this->assertGreaterThanOrEqual( 8, count( $data['presets'] ) );
 
@@ -363,11 +363,63 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 7, $data['pricing_estimate']['base_floor_credits'] );
         $this->assertSame( 0, $data['pricing_estimate']['normalized_actual_credits'] );
         $this->assertSame( 0, $data['pricing_estimate']['estimated_debit_credits'] );
-        $this->assertSame( 'local-openrouter-v1', $data['pricing_estimate']['pricing_policy_version'] );
-        $this->assertSame( 'openrouter_direct_route', $data['pricing_estimate']['estimate_source'] );
+        $this->assertSame( 'local-openrouter-v2', $data['pricing_estimate']['pricing_policy_version'] );
+        $this->assertSame( 'baseline_profile', $data['pricing_estimate']['estimate_source'] );
         $this->assertSame( 'openrouter', $data['pricing_estimate']['route'] );
         $this->assertSame( 'openrouter_currency', $data['pricing_estimate']['kind'] );
-        $this->assertStringStartsWith( 'OR: $', $data['pricing_estimate']['label'] );
+        $this->assertStringStartsWith( 'OR est. $', $data['pricing_estimate']['label'] );
+        $this->assertGreaterThan( 0, $data['pricing_estimate']['amount_usd'] );
+        $this->assertSame( 1900, $data['pricing_estimate']['estimated_input_tokens'] );
+        $this->assertSame( 320, $data['pricing_estimate']['estimated_output_tokens'] );
+        $this->assertSame( 0, $data['pricing_estimate']['sample_count'] );
+        $this->assertSame( 'baseline', $data['pricing_estimate']['confidence'] );
+    }
+
+    public function test_estimate_model_calibrates_openrouter_estimate_from_action_log_costs(): void
+    {
+        $this->seed_model_cache();
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $GLOBALS['wpdb'] );
+        $record = $events->record(
+            [
+                'execution_request_id' => 'estimate-calibration-openrouter',
+                'provider'             => 'openrouter',
+                'model'                => 'anthropic/claude-sonnet-4.6',
+                'status'               => 'succeeded',
+                'token_usage_json'     => [
+                    'prompt_tokens'     => 1900,
+                    'completion_tokens' => 320,
+                ],
+                'cost_json'            => [
+                    'amount_usd' => 0.02,
+                    'currency'   => 'USD',
+                ],
+            ]
+        );
+        $this->assertIsInt( $record );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/estimate' );
+        $request->set_body_params(
+            [
+                'action_id'         => 'entry_summary',
+                'base_credit_cost'  => 7,
+                'mapping_selection' => [
+                    'primary'   => 'anthropic/claude-sonnet-4.6',
+                    'is_preset' => false,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'action_log_openrouter_cost', $data['pricing_estimate']['estimate_source'] );
+        $this->assertSame( 1, $data['pricing_estimate']['sample_count'] );
+        $this->assertSame( 'low', $data['pricing_estimate']['confidence'] );
+        $this->assertSame( 'USD', $data['pricing_estimate']['estimate_range']['currency'] );
+        $this->assertGreaterThan( 0, $data['pricing_estimate']['estimate_range']['high'] );
     }
 
     public function test_estimate_model_reports_managed_service_credits_for_managed_route(): void
@@ -395,8 +447,11 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 'sentient_managed', $data['pricing_estimate']['route'] );
         $this->assertSame( 'sentient_credits', $data['pricing_estimate']['kind'] );
         $this->assertSame( 'SF: 7 credits', $data['pricing_estimate']['label'] );
-        $this->assertSame( 7, $data['pricing_estimate']['normalized_actual_credits'] );
+        $this->assertSame( 6, $data['pricing_estimate']['normalized_actual_credits'] );
         $this->assertSame( 7, $data['pricing_estimate']['estimated_debit_credits'] );
+        $this->assertSame( 'baseline_profile', $data['pricing_estimate']['estimate_source'] );
+        $this->assertSame( 0, $data['pricing_estimate']['sample_count'] );
+        $this->assertSame( 'baseline', $data['pricing_estimate']['confidence'] );
     }
 
     private function seed_model_cache(): void
@@ -453,5 +508,6 @@ class Tests_Models_Controller extends WP_UnitTestCase
         global $wpdb;
 
         $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}sentient_model_cache" );
+        $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}sentient_execution_events" );
     }
 }

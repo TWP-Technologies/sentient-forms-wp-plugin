@@ -195,6 +195,11 @@ foreach ( $iterator as $item )
         preg_match_all( $remote_url_pattern, $contents, $matches );
         foreach ( $matches[0] ?? [] as $url )
         {
+            if ( is_dynamic_url_template_fragment( $url ) )
+            {
+                continue;
+            }
+
             if ( is_allowed_url( $url, $allowed_url_hosts ) )
             {
                 continue;
@@ -247,6 +252,15 @@ if ( [] !== $issues )
 
 $mode = $source_tree ? 'source tree' : 'package';
 echo "Sentient Forms WordPress.org {$mode} scan passed for {$root}.\n";
+
+/**
+ * Return whether a discovered URL token is only part of a bundled dynamic
+ * template expression, such as a validator constructing an IPv6 URL.
+ */
+function is_dynamic_url_template_fragment( string $url ): bool
+{
+    return str_contains( $url, '${' );
+}
 
 /**
  * Return whether a discovered URL is an allowed docs/example/service URL.

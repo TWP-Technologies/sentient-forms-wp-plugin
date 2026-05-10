@@ -1,6 +1,18 @@
 <script lang="ts">
-	import type { PluginSettingsResponse } from '$lib/api/types';
-	import { Alert, Badge, Button } from '$lib/components/ui';
+	import type {
+		ModelSelection,
+		PluginSettingsResponse,
+		SiteContextStatusResponse
+	} from '$lib/api/types';
+	import { Alert, Badge, Button, ModelSelector, Toggle } from '$lib/components/ui';
+	import { notifications } from '$lib/stores/notifications';
+	import {
+		DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
+		DEFAULT_SITE_CONTEXT_REFRESH_DAYS,
+		SITE_CONTEXT_REFRESH_DAY_OPTIONS,
+		normalizeSiteContextResponse
+	} from '$lib/utils/site-context';
+	import { wpFetch } from '$lib/wp';
 
 	type PrivacyPresetId =
 		| 'balanced'
@@ -83,14 +95,38 @@
 	}
 
 	let selectedPreset = $state<PrivacyPresetId>(initialPreset(settings));
+	let siteContextLoading = $state(false);
+	let siteContextSaving = $state(false);
+	let siteContextGenerating = $state(false);
+	let siteContextStatus = $state<SiteContextStatusResponse | null>(null);
+	let siteContextText = $state('');
+	let siteContextConsent = $state(false);
+	let siteContextAutoRefresh = $state(false);
+	let siteContextRefreshDays = $state(DEFAULT_SITE_CONTEXT_REFRESH_DAYS);
+	let siteContextModelSelection = $state<ModelSelection>(DEFAULT_SITE_CONTEXT_MODEL_SELECTION);
 	let selectedDefinition = $derived(
 		presetDefinitions.find((preset) => preset.id === selectedPreset) ?? presetDefinitions[0]
 	);
 	let completedAtLabel = $derived(settings?.privacy_setup_completed_at ?? null);
+	let siteContextHasChanges = $derived.by(() => {
+		if (!siteContextStatus) return false;
+		return (
+			siteContextText !== (siteContextStatus.context?.summary_text ?? '') ||
+			siteContextConsent !== (siteContextStatus.settings.consent_status === 'granted') ||
+			siteContextAutoRefresh !== siteContextStatus.settings.auto_refresh_enabled ||
+			siteContextRefreshDays !== siteContextStatus.settings.auto_refresh_days ||
+			JSON.stringify(siteContextModelSelection) !==
+				JSON.stringify(
+					siteContextStatus.settings.generation_model_selection ??
+						DEFAULT_SITE_CONTEXT_MODEL_SELECTION
+				)
+		);
+	});
 
 	$effect(() => {
 		if (!open) return;
 		selectedPreset = initialPreset(settings);
+		void loadSiteContext();
 	});
 
 	function handleBackdropClick(event: MouseEvent): void {
@@ -107,12 +143,93 @@
 		}
 	}
 
-	function applySelectedPreset(): void {
+	async function applySelectedPreset(): Promise<void> {
+		if (siteContextHasChanges && !(await saveSiteContext())) {
+			return;
+		}
 		onapply?.(selectedPreset);
 	}
 
-	function useBalancedDefaults(): void {
+	async function useBalancedDefaults(): Promise<void> {
+		if (siteContextHasChanges && !(await saveSiteContext())) {
+			return;
+		}
 		onapply?.('balanced');
+	}
+
+	function syncSiteContext(next: SiteContextStatusResponse): void {
+		siteContextStatus = next;
+		siteContextText = next.context?.summary_text ?? '';
+		siteContextConsent = next.settings.consent_status === 'granted';
+		siteContextAutoRefresh = next.settings.auto_refresh_enabled;
+		siteContextRefreshDays = next.settings.auto_refresh_days || DEFAULT_SITE_CONTEXT_REFRESH_DAYS;
+		siteContextModelSelection =
+			next.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION;
+	}
+
+	async function loadSiteContext(): Promise<void> {
+		siteContextLoading = true;
+		try {
+			syncSiteContext(
+				normalizeSiteContextResponse(await wpFetch<SiteContextStatusResponse>('site-context'))
+			);
+		} catch (error) {
+			console.error('Failed to load Site Context setup state', error);
+		} finally {
+			siteContextLoading = false;
+		}
+	}
+
+	function siteContextPayload() {
+		return {
+			summary_text: siteContextText,
+			auto_include: true,
+			pii_ack: true,
+			consent_status: siteContextConsent ? 'granted' : 'unset',
+			auto_refresh_enabled: siteContextConsent && siteContextAutoRefresh,
+			auto_refresh_days: siteContextRefreshDays,
+			generation_model_selection: siteContextModelSelection
+		};
+	}
+
+	async function saveSiteContext(): Promise<boolean> {
+		siteContextSaving = true;
+		try {
+			const response = await wpFetch<SiteContextStatusResponse>('site-context', {
+				method: 'PUT',
+				body: JSON.stringify(siteContextPayload())
+			});
+			syncSiteContext(normalizeSiteContextResponse(response));
+			notifications.success('Site Context setup saved');
+			return true;
+		} catch (error) {
+			console.error('Failed to save Site Context setup', error);
+			notifications.error('Unable to save Site Context setup');
+			return false;
+		} finally {
+			siteContextSaving = false;
+		}
+	}
+
+	async function generateSiteContext(): Promise<void> {
+		if (!siteContextConsent) {
+			notifications.warning('Allow AI-generated Site Context before generating.');
+			return;
+		}
+		siteContextGenerating = true;
+		try {
+			const response = await wpFetch<SiteContextStatusResponse>('site-context/generate', {
+				method: 'POST',
+				body: JSON.stringify(siteContextPayload())
+			});
+			syncSiteContext(normalizeSiteContextResponse(response));
+			notifications.success('Site Context generated');
+		} catch (error) {
+			console.error('Failed to generate Site Context', error);
+			notifications.error('Unable to generate Site Context');
+		} finally {
+			siteContextGenerating = false;
+		}
 	}
 </script>
 
@@ -138,10 +255,14 @@
 						<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 							<Badge variant="info">Privacy setup</Badge>
 							{#if completedAtLabel}
-								<Badge variant="neutral">Updated before</Badge>
+								<Badge variant="neutral">Setup saved</Badge>
 							{/if}
 						</div>
-						<h2 id="privacy-setup-assistant-title" class="sf:text-xl sf:font-semibold sf:text-white">
+						<h2
+							id="privacy-setup-assistant-title"
+							class="sf:text-xl sf:font-semibold sf:text-white"
+							style="color: #ffffff;"
+						>
 							Choose how much Sentient Forms keeps locally
 						</h2>
 						<p class="sf:max-w-2xl sf:text-sm sf:text-slate-200">
@@ -201,7 +322,7 @@
 						{/each}
 					</div>
 
-				<div class="sf:grid sf:gap-4 sf:xl:grid-cols-[1.2fr_0.8fr]">
+				<div class="sf:grid sf:items-start sf:gap-4 sf:xl:grid-cols-[1.2fr_0.8fr]">
 					<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4 sf:space-y-4">
 						<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 							<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
@@ -237,6 +358,112 @@
 					</div>
 
 					<div class="sf:space-y-3">
+						<div class="sf:rounded-lg sf:border sf:border-primary-100 sf:bg-primary-50 sf:p-4 sf:space-y-4">
+							<div class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-2">
+								<div>
+									<p class="sf:text-sm sf:font-semibold sf:text-slate-900">Site Context</p>
+									<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
+										Give actions a site-specific baseline for better spam and summary decisions.
+									</p>
+								</div>
+								{#if siteContextStatus?.status === 'ready'}
+									<Badge variant="success">Ready</Badge>
+								{:else if siteContextStatus?.status === 'stale'}
+									<Badge variant="warning">Outdated</Badge>
+								{:else if siteContextStatus?.status === 'declined'}
+									<Badge variant="neutral">Generation off</Badge>
+								{:else}
+									<Badge variant="warning">Empty</Badge>
+								{/if}
+							</div>
+
+							{#if siteContextLoading}
+								<p class="sf:text-xs sf:text-slate-500">Loading Site Context setup...</p>
+							{:else}
+								<label class="sf:flex sf:items-start sf:gap-2 sf:text-sm sf:text-slate-700">
+									<input
+										type="checkbox"
+										class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+										bind:checked={siteContextConsent}
+									/>
+									<span>
+										<span class="sf:block sf:font-semibold sf:text-slate-900">
+											Allow AI-generated Site Context
+										</span>
+										<span class="sf:block sf:text-xs sf:text-slate-600">
+											Uses a web-capable model to read public site evidence.
+										</span>
+									</span>
+								</label>
+
+								<Toggle
+									label="Refresh automatically"
+									description="Schedule updates through WordPress."
+									bind:checked={siteContextAutoRefresh}
+									disabled={!siteContextConsent}
+								/>
+
+								<label class="sf:block">
+									<span class="sf:text-xs sf:font-semibold sf:text-slate-700">Refresh every</span>
+									<select
+										class="sf:mt-1 sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+										bind:value={siteContextRefreshDays}
+										disabled={!siteContextConsent || !siteContextAutoRefresh}
+									>
+										{#each SITE_CONTEXT_REFRESH_DAY_OPTIONS as days}
+											<option value={days}>{days} days</option>
+										{/each}
+									</select>
+								</label>
+
+								<label class="sf:block">
+									<span class="sf:text-xs sf:font-semibold sf:text-slate-700">
+										Manual context
+									</span>
+									<textarea
+										rows={4}
+										bind:value={siteContextText}
+										maxlength={5000}
+										class="sf:mt-1 sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+										placeholder="Describe the site, normal inquiries, service area, and suspicious patterns..."
+									></textarea>
+								</label>
+
+								<div class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+									<ModelSelector
+										label="Generation model"
+										level="global"
+										value={siteContextModelSelection}
+										readonly={!siteContextConsent}
+										requiredCapabilities={['web_search']}
+										lockRequiredCapabilities={true}
+										onchange={(selection) => {
+											siteContextModelSelection = selection;
+										}}
+									/>
+								</div>
+
+								<div class="sf:flex sf:flex-wrap sf:gap-2">
+									<Button
+										size="sm"
+										variant="secondary"
+										disabled={siteContextSaving}
+										onclick={saveSiteContext}
+									>
+										{siteContextSaving ? 'Saving...' : 'Save context'}
+									</Button>
+									<Button
+										size="sm"
+										disabled={!siteContextConsent || siteContextGenerating}
+										loading={siteContextGenerating}
+										onclick={generateSiteContext}
+									>
+										{siteContextGenerating ? 'Generating...' : 'Generate now'}
+									</Button>
+								</div>
+							{/if}
+						</div>
+
 						<Alert variant="info">
 							<p class="sf:font-semibold">High-sensitivity secret handling</p>
 							<p class="sf:mt-1">
@@ -266,16 +493,16 @@
 						to use immediately.
 					</p>
 					<div class="sf:flex sf:shrink-0 sf:flex-nowrap sf:gap-2">
-						<Button variant="secondary" disabled={saving} onclick={useBalancedDefaults}>
+						<Button variant="secondary" disabled={saving || siteContextSaving} onclick={useBalancedDefaults}>
 							Skip setup
 						</Button>
 						<Button
 							class="sf:min-w-[9rem]"
-							loading={saving}
-							disabled={saving}
+							loading={saving || siteContextSaving}
+							disabled={saving || siteContextSaving}
 							onclick={applySelectedPreset}
 						>
-							{saving ? 'Saving...' : `Apply ${selectedDefinition.label}`}
+							{saving || siteContextSaving ? 'Saving...' : `Apply ${selectedDefinition.label}`}
 						</Button>
 					</div>
 				</div>

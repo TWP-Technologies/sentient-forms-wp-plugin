@@ -168,6 +168,14 @@ class AsyncHandlerTest extends WP_UnitTestCase
 {
     private Sentient_Forms_Plugin $plugin;
 
+    private function guidance_example( string $text, string $rationale = 'Business-specific rationale' ): array
+    {
+        return [
+            'text'      => $text,
+            'rationale' => $rationale,
+        ];
+    }
+
 	protected function setUp(): void
 	{
 		parent::setUp();
@@ -459,7 +467,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertGreaterThanOrEqual( time() + 43190, (int) ( $job['run_at'] ?? 0 ) );
     }
 
-    public function test_process_action_async_master_batch_enqueue_is_idempotent_without_local_fallback(): void
+    public function test_process_action_async_master_batch_enqueue_is_idempotent_without_duplicate_fallback(): void
     {
         $data = [
             'hook'  => 'gform_after_submission',
@@ -1777,8 +1785,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		// Set up form-level config in wp_options
 		$form_config = [
 			'spam_detection_v1' => [
-				'spam_positive_examples' => [ 'This is a legitimate inquiry', 'I need help with my account' ],
-				'spam_negative_examples' => [ 'Buy crypto now!!!', 'You won a prize' ],
+				'spam_positive_examples' => [ $this->guidance_example( 'This is a legitimate inquiry' ), $this->guidance_example( 'I need help with my account' ) ],
+				'spam_negative_examples' => [ $this->guidance_example( 'Buy crypto now!!!' ), $this->guidance_example( 'You won a prize' ) ],
 			],
 		];
 		update_option( 'sentient_forms_form_config_gravity_forms_220', $form_config );
@@ -1823,12 +1831,12 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		// Verify form-level examples were merged into settings passed to executor
 		$captured_settings = $executor->captured['context']['settings'] ?? [];
 		$this->assertSame(
-			[ 'This is a legitimate inquiry', 'I need help with my account' ],
+			[ $this->guidance_example( 'This is a legitimate inquiry' ), $this->guidance_example( 'I need help with my account' ) ],
 			$captured_settings['spam_positive_examples'] ?? null,
 			'Form-level positive examples should be merged when mapping has none'
 		);
 		$this->assertSame(
-			[ 'Buy crypto now!!!', 'You won a prize' ],
+			[ $this->guidance_example( 'Buy crypto now!!!' ), $this->guidance_example( 'You won a prize' ) ],
 			$captured_settings['spam_negative_examples'] ?? null,
 			'Form-level negative examples should be merged when mapping has none'
 		);
@@ -1847,8 +1855,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		// Set up form-level config (should be overridden)
 		$form_config = [
 			'spam_detection_v1' => [
-				'spam_positive_examples' => [ 'Form level positive' ],
-				'spam_negative_examples' => [ 'Form level negative' ],
+				'spam_positive_examples' => [ $this->guidance_example( 'Form level positive' ) ],
+				'spam_negative_examples' => [ $this->guidance_example( 'Form level negative' ) ],
 			],
 		];
 		update_option( 'sentient_forms_form_config_gravity_forms_221', $form_config );
@@ -1868,8 +1876,8 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$settings = [
 			'central_action_id'       => 'spam_detection_v1',
 			'action_type_indicator'   => 'master',
-			'spam_positive_examples'  => [ 'Mapping level positive' ],
-			'spam_negative_examples'  => [ 'Mapping level negative' ],
+			'spam_positive_examples'  => [ $this->guidance_example( 'Mapping level positive' ) ],
+			'spam_negative_examples'  => [ $this->guidance_example( 'Mapping level negative' ) ],
 		];
 
 		$context = [
@@ -1892,12 +1900,12 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		// Mapping examples should win over form-level
 		$captured_settings = $executor->captured['context']['settings'] ?? [];
 		$this->assertSame(
-			[ 'Mapping level positive' ],
+			[ $this->guidance_example( 'Mapping level positive' ) ],
 			$captured_settings['spam_positive_examples'] ?? null,
 			'Mapping-level examples should override form-level'
 		);
 		$this->assertSame(
-			[ 'Mapping level negative' ],
+			[ $this->guidance_example( 'Mapping level negative' ) ],
 			$captured_settings['spam_negative_examples'] ?? null,
 			'Mapping-level examples should override form-level'
 		);
@@ -1916,6 +1924,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 					'is_preset' => true,
 				],
 				'include_site_context' => 'never',
+				'action_customization' => 'Highlight urgency and requested next step in the summary.',
 			]
 		);
 
@@ -1956,8 +1965,81 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertSame( 'sf_fast', $captured_settings['model_selection']['primary'] ?? null );
 		$this->assertSame( 'sf_quality', $captured_settings['model_selection']['backup'] ?? null );
 		$this->assertSame( 'never', $captured_settings['include_site_context'] ?? null );
+		$this->assertSame(
+			'Highlight urgency and requested next step in the summary.',
+			$captured_settings['action_customization'] ?? null
+		);
 
 		delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
+	}
+
+	public function test_process_action_resolves_action_customization_from_most_specific_scope(): void
+	{
+		update_option(
+			'sentient_forms_action_defaults_entry_summary_v1',
+			[
+				'action_customization' => 'Action-level summary customization.',
+			]
+		);
+		update_option(
+			'sentient_forms_form_config_gravity_forms_226',
+			[
+				'entry_summary_v1' => [
+					'action_customization' => 'Form-level summary customization.',
+				],
+			]
+		);
+
+		$executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+		$reflection = new ReflectionClass( $this->plugin );
+		$property   = $reflection->getProperty( 'action_executor' );
+		$property->setAccessible( true );
+		$property->setValue( $this->plugin, $executor );
+
+		$data = [
+			'form'  => [ 'id' => 226, 'title' => 'Customization Inheritance Test' ],
+			'entry' => [ 'id' => 806, 'field_1' => 'summarize me' ],
+		];
+		$context = [
+			'form_source' => 'gravity_forms',
+			'form_id'     => 226,
+			'entry_id'    => 806,
+			'job_id'      => wp_generate_uuid4(),
+			'action_id'   => 'entry_summary_v1',
+		];
+
+		$handler = $this->plugin->get_async_handler();
+		$handler->process_action(
+			'entry_summary_v1',
+			$data,
+			[
+				'central_action_id'     => 'entry_summary_v1',
+				'action_type_indicator' => 'master',
+			],
+			null,
+			$context
+		);
+
+		$captured_settings = $executor->captured['context']['settings'] ?? [];
+		$this->assertSame( 'Form-level summary customization.', $captured_settings['action_customization'] ?? null );
+
+		$handler->process_action(
+			'entry_summary_v1',
+			$data,
+			[
+				'central_action_id'     => 'entry_summary_v1',
+				'action_type_indicator' => 'master',
+				'action_customization'  => 'Mapping-level summary customization.',
+			],
+			null,
+			$context
+		);
+
+		$captured_settings = $executor->captured['context']['settings'] ?? [];
+		$this->assertSame( 'Mapping-level summary customization.', $captured_settings['action_customization'] ?? null );
+
+		delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
+		delete_option( 'sentient_forms_form_config_gravity_forms_226' );
 	}
 
 	public function test_process_action_form_level_spam_policies_override_action_defaults(): void
@@ -1966,6 +2048,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			'sentient_forms_action_defaults_spam_detection_v1',
 			[
 				'suppress_notifications_on_spam' => true,
+				'suppress_webhooks_on_spam'      => true,
 				'skip_downstream_on_spam'        => false,
 			]
 		);
@@ -1974,6 +2057,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			[
 				'spam_detection_v1' => [
 					'suppress_notifications_on_spam' => false,
+					'suppress_webhooks_on_spam'      => false,
 					'skip_downstream_on_spam'        => true,
 				],
 			]
@@ -2014,6 +2098,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
 		$captured_settings = $executor->captured['context']['settings'] ?? [];
 		$this->assertFalse( $captured_settings['suppress_notifications_on_spam'] ?? true );
+		$this->assertFalse( $captured_settings['suppress_webhooks_on_spam'] ?? true );
 		$this->assertTrue( $captured_settings['skip_downstream_on_spam'] ?? false );
 
 		delete_option( 'sentient_forms_action_defaults_spam_detection_v1' );
@@ -2021,14 +2106,14 @@ class AsyncHandlerTest extends WP_UnitTestCase
 	}
 
 	/**
-	 * Test that non-spam-detection actions bypass hierarchical resolution.
+	 * Test that non-spam-detection actions bypass spam-example hierarchical resolution.
 	 */
 	public function test_process_action_non_spam_actions_bypass_hierarchical_resolution(): void
 	{
 		// Set up form-level spam config (should be ignored for non-spam actions)
 		$form_config = [
 			'summary_v1' => [
-				'spam_positive_examples' => [ 'Should not appear' ],
+				'spam_positive_examples' => [ $this->guidance_example( 'Should not appear' ) ],
 			],
 		];
 		update_option( 'sentient_forms_form_config_gravity_forms_222', $form_config );

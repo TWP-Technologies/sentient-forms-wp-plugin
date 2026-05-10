@@ -528,7 +528,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Abstract_Sentient_Forms_B
 
             if ( isset( $runtime_selection['reasoning'] ) && is_scalar( $runtime_selection['reasoning'] ) )
             {
-                $selection['reasoning'] = sanitize_key( (string) $runtime_selection['reasoning'] );
+                $reasoning = sanitize_key( (string) $runtime_selection['reasoning'] );
+                if ( in_array( $reasoning, [ 'none', 'minimal', 'low', 'medium', 'high', 'xhigh' ], true ) )
+                {
+                    $selection['reasoning'] = $reasoning;
+                }
             }
 
             $tools = $this->sanitize_model_tool_settings( $runtime_selection['tools'] ?? null );

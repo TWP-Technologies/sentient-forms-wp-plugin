@@ -223,6 +223,7 @@ final class Sentient_Forms_Plugin
     private function init_hooks(): void
     {
         Sentient_Forms_Local_Data_Governance::register_hooks();
+        Sentient_Forms_Site_Context_Controller::register_hooks();
 
         if ( Sentient_Forms_Installer::is_network_active() )
         {

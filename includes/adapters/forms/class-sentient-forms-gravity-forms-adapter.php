@@ -28,13 +28,18 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     private const SPAM_NOTIFICATION_PREFERENCE_META_KEY = 'spam_notification_preference';
     private const SPAM_NOTIFICATION_PREFERENCE_SUPPRESS = 'suppress';
     private const SPAM_NOTIFICATION_PREFERENCE_ALLOW = 'allow';
+    private const SPAM_WEBHOOK_PREFERENCE_META_KEY = 'spam_webhook_preference';
     private const DEFERRED_NOTIFICATION_IDS_META_KEY = 'deferred_notification_ids';
     private const DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY = 'deferred_notification_mapping_ids';
     private const DEFERRED_NOTIFICATION_DECISION_META_KEY = 'deferred_notification_decision';
+    private const DEFERRED_WEBHOOK_FEED_IDS_META_KEY = 'deferred_webhook_feed_ids';
+    private const DEFERRED_WEBHOOK_MAPPING_IDS_META_KEY = 'deferred_webhook_mapping_ids';
+    private const DEFERRED_WEBHOOK_DECISION_META_KEY = 'deferred_webhook_decision';
     private const DEFERRED_NOTIFICATION_DECISION_PENDING = 'pending';
     private const DEFERRED_NOTIFICATION_DECISION_SUPPRESS = 'suppress';
     private const DEFERRED_NOTIFICATION_REPLAY_FLAG = 'sentient_forms_async_spam_notification_replay';
     private const DEFERRED_NOTIFICATION_ALLOWED_IDS = 'sentient_forms_allowed_notification_ids';
+    private const GRAVITY_FORMS_WEBHOOKS_ADDON_SLUG = 'gravityformswebhooks';
     private const REALTIME_QNA_STORAGE_FIELD_LABEL = 'Sentient Forms Realtime Q&A';
     private const REALTIME_QNA_STORAGE_FIELD_INPUT_NAME = 'sentient_forms_realtime_qna';
     private const REALTIME_QNA_STORAGE_FIELD_CLASS = 'sentient-forms-realtime-qna-storage';
@@ -55,6 +60,20 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      * @var array<string, array<int, string>>
      */
     private array $async_spam_notification_gate_cache = [];
+
+    /**
+     * Cache async spam Webhooks feed checks per form/entry.
+     *
+     * @var array<string, array<int, string>>
+     */
+    private array $async_spam_webhook_gate_cache = [];
+
+    /**
+     * Replay-only feed IDs while held Gravity Forms Webhooks are reprocessed.
+     *
+     * @var array<int, string>|null
+     */
+    private ?array $webhook_replay_allowed_feed_ids = null;
 
     /**
      * Validation-hook audit request ids that can be linked once Gravity Forms saves the entry.
@@ -122,6 +141,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         // FR-003: Notification interception hook - suppress notifications for blocking spam entries only
         add_filter( 'gform_notification', [ $this, 'maybe_suppress_spam_notification' ], 10, 3 );
         add_filter( 'gform_disable_notification', [ $this, 'maybe_defer_async_spam_notification' ], 10, 5 );
+        if ( $this->gravity_forms_webhooks_feed_controls_available() )
+        {
+            add_filter( 'gform_' . self::GRAVITY_FORMS_WEBHOOKS_ADDON_SLUG . '_pre_process_feeds', [ $this, 'maybe_defer_async_spam_webhooks' ], 10, 3 );
+        }
 
         // Add settings to the form editor
         add_action( 'gform_editor_js', [ $this, 'editor_js' ] );
@@ -138,6 +161,17 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         add_filter( 'sentient_forms_async_evaluation_jobs', [ $this, 'filter_async_evaluation_jobs' ], 10, 3 );
+    }
+
+    private function gravity_forms_webhooks_feed_controls_available(): bool
+    {
+        $addon_available = class_exists( 'GF_Webhooks' )
+            || class_exists( 'Gravity_Forms_Webhooks' )
+            || defined( 'GF_WEBHOOKS_VERSION' );
+
+        return $addon_available
+            && class_exists( 'GFAPI' )
+            && is_callable( [ 'GFAPI', 'maybe_process_feeds' ] );
     }
 
     /**
@@ -335,6 +369,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                     $reason
                 );
                 $this->add_local_action_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $note );
+                $runtime_mapping = $this->normalize_local_first_form_mapping( $mapping ) ?? $mapping;
+                $this->record_failed_spam_delivery_state( $entry_id, $runtime_mapping, $form_id );
                 $events->record( $event );
             }
         }
@@ -959,7 +995,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                         'mark_as_spam'                   => ! empty( $action_settings['mark_as_spam'] ),
                         'spam_confidence_threshold'      => $action_settings['settings']['spam_confidence_threshold'] ?? $action_settings['spam_confidence_threshold'] ?? 0.80,
                         'spam_indicators_display'        => $action_settings['settings']['spam_indicators_display'] ?? $action_settings['spam_indicators_display'] ?? 'simple',
-                        'spam_result_display_mode'       => $action_settings['settings']['spam_result_display_mode'] ?? $action_settings['spam_result_display_mode'] ?? 'entry_note',
+                        'spam_result_display_mode'       => $action_settings['settings']['spam_result_display_mode'] ?? $action_settings['spam_result_display_mode'] ?? 'all_results',
                         'central_action_id'              => $action_settings['central_action_id'] ?? null,
                         'dependency_mapping_ids'         => $dependency_ids,
                         'dependency_execution_request_ids' => $dependency_execution_request_ids,
@@ -1038,7 +1074,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 'mark_as_spam'      => ! empty( $action_settings['mark_as_spam'] ),
                 'spam_confidence_threshold' => $action_settings['settings']['spam_confidence_threshold'] ?? $action_settings['spam_confidence_threshold'] ?? 0.80,
                 'spam_indicators_display'   => $action_settings['settings']['spam_indicators_display'] ?? $action_settings['spam_indicators_display'] ?? 'simple',
-                'spam_result_display_mode'  => $action_settings['settings']['spam_result_display_mode'] ?? $action_settings['spam_result_display_mode'] ?? 'entry_note',
+                'spam_result_display_mode'  => $action_settings['settings']['spam_result_display_mode'] ?? $action_settings['spam_result_display_mode'] ?? 'all_results',
                 'settings'          => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
                     ? $action_settings['settings']
                     : [],
@@ -1531,6 +1567,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                     ? self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS
                     : self::SPAM_NOTIFICATION_PREFERENCE_ALLOW,
             );
+            $this->update_entry_meta(
+                $entry_id,
+                self::SPAM_WEBHOOK_PREFERENCE_META_KEY,
+                $this->should_suppress_webhooks_on_spam( $action_settings )
+                    ? self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS
+                    : self::SPAM_NOTIFICATION_PREFERENCE_ALLOW,
+            );
 
             if ( ! empty( $action_settings['mark_as_spam'] ) )
             {
@@ -1544,6 +1587,48 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         {
             $this->update_entry_meta( $entry_id, 'spam_classification', 'ham' );
             $this->update_entry_meta( $entry_id, self::SPAM_NOTIFICATION_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW );
+            $this->update_entry_meta( $entry_id, self::SPAM_WEBHOOK_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW );
+        }
+    }
+
+    /**
+     * Fail closed for delivery side effects when a spam action cannot produce a classification.
+     *
+     * @param int                  $entry_id        Gravity Forms entry id.
+     * @param array<string, mixed> $mapping         Runtime mapping or local custom-table mapping row.
+     * @param int                  $form_id         Gravity Forms form id for inherited settings resolution.
+     *
+     * @return void
+     */
+    private function record_failed_spam_delivery_state( int $entry_id, array $mapping, int $form_id = 0 ): void
+    {
+        if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        $action_id = isset( $mapping['central_action_id'] ) && is_scalar( $mapping['central_action_id'] )
+            ? sanitize_key( (string) $mapping['central_action_id'] )
+            : '';
+
+        if ( ! $this->local_spam_effect_enabled( $mapping ) && ! $this->is_spam_action_id( $action_id ) )
+        {
+            return;
+        }
+
+        if ( $form_id > 0 )
+        {
+            $mapping = $this->resolve_mapping_runtime_settings( $mapping, $form_id );
+        }
+
+        if ( $this->should_suppress_notifications_on_spam( $mapping ) )
+        {
+            $this->update_entry_meta( $entry_id, self::SPAM_NOTIFICATION_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS );
+        }
+
+        if ( $this->should_suppress_webhooks_on_spam( $mapping ) )
+        {
+            $this->update_entry_meta( $entry_id, self::SPAM_WEBHOOK_PREFERENCE_META_KEY, self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS );
         }
     }
 
@@ -1590,6 +1675,37 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     }
 
     /**
+     * Determine whether a spam mapping should suppress Gravity Forms Webhooks when it classifies spam.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     */
+    private function should_suppress_webhooks_on_spam( array $mapping ): bool
+    {
+        $settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
+        if ( array_key_exists( 'suppress_webhooks_on_spam', $settings ) )
+        {
+            return rest_sanitize_boolean( $settings['suppress_webhooks_on_spam'] );
+        }
+
+        $effect_mapping = $this->get_local_effect_mapping( $mapping );
+        if ( array_key_exists( 'suppress_webhooks_on_spam', $effect_mapping ) )
+        {
+            return rest_sanitize_boolean( $effect_mapping['suppress_webhooks_on_spam'] );
+        }
+
+        if (
+            isset( $effect_mapping['spam'] )
+            && is_array( $effect_mapping['spam'] )
+            && array_key_exists( 'suppress_webhooks_on_spam', $effect_mapping['spam'] )
+        )
+        {
+            return rest_sanitize_boolean( $effect_mapping['spam']['suppress_webhooks_on_spam'] );
+        }
+
+        return $this->local_spam_effect_enabled( $mapping );
+    }
+
+    /**
      * Resolve local effect mapping JSON from either runtime settings or a custom-table row.
      *
      * @param array<string, mixed> $mapping Runtime mapping or repository row.
@@ -1627,7 +1743,20 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         {
             if ( is_array( $effects['spam'] ) )
             {
-                return ! array_key_exists( 'enabled', $effects['spam'] ) || rest_sanitize_boolean( $effects['spam']['enabled'] );
+                if ( array_key_exists( 'enabled', $effects['spam'] ) )
+                {
+                    return rest_sanitize_boolean( $effects['spam']['enabled'] );
+                }
+
+                foreach ( [ 'classification_path', 'confidence_path', 'min_confidence', 'mark_as_spam' ] as $control_key )
+                {
+                    if ( array_key_exists( $control_key, $effects['spam'] ) )
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
             return rest_sanitize_boolean( $effects['spam'] );
@@ -3229,7 +3358,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $form_config     = $this->get_form_action_config( $this->get_id(), $form_id, $action_id );
         $mapping_settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] ) ? $mapping['settings'] : [];
 
-        foreach ( [ 'model_selection', 'include_site_context' ] as $field )
+        foreach ( [ 'model_selection', 'include_site_context', 'action_customization' ] as $field )
         {
             $mapping_settings = $this->merge_inherited_field( $mapping_settings, $field, $form_config, $action_defaults );
         }
@@ -3246,7 +3375,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 $mapping_settings = $this->merge_inherited_field( $mapping_settings, $field, $form_config, $action_defaults );
             }
 
-            foreach ( [ 'suppress_notifications_on_spam', 'skip_downstream_on_spam' ] as $field )
+            foreach ( [ 'suppress_notifications_on_spam', 'suppress_webhooks_on_spam', 'skip_downstream_on_spam' ] as $field )
             {
                 $mapping_settings = $this->merge_inherited_boolean_field( $mapping_settings, $field, $form_config, $action_defaults );
             }
@@ -3552,7 +3681,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             ];
         }
 
-        foreach ( [ 'suppress_notifications_on_spam', 'skip_downstream_on_spam' ] as $field )
+        foreach ( [ 'suppress_notifications_on_spam', 'suppress_webhooks_on_spam', 'skip_downstream_on_spam' ] as $field )
         {
             if ( array_key_exists( $field, $config ) )
             {
@@ -3578,8 +3707,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $value = sanitize_key( (string) $value );
 
         return match ( $value ) {
-            'entry_note' => 'all_results',
-            'silent'     => 'none',
             'none',
             'spam_only',
             'all_results' => $value,
@@ -4332,6 +4459,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $this->resolve_deferred_notifications_after_async_completion(
             $context,
             $this->should_suppress_deferred_notifications_from_result( $context, $result ),
+        );
+        $this->resolve_deferred_webhooks_after_async_completion(
+            $context,
+            $this->should_suppress_deferred_webhooks_from_result( $context, $result ),
         );
     }
 
@@ -5512,6 +5643,21 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         return $this->is_spam_action_id( $action_id ) && $this->is_blocking_execution_context( $context );
     }
 
+    private function should_suppress_webhooks_on_spam_for_context( array $context ): bool
+    {
+        $settings = isset( $context['settings'] ) && is_array( $context['settings'] ) ? $context['settings'] : [];
+        if ( array_key_exists( 'suppress_webhooks_on_spam', $settings ) )
+        {
+            return rest_sanitize_boolean( $settings['suppress_webhooks_on_spam'] );
+        }
+
+        $action_id = isset( $context['central_action_id'] ) && is_scalar( $context['central_action_id'] )
+            ? sanitize_key( (string) $context['central_action_id'] )
+            : '';
+
+        return $this->is_spam_action_id( $action_id );
+    }
+
     private function extract_action_log_meta( array $result ): array
     {
         if ( isset( $result['evaluation_payload']['meta'] ) && is_array( $result['evaluation_payload']['meta'] ) )
@@ -5600,7 +5746,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return true;
         }
 
-        if ( $this->is_entry_spam( $entry ) )
+        if ( $this->should_suppress_notifications_for_entry( $entry ) )
         {
             return true;
         }
@@ -5630,13 +5776,21 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return false;
         }
 
+        $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
+        if (
+            $entry_id > 0
+            && self::SPAM_NOTIFICATION_PREFERENCE_ALLOW === $this->get_entry_spam_notification_preference( $entry_id )
+        )
+        {
+            return false;
+        }
+
         $deferred_mapping_ids = $this->get_deferred_notification_mapping_ids_for_async_spam_submission( $form, $entry );
         if ( empty( $deferred_mapping_ids ) )
         {
             return false;
         }
 
-        $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
         if ( $entry_id <= 0 )
         {
             return false;
@@ -5655,6 +5809,81 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         );
 
         return true;
+    }
+
+    /**
+     * Hold or suppress Gravity Forms Webhooks feeds while async spam detection is unresolved.
+     *
+     * @param array<int, array<string, mixed>> $feeds Webhooks add-on feeds.
+     * @param array<string, mixed>             $entry Gravity Forms entry.
+     * @param array<string, mixed>             $form  Gravity Forms form.
+     * @return array<int, array<string, mixed>>
+     */
+    public function maybe_defer_async_spam_webhooks( array $feeds, array $entry, array $form ): array
+    {
+        if ( empty( $feeds ) )
+        {
+            return $feeds;
+        }
+
+        if ( null !== $this->webhook_replay_allowed_feed_ids )
+        {
+            return $this->filter_webhook_feeds_by_ids( $feeds, $this->webhook_replay_allowed_feed_ids );
+        }
+
+        $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
+        if (
+            $entry_id > 0
+            && self::SPAM_NOTIFICATION_PREFERENCE_ALLOW === $this->get_entry_spam_webhook_preference( $entry_id )
+        )
+        {
+            return $feeds;
+        }
+
+        if ( $this->should_suppress_webhooks_for_entry( $entry ) )
+        {
+            return [];
+        }
+
+        $deferred_mapping_ids = $this->get_deferred_webhook_mapping_ids_for_async_spam_submission( $form, $entry );
+        if ( empty( $deferred_mapping_ids ) )
+        {
+            return $feeds;
+        }
+
+        if ( $entry_id <= 0 )
+        {
+            return $feeds;
+        }
+
+        $feed_ids = [];
+        foreach ( $feeds as $feed )
+        {
+            if ( is_array( $feed ) && isset( $feed['id'] ) && is_scalar( $feed['id'] ) )
+            {
+                $feed_ids[] = (string) $feed['id'];
+            }
+        }
+        $feed_ids = $this->normalize_deferred_notification_ids( $feed_ids );
+        if ( empty( $feed_ids ) )
+        {
+            return $feeds;
+        }
+
+        $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_FEED_IDS_META_KEY, $feed_ids );
+        $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_MAPPING_IDS_META_KEY, $deferred_mapping_ids );
+        $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_PENDING );
+
+        sentient_forms_debug_log(
+            'Sentient Forms held Gravity Forms Webhooks feeds while spam classification is pending.',
+            [
+                'entry_id'  => $entry_id,
+                'form_id'   => $form['id'] ?? 0,
+                'feed_ids'  => $feed_ids,
+            ]
+        );
+
+        return [];
     }
 
     /**
@@ -5720,6 +5949,55 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     }
 
     /**
+     * Determine whether Gravity Forms Webhooks should be suppressed for this entry.
+     *
+     * @param array<string, mixed> $entry Entry data.
+     */
+    private function should_suppress_webhooks_for_entry( array $entry ): bool
+    {
+        $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
+        if ( $entry_id > 0 )
+        {
+            $preference = $this->get_entry_spam_webhook_preference( $entry_id );
+            if ( self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS === $preference )
+            {
+                return true;
+            }
+
+            if ( self::SPAM_NOTIFICATION_PREFERENCE_ALLOW === $preference )
+            {
+                return false;
+            }
+        }
+
+        return $this->is_entry_spam( $entry );
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $feeds
+     * @param array<int, string>               $allowed_feed_ids
+     * @return array<int, array<string, mixed>>
+     */
+    private function filter_webhook_feeds_by_ids( array $feeds, array $allowed_feed_ids ): array
+    {
+        $allowed_feed_ids = $this->normalize_deferred_notification_ids( $allowed_feed_ids );
+        if ( empty( $allowed_feed_ids ) )
+        {
+            return [];
+        }
+
+        return array_values(
+            array_filter(
+                $feeds,
+                static function ( array $feed ) use ( $allowed_feed_ids ): bool {
+                    $feed_id = isset( $feed['id'] ) && is_scalar( $feed['id'] ) ? (string) $feed['id'] : '';
+                    return '' !== $feed_id && in_array( $feed_id, $allowed_feed_ids, true );
+                }
+            )
+        );
+    }
+
+    /**
      * Retrieve the persisted spam-notification preference for an entry, when set by Sentient Forms.
      *
      * @param int $entry_id Entry id.
@@ -5734,6 +6012,28 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         $preference = $this->get_entry_meta( $entry_id, self::SPAM_NOTIFICATION_PREFERENCE_META_KEY );
+        if ( ! is_scalar( $preference ) )
+        {
+            return null;
+        }
+
+        $normalized = sanitize_key( (string) $preference );
+
+        return in_array(
+            $normalized,
+            [ self::SPAM_NOTIFICATION_PREFERENCE_SUPPRESS, self::SPAM_NOTIFICATION_PREFERENCE_ALLOW ],
+            true
+        ) ? $normalized : null;
+    }
+
+    private function get_entry_spam_webhook_preference( int $entry_id ): ?string
+    {
+        if ( $entry_id <= 0 )
+        {
+            return null;
+        }
+
+        $preference = $this->get_entry_meta( $entry_id, self::SPAM_WEBHOOK_PREFERENCE_META_KEY );
         if ( ! is_scalar( $preference ) )
         {
             return null;
@@ -5783,7 +6083,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         // FR-008: Log failed action execution
         $this->log_action_execution( $context, [], 'error', $error );
 
-        $this->resolve_deferred_notifications_after_async_completion( $context, false );
+        $this->resolve_deferred_notifications_after_async_completion(
+            $context,
+            $this->should_suppress_notifications_on_spam_for_context( $context )
+        );
+        $this->resolve_deferred_webhooks_after_async_completion(
+            $context,
+            $this->should_suppress_webhooks_on_spam_for_context( $context )
+        );
     }
 
     public function finalize_async_evaluation( array $context, array $result ): void
@@ -5827,6 +6134,14 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         $this->record_local_action_failure_meta( $entry_id, $error->get_error_message() );
         $this->add_local_action_entry_note_if_missing( $entry_id, 'Sentient Forms AI', $message );
+        $form_id = isset( $context['form_id'] ) && is_scalar( $context['form_id'] )
+            ? absint( $context['form_id'] )
+            : 0;
+        $this->record_failed_spam_delivery_state(
+            $entry_id,
+            ! empty( $action_settings ) ? $action_settings : $context,
+            $form_id
+        );
     }
 
     /**
@@ -6006,7 +6321,31 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         return ( $mapping['central_action_id'] ?? '' ) === 'spam_detection_v1'
-            && ! empty( $mapping['mark_as_spam'] );
+            && ! empty( $mapping['mark_as_spam'] )
+            && $this->should_suppress_notifications_on_spam( $mapping );
+    }
+
+    /**
+     * Determine whether a mapping should hold Gravity Forms Webhooks feeds.
+     *
+     * @param array<string, mixed> $mapping Mapping payload.
+     * @param bool                 $should_async Whether the mapping executes asynchronously.
+     */
+    private function should_defer_webhooks_for_mapping( array $mapping, bool $should_async ): bool
+    {
+        if ( ! $should_async )
+        {
+            return false;
+        }
+
+        if ( $this->local_spam_effect_enabled( $mapping ) )
+        {
+            return $this->should_suppress_webhooks_on_spam( $mapping );
+        }
+
+        return ( $mapping['central_action_id'] ?? '' ) === 'spam_detection_v1'
+            && ! empty( $mapping['mark_as_spam'] )
+            && $this->should_suppress_webhooks_on_spam( $mapping );
     }
 
     /**
@@ -6084,6 +6423,71 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         $mapping_ids = $this->normalize_deferred_notification_ids( $mapping_ids );
         $this->async_spam_notification_gate_cache[ $cache_key ] = $mapping_ids;
+
+        return $mapping_ids;
+    }
+
+    /**
+     * Resolve async spam mapping IDs that should hold Gravity Forms Webhooks feeds.
+     *
+     * @param array $form  The form object.
+     * @param array $entry The entry object.
+     * @return array<int, string>
+     */
+    private function get_deferred_webhook_mapping_ids_for_async_spam_submission( array $form, array $entry ): array
+    {
+        $form_id  = isset( $form['id'] ) ? absint( $form['id'] ) : 0;
+        $entry_id = isset( $entry['id'] ) ? absint( $entry['id'] ) : 0;
+        $cache_key = $form_id . ':' . $entry_id;
+
+        if ( array_key_exists( $cache_key, $this->async_spam_webhook_gate_cache ) )
+        {
+            return $this->async_spam_webhook_gate_cache[ $cache_key ];
+        }
+
+        $settings = $this->get_form_settings( $form_id );
+        $disable_flags = $this->get_execution_disable_flags( $settings );
+        if ( ! empty( $disable_flags['effective_disabled'] ) )
+        {
+            $this->async_spam_webhook_gate_cache[ $cache_key ] = [];
+            return [];
+        }
+
+        $planner = $this->plugin->get_mapping_dependency_planner();
+        $plan    = $planner->build_execution_plan( $settings, 'gform_after_submission' );
+        $mapping_ids = [];
+
+        foreach ( $plan['order'] as $mapping_id )
+        {
+            $node = $plan['nodes'][ $mapping_id ] ?? null;
+            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
+            {
+                continue;
+            }
+
+            if ( empty( $node['enabled'] ) || empty( $node['hook_enabled'] ) )
+            {
+                continue;
+            }
+
+            $mapping = $node['mapping'];
+            $mapping['local_mapping_id'] = $mapping['local_mapping_id'] ?? $mapping_id;
+
+            if ( ! $this->should_defer_webhooks_for_mapping( $mapping, $this->is_mapping_async( $mapping ) ) )
+            {
+                continue;
+            }
+
+            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $mapping, $entry ) )
+            {
+                continue;
+            }
+
+            $mapping_ids[] = (string) $mapping_id;
+        }
+
+        $mapping_ids = $this->normalize_deferred_notification_ids( $mapping_ids );
+        $this->async_spam_webhook_gate_cache[ $cache_key ] = $mapping_ids;
 
         return $mapping_ids;
     }
@@ -6202,6 +6606,54 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     }
 
     /**
+     * Resolve deferred Gravity Forms Webhooks after a spam-classification async job completes.
+     *
+     * @param array<string, mixed> $context Async job context.
+     * @param bool                 $should_suppress Whether Webhooks should stay suppressed.
+     */
+    private function resolve_deferred_webhooks_after_async_completion( array $context, bool $should_suppress ): void
+    {
+        $entry_id = isset( $context['entry_id'] ) ? absint( $context['entry_id'] ) : 0;
+        if ( $entry_id <= 0 )
+        {
+            return;
+        }
+
+        $pending_mapping_ids = $this->get_deferred_webhook_mapping_ids( $entry_id );
+        if ( empty( $pending_mapping_ids ) )
+        {
+            return;
+        }
+
+        $current_mapping_id = $this->resolve_deferred_notification_mapping_id( $context );
+        if ( '' === $current_mapping_id )
+        {
+            return;
+        }
+
+        if ( $should_suppress )
+        {
+            $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_SUPPRESS );
+        }
+
+        $remaining_mapping_ids = array_values( array_diff( $pending_mapping_ids, [ $current_mapping_id ] ) );
+        if ( ! empty( $remaining_mapping_ids ) )
+        {
+            $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_MAPPING_IDS_META_KEY, $remaining_mapping_ids );
+            return;
+        }
+
+        $decision = $this->get_deferred_webhook_decision( $entry_id );
+        if ( self::DEFERRED_NOTIFICATION_DECISION_SUPPRESS === $decision )
+        {
+            $this->clear_deferred_webhook_state( $entry_id );
+            return;
+        }
+
+        $this->replay_deferred_webhooks( $entry_id, absint( $context['form_id'] ?? 0 ) );
+    }
+
+    /**
      * Decide whether the async spam result should permanently suppress deferred notifications.
      *
      * @param array $context Async job context.
@@ -6211,6 +6663,43 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     private function should_suppress_deferred_notifications_from_result( array $context, array $result ): bool
     {
+        if ( ! $this->should_suppress_notifications_on_spam_for_context( $context ) )
+        {
+            return false;
+        }
+
+        if ( empty( $context['mark_as_spam'] ) && ! $this->local_spam_effect_enabled( $context ) )
+        {
+            return false;
+        }
+
+        $classification = $this->extract_spam_classification( $result );
+        if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+        {
+            return false;
+        }
+
+        $confidence = $this->extract_spam_confidence( $result );
+        $threshold  = isset( $context['spam_confidence_threshold'] )
+            ? (float) $context['spam_confidence_threshold']
+            : 0.80;
+
+        return ( $confidence ?? 1.0 ) >= $threshold;
+    }
+
+    /**
+     * Decide whether the async spam result should permanently suppress deferred Webhooks.
+     *
+     * @param array<string, mixed> $context Async job context.
+     * @param array<string, mixed> $result  Async result payload.
+     */
+    private function should_suppress_deferred_webhooks_from_result( array $context, array $result ): bool
+    {
+        if ( ! $this->should_suppress_webhooks_on_spam_for_context( $context ) )
+        {
+            return false;
+        }
+
         if ( empty( $context['mark_as_spam'] ) && ! $this->local_spam_effect_enabled( $context ) )
         {
             return false;
@@ -6264,6 +6753,42 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         $this->dispatch_entry_notifications( $form, $entry, $notification_ids );
         $this->clear_deferred_notification_state( $entry_id );
+    }
+
+    private function replay_deferred_webhooks( int $entry_id, int $form_id ): void
+    {
+        $feed_ids = $this->get_deferred_webhook_feed_ids( $entry_id );
+        if ( empty( $feed_ids ) )
+        {
+            $this->clear_deferred_webhook_state( $entry_id );
+            return;
+        }
+
+        $form = $this->get_form_object( $form_id );
+        $entry = $this->get_entry_record( $entry_id );
+        if ( ! is_array( $form ) || ! is_array( $entry ) || ! $this->gravity_forms_webhooks_feed_controls_available() )
+        {
+            sentient_forms_debug_log(
+                'Sentient Forms could not replay deferred Gravity Forms Webhooks.',
+                [
+                    'entry_id' => $entry_id,
+                    'form_id'  => $form_id,
+                ]
+            );
+            return;
+        }
+
+        $previous_allowed_feed_ids = $this->webhook_replay_allowed_feed_ids;
+        $this->webhook_replay_allowed_feed_ids = $feed_ids;
+        try
+        {
+            GFAPI::maybe_process_feeds( $entry, $form, self::GRAVITY_FORMS_WEBHOOKS_ADDON_SLUG );
+        } finally
+        {
+            $this->webhook_replay_allowed_feed_ids = $previous_allowed_feed_ids;
+        }
+
+        $this->clear_deferred_webhook_state( $entry_id );
     }
 
     /**
@@ -6361,6 +6886,16 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     }
 
     /**
+     * @return array<int, string>
+     */
+    private function get_deferred_webhook_feed_ids( int $entry_id ): array
+    {
+        return $this->normalize_deferred_notification_ids(
+            $this->get_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_FEED_IDS_META_KEY ) ?? [],
+        );
+    }
+
+    /**
      * Retrieve pending deferred notification mapping IDs for an entry.
      *
      * @param int $entry_id The entry ID.
@@ -6371,6 +6906,16 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     {
         return $this->normalize_deferred_notification_ids(
             $this->get_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY ) ?? [],
+        );
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function get_deferred_webhook_mapping_ids( int $entry_id ): array
+    {
+        return $this->normalize_deferred_notification_ids(
+            $this->get_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_MAPPING_IDS_META_KEY ) ?? [],
         );
     }
 
@@ -6390,6 +6935,15 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             : self::DEFERRED_NOTIFICATION_DECISION_PENDING;
     }
 
+    private function get_deferred_webhook_decision( int $entry_id ): string
+    {
+        $decision = $this->get_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_DECISION_META_KEY );
+
+        return is_scalar( $decision ) && '' !== (string) $decision
+            ? (string) $decision
+            : self::DEFERRED_NOTIFICATION_DECISION_PENDING;
+    }
+
     /**
      * Clear all deferred notification state for an entry.
      *
@@ -6402,6 +6956,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_IDS_META_KEY, [] );
         $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_MAPPING_IDS_META_KEY, [] );
         $this->update_entry_meta( $entry_id, self::DEFERRED_NOTIFICATION_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_PENDING );
+    }
+
+    private function clear_deferred_webhook_state( int $entry_id ): void
+    {
+        $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_FEED_IDS_META_KEY, [] );
+        $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_MAPPING_IDS_META_KEY, [] );
+        $this->update_entry_meta( $entry_id, self::DEFERRED_WEBHOOK_DECISION_META_KEY, self::DEFERRED_NOTIFICATION_DECISION_PENDING );
     }
 
     /**

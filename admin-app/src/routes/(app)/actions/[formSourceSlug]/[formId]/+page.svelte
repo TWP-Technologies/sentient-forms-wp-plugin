@@ -16,6 +16,9 @@
 		MappingDependencyGraph,
 		StateTemplate
 	} from '$lib/components/ui';
+	import AlignedSelectGrid from '$lib/components/aligned-select-grid.svelte';
+	import ActionCustomizationEditor from '$lib/components/action-customization-editor.svelte';
+	import SiteContextWarning from '$lib/components/site-context-warning.svelte';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { DEFAULT_BATCH_SETTINGS, sanitizeBatchSettings } from '$lib/utils/batch';
 	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
@@ -95,6 +98,7 @@
 		providerStatusLabel,
 		providerStatusVariant
 	} from '$lib/utils/provider-health';
+	import { formatModelSelectionPrimary, formatTemplateModelHint } from '$lib/utils/model-selection';
 	import { wpFetch } from '$lib/wp';
 
 	type Props = { data: { formSourceSlug: string; formId: number } };
@@ -290,8 +294,8 @@
 	];
 	const SPAM_RESULT_DISPLAY_OPTIONS = [
 		{ value: 'spam_only', label: 'Only when spam is detected' },
-		{ value: 'entry_note', label: 'For every classification' },
-		{ value: 'silent', label: 'Do not add spam notes' }
+		{ value: 'all_results', label: 'For every classification' },
+		{ value: 'none', label: 'Do not add spam notes' }
 	];
 	const SPAM_INDICATORS_DISPLAY_OPTIONS = [
 		{ value: 'simple', label: 'Simple (Summary only)' },
@@ -423,13 +427,13 @@
 			checkpoint_field_ids: [],
 			storage_target_field_id: '',
 			debounce_ms: 900,
-				cooldown_ms: 8000,
-				manual_refresh_enabled: true,
-				blocking_mode: 'advisory',
-				refresh_mode: 'auto',
-				initial_panel_state: 'minimized'
-			};
-		}
+			cooldown_ms: 8000,
+			manual_refresh_enabled: true,
+			blocking_mode: 'advisory',
+			refresh_mode: 'auto',
+			initial_panel_state: 'minimized'
+		};
+	}
 
 	function isRealtimeEligibleActionId(actionId: string | null | undefined): boolean {
 		return actionId === REALTIME_ACTION_ID;
@@ -483,20 +487,20 @@
 			: defaults.checkpoint_field_ids;
 		const debounceMs = Number.parseInt(String(candidate.debounce_ms ?? defaults.debounce_ms), 10);
 		const cooldownMs = Number.parseInt(String(candidate.cooldown_ms ?? defaults.cooldown_ms), 10);
-			const blockingMode =
-				candidate.blocking_mode === 'require_answers' ? 'require_answers' : 'advisory';
-			const refreshMode = ['auto', 'checkpoint', 'manual'].includes(
-				String(candidate.refresh_mode ?? '')
-			)
-				? (candidate.refresh_mode as RealtimeRefreshMode)
-				: defaults.refresh_mode;
-			const initialPanelState = ['open', 'minimized', 'hidden_until_interaction'].includes(
-				String(candidate.initial_panel_state ?? '')
-			)
-				? (candidate.initial_panel_state as RealtimeInitialPanelState)
-				: defaults.initial_panel_state;
+		const blockingMode =
+			candidate.blocking_mode === 'require_answers' ? 'require_answers' : 'advisory';
+		const refreshMode = ['auto', 'checkpoint', 'manual'].includes(
+			String(candidate.refresh_mode ?? '')
+		)
+			? (candidate.refresh_mode as RealtimeRefreshMode)
+			: defaults.refresh_mode;
+		const initialPanelState = ['open', 'minimized', 'hidden_until_interaction'].includes(
+			String(candidate.initial_panel_state ?? '')
+		)
+			? (candidate.initial_panel_state as RealtimeInitialPanelState)
+			: defaults.initial_panel_state;
 
-			return {
+		return {
 			checkpoint_field_ids: Array.from(new Set(checkpointFieldIds)),
 			storage_target_field_id:
 				typeof candidate.storage_target_field_id === 'string'
@@ -504,15 +508,15 @@
 					: defaults.storage_target_field_id,
 			debounce_ms: Number.isFinite(debounceMs) ? Math.min(5000, Math.max(250, debounceMs)) : 900,
 			cooldown_ms: Number.isFinite(cooldownMs) ? Math.min(60000, Math.max(0, cooldownMs)) : 8000,
-				manual_refresh_enabled:
-					typeof candidate.manual_refresh_enabled === 'boolean'
-						? candidate.manual_refresh_enabled
-						: defaults.manual_refresh_enabled,
-				blocking_mode: blockingMode,
-				refresh_mode: refreshMode,
-				initial_panel_state: initialPanelState
-			};
-		}
+			manual_refresh_enabled:
+				typeof candidate.manual_refresh_enabled === 'boolean'
+					? candidate.manual_refresh_enabled
+					: defaults.manual_refresh_enabled,
+			blocking_mode: blockingMode,
+			refresh_mode: refreshMode,
+			initial_panel_state: initialPanelState
+		};
+	}
 
 	function deriveExecutionModeForHooks(hooks: Iterable<string>, current?: unknown): ExecutionMode {
 		const normalizedHooks = normalizeHookIds(hooks);
@@ -586,7 +590,7 @@
 		switch (normalizeSpamResultDisplayMode(value)) {
 			case 'spam_only':
 				return 'notes on spam only';
-			case 'silent':
+			case 'none':
 				return 'no spam notes';
 			default:
 				return 'notes on all classifications';
@@ -719,6 +723,28 @@
 	let formLevelConfigSaving = $state(false);
 	let formLevelConfigByActionId = $state<Record<string, FormActionConfig>>({});
 	let actionDefaultsByActionId = $state<Record<string, FormActionConfig>>({});
+	let actionDefaultPreloadIds = $state<Set<string>>(new Set());
+
+	async function loadFormActionConfigIndex() {
+		try {
+			const client = createClientFromConfig();
+			const configs = await client.getFormActionConfigs(data.formSourceSlug, data.formId, {
+				showNotifications: false
+			});
+			const normalized = Object.fromEntries(
+				Object.entries(configs).map(([actionId, config]) => [
+					actionId,
+					normalizeFormActionConfig(config)
+				])
+			);
+			formLevelConfigByActionId = {
+				...formLevelConfigByActionId,
+				...normalized
+			};
+		} catch (error) {
+			console.warn('[FormLevelConfig] Failed to preload form-level config index:', error);
+		}
+	}
 
 	async function loadActionDefaultsForAction(
 		actionId: string,
@@ -749,8 +775,16 @@
 			configuringActionId = actionId;
 		}
 
+		const actionDefaultsPromise = loadActionDefaultsForAction(actionId, { force: false }).catch(
+			(error) => {
+				console.warn('[ActionDefaults] Failed to load action defaults for form config:', error);
+				return createBlankFormActionConfig();
+			}
+		);
+
 		try {
 			if (!shouldForce && formLevelConfigByActionId[actionId]) {
+				await actionDefaultsPromise;
 				const cachedConfig = formLevelConfigByActionId[actionId];
 				if (shouldOpenModal) {
 					formLevelConfig = cachedConfig;
@@ -759,9 +793,11 @@
 			}
 
 			const client = createClientFromConfig();
-			const config = normalizeFormActionConfig(
-				await client.getFormActionConfig(data.formSourceSlug, data.formId, actionId)
-			);
+			const [, rawConfig] = await Promise.all([
+				actionDefaultsPromise,
+				client.getFormActionConfig(data.formSourceSlug, data.formId, actionId)
+			]);
+			const config = normalizeFormActionConfig(rawConfig);
 			formLevelConfigByActionId = {
 				...formLevelConfigByActionId,
 				[actionId]: config
@@ -788,6 +824,24 @@
 		void loadFormLevelConfig(actionId, { openModal: false, force: false }).catch((error) => {
 			console.warn('[FormLevelConfig] Failed to preload form-level config:', error);
 		});
+	}
+
+	function preloadActionDefaultsForVisibleActions() {
+		const ids = [
+			...builtInDefinitions.map((definition) => definition.id),
+			...customActions.map((action) => action.code)
+		]
+			.map((actionId) => actionId?.trim())
+			.filter((actionId): actionId is string => Boolean(actionId));
+		const missing = ids.filter((actionId) => !actionDefaultPreloadIds.has(actionId));
+		if (missing.length === 0) return;
+
+		actionDefaultPreloadIds = new Set([...actionDefaultPreloadIds, ...missing]);
+		for (const actionId of missing) {
+			void loadActionDefaultsForAction(actionId, { force: false }).catch((error) => {
+				console.warn('[ActionDefaults] Failed to preload visible action defaults:', error);
+			});
+		}
 	}
 
 	async function saveFormLevelConfig() {
@@ -829,7 +883,10 @@
 	}
 
 	function handleFormLevelSpamPolicyChange(
-		field: 'suppress_notifications_on_spam' | 'skip_downstream_on_spam',
+		field:
+			| 'suppress_notifications_on_spam'
+			| 'suppress_webhooks_on_spam'
+			| 'skip_downstream_on_spam',
 		mode: string
 	) {
 		formLevelConfig = applyInheritableBooleanToConfig(
@@ -850,7 +907,10 @@
 	}
 
 	function handleMappingSpamPolicyChange(
-		field: 'suppress_notifications_on_spam' | 'skip_downstream_on_spam',
+		field:
+			| 'suppress_notifications_on_spam'
+			| 'suppress_webhooks_on_spam'
+			| 'skip_downstream_on_spam',
 		mode: string
 	) {
 		const nextDraftSettings = { ...draftSettings };
@@ -1149,6 +1209,30 @@
 			isDraftAfterSubmissionOnly ? 'background inactive' : 'blocking default'
 		)
 	);
+	const effectiveSuppressWebhooksOnSpam = $derived.by(() => {
+		if (!isSpamMapping) return false;
+		return resolveInheritableBoolean(
+			[
+				normalizeOptionalBoolean(draftSettings.suppress_webhooks_on_spam),
+				currentFormActionConfig.suppress_webhooks_on_spam,
+				currentActionDefaults.suppress_webhooks_on_spam
+			],
+			true
+		);
+	});
+	const effectiveSuppressWebhooksOnSpamSource = $derived.by(() =>
+		resolveInheritableBooleanSource(
+			[
+				{
+					level: 'mapping',
+					value: normalizeOptionalBoolean(draftSettings.suppress_webhooks_on_spam)
+				},
+				{ level: 'form', value: currentFormActionConfig.suppress_webhooks_on_spam },
+				{ level: 'action', value: currentActionDefaults.suppress_webhooks_on_spam }
+			],
+			'spam default'
+		)
+	);
 	const effectiveSkipDownstreamOnSpam = $derived.by(() => {
 		if (!isSpamMapping) return false;
 		return resolveInheritableBoolean(
@@ -1255,8 +1339,9 @@
 				? 'suppress notifications'
 				: 'allow notifications'
 			: 'background notifications';
+		const webhookPolicy = effectiveSuppressWebhooksOnSpam ? 'suppress Webhooks' : 'allow Webhooks';
 		const downstreamPolicy = effectiveSkipDownstreamOnSpam ? 'skip downstream' : 'allow downstream';
-		return `Threshold ${threshold} · ${noteDisplay} · ${displayMode} indicators · ${notificationPolicy} · ${downstreamPolicy}`;
+		return `Threshold ${threshold} · ${noteDisplay} · ${displayMode} indicators · ${notificationPolicy} · ${webhookPolicy} · ${downstreamPolicy}`;
 	});
 	const inputMappingSummary = $derived.by(() => {
 		const mapping = (draftSettings.input_mapping ?? {
@@ -1298,19 +1383,19 @@
 	const realtimeSummary = $derived.by(() => {
 		if (!isRealtimeDraft) return 'Disabled';
 		const checkpointCount = realtimeSettings.checkpoint_field_ids?.length ?? 0;
-			const storageLabel = realtimeSettings.storage_target_field_id
-				? `stores in ${realtimeSettings.storage_target_field_id}`
-				: 'no Q&A storage';
-			const submitPolicy =
-				realtimeSettings.blocking_mode === 'require_answers' ? 'required answers' : 'advisory';
-			const refresh =
-				realtimeSettings.refresh_mode === 'manual'
-					? 'manual'
-					: realtimeSettings.refresh_mode === 'checkpoint'
-						? 'checkpoints'
-						: 'auto';
-			return `${refresh} · ${checkpointCount || 'all'} checkpoint${checkpointCount === 1 ? '' : 's'} · ${storageLabel} · ${submitPolicy}`;
-		});
+		const storageLabel = realtimeSettings.storage_target_field_id
+			? `stores in ${realtimeSettings.storage_target_field_id}`
+			: 'no Q&A storage';
+		const submitPolicy =
+			realtimeSettings.blocking_mode === 'require_answers' ? 'required answers' : 'advisory';
+		const refresh =
+			realtimeSettings.refresh_mode === 'manual'
+				? 'manual'
+				: realtimeSettings.refresh_mode === 'checkpoint'
+					? 'checkpoints'
+					: 'auto';
+		return `${refresh} · ${checkpointCount || 'all'} checkpoint${checkpointCount === 1 ? '' : 's'} · ${storageLabel} · ${submitPolicy}`;
+	});
 	const conditionsSummary = $derived.by(() => {
 		const conditions = (draftSettings.conditions ?? createDefaultConditionConfig()) as Record<
 			string,
@@ -1331,8 +1416,11 @@
 				: effectiveDraftExecutionKind === 'mixed'
 					? 'Mixed hooks'
 					: 'Blocking';
-		const model = selection.primary?.toString().trim() || 'sf_default';
-		return `${executionMode} · ${model}`;
+		const model = formatModelSelectionPrimary(selection);
+		const source =
+			effectiveMappingModelSource === 'system' ? 'platform' : effectiveMappingModelSource;
+		const reasoning = selection.reasoning ? ` · reasoning ${selection.reasoning}` : '';
+		return `${executionMode} · ${model} · ${source}${reasoning}`;
 	});
 
 	$effect(() => {
@@ -1563,6 +1651,7 @@
 		customActionsStore.load({ status: 'active' });
 		loadFormFields(); // CA-MAP-001: Load form fields for FieldSelector
 		loadProviderCredentials();
+		loadFormActionConfigIndex();
 		restoreLastHooks();
 		startRefreshInterval();
 
@@ -1597,6 +1686,12 @@
 			return;
 		}
 		void loadWorkflowPlan(workflowPlanScope);
+	});
+
+	$effect(() => {
+		definitions;
+		customActions;
+		preloadActionDefaultsForVisibleActions();
 	});
 
 	function normalizeDefinitionHooks(hooks?: Record<string, string> | string[]): string[] {
@@ -1766,7 +1861,25 @@
 
 	const formatBaseCreditCost = (definition: ActionDefinition) =>
 		typeof definition.baseCreditCost === 'number' ? `${definition.baseCreditCost}` : '—';
-	const formatModelHint = (definition: ActionDefinition) => definition.modelHint ?? '—';
+	function formatActionModelSummary(
+		actionId: string,
+		modelHint: string | null | undefined
+	): string {
+		const formSelection = formLevelConfigByActionId[actionId]?.model_selection;
+		if (formSelection) {
+			return `Form default: ${formatModelSelectionPrimary(formSelection)}`;
+		}
+
+		const actionSelection = actionDefaultsByActionId[actionId]?.model_selection;
+		if (actionSelection) {
+			return `Global default: ${formatModelSelectionPrimary(actionSelection)}`;
+		}
+
+		return `Default: ${formatTemplateModelHint(modelHint)}`;
+	}
+
+	const formatModelHint = (definition: ActionDefinition) =>
+		formatActionModelSummary(definition.id, definition.modelHint ?? null);
 	function invalidHooksForLinkage(linkage: FormActionLinkage): string[] {
 		const triggerHooks = normalizeHookIds(getMappingTriggerHooks(linkage));
 		const triggerSources = getMappingTriggerSources(linkage);
@@ -2516,7 +2629,7 @@
 				baseSettings.spam_result_display_mode ??
 					inheritedFormConfig.spam_result_display_mode ??
 					inheritedActionConfig.spam_result_display_mode,
-				'entry_note'
+				'all_results'
 			),
 			spam_indicators_display: normalizeSpamIndicatorsDisplay(
 				baseSettings.spam_indicators_display ??
@@ -2544,8 +2657,8 @@
 		resetMappingSectionExpansion(linkage);
 		showMappingConfigModal = openModal;
 		editBaselineSignature = createDraftSignature(initialHooks, nextDraftSettings);
-			clearRootAttachUndoState();
-		}
+		clearRootAttachUndoState();
+	}
 
 	function cancelEditingAction() {
 		const cancelledMappingId = editingLinkageId;
@@ -3248,6 +3361,7 @@
 	function refresh() {
 		formActionsStore.refresh(data.formSourceSlug, data.formId);
 		loadProviderCredentials();
+		loadFormActionConfigIndex();
 	}
 
 	// Phase 7 CSM: Save current action config as a template
@@ -3363,7 +3477,7 @@
 	<!-- Form-Level Action Config Modal - Inside Section slot for Svelte 5 reactivity -->
 	{#if configuringActionId}
 		<div
-			class="sf:fixed sf:inset-0 sf:z-50 sf:bg-black/40 sf:flex sf:items-center sf:justify-center sf:p-2 sf:sm:p-4"
+			class="sf-wp-modal-backdrop sf:bg-black/40 sf:flex sf:items-center sf:justify-center sf:p-2 sf:sm:p-4"
 			onclick={handleFormLevelDefaultsBackdropClick}
 			onkeydown={(event) => {
 				if (event.key === 'Escape') cancelFormLevelConfig();
@@ -3445,6 +3559,20 @@
 							/>
 						</div>
 
+						<ActionCustomizationEditor
+							id="form-level-customization"
+							actionId={configuringActionId}
+							level="form"
+							bind:value={formLevelConfig.action_customization}
+							inheritedValue={actionDefaultsByActionId[configuringActionId ?? '']
+								?.action_customization ?? null}
+							inheritanceSource={actionDefaultsByActionId[
+								configuringActionId ?? ''
+							]?.action_customization?.trim()
+								? 'action'
+								: null}
+						/>
+
 						{#if configuringActionId && isSpamActionCode(configuringActionId)}
 							<SpamCriteriaEditor
 								positiveExamples={formLevelConfig.spam_positive_examples ?? []}
@@ -3472,66 +3600,87 @@
 									options={SPAM_INDICATORS_DISPLAY_OPTIONS}
 									disabled={normalizeSpamResultDisplayMode(
 										formLevelConfig.spam_result_display_mode
-									) === 'silent'}
+									) === 'none'}
 								/>
 							</div>
 
-							<div class="sf:grid sf:gap-4 sf:md:grid-cols-2">
-								<SelectField
-									id="form-level-spam-notifications"
-									label="Spam notification policy"
-									description="Applies to Blocking spam mappings on this form. Background mappings still send notifications immediately."
-									value={getInheritableBooleanMode(formLevelConfig.suppress_notifications_on_spam)}
-									options={[
-										{ value: 'inherit', label: 'Use global default' },
-										{ value: 'enabled', label: 'Suppress notifications' },
-										{ value: 'disabled', label: 'Allow notifications' }
-									]}
-									onchange={(event) =>
-										handleFormLevelSpamPolicyChange(
-											'suppress_notifications_on_spam',
-											event.currentTarget.value
-										)}
-								/>
-								<SelectField
-									id="form-level-spam-downstream"
-									label="Downstream spam gate"
-									description="Controls whether downstream work should stop when this form’s spam mapping confirms spam."
-									value={getInheritableBooleanMode(formLevelConfig.skip_downstream_on_spam)}
-									options={[
-										{ value: 'inherit', label: 'Use global default' },
-										{ value: 'enabled', label: 'Skip downstream actions' },
-										{ value: 'disabled', label: 'Allow downstream actions' }
-									]}
-									onchange={(event) =>
-										handleFormLevelSpamPolicyChange(
-											'skip_downstream_on_spam',
-											event.currentTarget.value
-										)}
-								/>
-							</div>
+							<AlignedSelectGrid
+								columns={3}
+								items={[
+									{
+										id: 'form-level-spam-notifications',
+										label: 'Spam notification policy',
+										description:
+											'Applies to Blocking spam mappings on this form. Background mappings still send notifications immediately.',
+										value: getInheritableBooleanMode(
+											formLevelConfig.suppress_notifications_on_spam
+										),
+										options: [
+											{ value: 'inherit', label: 'Use global default' },
+											{ value: 'enabled', label: 'Suppress notifications' },
+											{ value: 'disabled', label: 'Allow notifications' }
+										],
+										onchange: (event) =>
+											handleFormLevelSpamPolicyChange(
+												'suppress_notifications_on_spam',
+												event.currentTarget.value
+											)
+									},
+									{
+										id: 'form-level-spam-webhooks',
+										label: 'Spam Webhooks policy',
+										description:
+											'Applies only when the Gravity Forms Webhooks add-on and feed replay APIs are available.',
+										value: getInheritableBooleanMode(formLevelConfig.suppress_webhooks_on_spam),
+										options: [
+											{ value: 'inherit', label: 'Use global default' },
+											{ value: 'enabled', label: 'Suppress Webhooks' },
+											{ value: 'disabled', label: 'Allow Webhooks' }
+										],
+										onchange: (event) =>
+											handleFormLevelSpamPolicyChange(
+												'suppress_webhooks_on_spam',
+												event.currentTarget.value
+											)
+									},
+									{
+										id: 'form-level-spam-downstream',
+										label: 'Downstream spam gate',
+										description:
+											'Controls whether downstream work should stop when this form’s spam mapping confirms spam.',
+										value: getInheritableBooleanMode(formLevelConfig.skip_downstream_on_spam),
+										options: [
+											{ value: 'inherit', label: 'Use global default' },
+											{ value: 'enabled', label: 'Skip downstream actions' },
+											{ value: 'disabled', label: 'Allow downstream actions' }
+										],
+										onchange: (event) =>
+											handleFormLevelSpamPolicyChange(
+												'skip_downstream_on_spam',
+												event.currentTarget.value
+											)
+									}
+								]}
+							/>
 						{/if}
 
-						<SelectField
-							id="form-level-context"
-							label="Include Site Context"
-							bind:value={formLevelConfig.include_site_context}
-							options={[
-								{ value: 'global', label: 'Use global setting' },
-								{ value: 'always', label: 'Always include' },
-								{ value: 'never', label: 'Never include' }
-							]}
-						/>
+						<div class="sf:grid sf:gap-3 sf:lg:grid-cols-[minmax(16rem,0.9fr)_minmax(0,1.1fr)] sf:lg:items-end">
+							<SelectField
+								id="form-level-context"
+								label="Include Site Context"
+								bind:value={formLevelConfig.include_site_context}
+								options={[
+									{ value: 'global', label: 'Use global setting' },
+									{ value: 'always', label: 'Always include' },
+									{ value: 'never', label: 'Never include' }
+								]}
+							/>
+							<SiteContextWarning includeMode={formLevelConfig.include_site_context} />
+						</div>
 
-						<p
-							class="sf:text-xs sf:text-slate-500 sf:pt-2 sf:flex sf:flex-wrap sf:items-start sf:gap-1"
-						>
-							<span class="sf:text-amber-500">⚠</span>
-							Submission data is processed by AI.
-							<a href="#/settings/context" class="sf:underline hover:sf:text-slate-700">
-								Review Site Context settings
-							</a>
-							for PII handling options.
+						<p class="sf:text-xs sf:text-slate-500 sf:pt-1">
+							Submission data is processed by AI. Site Context controls whether saved site details
+							join the action prompt.
 						</p>
 					{/if}
 				</div>
@@ -4267,7 +4416,7 @@
 
 	{#if showMappingConfigModal && editingLinkage}
 		<div
-			class="sf:fixed sf:inset-0 sf:z-40 sf:bg-black/45 sf:flex sf:items-center sf:justify-center sf:p-2 sf:sm:p-4"
+			class="sf-wp-modal-backdrop sf:bg-black/45 sf:flex sf:items-center sf:justify-center sf:p-2 sf:sm:p-4"
 			onclick={handleMappingConfigBackdropClick}
 			onkeydown={(event) => {
 				if (event.key === 'Escape') closeMappingConfigModal();
@@ -4456,6 +4605,23 @@
 										</div>
 									{/if}
 								</div>
+
+								<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+									<ActionCustomizationEditor
+										id="mapping-action-customization"
+										actionId={editingLinkage.central_action_id}
+										level="mapping"
+										bind:value={draftSettings.action_customization}
+										inheritedValue={currentFormActionConfig.action_customization ||
+											currentActionDefaults.action_customization ||
+											null}
+										inheritanceSource={currentFormActionConfig.action_customization?.trim()
+											? 'form'
+											: currentActionDefaults.action_customization?.trim()
+												? 'action'
+												: null}
+									/>
+								</div>
 							{/if}
 						</div>
 					</section>
@@ -4495,12 +4661,19 @@
 									<SpamCriteriaEditor
 										positiveExamples={draftSettings.spam_positive_examples ?? []}
 										negativeExamples={draftSettings.spam_negative_examples ?? []}
-										inheritedPositive={currentFormActionConfig.spam_positive_examples ?? []}
-										inheritedNegative={currentFormActionConfig.spam_negative_examples ?? []}
+										inheritedPositive={currentFormActionConfig.spam_positive_examples?.length
+											? (currentFormActionConfig.spam_positive_examples ?? [])
+											: (currentActionDefaults.spam_positive_examples ?? [])}
+										inheritedNegative={currentFormActionConfig.spam_negative_examples?.length
+											? (currentFormActionConfig.spam_negative_examples ?? [])
+											: (currentActionDefaults.spam_negative_examples ?? [])}
 										inheritanceSource={currentFormActionConfig.spam_positive_examples?.length > 0 ||
 										currentFormActionConfig.spam_negative_examples?.length > 0
 											? 'form'
-											: null}
+											: currentActionDefaults.spam_positive_examples?.length > 0 ||
+												  currentActionDefaults.spam_negative_examples?.length > 0
+												? 'action'
+												: null}
 										onchange={(details) => {
 											draftSettings = {
 												...draftSettings,
@@ -4526,7 +4699,7 @@
 											Edit Form Defaults
 										</Button>
 										<p class="sf:text-xs sf:text-slate-500 sf:mt-1">
-											Set default classification guidance for this action on this form.
+											Set default customization and model choices for this action on this form.
 										</p>
 									</div>
 								{/if}
@@ -4582,7 +4755,7 @@
 											options={SPAM_INDICATORS_DISPLAY_OPTIONS}
 											disabled={normalizeSpamResultDisplayMode(
 												draftSettings.spam_result_display_mode
-											) === 'silent'}
+											) === 'none'}
 										/>
 										<SelectField
 											id="spam-context"
@@ -4594,42 +4767,66 @@
 												{ value: 'never', label: 'Never include' }
 											]}
 										/>
-										<SelectField
-											id="spam-notification-policy"
-											label="Notification policy on spam"
-											description={isBlockingSpamMapping
-												? `Current effective value: ${effectiveSuppressNotificationsOnSpam ? 'Suppress notifications' : 'Allow notifications'} (${effectiveSuppressNotificationsOnSpamSource}).`
-												: `Background spam mappings do not hold notifications. Current inherited value remains ${effectiveSuppressNotificationsOnSpam ? 'suppress' : 'allow'} but is inactive while this mapping runs in Background mode.`}
-											value={getInheritableBooleanMode(
-												draftSettings.suppress_notifications_on_spam
-											)}
-											options={[
-												{ value: 'inherit', label: 'Use inherited policy' },
-												{ value: 'enabled', label: 'Suppress notifications' },
-												{ value: 'disabled', label: 'Allow notifications' }
+										<SiteContextWarning includeMode={draftSettings.include_site_context} />
+										<AlignedSelectGrid
+											columns={3}
+											items={[
+												{
+													id: 'spam-notification-policy',
+													label: 'Notification policy on spam',
+													description: isBlockingSpamMapping
+														? `Current effective value: ${effectiveSuppressNotificationsOnSpam ? 'Suppress notifications' : 'Allow notifications'} (${effectiveSuppressNotificationsOnSpamSource}).`
+														: `Background spam mappings do not hold notifications. Current inherited value remains ${effectiveSuppressNotificationsOnSpam ? 'suppress' : 'allow'} but is inactive while this mapping runs in Background mode.`,
+													value: getInheritableBooleanMode(
+														draftSettings.suppress_notifications_on_spam
+													),
+													options: [
+														{ value: 'inherit', label: 'Use inherited policy' },
+														{ value: 'enabled', label: 'Suppress notifications' },
+														{ value: 'disabled', label: 'Allow notifications' }
+													],
+													disabled: !isBlockingSpamMapping,
+													onchange: (event) =>
+														handleMappingSpamPolicyChange(
+															'suppress_notifications_on_spam',
+															event.currentTarget.value
+														)
+												},
+												{
+													id: 'spam-webhook-policy',
+													label: 'Gravity Forms Webhooks policy on spam',
+													description: `Current effective value: ${effectiveSuppressWebhooksOnSpam ? 'Suppress Webhooks' : 'Allow Webhooks'} (${effectiveSuppressWebhooksOnSpamSource}). Requires the Gravity Forms Webhooks add-on and feed replay APIs.`,
+													value: getInheritableBooleanMode(
+														draftSettings.suppress_webhooks_on_spam
+													),
+													options: [
+														{ value: 'inherit', label: 'Use inherited policy' },
+														{ value: 'enabled', label: 'Suppress Webhooks' },
+														{ value: 'disabled', label: 'Allow Webhooks' }
+													],
+													onchange: (event) =>
+														handleMappingSpamPolicyChange(
+															'suppress_webhooks_on_spam',
+															event.currentTarget.value
+														)
+												},
+												{
+													id: 'spam-downstream-policy',
+													label: 'Downstream spam gate',
+													description: `Current effective value: ${effectiveSkipDownstreamOnSpam ? 'Skip downstream actions' : 'Allow downstream actions'} (${effectiveSkipDownstreamOnSpamSource}).`,
+													value: getInheritableBooleanMode(draftSettings.skip_downstream_on_spam),
+													options: [
+														{ value: 'inherit', label: 'Use inherited policy' },
+														{ value: 'enabled', label: 'Skip downstream actions' },
+														{ value: 'disabled', label: 'Allow downstream actions' }
+													],
+													onchange: (event) =>
+														handleMappingSpamPolicyChange(
+															'skip_downstream_on_spam',
+															event.currentTarget.value
+														)
+												}
 											]}
-											disabled={!isBlockingSpamMapping}
-											onchange={(event) =>
-												handleMappingSpamPolicyChange(
-													'suppress_notifications_on_spam',
-													event.currentTarget.value
-												)}
-										/>
-										<SelectField
-											id="spam-downstream-policy"
-											label="Downstream spam gate"
-											description={`Current effective value: ${effectiveSkipDownstreamOnSpam ? 'Skip downstream actions' : 'Allow downstream actions'} (${effectiveSkipDownstreamOnSpamSource}).`}
-											value={getInheritableBooleanMode(draftSettings.skip_downstream_on_spam)}
-											options={[
-												{ value: 'inherit', label: 'Use inherited policy' },
-												{ value: 'enabled', label: 'Skip downstream actions' },
-												{ value: 'disabled', label: 'Allow downstream actions' }
-											]}
-											onchange={(event) =>
-												handleMappingSpamPolicyChange(
-													'skip_downstream_on_spam',
-													event.currentTarget.value
-												)}
 										/>
 									</div>
 								{/if}
@@ -4751,40 +4948,40 @@
 													storage_target_field_id: event.currentTarget.value
 												})}
 										/>
-											<SelectField
-												id="realtime-submit-policy"
-												label="Submit policy"
-												value={realtimeSettings.blocking_mode}
-												options={REALTIME_BLOCKING_OPTIONS}
+										<SelectField
+											id="realtime-submit-policy"
+											label="Submit policy"
+											value={realtimeSettings.blocking_mode}
+											options={REALTIME_BLOCKING_OPTIONS}
 											onchange={(event) =>
 												updateRealtimeSettings({
 													blocking_mode: event.currentTarget.value as RealtimeBlockingMode
-													})}
-											/>
-											<SelectField
-												id="realtime-refresh-mode"
-												label="Refresh mode"
-												description="Choose whether recommendations update continuously, only at checkpoint fields, or only when the visitor clicks refresh."
-												value={realtimeSettings.refresh_mode}
-												options={REALTIME_REFRESH_MODE_OPTIONS}
-												onchange={(event) =>
-													updateRealtimeSettings({
-														refresh_mode: event.currentTarget.value as RealtimeRefreshMode
-													})}
-											/>
-											<SelectField
-												id="realtime-initial-panel-state"
-												label="Initial panel"
-												description="Keep embedded forms quiet by default, then let the assistant appear after the visitor starts."
-												value={realtimeSettings.initial_panel_state}
-												options={REALTIME_INITIAL_PANEL_OPTIONS}
-												onchange={(event) =>
-													updateRealtimeSettings({
-														initial_panel_state: event.currentTarget
-															.value as RealtimeInitialPanelState
-													})}
-											/>
-										</div>
+												})}
+										/>
+										<SelectField
+											id="realtime-refresh-mode"
+											label="Refresh mode"
+											description="Choose whether recommendations update continuously, only at checkpoint fields, or only when the visitor clicks refresh."
+											value={realtimeSettings.refresh_mode}
+											options={REALTIME_REFRESH_MODE_OPTIONS}
+											onchange={(event) =>
+												updateRealtimeSettings({
+													refresh_mode: event.currentTarget.value as RealtimeRefreshMode
+												})}
+										/>
+										<SelectField
+											id="realtime-initial-panel-state"
+											label="Initial panel"
+											description="Keep embedded forms quiet by default, then let the assistant appear after the visitor starts."
+											value={realtimeSettings.initial_panel_state}
+											options={REALTIME_INITIAL_PANEL_OPTIONS}
+											onchange={(event) =>
+												updateRealtimeSettings({
+													initial_panel_state: event.currentTarget
+														.value as RealtimeInitialPanelState
+												})}
+										/>
+									</div>
 									<Toggle
 										checked={realtimeSettings.manual_refresh_enabled}
 										label="Manual refresh"
@@ -5481,7 +5678,7 @@
 												bind:value={localBuilderSpamIndicatorsDisplay}
 												disabled={creating ||
 													normalizeSpamResultDisplayMode(localBuilderSpamResultDisplayMode) ===
-														'silent'}
+														'none'}
 												data-testid="local-builder-spam-indicators-display"
 											>
 												{#each SPAM_INDICATORS_DISPLAY_OPTIONS as option (option.value)}

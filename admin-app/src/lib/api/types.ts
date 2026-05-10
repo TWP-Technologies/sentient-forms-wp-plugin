@@ -267,6 +267,61 @@ export interface PluginSettingsResponse {
 	privacy_setup_completed_at?: string | null;
 }
 
+export type SiteContextConsentStatus = 'unset' | 'granted' | 'declined';
+
+export interface SiteContextRefreshSettings {
+	consent_status: SiteContextConsentStatus;
+	consented_at: string | null;
+	declined_at: string | null;
+	auto_refresh_enabled: boolean;
+	auto_refresh_days: number;
+	next_refresh_at: string | null;
+	last_generated_at: string | null;
+	last_error: string | null;
+	generation_model_selection?: ModelSelection | null;
+}
+
+export interface SiteContext {
+	id: string;
+	license_id: string;
+	summary_text: string;
+	source: string;
+	auto_include: boolean;
+	pii_ack: boolean;
+	free_refresh_available: boolean;
+	next_free_refresh_at: string | null;
+	created_at: string;
+	updated_at: string;
+	metadata?: Record<string, unknown> | null;
+}
+
+export interface SiteContextStatusResponse {
+	context: SiteContext | null;
+	settings: SiteContextRefreshSettings;
+	has_context: boolean;
+	is_empty: boolean;
+	is_stale: boolean;
+	stale_after_days: number;
+	status: 'empty' | 'ready' | 'stale' | 'declined';
+}
+
+export interface SiteContextUpdateRequest {
+	summary_text?: string;
+	auto_include?: boolean;
+	pii_ack?: boolean;
+	consent_status?: SiteContextConsentStatus;
+	auto_refresh_enabled?: boolean;
+	auto_refresh_days?: number;
+	generation_model_selection?: ModelSelection | null;
+}
+
+export interface SiteContextGenerateRequest {
+	consent_status?: SiteContextConsentStatus;
+	auto_refresh_enabled?: boolean;
+	auto_refresh_days?: number;
+	generation_model_selection?: ModelSelection | null;
+}
+
 export type LocalProvider = 'openrouter' | 'sentient_managed' | string;
 export type LocalProviderAuthMode =
 	| 'manual_key'
@@ -751,13 +806,7 @@ export interface MappingConditionsConfig {
 	root: ConditionGroup;
 }
 
-export type SpamResultDisplayMode =
-	| 'none'
-	| 'spam_only'
-	| 'all_results'
-	| 'entry_note'
-	| 'silent'
-	| string;
+export type SpamResultDisplayMode = 'none' | 'spam_only' | 'all_results' | string;
 export type SpamIndicatorsDisplayMode = 'simple' | 'detailed' | string;
 export type LinkedActionStatus = 'active' | 'archived' | 'missing' | 'unknown' | string;
 export type RepairState = 'ok' | 'needs_repair' | string;
@@ -821,12 +870,20 @@ export interface FormActionSettings {
 	skip_on_upstream_spam?: boolean;
 	/** Explicit mapping override for suppressing notifications when spam is confirmed */
 	suppress_notifications_on_spam?: boolean;
+	/** Explicit mapping override for suppressing Gravity Forms Webhooks when spam is confirmed */
+	suppress_webhooks_on_spam?: boolean;
 	/** Explicit mapping override for skipping downstream work when spam is confirmed */
 	skip_downstream_on_spam?: boolean;
 	/** Whether spam notes should be stored for none, spam-only, or all classifications */
 	spam_result_display_mode?: SpamResultDisplayMode;
 	/** How much spam-indicator detail to include in spam notes */
 	spam_indicators_display?: SpamIndicatorsDisplayMode;
+	/** Mapping-level legitimate spam-calibration examples */
+	spam_positive_examples?: SpamGuidanceExample[];
+	/** Mapping-level spam-calibration examples */
+	spam_negative_examples?: SpamGuidanceExample[];
+	/** Optional action-specific AI instructions for this mapping */
+	action_customization?: string;
 	/** Conditional run gates for this mapping (CB-FORMS-006) */
 	conditions?: MappingConditionsConfig;
 	/** Prompt overrides for this mapping */
@@ -954,7 +1011,7 @@ export interface WorkflowPolicyViolation {
 }
 
 export interface WorkflowPlanResponse {
-	authority: 'cps' | 'local_fallback';
+	authority: 'cps' | 'local';
 	authority_reason?: string | null;
 	cps_unreachable: boolean;
 	policy_version: string;
@@ -1178,6 +1235,18 @@ export interface ModelPricingEstimate {
 		| string;
 	label?: string;
 	amount_usd?: number | null;
+	estimate_range?: {
+		low?: number | null;
+		high?: number | null;
+		currency?: string;
+		unit?: 'usd' | 'credits' | string;
+	} | null;
+	estimated_input_tokens?: number;
+	estimated_output_tokens?: number;
+	estimated_reasoning_tokens?: number;
+	sample_count?: number;
+	confidence?: 'baseline' | 'low' | 'medium' | 'high' | string;
+	calibration_source?: string;
 	provider_pricing?: Record<string, string>;
 	base_floor_credits: number;
 	normalized_actual_credits: number;
@@ -1197,19 +1266,28 @@ export interface ModelEstimateResponse {
 	pricing_estimate: ModelPricingEstimate;
 }
 
+export interface SpamGuidanceExample {
+	text: string;
+	rationale: string;
+}
+
 /**
  * Form-level action configuration (hierarchical examples storage)
  * This configuration persists at the form level, surviving action mapping deletion.
  */
 export interface FormActionConfig {
 	/** Examples of legitimate submissions (positive examples) */
-	spam_positive_examples?: string[];
+	spam_positive_examples?: SpamGuidanceExample[];
 	/** Examples of spam submissions (negative examples) */
-	spam_negative_examples?: string[];
+	spam_negative_examples?: SpamGuidanceExample[];
 	/** Default policy for suppressing notifications when blocking spam checks confirm spam */
 	suppress_notifications_on_spam?: boolean;
+	/** Default policy for suppressing Gravity Forms Webhooks when blocking spam checks confirm spam */
+	suppress_webhooks_on_spam?: boolean;
 	/** Default policy for skipping downstream work when spam is confirmed */
 	skip_downstream_on_spam?: boolean;
+	/** Optional action-specific AI instructions for this configuration scope */
+	action_customization?: string;
 	/** Default policy for when to store spam notes for this action on this form */
 	spam_result_display_mode?: SpamResultDisplayMode;
 	/** Default policy for how much indicator detail spam notes should include */

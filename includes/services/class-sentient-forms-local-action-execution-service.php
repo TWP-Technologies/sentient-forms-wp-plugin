@@ -470,9 +470,12 @@ class Sentient_Forms_Local_Action_Execution_Service
             return is_wp_error( $messages ) ? $messages : $this->inject_site_context_message( $this->inject_prompt_safety_message( $messages ), $mapping, $context );
         }
 
-        $prompt_template = $this->append_prompt_overrides_to_template(
+        $prompt_template = $this->append_prompt_context_to_template(
             $this->resolve_prompt_template( $action, $definition ),
-            $definition
+            $action,
+            $definition,
+            $mapping,
+            $context
         );
         if ( '' === trim( $prompt_template ) )
         {
@@ -500,8 +503,14 @@ class Sentient_Forms_Local_Action_Execution_Service
         return is_wp_error( $rendered ) ? $rendered : $this->inject_site_context_message( $this->inject_prompt_safety_message( $rendered ), $mapping, $context );
     }
 
-    private function append_prompt_overrides_to_template( string $prompt_template, array $definition ): string
+    private function append_prompt_context_to_template( string $prompt_template, array $action, array $definition, array $mapping, array $context ): string
     {
+        $action_code = $this->resolve_action_code( $action, $definition );
+        if ( $this->is_bundled_action_code( $action_code ) )
+        {
+            return $this->append_bundled_prompt_context_to_template( $prompt_template, $action_code, $mapping, $context );
+        }
+
         $prompt_overrides = is_array( $definition['prompt_overrides'] ?? null ) ? $definition['prompt_overrides'] : [];
         $instructions     = isset( $prompt_overrides['custom_instructions'] ) && is_scalar( $prompt_overrides['custom_instructions'] )
             ? trim( (string) $prompt_overrides['custom_instructions'] )
@@ -519,6 +528,132 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         return rtrim( $prompt_template ) . "\n\n" . $suffix;
+    }
+
+    private function append_bundled_prompt_context_to_template( string $prompt_template, string $action_code, array $mapping, array $context ): string
+    {
+        $settings = is_array( $context['settings'] ?? null )
+            ? $context['settings']
+            : ( is_array( $mapping['settings'] ?? null ) ? $mapping['settings'] : [] );
+
+        $sections = [];
+        $action_customization = isset( $settings['action_customization'] ) && is_scalar( $settings['action_customization'] )
+            ? trim( sanitize_textarea_field( (string) $settings['action_customization'] ) )
+            : '';
+        if ( '' !== $action_customization )
+        {
+            $sections[] = sprintf(
+                "<TRUSTED_ACTION_CUSTOMIZATION source=\"sentient_forms_admin\">\n%s\n</TRUSTED_ACTION_CUSTOMIZATION>",
+                $this->xml_escape_prompt_text( mb_substr( $action_customization, 0, 2000 ) )
+            );
+        }
+
+        if ( 'spam_detection_v1' === $action_code )
+        {
+            $positive = $this->normalize_spam_guidance_examples( $settings['spam_positive_examples'] ?? [] );
+            $negative = $this->normalize_spam_guidance_examples( $settings['spam_negative_examples'] ?? [] );
+            if ( [] !== $positive || [] !== $negative )
+            {
+                $sections[] = sprintf(
+                    "<TRUSTED_SPAM_CALIBRATION_EXAMPLES encoding=\"json\">\n%s\n</TRUSTED_SPAM_CALIBRATION_EXAMPLES>",
+                    $this->xml_escape_prompt_text(
+                        (string) wp_json_encode(
+                            [
+                                'legitimate_examples' => $positive,
+                                'spam_examples'       => $negative,
+                            ],
+                            JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+                        )
+                    )
+                );
+            }
+        }
+
+        if ( [] === $sections )
+        {
+            return $prompt_template;
+        }
+
+        return rtrim( $prompt_template ) . "\n\n" . implode( "\n\n", $sections );
+    }
+
+    private function resolve_action_code( array $action, array $definition ): string
+    {
+        foreach ( [ $action['code'] ?? null, $definition['code'] ?? null, $definition['action_code'] ?? null ] as $candidate )
+        {
+            if ( is_scalar( $candidate ) )
+            {
+                $code = sanitize_key( (string) $candidate );
+                if ( '' !== $code )
+                {
+                    if ( class_exists( 'Sentient_Forms_Bundled_Action_Templates' ) && Sentient_Forms_Bundled_Action_Templates::is_managed_custom_action_code( $code ) )
+                    {
+                        return Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $code );
+                    }
+
+                    return $code;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    private function is_bundled_action_code( string $action_code ): bool
+    {
+        return in_array(
+            $action_code,
+            [ 'spam_detection_v1', 'content_validation_v1', 'entry_summary_v1', 'clarification_assistant_v1' ],
+            true
+        );
+    }
+
+    /**
+     * @return array<int, array{text: string, rationale: string}>
+     */
+    private function normalize_spam_guidance_examples( mixed $examples ): array
+    {
+        if ( ! is_array( $examples ) )
+        {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ( $examples as $example )
+        {
+            if ( ! is_array( $example ) )
+            {
+                continue;
+            }
+
+            $text      = isset( $example['text'] ) && is_scalar( $example['text'] )
+                ? trim( sanitize_textarea_field( (string) $example['text'] ) )
+                : '';
+            $rationale = isset( $example['rationale'] ) && is_scalar( $example['rationale'] )
+                ? trim( sanitize_textarea_field( (string) $example['rationale'] ) )
+                : '';
+            if ( '' === $text || '' === $rationale )
+            {
+                continue;
+            }
+
+            $normalized[] = [
+                'text'      => mb_substr( $text, 0, 800 ),
+                'rationale' => mb_substr( $rationale, 0, 800 ),
+            ];
+
+            if ( count( $normalized ) >= 10 )
+            {
+                break;
+            }
+        }
+
+        return $normalized;
+    }
+
+    private function xml_escape_prompt_text( string $value ): string
+    {
+        return htmlspecialchars( $value, ENT_XML1 | ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8' );
     }
 
     /**
@@ -827,6 +962,12 @@ class Sentient_Forms_Local_Action_Execution_Service
             $payload['max_output_tokens'] = (int) $max_output_tokens;
         }
 
+        $reasoning = $this->normalize_reasoning_payload( $model_selection['reasoning'] ?? null );
+        if ( null !== $reasoning )
+        {
+            $payload['reasoning'] = $reasoning;
+        }
+
         if ( is_array( $structured_output_contract ) )
         {
             $payload['output_contract'] = [
@@ -923,7 +1064,7 @@ class Sentient_Forms_Local_Action_Execution_Service
     }
 
     /**
-     * @return array{effort: string}|null
+     * @return array{effort: string, exclude: bool}|null
      */
     private function normalize_reasoning_payload( mixed $value ): ?array
     {
@@ -933,7 +1074,11 @@ class Sentient_Forms_Local_Action_Execution_Service
             return null;
         }
 
-        return [ 'effort' => $effort ];
+        return [
+            'effort'  => $effort,
+            // phpcs:ignore WordPressVIPMinimum.Performance.WPQueryParams.PostNotIn_exclude -- OpenRouter reasoning payload key, not a WP_Query parameter.
+            'exclude' => true,
+        ];
     }
 
     private function normalize_managed_response( array $response ): array

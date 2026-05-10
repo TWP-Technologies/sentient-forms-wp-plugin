@@ -1058,11 +1058,6 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
 
     private function model_supports_reasoning( string $model_id, string $provider ): bool
     {
-        if ( 'sentient_managed' === sanitize_key( $provider ) )
-        {
-            return true;
-        }
-
         $model = $this->list_local_openrouter_models()[ $model_id ] ?? null;
         if ( ! is_array( $model ) )
         {

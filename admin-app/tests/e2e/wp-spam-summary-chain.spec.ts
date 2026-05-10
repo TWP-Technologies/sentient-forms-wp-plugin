@@ -147,11 +147,11 @@ test.describe('Spam-gated summary chain @after-submission @spam-e2e @summary-e2e
 			hooks: ['gform_after_submission'],
 			async: true,
 			markAsSpam: true,
-			executionPriority: 5,
-			additionalSettings: {
-				spam_result_display_mode: 'entry_note',
-				spam_indicators_display: 'detailed'
-			}
+				executionPriority: 5,
+				additionalSettings: {
+					spam_result_display_mode: 'all_results',
+					spam_indicators_display: 'detailed'
+				}
 		});
 		configureGravityActionMapping({
 			formId,

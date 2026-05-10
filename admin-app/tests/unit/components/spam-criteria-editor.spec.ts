@@ -32,8 +32,8 @@ describe('SpamCriteriaEditor', () => {
 			negativeExamples: []
 		});
 
-		expect(target.querySelector('#new-positive')).toBeNull();
-		expect(target.querySelector('#new-negative')).toBeNull();
+		expect(target.textContent).not.toContain('Legitimate examples');
+		expect(target.textContent).not.toContain('Spam examples');
 		dispose();
 	});
 
@@ -44,8 +44,8 @@ describe('SpamCriteriaEditor', () => {
 			initiallyExpanded: true
 		});
 
-		expect(target.querySelector('#new-positive')).toBeTruthy();
-		expect(target.querySelector('#new-negative')).toBeTruthy();
+		expect(target.textContent).toContain('Legitimate examples');
+		expect(target.textContent).toContain('Spam examples');
 		dispose();
 	});
 });

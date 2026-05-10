@@ -59,6 +59,10 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
                 ],
                 'temperature'          => '0.2',
                 'max_output_tokens'    => '512',
+                'reasoning'            => [
+                    'effort'  => 'high',
+                    'exclude' => false,
+                ],
             ]
         );
 
@@ -79,8 +83,35 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'input', $payload );
         $this->assertSame( 0.2, $payload['temperature'] );
         $this->assertSame( 512, $payload['max_output_tokens'] );
+        $this->assertSame( [ 'effort' => 'high', 'exclude' => true ], $payload['reasoning'] );
         $this->assertSame( 123, $payload['metadata']['mapping_id'] );
         $this->assertSame( '99', $payload['metadata']['entry_id'] );
+    }
+
+    public function test_execute_rejects_invalid_reasoning_before_http_request(): void
+    {
+        $this->mock_http(
+            static function (): WP_Error {
+                return new WP_Error( 'unexpected_http', 'No HTTP request should be made.' );
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->execute(
+            'proxy-secret',
+            [
+                'site_id'              => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id' => 'managed-req-1',
+                'model'                => 'openai/gpt-4.1-mini',
+                'prompt'               => 'Summarize this entry.',
+                'reasoning'            => [
+                    'effort' => 'extreme',
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_managed_invalid_reasoning', $result->get_error_code() );
     }
 
     public function test_execute_rejects_raw_input_field_before_http_request(): void
@@ -112,9 +143,15 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
 
     public function test_base_url_falls_back_to_cps_base_url_resolution(): void
     {
+        $previous_managed_url = getenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
+        $previous_proxy_url   = getenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+
         $filter = static function (): string {
             return 'https://staging-api.sentientforms.com/v1';
         };
+
+        putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
+        putenv( 'SENTIENT_FORMS_PROXY_API_URL' );
 
         add_filter( 'sentient_forms_cps_base_url', $filter, 10, 2 );
 
@@ -126,6 +163,12 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         finally
         {
             remove_filter( 'sentient_forms_cps_base_url', $filter, 10 );
+            false === $previous_managed_url
+                ? putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' )
+                : putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL=' . $previous_managed_url );
+            false === $previous_proxy_url
+                ? putenv( 'SENTIENT_FORMS_PROXY_API_URL' )
+                : putenv( 'SENTIENT_FORMS_PROXY_API_URL=' . $previous_proxy_url );
         }
     }
 

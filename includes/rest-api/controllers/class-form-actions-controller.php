@@ -1979,6 +1979,15 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         $trigger_hooks = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
+        if ( $request->has_param( 'settings' ) )
+        {
+            $settings_validation = $this->validate_settings_write_payload( $request->get_param( 'settings' ) );
+            if ( is_wp_error( $settings_validation ) )
+            {
+                return $settings_validation;
+            }
+        }
+
         $settings      = $request->has_param( 'settings' )
             ? $this->sanitize_settings( $request->get_param( 'settings' ) )
             : [];
@@ -2063,6 +2072,15 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 __( 'Bundled action template could not be resolved.', 'sentient-forms' ),
                 400
             );
+        }
+
+        if ( $request->has_param( 'settings' ) )
+        {
+            $settings_validation = $this->validate_settings_write_payload( $request->get_param( 'settings' ) );
+            if ( is_wp_error( $settings_validation ) )
+            {
+                return $settings_validation;
+            }
         }
 
         $template_row = $this->ensure_bundled_action_template_row( $template_code, $definition );
@@ -2329,6 +2347,10 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     private function build_bundled_local_custom_action_definition( array $definition ): array
     {
         $action_definition = is_array( $definition['definition_json'] ?? null ) ? $definition['definition_json'] : [];
+        if ( isset( $definition['code'] ) && is_scalar( $definition['code'] ) )
+        {
+            $action_definition['code'] = sanitize_key( (string) $definition['code'] );
+        }
 
         if ( isset( $definition['description'] ) && is_scalar( $definition['description'] ) )
         {
@@ -2408,6 +2430,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             'spam_indicators_display',
             'spam_result_display_mode',
             'suppress_notifications_on_spam',
+            'suppress_webhooks_on_spam',
             'skip_downstream_on_spam',
             'trigger_hooks',
             'trigger_sources',
@@ -2455,9 +2478,19 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 $effect_mapping['spam']['suppress_notifications_on_spam'] = rest_sanitize_boolean( $settings['suppress_notifications_on_spam'] );
             }
 
+            if ( array_key_exists( 'suppress_webhooks_on_spam', $settings ) )
+            {
+                $effect_mapping['spam']['suppress_webhooks_on_spam'] = rest_sanitize_boolean( $settings['suppress_webhooks_on_spam'] );
+            }
+
             if ( array_key_exists( 'skip_downstream_on_spam', $settings ) )
             {
                 $effect_mapping['spam']['skip_downstream_on_spam'] = rest_sanitize_boolean( $settings['skip_downstream_on_spam'] );
+            }
+
+            if ( array_key_exists( 'spam_confidence_threshold', $settings ) && is_numeric( $settings['spam_confidence_threshold'] ) )
+            {
+                $effect_mapping['spam']['min_confidence'] = max( 0, min( 1, (float) $settings['spam_confidence_threshold'] ) );
             }
 
             $note = is_array( $effect_mapping['spam']['note'] ?? null ) ? $effect_mapping['spam']['note'] : [];
@@ -2497,9 +2530,19 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $settings['suppress_notifications_on_spam'] = rest_sanitize_boolean( $spam['suppress_notifications_on_spam'] );
         }
 
+        if ( array_key_exists( 'suppress_webhooks_on_spam', $spam ) )
+        {
+            $settings['suppress_webhooks_on_spam'] = rest_sanitize_boolean( $spam['suppress_webhooks_on_spam'] );
+        }
+
         if ( array_key_exists( 'skip_downstream_on_spam', $spam ) )
         {
             $settings['skip_downstream_on_spam'] = rest_sanitize_boolean( $spam['skip_downstream_on_spam'] );
+        }
+
+        if ( array_key_exists( 'min_confidence', $spam ) && is_numeric( $spam['min_confidence'] ) )
+        {
+            $settings['spam_confidence_threshold'] = max( 0, min( 1, (float) $spam['min_confidence'] ) );
         }
 
         $note = is_array( $spam['note'] ?? null ) ? $spam['note'] : [];
@@ -2521,7 +2564,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
      */
     private function settings_include_spam_effect_fields( array $settings ): bool
     {
-        foreach ( [ 'suppress_notifications_on_spam', 'skip_downstream_on_spam', 'spam_result_display_mode', 'spam_indicators_display' ] as $key )
+        foreach ( [ 'suppress_notifications_on_spam', 'suppress_webhooks_on_spam', 'skip_downstream_on_spam', 'spam_confidence_threshold', 'spam_result_display_mode', 'spam_indicators_display' ] as $key )
         {
             if ( array_key_exists( $key, $settings ) )
             {
@@ -2550,9 +2593,19 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $effect_mapping['spam']['suppress_notifications_on_spam'] = rest_sanitize_boolean( $settings['suppress_notifications_on_spam'] );
         }
 
+        if ( array_key_exists( 'suppress_webhooks_on_spam', $settings ) )
+        {
+            $effect_mapping['spam']['suppress_webhooks_on_spam'] = rest_sanitize_boolean( $settings['suppress_webhooks_on_spam'] );
+        }
+
         if ( array_key_exists( 'skip_downstream_on_spam', $settings ) )
         {
             $effect_mapping['spam']['skip_downstream_on_spam'] = rest_sanitize_boolean( $settings['skip_downstream_on_spam'] );
+        }
+
+        if ( array_key_exists( 'spam_confidence_threshold', $settings ) && is_numeric( $settings['spam_confidence_threshold'] ) )
+        {
+            $effect_mapping['spam']['min_confidence'] = max( 0, min( 1, (float) $settings['spam_confidence_threshold'] ) );
         }
 
         $note = is_array( $effect_mapping['spam']['note'] ?? null ) ? $effect_mapping['spam']['note'] : [];
@@ -2631,8 +2684,6 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $value = sanitize_key( (string) $value );
 
         return match ( $value ) {
-            'entry_note' => 'all_results',
-            'silent'     => 'none',
             'none',
             'spam_only',
             'all_results' => $value,
@@ -2718,6 +2769,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
                 if ( $request->has_param( 'settings' ) )
                 {
+                    $settings_validation = $this->validate_settings_write_payload( $request->get_param( 'settings' ) );
+                    if ( is_wp_error( $settings_validation ) )
+                    {
+                        return $settings_validation;
+                    }
+
                     $settings = $this->sanitize_settings( $request->get_param( 'settings' ) );
                     $storage_validation = $this->validate_realtime_storage_target(
                         sanitize_key( (string) $request->get_param( 'form_source_slug' ) ),
@@ -2840,6 +2897,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
         if ( $request->has_param( 'settings' ) )
         {
+            $settings_validation = $this->validate_settings_write_payload( $request->get_param( 'settings' ) );
+            if ( is_wp_error( $settings_validation ) )
+            {
+                return $settings_validation;
+            }
+
             $settings = $this->sanitize_settings( $request->get_param( 'settings' ) );
             $storage_validation = $this->validate_realtime_storage_target(
                 sanitize_key( (string) $request->get_param( 'form_source_slug' ) ),
@@ -4112,11 +4175,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     }
 
     /**
-     * Build a local fallback workflow plan when CPS planner is unavailable.
+     * Build the local workflow plan.
      *
      * @param array  $actions    Merged linkage payload.
      * @param string $hook_scope        Requested hook scope.
-     * @param string $authority_reason  Reason why local fallback is authoritative.
+     * @param string $authority_reason  Reason recorded for local planning.
      *
      * @return array
      */
@@ -4361,7 +4424,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return [
-            'authority'         => 'local_fallback',
+            'authority'         => 'local',
             'authority_reason'  => sanitize_key( $authority_reason ),
             'cps_unreachable'   => 'cps_mismatch' !== $authority_reason,
             'policy_version'    => self::WORKFLOW_POLICY_VERSION,
@@ -4622,6 +4685,178 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     }
 
     /**
+     * Validates mapping settings payloads for strict config writes.
+     *
+     * @param mixed $settings Raw settings payload.
+     * @return WP_Error|null
+     */
+    private function validate_settings_write_payload( mixed $settings ): ?WP_Error
+    {
+        if ( null === $settings )
+        {
+            return null;
+        }
+
+        if ( ! is_array( $settings ) )
+        {
+            return $this->invalid_settings_write_error(
+                'settings',
+                __( 'Mapping settings must be an object.', 'sentient-forms' )
+            );
+        }
+
+        foreach ( [ 'spam_positive_examples', 'spam_negative_examples' ] as $field )
+        {
+            if ( ! array_key_exists( $field, $settings ) )
+            {
+                continue;
+            }
+
+            $value = $settings[ $field ];
+            if ( null === $value || ( is_array( $value ) && [] === $value ) )
+            {
+                continue;
+            }
+
+            $validation = $this->validate_spam_guidance_examples_for_write( $field, $value );
+            if ( is_wp_error( $validation ) )
+            {
+                return $validation;
+            }
+        }
+
+        foreach ( [ 'suppress_notifications_on_spam', 'suppress_webhooks_on_spam', 'skip_downstream_on_spam' ] as $field )
+        {
+            if ( ! array_key_exists( $field, $settings ) )
+            {
+                continue;
+            }
+
+            $value = $settings[ $field ];
+            if ( null !== $value && ! is_bool( $value ) )
+            {
+                return $this->invalid_settings_write_error(
+                    $field,
+                    __( 'Spam policy controls must be JSON booleans.', 'sentient-forms' )
+                );
+            }
+        }
+
+        if ( array_key_exists( 'spam_confidence_threshold', $settings ) )
+        {
+            $value = $settings['spam_confidence_threshold'];
+            if ( null !== $value && ( ! is_int( $value ) && ! is_float( $value ) || $value < 0 || $value > 1 ) )
+            {
+                return $this->invalid_settings_write_error(
+                    'spam_confidence_threshold',
+                    __( 'Spam confidence threshold must be a JSON number between 0 and 1.', 'sentient-forms' )
+                );
+            }
+        }
+
+        if ( array_key_exists( 'action_customization', $settings ) )
+        {
+            $value = $settings['action_customization'];
+            if ( null !== $value )
+            {
+                if ( ! is_string( $value ) )
+                {
+                    return $this->invalid_settings_write_error(
+                        'action_customization',
+                        __( 'Action customization must be a string.', 'sentient-forms' )
+                    );
+                }
+
+                if ( mb_strlen( trim( $value ) ) > 2000 )
+                {
+                    return $this->invalid_settings_write_error(
+                        'action_customization',
+                        __( 'Action customization must be 2000 characters or fewer.', 'sentient-forms' )
+                    );
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param string $field Field being validated.
+     * @param mixed  $value Raw field value.
+     * @return WP_Error|null
+     */
+    private function validate_spam_guidance_examples_for_write( string $field, mixed $value ): ?WP_Error
+    {
+        if ( ! is_array( $value ) )
+        {
+            return $this->invalid_settings_write_error(
+                $field,
+                __( 'Spam guidance examples must be an array of objects.', 'sentient-forms' )
+            );
+        }
+
+        if ( count( $value ) > 10 )
+        {
+            return $this->invalid_settings_write_error(
+                $field,
+                __( 'Spam guidance examples are limited to 10 examples per list.', 'sentient-forms' )
+            );
+        }
+
+        foreach ( $value as $example )
+        {
+            if ( ! is_array( $example ) )
+            {
+                return $this->invalid_settings_write_error(
+                    $field,
+                    __( 'Each spam guidance example must be an object.', 'sentient-forms' )
+                );
+            }
+
+            $extra_keys = array_diff( array_keys( $example ), [ 'text', 'rationale' ] );
+            if ( [] !== $extra_keys )
+            {
+                return $this->invalid_settings_write_error(
+                    $field,
+                    __( 'Spam guidance examples may only include text and rationale.', 'sentient-forms' )
+                );
+            }
+
+            foreach ( [ 'text', 'rationale' ] as $example_field )
+            {
+                if ( ! array_key_exists( $example_field, $example ) || ! is_string( $example[ $example_field ] ) )
+                {
+                    return $this->invalid_settings_write_error(
+                        $field,
+                        __( 'Each spam guidance example must include string text and rationale fields.', 'sentient-forms' )
+                    );
+                }
+
+                $trimmed = trim( $example[ $example_field ] );
+                if ( '' === $trimmed || mb_strlen( $trimmed ) > 800 )
+                {
+                    return $this->invalid_settings_write_error(
+                        $field,
+                        __( 'Spam guidance example text and rationale must be between 1 and 800 characters.', 'sentient-forms' )
+                    );
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function invalid_settings_write_error( string $field, string $message ): WP_Error
+    {
+        return $this->prepare_error_response(
+            'rest_invalid_action_config',
+            $message,
+            400,
+            [ 'field' => $field ],
+        );
+    }
+
+    /**
      * Sanitize settings array recursively.
      */
     private function sanitize_settings( $settings ): array
@@ -4673,6 +4908,24 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 continue;
             }
 
+            if ( in_array( $key, [ 'suppress_notifications_on_spam', 'suppress_webhooks_on_spam', 'skip_downstream_on_spam' ], true ) )
+            {
+                $sanitized[ $key ] = rest_sanitize_boolean( $value );
+                continue;
+            }
+
+            if ( in_array( $key, [ 'spam_positive_examples', 'spam_negative_examples' ], true ) )
+            {
+                $sanitized[ $key ] = $this->sanitize_spam_guidance_examples( $value );
+                continue;
+            }
+
+            if ( 'action_customization' === $key )
+            {
+                $sanitized[ $key ] = $this->sanitize_action_customization( $value );
+                continue;
+            }
+
             if ( is_array( $value ) )
             {
                 $sanitized[ $key ] = $this->sanitize_settings( $value );
@@ -4689,6 +4942,61 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return $sanitized;
+    }
+
+    /**
+     * @param mixed $value
+     * @return array<int, array{text: string, rationale: string}>
+     */
+    private function sanitize_spam_guidance_examples( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $sanitized = [];
+        foreach ( $value as $example )
+        {
+            if ( ! is_array( $example ) )
+            {
+                continue;
+            }
+
+            $text      = isset( $example['text'] ) && is_scalar( $example['text'] )
+                ? trim( sanitize_textarea_field( (string) $example['text'] ) )
+                : '';
+            $rationale = isset( $example['rationale'] ) && is_scalar( $example['rationale'] )
+                ? trim( sanitize_textarea_field( (string) $example['rationale'] ) )
+                : '';
+
+            if ( '' === $text || '' === $rationale )
+            {
+                continue;
+            }
+
+            $sanitized[] = [
+                'text'      => mb_substr( $text, 0, 800 ),
+                'rationale' => mb_substr( $rationale, 0, 800 ),
+            ];
+
+            if ( count( $sanitized ) >= 10 )
+            {
+                break;
+            }
+        }
+
+        return $sanitized;
+    }
+
+    private function sanitize_action_customization( mixed $value ): string
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return '';
+        }
+
+        return mb_substr( trim( sanitize_textarea_field( (string) $value ) ), 0, 2000 );
     }
 
     /**

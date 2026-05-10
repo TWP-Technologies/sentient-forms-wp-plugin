@@ -9,7 +9,13 @@
 	import { createClientFromConfig } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Alert, Badge, Button, StateTemplate } from '$lib/components/ui';
-	import type { FormSourceSummary, PluginSettingsResponse } from '$lib/api/types';
+	import type { FormSourceSummary, PluginSettingsResponse, SiteContextStatusResponse } from '$lib/api/types';
+	import { navigateToAppPath } from '$lib/navigation';
+	import { wpFetch } from '$lib/wp';
+	import {
+		normalizeSiteContextResponse,
+		siteContextStatusLabel
+	} from '$lib/utils/site-context';
 
 	type PrivacyPresetId = 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility';
 
@@ -49,6 +55,8 @@
 	let privacySetupProfile =
 		$state<NonNullable<PluginSettingsResponse['privacy_setup_profile']>>('balanced');
 	let privacySetupCompletedAt = $state<string | null>(null);
+	let siteContextStatus = $state<SiteContextStatusResponse | null>(null);
+	let siteContextLoading = $state(false);
 
 	const privacyPresetDefinitions: Record<PrivacyPresetId, PrivacyPresetDefinition> = {
 		balanced: {
@@ -134,6 +142,7 @@
 		asyncHealth.refresh();
 		logging.load();
 		loadExecutionSettings();
+		void loadSiteContextStatus();
 
 		const handleSettingsUpdate = (event: Event) => {
 			const customEvent = event as CustomEvent<PluginSettingsResponse>;
@@ -362,6 +371,24 @@
 	function openPrivacySetupAssistant(): void {
 		window.dispatchEvent(new CustomEvent('sentient-forms:open-privacy-setup'));
 	}
+
+	function openSiteContextSettings(): void {
+		void navigateToAppPath('/settings/context');
+	}
+
+	async function loadSiteContextStatus(): Promise<void> {
+		siteContextLoading = true;
+		try {
+			siteContextStatus = normalizeSiteContextResponse(
+				await wpFetch<SiteContextStatusResponse>('site-context')
+			);
+		} catch (error) {
+			console.error('Failed to load Site Context status', error);
+			siteContextStatus = null;
+		} finally {
+			siteContextLoading = false;
+		}
+	}
 </script>
 
 <section class="sf:min-w-0 sf:space-y-6 sf:max-w-3xl">
@@ -434,8 +461,22 @@
 						{/if}
 					</p>
 				</div>
-				<Button type="button" variant="secondary" onclick={openPrivacySetupAssistant}>
-					{privacySetupCompletedAt ? 'Reopen setup assistant' : 'Finish guided setup'}
+				<Button
+					type="button"
+					variant="secondary"
+					class="sf:group sf:min-w-[11rem] sf:gap-2 sf:border-primary-200 sf:bg-primary-50 sf:text-primary-800 sf:shadow-sm sf:hover:border-primary-300 sf:hover:bg-primary-100"
+					onclick={openPrivacySetupAssistant}
+				>
+					<span
+						class="sf:inline-flex sf:h-5 sf:w-5 sf:items-center sf:justify-center sf:rounded-full sf:bg-white sf:text-primary-700 sf:shadow-sm sf:transition-transform sf:group-hover:-rotate-12"
+						aria-hidden="true"
+					>
+						<svg viewBox="0 0 20 20" class="sf:h-3.5 sf:w-3.5 sf:fill-current">
+							<path d="M9.5 2.6 11 6.8l4.2 1.5L11 9.8 9.5 14 8 9.8 3.8 8.3 8 6.8z" />
+							<path d="M15.2 1.7 15.8 3.4 17.5 4l-1.7.6-.6 1.7-.6-1.7-1.7-.6 1.7-.6z" />
+						</svg>
+					</span>
+					{privacySetupCompletedAt ? 'Review setup' : 'Finish guided setup'}
 				</Button>
 			</div>
 
@@ -480,6 +521,65 @@
 				</div>
 			</div>
 		{/if}
+	</div>
+
+	<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm">
+		<div
+			class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-4 sf:lg:flex-row sf:lg:items-center"
+		>
+			<div class="sf:min-w-0 sf:space-y-2">
+				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+					<p class="sf:text-base sf:font-semibold sf:text-slate-900">Site Context</p>
+					{#if siteContextLoading}
+						<Badge variant="neutral">Checking</Badge>
+					{:else if siteContextStatus}
+						<Badge
+							variant={siteContextStatus.status === 'ready'
+								? 'success'
+								: siteContextStatus.status === 'declined'
+									? 'neutral'
+									: 'warning'}
+						>
+							{siteContextStatusLabel(siteContextStatus)}
+						</Badge>
+					{:else}
+						<Badge variant="warning">Unavailable</Badge>
+					{/if}
+				</div>
+				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
+					Describe what this website does so spam checks, summaries, and other actions can make
+					site-specific decisions instead of generic guesses.
+				</p>
+				{#if siteContextStatus?.is_empty && siteContextStatus.settings.consent_status === 'granted'}
+					<p class="sf:text-xs sf:font-medium sf:text-amber-700">
+						Generation is allowed, but no Site Context is saved yet.
+					</p>
+				{:else if siteContextStatus?.is_stale}
+					<p class="sf:text-xs sf:font-medium sf:text-amber-700">
+						Last context looks older than {siteContextStatus.stale_after_days} days.
+					</p>
+				{:else if siteContextStatus?.settings.consent_status === 'declined'}
+					<p class="sf:text-xs sf:text-slate-500">
+						AI generation is off. Manual Site Context can still be configured.
+					</p>
+				{/if}
+			</div>
+			<Button
+				type="button"
+				variant="secondary"
+				class="sf:min-w-[13.5rem] sf:whitespace-nowrap sf:border-slate-300 sf:bg-white sf:text-slate-900"
+				onclick={openSiteContextSettings}
+				data-testid="settings-manage-site-context"
+			>
+				<svg viewBox="0 0 20 20" class="sf:h-4 sf:w-4" aria-hidden="true">
+					<path
+						fill="currentColor"
+						d="M5 4.5h6.2v1.7H7.9l6.4 6.4-1.2 1.2-6.4-6.4v3.3H5z"
+					/>
+				</svg>
+				Manage Site Context
+			</Button>
+		</div>
 	</div>
 
 	{#if $asyncHealth.warnings.length}

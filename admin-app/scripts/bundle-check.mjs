@@ -6,8 +6,10 @@ import path from 'node:path';
 // chunks. The all-model selector, action log, managed-service setup, realtime
 // assistant controls, model ranking metadata, and dependency-graph UX currently
 // sit at ~865 KB; keep a hard ceiling with narrow headroom so accidental
-// payload growth still fails.
-const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 875);
+// payload growth still fails. Zod is intentionally included for stricter
+// admin config validation during private beta; revisit this ceiling when the
+// validator is pared down or moved to a smaller import.
+const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 950);
 const distRoot = path.resolve('..', 'assets', 'dist', '_app', 'immutable');
 
 async function collectSizes(dir) {

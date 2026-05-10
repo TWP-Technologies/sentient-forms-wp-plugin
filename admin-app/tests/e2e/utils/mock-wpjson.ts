@@ -8,6 +8,7 @@ type Routes = {
 		status?: unknown;
 		settings?: Record<string, unknown>;
 		actionDefaultsById?: Record<string, Record<string, unknown>>;
+		formActionConfigById?: Record<string, Record<string, unknown>>;
 		formsActions?: unknown[];
 		formFields?: unknown[];
 		creditBalance?: unknown;
@@ -24,6 +25,7 @@ type Routes = {
 	localProviders?: {
 		credentials?: unknown[];
 	};
+	siteContext?: unknown;
 };
 
 const defaultLicense = {
@@ -61,7 +63,7 @@ const defaultModelCatalog = {
 				vision: true,
 				tools: true,
 				structured: true,
-				web_search: false,
+				web_search: true,
 				long_context: true
 			},
 			context_window: 200000,
@@ -118,6 +120,14 @@ const defaultModelCatalog = {
 			source_urls: ['https://artificialanalysis.ai/models', 'https://openrouter.ai/models']
 		},
 		{
+			code: 'sf_research',
+			display_name: 'Research',
+			description: 'Use a web-capable model for public site research.',
+			category: 'local',
+			resolved_model_id: 'openai/gpt-5.5',
+			auto_upgrade: true
+		},
+		{
 			code: 'sf_free',
 			display_name: 'Free model',
 			description: 'Use the OpenRouter free models router for workflow proof.',
@@ -154,6 +164,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 	const actionDefaultsState: Record<string, Record<string, unknown>> = {
 		...(routes.actions?.actionDefaultsById ?? {})
 	};
+	const formActionConfigState: Record<string, Record<string, unknown>> = {
+		...(routes.actions?.formActionConfigById ?? {})
+	};
 	const disableState: Record<string, boolean> = {
 		sf_disabled: false,
 		global_disabled: false,
@@ -161,6 +174,40 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 		effective_disabled: false,
 		...((routes.actions?.disableState as Record<string, boolean> | undefined) ?? {})
 	};
+	let siteContextState =
+		routes.siteContext ??
+		{
+			context: {
+				id: 'ctx-1',
+				license_id: 'lic-1',
+				summary_text: 'Mock Site Context for admin route coverage.',
+				source: 'manual',
+				auto_include: true,
+				pii_ack: true,
+				created_at: '2026-04-21T00:00:00Z',
+				updated_at: '2026-04-21T00:00:00Z'
+			},
+			settings: {
+				consent_status: 'unset',
+				consented_at: null,
+				declined_at: null,
+				auto_refresh_enabled: false,
+				auto_refresh_days: 30,
+				next_refresh_at: null,
+				last_generated_at: null,
+				last_error: null,
+				generation_model_selection: {
+					primary: 'sf_research',
+					is_preset: true,
+					provider: 'sentient_managed'
+				}
+			},
+			has_context: true,
+			is_empty: false,
+			is_stale: false,
+			stale_after_days: 90,
+			status: 'ready'
+		};
 
 	await page.context().route('**/wp-json/sentient-forms/v1/**', (route) => {
 		const url = route.request().url();
@@ -269,6 +316,138 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				status: 200,
 				headers: { 'content-type': 'application/json' },
 				body: envelope(settingsState)
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/site-context') && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(siteContextState)
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/site-context') && method === 'PUT') {
+			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+			const current =
+				siteContextState && typeof siteContextState === 'object' && !Array.isArray(siteContextState)
+					? (siteContextState as Record<string, unknown>)
+					: {};
+			const settings =
+				current.settings && typeof current.settings === 'object' && !Array.isArray(current.settings)
+					? { ...(current.settings as Record<string, unknown>) }
+					: {};
+			const summaryText = typeof body.summary_text === 'string' ? body.summary_text : '';
+			siteContextState = {
+				...current,
+				context:
+					summaryText.trim().length > 0
+						? {
+								...(current.context && typeof current.context === 'object'
+									? (current.context as Record<string, unknown>)
+									: {}),
+								id: 'ctx-1',
+								license_id: 'lic-1',
+								summary_text: summaryText,
+								source: 'manual',
+								auto_include:
+									typeof body.auto_include === 'boolean' ? body.auto_include : true,
+								pii_ack: true,
+								created_at: '2026-04-21T00:00:00Z',
+								updated_at: '2026-04-21T00:00:00Z'
+							}
+						: null,
+				settings: {
+					...settings,
+					consent_status:
+						typeof body.consent_status === 'string' ? body.consent_status : 'unset',
+					auto_refresh_enabled: Boolean(body.auto_refresh_enabled),
+					auto_refresh_days:
+						typeof body.auto_refresh_days === 'number' ? body.auto_refresh_days : 30,
+					generation_model_selection:
+						body.generation_model_selection ?? settings.generation_model_selection
+				},
+				has_context: summaryText.trim().length > 0,
+				is_empty: summaryText.trim().length === 0,
+				is_stale: false,
+				stale_after_days: 90,
+				status: summaryText.trim().length > 0 ? 'ready' : 'empty'
+			};
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(siteContextState)
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/site-context') && method === 'DELETE') {
+			siteContextState = {
+				context: null,
+				settings: {
+					consent_status: 'declined',
+					consented_at: null,
+					declined_at: '2026-04-21T00:00:00Z',
+					auto_refresh_enabled: false,
+					auto_refresh_days: 30,
+					next_refresh_at: null,
+					last_generated_at: null,
+					last_error: null,
+					generation_model_selection: {
+						primary: 'sf_research',
+						is_preset: true,
+						provider: 'sentient_managed'
+					}
+				},
+				has_context: false,
+				is_empty: true,
+				is_stale: false,
+				stale_after_days: 90,
+				status: 'declined'
+			};
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(siteContextState)
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/site-context/generate') && method === 'POST') {
+			siteContextState = {
+				context: {
+					id: 'ctx-1',
+					license_id: 'lic-1',
+					summary_text: 'Generated mock context for public site evidence.',
+					source: 'ai_generated',
+					auto_include: true,
+					pii_ack: true,
+					created_at: '2026-04-21T00:00:00Z',
+					updated_at: '2026-04-21T00:00:00Z'
+				},
+				settings: {
+					consent_status: 'granted',
+					consented_at: '2026-04-21T00:00:00Z',
+					declined_at: null,
+					auto_refresh_enabled: false,
+					auto_refresh_days: 30,
+					next_refresh_at: null,
+					last_generated_at: '2026-04-21T00:00:00Z',
+					last_error: null,
+					generation_model_selection: {
+						primary: 'sf_research',
+						is_preset: true,
+						provider: 'sentient_managed'
+					}
+				},
+				has_context: true,
+				is_empty: false,
+				is_stale: false,
+				stale_after_days: 90,
+				status: 'ready'
+			};
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(siteContextState)
 			});
 		}
 
@@ -402,11 +581,27 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 					pricing_estimate: {
 						action_id: actionId,
 						resolved_model_id: resolvedModelId,
+						route: 'openrouter',
+						kind: resolvedModelId === 'openrouter/free' ? 'openrouter_free' : 'openrouter_currency',
+						label: resolvedModelId === 'openrouter/free' ? 'OR est. $0.00' : 'OR est. $0.01',
+						amount_usd: resolvedModelId === 'openrouter/free' ? 0 : 0.01,
+						estimate_range: {
+							low: 0,
+							high: resolvedModelId === 'openrouter/free' ? 0 : 0.02,
+							currency: 'USD',
+							unit: 'usd'
+						},
+						estimated_input_tokens: 1900,
+						estimated_output_tokens: 320,
+						estimated_reasoning_tokens: 0,
+						sample_count: 0,
+						confidence: 'baseline',
+						calibration_source: 'baseline_profile',
 						base_floor_credits: 0,
 						normalized_actual_credits: 0,
 						estimated_debit_credits: 0,
 						pricing_policy_version: 'mock',
-						estimate_source: 'fallback'
+						estimate_source: 'baseline_profile'
 					}
 				})
 			});
@@ -490,7 +685,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				headers: { 'content-type': 'application/json' },
 				body: envelope(
 					routes.actions?.workflowPlan ?? {
-						authority: 'local_fallback',
+						authority: 'local',
 						authority_reason: 'mock',
 						cps_unreachable: false,
 						policy_version: '2026-02-mixed-sync-async-v1',
@@ -571,6 +766,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			/\/forms\/[^/]+\/(\d+)\/action-config\/([^/]+)$/
 		);
 		if (actionConfigMatch && method === 'GET') {
+			const actionId = decodeURIComponent(actionConfigMatch[2]);
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
@@ -579,8 +775,30 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 					data: {
 						form_source_slug: 'gravity_forms',
 						form_id: Number(actionConfigMatch[1]),
-						action_id: decodeURIComponent(actionConfigMatch[2]),
-						config: {}
+						action_id: actionId,
+						config: formActionConfigState[actionId] ?? {}
+					}
+				})
+			});
+		}
+
+		if (actionConfigMatch && method === 'POST') {
+			const actionId = decodeURIComponent(actionConfigMatch[2]);
+			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
+			formActionConfigState[actionId] = {
+				...(formActionConfigState[actionId] ?? {}),
+				...body
+			};
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					success: true,
+					data: {
+						form_source_slug: 'gravity_forms',
+						form_id: Number(actionConfigMatch[1]),
+						action_id: actionId,
+						config: formActionConfigState[actionId]
 					}
 				})
 			});

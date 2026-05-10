@@ -418,8 +418,6 @@ class Sentient_Forms_Local_Result_Applier
         $value = sanitize_key( (string) $value );
 
         return match ( $value ) {
-            'entry_note' => 'all_results',
-            'silent'     => 'none',
             'none',
             'spam_only',
             'all_results' => $value,

@@ -80,9 +80,45 @@
 		overflow: visible;
 	}
 
+	.sf-wp-modal-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 100000;
+	}
+
+	.sf-model-selector-shell {
+		height: min(calc(95dvh - 0.5rem), calc(100% - 0.5rem));
+		min-height: min(42rem, calc(100% - 0.5rem));
+		max-height: calc(100% - 0.5rem);
+	}
+
+	body.wp-admin #sentient-forms-admin-app .sf-wp-modal-backdrop {
+		top: 32px;
+		left: 160px;
+	}
+
+	body.wp-admin.folded #sentient-forms-admin-app .sf-wp-modal-backdrop {
+		left: 36px;
+	}
+
+	@media screen and (max-width: 960px) {
+		body.wp-admin.auto-fold #sentient-forms-admin-app .sf-wp-modal-backdrop {
+			left: 36px;
+		}
+	}
+
 	@media screen and (max-width: 782px) {
 		#sentient-forms-admin-app {
 			--sentient-forms-wp-admin-offset: 46px;
+		}
+
+		body.wp-admin #sentient-forms-admin-app .sf-wp-modal-backdrop {
+			top: 46px;
+			left: 0;
+		}
+
+		.sf-model-selector-shell {
+			min-height: 0;
 		}
 	}
 }

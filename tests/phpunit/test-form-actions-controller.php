@@ -566,6 +566,94 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( [ 'gform_validation' ], $data['trigger_hooks'] );
     }
 
+    public function test_add_form_action_rejects_malformed_spam_guidance_settings(): void {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'central_action_id', 'spam_detection_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
+        $request->set_param( 'trigger_hooks', [ 'gform_validation' ] );
+        $request->set_param(
+            'settings',
+            [
+                'spam_negative_examples' => [
+                    [
+                        'text' => 'Missing rationale',
+                    ],
+                ],
+            ]
+        );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_action_config', $response->get_error_code() );
+        $this->assertSame( 'spam_negative_examples', $response->get_error_data()['field'] ?? null );
+    }
+
+    public function test_update_form_action_item_rejects_string_spam_policy_setting(): void {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $request->set_param(
+            'settings',
+            [
+                'suppress_webhooks_on_spam' => 'true',
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_action_config', $response->get_error_code() );
+        $this->assertSame( 'suppress_webhooks_on_spam', $response->get_error_data()['field'] ?? null );
+    }
+
+    public function test_update_form_action_item_rejects_string_spam_confidence_threshold(): void {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $request->set_param(
+            'settings',
+            [
+                'spam_confidence_threshold' => '0.70',
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_action_config', $response->get_error_code() );
+        $this->assertSame( 'spam_confidence_threshold', $response->get_error_data()['field'] ?? null );
+    }
+
+    public function test_update_form_action_item_rejects_invalid_action_customization(): void {
+        $record = $this->create_local_first_mapping_fixture( '1' );
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/local_first_' . $record['mapping_id'] );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $record['mapping_id'] );
+        $request->set_param(
+            'settings',
+            [
+                'action_customization' => str_repeat( 'x', 2001 ),
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_action_config', $response->get_error_code() );
+        $this->assertSame( 'action_customization', $response->get_error_data()['field'] ?? null );
+    }
+
     public function test_add_form_action_creates_local_first_bundled_mapping_with_canonical_identity(): void
     {
         global $wpdb;
@@ -593,7 +681,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             [
                 'suppress_notifications_on_spam' => false,
                 'skip_downstream_on_spam'        => true,
-                'spam_result_display_mode'       => 'entry_note',
+                'spam_confidence_threshold'      => 0.65,
+                'spam_result_display_mode'       => 'all_results',
                 'spam_indicators_display'        => 'detailed',
                 'input_mapping'                  => [
                     'email' => '3',
@@ -641,6 +730,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( [ 'email' => '3' ], $validation_mapping['input_bindings_json'] ?? null );
         $this->assertFalse( $validation_mapping['effect_mapping_json']['spam']['suppress_notifications_on_spam'] ?? true );
         $this->assertTrue( $validation_mapping['effect_mapping_json']['spam']['skip_downstream_on_spam'] ?? false );
+        $this->assertSame( 0.65, $validation_mapping['effect_mapping_json']['spam']['min_confidence'] ?? null );
         $this->assertSame( 'all_results', $validation_mapping['effect_mapping_json']['spam']['note']['result_display_mode'] ?? null );
         $this->assertSame( 'detailed', $validation_mapping['effect_mapping_json']['spam']['note']['indicators_display'] ?? null );
     }
@@ -2086,7 +2176,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             [
                 'suppress_notifications_on_spam' => true,
                 'skip_downstream_on_spam'        => false,
-                'spam_result_display_mode'       => 'silent',
+                'spam_confidence_threshold'      => 0.7,
+                'spam_result_display_mode'       => 'none',
                 'spam_indicators_display'        => 'detailed',
             ]
         );
@@ -2102,6 +2193,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'detailed', $data['settings']['spam_indicators_display'] ?? null );
         $this->assertTrue( $data['settings']['suppress_notifications_on_spam'] ?? false );
         $this->assertFalse( $data['settings']['skip_downstream_on_spam'] ?? true );
+        $this->assertSame( 0.7, $data['settings']['spam_confidence_threshold'] ?? null );
         $this->assertIsArray( $stored );
         $this->assertSame(
             [ 'sentient_forms_qualification' => 'structured.qualification' ],
@@ -2109,6 +2201,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         );
         $this->assertTrue( $stored['effect_mapping_json']['spam']['suppress_notifications_on_spam'] ?? false );
         $this->assertFalse( $stored['effect_mapping_json']['spam']['skip_downstream_on_spam'] ?? true );
+        $this->assertSame( 0.7, $stored['effect_mapping_json']['spam']['min_confidence'] ?? null );
         $this->assertSame( 'none', $stored['effect_mapping_json']['spam']['note']['result_display_mode'] ?? null );
         $this->assertSame( 'detailed', $stored['effect_mapping_json']['spam']['note']['indicators_display'] ?? null );
     }
@@ -2195,7 +2288,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $response = $this->controller->get_workflow_plan( $request );
         $data     = $response->get_data();
 
-        $this->assertSame( 'local_fallback', $data['authority'] ?? null );
+        $this->assertSame( 'local', $data['authority'] ?? null );
         $this->assertSame( 'cps_mismatch', $data['authority_reason'] ?? null );
         $this->assertFalse( $data['cps_unreachable'] ?? true );
         $this->assertContains( 'gform_validation', $data['available_hooks'] ?? [] );

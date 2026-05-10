@@ -457,7 +457,7 @@ class Sentient_Forms_Local_Prompt_Renderer
             return (string) $value;
         }
 
-        $encoded = wp_json_encode( $value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+        $encoded = wp_json_encode( $value, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT );
         return is_string( $encoded ) ? $encoded : '';
     }
 }
