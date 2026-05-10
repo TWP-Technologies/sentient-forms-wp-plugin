@@ -7,9 +7,10 @@ import path from 'node:path';
 // assistant controls, model ranking metadata, and dependency-graph UX currently
 // sit at ~865 KB; keep a hard ceiling with narrow headroom so accidental
 // payload growth still fails. Zod is intentionally included for stricter
-// admin config validation during private beta; revisit this ceiling when the
+// admin config validation during private beta. The first AI impact recap adds
+// a small lazy dashboard chunk; keep the ceiling tight and revisit when the
 // validator is pared down or moved to a smaller import.
-const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 950);
+const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 960);
 const distRoot = path.resolve('..', 'assets', 'dist', '_app', 'immutable');
 
 async function collectSizes(dir) {

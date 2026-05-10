@@ -14,6 +14,17 @@
 
 	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 	type SettledResult<T> = PromiseSettledResult<T>;
+	type StructuredResult = Record<string, unknown>;
+
+	interface ImpactSummary {
+		totalRuns: number;
+		succeededRuns: number;
+		spamFlagged: number;
+		entryNotesCreated: number;
+		marketerInsights: number;
+		followUpsNeeded: number;
+		urgentSignals: number;
+	}
 
 	const client = createClientFromConfig();
 
@@ -37,6 +48,8 @@
 	let managedStatus = $derived(managedCredential?.status ?? 'missing');
 	let recentLocalEvents = $derived(recentEvents.filter((event) => !isImportedHistoryEvent(event)));
 	let importedHistoryCount = $derived(recentEvents.length - recentLocalEvents.length);
+	let recentDisplayEvents = $derived(recentLocalEvents.slice(0, 5));
+	let impactSummary = $derived(computeImpactSummary(recentLocalEvents));
 	let successfulRuns = $derived(
 		recentLocalEvents.filter((event) => event.status === 'succeeded').length
 	);
@@ -69,7 +82,7 @@
 			client.getLocalProviderCredentials({ showNotifications: false }),
 			client.getLocalActionTemplates({ showNotifications: false }),
 			client.getLocalCustomActions('active', { showNotifications: false }),
-			client.getLocalExecutionEvents(5, { showNotifications: false }),
+			client.getLocalExecutionEvents(100, { showNotifications: false }),
 			client.getLocalSupportBundle({ showNotifications: false })
 		]);
 
@@ -152,6 +165,88 @@
 	function isImportedHistoryEvent(event: LocalExecutionEvent): boolean {
 		const provider = typeof event.provider === 'string' ? event.provider.trim().toLowerCase() : '';
 		return provider === 'legacy_cps' || provider === 'cps';
+	}
+
+	function computeImpactSummary(events: LocalExecutionEvent[]): ImpactSummary {
+		return events.reduce<ImpactSummary>(
+			(summary, event) => {
+				const structured = structuredResult(event);
+				summary.totalRuns += 1;
+				if (event.status === 'succeeded') {
+					summary.succeededRuns += 1;
+				}
+
+				const classification = stringValue(structured.classification);
+				if (classification === 'spam' || classification === 'likely_spam') {
+					summary.spamFlagged += 1;
+				}
+
+				if (effectApplied(event, 'entry_note') || effectApplied(event, 'spam_note')) {
+					summary.entryNotesCreated += 1;
+				}
+
+				if (
+					stringValue(structured.sentiment) ||
+					stringValue(structured.status) ||
+					stringValue(structured.intent) ||
+					stringValue(structured.route_to) ||
+					stringValue(structured.severity)
+				) {
+					summary.marketerInsights += 1;
+				}
+
+				const informationStatus = stringValue(structured.status);
+				if (informationStatus === 'needs_follow_up' || informationStatus === 'insufficient') {
+					summary.followUpsNeeded += 1;
+				}
+
+				const urgency = stringValue(structured.urgency);
+				const priority = stringValue(structured.priority);
+				const severity = stringValue(structured.severity);
+				if (
+					urgency === 'high' ||
+					urgency === 'critical' ||
+					priority === 'high' ||
+					priority === 'urgent' ||
+					severity === 'high' ||
+					severity === 'critical'
+				) {
+					summary.urgentSignals += 1;
+				}
+
+				return summary;
+			},
+			{
+				totalRuns: 0,
+				succeededRuns: 0,
+				spamFlagged: 0,
+				entryNotesCreated: 0,
+				marketerInsights: 0,
+				followUpsNeeded: 0,
+				urgentSignals: 0
+			}
+		);
+	}
+
+	function structuredResult(event: LocalExecutionEvent): StructuredResult {
+		const result = event.result_json;
+		const structured = result?.structured;
+		return isPlainObject(structured) ? structured : {};
+	}
+
+	function effectApplied(event: LocalExecutionEvent, effect: string): boolean {
+		const result = event.result_json;
+		const effects = isPlainObject(result?.effects) ? result.effects : null;
+		const applied = effects?.applied;
+		return Array.isArray(applied) && applied.includes(effect);
+	}
+
+	function isPlainObject(value: unknown): value is Record<string, unknown> {
+		return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+	}
+
+	function stringValue(value: unknown): string {
+		return typeof value === 'string' ? value.trim().toLowerCase() : '';
 	}
 
 	onMount(() => {
@@ -329,6 +424,25 @@
 			/>
 		{:else}
 			<div class="sf:space-y-3">
+				<div class="sf:flex sf:flex-wrap sf:gap-2" data-testid="dashboard-impact-summary">
+					<Badge variant="info">{impactSummary.totalRuns} observed runs</Badge>
+					<Badge variant="success">{impactSummary.succeededRuns} successful automations</Badge>
+					<Badge variant={impactSummary.entryNotesCreated > 0 ? 'info' : 'neutral'}>
+						{impactSummary.entryNotesCreated} staff notes
+					</Badge>
+					<Badge variant={impactSummary.marketerInsights > 0 ? 'info' : 'neutral'}>
+						{impactSummary.marketerInsights} marketer insights
+					</Badge>
+					<Badge variant={impactSummary.spamFlagged > 0 ? 'warning' : 'neutral'}>
+						{impactSummary.spamFlagged} spam flagged
+					</Badge>
+					<Badge variant={impactSummary.followUpsNeeded > 0 ? 'info' : 'neutral'}>
+						{impactSummary.followUpsNeeded} need follow-up
+					</Badge>
+					<Badge variant={impactSummary.urgentSignals > 0 ? 'danger' : 'neutral'}>
+						{impactSummary.urgentSignals} urgent signals
+					</Badge>
+				</div>
 				<div class="sf:flex sf:flex-wrap sf:gap-2">
 					<Badge variant="success">{successfulRuns} succeeded</Badge>
 					<Badge variant={failedRuns > 0 ? 'danger' : 'neutral'}>{failedRuns} failed</Badge>
@@ -350,7 +464,7 @@
 							</tr>
 						</thead>
 						<tbody class="sf:divide-y sf:divide-slate-100">
-							{#each recentLocalEvents as event}
+							{#each recentDisplayEvents as event}
 								<tr>
 									<td class="sf:py-2 sf:pr-4">
 										<Badge variant={event.status === 'failed' ? 'danger' : event.status === 'succeeded' ? 'success' : 'neutral'}>

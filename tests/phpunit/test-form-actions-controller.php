@@ -803,6 +803,93 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'active', $custom_action['status'] ?? null );
     }
 
+    public function test_add_form_action_creates_marketer_ready_bundled_after_submission_mappings(): void
+    {
+        global $wpdb;
+
+        $expectations = [
+            'sentiment_urgency_v1'     => [
+                'display_name' => 'Sentiment and Urgency',
+                'meta'         => [
+                    'sentient_forms_sentiment'            => 'structured.sentiment',
+                    'sentient_forms_urgency'              => 'structured.urgency',
+                    'sentient_forms_sentiment_confidence' => 'structured.confidence',
+                ],
+                'note_path'    => 'structured.summary',
+            ],
+            'missing_information_v1'   => [
+                'display_name' => 'Missing Information Review',
+                'meta'         => [
+                    'sentient_forms_information_status'     => 'structured.status',
+                    'sentient_forms_information_confidence' => 'structured.confidence',
+                ],
+                'note_path'    => 'structured.summary',
+            ],
+            'pain_point_intent_v1'     => [
+                'display_name' => 'Pain Point and Intent',
+                'meta'         => [
+                    'sentient_forms_intent'            => 'structured.intent',
+                    'sentient_forms_buying_stage'      => 'structured.buying_stage',
+                    'sentient_forms_intent_confidence' => 'structured.confidence',
+                ],
+                'note_path'    => 'structured.summary',
+            ],
+            'routing_recommendation_v1' => [
+                'display_name' => 'Routing Recommendation',
+                'meta'         => [
+                    'sentient_forms_route_to'           => 'structured.route_to',
+                    'sentient_forms_route_priority'     => 'structured.priority',
+                    'sentient_forms_routing_confidence' => 'structured.confidence',
+                ],
+                'note_path'    => 'structured.recommendation',
+            ],
+            'toxicity_moderation_v1'   => [
+                'display_name' => 'Toxicity and Safety Review',
+                'meta'         => [
+                    'sentient_forms_toxicity_severity'    => 'structured.severity',
+                    'sentient_forms_toxicity_needs_review' => 'structured.needs_review',
+                    'sentient_forms_toxicity_confidence'   => 'structured.confidence',
+                ],
+                'note_path'    => 'structured.staff_warning',
+            ],
+        ];
+
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $form_id  = 140;
+
+        foreach ( $expectations as $action_code => $expected )
+        {
+            $template = Sentient_Forms_Bundled_Action_Templates::get( $action_code );
+            $this->assertIsArray( $template, sprintf( '%s template should exist', $action_code ) );
+            $this->assertSame( [ 'gform_after_submission' ], $template['hooks'] ?? null );
+            $this->assertSame( [ 'after_submission' ], $template['definition_json']['supported_execution_modes'] ?? null );
+            $this->assertSame( [ 'type' => 'json_object' ], $template['definition_json']['response_format'] ?? null );
+            $this->assertSame( 'object', $template['structured_output_schema']['type'] ?? null );
+
+            $data = $this->create_bundled_local_first_mapping(
+                $form_id,
+                $action_code,
+                [ 'gform_validation', 'gform_after_submission' ],
+                []
+            );
+
+            $this->assertSame( 'local_first', $data['action_type_indicator'] ?? null );
+            $this->assertSame( $action_code, $data['central_action_id'] ?? null );
+            $this->assertSame( $expected['display_name'], $data['action_name_label'] ?? null );
+            $this->assertSame( [ 'gform_after_submission' ], $data['trigger_hooks'] ?? null );
+
+            $stored_mappings = $mappings->list_for_form( 'gravity_forms', (string) $form_id );
+            $this->assertCount( 1, $stored_mappings );
+            $this->assertSame( 'async', $stored_mappings[0]['execution_mode'] ?? null );
+            $this->assertSame( $expected['meta'], $stored_mappings[0]['effect_mapping_json']['meta'] ?? null );
+            $this->assertSame( $expected['note_path'], $stored_mappings[0]['effect_mapping_json']['entry_note']['path'] ?? null );
+            $this->assertTrue( $stored_mappings[0]['effect_mapping_json']['store_result'] ?? false );
+            $this->assertArrayNotHasKey( 'spam', $stored_mappings[0]['effect_mapping_json'] );
+
+            ++$form_id;
+        }
+    }
+
     public function test_add_form_action_creates_local_first_clarification_mapping_on_realtime_hook(): void
     {
         GFAPI::$forms[16] = [

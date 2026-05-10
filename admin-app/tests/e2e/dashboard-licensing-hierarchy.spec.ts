@@ -126,6 +126,15 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 						provider: 'openrouter',
 						model: 'openrouter/free-model',
 						status: 'succeeded',
+						result_json: {
+							structured: {
+								sentiment: 'negative',
+								urgency: 'high'
+							},
+							effects: {
+								applied: ['entry_note']
+							}
+						},
 						created_at: '2030-01-05T10:00:00Z'
 					}
 				])
@@ -159,6 +168,10 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('dashboard-template-count')).toContainText('2');
 		await expect(page.getByTestId('dashboard-custom-action-count')).toContainText('1');
 		await expect(page.getByTestId('dashboard-execution-count')).toContainText('1');
+		await expect(page.getByTestId('dashboard-impact-summary')).toContainText('1 observed runs');
+		await expect(page.getByTestId('dashboard-impact-summary')).toContainText('1 staff notes');
+		await expect(page.getByTestId('dashboard-impact-summary')).toContainText('1 marketer insights');
+		await expect(page.getByTestId('dashboard-impact-summary')).toContainText('1 urgent signals');
 		await expect(page.getByTestId('dashboard-managed-status')).toContainText(
 			'Managed service not connected'
 		);
