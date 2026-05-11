@@ -93,14 +93,17 @@
 	{/if}
 
 	{#if loading}
-		<div class="sf:grid sf:gap-4 sf:lg:grid-cols-4">
+		<div class="sf:grid sf:grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] sf:gap-4">
 			<Card class="sf:h-32 sf:animate-pulse sf:bg-slate-50"></Card>
 			<Card class="sf:h-32 sf:animate-pulse sf:bg-slate-50"></Card>
 			<Card class="sf:h-32 sf:animate-pulse sf:bg-slate-50"></Card>
 			<Card class="sf:h-32 sf:animate-pulse sf:bg-slate-50"></Card>
 		</div>
 	{:else}
-		<div class="sf:grid sf:gap-3 sf:lg:grid-cols-4" data-testid="lead-scoring-aggregate-summary">
+		<div
+			class="sf:grid sf:grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] sf:gap-3"
+			data-testid="lead-scoring-aggregate-summary"
+		>
 			<Card class="sf:border-l-4 sf:border-l-primary-500">
 				<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Scored leads</p>
 				<p class="sf:mt-2 sf:text-2xl sf:font-semibold sf:text-slate-900">
@@ -143,7 +146,7 @@
 							</p>
 						</div>
 						<div
-							class="sf:grid sf:gap-2 sf:sm:grid-cols-[minmax(18rem,1fr)_auto] sf:sm:items-end sf:lg:max-w-xl"
+							class="sf:grid sf:gap-2 sf:sm:grid-cols-[minmax(0,1fr)_auto] sf:sm:items-end sf:lg:max-w-xl"
 						>
 							<div class="sf:min-w-0">
 								<InputField
@@ -156,7 +159,7 @@
 							<Button variant="secondary" onclick={searchEntries}>Search</Button>
 						</div>
 					</div>
-					<div class="sf:overflow-x-auto">
+					<div class="sf:hidden sf:overflow-x-auto sf:2xl:block">
 						<table
 							class="sf:min-w-full sf:table-fixed sf:border-separate sf:border-spacing-0 sf:text-sm"
 						>
@@ -237,6 +240,64 @@
 								{/each}
 							</tbody>
 						</table>
+					</div>
+					<div class="sf:space-y-3 sf:2xl:hidden">
+						{#each dashboard?.entries ?? [] as entry (`compact-${entry.form_source}-${entry.form_id}-${entry.entry_id}`)}
+							<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+								<div
+									class="sf:flex sf:flex-col sf:gap-3 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
+								>
+									<div class="sf:min-w-0">
+										<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
+											{entry.form_title || `Form ${entry.form_id}`} · Entry #{entry.entry_id}
+										</p>
+										<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+											{entry.form_source} · {entry.entry_snapshot?.date_created ??
+												entry.updated_at ??
+												''}
+										</p>
+									</div>
+									<Badge
+										variant={entry.grade === 'Reject'
+											? 'danger'
+											: entry.grade === 'A'
+												? 'success'
+												: 'neutral'}
+									>
+										{entry.grade || 'Ungraded'}
+									</Badge>
+								</div>
+								<p
+									class="sf:mt-3 sf:line-clamp-3 sf:max-h-[4.5rem] sf:overflow-hidden sf:text-sm sf:text-slate-700"
+								>
+									{entry.justification || entry.fit_summary || 'No justification stored yet.'}
+								</p>
+								{#if entry.next_best_action}
+									<p class="sf:mt-2 sf:text-xs sf:font-medium sf:text-slate-500">
+										Next step: {entry.next_best_action}
+									</p>
+								{/if}
+								<div class="sf:mt-3 sf:flex sf:flex-wrap sf:gap-2">
+									<Button size="sm" variant="secondary" onclick={() => (selectedEntry = entry)}>
+										Open detail
+									</Button>
+									<Button
+										size="sm"
+										variant="ghost"
+										onclick={() => navigateToAppPath(setupPath(entry))}
+									>
+										Setup
+									</Button>
+								</div>
+							</div>
+						{:else}
+							<p
+								class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-4 sf:text-center sf:text-sm sf:text-slate-500"
+							>
+								No scored entries yet. Configure Lead Scoring on a form or run a historical score to
+								populate this dashboard.
+							</p>
+						{/each}
 					</div>
 					<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-3">
 						<p class="sf:text-xs sf:text-slate-500">

@@ -687,13 +687,16 @@
 	{/if}
 
 	{#if loading}
-		<div class="sf:grid sf:gap-4 sf:lg:grid-cols-3">
+		<div class="sf:grid sf:grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] sf:gap-4">
 			<Card class="sf:h-36 sf:animate-pulse sf:bg-slate-50"></Card>
 			<Card class="sf:h-36 sf:animate-pulse sf:bg-slate-50"></Card>
 			<Card class="sf:h-36 sf:animate-pulse sf:bg-slate-50"></Card>
 		</div>
 	{:else}
-		<div class="sf:grid sf:gap-3 sf:lg:grid-cols-4" data-testid="lead-scoring-summary">
+		<div
+			class="sf:grid sf:grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] sf:gap-3"
+			data-testid="lead-scoring-summary"
+		>
 			<Card class="sf:border-l-4 sf:border-l-primary-500">
 				<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Scored leads</p>
 				<div class="sf:mt-2 sf:flex sf:items-center sf:justify-between sf:gap-3">
@@ -1233,7 +1236,7 @@
 							</p>
 						</div>
 						<div
-							class="sf:grid sf:gap-2 sf:sm:grid-cols-[minmax(18rem,1fr)_auto] sf:sm:items-end sf:lg:max-w-xl"
+							class="sf:grid sf:gap-2 sf:sm:grid-cols-[minmax(0,1fr)_auto] sf:sm:items-end sf:lg:max-w-xl"
 						>
 							<div class="sf:min-w-0">
 								<InputField
@@ -1246,7 +1249,7 @@
 							<Button variant="secondary" onclick={searchDashboardEntries}>Search</Button>
 						</div>
 					</div>
-					<div class="sf:overflow-x-auto">
+					<div class="sf:hidden sf:overflow-x-auto sf:2xl:block">
 						<table
 							class="sf:min-w-full sf:table-fixed sf:border-separate sf:border-spacing-0 sf:text-sm"
 						>
@@ -1322,6 +1325,67 @@
 								{/each}
 							</tbody>
 						</table>
+					</div>
+					<div class="sf:space-y-3 sf:2xl:hidden">
+						{#each dashboard?.entries ?? [] as entry (`compact-${entry.form_source}-${entry.form_id}-${entry.entry_id}`)}
+							<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+								<div
+									class="sf:flex sf:flex-col sf:gap-3 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
+								>
+									<div class="sf:min-w-0">
+										<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
+											Entry #{entry.entry_id}
+										</p>
+										<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+											{entry.entry_snapshot?.date_created ?? entry.updated_at ?? ''}
+										</p>
+									</div>
+									<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+										<Badge
+											variant={entry.grade === 'Reject'
+												? 'danger'
+												: entry.grade === 'A'
+													? 'success'
+													: 'neutral'}
+										>
+											{entry.grade || 'Ungraded'}
+										</Badge>
+										{#if entry.suggested_reply_draft || entry.next_best_action}
+											<Badge variant={entry.do_not_send ? 'warning' : 'info'}>
+												{entry.do_not_send ? 'Review only' : 'Draft ready'}
+											</Badge>
+										{/if}
+									</div>
+								</div>
+								<div class="sf:mt-3 sf:grid sf:gap-2 sf:sm:grid-cols-[8rem_minmax(0,1fr)]">
+									<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Priority</p>
+									<p class="sf:text-sm sf:text-slate-700">{entry.priority || 'normal'}</p>
+									<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">
+										Justification
+									</p>
+									<p
+										class="sf:line-clamp-3 sf:max-h-[4.5rem] sf:overflow-hidden sf:text-sm sf:text-slate-700"
+									>
+										{entry.justification || entry.fit_summary || 'No justification stored yet.'}
+									</p>
+								</div>
+								<Button
+									size="sm"
+									variant="ghost"
+									class="sf:mt-3 sf:px-0"
+									onclick={() => (selectedEntryDetail = entry)}
+								>
+									View full detail
+								</Button>
+							</div>
+						{:else}
+							<p
+								class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-4 sf:text-center sf:text-sm sf:text-slate-500"
+							>
+								No scored entries yet. Run lead scoring on new or historical entries to populate
+								this table.
+							</p>
+						{/each}
 					</div>
 					<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-3">
 						<p class="sf:text-xs sf:text-slate-500">
