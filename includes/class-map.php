@@ -64,6 +64,7 @@ return [
 	'Sentient_Forms_Historical_Analysis_Runs_Repository' => __DIR__ . '/repositories/class-sentient-forms-historical-analysis-runs-repository.php',
 	'Sentient_Forms_Installer' => __DIR__ . '/class-sentient-forms-installer.php',
 	'Sentient_Forms_Lead_Profiles_Repository' => __DIR__ . '/repositories/class-sentient-forms-lead-profiles-repository.php',
+	'Sentient_Forms_Lead_Scoring_Results_Repository' => __DIR__ . '/repositories/class-sentient-forms-lead-scoring-results-repository.php',
 	'Sentient_Forms_Lead_Value_Controller' => __DIR__ . '/rest-api/controllers/class-lead-value-controller.php',
 	'Sentient_Forms_License_Controller' => __DIR__ . '/rest-api/controllers/class-license-controller.php',
 	'Sentient_Forms_Licensing_Api_Client' => __DIR__ . '/api/class-sentient-forms-licensing-api-client.php',

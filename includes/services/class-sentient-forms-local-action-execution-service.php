@@ -23,7 +23,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         private ?Sentient_Forms_Action_Templates_Repository $templates = null,
         private ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null,
         private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null,
-        private ?Sentient_Forms_Lead_Profiles_Repository $lead_profiles = null
+        private ?Sentient_Forms_Lead_Profiles_Repository $lead_profiles = null,
+        private ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null
     )
     {
         global $wpdb;
@@ -40,6 +41,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $this->templates      = $this->templates ?? new Sentient_Forms_Action_Templates_Repository( $wpdb );
         $this->managed_proxy  = $this->managed_proxy ?? new Sentient_Forms_Managed_Proxy_Client();
         $this->lead_profiles  = $this->lead_profiles ?? new Sentient_Forms_Lead_Profiles_Repository( $wpdb );
+        $this->lead_scoring_results = $this->lead_scoring_results ?? new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
         $this->model_selection_service = $this->model_selection_service ?? new Sentient_Forms_Local_Action_Model_Selection_Service(
             $this->custom_actions,
             $this->credentials,
@@ -111,7 +113,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             return new WP_Error(
                 'sentient_forms_lead_profile_required',
-                __( 'Lead grading and suggested reply actions require an active, consented Lead Value profile for this form.', 'sentient-forms' )
+                __( 'Lead scoring and suggested reply actions require an active, consented Lead Scoring setup for this form.', 'sentient-forms' )
             );
         }
 
@@ -346,6 +348,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'payload_digest'       => $payload_digest,
             ]
         );
+        $this->index_lead_scoring_result( $mapping, $form, $entry, $context, $action_code, $execution_result, $result );
 
         return [
             'execution_request_id' => $execution_request_id,
@@ -355,6 +358,94 @@ class Sentient_Forms_Local_Action_Execution_Service
             'cached'               => false,
             'result'               => $result,
             'effects'              => $effects,
+        ];
+    }
+
+    private function index_lead_scoring_result( array $mapping, array $form, array $entry, array $context, string $action_code, array $execution_result, array $result ): void
+    {
+        if ( ! in_array( $action_code, [ 'lead_grading_v1', 'suggested_reply_v1' ], true ) )
+        {
+            return;
+        }
+
+        if ( ! $this->lead_scoring_results instanceof Sentient_Forms_Lead_Scoring_Results_Repository )
+        {
+            return;
+        }
+
+        $structured = is_array( $result['structured'] ?? null ) ? $result['structured'] : [];
+        if ( [] === $structured )
+        {
+            return;
+        }
+
+        $lead_profile = is_array( $context['lead_profile'] ?? null ) ? $context['lead_profile'] : [];
+        $entry_snapshot = $this->lead_scoring_entry_snapshot( $form, $entry );
+        $payload = [
+            'form_source'             => $mapping['form_source'] ?? 'gravity_forms',
+            'form_id'                 => $mapping['form_id'] ?? ( $form['id'] ?? '' ),
+            'form_title'              => $form['title'] ?? '',
+            'entry_id'                => $entry['id'] ?? '',
+            'action_code'             => $action_code,
+            'execution_request_id'    => $execution_result['execution_request_id'] ?? '',
+            'historical_run_id'       => $context['historical_run_id'] ?? null,
+            'lead_profile_id'         => $lead_profile['id'] ?? null,
+            'profile_version'         => $structured['profile_version'] ?? ( $lead_profile['profile_version'] ?? null ),
+            'grade'                   => $structured['grade'] ?? '',
+            'confidence'              => $structured['confidence'] ?? null,
+            'priority'                => $structured['recommended_priority'] ?? '',
+            'fit_summary'             => $structured['fit_summary'] ?? '',
+            'intent_summary'          => $structured['intent_summary'] ?? '',
+            'justification'           => $structured['justification'] ?? '',
+            'next_best_action'        => $structured['next_best_action'] ?? '',
+            'suggested_reply_draft'   => $structured['suggested_reply_draft'] ?? '',
+            'reply_rationale'         => $structured['reply_rationale'] ?? '',
+            'do_not_send'             => $structured['do_not_send'] ?? false,
+            'status'                  => $execution_result['status'] ?? 'succeeded',
+            'entry_snapshot'          => $entry_snapshot,
+            'source_payload'          => [
+                'action_code' => $action_code,
+                'structured'  => $structured,
+                'effects'     => $result['effects'] ?? [],
+            ],
+        ];
+
+        $indexed = $this->lead_scoring_results->upsert_from_execution( $payload );
+        if ( is_wp_error( $indexed ) )
+        {
+            do_action( 'sentient_forms_lead_scoring_result_index_failed', $indexed, $payload );
+        }
+    }
+
+    private function lead_scoring_entry_snapshot( array $form, array $entry ): array
+    {
+        $fields = [];
+        foreach ( is_array( $form['fields'] ?? null ) ? $form['fields'] : [] as $field )
+        {
+            $id = is_object( $field ) && isset( $field->id ) ? (string) $field->id : ( is_array( $field ) ? (string) ( $field['id'] ?? '' ) : '' );
+            if ( '' === $id )
+            {
+                continue;
+            }
+
+            $label = is_object( $field ) && isset( $field->label ) ? (string) $field->label : ( is_array( $field ) ? (string) ( $field['label'] ?? $id ) : $id );
+            $value = $entry[ $id ] ?? '';
+            if ( ! is_scalar( $value ) || '' === trim( (string) $value ) )
+            {
+                continue;
+            }
+
+            $fields[] = [
+                'field_id' => sanitize_text_field( $id ),
+                'label'    => sanitize_text_field( $label ),
+                'value'    => mb_substr( sanitize_textarea_field( (string) $value ), 0, 300 ),
+            ];
+        }
+
+        return [
+            'date_created'  => isset( $entry['date_created'] ) && is_scalar( $entry['date_created'] ) ? sanitize_text_field( (string) $entry['date_created'] ) : null,
+            'status'        => isset( $entry['status'] ) && is_scalar( $entry['status'] ) ? sanitize_text_field( (string) $entry['status'] ) : null,
+            'field_summary' => array_slice( $fields, 0, 12 ),
         ];
     }
 
@@ -402,6 +493,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             $mapping = $this->merge_lead_profile_handoff_actions( $mapping, $context['lead_profile'] );
         }
+
+        $mapping = $this->apply_lead_profile_note_preferences( $mapping, $context['lead_profile'], $action_code );
 
         return [ $mapping, $context ];
     }
@@ -559,6 +652,31 @@ class Sentient_Forms_Local_Action_Execution_Service
         $existing = $this->normalize_runtime_post_execution_actions( $effects['post_execution_actions'] ?? [] );
         $effects['post_execution_actions'] = array_merge( $existing, $actions );
         $mapping['effect_mapping_json']    = $effects;
+
+        return $mapping;
+    }
+
+    private function apply_lead_profile_note_preferences( array $mapping, array $lead_profile, string $action_code ): array
+    {
+        if ( ! in_array( $action_code, [ 'lead_grading_v1', 'suggested_reply_v1' ], true ) )
+        {
+            return $mapping;
+        }
+
+        $rules = is_array( $lead_profile['handoff_rules'] ?? null ) ? $lead_profile['handoff_rules'] : [];
+        $entry_notes = is_array( $rules['entry_notes'] ?? null ) ? $rules['entry_notes'] : [];
+        $enabled = 'suggested_reply_v1' === $action_code
+            ? ( ! isset( $entry_notes['suggested_reply'] ) || rest_sanitize_boolean( $entry_notes['suggested_reply'] ) )
+            : ( ! isset( $entry_notes['lead_grade'] ) || rest_sanitize_boolean( $entry_notes['lead_grade'] ) );
+
+        if ( $enabled )
+        {
+            return $mapping;
+        }
+
+        $effects = is_array( $mapping['effect_mapping_json'] ?? null ) ? $mapping['effect_mapping_json'] : [];
+        unset( $effects['entry_note'] );
+        $mapping['effect_mapping_json'] = $effects;
 
         return $mapping;
     }

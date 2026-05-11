@@ -3664,7 +3664,9 @@
 							/>
 						{/if}
 
-						<div class="sf:grid sf:gap-3 sf:lg:grid-cols-[minmax(16rem,0.9fr)_minmax(0,1.1fr)] sf:lg:items-end">
+						<div
+							class="sf:grid sf:gap-3 sf:lg:grid-cols-[minmax(16rem,0.9fr)_minmax(0,1.1fr)] sf:lg:items-end"
+						>
 							<SelectField
 								id="form-level-context"
 								label="Include Site Context"
@@ -3736,7 +3738,7 @@
 				onclick={() =>
 					navigateToAppPath(`/actions/${data.formSourceSlug}/${data.formId}/lead-value`)}
 			>
-				Lead value
+				Lead Scoring
 			</Button>
 			{#if providerEditUrl}
 				<a
@@ -4803,9 +4805,7 @@
 													id: 'spam-webhook-policy',
 													label: 'Gravity Forms Webhooks policy on spam',
 													description: `Current effective value: ${effectiveSuppressWebhooksOnSpam ? 'Suppress Webhooks' : 'Allow Webhooks'} (${effectiveSuppressWebhooksOnSpamSource}). Requires the Gravity Forms Webhooks add-on and feed replay APIs.`,
-													value: getInheritableBooleanMode(
-														draftSettings.suppress_webhooks_on_spam
-													),
+													value: getInheritableBooleanMode(draftSettings.suppress_webhooks_on_spam),
 													options: [
 														{ value: 'inherit', label: 'Use inherited policy' },
 														{ value: 'enabled', label: 'Suppress Webhooks' },

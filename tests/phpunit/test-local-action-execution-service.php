@@ -420,7 +420,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 ],
             ],
         ];
-        $action = [ 'display_name' => 'Lead Grading' ];
+        $action = [ 'display_name' => 'Lead Scoring' ];
 
         $skipped = $applier->apply(
             $mapping,
@@ -508,7 +508,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             ],
             [
                 'code'         => 'dogfood_lead_grading_v1',
-                'display_name' => 'Lead Grading',
+                'display_name' => 'Lead Scoring',
             ]
         );
 
@@ -567,6 +567,18 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'https://example.test/lead-handoff', $webhook_calls[0]['url'] );
         $this->assertSame( 'POST', $webhook_calls[0]['args']['method'] ?? null );
         $this->assertContains( 'post_execution:webhook', $result['effects']['applied'] ?? [] );
+
+        $results = new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
+        $entries = $results->paginated_entries(
+            [
+                'form_source' => 'gravity_forms',
+                'form_id'     => '7',
+            ]
+        );
+        $this->assertSame( 1, $entries['total'] );
+        $this->assertSame( '99', $entries['entries'][0]['entry_id'] );
+        $this->assertSame( 'A', $entries['entries'][0]['grade'] );
+        $this->assertStringContainsString( 'matches the trusted profile', $entries['entries'][0]['justification'] );
     }
 
     public function test_lead_grading_mapping_requires_active_consented_profile(): void
@@ -579,7 +591,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             ],
             [
                 'code'         => 'dogfood_lead_grading_v1',
-                'display_name' => 'Lead Grading',
+                'display_name' => 'Lead Scoring',
             ]
         );
 
@@ -589,7 +601,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                     'grade'                => 'A',
                     'confidence'           => 0.91,
                     'recommended_priority' => 'urgent',
-                    'justification'        => 'This should not run without a consented lead profile.',
+                    'justification'        => 'This should not run without a consented Lead Scoring setup.',
                 ]
             )
         );
@@ -2462,6 +2474,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'sentient_execution_events',
                 'sentient_model_cache',
                 'sentient_lead_profiles',
+                'sentient_lead_scoring_results',
                 'sentient_historical_analysis_runs',
             ] as $table
         )

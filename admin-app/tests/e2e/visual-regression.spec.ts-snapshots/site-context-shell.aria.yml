@@ -7,10 +7,10 @@
 - button "Withdraw consent"
 - button "Save changes" [disabled]
 - text: Site Context text
-- paragraph: "Keep this useful to a model: what the site does, who normally contacts you, what a good lead looks like, and what should be suspicious for this site."
+- paragraph: 'Keep this useful to a model: what the site does, who normally contacts you, what a good lead looks like, and what should be suspicious for this site.'
 - textbox "Site Context text":
-  - /placeholder: "Example: This site sells commercial HVAC maintenance in Austin. Legitimate leads usually ask about service plans, emergency repairs, rooftop units, or commercial quotes..."
-  - text: Sentient Forms demo context for responsive layout validation.
+    - /placeholder: 'Example: This site sells commercial HVAC maintenance in Austin. Legitimate leads usually ask about service plans, emergency repairs, rooftop units, or commercial quotes...'
+    - text: Sentient Forms demo context for responsive layout validation.
 - paragraph: /\d+ \/ \d+ characters/
 - switch "Include Site Context by default" [checked]
 - text: Include Site Context by default When actions use their global setting, this context can be included in model prompts.
@@ -21,44 +21,10 @@
 - switch "Refresh automatically"
 - text: Refresh automatically Use WordPress scheduled tasks to refresh context at the selected cadence. Refresh cadence
 - combobox "Refresh cadence" [disabled]:
-  - option "7 days"
-  - option /\d+ days/
-  - option /\d+ days/ [selected]
-  - option /\d+ days/
-  - option /\d+ days/
+    - option "7 days"
+    - option /\d+ days/
+    - option /\d+ days/ [selected]
+    - option /\d+ days/
+    - option /\d+ days/
 - button "Generate now"
-- paragraph: Generation model
-- paragraph: Managed Service route needs setup
-- button "Change model"
-- paragraph: research preset
-- text: Preset
-- paragraph: OpenRouter Auto
-- paragraph: Model tools
-- paragraph: Set OpenRouter server tools for this selected model only when the action needs fresh or external context.
-- paragraph: This cached model does not advertise tool support. Use Custom ID if OpenRouter has newer capabilities than this bundled snapshot.
-- text: Tool choice
-- combobox "Tool choice":
-  - option "Model default"
-  - option "No tools"
-  - option "Auto" [selected]
-  - option "Required"
-- text: Web search
-- combobox "Web search":
-  - option "Inherit"
-  - option "Off"
-  - option "Let model decide"
-  - option "Require when available" [selected]
-- text: Web fetch
-- combobox "Web fetch":
-  - option "Inherit"
-  - option "Off"
-  - option "Let model decide" [selected]
-  - option "Require when available"
-- text: Current date/time
-- combobox "Current date/time" [disabled]:
-  - option "Inherit" [selected]
-  - option "Off"
-  - option "Let model decide"
-  - option "Require when available"
-- text: Search results per call
-- spinbutton "Search results per call"
+- group: Generation model and tools

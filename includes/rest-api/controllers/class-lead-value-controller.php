@@ -1,6 +1,6 @@
 <?php
 /**
- * REST API controller for lead profiles, historical scoring, and value dashboard data.
+ * REST API controller for Lead Scoring setup, historical scoring, and dashboard data.
  */
 
 if ( ! defined( 'ABSPATH' ) )
@@ -24,6 +24,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
     private Sentient_Forms_Form_Mappings_Repository $mappings;
     private Sentient_Forms_Local_Custom_Actions_Repository $custom_actions;
     private Sentient_Forms_Execution_Events_Repository $events;
+    private Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results;
     private Sentient_Forms_Local_Action_Execution_Service $local_execution;
     private Sentient_Forms_Managed_Proxy_Client $managed_proxy;
 
@@ -34,7 +35,8 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         ?Sentient_Forms_Local_Custom_Actions_Repository $custom_actions = null,
         ?Sentient_Forms_Execution_Events_Repository $events = null,
         ?Sentient_Forms_Local_Action_Execution_Service $local_execution = null,
-        ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null
+        ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null,
+        ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null
     )
     {
         parent::__construct();
@@ -46,6 +48,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         $this->mappings        = $mappings ?? new Sentient_Forms_Form_Mappings_Repository( $wpdb );
         $this->custom_actions  = $custom_actions ?? new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
         $this->events          = $events ?? new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $this->lead_scoring_results = $lead_scoring_results ?? new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
         $profile_generation_timeout = $this->managed_profile_generation_timeout_seconds();
         $this->managed_proxy   = $managed_proxy ?? new Sentient_Forms_Managed_Proxy_Client( null, $profile_generation_timeout );
         $this->local_execution = $local_execution ?? new Sentient_Forms_Local_Action_Execution_Service(
@@ -225,7 +228,47 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_dashboard' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
-                    'args'                => $this->form_args(),
+                    'args'                => array_merge( $this->form_args(), $this->dashboard_query_args() ),
+                ],
+            ]
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/dashboard',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_aggregate_dashboard' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => $this->dashboard_query_args(),
+                ],
+            ]
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/profile/import',
+            [
+                [
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => [ $this, 'import_profile_for_form' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => array_merge(
+                        $this->form_args(),
+                        [
+                            'source_profile_id' => [
+                                'type'              => 'integer',
+                                'required'          => true,
+                                'sanitize_callback' => 'absint',
+                            ],
+                            'include_examples' => [
+                                'type'              => 'boolean',
+                                'sanitize_callback' => 'rest_sanitize_boolean',
+                                'default'           => false,
+                            ],
+                        ]
+                    ),
                 ],
             ]
         );
@@ -274,7 +317,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         $profile = $this->profiles->get( (int) $request['id'] );
         if ( null === $profile )
         {
-            return $this->not_found_error( 'sentient_forms_lead_profile_not_found', __( 'Lead profile could not be found.', 'sentient-forms' ) );
+            return $this->not_found_error( 'sentient_forms_lead_profile_not_found', __( 'Lead Scoring setup could not be found.', 'sentient-forms' ) );
         }
 
         return $this->prepare_item_for_response(
@@ -290,7 +333,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         $profile = $this->profiles->get( (int) $request['id'] );
         if ( null === $profile )
         {
-            return $this->not_found_error( 'sentient_forms_lead_profile_not_found', __( 'Lead profile could not be found.', 'sentient-forms' ) );
+            return $this->not_found_error( 'sentient_forms_lead_profile_not_found', __( 'Lead Scoring setup could not be found.', 'sentient-forms' ) );
         }
 
         $payload = $this->profile_payload_from_request(
@@ -318,7 +361,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         $profile = $this->profiles->get( (int) $request['id'] );
         if ( null === $profile )
         {
-            return $this->not_found_error( 'sentient_forms_lead_profile_not_found', __( 'Lead profile could not be found.', 'sentient-forms' ) );
+            return $this->not_found_error( 'sentient_forms_lead_profile_not_found', __( 'Lead Scoring setup could not be found.', 'sentient-forms' ) );
         }
 
         $readiness = $this->build_readiness( (string) $profile['form_source'], (string) $profile['form_id'], $profile );
@@ -344,7 +387,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         $profile = $this->profiles->get( (int) $request['id'] );
         if ( null === $profile )
         {
-            return $this->not_found_error( 'sentient_forms_lead_profile_not_found', __( 'Lead profile could not be found.', 'sentient-forms' ) );
+            return $this->not_found_error( 'sentient_forms_lead_profile_not_found', __( 'Lead Scoring setup could not be found.', 'sentient-forms' ) );
         }
 
         $consented = rest_sanitize_boolean( $request->get_param( 'lead_profile_consent' ) )
@@ -359,7 +402,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         {
             return new WP_Error(
                 'sentient_forms_lead_profile_not_ready',
-                __( 'Lead profile setup is incomplete. Resolve the readiness blockers before generating grading instructions.', 'sentient-forms' ),
+                __( 'Lead Scoring setup is incomplete. Resolve the readiness blockers before generating scoring instructions.', 'sentient-forms' ),
                 [
                     'status'    => 409,
                     'readiness' => $readiness,
@@ -421,7 +464,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
                 ? 'managed_augmented_profile_v1'
                 : 'local_readiness_grounded_profile_v1',
             'llm_augmentation'  => $augmentation,
-            'readiness_version' => 'lead_profile_readiness_v1',
+                'readiness_version' => 'lead_profile_readiness_v1',
         ];
 
         $saved_id = $this->profiles->save(
@@ -460,7 +503,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         $profile_id = absint( $profile['id'] ?? 0 );
         if ( $profile_id <= 0 )
         {
-            return $this->not_found_error( 'sentient_forms_lead_profile_not_found', __( 'Lead profile could not be found.', 'sentient-forms' ) );
+            return $this->not_found_error( 'sentient_forms_lead_profile_not_found', __( 'Lead Scoring setup could not be found.', 'sentient-forms' ) );
         }
 
         $job_id  = sprintf( 'lead-profile-%d-%s', $profile_id, wp_generate_uuid4() );
@@ -474,7 +517,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         {
             return new WP_Error(
                 'sentient_forms_lead_profile_generation_schedule_failed',
-                __( 'Lead profile generation could not be queued.', 'sentient-forms' ),
+                __( 'Lead Scoring setup generation could not be queued.', 'sentient-forms' ),
                 [ 'status' => 500 ]
             );
         }
@@ -617,7 +660,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
                 ],
                 static fn ( mixed $value ): bool => null !== $value && '' !== $value
             ),
-            'readiness_version' => 'lead_profile_readiness_v1',
+                'readiness_version' => 'lead_profile_readiness_v1',
         ];
 
         $this->profiles->save( [ 'generation_metadata_json' => $metadata ], $profile_id );
@@ -928,7 +971,107 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         $form_source = sanitize_key( (string) $request['form_source'] );
         $form_id     = sanitize_text_field( (string) $request['form_id'] );
 
-        return $this->prepare_item_for_response( $this->build_dashboard( $form_source, $form_id ) );
+        $this->sync_recent_lead_scoring_events( $form_source, $form_id );
+
+        return $this->prepare_item_for_response(
+            $this->build_dashboard(
+                $form_source,
+                $form_id,
+                [
+                    'page'     => absint( $request->get_param( 'page' ) ?: 1 ),
+                    'per_page' => absint( $request->get_param( 'per_page' ) ?: 10 ),
+                    'q'        => sanitize_text_field( (string) ( $request->get_param( 'q' ) ?? '' ) ),
+                ]
+            )
+        );
+    }
+
+    public function get_aggregate_dashboard( WP_REST_Request $request ): WP_REST_Response
+    {
+        $this->sync_recent_lead_scoring_events( null, null );
+
+        $dashboard = $this->lead_scoring_results->dashboard();
+        $entries   = $this->lead_scoring_results->paginated_entries(
+            [
+                'page'     => absint( $request->get_param( 'page' ) ?: 1 ),
+                'per_page' => absint( $request->get_param( 'per_page' ) ?: 10 ),
+                'q'        => sanitize_text_field( (string) ( $request->get_param( 'q' ) ?? '' ) ),
+            ]
+        );
+
+        return $this->prepare_item_for_response(
+            [
+                'form_source'       => 'all',
+                'form_id'           => 'all',
+                'event_count'       => $dashboard['scored_leads'] + $dashboard['reply_drafts'],
+                'successful_events' => $dashboard['scored_leads'] + $dashboard['reply_drafts'],
+                'failed_events'     => 0,
+                'grades'            => $dashboard['grades'],
+                'suggested_replies' => $dashboard['reply_drafts'],
+                'metrics'           => $dashboard,
+                'entries'           => $entries['entries'],
+                'entry_page'        => $entries['page'],
+                'entry_per_page'    => $entries['per_page'],
+                'entry_total'       => $entries['total'],
+                'entry_pages'       => $entries['pages'],
+                'forms'             => $this->aggregate_forms_summary(),
+                'historical_runs'   => [],
+            ]
+        );
+    }
+
+    public function import_profile_for_form( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
+        $form_source       = sanitize_key( (string) $request['form_source'] );
+        $form_id           = sanitize_text_field( (string) $request['form_id'] );
+        $source_profile_id = absint( $request->get_param( 'source_profile_id' ) );
+        $include_examples  = rest_sanitize_boolean( $request->get_param( 'include_examples' ) );
+        $source            = $this->profiles->get( $source_profile_id );
+
+        if ( null === $source )
+        {
+            return $this->not_found_error( 'sentient_forms_source_lead_profile_not_found', __( 'Source lead scoring setup could not be found.', 'sentient-forms' ) );
+        }
+
+        $target = $this->profiles->get_latest_for_form( $form_source, $form_id );
+        $payload = [
+            'form_source'             => $form_source,
+            'form_id'                 => $form_id,
+            'status'                  => 'draft',
+            'consented_at'            => null,
+            'good_lead_criteria_json' => $source['good_lead_criteria_json'] ?? [],
+            'bad_lead_criteria_json'  => $source['bad_lead_criteria_json'] ?? [],
+            'grading_rubric_json'     => $source['grading_rubric_json'] ?? null,
+            'handoff_rules_json'      => $source['handoff_rules_json'] ?? [],
+            'assistant_json'          => [
+                'status'       => 'imported',
+                'generated_at' => current_time( 'mysql' ),
+                'questions'    => [],
+                'recommendations' => [
+                    __( 'Imported setup should be reviewed for this form before generation.', 'sentient-forms' ),
+                    __( 'Calibration examples are optional because examples from another form can mislead scoring.', 'sentient-forms' ),
+                ],
+            ],
+            'example_entries_json'    => $include_examples ? ( $source['example_entries_json'] ?? [] ) : [],
+            'created_by_user_id'      => get_current_user_id() ?: null,
+        ];
+
+        $saved = $this->profiles->save( $payload, is_array( $target ) ? (int) $target['id'] : null );
+        if ( is_wp_error( $saved ) )
+        {
+            return $saved;
+        }
+
+        $profile = $this->profiles->get( (int) $saved );
+        return $this->prepare_item_for_response(
+            [
+                'profile'   => is_array( $profile ) ? $this->format_profile( $profile ) : null,
+                'readiness' => $this->build_readiness( $form_source, $form_id, $profile ),
+                'dashboard' => $this->build_dashboard( $form_source, $form_id ),
+                'message'   => __( 'Lead scoring setup imported. Review and regenerate before relying on this form.', 'sentient-forms' ),
+            ],
+            201
+        );
     }
 
     private function form_args(): array
@@ -1005,6 +1148,26 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         ];
     }
 
+    private function dashboard_query_args(): array
+    {
+        return [
+            'page' => [
+                'type'              => 'integer',
+                'sanitize_callback' => 'absint',
+                'default'           => 1,
+            ],
+            'per_page' => [
+                'type'              => 'integer',
+                'sanitize_callback' => 'absint',
+                'default'           => 10,
+            ],
+            'q' => [
+                'type'              => 'string',
+                'sanitize_callback' => 'sanitize_text_field',
+            ],
+        ];
+    }
+
     private function profile_payload_from_request( WP_REST_Request $request, string $form_source, string $form_id ): array
     {
         $payload = [
@@ -1056,10 +1219,10 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         $requirements = [
             [
                 'key'      => 'lead_profile_consent',
-                'label'    => __( 'Lead-profile consent', 'sentient-forms' ),
+                'label'    => __( 'Lead Scoring consent', 'sentient-forms' ),
                 'met'      => $consent_granted,
                 'severity' => 'blocker',
-                'detail'   => __( 'The WebMaster must consent before Sentient Forms uses stored examples and site context to construct grading instructions.', 'sentient-forms' ),
+                'detail'   => __( 'The WebMaster must consent before Sentient Forms uses stored examples and site context to construct scoring instructions.', 'sentient-forms' ),
             ],
             [
                 'key'      => 'site_context',
@@ -1126,7 +1289,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
                 'label'    => __( 'Spam action on this form', 'sentient-forms' ),
                 'met'      => $has_spam_mapping,
                 'severity' => 'recommendation',
-                'detail'   => __( 'Lead grading can run without the spam action, but using spam detection on the same form is strongly recommended.', 'sentient-forms' ),
+                'detail'   => __( 'Lead Scoring can run without the spam action, but using spam detection on the same form is strongly recommended.', 'sentient-forms' ),
             ],
         ];
 
@@ -1310,6 +1473,10 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
                 'email_recipients' => [],
                 'webhooks'         => [],
                 'grades'           => [ 'A', 'B' ],
+                'entry_notes'      => [
+                    'lead_grade'      => true,
+                    'suggested_reply' => true,
+                ],
             ];
         }
 
@@ -1365,6 +1532,10 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
             'email_recipients' => array_values( array_unique( $emails ) ),
             'webhooks'         => array_slice( $webhooks, 0, 10 ),
             'grades'           => [] === $grades ? [ 'A', 'B' ] : array_values( array_unique( $grades ) ),
+            'entry_notes'      => [
+                'lead_grade'      => ! isset( $rules['entry_notes']['lead_grade'] ) || rest_sanitize_boolean( $rules['entry_notes']['lead_grade'] ),
+                'suggested_reply' => ! isset( $rules['entry_notes']['suggested_reply'] ) || rest_sanitize_boolean( $rules['entry_notes']['suggested_reply'] ),
+            ],
         ];
     }
 
@@ -1434,7 +1605,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
     private function question_for_requirement( string $key ): string
     {
         return match ( $key ) {
-            'lead_profile_consent'    => __( 'Can Sentient Forms use Site Context, Spam Guidance, and selected entry examples to build this form-specific lead profile?', 'sentient-forms' ),
+            'lead_profile_consent'    => __( 'Can Sentient Forms use Site Context, Spam Guidance, and selected entry examples to build this form-specific Lead Scoring setup?', 'sentient-forms' ),
             'site_context'            => __( 'What does this website sell, who is the ideal customer, where does it operate, and what outcomes does the business want from this form?', 'sentient-forms' ),
             'spam_guidance_positive'  => __( 'Which legitimate submissions often look messy but should still be treated as real leads?', 'sentient-forms' ),
             'spam_guidance_negative'  => __( 'Which spam patterns should reduce or reject a lead grade?', 'sentient-forms' ),
@@ -1586,7 +1757,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
     {
         if ( ! class_exists( 'Sentient_Forms_Plugin' ) )
         {
-            return new WP_Error( 'sentient_forms_managed_plugin_unavailable', __( 'Sentient Forms managed profile generation could not read the site account state.', 'sentient-forms' ) );
+            return new WP_Error( 'sentient_forms_managed_plugin_unavailable', __( 'Sentient Forms managed Lead Scoring generation could not read the site account state.', 'sentient-forms' ) );
         }
 
         $plugin         = Sentient_Forms_Plugin::instance();
@@ -1594,14 +1765,14 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         $license_status = sanitize_key( (string) ( $license['license_status'] ?? '' ) );
         if ( ! in_array( $license_status, [ 'active', 'trial', 'valid' ], true ) )
         {
-            return new WP_Error( 'sentient_forms_managed_account_inactive', __( 'Managed profile generation requires an active Sentient Forms account.', 'sentient-forms' ) );
+            return new WP_Error( 'sentient_forms_managed_account_inactive', __( 'Managed Lead Scoring generation requires an active Sentient Forms account.', 'sentient-forms' ) );
         }
 
         $proxy_api_key = trim( (string) ( $license['proxy_api_key'] ?? $plugin->get_proxy_api_key() ) );
         $site_id       = sanitize_text_field( (string) ( $license['site_id'] ?? '' ) );
         if ( '' === $proxy_api_key || '' === $site_id )
         {
-            return new WP_Error( 'sentient_forms_managed_credentials_missing', __( 'Managed profile generation requires a site ID and proxy key.', 'sentient-forms' ) );
+            return new WP_Error( 'sentient_forms_managed_credentials_missing', __( 'Managed Lead Scoring generation requires a site ID and proxy key.', 'sentient-forms' ) );
         }
 
         return [
@@ -1613,7 +1784,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
     private function build_managed_profile_generation_prompt( array $profile, array $site_context, array $spam_guidance, array $rubric, string $local_prompt ): string
     {
         return trim(
-            "Construct a consent-gated lead grading profile for Sentient Forms. Treat trusted local inputs as authority. Web search/fetch tools are enabled, but use them only when current public context would materially improve rubric clarity; do not browse for generic advice, competitor copying, or facts already present locally.\n\n"
+            "Construct a consent-gated Lead Scoring setup for Sentient Forms. Treat trusted local inputs as authority. Web search/fetch tools are enabled, but use them only when current public context would materially improve rubric clarity; do not browse for generic advice, competitor copying, or facts already present locally.\n\n"
             . "Return only compact JSON with keys: generated_profile_prompt, grading_rubric, assistant_questions, improvement_notes. The generated_profile_prompt must be a production prompt segment that preserves trusted/untrusted separation, references the current Spam Guidance, requires grade justification, and keeps runtime scoring to A/B/C/Reject rather than numeric scoring.\n\n"
             . "<TRUSTED_LOCAL_PROFILE encoding=\"json\">\n" . wp_json_encode(
                 [
@@ -1793,8 +1964,85 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         ];
     }
 
-    private function build_dashboard( string $form_source, string $form_id ): array
+    private function aggregate_forms_summary(): array
     {
+        $forms = [];
+
+        foreach ( $this->lead_scoring_results->forms_summary() as $summary )
+        {
+            $key = sanitize_key( (string) ( $summary['form_source'] ?? '' ) ) . ':' . sanitize_text_field( (string) ( $summary['form_id'] ?? '' ) );
+            if ( ':' === $key )
+            {
+                continue;
+            }
+
+            $forms[ $key ] = [
+                'form_source'    => sanitize_key( (string) ( $summary['form_source'] ?? 'gravity_forms' ) ),
+                'form_id'        => sanitize_text_field( (string) ( $summary['form_id'] ?? '' ) ),
+                'form_title'     => sanitize_text_field( (string) ( $summary['form_title'] ?? '' ) ),
+                'scored_leads'   => absint( $summary['scored_leads'] ?? 0 ),
+                'priority_leads' => absint( $summary['priority_leads'] ?? 0 ),
+                'reply_drafts'   => absint( $summary['reply_drafts'] ?? 0 ),
+                'latest_at'      => sanitize_text_field( (string) ( $summary['latest_at'] ?? '' ) ),
+                'profile_id'     => null,
+                'profile_version' => null,
+                'setup_status'   => '',
+            ];
+        }
+
+        foreach ( $this->profiles->list_latest_by_form( 500 ) as $profile )
+        {
+            $key = sanitize_key( (string) ( $profile['form_source'] ?? '' ) ) . ':' . sanitize_text_field( (string) ( $profile['form_id'] ?? '' ) );
+            if ( ':' === $key )
+            {
+                continue;
+            }
+
+            if ( ! isset( $forms[ $key ] ) )
+            {
+                $forms[ $key ] = [
+                    'form_source'    => sanitize_key( (string) ( $profile['form_source'] ?? 'gravity_forms' ) ),
+                    'form_id'        => sanitize_text_field( (string) ( $profile['form_id'] ?? '' ) ),
+                    'form_title'     => '',
+                    'scored_leads'   => 0,
+                    'priority_leads' => 0,
+                    'reply_drafts'   => 0,
+                    'latest_at'      => sanitize_text_field( (string) ( $profile['updated_at'] ?? '' ) ),
+                    'profile_id'     => null,
+                    'profile_version' => null,
+                    'setup_status'   => '',
+                ];
+            }
+
+            $forms[ $key ]['profile_id']      = (int) ( $profile['id'] ?? 0 );
+            $forms[ $key ]['profile_version'] = (int) ( $profile['profile_version'] ?? 1 );
+            $forms[ $key ]['setup_status']    = sanitize_key( (string) ( $profile['status'] ?? '' ) );
+            if ( strcmp( (string) ( $profile['updated_at'] ?? '' ), (string) ( $forms[ $key ]['latest_at'] ?? '' ) ) > 0 )
+            {
+                $forms[ $key ]['latest_at'] = sanitize_text_field( (string) ( $profile['updated_at'] ?? '' ) );
+            }
+        }
+
+        usort(
+            $forms,
+            static fn ( array $a, array $b ): int => strcmp( (string) ( $b['latest_at'] ?? '' ), (string) ( $a['latest_at'] ?? '' ) )
+        );
+
+        return array_values( $forms );
+    }
+
+    private function build_dashboard( string $form_source, string $form_id, array $query_args = [] ): array
+    {
+        $result_metrics = $this->lead_scoring_results->dashboard( $form_source, $form_id );
+        $entry_page = $this->lead_scoring_results->paginated_entries(
+            [
+                'form_source' => $form_source,
+                'form_id'     => $form_id,
+                'page'        => $query_args['page'] ?? 1,
+                'per_page'    => $query_args['per_page'] ?? 10,
+                'q'           => $query_args['q'] ?? '',
+            ]
+        );
         $events = array_filter(
             $this->events->list_recent( 500 ),
             static fn ( array $event ): bool => sanitize_key( (string) ( $event['form_source'] ?? '' ) ) === sanitize_key( $form_source )
@@ -1840,13 +2088,121 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         return [
             'form_source'       => $form_source,
             'form_id'           => $form_id,
-            'event_count'       => count( $events ),
+            'event_count'       => max( count( $events ), (int) $result_metrics['scored_leads'] + (int) $result_metrics['reply_drafts'] ),
             'successful_events' => $successful,
             'failed_events'     => $failed,
-            'grades'            => $grades,
-            'suggested_replies' => $suggested_replies,
+            'grades'            => (int) array_sum( $result_metrics['grades'] ?? [] ) > 0 ? $result_metrics['grades'] : $grades,
+            'suggested_replies' => max( $suggested_replies, (int) $result_metrics['reply_drafts'] ),
+            'metrics'           => $result_metrics,
+            'entries'           => $entry_page['entries'],
+            'entry_page'        => $entry_page['page'],
+            'entry_per_page'    => $entry_page['per_page'],
+            'entry_total'       => $entry_page['total'],
+            'entry_pages'       => $entry_page['pages'],
             'historical_runs'   => array_map( [ $this, 'format_historical_run' ], $this->historical_runs->list_for_form( $form_source, $form_id, 5 ) ),
         ];
+    }
+
+    private function sync_recent_lead_scoring_events( ?string $form_source, ?string $form_id ): void
+    {
+        foreach ( $this->events->list_recent( 500 ) as $event )
+        {
+            if ( null !== $form_source && sanitize_key( (string) ( $event['form_source'] ?? '' ) ) !== sanitize_key( $form_source ) )
+            {
+                continue;
+            }
+
+            if ( null !== $form_id && sanitize_text_field( (string) ( $event['form_id'] ?? '' ) ) !== sanitize_text_field( $form_id ) )
+            {
+                continue;
+            }
+
+            $action_code = $this->lead_scoring_action_code_from_event( $event );
+            if ( '' === $action_code )
+            {
+                continue;
+            }
+
+            $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
+            $structured = is_array( $result['result']['structured'] ?? null )
+                ? $result['result']['structured']
+                : ( is_array( $result['structured'] ?? null ) ? $result['structured'] : [] );
+            if ( [] === $structured )
+            {
+                continue;
+            }
+
+            $indexed = $this->lead_scoring_results->upsert_from_execution(
+                [
+                    'form_source'          => $event['form_source'] ?? 'gravity_forms',
+                    'form_id'              => $event['form_id'] ?? '',
+                    'entry_id'             => $event['entry_id'] ?? '',
+                    'action_code'          => $action_code,
+                    'execution_request_id' => $event['execution_request_id'] ?? '',
+                    'historical_run_id'    => $this->historical_run_id_from_execution_request( (string) ( $event['execution_request_id'] ?? '' ) ),
+                    'profile_version'      => $structured['profile_version'] ?? null,
+                    'grade'                => $structured['grade'] ?? '',
+                    'confidence'           => $structured['confidence'] ?? null,
+                    'priority'             => $structured['recommended_priority'] ?? '',
+                    'fit_summary'          => $structured['fit_summary'] ?? '',
+                    'intent_summary'       => $structured['intent_summary'] ?? '',
+                    'justification'        => $structured['justification'] ?? '',
+                    'next_best_action'     => $structured['next_best_action'] ?? '',
+                    'suggested_reply_draft'=> $structured['suggested_reply_draft'] ?? '',
+                    'reply_rationale'      => $structured['reply_rationale'] ?? '',
+                    'do_not_send'          => $structured['do_not_send'] ?? false,
+                    'status'               => $event['status'] ?? 'succeeded',
+                    'source_created_at'    => $event['created_at'] ?? null,
+                    'source_payload'       => [ 'structured' => $structured ],
+                ]
+            );
+
+            if ( is_wp_error( $indexed ) )
+            {
+                do_action( 'sentient_forms_lead_scoring_result_index_failed', $indexed, $event );
+            }
+        }
+    }
+
+    private function lead_scoring_action_code_from_event( array $event ): string
+    {
+        $request_id = (string) ( $event['execution_request_id'] ?? '' );
+        if ( str_contains( $request_id, 'lead_grading_v1' ) || str_contains( $request_id, 'lead_grading' ) )
+        {
+            return 'lead_grading_v1';
+        }
+
+        if ( str_contains( $request_id, 'suggested_reply_v1' ) || str_contains( $request_id, 'suggested_reply' ) )
+        {
+            return 'suggested_reply_v1';
+        }
+
+        $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
+        $structured = is_array( $result['result']['structured'] ?? null )
+            ? $result['result']['structured']
+            : ( is_array( $result['structured'] ?? null ) ? $result['structured'] : [] );
+
+        if ( isset( $structured['grade'] ) )
+        {
+            return 'lead_grading_v1';
+        }
+
+        if ( isset( $structured['suggested_reply_draft'] ) || isset( $structured['next_best_action'] ) )
+        {
+            return 'suggested_reply_v1';
+        }
+
+        return '';
+    }
+
+    private function historical_run_id_from_execution_request( string $execution_request_id ): ?int
+    {
+        if ( preg_match( '/^historical:(\d+):/', $execution_request_id, $matches ) )
+        {
+            return absint( $matches[1] );
+        }
+
+        return null;
     }
 
     private function form_has_mapping_for_action_code( string $form_source, string $form_id, string $action_code ): bool

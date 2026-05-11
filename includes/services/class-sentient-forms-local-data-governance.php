@@ -431,7 +431,14 @@ class Sentient_Forms_Local_Data_Governance
         global $wpdb;
 
         $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
-        return $events->cleanup_expired( gmdate( 'Y-m-d H:i:s' ) );
+        $deleted = $events->cleanup_expired( gmdate( 'Y-m-d H:i:s' ) );
+        if ( class_exists( 'Sentient_Forms_Lead_Scoring_Results_Repository' ) )
+        {
+            $lead_scoring = new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
+            $deleted += $lead_scoring->cleanup_expired( gmdate( 'Y-m-d H:i:s' ) );
+        }
+
+        return $deleted;
     }
 
     /**
@@ -489,7 +496,7 @@ class Sentient_Forms_Local_Data_Governance
         $per_page = 100;
         $offset   = max( 0, ( $page - 1 ) * $per_page );
         $like     = '%' . $wpdb->esc_like( $email_address ) . '%';
-        $rows     = $wpdb->get_results(
+        $event_rows = $wpdb->get_results(
             $wpdb->prepare(
                 'SELECT * FROM ' . esc_sql( $wpdb->prefix . 'sentient_execution_events' ) . "
                 WHERE result_json LIKE %s OR error_message LIKE %s
@@ -502,12 +509,32 @@ class Sentient_Forms_Local_Data_Governance
             ),
             ARRAY_A
         ) ?: [];
+        $lead_rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT * FROM ' . esc_sql( $wpdb->prefix . 'sentient_lead_scoring_results' ) . "
+                WHERE entry_snapshot_json LIKE %s OR source_payload_json LIKE %s OR justification LIKE %s OR suggested_reply_draft LIKE %s OR reply_rationale LIKE %s OR next_best_action LIKE %s
+                ORDER BY id ASC
+                LIMIT %d OFFSET %d",
+                $like,
+                $like,
+                $like,
+                $like,
+                $like,
+                $like,
+                $per_page,
+                $offset
+            ),
+            ARRAY_A
+        ) ?: [];
 
-        $data = array_map( [ self::class, 'format_export_item' ], $rows );
+        $data = array_merge(
+            array_map( [ self::class, 'format_export_item' ], $event_rows ),
+            array_map( [ self::class, 'format_lead_scoring_export_item' ], $lead_rows )
+        );
 
         return [
             'data' => $data,
-            'done' => count( $rows ) < $per_page,
+            'done' => count( $event_rows ) < $per_page && count( $lead_rows ) < $per_page,
         ];
     }
 
@@ -535,12 +562,28 @@ class Sentient_Forms_Local_Data_Governance
 
         $per_page = 100;
         $like     = '%' . $wpdb->esc_like( $email_address ) . '%';
-        $rows     = $wpdb->get_results(
+        $event_rows = $wpdb->get_results(
             $wpdb->prepare(
                 'SELECT id FROM ' . esc_sql( $wpdb->prefix . 'sentient_execution_events' ) . "
                 WHERE result_json LIKE %s OR error_message LIKE %s
                 ORDER BY id ASC
                 LIMIT %d",
+                $like,
+                $like,
+                $per_page
+            ),
+            ARRAY_A
+        ) ?: [];
+        $lead_rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT id FROM ' . esc_sql( $wpdb->prefix . 'sentient_lead_scoring_results' ) . "
+                WHERE entry_snapshot_json LIKE %s OR source_payload_json LIKE %s OR justification LIKE %s OR suggested_reply_draft LIKE %s OR reply_rationale LIKE %s OR next_best_action LIKE %s
+                ORDER BY id ASC
+                LIMIT %d",
+                $like,
+                $like,
+                $like,
+                $like,
                 $like,
                 $like,
                 $per_page
@@ -557,7 +600,7 @@ class Sentient_Forms_Local_Data_Governance
         );
         $update_table = $wpdb->prefix . 'sentient_execution_events';
 
-        foreach ( $rows as $row )
+        foreach ( $event_rows as $row )
         {
             $wpdb->update(
                 $update_table,
@@ -572,15 +615,37 @@ class Sentient_Forms_Local_Data_Governance
             );
         }
 
-        $removed = count( $rows ) > 0;
+        $lead_update_table = $wpdb->prefix . 'sentient_lead_scoring_results';
+        foreach ( $lead_rows as $row )
+        {
+            $wpdb->update(
+                $lead_update_table,
+                [
+                    'entry_snapshot_json'    => $payload,
+                    'source_payload_json'    => $payload,
+                    'fit_summary'            => '',
+                    'intent_summary'         => '',
+                    'justification'          => '',
+                    'next_best_action'       => '',
+                    'suggested_reply_draft'  => '',
+                    'reply_rationale'        => '',
+                    'updated_at'             => $erased_at,
+                ],
+                [ 'id' => (int) $row['id'] ],
+                [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ],
+                [ '%d' ]
+            );
+        }
+
+        $removed = count( $event_rows ) > 0 || count( $lead_rows ) > 0;
 
         return [
             'items_removed'  => $removed,
             'items_retained' => $removed,
             'messages'       => $removed
-                ? [ __( 'Sentient Forms removed local execution result/error content and retained non-content audit metadata.', 'sentient-forms' ) ]
+                ? [ __( 'Sentient Forms removed local execution and lead scoring result content and retained non-content audit metadata.', 'sentient-forms' ) ]
                 : [],
-            'done'           => count( $rows ) < $per_page,
+            'done'           => count( $event_rows ) < $per_page && count( $lead_rows ) < $per_page,
         ];
     }
 
@@ -631,6 +696,7 @@ class Sentient_Forms_Local_Data_Governance
             'sentient_execution_events',
             'sentient_lead_profiles',
             'sentient_historical_analysis_runs',
+            'sentient_lead_scoring_results',
             'sentient_migration_runs',
             'sentient_model_cache',
         ];
@@ -673,6 +739,53 @@ class Sentient_Forms_Local_Data_Governance
                 [
                     'name'  => __( 'Created At', 'sentient-forms' ),
                     'value' => (string) ( $row['created_at'] ?? '' ),
+                ],
+            ],
+        ];
+    }
+
+    private static function format_lead_scoring_export_item( array $row ): array
+    {
+        $entry_snapshot = json_decode( (string) ( $row['entry_snapshot_json'] ?? '' ), true );
+        $source_payload = json_decode( (string) ( $row['source_payload_json'] ?? '' ), true );
+
+        return [
+            'group_id'          => 'sentient-forms-lead-scoring-results',
+            'group_label'       => __( 'Sentient Forms Lead Scoring Results', 'sentient-forms' ),
+            'group_description' => __( 'Local Lead Scoring result records stored by Sentient Forms on this WordPress site.', 'sentient-forms' ),
+            'item_id'           => 'sentient-forms-lead-scoring-result-' . (string) ( $row['id'] ?? '' ),
+            'data'              => [
+                [
+                    'name'  => __( 'Form ID', 'sentient-forms' ),
+                    'value' => (string) ( $row['form_id'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Entry ID', 'sentient-forms' ),
+                    'value' => (string) ( $row['entry_id'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Grade', 'sentient-forms' ),
+                    'value' => (string) ( $row['grade'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Justification', 'sentient-forms' ),
+                    'value' => (string) ( $row['justification'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Suggested Reply', 'sentient-forms' ),
+                    'value' => (string) ( $row['suggested_reply_draft'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Entry Snapshot', 'sentient-forms' ),
+                    'value' => is_array( $entry_snapshot ) ? (string) wp_json_encode( $entry_snapshot ) : (string) ( $row['entry_snapshot_json'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Source Payload', 'sentient-forms' ),
+                    'value' => is_array( $source_payload ) ? (string) wp_json_encode( $source_payload ) : (string) ( $row['source_payload_json'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Updated At', 'sentient-forms' ),
+                    'value' => (string) ( $row['updated_at'] ?? '' ),
                 ],
             ],
         ];

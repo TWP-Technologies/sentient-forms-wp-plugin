@@ -20,6 +20,7 @@ class Sentient_Forms_Local_Cutover_Service
         'sentient_custom_actions',
         'sentient_form_mappings',
         'sentient_execution_events',
+        'sentient_lead_scoring_results',
         'sentient_async_requests',
     ];
 

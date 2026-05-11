@@ -402,7 +402,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         GFAPI::$forms = [
             7 => [
                 'id'    => 7,
-                'title' => 'Lead Value Form',
+                'title' => 'Lead Scoring Form',
             ],
         ];
         GFAPI::$entries = [
@@ -422,7 +422,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $action_id      = $custom_actions->create(
             [
                 'code'            => 'lead_grading_v1',
-                'display_name'    => 'Lead Grading',
+                'display_name'    => 'Lead Scoring',
                 'definition_json' => [
                     'template_code' => 'lead_grading_v1',
                 ],
@@ -530,6 +530,81 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertSame( 1, $dashboard['grades']['Reject'] );
     }
 
+    public function test_aggregate_dashboard_combines_stored_grades_replies_and_setup_forms(): void
+    {
+        global $wpdb;
+
+        $results = new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
+        $grade_id = $results->upsert_from_execution(
+            [
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'form_title'           => 'Lead intake',
+                'entry_id'             => '1001',
+                'action_code'          => 'lead_grading_v1',
+                'execution_request_id' => 'lead-grading:1001',
+                'lead_profile_id'      => 44,
+                'profile_version'      => 5,
+                'grade'                => 'A',
+                'confidence'           => 0.94,
+                'priority'             => 'urgent',
+                'justification'        => 'The entry matches the current setup and names a paid project.',
+                'entry_snapshot'       => [
+                    'field_summary' => [
+                        [
+                            'field_id' => '1',
+                            'label'    => 'Name',
+                            'value'    => 'Ada Buyer',
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $grade_id );
+
+        $reply_id = $results->upsert_from_execution(
+            [
+                'form_source'           => 'gravity_forms',
+                'form_id'               => '7',
+                'form_title'            => 'Lead intake',
+                'entry_id'              => '1001',
+                'action_code'           => 'suggested_reply_v1',
+                'execution_request_id'  => 'suggested-reply:1001',
+                'profile_version'       => 5,
+                'next_best_action'      => 'Send to sales for same-day follow-up.',
+                'suggested_reply_draft' => 'Thanks for reaching out. We can help with that project.',
+                'reply_rationale'       => 'The lead is specific and urgent.',
+            ]
+        );
+        $this->assertIsInt( $reply_id );
+
+        $profiles = new Sentient_Forms_Lead_Profiles_Repository( $wpdb );
+        $setup_only_profile_id = $profiles->save(
+            [
+                'form_source'             => 'gravity_forms',
+                'form_id'                 => '99',
+                'status'                  => 'draft',
+                'profile_version'         => 1,
+                'good_lead_criteria_json' => [ 'summary_text' => 'Good leads are relevant.' ],
+                'bad_lead_criteria_json'  => [ 'summary_text' => 'Bad leads are spam.' ],
+            ]
+        );
+        $this->assertIsInt( $setup_only_profile_id );
+
+        $dashboard = $this->dispatch_json( 'GET', '/sentient-forms/v1/lead-value/dashboard' );
+
+        $this->assertSame( 1, $dashboard['metrics']['scored_leads'] );
+        $this->assertSame( 1, $dashboard['metrics']['priority_leads'] );
+        $this->assertSame( 1, $dashboard['metrics']['reply_drafts'] );
+        $this->assertSame( 1, $dashboard['entry_total'] );
+        $this->assertSame( '1001', $dashboard['entries'][0]['entry_id'] );
+        $this->assertSame( 'A', $dashboard['entries'][0]['grade'] );
+        $this->assertSame( 'Send to sales for same-day follow-up.', $dashboard['entries'][0]['next_best_action'] );
+        $form_ids = wp_list_pluck( $dashboard['forms'], 'form_id' );
+        $this->assertContains( '7', $form_ids );
+        $this->assertContains( '99', $form_ids );
+    }
+
     private function seed_ready_site_context(): void
     {
         update_option(
@@ -610,6 +685,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
                 'sentient_form_mappings',
                 'sentient_execution_events',
                 'sentient_lead_profiles',
+                'sentient_lead_scoring_results',
                 'sentient_historical_analysis_runs',
                 'sentient_migration_runs',
                 'sentient_model_cache',

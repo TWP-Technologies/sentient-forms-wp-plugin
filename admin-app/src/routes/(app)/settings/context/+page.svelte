@@ -60,7 +60,9 @@
 			autoRefreshEnabled !== status.settings.auto_refresh_enabled ||
 			autoRefreshDays !== status.settings.auto_refresh_days ||
 			JSON.stringify(generationModelSelection) !==
-				JSON.stringify(status.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION)
+				JSON.stringify(
+					status.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION
+				)
 		);
 	});
 
@@ -203,10 +205,12 @@
 			testId="site-context-loading-state"
 		/>
 	{:else if status}
-		<div class="sf:grid sf:gap-5 sf:xl:grid-cols-[minmax(0,1fr)_minmax(28rem,0.72fr)]">
+		<div class="sf:space-y-5">
 			<Card>
 				<div class="sf:space-y-5">
-					<div class="sf:flex sf:flex-col sf:gap-3 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between">
+					<div
+						class="sf:flex sf:flex-col sf:gap-3 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
+					>
 						<div class="sf:space-y-2">
 							<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 								<p class="sf:text-base sf:font-semibold sf:text-slate-900">Context summary</p>
@@ -240,8 +244,8 @@
 
 					{#if status.is_empty && generationConsent}
 						<Alert variant="warning" data-testid="site-context-empty-consented-warning">
-							Consent is enabled, but Site Context is empty. Generate or write context before relying on
-							site-specific action decisions.
+							Consent is enabled, but Site Context is empty. Generate or write context before
+							relying on site-specific action decisions.
 						</Alert>
 					{:else if status.is_stale}
 						<Alert variant="warning" data-testid="site-context-stale-warning">
@@ -256,30 +260,49 @@
 					{/if}
 
 					<div>
-						<label for="context-text" class="sf:block sf:text-sm sf:font-semibold sf:text-slate-900">
+						<label
+							for="context-text"
+							class="sf:block sf:text-sm sf:font-semibold sf:text-slate-900"
+						>
 							Site Context text
 						</label>
 						<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-							Keep this useful to a model: what the site does, who normally contacts you, what a good
-							lead looks like, and what should be suspicious for this site.
+							Keep this useful to a model: what the site does, who normally contacts you, what a
+							good lead looks like, and what should be suspicious for this site.
 						</p>
 						<textarea
 							id="context-text"
 							bind:value={editedText}
 							rows={10}
 							maxlength={CONTEXT_HARD_LIMIT}
-							class="sf:mt-3 sf:w-full sf:rounded-md sf:border sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:border-danger-500 sf:focus-visible:border-danger-500 sf:focus-visible:ring-danger-500' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:border-warning-600 sf:focus-visible:border-warning-600 sf:focus-visible:ring-warning-600' : 'sf:border-slate-300 sf:focus-visible:border-primary-600 sf:focus-visible:ring-primary-500'}"
+							class="sf:mt-3 sf:w-full sf:rounded-md sf:border sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white {characterCount >=
+							CONTEXT_WARN_LIMIT
+								? 'sf:border-danger-500 sf:focus-visible:border-danger-500 sf:focus-visible:ring-danger-500'
+								: characterCount > CONTEXT_SOFT_LIMIT
+									? 'sf:border-warning-600 sf:focus-visible:border-warning-600 sf:focus-visible:ring-warning-600'
+									: 'sf:border-slate-300 sf:focus-visible:border-primary-600 sf:focus-visible:ring-primary-500'}"
 							placeholder="Example: This site sells commercial HVAC maintenance in Austin. Legitimate leads usually ask about service plans, emergency repairs, rooftop units, or commercial quotes..."
 							data-testid="site-context-textarea"
 						></textarea>
-						<div class="sf:mt-1 sf:h-1 sf:w-full sf:overflow-hidden sf:rounded-full sf:bg-slate-100">
+						<div
+							class="sf:mt-1 sf:h-1 sf:w-full sf:overflow-hidden sf:rounded-full sf:bg-slate-100"
+						>
 							<div
-								class="sf:h-full sf:rounded-full sf:transition-all {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:bg-red-500' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:bg-amber-500' : 'sf:bg-indigo-500'}"
+								class="sf:h-full sf:rounded-full sf:transition-all {characterCount >=
+								CONTEXT_WARN_LIMIT
+									? 'sf:bg-red-500'
+									: characterCount > CONTEXT_SOFT_LIMIT
+										? 'sf:bg-amber-500'
+										: 'sf:bg-indigo-500'}"
 								style={`width: ${limitPercent}%`}
 							></div>
 						</div>
 						<p
-							class="sf:mt-1 sf:text-xs {characterCount >= CONTEXT_WARN_LIMIT ? 'sf:font-medium sf:text-red-600' : characterCount > CONTEXT_SOFT_LIMIT ? 'sf:text-amber-700' : 'sf:text-slate-600'}"
+							class="sf:mt-1 sf:text-xs {characterCount >= CONTEXT_WARN_LIMIT
+								? 'sf:font-medium sf:text-red-600'
+								: characterCount > CONTEXT_SOFT_LIMIT
+									? 'sf:text-amber-700'
+									: 'sf:text-slate-600'}"
 						>
 							{characterCount} / {CONTEXT_HARD_LIMIT} characters
 						</p>
@@ -304,7 +327,9 @@
 							</p>
 						</div>
 
-						<label class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3">
+						<label
+							class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3"
+						>
 							<input
 								type="checkbox"
 								class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
@@ -350,21 +375,31 @@
 						>
 							{generating ? 'Generating…' : 'Generate now'}
 						</Button>
-					</div>
-				</Card>
 
-				<Card>
-					<ModelSelector
-						label="Generation model"
-						level="global"
-						value={generationModelSelection}
-						readonly={!generationConsent}
-						requiredCapabilities={['web_search']}
-						lockRequiredCapabilities={true}
-						onchange={(selection) => {
-							generationModelSelection = selection;
-						}}
-					/>
+						<div class="sf:border-t sf:border-slate-200 sf:pt-4">
+							<details>
+								<summary class="sf:cursor-pointer sf:text-base sf:font-semibold sf:text-slate-900">
+									Generation model and tools
+								</summary>
+								<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
+									Change this when Site Context needs a different web-capable model policy.
+								</p>
+								<div class="sf:mt-4">
+									<ModelSelector
+										label="Generation model"
+										level="global"
+										value={generationModelSelection}
+										readonly={!generationConsent}
+										requiredCapabilities={['web_search']}
+										lockRequiredCapabilities={true}
+										onchange={(selection) => {
+											generationModelSelection = selection;
+										}}
+									/>
+								</div>
+							</details>
+						</div>
+					</div>
 				</Card>
 			</div>
 		</div>
@@ -381,15 +416,22 @@
 					aria-modal="true"
 					aria-labelledby="site-context-withdraw-title"
 				>
-					<h2 id="site-context-withdraw-title" class="sf:text-lg sf:font-semibold sf:text-slate-900">
+					<h2
+						id="site-context-withdraw-title"
+						class="sf:text-lg sf:font-semibold sf:text-slate-900"
+					>
 						Withdraw Site Context consent?
 					</h2>
 					<p class="sf:mt-2 sf:text-sm sf:text-slate-600">
-						This deletes saved Site Context, disables automatic refresh, and future action prompts will
-						not include Site Context until you enable it again.
+						This deletes saved Site Context, disables automatic refresh, and future action prompts
+						will not include Site Context until you enable it again.
 					</p>
 					<div class="sf:mt-5 sf:flex sf:flex-wrap sf:justify-end sf:gap-2">
-						<Button variant="secondary" disabled={withdrawing} onclick={() => (showWithdrawConfirm = false)}>
+						<Button
+							variant="secondary"
+							disabled={withdrawing}
+							onclick={() => (showWithdrawConfirm = false)}
+						>
 							Cancel
 						</Button>
 						<Button variant="danger" loading={withdrawing} onclick={withdrawConsent}>

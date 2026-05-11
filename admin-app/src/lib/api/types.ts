@@ -1334,6 +1334,10 @@ export interface LeadProfileHandoffRules {
 	email_recipients: string[];
 	webhooks: Array<{ url: string; method?: string }>;
 	grades: LeadGrade[];
+	entry_notes?: {
+		lead_grade?: boolean;
+		suggested_reply?: boolean;
+	};
 }
 
 export interface LeadProfileReadinessRequirement {
@@ -1438,6 +1442,56 @@ export interface LeadValueHistoricalRun {
 	updated_at?: string | null;
 }
 
+export interface LeadScoringDashboardMetrics {
+	scored_leads: number;
+	priority_leads: number;
+	reply_drafts: number;
+	rejected_leads: number;
+	grades: Record<LeadGrade | 'ungraded', number>;
+	latest_entries?: LeadScoringEntry[];
+}
+
+export interface LeadScoringEntry {
+	form_source: string;
+	form_id: string | number;
+	form_title?: string | null;
+	entry_id: string;
+	entry_snapshot?: {
+		date_created?: string | null;
+		status?: string | null;
+		field_summary?: Array<{ field_id: string; label: string; value: string }>;
+	};
+	updated_at?: string | null;
+	grade?: LeadGrade | '' | null;
+	confidence?: number | null;
+	priority?: string | null;
+	fit_summary?: string | null;
+	intent_summary?: string | null;
+	justification?: string | null;
+	next_best_action?: string | null;
+	suggested_reply_draft?: string | null;
+	reply_rationale?: string | null;
+	do_not_send?: boolean | number | null;
+	lead_profile_id?: number | null;
+	profile_version?: number | null;
+	historical_run_id?: number | null;
+	lead_execution_id?: string | null;
+	reply_execution_id?: string | null;
+}
+
+export interface LeadScoringFormSummary {
+	form_source: string;
+	form_id: string | number;
+	form_title?: string | null;
+	scored_leads: number;
+	priority_leads: number;
+	reply_drafts: number;
+	latest_at?: string | null;
+	profile_id?: number | null;
+	profile_version?: number | null;
+	setup_status?: string | null;
+}
+
 export interface LeadValueHistoricalRunResponse {
 	run: LeadValueHistoricalRun;
 	message?: string;
@@ -1459,6 +1513,13 @@ export interface LeadValueDashboard {
 	failed_events: number;
 	grades: Record<LeadGrade | 'ungraded', number>;
 	suggested_replies: number;
+	metrics?: LeadScoringDashboardMetrics;
+	entries?: LeadScoringEntry[];
+	entry_page?: number;
+	entry_per_page?: number;
+	entry_total?: number;
+	entry_pages?: number;
+	forms?: LeadScoringFormSummary[];
 	historical_runs: LeadValueHistoricalRun[];
 }
 

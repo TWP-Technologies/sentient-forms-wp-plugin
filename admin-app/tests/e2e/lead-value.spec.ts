@@ -49,7 +49,8 @@ const profileResponse = {
 		handoff_rules: {
 			email_recipients: ['sales@example.test'],
 			webhooks: [{ url: 'https://example.test/hook', method: 'POST' }],
-			grades: ['A', 'B']
+			grades: ['A', 'B'],
+			entry_notes: { lead_grade: true, suggested_reply: true }
 		}
 	},
 	readiness: {
@@ -101,6 +102,58 @@ const dashboardResponse = {
 	failed_events: 1,
 	grades: { A: 2, B: 3, C: 1, Reject: 1, ungraded: 1 },
 	suggested_replies: 4,
+	metrics: {
+		scored_leads: 7,
+		priority_leads: 2,
+		reply_drafts: 4,
+		rejected_leads: 1,
+		grades: { A: 2, B: 3, C: 1, Reject: 1, ungraded: 1 }
+	},
+	entries: [
+		{
+			form_source: 'gravity_forms',
+			form_id: '123',
+			form_title: 'Lead intake',
+			entry_id: '1001',
+			entry_snapshot: {
+				date_created: '2030-01-05T10:00:00Z',
+				status: 'active',
+				field_summary: [
+					{ field_id: '1', label: 'Name', value: 'Ada Lovelace' },
+					{ field_id: '2', label: 'Project', value: 'Paid implementation' }
+				]
+			},
+			grade: 'A',
+			confidence: 0.92,
+			priority: 'urgent',
+			justification:
+				'The entry names a concrete paid implementation project, includes reachable contact details, and matches the service area.',
+			next_best_action: 'Route to sales for same-day follow-up.',
+			suggested_reply_draft: 'Thanks for reaching out. We can help with that implementation.',
+			reply_rationale: 'The lead is specific and time-sensitive.',
+			profile_version: 3,
+			lead_execution_id: 'lead:1001',
+			reply_execution_id: 'reply:1001'
+		}
+	],
+	entry_page: 1,
+	entry_per_page: 10,
+	entry_total: 1,
+	entry_pages: 1,
+	forms: [
+		{
+			form_source: 'gravity_forms',
+			form_id: '123',
+			form_title: 'Lead intake',
+			scored_leads: 7,
+			priority_leads: 2,
+			reply_drafts: 4,
+			latest_at: '2030-01-05T10:00:00Z',
+			profile_id: 22,
+			profile_version: 3,
+			setup_status: 'active'
+		}
+	],
 	historical_runs: [
 		{
 			id: 50,
@@ -118,7 +171,24 @@ const dashboardResponse = {
 	]
 };
 
-test.describe('lead value workspace', () => {
+const actionConfigEnvelope = {
+	success: true,
+	data: {
+		form_source: 'gravity_forms',
+		form_id: 123,
+		action_id: 'spam_detection_v1',
+		config: {
+			spam_positive_examples: [
+				{ text: 'I need a paid implementation quote.', rationale: 'Specific service intent.' }
+			],
+			spam_negative_examples: [
+				{ text: 'Buy cheap links now.', rationale: 'Unrelated promotional spam.' }
+			]
+		}
+	}
+};
+
+test.describe('lead scoring workspace', () => {
 	test.beforeEach(async ({ page }) => {
 		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
@@ -126,20 +196,23 @@ test.describe('lead value workspace', () => {
 			siteUrl: previewHost
 		});
 
-		await page.route('**/wp-json/sentient-forms/v1/lead-value/forms/gravity_forms/123/profile**', async (route) => {
-			if (route.request().method() === 'POST') {
+		await page.route(
+			'**/wp-json/sentient-forms/v1/lead-value/forms/gravity_forms/123/profile**',
+			async (route) => {
+				if (route.request().method() === 'POST') {
+					return route.fulfill({
+						status: 200,
+						contentType: 'application/json',
+						body: JSON.stringify(profileResponse)
+					});
+				}
 				return route.fulfill({
 					status: 200,
 					contentType: 'application/json',
 					body: JSON.stringify(profileResponse)
 				});
 			}
-			return route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify(profileResponse)
-			});
-		});
+		);
 		await page.route('**/wp-json/sentient-forms/v1/lead-value/profiles/22/generate**', (route) =>
 			route.fulfill({
 				status: 200,
@@ -154,12 +227,37 @@ test.describe('lead value workspace', () => {
 				body: JSON.stringify(profileResponse)
 			})
 		);
-		await page.route('**/wp-json/sentient-forms/v1/lead-value/forms/gravity_forms/123/dashboard**', (route) =>
+		await page.route(
+			'**/wp-json/sentient-forms/v1/lead-value/forms/gravity_forms/123/dashboard**',
+			(route) =>
+				route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify(dashboardResponse)
+				})
+		);
+		await page.route('**/wp-json/sentient-forms/v1/lead-value/dashboard**', (route) =>
 			route.fulfill({
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify(dashboardResponse)
 			})
+		);
+		await page.route('**/wp-json/sentient-forms/v1/actions/spam_detection_v1/defaults**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(actionConfigEnvelope)
+			})
+		);
+		await page.route(
+			'**/wp-json/sentient-forms/v1/forms/gravity_forms/123/action-config/spam_detection_v1**',
+			(route) =>
+				route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify(actionConfigEnvelope)
+				})
 		);
 		await page.route(
 			'**/wp-json/sentient-forms/v1/lead-value/forms/gravity_forms/123/historical-runs**',
@@ -231,21 +329,43 @@ test.describe('lead value workspace', () => {
 	test('shows readiness, dashboard, and historical scoring controls', async ({ page }) => {
 		await page.goto('/#/actions/gravity_forms/123/lead-value', { waitUntil: 'networkidle' });
 
-		await expect(page.getByRole('heading', { name: 'Lead Value' })).toBeVisible();
-		await expect(page.getByTestId('lead-value-summary')).toContainText('Ready');
+		await expect(page.getByRole('heading', { name: 'Lead Scoring' })).toBeVisible();
+		await expect(page.getByTestId('lead-scoring-summary')).toContainText('Ready');
+		await expect(page.getByRole('heading', { name: 'Scored form entries' })).toBeVisible();
+		await expect(
+			page.getByText('The entry names a concrete paid implementation project')
+		).toBeVisible();
+		await page.getByRole('button', { name: 'View full detail' }).click();
+		await expect(page.getByRole('dialog')).toContainText('Route to sales for same-day follow-up.');
+		await page.getByRole('button', { name: 'Close' }).click();
+
+		await page.getByRole('button', { name: 'Setup' }).click();
 		await expect(page.getByLabel('Good lead criteria')).toHaveValue(/Good leads have/);
+		await expect(page.getByRole('heading', { name: 'Spam Guidance' })).toBeVisible();
 		await expect(page.getByText('Entry #1001')).toBeVisible();
 		await page.getByRole('button', { name: 'Search entries' }).click();
 		await expect(page.getByText('Entry #1002')).toBeVisible();
 		await page.getByRole('button', { name: 'Mark B' }).click();
-		await expect(page.getByText('2 selected for profile calibration')).toBeVisible();
+		await expect(page.getByText('2 selected for setup calibration')).toBeVisible();
 		await page.getByRole('button', { name: 'Dashboard' }).click();
 		await expect(page.getByRole('heading', { name: 'Grade Distribution' })).toBeVisible();
-		await expect(page.getByText('reply drafts')).toBeVisible();
+		await expect(page.getByTestId('lead-scoring-summary')).toContainText('Follow-up drafts');
 		await page.getByRole('button', { name: 'Historical' }).click();
 		await expect(page.getByRole('button', { name: 'Create dry-run preview' })).toBeVisible();
 		await page.getByRole('button', { name: 'Run confirmed' }).click();
 		await expect(page.getByText('completed')).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Start', exact: true })).toHaveCount(0);
+	});
+
+	test('shows aggregate lead scoring dashboard across forms', async ({ page }) => {
+		await page.goto('/#/lead-scoring', { waitUntil: 'networkidle' });
+
+		await expect(page.getByRole('heading', { name: 'Lead Scoring' })).toBeVisible();
+		await expect(page.getByTestId('lead-scoring-aggregate-summary')).toContainText('Scored leads');
+		await expect(page.getByRole('heading', { name: 'Scored entries' })).toBeVisible();
+		await expect(page.getByRole('table').getByText('Lead intake').first()).toBeVisible();
+		await expect(page.getByText('#1001')).toBeVisible();
+		await expect(page.getByText('Route to sales for same-day follow-up.')).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Configured forms' })).toBeVisible();
 	});
 });

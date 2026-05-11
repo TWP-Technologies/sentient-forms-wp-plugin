@@ -29,6 +29,7 @@
 		{ path: '/dashboard', label: 'Dashboard' },
 		{ path: '/providers', label: 'Providers' },
 		{ path: '/actions', label: 'Actions' },
+		{ path: '/lead-scoring', label: 'Lead Scoring' },
 		{ path: '/actions/log', label: 'Action Log' },
 		{ path: '/actions/custom', label: 'Custom Actions' },
 		{ path: '/licensing', label: 'Managed Service' },
@@ -44,7 +45,9 @@
 	let privacyAssistantOpen = $state(false);
 	let privacyAssistantSaving = $state(false);
 	let sessionExpired = $state(false);
-	let sessionExpiredMessage = $state('WordPress session expired. Reload this admin page before retrying.');
+	let sessionExpiredMessage = $state(
+		'WordPress session expired. Reload this admin page before retrying.'
+	);
 
 	function handleNavClick(event: MouseEvent, path: NavigationLinkPath): void {
 		if (event.defaultPrevented || event.button !== 0) return;
@@ -170,10 +173,7 @@
 	});
 </script>
 
-<div
-	data-sentient-admin-shell
-	class="sf:min-w-0 sf:bg-slate-100 sf:text-slate-900 sf:font-sans"
->
+<div data-sentient-admin-shell class="sf:min-w-0 sf:bg-slate-100 sf:text-slate-900 sf:font-sans">
 	<div data-sentient-admin-frame class="sf:flex sf:min-w-0 sf:flex-col sf:md:flex-row">
 		<aside class="sf:w-full sf:shrink-0 sf:bg-white sf:md:w-64 sf:shadow-sm">
 			<div class="sf:p-4 sf:sm:p-6 sf:border-b sf:border-slate-200">
@@ -224,13 +224,9 @@
 							class="sf:rounded sf:border sf:border-rose-300 sf:bg-rose-50 sf:p-4 sf:space-y-2 sf:break-words"
 							data-testid="route-boundary-error"
 						>
-							<h2 class="sf:text-base sf:font-semibold sf:text-rose-900">
-								This view hit an error
-							</h2>
+							<h2 class="sf:text-base sf:font-semibold sf:text-rose-900">This view hit an error</h2>
 							<p class="sf:text-sm sf:text-rose-800">{String(error)}</p>
-							<Button type="button" variant="danger" size="sm" onclick={reset}
-								>Retry view</Button
-							>
+							<Button type="button" variant="danger" size="sm" onclick={reset}>Retry view</Button>
 						</section>
 					{/snippet}
 				</svelte:boundary>

@@ -8,6 +8,7 @@ export type NavigationLinkPath =
 	| '/providers'
 	| '/licensing'
 	| '/actions'
+	| '/lead-scoring'
 	| '/actions/log'
 	| '/actions/custom'
 	| '/settings'
@@ -52,6 +53,7 @@ const APP_ROUTE_PREFIXES = [
 	'/providers',
 	'/licensing',
 	'/actions',
+	'/lead-scoring',
 	'/settings'
 ] as const;
 const ABSOLUTE_OR_PROTOCOL_RELATIVE_URL = /^(?:[a-z][a-z0-9+.-]*:)?\/\//i;
@@ -81,6 +83,10 @@ const NAV_MATCHERS: Array<{ path: NavigationLinkPath; matches: (value: string) =
 	{
 		path: '/actions/log',
 		matches: (value) => value === '/actions/log' || value.startsWith('/actions/log/')
+	},
+	{
+		path: '/lead-scoring',
+		matches: (value) => value === '/lead-scoring' || value.startsWith('/lead-scoring/')
 	},
 	{
 		path: '/actions',

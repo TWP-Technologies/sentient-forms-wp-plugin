@@ -612,11 +612,48 @@ export class SentientFormsApiClient {
 	async getLeadValueDashboard(
 		formSource: string,
 		formId: string | number,
+		params: { page?: number; per_page?: number; q?: string } = {},
 		options: RequestOptions = {}
 	): Promise<LeadValueDashboard> {
+		const query = new URLSearchParams();
+		if (params.page) query.set('page', String(params.page));
+		if (params.per_page) query.set('per_page', String(params.per_page));
+		if (params.q) query.set('q', params.q);
+		const suffix = query.toString() ? `?${query}` : '';
 		return this.request<LeadValueDashboard>(
-			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/dashboard`,
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/dashboard${suffix}`,
 			{ showNotifications: false, ...options }
+		);
+	}
+
+	async getLeadScoringDashboard(
+		params: { page?: number; per_page?: number; q?: string } = {},
+		options: RequestOptions = {}
+	): Promise<LeadValueDashboard> {
+		const query = new URLSearchParams();
+		if (params.page) query.set('page', String(params.page));
+		if (params.per_page) query.set('per_page', String(params.per_page));
+		if (params.q) query.set('q', params.q);
+		const suffix = query.toString() ? `?${query}` : '';
+		return this.request<LeadValueDashboard>(`lead-value/dashboard${suffix}`, {
+			showNotifications: false,
+			...options
+		});
+	}
+
+	async importLeadProfile(
+		formSource: string,
+		formId: string | number,
+		payload: { source_profile_id: number; include_examples?: boolean },
+		options: RequestOptions = {}
+	): Promise<LeadProfileResponse> {
+		return this.request<LeadProfileResponse>(
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/profile/import`,
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
 		);
 	}
 
@@ -1131,7 +1168,9 @@ export class SentientFormsApiClient {
 		return this.unwrap<FormActionConfigResponse>(response).config;
 	}
 
-	private validateFormActionConfigPayload(config: Partial<FormActionConfig>): Partial<FormActionConfig> {
+	private validateFormActionConfigPayload(
+		config: Partial<FormActionConfig>
+	): Partial<FormActionConfig> {
 		const result = safeParseFormActionConfigPayload(config);
 		if (result.success === false) {
 			const message = result.error.issues

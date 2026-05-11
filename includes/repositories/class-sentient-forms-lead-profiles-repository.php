@@ -1,6 +1,6 @@
 <?php
 /**
- * Local lead profile repository.
+ * Local lead scoring setup repository.
  */
 
 if ( ! defined( 'ABSPATH' ) )
@@ -91,6 +91,36 @@ class Sentient_Forms_Lead_Profiles_Repository extends Sentient_Forms_Local_Repos
         ) ?: [];
 
         return array_map( [ $this, 'decode_row' ], $rows );
+    }
+
+    public function list_latest_by_form( int $limit = 200 ): array
+    {
+        $limit = max( 1, min( 1000, $limit ) );
+
+        // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared -- Static query uses %i/%d placeholders and a plugin-owned table identifier.
+        $rows = $this->wpdb->get_results(
+            $this->wpdb->prepare(
+                'SELECT * FROM %i ORDER BY updated_at DESC, id DESC LIMIT %d',
+                $this->table_name(),
+                $limit
+            ),
+            ARRAY_A
+        ) ?: [];
+        // phpcs:enable WordPress.DB.PreparedSQL.NotPrepared
+
+        $latest = [];
+        foreach ( array_map( [ $this, 'decode_row' ], $rows ) as $row )
+        {
+            $key = sanitize_key( (string) ( $row['form_source'] ?? '' ) ) . ':' . sanitize_text_field( (string) ( $row['form_id'] ?? '' ) );
+            if ( ':' === $key || isset( $latest[ $key ] ) )
+            {
+                continue;
+            }
+
+            $latest[ $key ] = $row;
+        }
+
+        return array_values( $latest );
     }
 
     public function increment_profile_version( int $id ): int | WP_Error
@@ -187,7 +217,7 @@ class Sentient_Forms_Lead_Profiles_Repository extends Sentient_Forms_Local_Repos
 
         if ( ! $is_update && ( '' === (string) $values['form_source'] || '' === (string) $values['form_id'] ) )
         {
-            return new WP_Error( 'sentient_forms_missing_lead_profile_form', __( 'Form source and form ID are required for lead profiles.', 'sentient-forms' ) );
+            return new WP_Error( 'sentient_forms_missing_lead_profile_form', __( 'Form source and form ID are required for Lead Scoring setup.', 'sentient-forms' ) );
         }
 
         return [
