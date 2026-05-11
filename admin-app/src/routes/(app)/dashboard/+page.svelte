@@ -24,6 +24,8 @@
 		marketerInsights: number;
 		followUpsNeeded: number;
 		urgentSignals: number;
+		gradedLeads: number;
+		replyDrafts: number;
 	}
 
 	const client = createClientFromConfig();
@@ -190,9 +192,19 @@
 					stringValue(structured.status) ||
 					stringValue(structured.intent) ||
 					stringValue(structured.route_to) ||
-					stringValue(structured.severity)
+					stringValue(structured.severity) ||
+					stringValue(structured.grade) ||
+					stringValue(structured.next_best_action)
 				) {
 					summary.marketerInsights += 1;
+				}
+
+				if (stringValue(structured.grade)) {
+					summary.gradedLeads += 1;
+				}
+
+				if (stringValue(structured.suggested_reply_draft)) {
+					summary.replyDrafts += 1;
 				}
 
 				const informationStatus = stringValue(structured.status);
@@ -223,13 +235,18 @@
 				entryNotesCreated: 0,
 				marketerInsights: 0,
 				followUpsNeeded: 0,
-				urgentSignals: 0
+				urgentSignals: 0,
+				gradedLeads: 0,
+				replyDrafts: 0
 			}
 		);
 	}
 
 	function structuredResult(event: LocalExecutionEvent): StructuredResult {
 		const result = event.result_json;
+		if (isPlainObject(result?.result) && isPlainObject(result.result.structured)) {
+			return result.result.structured;
+		}
 		const structured = result?.structured;
 		return isPlainObject(structured) ? structured : {};
 	}
@@ -432,6 +449,12 @@
 					</Badge>
 					<Badge variant={impactSummary.marketerInsights > 0 ? 'info' : 'neutral'}>
 						{impactSummary.marketerInsights} marketer insights
+					</Badge>
+					<Badge variant={impactSummary.gradedLeads > 0 ? 'success' : 'neutral'}>
+						{impactSummary.gradedLeads} graded leads
+					</Badge>
+					<Badge variant={impactSummary.replyDrafts > 0 ? 'info' : 'neutral'}>
+						{impactSummary.replyDrafts} reply drafts
 					</Badge>
 					<Badge variant={impactSummary.spamFlagged > 0 ? 'warning' : 'neutral'}>
 						{impactSummary.spamFlagged} spam flagged

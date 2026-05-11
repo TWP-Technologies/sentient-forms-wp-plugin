@@ -22,7 +22,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         private ?Sentient_Forms_Local_Result_Applier $result_applier = null,
         private ?Sentient_Forms_Action_Templates_Repository $templates = null,
         private ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null,
-        private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null
+        private ?Sentient_Forms_Local_Action_Model_Selection_Service $model_selection_service = null,
+        private ?Sentient_Forms_Lead_Profiles_Repository $lead_profiles = null
     )
     {
         global $wpdb;
@@ -38,6 +39,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $this->result_applier = $this->result_applier ?? new Sentient_Forms_Local_Result_Applier();
         $this->templates      = $this->templates ?? new Sentient_Forms_Action_Templates_Repository( $wpdb );
         $this->managed_proxy  = $this->managed_proxy ?? new Sentient_Forms_Managed_Proxy_Client();
+        $this->lead_profiles  = $this->lead_profiles ?? new Sentient_Forms_Lead_Profiles_Repository( $wpdb );
         $this->model_selection_service = $this->model_selection_service ?? new Sentient_Forms_Local_Action_Model_Selection_Service(
             $this->custom_actions,
             $this->credentials,
@@ -103,6 +105,16 @@ class Sentient_Forms_Local_Action_Execution_Service
         $mapping = $this->model_selection_service->prepare_mapping_for_action( $mapping, $action );
 
         $definition                 = is_array( $action['definition_json'] ?? null ) ? $action['definition_json'] : [];
+        $action_code                = $this->resolve_action_code( $action, $definition );
+        [ $mapping, $context ]      = $this->prepare_lead_value_runtime_context( $mapping, $action, $definition, $context );
+        if ( $this->requires_active_lead_profile( $action_code ) && ! is_array( $context['lead_profile'] ?? null ) )
+        {
+            return new WP_Error(
+                'sentient_forms_lead_profile_required',
+                __( 'Lead grading and suggested reply actions require an active, consented Lead Value profile for this form.', 'sentient-forms' )
+            );
+        }
+
         $structured_output_contract = $this->resolve_structured_output_contract( $action, $definition );
         if ( is_wp_error( $structured_output_contract ) )
         {
@@ -269,6 +281,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         $result = 'sentient_managed' === $provider
             ? $this->normalize_managed_response( $response )
             : $this->normalize_openrouter_response( $response );
+        $result = $this->stamp_lead_profile_structured_metadata( $result, $context, $action_code );
         $result = $this->validate_structured_output( $result, $structured_output_contract );
         if ( is_wp_error( $result ) )
         {
@@ -357,6 +370,355 @@ class Sentient_Forms_Local_Action_Execution_Service
             'sentient_forms_external_service_consent_required',
             __( 'External-service disclosure acceptance is required before local provider execution.', 'sentient-forms' )
         );
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $action
+     * @param array<string, mixed> $definition
+     * @param array<string, mixed> $context
+     *
+     * @return array{0: array<string, mixed>, 1: array<string, mixed>}
+     */
+    private function prepare_lead_value_runtime_context( array $mapping, array $action, array $definition, array $context ): array
+    {
+        $action_code = $this->resolve_action_code( $action, $definition );
+        if ( ! $this->requires_active_lead_profile( $action_code ) )
+        {
+            return [ $mapping, $context ];
+        }
+
+        $lead_profile = isset( $context['lead_profile'] ) && is_array( $context['lead_profile'] )
+            ? $context['lead_profile']
+            : $this->resolve_active_lead_profile_for_mapping( $mapping );
+
+        if ( [] === $lead_profile )
+        {
+            return [ $mapping, $context ];
+        }
+
+        $context['lead_profile'] = $this->lead_profile_runtime_context( $lead_profile );
+        if ( 'lead_grading_v1' === $action_code )
+        {
+            $mapping = $this->merge_lead_profile_handoff_actions( $mapping, $context['lead_profile'] );
+        }
+
+        return [ $mapping, $context ];
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     *
+     * @return array<string, mixed>
+     */
+    private function resolve_active_lead_profile_for_mapping( array $mapping ): array
+    {
+        $form_source = sanitize_key( (string) ( $mapping['form_source'] ?? 'gravity_forms' ) );
+        $form_id     = sanitize_text_field( (string) ( $mapping['form_id'] ?? '' ) );
+        if ( '' === $form_source || '' === $form_id )
+        {
+            return [];
+        }
+
+        $profile = $this->lead_profiles->get_latest_for_form( $form_source, $form_id );
+        if ( ! is_array( $profile ) )
+        {
+            return [];
+        }
+
+        if ( 'active' !== sanitize_key( (string) ( $profile['status'] ?? '' ) ) || empty( $profile['consented_at'] ) )
+        {
+            return [];
+        }
+
+        return $profile;
+    }
+
+    /**
+     * @param array<string, mixed> $profile
+     *
+     * @return array<string, mixed>
+     */
+    private function lead_profile_runtime_context( array $profile ): array
+    {
+        return [
+            'id'                       => isset( $profile['id'] ) ? absint( $profile['id'] ) : 0,
+            'profile_version'          => max( 1, absint( $profile['profile_version'] ?? 1 ) ),
+            'generated_profile_prompt' => isset( $profile['generated_profile_prompt'] ) && is_scalar( $profile['generated_profile_prompt'] )
+                ? (string) $profile['generated_profile_prompt']
+                : '',
+            'grading_rubric'           => $this->array_value( $profile, [ 'grading_rubric_json', 'grading_rubric' ] ),
+            'site_context_snapshot'    => $this->array_value( $profile, [ 'site_context_snapshot_json', 'site_context_snapshot' ] ),
+            'spam_guidance_snapshot'   => $this->array_value( $profile, [ 'spam_guidance_snapshot_json', 'spam_guidance_snapshot' ] ),
+            'good_lead_criteria'       => $this->array_value( $profile, [ 'good_lead_criteria_json', 'good_lead_criteria' ] ),
+            'bad_lead_criteria'        => $this->array_value( $profile, [ 'bad_lead_criteria_json', 'bad_lead_criteria' ] ),
+            'example_entries'          => $this->array_value( $profile, [ 'example_entries_json', 'example_entries' ] ),
+            'handoff_rules'            => $this->array_value( $profile, [ 'handoff_rules_json', 'handoff_rules' ] ),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     * @param array<string, mixed> $context
+     *
+     * @return array<string, mixed>
+     */
+    private function stamp_lead_profile_structured_metadata( array $result, array $context, string $action_code ): array
+    {
+        if ( ! $this->requires_active_lead_profile( $action_code ) )
+        {
+            return $result;
+        }
+
+        if ( ! is_array( $result['structured'] ?? null ) || ! is_array( $context['lead_profile'] ?? null ) )
+        {
+            return $result;
+        }
+
+        $profile_version = max( 1, absint( $context['lead_profile']['profile_version'] ?? 1 ) );
+        $result['structured']['profile_version'] = $profile_version;
+
+        return $result;
+    }
+
+    private function requires_active_lead_profile( string $action_code ): bool
+    {
+        return in_array( $action_code, [ 'lead_grading_v1', 'suggested_reply_v1' ], true );
+    }
+
+    /**
+     * @param array<string, mixed>      $source
+     * @param array<int, string>        $keys
+     *
+     * @return array<string, mixed>|array<int, mixed>
+     */
+    private function array_value( array $source, array $keys ): array
+    {
+        foreach ( $keys as $key )
+        {
+            if ( isset( $source[ $key ] ) && is_array( $source[ $key ] ) )
+            {
+                return $source[ $key ];
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $lead_profile
+     *
+     * @return array<string, mixed>
+     */
+    private function merge_lead_profile_handoff_actions( array $mapping, array $lead_profile ): array
+    {
+        $rules = is_array( $lead_profile['handoff_rules'] ?? null ) ? $lead_profile['handoff_rules'] : [];
+        if ( [] === $rules )
+        {
+            return $mapping;
+        }
+
+        $grades   = $this->normalize_lead_grade_list( $rules['grades'] ?? [ 'A', 'B' ] );
+        $actions  = [];
+        $emails   = $this->sanitize_handoff_emails( $rules['email_recipients'] ?? [] );
+        $webhooks = $this->sanitize_handoff_webhooks( $rules['webhooks'] ?? [] );
+
+        if ( [] !== $emails )
+        {
+            $actions[] = [
+                'type'         => 'send_email',
+                'source'       => 'lead_profile_handoff_rules',
+                'recipients'   => $emails,
+                'grade_filter' => $grades,
+                'subject'      => __( 'New {{grade}} lead from {{form_title}}', 'sentient-forms' ),
+                'body'         => __(
+                    "Sentient Forms graded this entry as {{grade}}.\n\nPriority: {{priority}}\nNext best action: {{next_best_action}}\nJustification: {{justification}}\n\nEntry ID: {{entry_id}}\nExecution: {{execution_request_id}}\n\nSuggested reply:\n{{suggested_reply_draft}}\n\nRaw output:\n{{llm_output}}",
+                    'sentient-forms'
+                ),
+            ];
+        }
+
+        foreach ( $webhooks as $webhook )
+        {
+            $actions[] = [
+                'type'         => 'webhook',
+                'source'       => 'lead_profile_handoff_rules',
+                'url'          => $webhook['url'],
+                'method'       => $webhook['method'],
+                'grade_filter' => $grades,
+            ];
+        }
+
+        if ( [] === $actions )
+        {
+            return $mapping;
+        }
+
+        $effects = is_array( $mapping['effect_mapping_json'] ?? null ) ? $mapping['effect_mapping_json'] : [];
+        $existing = $this->normalize_runtime_post_execution_actions( $effects['post_execution_actions'] ?? [] );
+        $effects['post_execution_actions'] = array_merge( $existing, $actions );
+        $mapping['effect_mapping_json']    = $effects;
+
+        return $mapping;
+    }
+
+    /**
+     * @param mixed $candidate
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function normalize_runtime_post_execution_actions( mixed $candidate ): array
+    {
+        if ( ! is_array( $candidate ) )
+        {
+            return [];
+        }
+
+        if ( isset( $candidate['type'] ) || isset( $candidate['kind'] ) )
+        {
+            $candidate = [ $candidate ];
+        }
+
+        $actions = [];
+        foreach ( $candidate as $action )
+        {
+            if ( is_array( $action ) )
+            {
+                $actions[] = $action;
+            }
+        }
+
+        return array_values( $actions );
+    }
+
+    /**
+     * @param mixed $value
+     *
+     * @return array<int, string>
+     */
+    private function sanitize_handoff_emails( mixed $value ): array
+    {
+        if ( is_string( $value ) )
+        {
+            $value = array_filter( array_map( 'trim', explode( ',', $value ) ) );
+        }
+
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $emails = [];
+        foreach ( $value as $email )
+        {
+            if ( ! is_scalar( $email ) )
+            {
+                continue;
+            }
+
+            $sanitized = sanitize_email( (string) $email );
+            if ( is_email( $sanitized ) )
+            {
+                $emails[] = $sanitized;
+            }
+        }
+
+        return array_values( array_unique( $emails ) );
+    }
+
+    /**
+     * @param mixed $value
+     *
+     * @return array<int, array{url: string, method: string}>
+     */
+    private function sanitize_handoff_webhooks( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $webhooks = [];
+        foreach ( $value as $webhook )
+        {
+            if ( ! is_array( $webhook ) )
+            {
+                continue;
+            }
+
+            $url = isset( $webhook['url'] ) && is_scalar( $webhook['url'] )
+                ? esc_url_raw( (string) $webhook['url'] )
+                : '';
+            $scheme = wp_parse_url( $url, PHP_URL_SCHEME );
+            if ( ! in_array( $scheme, [ 'http', 'https' ], true ) )
+            {
+                continue;
+            }
+
+            $method = isset( $webhook['method'] ) && is_scalar( $webhook['method'] )
+                ? strtoupper( sanitize_key( (string) $webhook['method'] ) )
+                : 'POST';
+
+            $webhooks[] = [
+                'url'    => $url,
+                'method' => in_array( $method, [ 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) ? $method : 'POST',
+            ];
+        }
+
+        return array_slice( $webhooks, 0, 10 );
+    }
+
+    /**
+     * @param mixed $value
+     *
+     * @return array<int, string>
+     */
+    private function normalize_lead_grade_list( mixed $value ): array
+    {
+        if ( is_string( $value ) )
+        {
+            $value = array_filter( array_map( 'trim', explode( ',', $value ) ) );
+        }
+
+        if ( ! is_array( $value ) )
+        {
+            return [ 'A', 'B' ];
+        }
+
+        $grades = [];
+        foreach ( $value as $grade )
+        {
+            if ( ! is_scalar( $grade ) )
+            {
+                continue;
+            }
+
+            $normalized = $this->normalize_lead_grade_value( (string) $grade );
+            if ( '' !== $normalized )
+            {
+                $grades[] = $normalized;
+            }
+        }
+
+        $grades = array_values( array_unique( $grades ) );
+        return [] === $grades ? [ 'A', 'B' ] : $grades;
+    }
+
+    private function normalize_lead_grade_value( string $grade ): string
+    {
+        $grade = strtoupper( trim( $grade ) );
+        if ( in_array( $grade, [ 'A', 'B', 'C' ], true ) )
+        {
+            return $grade;
+        }
+
+        if ( in_array( $grade, [ 'F', 'REJECT', 'REJECTED' ], true ) )
+        {
+            return 'Reject';
+        }
+
+        return '';
     }
 
     private function resolve_api_key( array $credential ): string | WP_Error
@@ -569,6 +931,25 @@ class Sentient_Forms_Local_Action_Execution_Service
             }
         }
 
+        if ( in_array( $action_code, [ 'lead_grading_v1', 'suggested_reply_v1' ], true ) )
+        {
+            $lead_profile = isset( $context['lead_profile'] ) && is_array( $context['lead_profile'] )
+                ? $context['lead_profile']
+                : [];
+            if ( [] !== $lead_profile )
+            {
+                $sections[] = sprintf(
+                    "<TRUSTED_LEAD_PROFILE_CONTEXT source=\"sentient_forms_lead_profile\" encoding=\"json\">\n%s\n</TRUSTED_LEAD_PROFILE_CONTEXT>",
+                    $this->xml_escape_prompt_text(
+                        (string) wp_json_encode(
+                            $lead_profile,
+                            JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+                        )
+                    )
+                );
+            }
+        }
+
         if ( [] === $sections )
         {
             return $prompt_template;
@@ -579,16 +960,20 @@ class Sentient_Forms_Local_Action_Execution_Service
 
     private function resolve_action_code( array $action, array $definition ): string
     {
-        foreach ( [ $action['code'] ?? null, $definition['code'] ?? null, $definition['action_code'] ?? null ] as $candidate )
+        foreach ( [ $action['code'] ?? null, $definition['code'] ?? null, $definition['action_code'] ?? null, $definition['template_code'] ?? null, $definition['action_template_code'] ?? null, $definition['central_action_id'] ?? null ] as $candidate )
         {
             if ( is_scalar( $candidate ) )
             {
                 $code = sanitize_key( (string) $candidate );
                 if ( '' !== $code )
                 {
-                    if ( class_exists( 'Sentient_Forms_Bundled_Action_Templates' ) && Sentient_Forms_Bundled_Action_Templates::is_managed_custom_action_code( $code ) )
+                    if ( class_exists( 'Sentient_Forms_Bundled_Action_Templates' ) )
                     {
-                        return Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $code );
+                        $template_code = Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code( $code );
+                        if ( '' !== $template_code )
+                        {
+                            return $template_code;
+                        }
                     }
 
                     return $code;
@@ -603,7 +988,19 @@ class Sentient_Forms_Local_Action_Execution_Service
     {
         return in_array(
             $action_code,
-            [ 'spam_detection_v1', 'content_validation_v1', 'entry_summary_v1', 'clarification_assistant_v1' ],
+            [
+                'spam_detection_v1',
+                'content_validation_v1',
+                'entry_summary_v1',
+                'clarification_assistant_v1',
+                'sentiment_urgency_v1',
+                'missing_information_v1',
+                'pain_point_intent_v1',
+                'routing_recommendation_v1',
+                'toxicity_moderation_v1',
+                'lead_grading_v1',
+                'suggested_reply_v1',
+            ],
             true
         );
     }

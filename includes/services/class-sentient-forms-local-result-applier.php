@@ -756,6 +756,18 @@ class Sentient_Forms_Local_Result_Applier
             ];
         }
 
+        $grade_gate = $this->resolve_post_execution_grade_gate( $post_execution_action, $execution_result );
+        if ( null !== $grade_gate )
+        {
+            return [
+                'index'          => $index,
+                'type'           => $type,
+                'status'         => 'skipped_grade_filter',
+                'grade'          => $grade_gate['grade'],
+                'allowed_grades' => $grade_gate['allowed_grades'],
+            ];
+        }
+
         return match ( $type )
         {
             'entry_note' => $this->run_post_execution_entry_note_action( $entry_id, $mapping, $form, $entry, $execution_result, $action, $post_execution_action, $index, $type ),
@@ -773,6 +785,89 @@ class Sentient_Forms_Local_Result_Applier
                 ),
             ],
         };
+    }
+
+    /**
+     * @param array<string, mixed> $post_execution_action Effect configuration.
+     * @param array<string, mixed> $execution_result Normalized execution result.
+     *
+     * @return array{grade: string, allowed_grades: array<int, string>}|null
+     */
+    private function resolve_post_execution_grade_gate( array $post_execution_action, array $execution_result ): ?array
+    {
+        $allowed = $post_execution_action['grade_filter'] ?? $post_execution_action['grades'] ?? $post_execution_action['allowed_grades'] ?? null;
+        if ( null === $allowed )
+        {
+            return null;
+        }
+
+        if ( is_string( $allowed ) )
+        {
+            $allowed = array_filter( array_map( 'trim', explode( ',', $allowed ) ) );
+        }
+
+        if ( ! is_array( $allowed ) )
+        {
+            return null;
+        }
+
+        $allowed_grades = [];
+        foreach ( $allowed as $grade )
+        {
+            if ( ! is_scalar( $grade ) )
+            {
+                continue;
+            }
+
+            $normalized = $this->normalize_lead_grade( (string) $grade );
+            if ( '' !== $normalized )
+            {
+                $allowed_grades[] = $normalized;
+            }
+        }
+
+        $allowed_grades = array_values( array_unique( $allowed_grades ) );
+        if ( [] === $allowed_grades )
+        {
+            return null;
+        }
+
+        $result     = is_array( $execution_result['result'] ?? null ) ? $execution_result['result'] : [];
+        $structured = is_array( $result['structured'] ?? null ) ? $result['structured'] : [];
+        $grade      = $this->normalize_lead_grade(
+            (string) (
+                $structured['grade']
+                ?? $result['grade']
+                ?? $this->resolve_path( $result, 'lead.grade' )
+                ?? ''
+            )
+        );
+
+        if ( '' !== $grade && in_array( $grade, $allowed_grades, true ) )
+        {
+            return null;
+        }
+
+        return [
+            'grade'          => $grade,
+            'allowed_grades' => $allowed_grades,
+        ];
+    }
+
+    private function normalize_lead_grade( string $grade ): string
+    {
+        $grade = strtoupper( trim( $grade ) );
+        if ( in_array( $grade, [ 'A', 'B', 'C' ], true ) )
+        {
+            return $grade;
+        }
+
+        if ( in_array( $grade, [ 'F', 'REJECT', 'REJECTED' ], true ) )
+        {
+            return 'Reject';
+        }
+
+        return '';
     }
 
     /**
@@ -1133,9 +1228,28 @@ class Sentient_Forms_Local_Result_Applier
             'provider'             => $execution_result['provider'] ?? null,
             'model'                => $execution_result['model'] ?? null,
             'execution_request_id' => $execution_result['execution_request_id'] ?? null,
+            'grade'                => $this->resolve_result_grade( $execution_result ),
             'form'                 => $form,
             'entry'                => $entry,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $execution_result Normalized execution result.
+     */
+    private function resolve_result_grade( array $execution_result ): string
+    {
+        $result     = is_array( $execution_result['result'] ?? null ) ? $execution_result['result'] : [];
+        $structured = is_array( $result['structured'] ?? null ) ? $result['structured'] : [];
+
+        return $this->normalize_lead_grade(
+            (string) (
+                $structured['grade']
+                ?? $result['grade']
+                ?? $this->resolve_path( $result, 'lead.grade' )
+                ?? ''
+            )
+        );
     }
 
     /**
@@ -1182,6 +1296,10 @@ class Sentient_Forms_Local_Result_Applier
                     'content'              => $result['content'] ?? '',
                     'classification'       => $structured['classification'] ?? $result['classification'] ?? '',
                     'confidence'           => $structured['confidence'] ?? $result['confidence'] ?? '',
+                    'grade'                => $structured['grade'] ?? $result['grade'] ?? '',
+                    'priority'             => $structured['recommended_priority'] ?? $structured['priority'] ?? $result['priority'] ?? '',
+                    'next_best_action'     => $structured['next_best_action'] ?? $result['next_best_action'] ?? '',
+                    'suggested_reply_draft'=> $structured['suggested_reply_draft'] ?? $result['suggested_reply_draft'] ?? '',
                     'summary'              => $structured['summary'] ?? $result['summary'] ?? '',
                     'justification'        => $structured['justification'] ?? $result['justification'] ?? '',
                     'structured_output'    => wp_json_encode( $structured ),

@@ -18,14 +18,15 @@
 
 	let {
 		id = 'reasoning-effort',
-		value = $bindable('default' as ReasoningRailValue),
+		value = $bindable(),
 		options,
 		disabled = false,
 		onchange
 	}: Props = $props();
 
 	const effortOptions = $derived(options.filter((option) => option.value !== 'default'));
-	const activeEffortIndex = $derived(effortOptions.findIndex((option) => option.value === value));
+	const currentValue = $derived<ReasoningRailValue>((value ?? 'default') as ReasoningRailValue);
+	const activeEffortIndex = $derived(effortOptions.findIndex((option) => option.value === currentValue));
 	const progress = $derived.by(() => {
 		if (activeEffortIndex < 0 || effortOptions.length <= 1) return 0;
 		return Math.round((activeEffortIndex / (effortOptions.length - 1)) * 100);
@@ -65,7 +66,7 @@
 <div
 	class="sf-reasoning-rail"
 	class:is-disabled={disabled}
-	class:is-default={value === 'default'}
+	class:is-default={currentValue === 'default'}
 	style={`--sf-reasoning-progress: ${progress}%;`}
 	data-testid="reasoning-effort-rail"
 >
@@ -77,8 +78,8 @@
 			id={`${id}-default`}
 			type="button"
 			class="sf-reasoning-rail__default"
-			class:is-active={value === 'default'}
-			aria-pressed={value === 'default'}
+			class:is-active={currentValue === 'default'}
+			aria-pressed={currentValue === 'default'}
 			{disabled}
 			onclick={() => choose('default')}
 			data-testid="reasoning-effort-default"
@@ -103,9 +104,9 @@
 				<button
 					type="button"
 					class={`sf-reasoning-rail__choice ${optionTone(option)}`}
-					class:is-active={option.value === value}
+					class:is-active={option.value === currentValue}
 					style={`--sf-option-left: ${optionPosition(index)}%;`}
-					aria-pressed={option.value === value}
+					aria-pressed={option.value === currentValue}
 					{disabled}
 					onclick={() => choose(option.value)}
 					data-testid={`reasoning-effort-${option.value}`}

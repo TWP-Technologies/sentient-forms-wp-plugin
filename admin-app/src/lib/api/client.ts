@@ -43,6 +43,12 @@ import type {
 	LicenseActivationResponsePayload,
 	LicenseActivationResult,
 	LicenseInfoResponse,
+	LeadProfileResponse,
+	LeadProfileSavePayload,
+	LeadValueDashboard,
+	LeadValueEntrySearchResponse,
+	LeadValueHistoricalRunCreatePayload,
+	LeadValueHistoricalRunResponse,
 	LocalActionTemplate,
 	LocalCustomActionCreatePayload,
 	LocalCustomActionRecord,
@@ -529,6 +535,130 @@ export class SentientFormsApiClient {
 			showNotifications: false,
 			...options
 		});
+	}
+
+	async getLeadProfile(
+		formSource: string,
+		formId: string | number,
+		options: RequestOptions = {}
+	): Promise<LeadProfileResponse> {
+		return this.request<LeadProfileResponse>(
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/profile`,
+			{ showNotifications: false, ...options }
+		);
+	}
+
+	async saveLeadProfile(
+		formSource: string,
+		formId: string | number,
+		payload: LeadProfileSavePayload,
+		options: RequestOptions = {}
+	): Promise<LeadProfileResponse> {
+		return this.request<LeadProfileResponse>(
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/profile`,
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+	}
+
+	async generateLeadProfile(
+		profileId: number,
+		payload: { lead_profile_consent?: boolean } = {},
+		options: RequestOptions = {}
+	): Promise<LeadProfileResponse> {
+		return this.request<LeadProfileResponse>(
+			`lead-value/profiles/${encodeURIComponent(String(profileId))}/generate`,
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+	}
+
+	async refreshLeadProfileAssistant(
+		profileId: number,
+		options: RequestOptions = {}
+	): Promise<LeadProfileResponse & { assistant?: Record<string, unknown> }> {
+		return this.request<LeadProfileResponse & { assistant?: Record<string, unknown> }>(
+			`lead-value/profiles/${encodeURIComponent(String(profileId))}/assistant`,
+			{
+				method: 'POST',
+				...options
+			}
+		);
+	}
+
+	async searchLeadValueEntries(
+		formSource: string,
+		formId: string | number,
+		params: { q?: string; limit?: number } = {},
+		options: RequestOptions = {}
+	): Promise<LeadValueEntrySearchResponse> {
+		const query = new URLSearchParams();
+		if (params.q) query.set('q', params.q);
+		if (params.limit) query.set('limit', String(params.limit));
+		const suffix = query.toString() ? `?${query}` : '';
+		return this.request<LeadValueEntrySearchResponse>(
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/entries/search${suffix}`,
+			{ showNotifications: false, ...options }
+		);
+	}
+
+	async getLeadValueDashboard(
+		formSource: string,
+		formId: string | number,
+		options: RequestOptions = {}
+	): Promise<LeadValueDashboard> {
+		return this.request<LeadValueDashboard>(
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/dashboard`,
+			{ showNotifications: false, ...options }
+		);
+	}
+
+	async listLeadValueHistoricalRuns(
+		formSource: string,
+		formId: string | number,
+		options: RequestOptions = {}
+	): Promise<{ runs: LeadValueHistoricalRunResponse['run'][] }> {
+		return this.request<{ runs: LeadValueHistoricalRunResponse['run'][] }>(
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/historical-runs`,
+			{ showNotifications: false, ...options }
+		);
+	}
+
+	async createLeadValueHistoricalRun(
+		formSource: string,
+		formId: string | number,
+		payload: LeadValueHistoricalRunCreatePayload,
+		options: RequestOptions = {}
+	): Promise<LeadValueHistoricalRunResponse> {
+		return this.request<LeadValueHistoricalRunResponse>(
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/historical-runs`,
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+	}
+
+	async startLeadValueHistoricalRun(
+		runId: number,
+		payload: { confirm_costs?: boolean } = {},
+		options: RequestOptions = {}
+	): Promise<LeadValueHistoricalRunResponse> {
+		return this.request<LeadValueHistoricalRunResponse>(
+			`lead-value/historical-runs/${encodeURIComponent(String(runId))}/start`,
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
 	}
 
 	async getLocalSupportBundle(options: RequestOptions = {}): Promise<LocalSupportBundle> {

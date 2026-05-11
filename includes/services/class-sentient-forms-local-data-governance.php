@@ -629,6 +629,8 @@ class Sentient_Forms_Local_Data_Governance
             'sentient_custom_actions',
             'sentient_form_mappings',
             'sentient_execution_events',
+            'sentient_lead_profiles',
+            'sentient_historical_analysis_runs',
             'sentient_migration_runs',
             'sentient_model_cache',
         ];

@@ -12,6 +12,16 @@ class Tests_Bundled_Action_Templates extends WP_UnitTestCase
         );
     }
 
+    public function test_extract_template_code_from_prefixed_dogfood_custom_action_code(): void
+    {
+        $this->assertSame(
+            'lead_grading_v1',
+            Sentient_Forms_Bundled_Action_Templates::extract_template_code_from_custom_action_code(
+                'dogfood_lead_grading_v1'
+            )
+        );
+    }
+
     public function test_bundled_provider_prompts_include_submission_context_placeholders(): void
     {
         foreach ( [ 'spam_detection_v1', 'content_validation_v1', 'entry_summary_v1', 'clarification_assistant_v1' ] as $template_code )

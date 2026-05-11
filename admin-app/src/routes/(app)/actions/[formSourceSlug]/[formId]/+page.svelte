@@ -3731,6 +3731,13 @@
 				/>
 			</div>
 			<Button variant="secondary" onclick={() => navigateToAppPath('/actions')}>All forms</Button>
+			<Button
+				variant="secondary"
+				onclick={() =>
+					navigateToAppPath(`/actions/${data.formSourceSlug}/${data.formId}/lead-value`)}
+			>
+				Lead value
+			</Button>
 			{#if providerEditUrl}
 				<a
 					href={providerEditUrl}

@@ -25,6 +25,7 @@ class Sentient_Forms_Managed_Proxy_Client
         'metadata'             => true,
         'temperature'          => true,
         'max_output_tokens'    => true,
+        'timeout_seconds'      => true,
         'reasoning'            => true,
         'tools'                => true,
         'tool_choice'          => true,
@@ -265,6 +266,18 @@ class Sentient_Forms_Managed_Proxy_Client
             }
 
             $normalized['temperature'] = (float) $payload['temperature'];
+        }
+
+        if ( isset( $payload['timeout_seconds'] ) )
+        {
+            $normalized['timeout_seconds'] = absint( $payload['timeout_seconds'] );
+            if ( $normalized['timeout_seconds'] < 1 || $normalized['timeout_seconds'] > 300 )
+            {
+                return new WP_Error(
+                    'sentient_managed_invalid_timeout_seconds',
+                    __( 'Managed execution timeout must be between 1 and 300 seconds.', 'sentient-forms' )
+                );
+            }
         }
 
         if ( isset( $payload['metadata'] ) )

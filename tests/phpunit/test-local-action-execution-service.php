@@ -393,6 +393,224 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertStringContainsString( 'Mention the requested next step first.', $content );
     }
 
+    public function test_post_execution_actions_can_be_filtered_by_lead_grade(): void
+    {
+        $calls = 0;
+        add_action(
+            'sentient_forms_test_grade_handoff',
+            static function () use ( &$calls ): void {
+                ++$calls;
+            },
+        );
+
+        $applier = new Sentient_Forms_Local_Result_Applier();
+        $mapping = [
+            'id'                  => 123,
+            'form_source'         => 'gravity_forms',
+            'form_id'             => '7',
+            'action_kind'         => 'custom_action',
+            'action_id'           => 456,
+            'effect_mapping_json' => [
+                'post_execution_actions' => [
+                    [
+                        'type'         => 'wp_hook',
+                        'hook_name'    => 'sentient_forms_test_grade_handoff',
+                        'grade_filter' => [ 'A', 'B' ],
+                    ],
+                ],
+            ],
+        ];
+        $action = [ 'display_name' => 'Lead Grading' ];
+
+        $skipped = $applier->apply(
+            $mapping,
+            [ 'id' => 7, 'title' => 'Contact' ],
+            [ 'id' => 99 ],
+            [
+                'result' => [
+                    'structured' => [
+                        'grade' => 'C',
+                    ],
+                ],
+            ],
+            $action
+        );
+
+        $this->assertIsArray( $skipped );
+        $this->assertSame( 0, $calls );
+        $this->assertSame( 'post_execution:wp_hook', $skipped['skipped'][0]['effect'] );
+        $this->assertSame( 'skipped_grade_filter', $skipped['skipped'][0]['reason'] );
+
+        $applied = $applier->apply(
+            $mapping,
+            [ 'id' => 7, 'title' => 'Contact' ],
+            [ 'id' => 99 ],
+            [
+                'result' => [
+                    'structured' => [
+                        'grade' => 'A',
+                    ],
+                ],
+            ],
+            $action
+        );
+
+        remove_all_actions( 'sentient_forms_test_grade_handoff' );
+
+        $this->assertIsArray( $applied );
+        $this->assertSame( 1, $calls );
+        $this->assertContains( 'post_execution:wp_hook', $applied['applied'] );
+    }
+
+    public function test_lead_grading_mapping_loads_active_profile_and_runs_grade_handoff(): void
+    {
+        global $wpdb;
+
+        $profiles = new Sentient_Forms_Lead_Profiles_Repository( $wpdb );
+        $profile_id = $profiles->save(
+            [
+                'form_source'              => 'gravity_forms',
+                'form_id'                  => '7',
+                'status'                   => 'active',
+                'profile_version'          => 4,
+                'consented_at'             => current_time( 'mysql' ),
+                'generated_profile_prompt' => 'Trusted generated grading prompt for high-intent service leads.',
+                'grading_rubric_json'      => [
+                    'scale' => [
+                        'A' => 'Strong fit',
+                        'B' => 'Likely fit',
+                    ],
+                ],
+                'good_lead_criteria_json'  => [
+                    'summary_text' => 'Good leads have clear fit, contactability, urgency, and a practical next step.',
+                ],
+                'bad_lead_criteria_json'   => [
+                    'summary_text' => 'Bad leads are spam-like, irrelevant, abusive, or impossible to contact.',
+                ],
+                'handoff_rules_json'       => [
+                    'grades'   => [ 'A' ],
+                    'webhooks' => [
+                        [
+                            'url'    => 'https://example.test/lead-handoff',
+                            'method' => 'POST',
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $profile_id );
+
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'prompt_template' => 'Grade this lead from {{form.title}} for {{name}}.',
+            ],
+            [
+                'code'         => 'dogfood_lead_grading_v1',
+                'display_name' => 'Lead Grading',
+            ]
+        );
+
+        $webhook_calls = [];
+        $capture_webhook = static function ( $preempt, array $parsed_args, string $url ) use ( &$webhook_calls ) {
+            $webhook_calls[] = [
+                'url'  => $url,
+                'args' => $parsed_args,
+            ];
+
+            return [
+                'response' => [
+                    'code'    => 204,
+                    'message' => 'No Content',
+                ],
+                'body'     => '',
+            ];
+        };
+        add_filter( 'pre_http_request', $capture_webhook, 10, 3 );
+
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'grade'                => 'A',
+                    'confidence'           => 0.91,
+                    'recommended_priority' => 'urgent',
+                    'next_best_action'     => 'Call within one business hour.',
+                    'justification'        => 'The request matches the trusted profile and includes a clear project.',
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        remove_filter( 'pre_http_request', $capture_webhook, 10 );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'succeeded', $result['status'] );
+        $this->assertSame( 4, $result['result']['structured']['profile_version'] ?? null );
+        $this->assertCount( 1, $client->chat_calls );
+        $prompt = (string) ( $client->chat_calls[0]['payload']['messages'][1]['content'] ?? '' );
+        $this->assertStringContainsString( '<TRUSTED_LEAD_PROFILE_CONTEXT source="sentient_forms_lead_profile" encoding="json">', $prompt );
+        $this->assertStringContainsString( 'Trusted generated grading prompt', $prompt );
+
+        $this->assertCount( 1, $webhook_calls );
+        $this->assertSame( 'https://example.test/lead-handoff', $webhook_calls[0]['url'] );
+        $this->assertSame( 'POST', $webhook_calls[0]['args']['method'] ?? null );
+        $this->assertContains( 'post_execution:webhook', $result['effects']['applied'] ?? [] );
+    }
+
+    public function test_lead_grading_mapping_requires_active_consented_profile(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'prompt_template' => 'Grade this lead from {{form.title}} for {{name}}.',
+            ],
+            [
+                'code'         => 'dogfood_lead_grading_v1',
+                'display_name' => 'Lead Grading',
+            ]
+        );
+
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'grade'                => 'A',
+                    'confidence'           => 0.91,
+                    'recommended_priority' => 'urgent',
+                    'justification'        => 'This should not run without a consented lead profile.',
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_lead_profile_required', $result->get_error_code() );
+        $this->assertSame( [], $client->chat_calls );
+    }
+
     public function test_executes_imported_bundled_openrouter_mapping_without_saved_credential_id(): void
     {
         $fixture = $this->create_local_openrouter_mapping(
@@ -2243,6 +2461,8 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'sentient_form_mappings',
                 'sentient_execution_events',
                 'sentient_model_cache',
+                'sentient_lead_profiles',
+                'sentient_historical_analysis_runs',
             ] as $table
         )
         {

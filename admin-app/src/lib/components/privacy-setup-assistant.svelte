@@ -261,7 +261,6 @@
 						<h2
 							id="privacy-setup-assistant-title"
 							class="sf:text-xl sf:font-semibold sf:text-white"
-							style="color: #ffffff;"
 						>
 							Choose how much Sentient Forms keeps locally
 						</h2>

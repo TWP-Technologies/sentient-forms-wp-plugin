@@ -71,6 +71,7 @@ final class Sentient_Forms_REST_API
             Sentient_Forms_Site_Context_Controller::class,
             Sentient_Forms_Models_Controller::class,
             Sentient_Forms_Form_Suggestions_Controller::class,
+            Sentient_Forms_Lead_Value_Controller::class,
             // Register suggest route controller before generic form-actions item routes
             // to prevent '/actions/suggest' from being matched as {local_mapping_id}.
             Sentient_Forms_Form_Actions_Controller::class,

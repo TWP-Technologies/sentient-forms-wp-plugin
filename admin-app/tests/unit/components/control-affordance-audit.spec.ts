@@ -8,7 +8,8 @@ const mappingRoutePath = 'routes/(app)/actions/[formSourceSlug]/[formId]/+page.s
 const allowedPrimitiveRawButtons = new Map<string, number>([
 	['lib/components/ui/button.svelte', 1],
 	['lib/components/ui/toggle.svelte', 1],
-	['lib/components/ui/mapping-dependency-graph-node.svelte', 1]
+	['lib/components/ui/mapping-dependency-graph-node.svelte', 1],
+	['lib/components/ui/reasoning-effort-rail.svelte', 2]
 ]);
 
 type RawButtonHit = {

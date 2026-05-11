@@ -1321,6 +1321,150 @@ export interface FormAllActionConfigsResponse {
 	configs: Record<string, FormActionConfig>;
 }
 
+export type LeadGrade = 'A' | 'B' | 'C' | 'Reject';
+
+export interface LeadProfileCriteria {
+	summary_text: string;
+	must_have_signals?: string[];
+	disqualifiers?: string[];
+	updated_at?: string;
+}
+
+export interface LeadProfileHandoffRules {
+	email_recipients: string[];
+	webhooks: Array<{ url: string; method?: string }>;
+	grades: LeadGrade[];
+}
+
+export interface LeadProfileReadinessRequirement {
+	key: string;
+	label: string;
+	met: boolean;
+	severity: 'blocker' | 'recommendation' | string;
+	detail: string;
+}
+
+export interface LeadProfileReadiness {
+	ready: boolean;
+	requirements: LeadProfileReadinessRequirement[];
+	blockers: LeadProfileReadinessRequirement[];
+	site_context: {
+		summary_text: string;
+		word_count: number;
+		consented: boolean;
+		consent_status: string;
+		source?: string | null;
+		updated_at?: string | null;
+	};
+	spam_guidance: {
+		positive_count: number;
+		negative_count: number;
+		positive?: Array<Record<string, unknown>>;
+		negative?: Array<Record<string, unknown>>;
+		sources?: Record<string, unknown>;
+	};
+	good_word_count: number;
+	bad_word_count: number;
+}
+
+export interface LeadProfileRecord {
+	id: number;
+	form_source: string;
+	form_id: string;
+	status: string;
+	profile_version: number;
+	consented_at: string | null;
+	site_context_snapshot?: Record<string, unknown> | null;
+	spam_guidance_snapshot?: Record<string, unknown> | null;
+	good_lead_criteria: LeadProfileCriteria;
+	bad_lead_criteria: LeadProfileCriteria;
+	grading_rubric?: Record<string, unknown> | null;
+	example_entries: Array<Record<string, unknown>>;
+	generated_profile_prompt?: string | null;
+	generation_metadata?: Record<string, unknown> | null;
+	assistant?: {
+		status?: string;
+		generated_at?: string;
+		questions?: Array<{ key: string; question: string; why: string }>;
+		recommendations?: string[];
+	} | null;
+	handoff_rules: LeadProfileHandoffRules;
+	created_by_user_id?: number | null;
+	created_at?: string | null;
+	updated_at?: string | null;
+}
+
+export interface LeadProfileResponse {
+	profile: LeadProfileRecord | null;
+	readiness: LeadProfileReadiness;
+	dashboard?: LeadValueDashboard;
+}
+
+export interface LeadProfileSavePayload {
+	lead_profile_consent?: boolean;
+	good_lead_criteria?: LeadProfileCriteria;
+	bad_lead_criteria?: LeadProfileCriteria;
+	example_entries?: Array<Record<string, unknown>>;
+	handoff_rules?: Partial<LeadProfileHandoffRules>;
+}
+
+export interface LeadValueHistoricalRun {
+	id: number;
+	form_source: string;
+	form_id: string;
+	action_code: string;
+	lead_profile_id?: number | null;
+	selected_entry_ids: string[];
+	filters: Record<string, unknown>;
+	estimated_entry_count: number;
+	estimated_managed_credits?: number | null;
+	estimated_direct_provider_cost?: Record<string, unknown> | null;
+	dry_run: boolean;
+	status: string;
+	progress?: { processed?: number; total?: number; errors?: Array<Record<string, unknown>> } | null;
+	result_summary?: Record<string, unknown> | null;
+	created_by_user_id?: number | null;
+	created_at?: string | null;
+	updated_at?: string | null;
+}
+
+export interface LeadValueHistoricalRunResponse {
+	run: LeadValueHistoricalRun;
+	message?: string;
+}
+
+export interface LeadValueHistoricalRunCreatePayload {
+	action_code?: 'lead_grading_v1' | 'suggested_reply_v1' | string;
+	lead_profile_id?: number | null;
+	entry_ids?: Array<string | number>;
+	filters?: Record<string, unknown>;
+	dry_run?: boolean;
+}
+
+export interface LeadValueDashboard {
+	form_source: string;
+	form_id: string;
+	event_count: number;
+	successful_events: number;
+	failed_events: number;
+	grades: Record<LeadGrade | 'ungraded', number>;
+	suggested_replies: number;
+	historical_runs: LeadValueHistoricalRun[];
+}
+
+export interface LeadValueEntrySearchEntry {
+	id: string;
+	date_created?: string | null;
+	status?: string | null;
+	field_summary: Array<{ field_id: string; label: string; value: string }>;
+}
+
+export interface LeadValueEntrySearchResponse {
+	entries: LeadValueEntrySearchEntry[];
+	form_source: string;
+	form_id: number;
+}
+
 export type CustomActionStatus = 'active' | 'archived';
 
 /**
