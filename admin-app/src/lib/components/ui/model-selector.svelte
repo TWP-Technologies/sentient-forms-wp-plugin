@@ -1081,7 +1081,7 @@
 			return `Managed Service credit estimate from ${source}${suffix}.`;
 		}
 
-		return `Provider-cost estimate from ${source}${suffix}. Direct OpenRouter runs do not spend managed credits.`;
+		return `Provider-cost estimate from ${source}${suffix}. Local OpenRouter runs do not spend managed credits. Provider charges are billed by OpenRouter or the configured provider account.`;
 	}
 
 	function formatUsd(amount: number): string {

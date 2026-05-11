@@ -248,19 +248,20 @@ async function coverSettingsRetentionControls(page: Page): Promise<void> {
 async function coverSiteContextWarningFlow(page: Page): Promise<void> {
 	await ensureSentientFormsSpa(page, '/settings/context');
 
-	const generateButton = page.getByRole('button', { name: 'Generate Site Context' });
-	if (await generateButton.isVisible().catch(() => false)) {
-		const piiAck = page.getByRole('checkbox').first();
-		await piiAck.check();
-		await generateButton.click();
-		await expect(page.getByRole('button', { name: /Regenerate/ })).toBeVisible();
+	const generationConsent = page.getByTestId('site-context-generation-consent');
+	await expect(generationConsent).toBeVisible();
+	if (!(await generationConsent.isChecked())) {
+		await generationConsent.check();
 	}
 
-	const regenerateButton = page.getByRole('button', { name: /Regenerate/ }).first();
-	await expect(regenerateButton).toBeVisible();
-	await regenerateButton.click();
-	const confirmAlert = page.getByText('Confirm Regeneration').locator('..');
-	await expect(confirmAlert).toBeVisible();
+	const generateButton = page.getByTestId('site-context-generate-now');
+	await expect(generateButton).toBeVisible();
+	await expect(generateButton).toBeEnabled();
+
+	const withdrawButton = page.getByRole('button', { name: 'Withdraw consent' });
+	await expect(withdrawButton).toBeVisible();
+	await withdrawButton.click();
+	await expect(page.getByRole('heading', { name: 'Withdraw Site Context consent?' })).toBeVisible();
 	await attachViewportScreenshot(page, 'site-context-warnings');
 	await page.getByRole('button', { name: 'Cancel' }).click();
 }

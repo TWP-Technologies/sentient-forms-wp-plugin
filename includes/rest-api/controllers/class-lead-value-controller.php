@@ -15,6 +15,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
     private const MIN_SITE_CONTEXT_WORDS = 80;
     private const MIN_SPAM_GUIDANCE_EXAMPLES = 3;
     private const MIN_CRITERIA_WORDS = 12;
+    private const PROFILE_GENERATION_HOOK = 'sentient_forms_generate_lead_profile';
 
     protected string $rest_base = 'lead-value';
 
@@ -54,6 +55,8 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
             null,
             $this->events
         );
+
+        add_action( self::PROFILE_GENERATION_HOOK, [ $this, 'process_profile_generation_job' ], 10, 1 );
     }
 
     public function register_routes(): void
@@ -123,6 +126,11 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
                             'lead_profile_consent' => [
                                 'type'              => 'boolean',
                                 'sanitize_callback' => 'rest_sanitize_boolean',
+                            ],
+                            'async' => [
+                                'type'              => 'boolean',
+                                'sanitize_callback' => 'rest_sanitize_boolean',
+                                'default'           => false,
                             ],
                         ]
                     ),
@@ -359,6 +367,28 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
             );
         }
 
+        if ( rest_sanitize_boolean( $request->get_param( 'async' ) ) )
+        {
+            return $this->queue_profile_generation( $profile, $consented, $readiness );
+        }
+
+        $result = $this->run_profile_generation( $profile, $consented, $readiness );
+        if ( is_wp_error( $result ) )
+        {
+            return $result;
+        }
+
+        return $this->prepare_item_for_response( $result );
+    }
+
+    /**
+     * @param array<string, mixed> $profile
+     * @param array<string, mixed> $readiness
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    private function run_profile_generation( array $profile, bool $consented, array $readiness ): array | WP_Error
+    {
         $site_context  = $this->build_site_context_snapshot();
         $spam_guidance = $this->build_spam_guidance_snapshot( (string) $profile['form_source'], (string) $profile['form_id'] );
         $assistant     = $this->build_profile_assistant( $profile, $readiness );
@@ -398,7 +428,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
             [
                 'status'                     => 'active',
                 'profile_version'            => $version,
-                'consented_at'               => $profile['consented_at'] ?? current_time( 'mysql' ),
+                'consented_at'               => $profile['consented_at'] ?? ( $consented ? current_time( 'mysql' ) : null ),
                 'site_context_snapshot_json' => $site_context,
                 'spam_guidance_snapshot_json'=> $spam_guidance,
                 'grading_rubric_json'        => $rubric,
@@ -415,12 +445,182 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         }
 
         $saved = $this->profiles->get( $saved_id );
-        return $this->prepare_item_for_response(
+        return [
+            'profile'   => $this->format_profile( $saved ?? $profile ),
+            'readiness' => $this->build_readiness( (string) $profile['form_source'], (string) $profile['form_id'], $saved ?? $profile ),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $profile
+     * @param array<string, mixed> $readiness
+     */
+    private function queue_profile_generation( array $profile, bool $consented, array $readiness ): WP_REST_Response | WP_Error
+    {
+        $profile_id = absint( $profile['id'] ?? 0 );
+        if ( $profile_id <= 0 )
+        {
+            return $this->not_found_error( 'sentient_forms_lead_profile_not_found', __( 'Lead profile could not be found.', 'sentient-forms' ) );
+        }
+
+        $job_id  = sprintf( 'lead-profile-%d-%s', $profile_id, wp_generate_uuid4() );
+        $payload = [
+            'profile_id'           => $profile_id,
+            'lead_profile_consent' => $consented,
+            'job_id'               => $job_id,
+        ];
+        $scheduled = $this->schedule_profile_generation_job( $payload );
+        if ( ! $scheduled['scheduled'] )
+        {
+            return new WP_Error(
+                'sentient_forms_lead_profile_generation_schedule_failed',
+                __( 'Lead profile generation could not be queued.', 'sentient-forms' ),
+                [ 'status' => 500 ]
+            );
+        }
+
+        $metadata = [
+            'generated_at'      => current_time( 'mysql' ),
+            'generation_mode'   => 'managed_augmented_profile_v1',
+            'llm_augmentation'  => [
+                'status'              => 'queued',
+                'job_id'              => $job_id,
+                'action_scheduler_id' => $scheduled['action_id'],
+                'queued_at'           => current_time( 'mysql' ),
+            ],
+            'readiness_version' => 'lead_profile_readiness_v1',
+        ];
+
+        $saved_id = $this->profiles->save(
             [
-                'profile'   => $this->format_profile( $saved ?? $profile ),
-                'readiness' => $this->build_readiness( (string) $profile['form_source'], (string) $profile['form_id'], $saved ?? $profile ),
+                'consented_at'             => $profile['consented_at'] ?? ( $consented ? current_time( 'mysql' ) : null ),
+                'generation_metadata_json' => $metadata,
+            ],
+            $profile_id
+        );
+        if ( is_wp_error( $saved_id ) )
+        {
+            return $saved_id;
+        }
+
+        $saved    = $this->profiles->get( $saved_id ) ?? $profile;
+        $response = $this->prepare_item_for_response(
+            [
+                'profile'        => $this->format_profile( $saved ),
+                'readiness'      => $this->build_readiness( (string) $profile['form_source'], (string) $profile['form_id'], $saved ),
+                'generation_job' => [
+                    'id'                  => $job_id,
+                    'status'              => 'queued',
+                    'action_scheduler_id' => $scheduled['action_id'],
+                ],
             ]
         );
+        $response->set_status( 202 );
+
+        return $response;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     *
+     * @return array{scheduled: bool, action_id: int|null}
+     */
+    private function schedule_profile_generation_job( array $payload ): array
+    {
+        $args  = [ $payload ];
+        $group = (string) apply_filters( 'sentient_forms_async_scheduler_group', 'sentient_forms' );
+
+        if ( function_exists( 'as_enqueue_async_action' ) )
+        {
+            $action_id = as_enqueue_async_action( self::PROFILE_GENERATION_HOOK, $args, $group );
+            return [
+                'scheduled' => (bool) $action_id,
+                'action_id' => is_numeric( $action_id ) ? (int) $action_id : null,
+            ];
+        }
+
+        if ( function_exists( 'as_schedule_single_action' ) )
+        {
+            $action_id = as_schedule_single_action( time() + 1, self::PROFILE_GENERATION_HOOK, $args, $group );
+            if ( is_wp_error( $action_id ) )
+            {
+                return [ 'scheduled' => false, 'action_id' => null ];
+            }
+
+            return [
+                'scheduled' => (bool) $action_id,
+                'action_id' => is_numeric( $action_id ) ? (int) $action_id : null,
+            ];
+        }
+
+        return [
+            'scheduled' => (bool) wp_schedule_single_event( time() + 1, self::PROFILE_GENERATION_HOOK, $args ),
+            'action_id' => null,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    public function process_profile_generation_job( array $payload ): void
+    {
+        if ( isset( $payload[0] ) && is_array( $payload[0] ) && ! isset( $payload['profile_id'] ) )
+        {
+            $payload = $payload[0];
+        }
+
+        $profile_id = absint( $payload['profile_id'] ?? 0 );
+        $job_id     = sanitize_text_field( (string) ( $payload['job_id'] ?? '' ) );
+        if ( $profile_id <= 0 )
+        {
+            return;
+        }
+
+        $profile = $this->profiles->get( $profile_id );
+        if ( null === $profile )
+        {
+            return;
+        }
+
+        $this->mark_profile_generation_job( $profile_id, $job_id, 'running' );
+
+        $consented = ! empty( $payload['lead_profile_consent'] ) || ! empty( $profile['consented_at'] );
+        $readiness = $this->build_readiness(
+            (string) $profile['form_source'],
+            (string) $profile['form_id'],
+            array_merge( $profile, [ 'consented_at' => $consented ? ( $profile['consented_at'] ?? current_time( 'mysql' ) ) : null ] )
+        );
+
+        if ( ! $readiness['ready'] )
+        {
+            $this->mark_profile_generation_job( $profile_id, $job_id, 'failed', 'lead_profile_not_ready' );
+            return;
+        }
+
+        $result = $this->run_profile_generation( $profile, $consented, $readiness );
+        if ( is_wp_error( $result ) )
+        {
+            $this->mark_profile_generation_job( $profile_id, $job_id, 'failed', $result->get_error_code() );
+        }
+    }
+
+    private function mark_profile_generation_job( int $profile_id, string $job_id, string $status, ?string $reason = null ): void
+    {
+        $metadata = [
+            'generated_at'      => current_time( 'mysql' ),
+            'generation_mode'   => 'managed_augmented_profile_v1',
+            'llm_augmentation'  => array_filter(
+                [
+                    'status' => sanitize_key( $status ),
+                    'job_id' => $job_id,
+                    'reason' => null === $reason ? null : sanitize_key( $reason ),
+                ],
+                static fn ( mixed $value ): bool => null !== $value && '' !== $value
+            ),
+            'readiness_version' => 'lead_profile_readiness_v1',
+        ];
+
+        $this->profiles->save( [ 'generation_metadata_json' => $metadata ], $profile_id );
     }
 
     public function search_entries( WP_REST_Request $request ): WP_REST_Response | WP_Error
@@ -1310,8 +1510,8 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
             (int) ( $profile['id'] ?? 0 ),
             wp_generate_uuid4()
         );
-        $model = apply_filters( 'sentient_forms_lead_profile_generation_model', 'openai/gpt-5.5-pro', $profile );
-        $model = is_scalar( $model ) && '' !== trim( (string) $model ) ? sanitize_text_field( (string) $model ) : 'openai/gpt-5.5-pro';
+        $model = apply_filters( 'sentient_forms_lead_profile_generation_model', 'openai/gpt-5.5', $profile );
+        $model = is_scalar( $model ) && '' !== trim( (string) $model ) ? sanitize_text_field( (string) $model ) : 'openai/gpt-5.5';
 
         $payload = [
             'site_id'              => $context['site_id'],
@@ -1330,9 +1530,10 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
                 'form_id'     => sanitize_text_field( (string) ( $profile['form_id'] ?? '' ) ),
             ],
             'temperature'          => 0.1,
-            'max_output_tokens'    => 4096,
+            'max_output_tokens'    => 6000,
             'reasoning'            => [
                 'effort'  => 'xhigh',
+                // phpcs:ignore WordPressVIPMinimum.Performance.WPQueryParams.PostNotIn_exclude -- OpenRouter reasoning payload key, not a WP_Query parameter.
                 'exclude' => true,
             ],
             'tools'                => [
@@ -1412,8 +1613,8 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
     private function build_managed_profile_generation_prompt( array $profile, array $site_context, array $spam_guidance, array $rubric, string $local_prompt ): string
     {
         return trim(
-            "Construct a consent-gated lead grading profile for Sentient Forms. Use the trusted local inputs as the authority, use web search/fetch only to resolve current public context that materially improves rubric clarity, and never copy a competitor's workflow.\n\n"
-            . "Return JSON matching the output contract. The generated_profile_prompt must be a production prompt segment that preserves trusted/untrusted separation, references the current Spam Guidance, includes explicit grade justification requirements, and keeps runtime scoring to A/B/C/Reject rather than numeric scoring.\n\n"
+            "Construct a consent-gated lead grading profile for Sentient Forms. Treat trusted local inputs as authority. Web search/fetch tools are enabled, but use them only when current public context would materially improve rubric clarity; do not browse for generic advice, competitor copying, or facts already present locally.\n\n"
+            . "Return only compact JSON with keys: generated_profile_prompt, grading_rubric, assistant_questions, improvement_notes. The generated_profile_prompt must be a production prompt segment that preserves trusted/untrusted separation, references the current Spam Guidance, requires grade justification, and keeps runtime scoring to A/B/C/Reject rather than numeric scoring.\n\n"
             . "<TRUSTED_LOCAL_PROFILE encoding=\"json\">\n" . wp_json_encode(
                 [
                     'profile_id'          => $profile['id'] ?? null,
@@ -1425,9 +1626,15 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
                     'site_context'        => $site_context,
                     'spam_guidance'       => $spam_guidance,
                     'local_rubric'        => $rubric,
-                    'local_prompt_draft'  => $local_prompt,
+                    'local_prompt_requirements' => [
+                        'preserve_trusted_untrusted_boundaries',
+                        'reference_current_spam_guidance',
+                        'require_grade_justification',
+                        'use_a_b_c_reject_grades',
+                    ],
+                    'local_prompt_digest' => hash( 'sha256', $local_prompt ),
                 ],
-                JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE
+                JSON_UNESCAPED_UNICODE
             ) . "\n</TRUSTED_LOCAL_PROFILE>"
         );
     }
@@ -1510,7 +1717,32 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         }
 
         $decoded = json_decode( $text, true );
+        if ( is_array( $decoded ) )
+        {
+            return $decoded;
+        }
+
+        $object_text = $this->extract_json_object_text( $text );
+        if ( '' === $object_text )
+        {
+            return [];
+        }
+
+        $decoded = json_decode( $object_text, true );
         return is_array( $decoded ) ? $decoded : [];
+    }
+
+    private function extract_json_object_text( string $text ): string
+    {
+        $text  = trim( $text );
+        $start = strpos( $text, '{' );
+        $end   = strrpos( $text, '}' );
+        if ( false === $start || false === $end || $end <= $start )
+        {
+            return '';
+        }
+
+        return trim( substr( $text, $start, $end - $start + 1 ) );
     }
 
     /**

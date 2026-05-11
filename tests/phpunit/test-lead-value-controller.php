@@ -39,6 +39,8 @@ class Sentient_Forms_Lead_Value_Test_Managed_Proxy_Client extends Sentient_Forms
     /** @var array<int, array{proxy_api_key: string, payload: array<string, mixed>}> */
     public array $execute_calls = [];
 
+    public ?string $output_text = null;
+
     public function execute( string $proxy_api_key, array $payload ): array | WP_Error
     {
         $this->execute_calls[] = [
@@ -48,10 +50,10 @@ class Sentient_Forms_Lead_Value_Test_Managed_Proxy_Client extends Sentient_Forms
 
         return [
             'execution_request_id' => $payload['execution_request_id'] ?? 'lead-profile-managed-test',
-            'model'                => $payload['model'] ?? 'openai/gpt-5.5-pro',
+            'model'                => $payload['model'] ?? 'openai/gpt-5.5',
             'status'               => 'succeeded',
             'output'               => [
-                'text' => wp_json_encode(
+                'text' => $this->output_text ?? wp_json_encode(
                     [
                         'generated_profile_prompt' => 'Managed augmented profile prompt with current market context and trusted spam guidance.',
                         'grading_rubric'           => [
@@ -244,6 +246,125 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertContains( [ 'type' => 'openrouter:web_fetch' ], $payload['tools'] );
         $this->assertSame( 'openrouter:web_search', $payload['tools'][0]['type'] ?? null );
         $this->assertSame( 'auto', $payload['tool_choice'] ?? null );
+        $this->assertSame( 6000, $payload['max_output_tokens'] );
+    }
+
+    public function test_profile_generation_extracts_wrapped_managed_json(): void
+    {
+        $this->seed_ready_site_context();
+        $this->seed_spam_guidance();
+
+        $created = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/lead-value/forms/gravity_forms/7/profile',
+            [
+                'lead_profile_consent' => true,
+                'good_lead_criteria'   => [
+                    'summary_text' => 'A good lead has a real business need, a reachable email address, service-area fit, and clear intent to discuss a project.',
+                ],
+                'bad_lead_criteria'    => [
+                    'summary_text' => 'A bad lead is irrelevant, spam-like, abusive, outside the service area, impossible to contact, or only asking for unrelated backlinks.',
+                ],
+            ],
+            201
+        );
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'site_id'        => '11111111-1111-4111-8111-111111111111',
+                'proxy_api_key'  => 'proxy-profile-generation-test',
+            ]
+        );
+
+        $managed_proxy              = new Sentient_Forms_Lead_Value_Test_Managed_Proxy_Client();
+        $managed_proxy->output_text = 'Here is the requested JSON: '
+            . wp_json_encode(
+                [
+                    'generated_profile_prompt' => 'Wrapped managed profile prompt.',
+                    'grading_rubric'           => [
+                        'scale' => [
+                            'A'      => 'Wrapped strong fit',
+                            'B'      => 'Wrapped likely fit',
+                            'C'      => 'Wrapped possible fit',
+                            'Reject' => 'Wrapped reject',
+                        ],
+                    ],
+                    'assistant_questions'      => [],
+                    'improvement_notes'        => [],
+                ]
+            );
+        $controller = new Sentient_Forms_Lead_Value_Controller(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            $managed_proxy
+        );
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/profiles/' . $created['profile']['id'] . '/generate' );
+        $request->set_param( 'id', (int) $created['profile']['id'] );
+        $request->set_param( 'lead_profile_consent', true );
+        $response = $controller->generate_profile( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data = $response->get_data();
+        $this->assertIsArray( $data );
+        $this->assertSame( 'managed_augmented_profile_v1', $data['profile']['generation_metadata']['generation_mode'] );
+        $this->assertSame( 'Wrapped managed profile prompt.', $data['profile']['generated_profile_prompt'] );
+        $this->assertSame( 'Wrapped strong fit', $data['profile']['grading_rubric']['scale']['A'] );
+    }
+
+    public function test_profile_generation_can_queue_async_job_without_blocking_managed_request(): void
+    {
+        $this->seed_ready_site_context();
+        $this->seed_spam_guidance();
+
+        $created = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/lead-value/forms/gravity_forms/7/profile',
+            [
+                'lead_profile_consent' => true,
+                'good_lead_criteria'   => [
+                    'summary_text' => 'A good lead has a real business need, a reachable email address, service-area fit, and clear intent to discuss a project.',
+                ],
+                'bad_lead_criteria'    => [
+                    'summary_text' => 'A bad lead is irrelevant, spam-like, abusive, outside the service area, impossible to contact, or only asking for unrelated backlinks.',
+                ],
+            ],
+            201
+        );
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'site_id'        => '11111111-1111-4111-8111-111111111111',
+                'proxy_api_key'  => 'proxy-profile-generation-test',
+            ]
+        );
+
+        $managed_proxy = new Sentient_Forms_Lead_Value_Test_Managed_Proxy_Client();
+        $controller    = new Sentient_Forms_Lead_Value_Controller(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            $managed_proxy
+        );
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/profiles/' . $created['profile']['id'] . '/generate' );
+        $request->set_param( 'id', (int) $created['profile']['id'] );
+        $request->set_param( 'lead_profile_consent', true );
+        $request->set_param( 'async', true );
+        $response = $controller->generate_profile( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $this->assertSame( 202, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertIsArray( $data );
+        $this->assertSame( 'queued', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'queued', $data['profile']['generation_metadata']['llm_augmentation']['status'] ?? null );
+        $this->assertSame( [], $managed_proxy->execute_calls );
     }
 
     public function test_historical_dry_run_estimates_credits_without_execution(): void

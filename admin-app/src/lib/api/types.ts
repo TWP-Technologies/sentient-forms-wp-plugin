@@ -1398,6 +1398,11 @@ export interface LeadProfileResponse {
 	profile: LeadProfileRecord | null;
 	readiness: LeadProfileReadiness;
 	dashboard?: LeadValueDashboard;
+	generation_job?: {
+		id: string;
+		status: string;
+		action_scheduler_id?: number | null;
+	};
 }
 
 export interface LeadProfileSavePayload {
@@ -1406,6 +1411,11 @@ export interface LeadProfileSavePayload {
 	bad_lead_criteria?: LeadProfileCriteria;
 	example_entries?: Array<Record<string, unknown>>;
 	handoff_rules?: Partial<LeadProfileHandoffRules>;
+}
+
+export interface LeadProfileGeneratePayload {
+	lead_profile_consent?: boolean;
+	async?: boolean;
 }
 
 export interface LeadValueHistoricalRun {

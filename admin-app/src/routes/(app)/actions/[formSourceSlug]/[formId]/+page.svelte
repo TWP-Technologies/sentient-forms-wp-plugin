@@ -3477,7 +3477,7 @@
 	<!-- Form-Level Action Config Modal - Inside Section slot for Svelte 5 reactivity -->
 	{#if configuringActionId}
 		<div
-			class="sf-wp-modal-backdrop sf:bg-black/40 sf:flex sf:items-center sf:justify-center sf:p-2 sf:sm:p-4"
+			class="sf-wp-modal-backdrop sf-wp-modal-backdrop--elevated sf:bg-black/40 sf:flex sf:items-center sf:justify-center sf:p-2 sf:sm:p-4"
 			onclick={handleFormLevelDefaultsBackdropClick}
 			onkeydown={(event) => {
 				if (event.key === 'Escape') cancelFormLevelConfig();

@@ -68,9 +68,12 @@
 	const readiness = $derived(profileResponse?.readiness ?? null);
 	const blockers = $derived(readiness?.blockers ?? []);
 	const ready = $derived(Boolean(readiness?.ready));
+	const generationStatus = $derived(resolveGenerationStatus(profile?.generation_metadata));
+	const generationPending = $derived(isGenerationPending(generationStatus));
 	const gradeTotal = $derived(
 		Object.values(dashboard?.grades ?? {}).reduce((total, count) => total + Number(count ?? 0), 0)
 	);
+	let generationPollToken = 0;
 
 	onMount(() => {
 		void loadLeadValue();
@@ -89,6 +92,10 @@
 			dashboard = dashboardData;
 			historicalRuns = runData.runs;
 			applyDrafts(profileData);
+			const profileId = profileData.profile?.id;
+			if (profileId && isGenerationPending(resolveGenerationStatus(profileData.profile.generation_metadata))) {
+				void pollProfileGeneration(profileId);
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Lead value workspace failed to load.';
 		} finally {
@@ -202,14 +209,51 @@
 			const saved = await saveProfile(false);
 			const profileId = saved?.profile?.id;
 			if (!profileId) throw new Error('Save the lead profile before generation.');
-			const response = await client.generateLeadProfile(profileId, { lead_profile_consent: consent });
+			const response = await client.generateLeadProfile(profileId, {
+				lead_profile_consent: consent,
+				async: true
+			});
 			profileResponse = response;
 			dashboard = response.dashboard ?? dashboard;
-			notifications.success('Lead grading profile generated');
+			if (isGenerationPending(resolveGenerationStatus(response.profile?.generation_metadata))) {
+				notifications.success('Lead grading profile generation queued');
+				await pollProfileGeneration(profileId);
+			} else {
+				notifications.success('Lead grading profile generated');
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Lead profile could not be generated.';
 		} finally {
 			generating = false;
+		}
+	}
+
+	async function pollProfileGeneration(profileId: number) {
+		const token = ++generationPollToken;
+		generating = true;
+		try {
+			for (let attempt = 0; attempt < 36; attempt += 1) {
+				await delay(attempt === 0 ? 2500 : 5000);
+				if (token !== generationPollToken) return;
+
+				const response = await client.getLeadProfile(data.formSourceSlug, data.formId, {
+					showNotifications: false
+				});
+				profileResponse = response;
+				const status = resolveGenerationStatus(response.profile?.generation_metadata);
+				if (!isGenerationPending(status)) {
+					if (status === 'succeeded') {
+						notifications.success('Lead grading profile generated');
+					} else if (status === 'failed') {
+						error = 'Managed profile generation failed; the saved local fallback remains available.';
+					}
+					return;
+				}
+			}
+
+			error = `Lead profile generation is still running for profile #${profileId}. Refresh this page to check the latest status.`;
+		} finally {
+			if (token === generationPollToken) generating = false;
 		}
 	}
 
@@ -290,6 +334,26 @@
 		return (Object.entries(selectedGrades) as Array<[LeadGrade, boolean]>)
 			.filter(([, enabled]) => enabled)
 			.map(([grade]) => grade);
+	}
+
+	function delay(ms: number): Promise<void> {
+		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
+	function resolveGenerationStatus(metadata: Record<string, unknown> | null | undefined): string {
+		const augmentation =
+			metadata && typeof metadata === 'object' && 'llm_augmentation' in metadata
+				? metadata.llm_augmentation
+				: null;
+		if (augmentation && typeof augmentation === 'object' && 'status' in augmentation) {
+			const value = augmentation.status;
+			if (typeof value === 'string' && value.trim()) return value.trim();
+		}
+		return '';
+	}
+
+	function isGenerationPending(status: string): boolean {
+		return status === 'queued' || status === 'running';
 	}
 
 	function setSelectedGrade(grade: LeadGrade, enabled: boolean) {
@@ -399,6 +463,9 @@
 					<Badge variant={ready ? 'success' : 'warning'}>{ready ? 'Ready' : 'Blocked'}</Badge>
 				</div>
 				<p class="sf:mt-2 sf:text-xs sf:text-slate-500">v{profile?.profile_version ?? 0}</p>
+				{#if generationStatus}
+					<p class="sf:mt-1 sf:text-xs sf:text-slate-500">Generation: {generationStatus}</p>
+				{/if}
 			</Card>
 			<Card>
 				<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Site Context</p>
@@ -624,11 +691,11 @@
 							</div>
 						</div>
 						<div class="sf:flex sf:flex-wrap sf:gap-2">
-							<Button onclick={() => saveProfile()} disabled={saving || generating}>
+							<Button onclick={() => saveProfile()} disabled={saving || generating || generationPending}>
 								{saving ? 'Saving...' : 'Save profile'}
 							</Button>
-							<Button variant="secondary" onclick={generateProfile} disabled={saving || generating}>
-								{generating ? 'Generating...' : 'Generate grading profile'}
+							<Button variant="secondary" onclick={generateProfile} disabled={saving || generating || generationPending}>
+								{generating || generationPending ? 'Generating...' : 'Generate grading profile'}
 							</Button>
 							<Button variant="secondary" onclick={refreshAssistant} disabled={!profile?.id || saving}>
 								Refresh setup questions

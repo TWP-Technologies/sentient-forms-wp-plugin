@@ -44,6 +44,7 @@ import type {
 	LicenseActivationResult,
 	LicenseInfoResponse,
 	LeadProfileResponse,
+	LeadProfileGeneratePayload,
 	LeadProfileSavePayload,
 	LeadValueDashboard,
 	LeadValueEntrySearchResponse,
@@ -566,7 +567,7 @@ export class SentientFormsApiClient {
 
 	async generateLeadProfile(
 		profileId: number,
-		payload: { lead_profile_consent?: boolean } = {},
+		payload: LeadProfileGeneratePayload = {},
 		options: RequestOptions = {}
 	): Promise<LeadProfileResponse> {
 		return this.request<LeadProfileResponse>(

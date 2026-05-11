@@ -3,7 +3,7 @@
 - paragraph: Privacy & visibility profile
 - text: Custom settings Balanced Setup saved
 - paragraph: Started from Balanced. One or more controls below now differ from that preset, so this site is using a custom privacy configuration.
-- button "Reopen setup assistant"
+- button "Review setup"
 - paragraph: Execution history
 - paragraph: /\d+ days/
 - paragraph: Full AI outputs
@@ -12,6 +12,10 @@
 - paragraph: Deletes plugin data
 - paragraph: Local diagnostics
 - paragraph: On-site logging enabled
+- paragraph: Site Context
+- text: Ready
+- paragraph: Describe what this website does so spam checks, summaries, and other actions can make site-specific decisions instead of generic guesses.
+- button "Manage Site Context"
 - paragraph: Enable telemetry sharing
 - paragraph: Share aggregated action metrics and local reliability diagnostics to help Sentient Forms improve reliability.
 - text: "Off"

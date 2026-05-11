@@ -28,7 +28,7 @@
 - paragraph: OpenRouter free routes
 - paragraph: Try actions with free models first if you want to confirm the plugin path before choosing managed service or BYOK paid models.
 - heading "Recent local runs" [level=2]
-- text: 1 succeeded 0 failed
+- text: 1 observed runs 1 successful automations 0 staff notes 0 marketer insights 0 graded leads 0 reply drafts 0 spam flagged 0 need follow-up 0 urgent signals 1 succeeded 0 failed
 - region "Recent local runs table":
   - table:
     - rowgroup:

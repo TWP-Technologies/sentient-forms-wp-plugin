@@ -86,6 +86,10 @@
 		z-index: 100000;
 	}
 
+	.sf-wp-modal-backdrop--elevated {
+		z-index: 100010;
+	}
+
 	.sf-model-selector-shell {
 		height: min(calc(95dvh - 0.5rem), calc(100% - 0.5rem));
 		min-height: min(42rem, calc(100% - 0.5rem));
