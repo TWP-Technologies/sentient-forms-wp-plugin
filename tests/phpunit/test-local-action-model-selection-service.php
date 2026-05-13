@@ -55,7 +55,7 @@ class Tests_Local_Action_Model_Selection_Service extends WP_UnitTestCase
         $selection = $custom_actions->get( $action_id )['model_selection_json'] ?? [];
         $this->assertSame( 'sentient_managed', $selection['provider'] ?? null );
         $this->assertSame( $managed_credential_id, $selection['credential_id'] ?? null );
-        $this->assertSame( 'google/gemini-3-flash-preview', $selection['model'] ?? null );
+        $this->assertSame( '~google/gemini-flash-latest', $selection['model'] ?? null );
         $this->assertSame( 'sf_realtime', $selection['selection']['primary'] ?? null );
         $this->assertTrue( $selection['selection']['is_preset'] ?? false );
     }

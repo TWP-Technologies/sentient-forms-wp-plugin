@@ -3446,7 +3446,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'succeeded', $recent_events[0]['status'] ?? null );
         $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
         $this->assertSame( 'sentient_managed', $recent_events[0]['provider'] ?? null );
-        $this->assertSame( 'openai/gpt-5.5', $recent_events[0]['model'] ?? null );
+        $this->assertSame( '~openai/gpt-latest', $recent_events[0]['model'] ?? null );
         $this->assertSame( 1000, $recent_events[0]['cost_json']['billed_amount_microusd'] ?? null );
         $this->assertSame( 'sentient_forms_metering', $recent_events[0]['cost_json']['source'] ?? null );
 
