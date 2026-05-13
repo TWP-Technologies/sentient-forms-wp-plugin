@@ -3,7 +3,12 @@
 	import { Badge, Button, Card, InputField, Section } from '$lib/components/ui';
 	import { createClientFromConfig } from '$lib/api/client';
 	import { navigateToAppPath } from '$lib/navigation';
-	import type { LeadGrade, LeadScoringEntry, LeadValueDashboard } from '$lib/api/types';
+	import type {
+		LeadGrade,
+		LeadScoringEntry,
+		LeadScoringFormSummary,
+		LeadValueDashboard
+	} from '$lib/api/types';
 
 	const client = createClientFromConfig();
 	const gradeOrder: Array<LeadGrade | 'ungraded'> = ['A', 'B', 'C', 'Reject', 'ungraded'];
@@ -49,8 +54,62 @@
 		await loadDashboard();
 	}
 
-	function setupPath(entry: Pick<LeadScoringEntry, 'form_source' | 'form_id'>) {
+	function setupPath(entry: Pick<LeadScoringEntry | LeadScoringFormSummary, 'form_source' | 'form_id'>) {
 		return `/actions/${entry.form_source}/${entry.form_id}/lead-value`;
+	}
+
+	function setupJumpPath(entry: Pick<LeadScoringEntry | LeadScoringFormSummary, 'form_source' | 'form_id'>) {
+		return `${setupPath(entry)}?view=setup`;
+	}
+
+	function providerLabel(source: string, label?: string | null) {
+		if (label) return label;
+		if (source === 'gravity_forms' || source === 'gravity-forms') return 'Gravity Forms';
+		return source
+			.split(/[_-]+/)
+			.filter(Boolean)
+			.map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+			.join(' ');
+	}
+
+	function entryDateValue(entry: LeadScoringEntry) {
+		return entry.entry_snapshot?.date_created ?? entry.updated_at ?? '';
+	}
+
+	function parseDateTime(value?: string | null) {
+		if (!value) return null;
+		const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+		const hasZone = /(?:Z|[+-]\d\d:?\d\d)$/.test(normalized);
+		const date = new Date(hasZone ? normalized : `${normalized}Z`);
+		return Number.isNaN(date.getTime()) ? null : date;
+	}
+
+	function absoluteDateTime(value?: string | null) {
+		const date = parseDateTime(value);
+		return date
+			? new Intl.DateTimeFormat(undefined, {
+					dateStyle: 'medium',
+					timeStyle: 'short'
+				}).format(date)
+			: '';
+	}
+
+	function relativeDateTime(value?: string | null) {
+		const date = parseDateTime(value);
+		if (!date) return '';
+		const seconds = Math.round((date.getTime() - Date.now()) / 1000);
+		const absSeconds = Math.abs(seconds);
+		const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+		if (absSeconds < 60) return formatter.format(seconds, 'second');
+		const minutes = Math.round(seconds / 60);
+		if (Math.abs(minutes) < 60) return formatter.format(minutes, 'minute');
+		const hours = Math.round(minutes / 60);
+		if (Math.abs(hours) < 24) return formatter.format(hours, 'hour');
+		const days = Math.round(hours / 24);
+		if (Math.abs(days) < 30) return formatter.format(days, 'day');
+		const months = Math.round(days / 30);
+		if (Math.abs(months) < 12) return formatter.format(months, 'month');
+		return formatter.format(Math.round(months / 12), 'year');
 	}
 
 	function gradeTone(grade: LeadGrade | 'ungraded') {
@@ -78,7 +137,7 @@
 	description="Review scored leads across every configured form, then open a form setup when scoring needs tuning."
 >
 	{#snippet actions()}
-		<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+		<div class="sf:flex sf:min-w-max sf:flex-wrap sf:items-center sf:gap-2">
 			<Button variant="secondary" onclick={() => navigateToAppPath('/actions')}>All forms</Button>
 			<Button variant="secondary" onclick={loadDashboard} disabled={loading}>Refresh</Button>
 		</div>
@@ -101,37 +160,37 @@
 		</div>
 	{:else}
 		<div
-			class="sf:grid sf:grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] sf:gap-3"
+			class="sf:overflow-hidden sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:shadow-sm sf:grid sf:grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))]"
 			data-testid="lead-scoring-aggregate-summary"
 		>
-			<Card class="sf:border-l-4 sf:border-l-primary-500">
+			<div class="sf:border-l-4 sf:border-l-primary-500 sf:border-r sf:border-slate-100 sf:p-5">
 				<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Scored leads</p>
 				<p class="sf:mt-2 sf:text-2xl sf:font-semibold sf:text-slate-900">
 					{dashboard?.metrics?.scored_leads ?? gradeTotal}
 				</p>
 				<p class="sf:mt-2 sf:text-xs sf:text-slate-500">Across all forms</p>
-			</Card>
-			<Card>
+			</div>
+			<div class="sf:border-r sf:border-slate-100 sf:p-5">
 				<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Priority leads</p>
 				<p class="sf:mt-2 sf:text-2xl sf:font-semibold sf:text-slate-900">
 					{dashboard?.metrics?.priority_leads ?? dashboard?.grades?.A ?? 0}
 				</p>
 				<p class="sf:mt-2 sf:text-xs sf:text-slate-500">A grade or high priority</p>
-			</Card>
-			<Card>
+			</div>
+			<div class="sf:border-r sf:border-slate-100 sf:p-5">
 				<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Follow-up drafts</p>
 				<p class="sf:mt-2 sf:text-2xl sf:font-semibold sf:text-slate-900">
 					{dashboard?.metrics?.reply_drafts ?? dashboard?.suggested_replies ?? 0}
 				</p>
 				<p class="sf:mt-2 sf:text-xs sf:text-slate-500">Replies and next steps</p>
-			</Card>
-			<Card>
-				<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Rejected or low-fit</p>
+			</div>
+			<div class="sf:p-5">
+				<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Rejected leads</p>
 				<p class="sf:mt-2 sf:text-2xl sf:font-semibold sf:text-slate-900">
 					{dashboard?.metrics?.rejected_leads ?? dashboard?.grades?.Reject ?? 0}
 				</p>
 				<p class="sf:mt-2 sf:text-xs sf:text-slate-500">Rejected lead submissions</p>
-			</Card>
+			</div>
 		</div>
 
 		<div class="sf:mt-5 sf:grid sf:gap-4 sf:xl:grid-cols-[minmax(0,1fr)_24rem]">
@@ -179,12 +238,17 @@
 											<p class="sf:font-semibold sf:text-slate-900">
 												{entry.form_title || `Form ${entry.form_id}`}
 											</p>
-											<p class="sf:mt-1 sf:text-xs sf:text-slate-500">{entry.form_source}</p>
+											<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+												{providerLabel(entry.form_source, entry.provider_label)}
+											</p>
 										</td>
 										<td class="sf:border-b sf:border-slate-100 sf:px-3 sf:py-3">
 											<p class="sf:font-semibold sf:text-slate-900">#{entry.entry_id}</p>
-											<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-												{entry.entry_snapshot?.date_created ?? entry.updated_at ?? ''}
+											<p
+												class="sf:mt-1 sf:text-xs sf:text-slate-500"
+												title={absoluteDateTime(entryDateValue(entry))}
+											>
+												{relativeDateTime(entryDateValue(entry))}
 											</p>
 										</td>
 										<td class="sf:border-b sf:border-slate-100 sf:px-3 sf:py-3">
@@ -223,7 +287,7 @@
 													size="sm"
 													variant="ghost"
 													class="sf:px-0"
-													onclick={() => navigateToAppPath(setupPath(entry))}
+													onclick={() => navigateToAppPath(setupJumpPath(entry))}
 												>
 													Setup
 												</Button>
@@ -252,9 +316,10 @@
 											{entry.form_title || `Form ${entry.form_id}`} · Entry #{entry.entry_id}
 										</p>
 										<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
-											{entry.form_source} · {entry.entry_snapshot?.date_created ??
-												entry.updated_at ??
-												''}
+											{providerLabel(entry.form_source, entry.provider_label)} ·
+											<span title={absoluteDateTime(entryDateValue(entry))}>
+												{relativeDateTime(entryDateValue(entry))}
+											</span>
 										</p>
 									</div>
 									<Badge
@@ -284,7 +349,7 @@
 									<Button
 										size="sm"
 										variant="ghost"
-										onclick={() => navigateToAppPath(setupPath(entry))}
+										onclick={() => navigateToAppPath(setupJumpPath(entry))}
 									>
 										Setup
 									</Button>
@@ -327,6 +392,36 @@
 			</div>
 
 			<div class="sf:space-y-4">
+				{#if (dashboard?.unconfigured_forms?.length ?? 0) > 0}
+					<Card>
+						<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Quick jump</h2>
+						<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
+							Forms that do not have Lead Scoring setup yet.
+						</p>
+						<div class="sf:mt-4 sf:space-y-3">
+							{#each dashboard?.unconfigured_forms ?? [] as form (`unconfigured-${form.form_source}-${form.form_id}`)}
+								<div class="sf:flex sf:items-center sf:justify-between sf:gap-3 sf:rounded sf:border sf:border-slate-200 sf:p-3">
+									<div class="sf:min-w-0">
+										<p class="sf:truncate sf:text-sm sf:font-semibold sf:text-slate-900">
+											{form.form_title || `Form ${form.form_id}`}
+										</p>
+										<p class="sf:text-xs sf:text-slate-500">
+											{providerLabel(form.form_source, form.provider_label)}
+										</p>
+									</div>
+									<Button
+										size="sm"
+										variant="secondary"
+										onclick={() => navigateToAppPath(setupJumpPath(form))}
+									>
+										Set Up
+									</Button>
+								</div>
+							{/each}
+						</div>
+					</Card>
+				{/if}
+
 				<Card>
 					<h2 class="sf:text-base sf:font-semibold sf:text-slate-900">Configured forms</h2>
 					<div class="sf:mt-4 sf:space-y-3">
@@ -336,6 +431,9 @@
 									<div>
 										<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
 											{form.form_title || `Form ${form.form_id}`}
+										</p>
+										<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+											{providerLabel(form.form_source, form.provider_label)}
 										</p>
 										<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
 											{form.scored_leads} scored · {form.priority_leads} priority · {form.reply_drafts}
@@ -350,8 +448,7 @@
 									<Button
 										size="sm"
 										variant="secondary"
-										onclick={() =>
-											navigateToAppPath(`/actions/${form.form_source}/${form.form_id}/lead-value`)}
+										onclick={() => navigateToAppPath(setupJumpPath(form))}
 									>
 										Setup
 									</Button>

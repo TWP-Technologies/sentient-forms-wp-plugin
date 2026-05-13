@@ -78,7 +78,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertContains( 'sf_legal', $preset_codes );
         $this->assertContains( 'sf_financial', $preset_codes );
         $this->assertContains( 'sf_realtime', $preset_codes );
-        $this->assertSame( 'openai/gpt-5.5', $data['presets'][0]['resolved_model_id'] );
+        $this->assertSame( '~openai/gpt-latest', $data['presets'][0]['resolved_model_id'] );
     }
 
     public function test_list_models_returns_bundled_recommendations_when_cache_empty(): void
@@ -109,8 +109,15 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertContains( 'poolside/laguna-m.1:free', $model_ids );
         $this->assertContains( 'openrouter/free', $model_ids );
         $this->assertContains( 'openrouter/auto', $model_ids );
+        $this->assertContains( '~openai/gpt-latest', $model_ids );
+        $this->assertContains( '~openai/gpt-mini-latest', $model_ids );
+        $this->assertContains( '~google/gemini-pro-latest', $model_ids );
+        $this->assertContains( '~google/gemini-flash-latest', $model_ids );
+        $this->assertContains( '~anthropic/claude-opus-latest', $model_ids );
+        $this->assertContains( '~anthropic/claude-sonnet-latest', $model_ids );
+        $this->assertContains( '~anthropic/claude-haiku-latest', $model_ids );
         $this->assertContains( 'bundled-recommendation', $data['models'][0]['tags'] );
-        $this->assertSame( 'openai/gpt-5.5', $data['presets'][0]['resolved_model_id'] );
+        $this->assertSame( '~openai/gpt-latest', $data['presets'][0]['resolved_model_id'] );
 
         $models_by_id = [];
         foreach ( $data['models'] as $model )
@@ -129,23 +136,23 @@ class Tests_Models_Controller extends WP_UnitTestCase
         }
 
         $expected_preset_models = [
-            'sf_default'      => 'openai/gpt-5.5',
-            'sf_general'      => 'openai/gpt-5.5',
+            'sf_default'      => '~openai/gpt-latest',
+            'sf_general'      => '~openai/gpt-latest',
             'sf_quality'      => 'openai/gpt-5.5-pro',
             'sf_free'         => 'openrouter/free',
-            'sf_structured'   => 'openai/gpt-5.5',
-            'sf_fast'         => 'google/gemini-3-flash-preview',
+            'sf_structured'   => '~openai/gpt-latest',
+            'sf_fast'         => '~google/gemini-flash-latest',
             'sf_low_cost'     => 'deepseek/deepseek-v4-flash',
-            'sf_long_context' => 'openai/gpt-5.5',
+            'sf_long_context' => '~openai/gpt-latest',
             'sf_reasoning'    => 'openai/gpt-5.5-pro',
             'sf_code'         => 'moonshotai/kimi-k2.6',
-            'sf_legal'        => 'google/gemini-3.1-pro-preview',
-            'sf_financial'    => 'anthropic/claude-sonnet-4.6',
-            'sf_privacy'      => 'openai/gpt-5.5',
-            'sf_realtime'     => 'google/gemini-3-flash-preview',
-            'sf_multimodal'   => 'google/gemini-3.1-pro-preview',
-            'sf_research'     => 'openai/gpt-5.5',
-            'sf_agentic'      => 'google/gemini-3.1-pro-preview',
+            'sf_legal'        => '~google/gemini-pro-latest',
+            'sf_financial'    => '~anthropic/claude-sonnet-latest',
+            'sf_privacy'      => '~openai/gpt-latest',
+            'sf_realtime'     => '~google/gemini-flash-latest',
+            'sf_multimodal'   => '~google/gemini-pro-latest',
+            'sf_research'     => '~openai/gpt-latest',
+            'sf_agentic'      => '~google/gemini-pro-latest',
         ];
         foreach ( $expected_preset_models as $preset_code => $model_id )
         {
@@ -202,7 +209,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
             $presets_by_code[ $preset['code'] ] = $preset;
         }
 
-        $this->assertSame( 'openai/gpt-5.5', $presets_by_code['sf_long_context']['resolved_model_id'] );
+        $this->assertSame( '~openai/gpt-latest', $presets_by_code['sf_long_context']['resolved_model_id'] );
         $this->assertStringContainsString( 'not just the largest advertised context window', $presets_by_code['sf_long_context']['description'] );
     }
 
@@ -267,8 +274,8 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
 
         $data = $response->get_data();
-        $this->assertSame( 'openai/gpt-5.5', $data['model_id'] );
-        $this->assertSame( 'OpenAI: GPT-5.5', $data['display_name'] );
+        $this->assertSame( '~openai/gpt-latest', $data['model_id'] );
+        $this->assertSame( 'OpenAI: GPT-5.5 (latest alias)', $data['display_name'] );
         $this->assertSame( 'mapping', $data['resolution_source'] );
 
         $applied = array_values(
@@ -332,9 +339,9 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
 
         $data = $response->get_data();
-        $this->assertSame( 'openai/gpt-5.5', $data['model_id'] );
+        $this->assertSame( '~openai/gpt-latest', $data['model_id'] );
         $this->assertSame( 'fallback', $data['resolution_source'] );
-        $this->assertSame( 'OpenAI: GPT-5.5', $data['display_name'] );
+        $this->assertSame( 'OpenAI: GPT-5.5 (latest alias)', $data['display_name'] );
     }
 
     public function test_estimate_model_reports_openrouter_currency_for_local_openrouter(): void

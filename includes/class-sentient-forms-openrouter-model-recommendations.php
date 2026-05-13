@@ -39,7 +39,7 @@ class Sentient_Forms_OpenRouter_Model_Recommendations
 
                 if ( [] !== $keyed )
                 {
-                    return $keyed;
+                    return self::with_latest_aliases( $keyed );
                 }
             }
         }
@@ -369,6 +369,52 @@ class Sentient_Forms_OpenRouter_Model_Recommendations
             $keyed[ (string) $model['id'] ] = $model;
         }
 
-        return $keyed;
+        return self::with_latest_aliases( $keyed );
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $models
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private static function with_latest_aliases( array $models ): array
+    {
+        $aliases = [
+            '~openai/gpt-latest'              => 'openai/gpt-5.5',
+            '~openai/gpt-mini-latest'         => 'openai/gpt-5.4-mini',
+            '~google/gemini-pro-latest'       => 'google/gemini-3.1-pro-preview',
+            '~google/gemini-flash-latest'     => 'google/gemini-3-flash-preview',
+            '~anthropic/claude-opus-latest'   => 'anthropic/claude-opus-4.7',
+            '~anthropic/claude-sonnet-latest' => 'anthropic/claude-sonnet-4.6',
+            '~anthropic/claude-haiku-latest'  => 'anthropic/claude-haiku-4.5',
+        ];
+
+        foreach ( $aliases as $alias => $source_id )
+        {
+            if ( ! isset( $models[ $source_id ] ) || isset( $models[ $alias ] ) )
+            {
+                continue;
+            }
+
+            $model = $models[ $source_id ];
+            $model['id'] = $alias;
+            $model['name'] = sprintf(
+                /* translators: %s: model display name. */
+                __( '%s (latest alias)', 'sentient-forms' ),
+                is_scalar( $model['name'] ?? null ) ? (string) $model['name'] : $source_id
+            );
+            $model['canonical_source_model_id'] = $source_id;
+            $model['recommended_for'] = array_values(
+                array_unique(
+                    array_merge(
+                        is_array( $model['recommended_for'] ?? null ) ? $model['recommended_for'] : [],
+                        [ __( 'Auto-upgrading latest alias', 'sentient-forms' ) ]
+                    )
+                )
+            );
+            $models[ $alias ] = $model;
+        }
+
+        return $models;
     }
 }

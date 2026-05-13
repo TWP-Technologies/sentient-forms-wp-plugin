@@ -985,6 +985,12 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
     {
         foreach ( $preferred_model_ids as $model_id )
         {
+            $latest_alias = $this->latest_alias_for_model_id( $model_id );
+            if ( null !== $latest_alias && isset( $models[ $latest_alias ] ) )
+            {
+                return $latest_alias;
+            }
+
             if ( isset( $models[ $model_id ] ) )
             {
                 return $model_id;
@@ -992,6 +998,21 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         }
 
         return null;
+    }
+
+    private function latest_alias_for_model_id( string $model_id ): ?string
+    {
+        return match ( $model_id ) {
+            'openai/gpt-5.5', 'openai/gpt-5.4' => '~openai/gpt-latest',
+            'openai/gpt-5.4-mini'             => '~openai/gpt-mini-latest',
+            'google/gemini-3.1-pro-preview'   => '~google/gemini-pro-latest',
+            'google/gemini-3-flash-preview'   => '~google/gemini-flash-latest',
+            'anthropic/claude-opus-4.6',
+            'anthropic/claude-opus-4.7'        => '~anthropic/claude-opus-latest',
+            'anthropic/claude-sonnet-4.6'      => '~anthropic/claude-sonnet-latest',
+            'anthropic/claude-haiku-4.5'       => '~anthropic/claude-haiku-latest',
+            default                            => null,
+        };
     }
 
     /**

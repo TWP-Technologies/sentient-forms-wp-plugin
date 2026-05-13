@@ -5,13 +5,15 @@ import path from 'node:path';
 // This totals all JS emitted by the static admin SPA, including lazy route
 // chunks. The all-model selector, action log, managed-service setup, realtime
 // assistant controls, model ranking metadata, and dependency-graph UX currently
-// sit at ~865 KB; keep a hard ceiling with narrow headroom so accidental
+// sit above 1 MB after the Lead Scoring dashboard/setup expansion; keep a hard
+// ceiling with deliberate headroom so accidental
 // payload growth still fails. Zod is intentionally included for stricter
 // admin config validation during private beta. The first AI impact recap and
-// Lead Value workspace add lazy admin chunks for reporting, setup, historical
-// scoring, and entry-example selection; revisit after the workflows settle and
-// route-level chunk splitting can be compacted deliberately.
-const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 1050);
+// Lead Scoring workspace add lazy admin chunks for reporting, setup,
+// historical scoring, corrections, and self-improvement controls; revisit after
+// the workflows settle and route-level chunk splitting can be compacted
+// deliberately.
+const MAX_TOTAL_KB = Number(process.env.BUNDLE_MAX_KB ?? 1150);
 const distRoot = path.resolve('..', 'assets', 'dist', '_app', 'immutable');
 
 async function collectSizes(dir) {

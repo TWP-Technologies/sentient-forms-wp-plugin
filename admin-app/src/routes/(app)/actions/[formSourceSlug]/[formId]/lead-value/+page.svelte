@@ -14,6 +14,7 @@
 	import { createClientFromConfig } from '$lib/api/client';
 	import { navigateToAppPath } from '$lib/navigation';
 	import {
+		leadScoringCorrectionSchema,
 		parseDelimitedList,
 		validateEmailTags,
 		validateWebhookTags
@@ -77,6 +78,18 @@
 	let webhookErrors = $state<string[]>([]);
 	let writeLeadGradeNote = $state(true);
 	let writeSuggestedReplyNote = $state(true);
+	let skipRejectSuggestedReply = $state(true);
+	let generationModel = $state<
+		'~openai/gpt-latest' | '~google/gemini-pro-latest' | '~anthropic/claude-opus-latest'
+	>('~openai/gpt-latest');
+	let selfImproveConsent = $state(false);
+	let selfImproveFrequency = $state<'manual' | 'weekly' | 'monthly'>('manual');
+	let selfImproveReviewRequired = $state(true);
+	let selfImproving = $state(false);
+	let correctionGrade = $state<LeadGrade>('B');
+	let correctionJustification = $state('');
+	let correcting = $state(false);
+	let generatingManualReply = $state(false);
 	let selectedGrades = $state<Record<LeadGrade, boolean>>({
 		A: true,
 		B: true,
@@ -134,6 +147,8 @@
 			dashboard = dashboardData;
 			historicalRuns = runData.runs;
 			applyDrafts(profileData);
+			const requestedView = requestedViewFromLocation();
+			view = requestedView ?? (profileData.readiness.ready ? 'dashboard' : 'setup');
 			const profileId = profileData.profile?.id;
 			if (
 				profileId &&
@@ -147,6 +162,12 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function requestedViewFromLocation(): ViewKey | null {
+		if (typeof window === 'undefined') return null;
+		const value = new URLSearchParams(window.location.search).get('view');
+		return value === 'setup' || value === 'historical' || value === 'dashboard' ? value : null;
 	}
 
 	async function loadSpamGuidance() {
@@ -178,6 +199,32 @@
 			current?.handoff_rules?.webhooks?.map((webhook) => webhook.url).filter(Boolean) ?? [];
 		writeLeadGradeNote = current?.handoff_rules?.entry_notes?.lead_grade ?? true;
 		writeSuggestedReplyNote = current?.handoff_rules?.entry_notes?.suggested_reply ?? true;
+		skipRejectSuggestedReply = current?.handoff_rules?.reply_rules?.skip_reject_grade ?? true;
+		const metadata = current?.generation_metadata ?? {};
+		const generationSettings =
+			'profile_generation_settings' in metadata &&
+			typeof metadata.profile_generation_settings === 'object' &&
+			metadata.profile_generation_settings !== null
+				? (metadata.profile_generation_settings as Record<string, unknown>)
+				: {};
+		const savedModel =
+			typeof generationSettings.model === 'string' ? generationSettings.model : '~openai/gpt-latest';
+		generationModel =
+			savedModel === '~google/gemini-pro-latest' || savedModel === '~anthropic/claude-opus-latest'
+				? savedModel
+				: '~openai/gpt-latest';
+		const selfImprovement =
+			'self_improvement' in metadata &&
+			typeof metadata.self_improvement === 'object' &&
+			metadata.self_improvement !== null
+				? (metadata.self_improvement as Record<string, unknown>)
+				: {};
+		selfImproveConsent = Boolean(selfImprovement.consent);
+		selfImproveFrequency =
+			selfImprovement.frequency === 'weekly' || selfImprovement.frequency === 'monthly'
+				? selfImprovement.frequency
+				: 'manual';
+		selfImproveReviewRequired = selfImprovement.review_required !== false;
 		exampleEntries = normalizeExampleEntries(current?.example_entries ?? []);
 		const grades = new Set(current?.handoff_rules?.grades ?? ['A', 'B']);
 		selectedGrades = {
@@ -220,16 +267,28 @@
 					rationale: example.rationale,
 					snapshot: example.snapshot
 				})),
-				handoff_rules: {
-					email_recipients: emailRecipients,
-					webhooks: webhookUrls.map((url) => ({ url, method: 'POST' })),
-					grades: selectedGradeList(),
-					entry_notes: {
-						lead_grade: writeLeadGradeNote,
-						suggested_reply: writeSuggestedReplyNote
+					handoff_rules: {
+						email_recipients: emailRecipients,
+						webhooks: webhookUrls.map((url) => ({ url, method: 'POST' })),
+						grades: selectedGradeList(),
+						entry_notes: {
+							lead_grade: writeLeadGradeNote,
+							suggested_reply: writeSuggestedReplyNote
+						},
+						reply_rules: {
+							skip_reject_grade: skipRejectSuggestedReply
+						}
+					},
+					generation_settings: {
+						model: generationModel,
+						reasoning_effort: 'xhigh'
+					},
+					self_improvement: {
+						consent: selfImproveConsent,
+						frequency: selfImproveFrequency,
+						review_required: selfImproveReviewRequired
 					}
-				}
-			});
+				});
 			profileResponse = response;
 			if (showNotification) notifications.success('Lead scoring setup saved');
 			return response;
@@ -359,6 +418,82 @@
 			error = e instanceof Error ? e.message : 'Setup questions could not be refreshed.';
 		} finally {
 			saving = false;
+		}
+	}
+
+	async function runSelfImprovement() {
+		const saved = await saveProfile(false);
+		const profileId = saved?.profile?.id;
+		if (!profileId) {
+			notifications.warning('Save Lead Scoring setup before self-improvement.');
+			return;
+		}
+
+		selfImproving = true;
+		error = null;
+		try {
+			const response = await client.selfImproveLeadProfile(profileId, {
+				async: true,
+				force: true
+			});
+			profileResponse = response;
+			notifications.success('Lead Scoring self-improvement queued');
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Lead Scoring self-improvement could not be queued.';
+		} finally {
+			selfImproving = false;
+		}
+	}
+
+	async function correctSelectedEntry() {
+		if (!selectedEntryDetail) return;
+		const parsed = leadScoringCorrectionSchema.safeParse({
+			grade: correctionGrade,
+			justification: correctionJustification
+		});
+		if (!parsed.success) {
+			error = parsed.error.issues[0]?.message ?? 'Enter a corrected grade and justification.';
+			return;
+		}
+
+		correcting = true;
+		error = null;
+		try {
+			const response = await client.correctLeadScoringEntry(
+				data.formSourceSlug,
+				data.formId,
+				selectedEntryDetail.entry_id,
+				parsed.data
+			);
+			profileResponse = response;
+			dashboard = response.dashboard ?? dashboard;
+			selectedEntryDetail = (response.entry as LeadScoringEntry | undefined) ?? selectedEntryDetail;
+			correctionJustification = '';
+			notifications.success('Lead grade correction saved');
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Lead grade correction could not be saved.';
+		} finally {
+			correcting = false;
+		}
+	}
+
+	async function generateManualSuggestedReply() {
+		if (!selectedEntryDetail) return;
+		generatingManualReply = true;
+		error = null;
+		try {
+			const response = await client.generateLeadSuggestedReply(
+				data.formSourceSlug,
+				data.formId,
+				selectedEntryDetail.entry_id
+			);
+			dashboard = response.dashboard ?? dashboard;
+			selectedEntryDetail = (response.entry as LeadScoringEntry | undefined) ?? selectedEntryDetail;
+			notifications.success('Suggested reply generation started');
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Suggested reply could not be generated.';
+		} finally {
+			generatingManualReply = false;
 		}
 	}
 
@@ -663,6 +798,12 @@
 		}
 	}
 
+	function openEntryDetail(entry: LeadScoringEntry) {
+		selectedEntryDetail = entry;
+		correctionGrade = normalizeGrade(String(entry.grade ?? '')) ?? 'B';
+		correctionJustification = '';
+	}
+
 	const gradeChoices: LeadGrade[] = ['A', 'B', 'C', 'Reject'];
 </script>
 
@@ -671,7 +812,7 @@
 	description="Review scored form entries, tune the setup, run historical scoring, and hand off qualified leads from this form."
 >
 	{#snippet actions()}
-		<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+		<div class="sf:flex sf:min-w-max sf:flex-wrap sf:items-center sf:gap-2">
 			<Button
 				variant="secondary"
 				onclick={() => navigateToAppPath(`/actions/${data.formSourceSlug}/${data.formId}`)}
@@ -694,7 +835,7 @@
 		</div>
 	{:else}
 		<div
-			class="sf:grid sf:grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] sf:gap-3"
+			class="sf:grid sf:grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] sf:gap-3"
 			data-testid="lead-scoring-summary"
 		>
 			<Card class="sf:border-l-4 sf:border-l-primary-500">
@@ -725,7 +866,7 @@
 				<p class="sf:mt-2 sf:text-xs sf:text-slate-500">Suggested replies or next steps</p>
 			</Card>
 			<Card>
-				<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Rejected or low-fit</p>
+				<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Rejected leads</p>
 				<p class="sf:mt-2 sf:text-2xl sf:font-semibold sf:text-slate-900">
 					{dashboard?.metrics?.rejected_leads ?? dashboard?.grades?.Reject ?? 0}
 				</p>
@@ -1181,6 +1322,82 @@
 								>
 							</label>
 						</div>
+						<div class="sf:grid sf:gap-3 sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:lg:grid-cols-2">
+							<div>
+								<SelectField
+									id="lead-profile-generation-model"
+									label="Setup generation model"
+									bind:value={generationModel}
+									options={[
+										{ value: '~openai/gpt-latest', label: 'OpenAI GPT Latest' },
+										{ value: '~google/gemini-pro-latest', label: 'Google Gemini Pro Latest' },
+										{ value: '~anthropic/claude-opus-latest', label: 'Anthropic Claude Opus Latest' }
+									]}
+								/>
+								<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+									Lead Scoring setup generation always uses the highest reasoning mode and web-capable tools.
+								</p>
+							</div>
+							<label class="sf:flex sf:items-start sf:gap-2 sf:text-sm sf:text-slate-700">
+								<input
+									type="checkbox"
+									class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+									bind:checked={skipRejectSuggestedReply}
+								/>
+								<span>
+									<span class="sf:block sf:font-medium sf:text-slate-900">
+										Skip suggested replies for Reject leads
+									</span>
+									<span class="sf:mt-1 sf:block sf:text-xs sf:text-slate-500">
+										Save reply-generation credits unless a staff member manually generates a draft.
+									</span>
+								</span>
+							</label>
+						</div>
+						<div class="sf:grid sf:gap-3 sf:rounded sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3 sf:lg:grid-cols-[minmax(0,1fr)_auto] sf:lg:items-end">
+							<div class="sf:grid sf:gap-3 sf:lg:grid-cols-3">
+								<label class="sf:flex sf:items-start sf:gap-2 sf:text-sm sf:text-slate-700">
+									<input
+										type="checkbox"
+										class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+										bind:checked={selfImproveConsent}
+									/>
+									<span>
+										<span class="sf:block sf:font-medium sf:text-slate-900">
+											Enable self-improvement
+										</span>
+										<span class="sf:mt-1 sf:block sf:text-xs sf:text-slate-500">
+											Use staff corrections to refresh scoring setup.
+										</span>
+									</span>
+								</label>
+								<SelectField
+									id="lead-self-improvement-frequency"
+									label="Frequency"
+									bind:value={selfImproveFrequency}
+									options={[
+										{ value: 'manual', label: 'Manual only' },
+										{ value: 'weekly', label: 'Weekly' },
+										{ value: 'monthly', label: 'Monthly' }
+									]}
+								/>
+								<label class="sf:flex sf:items-start sf:gap-2 sf:text-sm sf:text-slate-700">
+									<input
+										type="checkbox"
+										class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+										bind:checked={selfImproveReviewRequired}
+									/>
+									<span>Require review after regeneration</span>
+								</label>
+							</div>
+							<Button
+								variant="secondary"
+								onclick={runSelfImprovement}
+								disabled={!profile?.id || !selfImproveConsent || selfImproving || saving}
+							>
+								{selfImproving ? 'Running...' : 'Run self-improvement'}
+							</Button>
+						</div>
 						<div class="sf:flex sf:flex-wrap sf:gap-2 sf:pt-2">
 							<Button
 								onclick={() => saveProfile()}
@@ -1300,7 +1517,7 @@
 												size="sm"
 												variant="ghost"
 												class="sf:mt-2 sf:px-0"
-												onclick={() => (selectedEntryDetail = entry)}
+												onclick={() => openEntryDetail(entry)}
 											>
 												View full detail
 											</Button>
@@ -1373,7 +1590,7 @@
 									size="sm"
 									variant="ghost"
 									class="sf:mt-3 sf:px-0"
-									onclick={() => (selectedEntryDetail = entry)}
+									onclick={() => openEntryDetail(entry)}
 								>
 									View full detail
 								</Button>
@@ -1696,6 +1913,17 @@
 							Suggested reply and next best action
 						</h3>
 						<div class="sf:mt-2 sf:space-y-3 sf:rounded sf:border sf:border-slate-200 sf:p-3">
+							<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
+								<p class="sf:text-xs sf:font-medium sf:uppercase sf:text-slate-500">Draft state</p>
+								<Button
+									size="sm"
+									variant="secondary"
+									onclick={generateManualSuggestedReply}
+									disabled={generatingManualReply}
+								>
+									{generatingManualReply ? 'Generating...' : 'Generate reply'}
+								</Button>
+							</div>
 							<p class="sf:text-sm sf:text-slate-700">
 								<strong>Next best action:</strong>
 								{selectedEntryDetail.next_best_action || 'No recommendation stored.'}
@@ -1705,6 +1933,36 @@
 							</p>
 							{#if selectedEntryDetail.reply_rationale}
 								<p class="sf:text-xs sf:text-slate-500">{selectedEntryDetail.reply_rationale}</p>
+							{/if}
+						</div>
+					</section>
+
+					<section class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3">
+						<h3 class="sf:text-sm sf:font-semibold sf:text-slate-900">Correct this grade</h3>
+						<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
+							Corrections become calibration examples for future Lead Scoring self-improvement.
+						</p>
+						<div class="sf:mt-3 sf:grid sf:gap-3 sf:sm:grid-cols-[10rem_minmax(0,1fr)]">
+							<SelectField
+								id="lead-grade-correction"
+								label="Correct grade"
+								bind:value={correctionGrade}
+								options={gradeChoices.map((grade) => ({ value: grade, label: grade }))}
+							/>
+							<TextareaField
+								id="lead-grade-correction-justification"
+								label="Correction justification"
+								rows={4}
+								bind:value={correctionJustification}
+								placeholder="Explain why this entry should receive the corrected grade."
+							/>
+						</div>
+						<div class="sf:mt-3 sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+							<Button onclick={correctSelectedEntry} disabled={correcting}>
+								{correcting ? 'Saving...' : 'Save correction'}
+							</Button>
+							{#if selectedEntryDetail.correction}
+								<Badge variant="info">Previously corrected</Badge>
 							{/if}
 						</div>
 					</section>

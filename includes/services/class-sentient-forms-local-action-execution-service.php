@@ -117,6 +117,12 @@ class Sentient_Forms_Local_Action_Execution_Service
             );
         }
 
+        $execution_request_id = $this->resolve_execution_request_id( $mapping, $action, $form, $entry, $context );
+        if ( $this->should_skip_suggested_reply_for_reject_grade( $mapping, $entry, $context, $action_code ) )
+        {
+            return $this->record_suggested_reply_skip( $execution_request_id, $mapping, $form, $entry, $action_code );
+        }
+
         $structured_output_contract = $this->resolve_structured_output_contract( $action, $definition );
         if ( is_wp_error( $structured_output_contract ) )
         {
@@ -184,7 +190,6 @@ class Sentient_Forms_Local_Action_Execution_Service
 
         $managed_context = null;
         $payload         = $this->build_provider_payload( $model, $messages, $definition, $model_selection );
-        $execution_request_id = $this->resolve_execution_request_id( $mapping, $action, $form, $entry, $context );
 
         if ( 'sentient_managed' === $provider )
         {
@@ -577,6 +582,85 @@ class Sentient_Forms_Local_Action_Execution_Service
     private function requires_active_lead_profile( string $action_code ): bool
     {
         return in_array( $action_code, [ 'lead_grading_v1', 'suggested_reply_v1' ], true );
+    }
+
+    private function should_skip_suggested_reply_for_reject_grade( array $mapping, array $entry, array $context, string $action_code ): bool
+    {
+        if ( 'suggested_reply_v1' !== $action_code )
+        {
+            return false;
+        }
+
+        if ( ! empty( $context['manual_suggested_reply'] ) || ! empty( $context['force_suggested_reply'] ) )
+        {
+            return false;
+        }
+
+        $lead_profile = is_array( $context['lead_profile'] ?? null ) ? $context['lead_profile'] : [];
+        $rules        = is_array( $lead_profile['handoff_rules'] ?? null ) ? $lead_profile['handoff_rules'] : [];
+        $reply_rules  = is_array( $rules['reply_rules'] ?? null ) ? $rules['reply_rules'] : [];
+        $enabled      = ! isset( $reply_rules['skip_reject_grade'] ) || rest_sanitize_boolean( $reply_rules['skip_reject_grade'] );
+        if ( ! $enabled )
+        {
+            return false;
+        }
+
+        $form_source = sanitize_key( (string) ( $mapping['form_source'] ?? 'gravity_forms' ) );
+        $form_id     = sanitize_text_field( (string) ( $mapping['form_id'] ?? '' ) );
+        $entry_id    = sanitize_text_field( (string) ( $entry['id'] ?? '' ) );
+        if ( '' === $form_source || '' === $form_id || '' === $entry_id )
+        {
+            return false;
+        }
+
+        $result = $this->lead_scoring_results->get_entry_result( $form_source, $form_id, $entry_id );
+        return is_array( $result ) && 'Reject' === (string) ( $result['grade'] ?? '' );
+    }
+
+    private function record_suggested_reply_skip( string $execution_request_id, array $mapping, array $form, array $entry, string $action_code ): array
+    {
+        $result = [
+            'structured' => [
+                'do_not_send'      => true,
+                'next_best_action' => __( 'No suggested reply was generated because this lead is currently graded Reject.', 'sentient-forms' ),
+                'reply_rationale'  => __( 'The Lead Scoring setup is configured to avoid spending reply-generation credits on rejected leads.', 'sentient-forms' ),
+            ],
+            'effects' => [
+                'applied' => [],
+                'skipped' => [
+                    [
+                        'effect' => 'suggested_reply_generation',
+                        'reason' => 'lead_grade_reject',
+                    ],
+                ],
+            ],
+        ];
+        $payload_digest = hash( 'sha256', (string) wp_json_encode( [ 'status' => 'skipped', 'action_code' => $action_code, 'entry_id' => $entry['id'] ?? null ] ) );
+
+        $this->events->record(
+            [
+                'execution_request_id' => $execution_request_id,
+                'mapping_id'           => (int) ( $mapping['id'] ?? 0 ),
+                'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
+                'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
+                'entry_id'             => $entry['id'] ?? null,
+                'provider'             => 'local',
+                'model'                => 'not_applicable',
+                'status'               => 'skipped',
+                'result_json'          => $result,
+                'payload_digest'       => $payload_digest,
+            ]
+        );
+
+        return [
+            'execution_request_id' => $execution_request_id,
+            'status'               => 'skipped',
+            'provider'             => 'local',
+            'model'                => 'not_applicable',
+            'cached'               => false,
+            'result'               => $result,
+            'effects'              => $result['effects'],
+        ];
     }
 
     /**

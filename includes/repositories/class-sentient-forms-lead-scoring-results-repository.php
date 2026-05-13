@@ -276,6 +276,92 @@ class Sentient_Forms_Lead_Scoring_Results_Repository extends Sentient_Forms_Loca
         return array_values( $forms );
     }
 
+    public function get_entry_result( string $form_source, string $form_id, string $entry_id ): ?array
+    {
+        $rows = $this->list_recent_rows( $form_source, $form_id, 2000 );
+        foreach ( $this->combine_entry_rows( $rows ) as $entry )
+        {
+            if ( sanitize_text_field( (string) ( $entry['entry_id'] ?? '' ) ) === sanitize_text_field( $entry_id ) )
+            {
+                return $entry;
+            }
+        }
+
+        return null;
+    }
+
+    public function apply_human_correction( string $form_source, string $form_id, string $entry_id, string $grade, string $justification, ?int $user_id = null ): array | WP_Error
+    {
+        $row = $this->latest_action_row( $form_source, $form_id, $entry_id, 'lead_grading_v1' );
+        if ( null === $row )
+        {
+            return new WP_Error(
+                'sentient_forms_lead_scoring_result_not_found',
+                __( 'A stored Lead Scoring result is required before a lead grade can be corrected.', 'sentient-forms' ),
+                [ 'status' => 404 ]
+            );
+        }
+
+        $normalized_grade = $this->normalize_grade( $grade );
+        $justification    = wp_check_invalid_utf8( mb_substr( trim( $justification ), 0, 6000 ) );
+        if ( '' === $normalized_grade || '' === $justification )
+        {
+            return new WP_Error(
+                'sentient_forms_lead_scoring_correction_invalid',
+                __( 'A valid corrected grade and justification are required.', 'sentient-forms' ),
+                [ 'status' => 400 ]
+            );
+        }
+
+        $source_payload = is_array( $row['source_payload_json'] ?? null ) ? $row['source_payload_json'] : [];
+        if ( ! isset( $source_payload['model_original'] ) )
+        {
+            $source_payload['model_original'] = [
+                'grade'         => $row['grade'] ?? '',
+                'justification' => $row['justification'] ?? '',
+                'corrected_at'  => current_time( 'mysql' ),
+            ];
+        }
+
+        $source_payload['human_correction'] = [
+            'grade'                  => $normalized_grade,
+            'justification'          => $justification,
+            'original_grade'         => $source_payload['model_original']['grade'] ?? ( $row['grade'] ?? '' ),
+            'original_justification' => $source_payload['model_original']['justification'] ?? ( $row['justification'] ?? '' ),
+            'corrected_by_user_id'   => $user_id,
+            'corrected_at'           => current_time( 'mysql' ),
+        ];
+
+        $source_payload_json = $this->encode_json_field( $source_payload, 'source_payload_json' );
+        if ( is_wp_error( $source_payload_json ) )
+        {
+            return $source_payload_json;
+        }
+
+        $updated = $this->wpdb->update(
+            $this->table_name(),
+            [
+                'grade'               => $normalized_grade,
+                'justification'       => $justification,
+                'source_payload_json' => $source_payload_json,
+                'updated_at'          => $this->now(),
+            ],
+            [ 'id' => (int) $row['id'] ],
+            [ '%s', '%s', '%s', '%s' ],
+            [ '%d' ]
+        );
+
+        if ( false === $updated )
+        {
+            return new WP_Error( 'sentient_forms_db_update_failed', __( 'Lead Scoring correction could not be saved.', 'sentient-forms' ) );
+        }
+
+        $entry = $this->get_entry_result( $form_source, $form_id, $entry_id );
+        return is_array( $entry )
+            ? $entry
+            : new WP_Error( 'sentient_forms_lead_scoring_result_not_found', __( 'Updated Lead Scoring result could not be loaded.', 'sentient-forms' ), [ 'status' => 404 ] );
+    }
+
     public function cleanup_expired( ?string $before = null ): int
     {
         $before = $before ?: $this->now();
@@ -378,6 +464,11 @@ class Sentient_Forms_Lead_Scoring_Results_Repository extends Sentient_Forms_Loca
                     $entries[ $key ][ $field ] = $row[ $field ] ?? null;
                 }
                 $entries[ $key ]['lead_execution_id'] = $row['execution_request_id'] ?? null;
+                $source_payload = is_array( $row['source_payload_json'] ?? null ) ? $row['source_payload_json'] : [];
+                if ( is_array( $source_payload['human_correction'] ?? null ) )
+                {
+                    $entries[ $key ]['correction'] = $source_payload['human_correction'];
+                }
             }
 
             if ( 'suggested_reply_v1' === $row['action_code'] )
@@ -401,6 +492,25 @@ class Sentient_Forms_Lead_Scoring_Results_Repository extends Sentient_Forms_Loca
         );
 
         return array_values( $entries );
+    }
+
+    private function latest_action_row( string $form_source, string $form_id, string $entry_id, string $action_code ): ?array
+    {
+        // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared -- Static query uses %i/%s placeholders and a plugin-owned table identifier.
+        $row = $this->wpdb->get_row(
+            $this->wpdb->prepare(
+                'SELECT * FROM %i WHERE form_source = %s AND form_id = %s AND entry_id = %s AND action_code = %s ORDER BY updated_at DESC, id DESC LIMIT 1',
+                $this->table_name(),
+                sanitize_key( $form_source ),
+                sanitize_text_field( $form_id ),
+                sanitize_text_field( $entry_id ),
+                sanitize_key( $action_code )
+            ),
+            ARRAY_A
+        );
+        // phpcs:enable WordPress.DB.PreparedSQL.NotPrepared
+
+        return $row ? $this->decode_row( $row ) : null;
     }
 
     private function decode_row( array $row ): array

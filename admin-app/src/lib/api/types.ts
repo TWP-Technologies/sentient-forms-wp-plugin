@@ -1338,6 +1338,20 @@ export interface LeadProfileHandoffRules {
 		lead_grade?: boolean;
 		suggested_reply?: boolean;
 	};
+	reply_rules?: {
+		skip_reject_grade?: boolean;
+	};
+}
+
+export interface LeadProfileGenerationSettings {
+	model: '~openai/gpt-latest' | '~google/gemini-pro-latest' | '~anthropic/claude-opus-latest' | string;
+	reasoning_effort?: 'xhigh' | string;
+}
+
+export interface LeadProfileSelfImprovementSettings {
+	consent: boolean;
+	frequency: 'manual' | 'weekly' | 'monthly' | string;
+	review_required?: boolean;
 }
 
 export interface LeadProfileReadinessRequirement {
@@ -1415,6 +1429,8 @@ export interface LeadProfileSavePayload {
 	bad_lead_criteria?: LeadProfileCriteria;
 	example_entries?: Array<Record<string, unknown>>;
 	handoff_rules?: Partial<LeadProfileHandoffRules>;
+	generation_settings?: LeadProfileGenerationSettings;
+	self_improvement?: LeadProfileSelfImprovementSettings;
 }
 
 export interface LeadProfileGeneratePayload {
@@ -1455,6 +1471,7 @@ export interface LeadScoringEntry {
 	form_source: string;
 	form_id: string | number;
 	form_title?: string | null;
+	provider_label?: string | null;
 	entry_id: string;
 	entry_snapshot?: {
 		date_created?: string | null;
@@ -1477,12 +1494,21 @@ export interface LeadScoringEntry {
 	historical_run_id?: number | null;
 	lead_execution_id?: string | null;
 	reply_execution_id?: string | null;
+	correction?: {
+		grade?: LeadGrade | string;
+		justification?: string;
+		original_grade?: LeadGrade | string;
+		original_justification?: string;
+		corrected_by_user_id?: number | null;
+		corrected_at?: string | null;
+	};
 }
 
 export interface LeadScoringFormSummary {
 	form_source: string;
 	form_id: string | number;
 	form_title?: string | null;
+	provider_label?: string | null;
 	scored_leads: number;
 	priority_leads: number;
 	reply_drafts: number;
@@ -1520,7 +1546,13 @@ export interface LeadValueDashboard {
 	entry_total?: number;
 	entry_pages?: number;
 	forms?: LeadScoringFormSummary[];
+	unconfigured_forms?: LeadScoringFormSummary[];
 	historical_runs: LeadValueHistoricalRun[];
+}
+
+export interface LeadScoringCorrectionPayload {
+	grade: LeadGrade;
+	justification: string;
 }
 
 export interface LeadValueEntrySearchEntry {

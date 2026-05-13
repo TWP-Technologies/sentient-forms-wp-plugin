@@ -46,6 +46,7 @@ import type {
 	LeadProfileResponse,
 	LeadProfileGeneratePayload,
 	LeadProfileSavePayload,
+	LeadScoringCorrectionPayload,
 	LeadValueDashboard,
 	LeadValueEntrySearchResponse,
 	LeadValueHistoricalRunCreatePayload,
@@ -580,6 +581,21 @@ export class SentientFormsApiClient {
 		);
 	}
 
+	async selfImproveLeadProfile(
+		profileId: number,
+		payload: { async?: boolean; force?: boolean } = {},
+		options: RequestOptions = {}
+	): Promise<LeadProfileResponse & { self_improvement?: Record<string, unknown> }> {
+		return this.request<LeadProfileResponse & { self_improvement?: Record<string, unknown> }>(
+			`lead-value/profiles/${encodeURIComponent(String(profileId))}/self-improve`,
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+	}
+
 	async refreshLeadProfileAssistant(
 		profileId: number,
 		options: RequestOptions = {}
@@ -606,6 +622,38 @@ export class SentientFormsApiClient {
 		return this.request<LeadValueEntrySearchResponse>(
 			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/entries/search${suffix}`,
 			{ showNotifications: false, ...options }
+		);
+	}
+
+	async correctLeadScoringEntry(
+		formSource: string,
+		formId: string | number,
+		entryId: string | number,
+		payload: LeadScoringCorrectionPayload,
+		options: RequestOptions = {}
+	): Promise<LeadProfileResponse & { entry?: unknown; dashboard?: LeadValueDashboard }> {
+		return this.request<LeadProfileResponse & { entry?: unknown; dashboard?: LeadValueDashboard }>(
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/entries/${encodeURIComponent(String(entryId))}/correction`,
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+	}
+
+	async generateLeadSuggestedReply(
+		formSource: string,
+		formId: string | number,
+		entryId: string | number,
+		options: RequestOptions = {}
+	): Promise<{ execution?: unknown; entry?: unknown; dashboard?: LeadValueDashboard }> {
+		return this.request<{ execution?: unknown; entry?: unknown; dashboard?: LeadValueDashboard }>(
+			`lead-value/forms/${encodeURIComponent(formSource)}/${encodeURIComponent(String(formId))}/entries/${encodeURIComponent(String(entryId))}/suggested-reply`,
+			{
+				method: 'POST',
+				...options
+			}
 		);
 	}
 

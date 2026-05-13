@@ -3,6 +3,23 @@ import { z } from 'zod';
 const delimiterPattern = /[\s,;\t|]+/;
 const emailSchema = z.email();
 const webhookSchema = z.url({ protocol: /^https?$/ });
+export const leadGradeSchema = z.enum(['A', 'B', 'C', 'Reject']);
+export const leadProfileGenerationSettingsSchema = z.object({
+	model: z.enum(['~openai/gpt-latest', '~google/gemini-pro-latest', '~anthropic/claude-opus-latest']),
+	reasoning_effort: z.literal('xhigh').optional()
+});
+export const leadProfileSelfImprovementSchema = z.object({
+	consent: z.boolean(),
+	frequency: z.enum(['manual', 'weekly', 'monthly']),
+	review_required: z.boolean().optional()
+});
+export const leadProfileReplyRulesSchema = z.object({
+	skip_reject_grade: z.boolean()
+});
+export const leadScoringCorrectionSchema = z.object({
+	grade: leadGradeSchema,
+	justification: z.string().trim().min(12).max(6000)
+});
 
 export function parseDelimitedList(value: string): string[] {
 	return Array.from(

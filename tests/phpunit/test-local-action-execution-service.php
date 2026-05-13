@@ -623,6 +623,104 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( [], $client->chat_calls );
     }
 
+    public function test_suggested_reply_skips_rejected_lead_unless_manual_override(): void
+    {
+        global $wpdb;
+
+        $profiles = new Sentient_Forms_Lead_Profiles_Repository( $wpdb );
+        $profile_id = $profiles->save(
+            [
+                'form_source'              => 'gravity_forms',
+                'form_id'                  => '7',
+                'status'                   => 'active',
+                'profile_version'          => 2,
+                'consented_at'             => current_time( 'mysql' ),
+                'generated_profile_prompt' => 'Trusted lead scoring prompt.',
+                'grading_rubric_json'      => [ 'scale' => [ 'Reject' => 'Spam or low-fit lead.' ] ],
+                'handoff_rules_json'       => [
+                    'reply_rules' => [
+                        'skip_reject_grade' => true,
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $profile_id );
+
+        $stored = ( new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb ) )->upsert_from_execution(
+            [
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'form_title'           => 'Contact Form',
+                'entry_id'             => '99',
+                'action_code'          => 'lead_grading_v1',
+                'execution_request_id' => 'lead-reject-99',
+                'lead_profile_id'      => $profile_id,
+                'profile_version'      => 2,
+                'grade'                => 'Reject',
+                'confidence'           => 0.95,
+                'priority'             => 'low',
+                'justification'        => 'The entry was classified as spam and should not receive an automatic reply draft.',
+                'status'               => 'succeeded',
+                'entry_snapshot'       => [ 'Name' => 'Spam Lead' ],
+            ]
+        );
+        $this->assertIsInt( $stored );
+
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'prompt_template' => 'Draft a reply for {{name}}.',
+            ],
+            [
+                'code'         => 'suggested_reply_v1',
+                'display_name' => 'Suggested Reply',
+            ]
+        );
+
+        $client  = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'suggested_reply_draft' => 'Thanks for reaching out.',
+                    'next_best_action'      => 'Reply after internal review.',
+                    'reply_rationale'       => 'Manual override requested a draft.',
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+        $entry   = [
+            'id' => 99,
+            '1'  => 'Spam Lead',
+            '2'  => 'spam@example.test',
+        ];
+
+        $skipped = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            $entry,
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $skipped );
+        $this->assertSame( 'skipped', $skipped['status'] );
+        $this->assertSame( 'lead_grade_reject', $skipped['effects']['skipped'][0]['reason'] ?? null );
+        $this->assertSame( [], $client->chat_calls );
+
+        $manual = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            $entry,
+            [
+                'hook'                   => 'gform_after_submission',
+                'manual_suggested_reply' => true,
+            ]
+        );
+
+        $this->assertIsArray( $manual );
+        $this->assertSame( 'succeeded', $manual['status'] );
+        $this->assertCount( 1, $client->chat_calls );
+    }
+
     public function test_executes_imported_bundled_openrouter_mapping_without_saved_credential_id(): void
     {
         $fixture = $this->create_local_openrouter_mapping(
@@ -1038,9 +1136,9 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         );
 
         $this->assertIsArray( $result );
-        $this->assertSame( 'openai/gpt-5.5', $result['model'] );
+        $this->assertSame( '~openai/gpt-latest', $result['model'] );
         $this->assertCount( 1, $client->chat_calls );
-        $this->assertSame( 'openai/gpt-5.5', $client->chat_calls[0]['payload']['model'] );
+        $this->assertSame( '~openai/gpt-latest', $client->chat_calls[0]['payload']['model'] );
     }
 
     public function test_runtime_model_selection_can_route_openrouter_action_through_sentient_managed(): void
@@ -1055,7 +1153,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             [
                 'execution_request_id' => 'runtime-managed-req',
                 'provider'             => 'sentient_managed',
-                'model'                => 'openai/gpt-5.5',
+                'model'                => '~openai/gpt-latest',
                 'status'               => 'succeeded',
                 'output'               => [
                     'text' => 'Managed runtime route succeeded.',
@@ -1101,7 +1199,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertIsArray( $result );
         $this->assertSame( 'succeeded', $result['status'] );
         $this->assertSame( 'sentient_managed', $result['provider'] );
-        $this->assertSame( 'openai/gpt-5.5', $result['model'] );
+        $this->assertSame( '~openai/gpt-latest', $result['model'] );
         $this->assertCount( 0, $openrouter->chat_calls );
         $this->assertCount( 1, $managed_proxy->execute_calls );
         $this->assertSame( $managed['proxy_api_key'], $managed_proxy->execute_calls[0]['proxy_api_key'] );
@@ -1110,7 +1208,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'sentient_managed', $payload['provider'] );
         $this->assertSame( $managed['site_id'], $payload['site_id'] );
         $this->assertSame( 'runtime-managed-req', $payload['execution_request_id'] );
-        $this->assertSame( 'openai/gpt-5.5', $payload['model'] );
+        $this->assertSame( '~openai/gpt-latest', $payload['model'] );
         $this->assertSame( 'contact_spam_triage', $payload['action_code'] );
         $this->assertSame( [ 'effort' => 'high', 'exclude' => true ], $payload['reasoning'] ?? null );
     }

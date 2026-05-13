@@ -416,21 +416,11 @@
 							{#if siteContextLoading}
 								<p class="sf:text-xs sf:text-slate-500">Loading Site Context setup...</p>
 							{:else}
-								<label class="sf:flex sf:items-start sf:gap-2 sf:text-sm sf:text-slate-700">
-									<input
-										type="checkbox"
-										class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-										bind:checked={siteContextConsent}
-									/>
-									<span>
-										<span class="sf:block sf:font-semibold sf:text-slate-900">
-											Allow AI-generated Site Context
-										</span>
-										<span class="sf:block sf:text-xs sf:text-slate-600">
-											Uses a web-capable model to read public site evidence.
-										</span>
-									</span>
-								</label>
+								<Toggle
+									label="Allow AI-generated Site Context"
+									description="Uses a web-capable model to read public site evidence."
+									bind:checked={siteContextConsent}
+								/>
 
 								<Toggle
 									label="Refresh automatically"
@@ -521,8 +511,17 @@
 							<p class="sf:font-semibold">OpenRouter privacy note</p>
 							<p class="sf:mt-1">
 								Zero Data Retention depends on the specific OpenRouter route and upstream model
-								provider. Many free routes have different retention or training policies, so review
-								the provider privacy terms before using them on sensitive forms.
+								provider. Review the
+								<a
+									class="sf:font-medium sf:text-primary-700 sf:underline sf:underline-offset-2"
+									href="https://openrouter.ai/docs/guides/features/zdr"
+									target="_blank"
+									rel="noreferrer"
+								>
+									OpenRouter ZDR guide
+								</a>
+								before choosing sensitive routes. Many free routes have different retention or training
+								policies, so review the provider privacy terms before using them on sensitive forms.
 							</p>
 						</Alert>
 					</div>
@@ -538,7 +537,7 @@
 							4
 						</span>
 						<p class="sf:min-w-0 sf:text-sm sf:text-slate-500">
-							Skip setup applies the recommended Balanced defaults and keeps the plugin ready to use
+								Skip Setup applies the recommended Balanced defaults and keeps the plugin ready to use
 							immediately.
 						</p>
 					</div>
@@ -548,7 +547,7 @@
 							disabled={saving || siteContextSaving}
 							onclick={useBalancedDefaults}
 						>
-							Skip setup
+								Skip Setup
 						</Button>
 						<Button
 							class="sf:min-w-[9rem]"
