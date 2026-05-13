@@ -330,12 +330,12 @@ test.describe('lead scoring workspace', () => {
 		await page.goto('/#/actions/gravity_forms/123/lead-value', { waitUntil: 'networkidle' });
 
 		await expect(page.getByRole('heading', { name: 'Lead Scoring' })).toBeVisible();
-		await expect(page.getByTestId('lead-scoring-summary')).toContainText('Ready');
-		await expect(page.getByRole('heading', { name: 'Scored form entries' })).toBeVisible();
+		await expect(page.getByTestId('lead-scoring-summary')).toContainText('Scored leads');
+		await expect(page.getByRole('heading', { name: 'Scored entries' })).toBeVisible();
 		await expect(
-			page.getByText('The entry names a concrete paid implementation project')
+			page.getByRole('table').getByText('The entry names a concrete paid implementation project')
 		).toBeVisible();
-		await page.getByRole('button', { name: 'View full detail' }).click();
+		await page.getByRole('link', { name: 'Open detail' }).first().click();
 		await expect(page.getByRole('dialog')).toContainText('Route to sales for same-day follow-up.');
 		await page.getByRole('button', { name: 'Close' }).click();
 
@@ -364,8 +364,8 @@ test.describe('lead scoring workspace', () => {
 		await expect(page.getByTestId('lead-scoring-aggregate-summary')).toContainText('Scored leads');
 		await expect(page.getByRole('heading', { name: 'Scored entries' })).toBeVisible();
 		await expect(page.getByRole('table').getByText('Lead intake').first()).toBeVisible();
-		await expect(page.getByText('#1001')).toBeVisible();
-		await expect(page.getByText('Route to sales for same-day follow-up.')).toBeVisible();
+		await expect(page.getByRole('table').getByText('#1001')).toBeVisible();
+		await expect(page.getByRole('table').getByText('Route to sales for same-day follow-up.')).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'Configured forms' })).toBeVisible();
 	});
 });

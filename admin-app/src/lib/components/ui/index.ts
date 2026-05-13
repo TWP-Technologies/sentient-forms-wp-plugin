@@ -1,5 +1,6 @@
 export { default as Input } from './input.svelte';
 export { default as Button } from './button.svelte';
+export { default as ButtonLink } from './button-link.svelte';
 export { default as Card } from './card.svelte';
 export { default as Section } from './section.svelte';
 export { default as Badge } from './badge.svelte';
@@ -11,6 +12,7 @@ export { default as SelectField } from './select-field.svelte';
 export { default as TextareaField } from './textarea-field.svelte';
 export { default as Toggle } from './toggle.svelte';
 export { default as ValidationSummary } from './validation-summary.svelte';
+export { default as InfoTooltip } from './info-tooltip.svelte';
 export { default as SlugGenerator } from './slug-generator.svelte';
 export { default as PromptBuilder } from './prompt-builder.svelte';
 export { default as ModelSelect } from './model-select.svelte';

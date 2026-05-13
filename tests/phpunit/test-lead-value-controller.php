@@ -605,6 +605,68 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertContains( '99', $form_ids );
     }
 
+    public function test_dashboards_hydrate_missing_entry_preview_from_gravity_forms(): void
+    {
+        global $wpdb;
+
+        GFAPI::$forms = [
+            7 => [
+                'id'     => 7,
+                'title'  => 'Lead intake',
+                'fields' => [
+                    [
+                        'id'    => 1,
+                        'label' => 'Name',
+                    ],
+                    [
+                        'id'    => 2,
+                        'label' => 'Project Details',
+                    ],
+                ],
+            ],
+        ];
+        GFAPI::$entries = [
+            1002 => [
+                'id'           => 1002,
+                'form_id'      => 7,
+                'date_created' => '2026-05-13 08:15:00',
+                'status'       => 'active',
+                '1'            => 'Grace Buyer',
+                '2'            => 'We need paid implementation help with a multi-location intake workflow.',
+            ],
+        ];
+
+        $results = new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
+        $results->upsert_from_execution(
+            [
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'form_title'           => 'Lead intake',
+                'entry_id'             => '1002',
+                'action_code'          => 'lead_grading_v1',
+                'execution_request_id' => 'lead-grading:1002',
+                'profile_version'      => 6,
+                'grade'                => 'A',
+                'priority'             => 'high',
+                'justification'        => 'The entry describes a relevant paid project.',
+                'entry_snapshot'       => [],
+            ]
+        );
+
+        $aggregate = $this->dispatch_json( 'GET', '/sentient-forms/v1/lead-value/dashboard' );
+        $form      = $this->dispatch_json( 'GET', '/sentient-forms/v1/lead-value/forms/gravity_forms/7/dashboard' );
+
+        foreach ( [ $aggregate, $form ] as $dashboard )
+        {
+            $this->assertSame( '1002', $dashboard['entries'][0]['entry_id'] );
+            $this->assertSame( 'active', $dashboard['entries'][0]['entry_snapshot']['status'] );
+            $this->assertSame( '2026-05-13 08:15:00', $dashboard['entries'][0]['entry_snapshot']['date_created'] );
+            $this->assertSame( 'Name', $dashboard['entries'][0]['entry_snapshot']['field_summary'][0]['label'] );
+            $this->assertSame( 'Grace Buyer', $dashboard['entries'][0]['entry_snapshot']['field_summary'][0]['value'] );
+            $this->assertSame( 'Project Details', $dashboard['entries'][0]['entry_snapshot']['field_summary'][1]['label'] );
+        }
+    }
+
     private function seed_ready_site_context(): void
     {
         update_option(

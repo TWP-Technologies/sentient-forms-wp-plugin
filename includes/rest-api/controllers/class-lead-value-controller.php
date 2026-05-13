@@ -629,6 +629,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         {
             return $entry;
         }
+        $entry = $this->hydrate_entry_preview( $entry );
 
         $profile = $this->profiles->get_latest_for_form( $form_source, $form_id );
         if ( is_array( $profile ) )
@@ -697,7 +698,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         return $this->prepare_item_for_response(
             [
                 'execution' => $result,
-                'entry'     => $this->lead_scoring_results->get_entry_result( $form_source, $form_id, $entry_id ),
+                'entry'     => $this->hydrate_entry_preview( $this->lead_scoring_results->get_entry_result( $form_source, $form_id, $entry_id ) ?? [] ),
                 'dashboard' => $this->build_dashboard( $form_source, $form_id ),
             ],
             202
@@ -1440,6 +1441,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
                 'q'        => sanitize_text_field( (string) ( $request->get_param( 'q' ) ?? '' ) ),
             ]
         );
+        $entries['entries'] = $this->hydrate_entry_previews( $entries['entries'] ?? [] );
         $forms = $this->aggregate_forms_summary();
 
         return $this->prepare_item_for_response(
@@ -2692,6 +2694,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
                 'q'           => $query_args['q'] ?? '',
             ]
         );
+        $entry_page['entries'] = $this->hydrate_entry_previews( $entry_page['entries'] ?? [] );
         $events = array_filter(
             $this->events->list_recent( 500 ),
             static fn ( array $event ): bool => sanitize_key( (string) ( $event['form_source'] ?? '' ) ) === sanitize_key( $form_source )
@@ -2890,6 +2893,66 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         }
 
         return null;
+    }
+
+    private function hydrate_entry_previews( array $entries ): array
+    {
+        foreach ( $entries as $index => $entry )
+        {
+            if ( is_array( $entry ) )
+            {
+                $entries[ $index ] = $this->hydrate_entry_preview( $entry );
+            }
+        }
+
+        return $entries;
+    }
+
+    private function hydrate_entry_preview( array $entry ): array
+    {
+        $snapshot = is_array( $entry['entry_snapshot'] ?? null ) ? $entry['entry_snapshot'] : [];
+        if ( ! empty( $snapshot['field_summary'] ) && is_array( $snapshot['field_summary'] ) )
+        {
+            return $entry;
+        }
+
+        $form_source = sanitize_key( (string) ( $entry['form_source'] ?? '' ) );
+        if ( ! in_array( $form_source, [ 'gravity_forms', 'gravity-forms' ], true ) )
+        {
+            return $entry;
+        }
+
+        if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_form' ] ) || ! is_callable( [ 'GFAPI', 'get_entry' ] ) )
+        {
+            return $entry;
+        }
+
+        $form_id  = absint( $entry['form_id'] ?? 0 );
+        $entry_id = sanitize_text_field( (string) ( $entry['entry_id'] ?? '' ) );
+        if ( $form_id <= 0 || '' === $entry_id )
+        {
+            return $entry;
+        }
+
+        $form     = GFAPI::get_form( $form_id );
+        $gf_entry = GFAPI::get_entry( $entry_id );
+        if ( is_wp_error( $gf_entry ) || ! is_array( $gf_entry ) )
+        {
+            return $entry;
+        }
+
+        $summary = $this->summarize_entry_fields( is_array( $form ) ? $form : [], $gf_entry );
+        if ( [] === $summary )
+        {
+            return $entry;
+        }
+
+        $snapshot['date_created']  = $snapshot['date_created'] ?? ( $gf_entry['date_created'] ?? null );
+        $snapshot['status']        = $snapshot['status'] ?? ( $gf_entry['status'] ?? null );
+        $snapshot['field_summary'] = $summary;
+        $entry['entry_snapshot']   = $snapshot;
+
+        return $entry;
     }
 
     private function summarize_entry_fields( array $form, array $entry ): array

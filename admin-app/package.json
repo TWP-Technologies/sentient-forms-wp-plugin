@@ -71,6 +71,7 @@
   "packageManager": "bun@1.3.0",
   "dependencies": {
     "@dagrejs/dagre": "^1.1.8",
+    "@lucide/svelte": "^1.14.0",
     "@xyflow/svelte": "^1.5.0",
     "zod": "^4.3.5"
   }

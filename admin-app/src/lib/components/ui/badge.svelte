@@ -4,12 +4,13 @@
 
 	interface Props {
 		variant?: Variant;
+		class?: string;
 		children?: import('svelte').Snippet;
 	}
 
-	let { variant = 'neutral', children }: Props = $props();
+	let { variant = 'neutral', class: className = '', children }: Props = $props();
 </script>
 
-<span class={badgeStyles({ variant })}>
+<span class={[badgeStyles({ variant }), className].filter(Boolean).join(' ')}>
 	{@render children?.()}
 </span>
