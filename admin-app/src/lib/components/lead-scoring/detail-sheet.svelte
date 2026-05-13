@@ -9,6 +9,13 @@
 	import type { LeadScoringEntry } from '$lib/api/types';
 	import { gradeBadgeVariant } from '$lib/components/lead-scoring/utils';
 
+	type PriorityPresentation = {
+		containerClass: string;
+		iconClass: string;
+		labelClass: string;
+		valueClass: string;
+	};
+
 	type Props = {
 		entry: LeadScoringEntry | null;
 		onClose: () => void;
@@ -40,6 +47,48 @@
 			? 'sf:bg-rose-500 sf:text-white sf:shadow-rose-200'
 			: 'sf:bg-emerald-500 sf:text-white sf:shadow-emerald-200';
 	}
+
+	function priorityPresentation(value?: string | null): PriorityPresentation {
+		const priority = value?.trim().toLowerCase() ?? '';
+
+		if (priority === 'urgent' || priority === 'high') {
+			return {
+				containerClass: 'sf:border-amber-200 sf:bg-amber-50/85',
+				iconClass: 'sf:border-amber-200 sf:bg-white sf:text-amber-600',
+				labelClass: 'sf:text-amber-700',
+				valueClass: 'sf:text-amber-950'
+			};
+		}
+
+		if (priority === 'normal' || priority === 'medium') {
+			return {
+				containerClass: 'sf:border-sky-200 sf:bg-sky-50/80',
+				iconClass: 'sf:border-sky-200 sf:bg-white sf:text-sky-600',
+				labelClass: 'sf:text-sky-700',
+				valueClass: 'sf:text-sky-950'
+			};
+		}
+
+		return {
+			containerClass: 'sf:border-slate-200 sf:bg-slate-50',
+			iconClass: 'sf:border-slate-200 sf:bg-white sf:text-slate-400',
+			labelClass: 'sf:text-slate-400',
+			valueClass: 'sf:text-slate-950'
+		};
+	}
+
+	function formatPriority(value?: string | null): string {
+		const priority = value?.trim();
+		if (!priority) return 'Normal';
+
+		return priority
+			.split(/[\s_-]+/)
+			.filter(Boolean)
+			.map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
+			.join(' ');
+	}
+
+	let priorityDisplay = $derived(priorityPresentation(entry?.priority));
 </script>
 
 {#if entry}
@@ -50,12 +99,12 @@
 	>
 		<div
 			data-lead-scoring-detail-sheet
-			class="sf:h-full sf:w-full sf:max-w-3xl sf:overflow-y-auto sf:bg-slate-50 sf:p-6 sf:shadow-2xl sf:sm:p-8"
+			class="sf:h-full sf:w-full sf:max-w-3xl sf:overflow-y-auto sf:bg-slate-50 sf:p-5 sf:shadow-2xl sf:sm:p-7"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="lead-scoring-entry-detail-title"
 		>
-			<div class="sf:flex sf:items-start sf:justify-between sf:gap-4 sf:border-b sf:border-slate-200 sf:pb-7">
+			<div class="sf:flex sf:items-start sf:justify-between sf:gap-4 sf:border-b sf:border-slate-200 sf:pb-5">
 				<div>
 					<p class="sf:text-xs sf:font-bold sf:uppercase sf:tracking-[0.16em] sf:text-slate-400">
 						Lead Scoring Detail
@@ -70,24 +119,24 @@
 				<Button variant="secondary" onclick={onClose}>Close</Button>
 			</div>
 
-			<div class="sf:mt-9 sf:rounded-3xl sf:bg-white sf:p-6 sf:shadow-[0_20px_45px_rgba(15,23,42,0.08)]">
-				<div class="sf:grid sf:gap-6 sf:lg:grid-cols-[minmax(0,1fr)_13rem]">
-					<div class={`sf:rounded-2xl sf:border sf:p-7 ${gradeAccentClass(entry.grade)}`}>
+			<div class="sf:mt-6 sf:rounded-3xl sf:bg-white sf:p-5 sf:shadow-[0_18px_38px_rgba(15,23,42,0.08)]">
+				<div class="sf:grid sf:gap-5 sf:lg:grid-cols-[minmax(0,1fr)_13rem]">
+					<div class={`sf:rounded-2xl sf:border sf:p-6 ${gradeAccentClass(entry.grade)}`}>
 						<p class="sf:text-xs sf:font-bold sf:uppercase sf:tracking-[0.16em] sf:text-rose-500">
 							Primary outcome
 						</p>
-						<div class="sf:mt-5 sf:flex sf:items-center sf:gap-5">
+						<div class="sf:mt-4 sf:flex sf:items-center sf:gap-4">
 							<span
-								class={`sf:flex sf:h-14 sf:w-14 sf:items-center sf:justify-center sf:rounded-full sf:shadow-xl ${gradeIconClass(entry.grade)}`}
+								class={`sf:flex sf:h-12 sf:w-12 sf:items-center sf:justify-center sf:rounded-full sf:shadow-xl ${gradeIconClass(entry.grade)}`}
 							>
 								{#if entry.grade === 'Reject'}
-									<BanIcon class="sf:h-8 sf:w-8" aria-hidden="true" />
+									<BanIcon class="sf:h-7 sf:w-7" aria-hidden="true" />
 								{:else}
-									<BriefcaseIcon class="sf:h-8 sf:w-8" aria-hidden="true" />
+									<BriefcaseIcon class="sf:h-7 sf:w-7" aria-hidden="true" />
 								{/if}
 							</span>
 							<div>
-								<p class="sf:text-4xl sf:font-bold sf:leading-none sf:text-slate-950">
+								<p class="sf:text-3xl sf:font-bold sf:leading-none sf:text-slate-950">
 									{entry.grade || 'Ungraded'}
 								</p>
 								<p class="sf:mt-2 sf:text-sm sf:text-slate-500">
@@ -101,16 +150,22 @@
 					</div>
 
 					<div class="sf:grid sf:gap-4">
-						<div class="sf:flex sf:items-center sf:gap-4 sf:rounded-2xl sf:bg-slate-50 sf:p-5">
-							<span class="sf:flex sf:h-11 sf:w-11 sf:items-center sf:justify-center sf:rounded-full sf:border sf:border-slate-200 sf:bg-white sf:text-slate-400">
+						<div
+							class={`sf:flex sf:items-center sf:gap-4 sf:rounded-2xl sf:border sf:p-5 ${priorityDisplay.containerClass}`}
+						>
+							<span
+								class={`sf:flex sf:h-11 sf:w-11 sf:items-center sf:justify-center sf:rounded-full sf:border ${priorityDisplay.iconClass}`}
+							>
 								<SlidersIcon class="sf:h-5 sf:w-5" aria-hidden="true" />
 							</span>
 							<div>
-								<p class="sf:text-xs sf:font-bold sf:uppercase sf:tracking-[0.14em] sf:text-slate-400">
+								<p
+									class={`sf:text-xs sf:font-bold sf:uppercase sf:tracking-[0.14em] ${priorityDisplay.labelClass}`}
+								>
 									Priority
 								</p>
-								<p class="sf:mt-1 sf:text-xl sf:font-semibold sf:text-slate-950">
-									{entry.priority || 'Normal'}
+								<p class={`sf:mt-1 sf:text-xl sf:font-semibold ${priorityDisplay.valueClass}`}>
+									{formatPriority(entry.priority)}
 								</p>
 							</div>
 						</div>
@@ -122,18 +177,18 @@
 				</div>
 			</div>
 
-			<section class="sf:mt-9">
+			<section class="sf:mt-7">
 				<h3 class="sf:text-2xl sf:font-semibold sf:text-slate-950">Justification</h3>
-				<p class="sf:mt-5 sf:whitespace-pre-wrap sf:rounded-2xl sf:border sf:border-primary-100 sf:bg-primary-50/40 sf:p-6 sf:text-base sf:leading-8 sf:text-slate-800">
+				<p class="sf:mt-4 sf:whitespace-pre-wrap sf:rounded-2xl sf:border sf:border-primary-100 sf:bg-primary-50/40 sf:p-5 sf:text-base sf:leading-8 sf:text-slate-800">
 					{entry.justification || entry.fit_summary || 'No justification stored.'}
 				</p>
 			</section>
 
-			<section class="sf:mt-9">
+			<section class="sf:mt-7">
 				<h3 class="sf:text-2xl sf:font-semibold sf:text-slate-950">
 					Suggested reply and next best action
 				</h3>
-				<div class="sf:mt-5 sf:overflow-hidden sf:rounded-3xl sf:bg-white sf:p-6 sf:shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
+				<div class="sf:mt-4 sf:overflow-hidden sf:rounded-3xl sf:bg-white sf:p-5 sf:shadow-[0_16px_34px_rgba(15,23,42,0.06)]">
 					<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-4">
 						<Badge variant={entry.do_not_send ? 'warning' : 'info'}>
 							{entry.do_not_send ? 'Review only' : 'Draft state'}
@@ -149,16 +204,16 @@
 							</Button>
 						{/if}
 					</div>
-					<p class="sf:mt-7 sf:text-base sf:leading-7 sf:text-slate-800">
+					<p class="sf:mt-5 sf:text-base sf:leading-7 sf:text-slate-800">
 						<strong>Next best action:</strong>
 						{entry.next_best_action || 'No recommendation stored.'}
 					</p>
-					<div class="sf:mt-7 sf:rounded-3xl sf:bg-slate-50 sf:p-6">
+					<div class="sf:mt-5 sf:rounded-3xl sf:bg-slate-50 sf:p-5">
 						<p class="sf:whitespace-pre-wrap sf:text-base sf:italic sf:leading-8 sf:text-slate-800">
 							{entry.suggested_reply_draft || 'No suggested reply draft stored.'}
 						</p>
 						{#if entry.reply_rationale}
-							<div class="sf:my-5 sf:h-1 sf:w-14 sf:rounded-full sf:bg-slate-200"></div>
+							<div class="sf:my-4 sf:h-1 sf:w-14 sf:rounded-full sf:bg-slate-200"></div>
 							<p class="sf:whitespace-pre-wrap sf:text-sm sf:leading-7 sf:text-slate-500">
 								{entry.reply_rationale}
 							</p>
@@ -167,9 +222,9 @@
 				</div>
 			</section>
 
-			<section class="sf:mt-9">
+			<section class="sf:mt-7">
 				<h3 class="sf:text-2xl sf:font-semibold sf:text-slate-950">Entry preview</h3>
-				<div class="sf:mt-5 sf:grid sf:gap-3">
+				<div class="sf:mt-4 sf:grid sf:gap-3">
 					{#each entry.entry_snapshot?.field_summary ?? [] as field (`${field.field_id}-${field.label}`)}
 						<div class="sf:rounded-2xl sf:border sf:border-slate-200 sf:bg-white sf:p-4">
 							<p class="sf:text-xs sf:font-bold sf:uppercase sf:tracking-[0.08em] sf:text-slate-400">
@@ -187,7 +242,7 @@
 				</div>
 			</section>
 
-			<section class="sf:mt-9 sf:rounded-2xl sf:border sf:border-slate-200 sf:bg-white sf:p-5">
+			<section class="sf:mt-7 sf:rounded-2xl sf:border sf:border-slate-200 sf:bg-white sf:p-5">
 				<div class="sf:flex sf:items-start sf:gap-3">
 					<FileTextIcon class="sf:mt-0.5 sf:h-4 sf:w-4 sf:text-slate-400" aria-hidden="true" />
 					<p class="sf:text-xs sf:leading-6 sf:text-slate-500">
