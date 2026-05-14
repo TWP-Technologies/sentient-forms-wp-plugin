@@ -137,6 +137,19 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
                 ],
             ]
         );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/sentient-managed/revoke',
+            [
+                [
+                    'methods'             => WP_REST_Server::CREATABLE,
+                    'callback'            => [ $this, 'revoke_sentient_managed_proxy' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => $this->get_sentient_managed_revoke_args(),
+                ],
+            ]
+        );
     }
 
     public function list_credentials( WP_REST_Request $request ): WP_REST_Response
@@ -520,6 +533,14 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
             'site_id'           => $account['site_id'],
             'license_status'    => $account['status'],
             'proxy_key_present' => true,
+            'managed_consent'   => [
+                'state'                    => 'accepted',
+                'disclosure_version'       => $disclosure_version,
+                'consent_id'               => (int) $consent_id,
+                'accepted_at'              => gmdate( 'Y-m-d H:i:s' ),
+                'stripe_plan_changed'      => false,
+                'managed_proxy_selected'   => true,
+            ],
             'billing_boundary'  => [
                 'direct_openrouter_billed_by_sentient' => false,
                 'managed_proxy_billed_by_sentient'     => true,
@@ -566,7 +587,96 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
                 'credential'       => is_array( $credential ) ? $this->format_credential( $credential ) : null,
                 'consent_recorded' => true,
                 'consent_id'       => $consent_id,
+                'consent_state'    => 'accepted',
                 'account'          => $account,
+                'billing_boundary' => [
+                    'direct_openrouter_billed_by_sentient' => false,
+                    'managed_proxy_billed_by_sentient'     => true,
+                ],
+            ]
+        );
+    }
+
+    public function revoke_sentient_managed_proxy( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
+        $confirmed = rest_sanitize_boolean( $request->get_param( 'confirm_managed_service_revocation' ) );
+        if ( ! $confirmed )
+        {
+            return new WP_Error(
+                'sentient_forms_managed_service_revocation_confirmation_required',
+                __( 'Confirm that managed-service consent should be revoked for this WordPress site.', 'sentient-forms' ),
+                [ 'status' => 400 ]
+            );
+        }
+
+        $license_data       = Sentient_Forms_Plugin::instance()->get_license_data();
+        $disclosure_version = sanitize_text_field( (string) $request->get_param( 'disclosure_version' ) );
+        $credential         = $this->credentials->find_by_provider_auth_mode( 'sentient_managed', 'sentient_proxy' );
+        $now                = gmdate( 'Y-m-d H:i:s' );
+
+        $consent_id = $this->consents->record(
+            'sentient_managed',
+            $disclosure_version,
+            get_current_user_id() ?: null,
+            [
+                'action'                              => 'revoke_managed_proxy',
+                'request_ip'                          => $this->request_ip_hash(),
+                'license_id'                          => sanitize_text_field( (string) ( $license_data['license_id'] ?? '' ) ),
+                'site_id'                             => sanitize_text_field( (string) ( $license_data['site_id'] ?? '' ) ),
+                'local_site_identifier'               => sanitize_text_field( (string) ( $license_data['local_site_identifier'] ?? '' ) ),
+                'managed_proxy_selected'              => false,
+                'managed_provider_disabled_locally'    => true,
+                'stripe_plan_changed'                 => false,
+                'direct_openrouter_billed_by_sentient' => false,
+                'managed_proxy_billed_by_sentient'      => true,
+            ]
+        );
+
+        if ( is_wp_error( $consent_id ) )
+        {
+            return $consent_id;
+        }
+
+        $credential_id = null;
+        if ( is_array( $credential ) )
+        {
+            $credential_id = (int) $credential['id'];
+            $status_json   = is_array( $credential['status_json'] ?? null ) ? $credential['status_json'] : [];
+            $status_json['managed_consent'] = [
+                'state'                         => 'revoked',
+                'disclosure_version'            => $disclosure_version,
+                'consent_id'                    => (int) $consent_id,
+                'revoked_at'                    => $now,
+                'stripe_plan_changed'           => false,
+                'managed_proxy_selected'        => false,
+                'managed_provider_disabled_locally' => true,
+            ];
+            $status_json['billing_boundary'] = [
+                'direct_openrouter_billed_by_sentient' => false,
+                'managed_proxy_billed_by_sentient'     => true,
+            ];
+
+            $updated = $this->credentials->update_status( $credential_id, 'disabled', $status_json );
+            if ( is_wp_error( $updated ) )
+            {
+                return $updated;
+            }
+
+            $this->model_selection_service->repair_all_custom_actions();
+            $this->model_selection_service->repair_all_bundled_form_mappings();
+        }
+
+        $updated_credential = null !== $credential_id ? $this->credentials->get( $credential_id ) : null;
+
+        return $this->prepare_item_for_response(
+            [
+                'provider'         => 'sentient_managed',
+                'status'           => 'disabled',
+                'credential_id'    => $credential_id,
+                'credential'       => is_array( $updated_credential ) ? $this->format_credential( $updated_credential ) : null,
+                'consent_recorded' => true,
+                'consent_id'       => (int) $consent_id,
+                'consent_state'    => 'revoked',
                 'billing_boundary' => [
                     'direct_openrouter_billed_by_sentient' => false,
                     'managed_proxy_billed_by_sentient'     => true,
@@ -732,6 +842,24 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         ];
     }
 
+    private function get_sentient_managed_revoke_args(): array
+    {
+        return [
+            'disclosure_version' => [
+                'type'              => 'string',
+                'required'          => true,
+                'sanitize_callback' => 'sanitize_text_field',
+                'validate_callback' => [ $this, 'validate_non_empty_string' ],
+            ],
+            'confirm_managed_service_revocation' => [
+                'type'              => 'boolean',
+                'required'          => true,
+                'sanitize_callback' => 'rest_sanitize_boolean',
+                'validate_callback' => 'rest_validate_request_arg',
+            ],
+        ];
+    }
+
     public function sanitize_secret_param( mixed $value, ?WP_REST_Request $request = null, string $param = '' ): string
     {
         return trim( (string) $value );
@@ -766,10 +894,18 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
                 && Sentient_Forms_Provider_Secret_Resolver::is_constant_secret_configured( $constant_name );
         }
 
-        if ( 'sentient_managed' === (string) ( $row['provider'] ?? '' ) && 'sentient_proxy' === (string) ( $row['auth_mode'] ?? '' ) )
+        $is_managed_proxy = 'sentient_managed' === (string) ( $row['provider'] ?? '' ) && 'sentient_proxy' === (string) ( $row['auth_mode'] ?? '' );
+        if ( $is_managed_proxy )
         {
             $license_data      = Sentient_Forms_Plugin::instance()->get_license_data();
             $secret_configured = '' !== trim( (string) ( $license_data['proxy_api_key'] ?? '' ) );
+        }
+
+        $status_json = is_array( $row['status_json'] ?? null ) ? $this->redact_sensitive_metadata( $row['status_json'] ) : null;
+        if ( $is_managed_proxy )
+        {
+            $status_json                    = is_array( $status_json ) ? $status_json : [];
+            $status_json['managed_consent'] = $this->latest_managed_consent_state();
         }
 
         return [
@@ -779,11 +915,38 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
             'auth_mode'          => $auth_mode,
             'constant_name'      => $constant_name,
             'status'             => (string) $row['status'],
-            'status_json'        => is_array( $row['status_json'] ?? null ) ? $this->redact_sensitive_metadata( $row['status_json'] ) : null,
+            'status_json'        => $status_json,
             'last_validated_at'  => $row['last_validated_at'] ?? null,
             'created_at'         => $row['created_at'] ?? null,
             'updated_at'         => $row['updated_at'] ?? null,
             'secret_configured'  => $secret_configured,
+        ];
+    }
+
+    private function latest_managed_consent_state(): array
+    {
+        $latest = $this->consents->latest_for_provider( 'sentient_managed' );
+        if ( ! is_array( $latest ) )
+        {
+            return [
+                'state' => 'missing',
+            ];
+        }
+
+        $metadata = is_array( $latest['metadata_json'] ?? null ) ? $latest['metadata_json'] : [];
+        $action   = sanitize_key( (string) ( $metadata['action'] ?? '' ) );
+        $state    = 'revoke_managed_proxy' === $action ? 'revoked' : 'accepted';
+        $at_key   = 'revoked' === $state ? 'revoked_at' : 'accepted_at';
+
+        return [
+            'state'                         => $state,
+            'action'                        => $action,
+            'consent_id'                    => (int) ( $latest['id'] ?? 0 ),
+            'disclosure_version'            => sanitize_text_field( (string) ( $latest['disclosure_version'] ?? '' ) ),
+            $at_key                         => sanitize_text_field( (string) ( $latest['accepted_at'] ?? '' ) ),
+            'managed_proxy_selected'        => rest_sanitize_boolean( $metadata['managed_proxy_selected'] ?? ( 'accepted' === $state ) ),
+            'stripe_plan_changed'           => rest_sanitize_boolean( $metadata['stripe_plan_changed'] ?? false ),
+            'managed_provider_disabled_locally' => rest_sanitize_boolean( $metadata['managed_provider_disabled_locally'] ?? ( 'revoked' === $state ) ),
         ];
     }
 

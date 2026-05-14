@@ -2,21 +2,35 @@
 	import { onMount } from 'svelte';
 	import {
 		Section,
-		Card,
 		Button,
+		ButtonLink,
 		Badge,
 		Alert,
+		Input,
 		SelectField,
 		Toggle,
 		ModelSelector,
 		StateTemplate
 	} from '$lib/components/ui';
+	import ActivityIcon from '@lucide/svelte/icons/activity';
+	import BotIcon from '@lucide/svelte/icons/bot';
+	import CircleDotIcon from '@lucide/svelte/icons/circle-dot';
+	import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
+	import LibraryIcon from '@lucide/svelte/icons/library';
+	import PlugZapIcon from '@lucide/svelte/icons/plug-zap';
+	import PowerIcon from '@lucide/svelte/icons/power';
+	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+	import RouteIcon from '@lucide/svelte/icons/route';
+	import SearchIcon from '@lucide/svelte/icons/search';
+	import Settings2Icon from '@lucide/svelte/icons/settings-2';
+	import SlidersIcon from '@lucide/svelte/icons/sliders-horizontal';
+	import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
 	import AlignedSelectGrid from '$lib/components/aligned-select-grid.svelte';
 	import ActionCustomizationEditor from '$lib/components/action-customization-editor.svelte';
 	import SiteContextWarning from '$lib/components/site-context-warning.svelte';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { notifications } from '$lib/stores/notifications';
-	import { navigateToAppPath } from '$lib/navigation';
+	import { appHref, navigateToAppPath } from '$lib/navigation';
 	import { ApiClientError, createClientFromConfig } from '$lib/api/client';
 	import type {
 		ActionDefinition,
@@ -27,10 +41,15 @@
 		FormActionConfig,
 		FormExecutionStatus,
 		LocalProviderCredential,
-		ModelSelection
+		ModelSelection,
+		CustomAction
 	} from '$lib/api/types';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
-	import { groupDefinitionsByCategory, getCategoryMeta } from '$lib/utils/action-categories';
+	import {
+		groupDefinitionsByCategory,
+		getCategoryMeta,
+		getDefinitionCategory
+	} from '$lib/utils/action-categories';
 	import { getHealthBadge as resolveHealthBadge } from '$lib/utils/form-health';
 	import {
 		applyInheritableBooleanToConfig,
@@ -60,6 +79,9 @@
 	);
 	let error: string | null = $state(null);
 	let searchTerm = $state('');
+	let actionSearchTerm = $state('');
+	let actionLibraryTab = $state<'built-in' | 'custom'>('built-in');
+	let selectedActionCategory = $state<ActionCategory | 'all'>('all');
 	let currentPage = $state(1);
 	const pageSize = 12;
 
@@ -169,6 +191,37 @@
 		'automation',
 		'custom'
 	];
+	const actionCategoryFilters = $derived(
+		categoryOrder
+			.map((category) => ({
+				category,
+				meta: getCategoryMeta(category),
+				count: groupedDefinitions.get(category)?.length ?? 0
+			}))
+			.filter((item) => item.count > 0)
+	);
+	const filteredBuiltInDefinitions = $derived.by(() => {
+		const query = actionSearchTerm.trim().toLowerCase();
+		return builtInDefinitions.filter((definition) => {
+			const category = getDefinitionCategory(definition);
+			if (selectedActionCategory !== 'all' && category !== selectedActionCategory) {
+				return false;
+			}
+			if (!query) return true;
+			return actionDefinitionSearchText(definition).includes(query);
+		});
+	});
+	const filteredCustomActions = $derived.by(() => {
+		const query = actionSearchTerm.trim().toLowerCase();
+		if (!query) return customActions;
+		return customActions.filter((action) => customActionSearchText(action).includes(query));
+	});
+	const visibleActionCount = $derived(
+		actionLibraryTab === 'built-in' ? filteredBuiltInDefinitions.length : filteredCustomActions.length
+	);
+	const totalFormCount = $derived(
+		Object.values(formsBySource).reduce((count, forms) => count + forms.length, 0)
+	);
 
 	function friendlyMessageFromError(err: unknown, fallback: string): string {
 		if (err instanceof ApiClientError) {
@@ -177,6 +230,40 @@
 		}
 		if (err instanceof Error) return err.message ?? fallback;
 		return fallback;
+	}
+
+	function actionDefinitionSearchText(definition: ActionDefinition): string {
+		return [
+			definition.id,
+			definition.label,
+			definition.description,
+			definition.modelHint,
+			getDefinitionCategory(definition)
+		]
+			.filter(Boolean)
+			.join(' ')
+			.toLowerCase();
+	}
+
+	function customActionSearchText(action: CustomAction): string {
+		return [action.code, action.display_name, action.description, action.model_hint]
+			.filter(Boolean)
+			.join(' ')
+			.toLowerCase();
+	}
+
+	function providerLabelForForm(form: FormSummary): string {
+		return selectedSource?.label ?? form.adapter_name ?? form.adapter;
+	}
+
+	function formDetailHref(form: FormSummary): string {
+		const sourceSlug = selectedSource?.slug ?? form.adapter;
+		return appHref(`/actions/${sourceSlug}/${form.id}`);
+	}
+
+	function selectSource(source: FormSourceSummary) {
+		selectedSource = source;
+		currentPage = 1;
 	}
 
 	function getActionDisplayName(actionId: string | null): string {
@@ -668,282 +755,99 @@
 >
 	{#snippet actions()}
 		<div class="sf:flex sf:flex-wrap sf:gap-2">
-			<Button variant="secondary" onclick={refreshAll}>Refresh</Button>
-			<Button variant="secondary" onclick={() => navigateToAppPath('/actions/custom')}>
-				Manage custom actions
+			<Button variant="secondary" onclick={refreshAll} class="sf:gap-2">
+				<RefreshCwIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+				Refresh
 			</Button>
+			<ButtonLink variant="secondary" href={appHref('/actions/custom')} class="sf:gap-2">
+				<Settings2Icon class="sf:h-4 sf:w-4" aria-hidden="true" />
+				Manage custom actions
+			</ButtonLink>
 		</div>
 	{/snippet}
 
-	<div class="sf:grid sf:gap-4 sf:lg:grid-cols-3">
-		<Card data-testid="actions-built-in-card">
-			<div
-				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
-			>
-				<div>
-					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Built-in actions</p>
-					<p class="sf:text-xs sf:text-slate-600">Included with Sentient Forms and ready to map.</p>
+	<div
+		class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3 sf:shadow-sm"
+		data-testid="actions-operations-strip"
+	>
+		<div class="sf:flex sf:flex-col sf:gap-3 sf:xl:flex-row sf:xl:items-center sf:xl:justify-between">
+			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+				<div class="sf:flex sf:items-center sf:gap-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:px-3 sf:py-2">
+					<PowerIcon class="sf:h-4 sf:w-4 sf:text-slate-500" aria-hidden="true" />
+					<span class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
+						Global execution
+					</span>
+					<Badge variant={executionGlobalDisabled ? 'warning' : 'success'}>
+						{executionGlobalDisabled ? 'Paused' : 'Running'}
+					</Badge>
+					<Toggle
+						checked={!executionGlobalDisabled}
+						disabled={executionSettingsSaving || executionSettingsLoading}
+						onchange={() => toggleGlobalExecutionDisabled(!executionGlobalDisabled)}
+					/>
+				</div>
+
+				<div
+					class="sf:flex sf:items-center sf:gap-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:px-3 sf:py-2"
+					data-testid="actions-openrouter-health"
+				>
+					<PlugZapIcon class="sf:h-4 sf:w-4 sf:text-slate-500" aria-hidden="true" />
+					<span class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
+						{providerCredentialsLoading ? 'Checking provider' : openRouterHealth.title}
+					</span>
+					<Badge
+						variant={providerCredentialsError
+							? 'warning'
+							: providerCredentialsLoading
+								? 'neutral'
+								: providerStatusVariant(openRouterHealth.badgeStatus)}
+					>
+						{providerCredentialsError
+							? 'Unavailable'
+							: providerCredentialsLoading
+								? 'Checking'
+								: providerStatusLabel(openRouterHealth.badgeStatus)}
+					</Badge>
+					{#if openRouterHealth.status !== 'ready' || providerCredentialsError}
+						<ButtonLink size="sm" variant="secondary" href={appHref('/providers')}>
+							Review
+						</ButtonLink>
+					{/if}
 				</div>
 			</div>
-			{#if definitionsLoading}
-				<div class="sf:mt-3">
-					<StateTemplate
-						variant="loading"
-						title="Loading built-in actions"
-						message="Fetching available built-in actions."
-						inline
-						dense
-						testId="actions-definitions-loading-state"
-					/>
-				</div>
-			{:else if builtInDefinitions.length === 0}
-				<div class="sf:mt-3">
-					<StateTemplate
-						variant="empty"
-						title="No built-in actions loaded yet"
-						message="Refresh and try again."
-						actionLabel="Refresh actions"
-						onAction={() => {
-							void loadDefinitions();
-						}}
-						inline
-						dense
-						testId="actions-definitions-empty-state"
-					/>
-				</div>
-			{:else}
-				<div class="sf:mt-3 sf:space-y-3">
-					{#each categoryOrder as category}
-						{@const items = groupedDefinitions.get(category) ?? []}
-						{#if items.length > 0}
-							{@const meta = getCategoryMeta(category)}
-							<div>
-								<p
-									class="sf:mb-1 sf:text-xs sf:font-medium sf:uppercase sf:tracking-wide sf:text-slate-600"
-								>
-									{meta.icon}
-									{meta.label}
-								</p>
-								<ul class="sf:space-y-1">
-									{#each items.slice(0, 3) as definition (definition.id)}
-										{@const formCount = formsPerAction.get(definition.id) ?? 0}
-										<li
-											class="sf:flex sf:flex-col sf:items-start sf:gap-2"
-											data-testid={`actions-built-in-action-${definition.id}`}
-										>
-											<div class="sf:min-w-0 sf:flex-1">
-												<p class="sf:text-sm sf:font-semibold sf:text-slate-800 sf:break-words">
-													{definition.label ?? definition.id}
-												</p>
-												<p class="sf:text-xs sf:text-slate-600">
-													Default model: {actionDefaultModelSummary(
-														definition.id,
-														definition.modelHint ?? null
-													)}
-												</p>
-											</div>
-											<div class="sf:flex sf:w-full sf:flex-wrap sf:items-center sf:gap-2">
-												<Button
-													size="sm"
-													variant="ghost"
-													onclick={() => loadActionDefaults(definition.id)}
-													disabled={actionDefaultsLoading}
-													data-testid={`action-defaults-button-${definition.id}`}
-												>
-													Defaults
-												</Button>
-												<Badge variant={formCount > 0 ? 'info' : 'neutral'}>
-													{formCount} form{formCount !== 1 ? 's' : ''}
-												</Badge>
-											</div>
-										</li>
-									{/each}
-								</ul>
-							</div>
-						{/if}
-					{/each}
-				</div>
-			{/if}
-		</Card>
 
-		<Card data-testid="actions-custom-actions-card">
-			<div
-				class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
-			>
-				<div>
-					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Custom actions</p>
-					<p class="sf:text-xs sf:text-slate-600">Tenant-specific automations.</p>
-				</div>
-				<Badge variant="info">{customActions.length} active</Badge>
-			</div>
-			{#if customActions.length === 0}
-				<div class="sf:mt-3">
-					<StateTemplate
-						variant="empty"
-						title="No custom actions yet"
-						message="Create a custom action to tailor responses for this site."
-						actionLabel="Manage custom actions"
-						onAction={() => {
-							void navigateToAppPath('/actions/custom');
-						}}
-						inline
-						dense
-						testId="actions-custom-actions-empty-state"
-					/>
-				</div>
-			{:else}
-				<ul class="sf:mt-3 sf:space-y-2">
-					{#each customActions.slice(0, 4) as action (action.id)}
-						{@const customFormCount = formsPerAction.get(action.code) ?? 0}
-						<li
-							class="sf:flex sf:flex-col sf:items-start sf:gap-2"
-							data-testid={`actions-custom-action-${action.id}`}
-						>
-							<div class="sf:min-w-0 sf:flex-1">
-								<p class="sf:text-sm sf:font-semibold sf:text-slate-800 sf:break-words">
-									{action.display_name}
-								</p>
-								<p class="sf:text-xs sf:text-slate-600 sf:break-all">Code: {action.code}</p>
-								<p class="sf:text-xs sf:text-slate-600">
-									Default model: {actionDefaultModelSummary(action.code, action.model_hint ?? null)}
-								</p>
-							</div>
-							<div class="sf:flex sf:w-full sf:flex-wrap sf:items-center sf:gap-2">
-								<Button
-									size="sm"
-									variant="ghost"
-									onclick={() => loadActionDefaults(action.code)}
-									disabled={actionDefaultsLoading}
-									data-testid={`action-defaults-button-${action.code}`}
-								>
-									Defaults
-								</Button>
-								<Badge variant={customFormCount > 0 ? 'info' : 'neutral'}>
-									{customFormCount} form{customFormCount !== 1 ? 's' : ''}
-								</Badge>
-								<Badge variant="success">Active</Badge>
-							</div>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</Card>
-
-		<Card>
-			<p class="sf:text-sm sf:font-medium sf:text-slate-700">Form providers</p>
-			{#if formSources.length === 0}
-				<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
-					Install and activate a supported form builder (like Gravity Forms) to start mapping
-					actions.
-				</p>
-			{:else}
-				<div class="sf:mt-3 sf:space-y-3">
-					<div
-						class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
-					>
-						<div>
-							<p class="sf:text-sm sf:font-medium sf:text-slate-700">Global execution</p>
-							<p class="sf:text-xs sf:text-slate-600">
-								Pause all Sentient Forms runs without locking mapping edits.
-							</p>
-						</div>
-						<div class="sf:flex sf:items-center sf:gap-2">
-							<Badge variant={executionGlobalDisabled ? 'warning' : 'success'}>
-								{executionGlobalDisabled ? 'Paused' : 'Running'}
-							</Badge>
-							<Toggle
-								checked={!executionGlobalDisabled}
-								disabled={executionSettingsSaving || executionSettingsLoading}
-								onchange={() => toggleGlobalExecutionDisabled(!executionGlobalDisabled)}
-							/>
-						</div>
-					</div>
-
-					<div
-						class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3"
-						data-testid="actions-openrouter-health"
-					>
-						<div
-							class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
-						>
-							<div>
-								<p class="sf:text-sm sf:font-medium sf:text-slate-700">
-									{providerCredentialsLoading
-										? 'Checking OpenRouter status'
-										: openRouterHealth.title}
-								</p>
-								<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
-									{providerCredentialsError ?? openRouterHealth.message}
-								</p>
-							</div>
-							<div class="sf:flex sf:items-center sf:gap-2">
-								<Badge
-									variant={providerCredentialsError
-										? 'warning'
-										: providerCredentialsLoading
-											? 'neutral'
-											: providerStatusVariant(openRouterHealth.badgeStatus)}
-								>
-									{providerCredentialsError
-										? 'Status unavailable'
-										: providerCredentialsLoading
-											? 'Checking'
-											: providerStatusLabel(openRouterHealth.badgeStatus)}
-								</Badge>
-								{#if openRouterHealth.status !== 'ready' || providerCredentialsError}
-									<Button
-										size="sm"
-										variant="secondary"
-										onclick={() => navigateToAppPath('/providers')}
-									>
-										Review OpenRouter
-									</Button>
-								{/if}
-							</div>
-						</div>
-					</div>
-
+			{#if formSources.length > 0}
+				<div class="sf:flex sf:min-w-0 sf:flex-wrap sf:items-center sf:gap-2">
 					{#each formSources as source}
 						<div
-							class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center"
+							class="sf:flex sf:items-center sf:gap-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:px-3 sf:py-2"
 						>
-							<div class="sf:flex sf:items-center sf:gap-2">
-								<span class="sf:text-sm sf:text-slate-800">{source.label}</span>
-								<Badge variant={source.isActive ? 'success' : 'warning'}>
-									{source.isActive ? 'Plugin active' : 'Plugin inactive'}
-								</Badge>
-							</div>
-							<div class="sf:flex sf:items-center sf:gap-2">
-								<Badge variant={providerExecutionIsPaused(source.slug) ? 'warning' : 'success'}>
-									{providerExecutionIsPaused(source.slug)
-										? 'Execution paused'
-										: 'Execution running'}
-								</Badge>
-								<Toggle
-									checked={!Boolean(executionProviderDisabled[source.slug])}
-									disabled={executionSettingsSaving || executionSettingsLoading || !source.isActive}
-									onchange={() =>
-										toggleProviderExecutionDisabled(
-											source.slug,
-											!Boolean(executionProviderDisabled[source.slug])
-										)}
-								/>
-							</div>
+							<span class="sf:max-w-40 sf:truncate sf:text-sm sf:font-medium sf:text-slate-800">
+								{source.label}
+							</span>
+							<Badge variant={source.isActive ? 'success' : 'warning'}>
+								{source.isActive ? 'Plugin active' : 'Inactive'}
+							</Badge>
+							<Badge variant={providerExecutionIsPaused(source.slug) ? 'warning' : 'success'}>
+								{providerExecutionIsPaused(source.slug) ? 'Paused' : 'Running'}
+							</Badge>
+							<Toggle
+								checked={!Boolean(executionProviderDisabled[source.slug])}
+								disabled={executionSettingsSaving || executionSettingsLoading || !source.isActive}
+								onchange={() =>
+									toggleProviderExecutionDisabled(
+										source.slug,
+										!Boolean(executionProviderDisabled[source.slug])
+									)}
+							/>
 						</div>
 					{/each}
 				</div>
-				{#if activeSources.length === 0}
-					<Alert variant="warning" class="sf:mt-3">
-						Activate at least one form provider to configure actions.
-					</Alert>
-				{/if}
-				{#if executionGlobalDisabled}
-					<Alert variant="warning" class="sf:mt-3">
-						Global execution is paused. You can still configure mappings while runs are paused.
-					</Alert>
-				{/if}
 			{/if}
-		</Card>
+		</div>
+		{#if providerCredentialsError}
+			<p class="sf:mt-2 sf:text-xs sf:text-amber-700">{providerCredentialsError}</p>
+		{/if}
 	</div>
 
 	{#if error}
@@ -969,147 +873,421 @@
 			/>
 		</div>
 	{:else}
-		<Card class="sf:mt-4">
-			<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
-				<div class="sf:flex sf:flex-wrap sf:gap-2">
-					{#each activeSources as source}
+		<div class="sf:mt-4 sf:grid sf:gap-4 sf:xl:grid-cols-[minmax(320px,0.38fr)_minmax(0,1fr)]">
+			<section
+				class="sf:flex sf:min-h-[620px] sf:max-h-[calc(100vh-260px)] sf:flex-col sf:overflow-hidden sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:shadow-sm"
+				data-testid="actions-library-panel"
+			>
+				<div class="sf:border-b sf:border-slate-200 sf:bg-slate-50 sf:p-4">
+					<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
+						<div>
+							<div class="sf:flex sf:items-center sf:gap-2">
+								<LibraryIcon class="sf:h-5 sf:w-5 sf:text-primary-600" aria-hidden="true" />
+								<h2 class="sf:text-base sf:font-semibold sf:text-slate-950">Action Library</h2>
+							</div>
+							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
+								Defaults, templates, and reusable automations.
+							</p>
+						</div>
+						<Badge variant="neutral">{visibleActionCount} shown</Badge>
+					</div>
+
+					<div class="sf:mt-4 sf:grid sf:grid-cols-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-1">
 						<Button
 							size="sm"
-							variant={selectedSource?.slug === source.slug ? 'primary' : 'secondary'}
-							onclick={() => (selectedSource = source)}
+							variant={actionLibraryTab === 'built-in' ? 'primary' : 'ghost'}
+							class="sf:w-full sf:rounded"
+							aria-pressed={actionLibraryTab === 'built-in'}
+							onclick={() => (actionLibraryTab = 'built-in')}
 						>
-							{source.label}
+							Built-in
+							<span class="sf:ml-1 sf:text-xs sf:opacity-80">{builtInDefinitions.length}</span>
 						</Button>
-					{/each}
-				</div>
-				<Button size="sm" variant="secondary" onclick={loadForms} disabled={formsLoading}>
-					Refresh forms
-				</Button>
-			</div>
-
-			<div class="sf:mt-4 sf:flex sf:flex-wrap sf:items-center sf:gap-3">
-				<input
-					type="text"
-					bind:value={searchTerm}
-					placeholder="Search forms..."
-					class="sf:min-w-0 sf:flex-1 sf:rounded-md sf:border sf:border-slate-300 sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-				/>
-				<span class="sf:text-sm sf:text-slate-600">
-					{filteredForms.length} form{filteredForms.length !== 1 ? 's' : ''}
-				</span>
-			</div>
-
-			{#if formsLoading}
-				<div class="sf:mt-4">
-					<StateTemplate
-						variant="loading"
-						title="Loading forms"
-						message="Retrieving forms for the selected provider."
-						inline
-						testId="actions-forms-loading-state"
-					/>
-				</div>
-			{:else if displayedForms.length === 0}
-				<div class="sf:mt-4">
-					<StateTemplate
-						variant="empty"
-						title="No forms detected"
-						message={`No forms were detected for ${selectedSource?.label ?? 'this provider'}. Create a form first, then refresh this page.`}
-						actionLabel="Refresh forms"
-						onAction={() => {
-							void loadForms();
-						}}
-						inline
-						testId="actions-forms-empty-state"
-					/>
-				</div>
-			{:else}
-				<div class="sf:mt-4 sf:grid sf:gap-4 sf:lg:grid-cols-2 sf:2xl:grid-cols-3">
-					{#each displayedForms as form (form.id)}
-						{@const actionCount = configuredActionCount(form)}
-						{@const enabled = isFormEnabled(form)}
-						{@const providerActive = isProviderFormActive(form)}
-						{@const health = getHealthBadge(form)}
-						<Card data-testid={`actions-form-card-${form.id}`}>
-							<div class="sf:flex sf:flex-col sf:items-start sf:gap-3">
-								<div class="sf:min-w-0 sf:flex-1">
-									<p class="sf:font-semibold sf:text-slate-800 sf:break-words">{form.title}</p>
-									<p class="sf:text-xs sf:text-slate-600">ID: {form.id}</p>
-								</div>
-								<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-1">
-									<Badge variant={providerActive ? 'success' : 'warning'}>
-										{providerActive ? 'Form active' : 'Form inactive'}
-									</Badge>
-									<Badge variant={enabled ? 'info' : 'neutral'}>
-										{enabled ? 'Automation enabled' : 'Automation paused'}
-									</Badge>
-									<!-- CB-FORMS-003: Health badge -->
-									<span title={health.tooltip}>
-										<Badge variant={health.variant}>{health.label}</Badge>
-									</span>
-									{#if actionCount === null}
-										<span class="sf:text-xs sf:text-slate-600">Checking actions…</span>
-									{:else if actionCount > 0}
-										<span class="sf:text-xs sf:text-indigo-600 sf:font-medium">
-											{actionCount} action{actionCount !== 1 ? 's' : ''}
-										</span>
-									{/if}
-								</div>
-							</div>
-							<div class="sf:mt-3 sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-								<span class="sf:text-xs sf:text-slate-600">
-									{selectedSource?.label ?? form.adapter_name ?? form.adapter}
-								</span>
-								{#if actionCount === 0}
-									<span class="sf:text-xs sf:text-amber-700">No actions configured</span>
-								{/if}
-							</div>
-							{#if !providerActive}
-								<p class="sf:mt-2 sf:text-xs sf:text-amber-700">
-									The provider form is inactive. Sentient Forms mappings remain editable, but the
-									form itself will not accept live submissions until it is reactivated.
-								</p>
-							{/if}
-							<div class="sf:mt-3">
-								<Button size="sm" onclick={() => openFormDetail(form)} class="sf:w-full">
-									Configure Actions
-								</Button>
-								{#if form.provider_edit_url}
-									<a
-										href={form.provider_edit_url}
-										class="sf:mt-2 sf:block sf:text-center sf:text-xs sf:font-medium sf:text-slate-700 hover:sf:text-slate-900"
-										data-sveltekit-reload
-										rel="external"
-										data-testid={`actions-provider-edit-link-${form.id}`}
-									>
-										Open in {selectedSource?.label ?? form.adapter_name ?? form.adapter}
-									</a>
-								{/if}
-							</div>
-						</Card>
-					{/each}
-				</div>
-
-				{#if totalPages > 1}
-					<div class="sf:mt-4 sf:flex sf:items-center sf:justify-center sf:gap-4">
-						<Button size="sm" variant="secondary" onclick={prevPage} disabled={currentPage === 1}>
-							← Previous
-						</Button>
-						<span class="sf:text-sm sf:text-slate-600">
-							Page {currentPage} of {totalPages}
-						</span>
 						<Button
 							size="sm"
-							variant="secondary"
-							onclick={nextPage}
-							disabled={currentPage === totalPages}
+							variant={actionLibraryTab === 'custom' ? 'primary' : 'ghost'}
+							class="sf:w-full sf:rounded"
+							aria-pressed={actionLibraryTab === 'custom'}
+							onclick={() => (actionLibraryTab = 'custom')}
 						>
-							Next →
+							Custom
+							<span class="sf:ml-1 sf:text-xs sf:opacity-80">{customActions.length}</span>
 						</Button>
 					</div>
-				{/if}
-			{/if}
-		</Card>
+
+					<div class="sf:relative sf:mt-3">
+						<SearchIcon
+							class="sf:pointer-events-none sf:absolute sf:left-3 sf:top-1/2 sf:h-4 sf:w-4 sf:-translate-y-1/2 sf:text-slate-400"
+							aria-hidden="true"
+						/>
+						<Input
+							type="search"
+							bind:value={actionSearchTerm}
+							placeholder="Search actions..."
+							class="sf:pl-9"
+						/>
+					</div>
+
+					{#if actionLibraryTab === 'built-in' && actionCategoryFilters.length > 1}
+						<div class="sf:mt-3 sf:flex sf:flex-wrap sf:gap-2">
+							<Button
+								size="xs"
+								variant={selectedActionCategory === 'all' ? 'secondary' : 'ghost'}
+								class="sf:rounded-full"
+								onclick={() => (selectedActionCategory = 'all')}
+							>
+								All
+							</Button>
+							{#each actionCategoryFilters as item (item.category)}
+								<Button
+									size="xs"
+									variant={selectedActionCategory === item.category ? 'secondary' : 'ghost'}
+									class="sf:rounded-full"
+									onclick={() => (selectedActionCategory = item.category)}
+								>
+									{item.meta.label}
+									<span class="sf:ml-1 sf:text-[11px] sf:opacity-70">{item.count}</span>
+								</Button>
+							{/each}
+						</div>
+					{/if}
+				</div>
+
+				<div class="sf:flex-1 sf:overflow-y-auto sf:p-3">
+					{#if actionLibraryTab === 'built-in'}
+						{#if definitionsLoading}
+							<StateTemplate
+								variant="loading"
+								title="Loading built-in actions"
+								message="Fetching available built-in actions."
+								inline
+								dense
+								testId="actions-definitions-loading-state"
+							/>
+						{:else if builtInDefinitions.length === 0}
+							<StateTemplate
+								variant="empty"
+								title="No built-in actions loaded yet"
+								message="Refresh and try again."
+								actionLabel="Refresh actions"
+								onAction={() => {
+									void loadDefinitions();
+								}}
+								inline
+								dense
+								testId="actions-definitions-empty-state"
+							/>
+						{:else if filteredBuiltInDefinitions.length === 0}
+							<StateTemplate
+								variant="empty"
+								title="No built-in actions match"
+								message="Clear the search or category filter."
+								inline
+								dense
+								testId="actions-definitions-filter-empty-state"
+							/>
+						{:else}
+							<ul class="sf:space-y-2">
+								{#each filteredBuiltInDefinitions as definition (definition.id)}
+									{@const formCount = formsPerAction.get(definition.id) ?? 0}
+									{@const meta = getCategoryMeta(getDefinitionCategory(definition))}
+									<li
+										class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:transition hover:sf:border-primary-200 hover:sf:bg-primary-50/30"
+										data-testid={`actions-built-in-action-${definition.id}`}
+									>
+										<div class="sf:flex sf:items-start sf:gap-3">
+											<div class="sf:flex sf:h-9 sf:w-9 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-md sf:bg-primary-50 sf:text-primary-700">
+												<BotIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+											</div>
+											<div class="sf:min-w-0 sf:flex-1">
+												<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+													<p class="sf:font-semibold sf:text-slate-950 sf:break-words">
+														{definition.label ?? definition.id}
+													</p>
+													<Badge variant={formCount > 0 ? 'info' : 'neutral'}>
+														{formCount} form{formCount !== 1 ? 's' : ''}
+													</Badge>
+												</div>
+												<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
+													{meta.label} · Default model: {actionDefaultModelSummary(
+														definition.id,
+														definition.modelHint ?? null
+													)}
+												</p>
+												{#if definition.description}
+													<p class="sf:mt-1 sf:line-clamp-2 sf:text-xs sf:text-slate-500">
+														{definition.description}
+													</p>
+												{/if}
+											</div>
+										</div>
+										<div class="sf:mt-3 sf:flex sf:items-center sf:justify-end">
+											<Button
+												size="sm"
+												variant="secondary"
+												onclick={() => loadActionDefaults(definition.id)}
+												disabled={actionDefaultsLoading}
+												data-testid={`action-defaults-button-${definition.id}`}
+											>
+												Defaults
+											</Button>
+										</div>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					{:else}
+						{#if filteredCustomActions.length === 0}
+							<StateTemplate
+								variant="empty"
+								title={customActions.length === 0 ? 'No custom actions yet' : 'No custom actions match'}
+								message={customActions.length === 0
+									? 'Create a custom action to tailor responses for this site.'
+									: 'Clear the search to see all custom actions.'}
+								actionLabel={customActions.length === 0 ? 'Manage custom actions' : undefined}
+								onAction={() => {
+									void navigateToAppPath('/actions/custom');
+								}}
+								inline
+								dense
+								testId="actions-custom-actions-empty-state"
+							/>
+						{:else}
+							<ul class="sf:space-y-2">
+								{#each filteredCustomActions as action (action.id)}
+									{@const customFormCount = formsPerAction.get(action.code) ?? 0}
+									<li
+										class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:transition hover:sf:border-primary-200 hover:sf:bg-primary-50/30"
+										data-testid={`actions-custom-action-${action.id}`}
+									>
+										<div class="sf:flex sf:items-start sf:gap-3">
+											<div class="sf:flex sf:h-9 sf:w-9 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-md sf:bg-slate-100 sf:text-slate-700">
+												<WandSparklesIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+											</div>
+											<div class="sf:min-w-0 sf:flex-1">
+												<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+													<p class="sf:font-semibold sf:text-slate-950 sf:break-words">
+														{action.display_name}
+													</p>
+													<Badge variant={customFormCount > 0 ? 'info' : 'neutral'}>
+														{customFormCount} form{customFormCount !== 1 ? 's' : ''}
+													</Badge>
+													<Badge variant="success">Active</Badge>
+												</div>
+												<p class="sf:mt-1 sf:text-xs sf:text-slate-600 sf:break-all">
+													{action.code} · Default model: {actionDefaultModelSummary(
+														action.code,
+														action.model_hint ?? null
+													)}
+												</p>
+												{#if action.description}
+													<p class="sf:mt-1 sf:line-clamp-2 sf:text-xs sf:text-slate-500">
+														{action.description}
+													</p>
+												{/if}
+											</div>
+										</div>
+										<div class="sf:mt-3 sf:flex sf:items-center sf:justify-end sf:gap-2">
+											<Button
+												size="sm"
+												variant="secondary"
+												onclick={() => loadActionDefaults(action.code)}
+												disabled={actionDefaultsLoading}
+												data-testid={`action-defaults-button-${action.code}`}
+											>
+												Defaults
+											</Button>
+										</div>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					{/if}
+				</div>
+			</section>
+
+			<section
+				class="sf:flex sf:min-h-[620px] sf:max-h-[calc(100vh-260px)] sf:flex-col sf:overflow-hidden sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:shadow-sm"
+				data-testid="actions-forms-workspace"
+			>
+				<div class="sf:border-b sf:border-slate-200 sf:bg-white sf:p-4">
+					<div class="sf:flex sf:flex-col sf:gap-3 sf:lg:flex-row sf:lg:items-start sf:lg:justify-between">
+						<div>
+							<div class="sf:flex sf:items-center sf:gap-2">
+								<RouteIcon class="sf:h-5 sf:w-5 sf:text-primary-600" aria-hidden="true" />
+								<h2 class="sf:text-base sf:font-semibold sf:text-slate-950">Forms Workspace</h2>
+							</div>
+							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
+								{filteredForms.length} visible · {totalFormCount} loaded across active providers.
+							</p>
+						</div>
+						<Button size="sm" variant="secondary" onclick={loadForms} disabled={formsLoading} class="sf:gap-2">
+							<RefreshCwIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+							Refresh forms
+						</Button>
+					</div>
+
+					<div class="sf:mt-4 sf:flex sf:flex-col sf:gap-3 sf:2xl:flex-row sf:2xl:items-center">
+						<div class="sf:flex sf:flex-wrap sf:gap-2">
+							{#each activeSources as source}
+								<Button
+									size="sm"
+									variant={selectedSource?.slug === source.slug ? 'primary' : 'secondary'}
+									onclick={() => selectSource(source)}
+									class="sf:gap-2"
+								>
+									<CircleDotIcon class="sf:h-3.5 sf:w-3.5" aria-hidden="true" />
+									{source.label}
+								</Button>
+							{/each}
+						</div>
+						<div class="sf:relative sf:min-w-64 sf:flex-1">
+							<SearchIcon
+								class="sf:pointer-events-none sf:absolute sf:left-3 sf:top-1/2 sf:h-4 sf:w-4 sf:-translate-y-1/2 sf:text-slate-400"
+								aria-hidden="true"
+							/>
+							<Input
+								type="search"
+								bind:value={searchTerm}
+								placeholder="Search forms..."
+								class="sf:pl-9"
+							/>
+						</div>
+					</div>
+				</div>
+
+				<div class="sf:flex-1 sf:overflow-y-auto sf:bg-slate-50 sf:p-4">
+					{#if formsLoading}
+						<StateTemplate
+							variant="loading"
+							title="Loading forms"
+							message="Retrieving forms for the selected provider."
+							inline
+							testId="actions-forms-loading-state"
+						/>
+					{:else if displayedForms.length === 0}
+						<StateTemplate
+							variant="empty"
+							title="No forms detected"
+							message={`No forms were detected for ${selectedSource?.label ?? 'this provider'}. Create a form first, then refresh this page.`}
+							actionLabel="Refresh forms"
+							onAction={() => {
+								void loadForms();
+							}}
+							inline
+							testId="actions-forms-empty-state"
+						/>
+					{:else}
+						<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2 sf:2xl:grid-cols-3">
+							{#each displayedForms as form (form.id)}
+								{@const actionCount = configuredActionCount(form)}
+								{@const enabled = isFormEnabled(form)}
+								{@const providerActive = isProviderFormActive(form)}
+								{@const health = getHealthBadge(form)}
+								<article
+									class="sf:flex sf:min-h-56 sf:flex-col sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-4 sf:shadow-sm sf:transition hover:sf:border-primary-200 hover:sf:shadow-md"
+									data-testid={`actions-form-card-${form.id}`}
+								>
+									<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
+										<div class="sf:min-w-0">
+											<p class="sf:text-base sf:font-semibold sf:text-slate-950 sf:break-words">
+												{form.title}
+											</p>
+											<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
+												{providerLabelForForm(form)} · ID {form.id}
+											</p>
+										</div>
+										<div class="sf:flex sf:h-10 sf:w-10 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-md sf:bg-primary-50 sf:text-primary-700">
+											<ActivityIcon class="sf:h-5 sf:w-5" aria-hidden="true" />
+										</div>
+									</div>
+
+									<div class="sf:mt-3 sf:flex sf:flex-wrap sf:items-center sf:gap-1.5">
+										<Badge variant={providerActive ? 'success' : 'warning'}>
+											{providerActive ? 'Form active' : 'Form inactive'}
+										</Badge>
+										<Badge variant={enabled ? 'info' : 'neutral'}>
+											{enabled ? 'Automation enabled' : 'Automation paused'}
+										</Badge>
+										<span title={health.tooltip}>
+											<Badge variant={health.variant}>{health.label}</Badge>
+										</span>
+									</div>
+
+									<div class="sf:mt-4 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-3 sf:py-2">
+										<div class="sf:flex sf:items-center sf:justify-between sf:gap-3">
+											<span class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
+												Configured actions
+											</span>
+											{#if actionCount === null}
+												<span class="sf:text-sm sf:text-slate-500">Checking…</span>
+											{:else}
+												<span class="sf:text-lg sf:font-semibold sf:text-slate-950">{actionCount}</span>
+											{/if}
+										</div>
+										{#if actionCount === 0}
+											<p class="sf:mt-1 sf:text-xs sf:text-amber-700">No actions configured yet.</p>
+										{/if}
+									</div>
+
+									{#if !providerActive}
+										<p class="sf:mt-3 sf:text-xs sf:text-amber-700">
+											The provider form is inactive. Mappings remain editable, but the form will
+											not accept live submissions until it is reactivated.
+										</p>
+									{/if}
+
+									<div class="sf:mt-auto sf:flex sf:flex-col sf:gap-2 sf:pt-4">
+										<ButtonLink
+											size="sm"
+											href={formDetailHref(form)}
+											class="sf:w-full sf:justify-center sf:gap-2"
+											data-testid={`actions-configure-form-${form.id}`}
+										>
+											<SlidersIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+											Configure Actions
+										</ButtonLink>
+										{#if form.provider_edit_url}
+											<ButtonLink
+												size="sm"
+												variant="secondary"
+												href={form.provider_edit_url}
+												class="sf:w-full sf:justify-center sf:gap-2"
+												data-sveltekit-reload
+												rel="external"
+												data-testid={`actions-provider-edit-link-${form.id}`}
+											>
+												<ExternalLinkIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+												Open in {providerLabelForForm(form)}
+											</ButtonLink>
+										{/if}
+									</div>
+								</article>
+							{/each}
+						</div>
+
+						{#if totalPages > 1}
+							<div class="sf:mt-4 sf:flex sf:items-center sf:justify-center sf:gap-4">
+								<Button size="sm" variant="secondary" onclick={prevPage} disabled={currentPage === 1}>
+									Previous
+								</Button>
+								<span class="sf:text-sm sf:text-slate-600">
+									Page {currentPage} of {totalPages}
+								</span>
+								<Button
+									size="sm"
+									variant="secondary"
+									onclick={nextPage}
+									disabled={currentPage === totalPages}
+								>
+									Next
+								</Button>
+							</div>
+						{/if}
+					{/if}
+				</div>
+			</section>
+		</div>
 	{/if}
 </Section>
 

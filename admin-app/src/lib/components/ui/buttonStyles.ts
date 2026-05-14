@@ -27,17 +27,17 @@ export const buttonStyles = cva(
 		variants: {
 			variant: {
 				primary:
-					'sf:border-primary-700 sf:bg-primary-600 sf:text-white sf:shadow-sm sf:hover:bg-primary-700 sf:hover:border-primary-700 sf:focus-visible:ring-primary-500',
+					'sf:border-primary-700 sf:bg-primary-600 sf:!text-white sf:visited:!text-white sf:shadow-sm sf:hover:bg-primary-700 sf:hover:border-primary-700 sf:hover:!text-white sf:focus-visible:ring-primary-500',
 				secondary:
-					'sf:border-slate-300 sf:bg-white sf:text-slate-900 sf:shadow-sm sf:hover:bg-slate-50 sf:hover:border-slate-400 sf:focus-visible:ring-slate-600',
+					'sf:border-slate-300 sf:bg-white sf:!text-slate-900 sf:visited:!text-slate-900 sf:shadow-sm sf:hover:bg-slate-50 sf:hover:border-slate-400 sf:hover:!text-slate-950 sf:focus-visible:ring-slate-600',
 				ghost:
-					'sf:border-slate-300 sf:bg-slate-50/70 sf:text-slate-700 sf:hover:bg-slate-100 sf:hover:border-slate-400 sf:focus-visible:ring-slate-600',
+					'sf:border-slate-300 sf:bg-slate-50/70 sf:!text-slate-700 sf:visited:!text-slate-700 sf:hover:bg-slate-100 sf:hover:border-slate-400 sf:hover:!text-slate-900 sf:focus-visible:ring-slate-600',
 				danger:
-					'sf:border-danger-600 sf:bg-danger-600 sf:text-white sf:shadow-sm sf:hover:bg-danger-500 sf:hover:border-danger-500 sf:focus-visible:ring-danger-500',
+					'sf:border-danger-600 sf:bg-danger-600 sf:!text-white sf:visited:!text-white sf:shadow-sm sf:hover:bg-danger-500 sf:hover:border-danger-500 sf:hover:!text-white sf:focus-visible:ring-danger-500',
 				dark:
-					'sf:border-slate-900 sf:bg-slate-900 sf:text-white sf:shadow-sm sf:hover:bg-slate-800 sf:hover:border-slate-800 sf:focus-visible:ring-slate-900',
+					'sf:border-slate-900 sf:bg-slate-900 sf:!text-white sf:visited:!text-white sf:shadow-sm sf:hover:bg-slate-800 sf:hover:border-slate-800 sf:hover:!text-white sf:focus-visible:ring-slate-900',
 				inline:
-					'sf:border-transparent sf:bg-transparent sf:p-0 sf:text-current sf:shadow-none sf:hover:bg-transparent sf:hover:border-transparent sf:focus-visible:ring-primary-500'
+					'sf:border-transparent sf:bg-transparent sf:p-0 sf:!text-current sf:visited:!text-current sf:shadow-none sf:hover:bg-transparent sf:hover:border-transparent sf:hover:!text-current sf:focus-visible:ring-primary-500'
 			},
 			size: {
 				xs: 'sf:h-5 sf:px-2 sf:text-xs',

@@ -76,6 +76,8 @@ import type {
 	OpenRouterModelsResponse,
 	OpenRouterValidateRequest,
 	OpenRouterValidateResponse,
+	SentientManagedRevokeRequest,
+	SentientManagedRevokeResponse,
 	SentientManagedSetupRequest,
 	SentientManagedSetupResponse,
 	TelemetrySettingsResponse,
@@ -430,6 +432,17 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<SentientManagedSetupResponse> {
 		return this.request<SentientManagedSetupResponse>('local/providers/sentient-managed/setup', {
+			method: 'POST',
+			body: payload,
+			...options
+		});
+	}
+
+	async revokeSentientManagedProvider(
+		payload: SentientManagedRevokeRequest,
+		options: RequestOptions = {}
+	): Promise<SentientManagedRevokeResponse> {
+		return this.request<SentientManagedRevokeResponse>('local/providers/sentient-managed/revoke', {
 			method: 'POST',
 			body: payload,
 			...options

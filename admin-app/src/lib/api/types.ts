@@ -356,6 +356,13 @@ export interface SentientManagedSetupRequest {
 	label?: string;
 }
 
+export interface SentientManagedRevokeRequest {
+	disclosure_version: string;
+	confirm_managed_service_revocation: boolean;
+}
+
+export type SentientManagedConsentState = 'accepted' | 'revoked' | 'missing' | string;
+
 export interface SentientManagedAccountState {
 	status: string;
 	license_id: string;
@@ -372,7 +379,19 @@ export interface SentientManagedSetupResponse {
 	credential: LocalProviderCredential | null;
 	consent_recorded: boolean;
 	consent_id: number;
+	consent_state?: SentientManagedConsentState;
 	account: SentientManagedAccountState;
+	billing_boundary: BillingBoundaryState;
+}
+
+export interface SentientManagedRevokeResponse {
+	provider: 'sentient_managed';
+	status: LocalProviderStatus;
+	credential_id: number | null;
+	credential: LocalProviderCredential | null;
+	consent_recorded: boolean;
+	consent_id: number;
+	consent_state: SentientManagedConsentState;
 	billing_boundary: BillingBoundaryState;
 }
 

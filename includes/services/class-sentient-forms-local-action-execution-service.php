@@ -459,6 +459,16 @@ class Sentient_Forms_Local_Action_Execution_Service
         $latest = $this->consents->latest_for_provider( $provider );
         if ( is_array( $latest ) )
         {
+            $metadata = is_array( $latest['metadata_json'] ?? null ) ? $latest['metadata_json'] : [];
+            $action   = sanitize_key( (string) ( $metadata['action'] ?? '' ) );
+            if ( 'revoke_managed_proxy' === $action )
+            {
+                return new WP_Error(
+                    'sentient_forms_external_service_consent_revoked',
+                    __( 'Sentient Forms managed-service consent has been revoked for this site.', 'sentient-forms' )
+                );
+            }
+
             return true;
         }
 

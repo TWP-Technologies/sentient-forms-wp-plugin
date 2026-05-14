@@ -5,6 +5,7 @@
 		LocalProviderCredential,
 		OpenRouterModelsResponse,
 		OpenRouterValidateResponse,
+		SentientManagedRevokeResponse,
 		SentientManagedSetupResponse
 	} from '$lib/api/types';
 	import { Alert, Badge, Button, Card, InputField, Section, StateTemplate } from '$lib/components/ui';
@@ -33,10 +34,12 @@
 	let validationResult = $state<OpenRouterValidateResponse | null>(null);
 	let validationResultSource = $state<'manual_key' | 'constant' | null>(null);
 	let managedSetupResult = $state<SentientManagedSetupResponse | null>(null);
+	let managedRevokeResult = $state<SentientManagedRevokeResponse | null>(null);
 	let modelCatalog = $state<OpenRouterModelsResponse | null>(null);
 	let error = $state<string | null>(null);
 	let constantError = $state<string | null>(null);
 	let managedSetupError = $state<string | null>(null);
+	let managedRevokeError = $state<string | null>(null);
 	let modelCatalogError = $state<string | null>(null);
 	let apiKey = $state('');
 	let label = $state('OpenRouter key');
@@ -51,6 +54,7 @@
 	let deletingCredentialId = $state<number | null>(null);
 	let pendingDeleteCredentialId = $state<number | null>(null);
 	let managedSetupLoading = $state(false);
+	let managedRevokeLoading = $state(false);
 	let modelCatalogLoading = $state(true);
 	let modelCatalogRefreshing = $state(false);
 
@@ -68,11 +72,13 @@
 			(credential) =>
 				credential.auth_mode === 'sentient_proxy' &&
 				credential.status === 'valid' &&
-				credential.secret_configured
+				credential.secret_configured &&
+				readManagedConsent(credential).state === 'accepted'
 		)
 	);
 	let primaryOpenRouterCredential = $derived(openRouterCredentials[0] ?? null);
 	let primaryManagedCredential = $derived(readyManagedCredentials[0] ?? managedCredentials[0] ?? null);
+	let managedConsent = $derived(readManagedConsent(primaryManagedCredential));
 	let readyCredentialCount = $derived(readyOpenRouterCredentials.length);
 	let readyProviderCredentials = $derived([
 		...readyOpenRouterCredentials,
@@ -105,8 +111,73 @@
 		acceptedDisclosure && constantName.trim().length > 0 && !validatingConstant
 	);
 	let canEnableManagedProxy = $derived(
-		managedAccountReady && acceptedManagedDisclosure && !managedSetupLoading
+		managedAccountReady &&
+			acceptedManagedDisclosure &&
+			!managedSetupLoading &&
+			managedConsent.state !== 'accepted'
 	);
+
+	$effect(() => {
+		if (managedConsent.state === 'accepted') {
+			acceptedManagedDisclosure = true;
+		} else if (managedConsent.state === 'revoked') {
+			acceptedManagedDisclosure = false;
+		}
+	});
+
+	type ManagedConsentSummary = {
+		state: 'accepted' | 'revoked' | 'missing';
+		consentId: number | null;
+		disclosureVersion: string | null;
+		acceptedAt: string | null;
+		revokedAt: string | null;
+	};
+
+	function isRecord(value: unknown): value is Record<string, unknown> {
+		return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+	}
+
+	function readManagedConsent(credential: LocalProviderCredential | null): ManagedConsentSummary {
+		const statusJson = isRecord(credential?.status_json) ? credential.status_json : null;
+		const managedConsent = isRecord(statusJson?.managed_consent) ? statusJson.managed_consent : null;
+		const rawState = typeof managedConsent?.state === 'string' ? managedConsent.state : 'missing';
+		const state =
+			rawState === 'accepted' || rawState === 'revoked' || rawState === 'missing'
+				? rawState
+				: 'missing';
+		const consentId =
+			typeof managedConsent?.consent_id === 'number' ? managedConsent.consent_id : null;
+
+		return {
+			state,
+			consentId,
+			disclosureVersion:
+				typeof managedConsent?.disclosure_version === 'string'
+					? managedConsent.disclosure_version
+					: null,
+			acceptedAt:
+				typeof managedConsent?.accepted_at === 'string' ? managedConsent.accepted_at : null,
+			revokedAt: typeof managedConsent?.revoked_at === 'string' ? managedConsent.revoked_at : null
+		};
+	}
+
+	function managedConsentBadgeVariant(state: ManagedConsentSummary['state']) {
+		if (state === 'accepted') return 'success';
+		if (state === 'revoked') return 'warning';
+		return 'neutral';
+	}
+
+	function managedConsentLabel(state: ManagedConsentSummary['state']): string {
+		if (state === 'accepted') return 'Consent accepted';
+		if (state === 'revoked') return 'Consent revoked';
+		return 'Consent missing';
+	}
+
+	function managedConsentTimestamp(consent: ManagedConsentSummary): string | null {
+		if (consent.state === 'accepted') return consent.acceptedAt;
+		if (consent.state === 'revoked') return consent.revokedAt;
+		return null;
+	}
 
 	function errorMessage(requestError: unknown): string {
 		if (requestError instanceof ApiClientError) {
@@ -291,6 +362,8 @@
 
 		managedSetupError = null;
 		managedSetupResult = null;
+		managedRevokeError = null;
+		managedRevokeResult = null;
 
 		if (!managedAccountReady) {
 			managedSetupError =
@@ -321,6 +394,31 @@
 			managedSetupError = errorMessage(requestError);
 		} finally {
 			managedSetupLoading = false;
+		}
+	}
+
+	async function revokeSentientManagedProxy(): Promise<void> {
+		managedSetupError = null;
+		managedSetupResult = null;
+		managedRevokeError = null;
+		managedRevokeResult = null;
+		managedRevokeLoading = true;
+
+		try {
+			managedRevokeResult = await client.revokeSentientManagedProvider(
+				{
+					disclosure_version: MANAGED_DISCLOSURE_VERSION,
+					confirm_managed_service_revocation: true
+				},
+				{ showNotifications: false }
+			);
+			acceptedManagedDisclosure = false;
+			await loadCredentials();
+			notifications.success('Managed-service consent revoked. Stripe subscription unchanged.');
+		} catch (requestError) {
+			managedRevokeError = errorMessage(requestError);
+		} finally {
+			managedRevokeLoading = false;
 		}
 	}
 
@@ -414,6 +512,9 @@
 					<Badge variant={managedAccountReady ? 'success' : 'warning'}>
 						{managedAccountReady ? 'Managed account ready' : 'Managed account inactive'}
 					</Badge>
+					<Badge variant={managedConsentBadgeVariant(managedConsent.state)}>
+						{managedConsentLabel(managedConsent.state)}
+					</Badge>
 					<Badge variant="info">Sentient Forms billed</Badge>
 				</div>
 				<h3 class="sf:text-xl sf:font-semibold sf:text-slate-900">
@@ -441,6 +542,12 @@
 						data-testid="providers-managed-ready-count"
 					>
 						{readyManagedCredentials.length}
+					</p>
+				</div>
+				<div>
+					<p class="sf:text-xs sf:font-medium sf:text-slate-500">Consent state</p>
+					<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
+						{managedConsentLabel(managedConsent.state)}
 					</p>
 				</div>
 			</div>
@@ -930,7 +1037,12 @@
 	</div>
 
 	<div class="sf:grid sf:gap-4 sf:xl:grid-cols-[1fr_0.9fr]">
-		<Card title="Enable Sentient Forms managed service" data-testid="providers-managed-setup-card">
+		<Card
+			title={managedConsent.state === 'accepted'
+				? 'Manage Sentient Forms managed service'
+				: 'Enable Sentient Forms managed service'}
+			data-testid="providers-managed-setup-card"
+		>
 			{#if !managedAccountReady}
 				<StateTemplate
 					variant="empty"
@@ -942,38 +1054,109 @@
 					testId="providers-managed-account-required"
 				/>
 			{:else}
-				<form class="sf:space-y-4" onsubmit={setupSentientManagedProxy}>
-					<InputField
-						id="sentient-managed-label"
-						label="Label"
-						placeholder="Sentient Forms managed service"
-						bind:value={managedLabel}
-						disabled={managedSetupLoading}
-					/>
-
-					<label class="sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-700">
-						<input
-							class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
-							type="checkbox"
-							bind:checked={acceptedManagedDisclosure}
-							disabled={managedSetupLoading}
-							required
-						/>
-						<span>
-							I understand Sentient Forms receives the rendered prompt and required form fields
-							for managed service runs, meters usage, and bills through my Sentient Forms plan.
-						</span>
-					</label>
-
-					<Button
-						type="submit"
-						loading={managedSetupLoading}
-						disabled={!canEnableManagedProxy}
-						data-testid="providers-managed-setup-submit"
+				<div class="sf:space-y-4">
+					<div
+						class={`sf:rounded sf:border sf:p-4 ${
+							managedConsent.state === 'accepted'
+								? 'sf:border-success-200 sf:bg-success-50'
+								: managedConsent.state === 'revoked'
+									? 'sf:border-amber-200 sf:bg-amber-50'
+									: 'sf:border-slate-200 sf:bg-slate-50'
+						}`}
+						data-testid="providers-managed-consent-state"
 					>
-						{managedSetupLoading ? 'Enabling...' : 'Enable managed service'}
-					</Button>
-				</form>
+						<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+							<Badge variant={managedConsentBadgeVariant(managedConsent.state)}>
+								{managedConsentLabel(managedConsent.state)}
+							</Badge>
+							{#if managedConsent.consentId}
+								<Badge variant="neutral">Consent #{managedConsent.consentId}</Badge>
+							{/if}
+						</div>
+						<h3 class="sf:mt-3 sf:text-base sf:font-semibold sf:text-slate-900">
+							{#if managedConsent.state === 'accepted'}
+								Managed execution is allowed for this site
+							{:else if managedConsent.state === 'revoked'}
+								Managed execution is disabled locally
+							{:else}
+								Consent is required before managed execution can run
+							{/if}
+						</h3>
+						<p class="sf:mt-2 sf:text-sm sf:text-slate-700">
+							{#if managedConsent.state === 'accepted'}
+								This WordPress site may send rendered prompts and required form fields through the
+								Sentient Forms managed service. You can revoke this local consent without canceling
+								or changing the Stripe subscription.
+							{:else if managedConsent.state === 'revoked'}
+								New managed-service requests are blocked from this plugin until consent is enabled
+								again. Revocation does not cancel or change the Stripe subscription.
+							{:else}
+								Enable managed execution only when this site should use Sentient Forms billing and
+								the central proxy for model runs.
+							{/if}
+						</p>
+						{#if managedConsentTimestamp(managedConsent)}
+							<p class="sf:mt-2 sf:text-xs sf:text-slate-600">
+								Last changed {formatTimestamp(managedConsentTimestamp(managedConsent), 'unknown')}.
+							</p>
+						{/if}
+
+						{#if managedConsent.state === 'accepted'}
+							<div class="sf:mt-4">
+								<Button
+									variant="danger"
+									loading={managedRevokeLoading}
+									disabled={managedRevokeLoading}
+									onclick={revokeSentientManagedProxy}
+									data-testid="providers-managed-revoke-submit"
+								>
+									{managedRevokeLoading ? 'Revoking...' : 'Revoke managed-service consent'}
+								</Button>
+							</div>
+						{/if}
+					</div>
+
+					{#if managedConsent.state !== 'accepted'}
+						<form class="sf:space-y-4" onsubmit={setupSentientManagedProxy}>
+							<InputField
+								id="sentient-managed-label"
+								label="Label"
+								placeholder="Sentient Forms managed service"
+								bind:value={managedLabel}
+								disabled={managedSetupLoading}
+							/>
+
+							<label class="sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-700">
+								<input
+									class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
+									type="checkbox"
+									bind:checked={acceptedManagedDisclosure}
+									disabled={managedSetupLoading}
+									required
+								/>
+								<span>
+									I understand Sentient Forms receives the rendered prompt and required form fields
+									for managed service runs, meters usage, and bills through my Sentient Forms plan.
+								</span>
+							</label>
+
+							<Button
+								type="submit"
+								loading={managedSetupLoading}
+								disabled={!canEnableManagedProxy}
+								data-testid="providers-managed-setup-submit"
+							>
+								{#if managedSetupLoading}
+									Enabling...
+								{:else if managedConsent.state === 'revoked'}
+									Re-enable managed service
+								{:else}
+									Enable managed service
+								{/if}
+							</Button>
+						</form>
+					{/if}
+				</div>
 			{/if}
 
 			{#if managedSetupError}
@@ -983,6 +1166,16 @@
 					data-testid="providers-managed-setup-error"
 				>
 					{managedSetupError}
+				</p>
+			{/if}
+
+			{#if managedRevokeError}
+				<p
+					class="sf:mt-4 sf:text-sm sf:text-danger-700"
+					role="alert"
+					data-testid="providers-managed-revoke-error"
+				>
+					{managedRevokeError}
 				</p>
 			{/if}
 
@@ -1004,6 +1197,23 @@
 					</p>
 				</div>
 			{/if}
+
+			{#if managedRevokeResult}
+				<div
+					class="sf:mt-4 sf:rounded sf:border sf:border-amber-200 sf:bg-amber-50 sf:p-4"
+					data-testid="providers-managed-revoke-result"
+				>
+					<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+						<Badge variant="warning">Consent revoked</Badge>
+						<span class="sf:text-sm sf:text-amber-800">
+							Consent #{managedRevokeResult.consent_id} recorded.
+						</span>
+					</div>
+					<p class="sf:mt-2 sf:text-sm sf:text-amber-800">
+						The local managed-service credential is disabled. Stripe billing was not changed.
+					</p>
+				</div>
+			{/if}
 		</Card>
 
 		<Card title="Sentient Forms managed service credentials" data-testid="providers-managed-list-card">
@@ -1020,15 +1230,21 @@
 				<div class="sf:space-y-3">
 					{#each managedCredentials as credential}
 						{@const statusDetail = providerCredentialStatusDetail(credential)}
+						{@const credentialConsent = readManagedConsent(credential)}
 						<div
 							class="sf:border-l sf:border-slate-300 sf:pl-3"
 							data-testid="providers-managed-credential"
 						>
 							<div class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-2">
 								<p class="sf:font-medium sf:text-slate-900">{credential.label}</p>
-								<Badge variant={providerStatusVariant(credential.status)}
-									>{providerStatusLabel(credential.status)}</Badge
-								>
+								<div class="sf:flex sf:flex-wrap sf:gap-2">
+									<Badge variant={providerStatusVariant(credential.status)}
+										>{providerStatusLabel(credential.status)}</Badge
+									>
+									<Badge variant={managedConsentBadgeVariant(credentialConsent.state)}>
+										{managedConsentLabel(credentialConsent.state)}
+									</Badge>
+								</div>
 							</div>
 							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
 								{providerCredentialAuthModeLabel(credential)} · {providerCredentialSecretSummary(credential)}
