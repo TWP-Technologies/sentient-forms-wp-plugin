@@ -4,17 +4,21 @@
 		PluginSettingsResponse,
 		SiteContextStatusResponse
 	} from '$lib/api/types';
-	import { Alert, Badge, Button, ModelSelector, Toggle } from '$lib/components/ui';
+	import SiteContextNotices from '$lib/components/site-context-notices.svelte';
+	import SiteContextSetupPanel from '$lib/components/site-context-setup-panel.svelte';
+	import { Badge, Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 	import {
 		DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
 		DEFAULT_SITE_CONTEXT_REFRESH_DAYS,
 		SITE_CONTEXT_REFRESH_DAY_OPTIONS,
-		normalizeSiteContextResponse
+		normalizeSiteContextResponse,
+		siteContextStatusLabel
 	} from '$lib/utils/site-context';
 	import { wpFetch } from '$lib/wp';
 
 	type PrivacyPresetId = 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility';
+	type SiteContextBadgeVariant = 'neutral' | 'success' | 'warning';
 
 	interface PrivacyPresetDefinition {
 		id: PrivacyPresetId;
@@ -124,6 +128,10 @@
 				)
 		);
 	});
+	let siteContextSetupLabel = $derived(
+		siteContextStatus ? siteContextStatusLabel(siteContextStatus) : 'Loading'
+	);
+	let siteContextSetupVariant = $derived(siteContextBadgeVariant(siteContextStatus));
 
 	$effect(() => {
 		if (!open) return;
@@ -167,6 +175,14 @@
 		siteContextRefreshDays = next.settings.auto_refresh_days || DEFAULT_SITE_CONTEXT_REFRESH_DAYS;
 		siteContextModelSelection =
 			next.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION;
+	}
+
+	function siteContextBadgeVariant(
+		nextStatus: SiteContextStatusResponse | null
+	): SiteContextBadgeVariant {
+		if (nextStatus?.status === 'ready') return 'success';
+		if (nextStatus?.status === 'declined') return 'neutral';
+		return 'warning';
 	}
 
 	async function loadSiteContext(): Promise<void> {
@@ -384,146 +400,25 @@
 						</p>
 					</div>
 
-					<div class="sf:space-y-3">
-						<div
-							class="sf:rounded-lg sf:border sf:border-primary-100 sf:bg-primary-50 sf:p-4 sf:space-y-4"
-						>
-							<div class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-2">
-								<div>
-									<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
-										<span
-											class="sf:inline-flex sf:h-7 sf:w-7 sf:items-center sf:justify-center sf:rounded-full sf:bg-primary-600 sf:text-sm sf:font-semibold sf:text-white"
-										>
-											3
-										</span>
-										<p class="sf:text-sm sf:font-semibold sf:text-slate-900">Site Context</p>
-									</div>
-									<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
-										Give actions a site-specific baseline for better spam and summary decisions.
-									</p>
-								</div>
-								{#if siteContextStatus?.status === 'ready'}
-									<Badge variant="success">Ready</Badge>
-								{:else if siteContextStatus?.status === 'stale'}
-									<Badge variant="warning">Outdated</Badge>
-								{:else if siteContextStatus?.status === 'declined'}
-									<Badge variant="neutral">Generation off</Badge>
-								{:else}
-									<Badge variant="warning">Empty</Badge>
-								{/if}
-							</div>
-
-							{#if siteContextLoading}
-								<p class="sf:text-xs sf:text-slate-500">Loading Site Context setup...</p>
-							{:else}
-								<Toggle
-									label="Allow AI-generated Site Context"
-									description="Uses a web-capable model to read public site evidence."
-									bind:checked={siteContextConsent}
-								/>
-
-								<Toggle
-									label="Refresh automatically"
-									description="Schedule updates through WordPress."
-									bind:checked={siteContextAutoRefresh}
-									disabled={!siteContextConsent}
-								/>
-
-								<label class="sf:block">
-									<span class="sf:text-xs sf:font-semibold sf:text-slate-700">Refresh every</span>
-									<select
-										class="sf:mt-1 sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-										bind:value={siteContextRefreshDays}
-										disabled={!siteContextConsent || !siteContextAutoRefresh}
-									>
-										{#each SITE_CONTEXT_REFRESH_DAY_OPTIONS as days}
-											<option value={days}>{days} days</option>
-										{/each}
-									</select>
-								</label>
-
-								<label class="sf:block">
-									<span class="sf:text-xs sf:font-semibold sf:text-slate-700">
-										Manual context
-									</span>
-									<textarea
-										rows={4}
-										bind:value={siteContextText}
-										maxlength={5000}
-										class="sf:mt-1 sf:w-full sf:rounded sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-										placeholder="Describe the site, normal inquiries, service area, and suspicious patterns..."
-									></textarea>
-								</label>
-
-								<details class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3">
-									<summary class="sf:cursor-pointer sf:text-sm sf:font-semibold sf:text-slate-900">
-										Generation model and tools
-									</summary>
-									<div class="sf:mt-3">
-										<ModelSelector
-											label="Generation model"
-											level="global"
-											value={siteContextModelSelection}
-											readonly={!siteContextConsent}
-											requiredCapabilities={['web_search']}
-											lockRequiredCapabilities={true}
-											onchange={(selection) => {
-												siteContextModelSelection = selection;
-											}}
-										/>
-									</div>
-								</details>
-
-								<div class="sf:flex sf:flex-wrap sf:gap-2">
-									<Button
-										size="sm"
-										variant="secondary"
-										disabled={siteContextSaving}
-										onclick={saveSiteContext}
-									>
-										{siteContextSaving ? 'Saving...' : 'Save context'}
-									</Button>
-									<Button
-										size="sm"
-										disabled={!siteContextConsent || siteContextGenerating}
-										loading={siteContextGenerating}
-										onclick={generateSiteContext}
-									>
-										{siteContextGenerating ? 'Generating...' : 'Generate now'}
-									</Button>
-								</div>
-							{/if}
-						</div>
-
-						<Alert variant="info">
-							<p class="sf:font-semibold">High-sensitivity secret handling</p>
-							<p class="sf:mt-1">
-								Saved provider keys are encrypted locally with server-side WordPress secrets. If you
-								need stronger operational control, configure the provider through a WordPress
-								constant or environment variable instead of storing the key in the database.
-							</p>
-							<p class="sf:mt-2">
-								If WordPress salts change later, encrypted saved keys will need to be entered again.
-							</p>
-						</Alert>
-
-						<Alert variant="warning">
-							<p class="sf:font-semibold">OpenRouter privacy note</p>
-							<p class="sf:mt-1">
-								Zero Data Retention depends on the specific OpenRouter route and upstream model
-								provider. Review the
-								<a
-									class="sf:font-medium sf:text-primary-700 sf:underline sf:underline-offset-2"
-									href="https://openrouter.ai/docs/guides/features/zdr"
-									target="_blank"
-									rel="noreferrer"
-								>
-									OpenRouter ZDR guide
-								</a>
-								before choosing sensitive routes. Many free routes have different retention or training
-								policies, so review the provider privacy terms before using them on sensitive forms.
-							</p>
-						</Alert>
+					<div class="sf:space-y-6">
+						<SiteContextSetupPanel
+							stepNumber={3}
+							statusLabel={siteContextSetupLabel}
+							statusVariant={siteContextSetupVariant}
+							loading={siteContextLoading}
+							saving={siteContextSaving}
+							generating={siteContextGenerating}
+							generateDisabled={!siteContextConsent || siteContextGenerating}
+							bind:contextText={siteContextText}
+							bind:generationConsent={siteContextConsent}
+							bind:autoRefreshEnabled={siteContextAutoRefresh}
+							bind:autoRefreshDays={siteContextRefreshDays}
+							bind:modelSelection={siteContextModelSelection}
+							refreshDayOptions={SITE_CONTEXT_REFRESH_DAY_OPTIONS}
+							onSave={saveSiteContext}
+							onGenerate={generateSiteContext}
+						/>
+						<SiteContextNotices />
 					</div>
 				</div>
 

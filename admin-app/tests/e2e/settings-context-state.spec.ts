@@ -91,7 +91,7 @@ test.describe('Settings context state templates', () => {
 
 		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Site Context' })).toBeVisible();
-		await expect(page.getByText('Context summary')).toBeVisible();
+		await expect(page.getByTestId('site-context-setup-panel')).toBeVisible();
 		await expect(page.getByText('Empty')).toBeVisible();
 		await expect(page.getByTestId('site-context-textarea')).toBeVisible();
 		await expect(page.getByTestId('site-context-generate-now')).toBeDisabled();
@@ -133,7 +133,11 @@ test.describe('Settings context state templates', () => {
 		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
 		await expect(page.getByRole('heading', { name: 'Site Context' })).toBeVisible();
 		await expect(page.getByTestId('site-context-empty-consented-warning')).toBeVisible();
-		await expect(page.getByTestId('site-context-generation-consent')).toBeChecked();
+		await expect(page.getByTestId('site-context-generation-consent')).toHaveAttribute(
+			'aria-checked',
+			'true'
+		);
+		await expect(page.getByTestId('site-context-notices')).toBeVisible();
 	});
 
 	test('shows error template and recovers on retry', async ({ page }) => {

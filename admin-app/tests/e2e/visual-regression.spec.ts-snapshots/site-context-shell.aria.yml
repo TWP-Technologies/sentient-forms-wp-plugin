@@ -1,30 +1,34 @@
 - heading "Site Context" [level=2]
 - paragraph: Describe this site so form actions can make more correct decisions about legitimate submissions, spam, summaries, and follow-up work.
 - button "Refresh"
-- paragraph: Context summary
-- text: Ready
-- paragraph: "/Last updated: 2\\/\\d+\\/\\d+/"
 - button "Withdraw consent"
-- button "Save changes" [disabled]
-- text: Site Context text
-- paragraph: 'Keep this useful to a model: what the site does, who normally contacts you, what a good lead looks like, and what should be suspicious for this site.'
-- textbox "Site Context text":
-    - /placeholder: 'Example: This site sells commercial HVAC maintenance in Austin. Legitimate leads usually ask about service plans, emergency repairs, rooftop units, or commercial quotes...'
-    - text: Sentient Forms demo context for responsive layout validation.
-- paragraph: /\d+ \/ \d+ characters/
-- switch "Include Site Context by default" [checked]
-- text: Include Site Context by default When actions use their global setting, this context can be included in model prompts.
-- paragraph: AI generation
-- paragraph: Generate context from public website evidence. Website content is treated as untrusted evidence, not instructions.
-- checkbox "Allow AI to generate Site Context This may use web search or website fetching through the selected route." [checked]
-- text: Allow AI to generate Site Context This may use web search or website fetching through the selected route.
+- paragraph: "/Last updated: 2\\/\\d+\\/\\d+/"
+- paragraph: Site Context
+- paragraph: Give actions a site-specific baseline for better spam and summary decisions.
+- text: Ready
+- switch "Allow AI-generated Site Context" [checked]
+- text: Allow AI-generated Site Context Uses a web-capable model to read public site evidence.
 - switch "Refresh automatically"
-- text: Refresh automatically Use WordPress scheduled tasks to refresh context at the selected cadence. Refresh cadence
-- combobox "Refresh cadence" [disabled]:
-    - option "7 days"
-    - option /\d+ days/
-    - option /\d+ days/ [selected]
-    - option /\d+ days/
-    - option /\d+ days/
-- button "Generate now"
+- text: Refresh automatically Schedule updates through WordPress. Refresh every
+- combobox "Refresh every" [disabled]:
+  - option "7 days"
+  - option /\d+ days/
+  - option /\d+ days/ [selected]
+  - option /\d+ days/
+  - option /\d+ days/
+- text: Manual context
+- textbox "Manual context":
+  - /placeholder: Describe the site, normal inquiries, service area, and suspicious patterns...
+  - text: Sentient Forms demo context for responsive layout validation.
 - group: Generation model and tools
+- button "Save context" [disabled]
+- button "Generate now"
+- heading "High-sensitivity secret handling" [level=3]
+- paragraph: Saved provider keys are encrypted locally with server-side WordPress secrets. If you need stronger operational control, configure the provider through a WordPress constant or environment variable instead of storing the key in the database.
+- paragraph: If WordPress salts change later, encrypted saved keys will need to be entered again.
+- heading "OpenRouter privacy note" [level=3]
+- paragraph:
+  - text: Zero Data Retention depends on the specific OpenRouter route and upstream model provider. Many free routes have different retention or training policies, so review the provider privacy terms and the
+  - link "OpenRouter ZDR guide":
+    - /url: https://openrouter.ai/docs/guides/features/zdr
+  - text: before using them on sensitive forms.

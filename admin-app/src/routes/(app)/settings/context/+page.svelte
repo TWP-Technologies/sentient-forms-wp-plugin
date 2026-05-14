@@ -1,15 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import {
-		Alert,
-		Badge,
-		Button,
-		Card,
-		ModelSelector,
-		Section,
-		StateTemplate,
-		Toggle
-	} from '$lib/components/ui';
+	import SiteContextNotices from '$lib/components/site-context-notices.svelte';
+	import SiteContextSetupPanel from '$lib/components/site-context-setup-panel.svelte';
+	import { Alert, Button, Section, StateTemplate } from '$lib/components/ui';
 	import type {
 		ModelSelection,
 		SiteContextStatusResponse,
@@ -25,9 +18,8 @@
 	} from '$lib/utils/site-context';
 	import { wpFetch } from '$lib/wp';
 
-	const CONTEXT_SOFT_LIMIT = 2000;
-	const CONTEXT_WARN_LIMIT = 4500;
 	const CONTEXT_HARD_LIMIT = 5000;
+	type SiteContextBadgeVariant = 'neutral' | 'success' | 'warning';
 
 	let loading = $state(true);
 	let saving = $state(false);
@@ -45,9 +37,9 @@
 
 	const characterCount = $derived(editedText.length);
 	const isOverLimit = $derived(characterCount > CONTEXT_HARD_LIMIT);
-	const limitPercent = $derived(Math.min((characterCount / CONTEXT_HARD_LIMIT) * 100, 100));
 	const hasContext = $derived(Boolean(status?.has_context));
 	const statusLabel = $derived(status ? siteContextStatusLabel(status) : 'Loading');
+	const statusVariant = $derived(siteContextBadgeVariant(status));
 	const canGenerate = $derived(generationConsent && !generating);
 	const canWithdraw = $derived(status?.settings.consent_status === 'granted' || hasContext);
 	const hasChanges = $derived.by(() => {
@@ -75,6 +67,14 @@
 		autoRefreshDays = next.settings.auto_refresh_days || DEFAULT_SITE_CONTEXT_REFRESH_DAYS;
 		generationModelSelection =
 			next.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION;
+	}
+
+	function siteContextBadgeVariant(
+		nextStatus: SiteContextStatusResponse | null
+	): SiteContextBadgeVariant {
+		if (nextStatus?.status === 'ready') return 'success';
+		if (nextStatus?.status === 'declined') return 'neutral';
+		return 'warning';
 	}
 
 	async function loadContext(): Promise<void> {
@@ -179,9 +179,18 @@
 	description="Describe this site so form actions can make more correct decisions about legitimate submissions, spam, summaries, and follow-up work."
 >
 	{#snippet actions()}
-		<Button variant="secondary" onclick={loadContext} disabled={loading}>
-			{loading ? 'Loading…' : 'Refresh'}
-		</Button>
+		<div class="sf:flex sf:flex-wrap sf:gap-2">
+			<Button variant="secondary" onclick={loadContext} disabled={loading}>
+				{loading ? 'Loading...' : 'Refresh'}
+			</Button>
+			<Button
+				variant="secondary"
+				disabled={!canWithdraw || withdrawing}
+				onclick={() => (showWithdrawConfirm = true)}
+			>
+				Withdraw consent
+			</Button>
+		</div>
 	{/snippet}
 
 	{#if error}
@@ -206,202 +215,46 @@
 		/>
 	{:else if status}
 		<div class="sf:space-y-5">
-			<Card>
-				<div class="sf:space-y-5">
-					<div
-						class="sf:flex sf:flex-col sf:gap-3 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
-					>
-						<div class="sf:space-y-2">
-							<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-								<p class="sf:text-base sf:font-semibold sf:text-slate-900">Context summary</p>
-								<Badge
-									variant={status.status === 'ready'
-										? 'success'
-										: status.status === 'declined'
-											? 'neutral'
-											: 'warning'}
-								>
-									{statusLabel}
-								</Badge>
-							</div>
-							<p class="sf:text-sm sf:text-slate-600">
-								Last updated: {formatDate(status.context?.updated_at)}
-							</p>
-						</div>
-						<div class="sf:flex sf:flex-wrap sf:gap-2">
-							<Button
-								variant="secondary"
-								disabled={!canWithdraw || withdrawing}
-								onclick={() => (showWithdrawConfirm = true)}
-							>
-								Withdraw consent
-							</Button>
-							<Button disabled={saving || !hasChanges || isOverLimit} onclick={saveContext}>
-								{saving ? 'Saving…' : 'Save changes'}
-							</Button>
-						</div>
-					</div>
+			<p class="sf:text-sm sf:text-slate-600">
+				Last updated: {formatDate(status.context?.updated_at)}
+			</p>
 
-					{#if status.is_empty && generationConsent}
-						<Alert variant="warning" data-testid="site-context-empty-consented-warning">
-							Consent is enabled, but Site Context is empty. Generate or write context before
-							relying on site-specific action decisions.
-						</Alert>
-					{:else if status.is_stale}
-						<Alert variant="warning" data-testid="site-context-stale-warning">
-							Site Context looks older than {status.stale_after_days} days. Refresh it before using it
-							for high-confidence spam decisions.
-						</Alert>
-					{:else if status.settings.consent_status === 'declined'}
-						<Alert variant="info" data-testid="site-context-declined-warning">
-							AI-generated Site Context is off. You can still write context manually; better context
-							usually improves correct action resolution.
-						</Alert>
-					{/if}
+			{#if status.is_empty && generationConsent}
+				<Alert variant="warning" data-testid="site-context-empty-consented-warning">
+					Consent is enabled, but Site Context is empty. Generate or write context before
+					relying on site-specific action decisions.
+				</Alert>
+			{:else if status.is_stale}
+				<Alert variant="warning" data-testid="site-context-stale-warning">
+					Site Context looks older than {status.stale_after_days} days. Refresh it before using it
+					for high-confidence spam decisions.
+				</Alert>
+			{:else if status.settings.consent_status === 'declined'}
+				<Alert variant="info" data-testid="site-context-declined-warning">
+					AI-generated Site Context is off. You can still write context manually; better context
+					usually improves correct action resolution.
+				</Alert>
+			{/if}
 
-					<div>
-						<label
-							for="context-text"
-							class="sf:block sf:text-sm sf:font-semibold sf:text-slate-900"
-						>
-							Site Context text
-						</label>
-						<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-							Keep this useful to a model: what the site does, who normally contacts you, what a
-							good lead looks like, and what should be suspicious for this site.
-						</p>
-						<textarea
-							id="context-text"
-							bind:value={editedText}
-							rows={10}
-							maxlength={CONTEXT_HARD_LIMIT}
-							class="sf:mt-3 sf:w-full sf:rounded-md sf:border sf:px-3 sf:py-2 sf:text-sm sf:placeholder-slate-400 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white {characterCount >=
-							CONTEXT_WARN_LIMIT
-								? 'sf:border-danger-500 sf:focus-visible:border-danger-500 sf:focus-visible:ring-danger-500'
-								: characterCount > CONTEXT_SOFT_LIMIT
-									? 'sf:border-warning-600 sf:focus-visible:border-warning-600 sf:focus-visible:ring-warning-600'
-									: 'sf:border-slate-300 sf:focus-visible:border-primary-600 sf:focus-visible:ring-primary-500'}"
-							placeholder="Example: This site sells commercial HVAC maintenance in Austin. Legitimate leads usually ask about service plans, emergency repairs, rooftop units, or commercial quotes..."
-							data-testid="site-context-textarea"
-						></textarea>
-						<div
-							class="sf:mt-1 sf:h-1 sf:w-full sf:overflow-hidden sf:rounded-full sf:bg-slate-100"
-						>
-							<div
-								class="sf:h-full sf:rounded-full sf:transition-all {characterCount >=
-								CONTEXT_WARN_LIMIT
-									? 'sf:bg-red-500'
-									: characterCount > CONTEXT_SOFT_LIMIT
-										? 'sf:bg-amber-500'
-										: 'sf:bg-indigo-500'}"
-								style={`width: ${limitPercent}%`}
-							></div>
-						</div>
-						<p
-							class="sf:mt-1 sf:text-xs {characterCount >= CONTEXT_WARN_LIMIT
-								? 'sf:font-medium sf:text-red-600'
-								: characterCount > CONTEXT_SOFT_LIMIT
-									? 'sf:text-amber-700'
-									: 'sf:text-slate-600'}"
-						>
-							{characterCount} / {CONTEXT_HARD_LIMIT} characters
-						</p>
-					</div>
+			<SiteContextSetupPanel
+				statusLabel={statusLabel}
+				statusVariant={statusVariant}
+				saving={saving}
+				generating={generating}
+				saveLabel="Save context"
+				saveDisabled={!hasChanges || isOverLimit}
+				generateDisabled={!canGenerate}
+				bind:contextText={editedText}
+				bind:generationConsent={generationConsent}
+				bind:autoRefreshEnabled={autoRefreshEnabled}
+				bind:autoRefreshDays={autoRefreshDays}
+				bind:modelSelection={generationModelSelection}
+				refreshDayOptions={SITE_CONTEXT_REFRESH_DAY_OPTIONS}
+				onSave={saveContext}
+				onGenerate={generateContext}
+			/>
 
-					<Toggle
-						label="Include Site Context by default"
-						description="When actions use their global setting, this context can be included in model prompts."
-						bind:checked={autoInclude}
-					/>
-				</div>
-			</Card>
-
-			<div class="sf:space-y-5">
-				<Card>
-					<div class="sf:space-y-4">
-						<div>
-							<p class="sf:text-base sf:font-semibold sf:text-slate-900">AI generation</p>
-							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-								Generate context from public website evidence. Website content is treated as
-								untrusted evidence, not instructions.
-							</p>
-						</div>
-
-						<label
-							class="sf:flex sf:items-start sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-3"
-						>
-							<input
-								type="checkbox"
-								class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-								bind:checked={generationConsent}
-								data-testid="site-context-generation-consent"
-							/>
-							<span>
-								<span class="sf:block sf:text-sm sf:font-semibold sf:text-slate-900">
-									Allow AI to generate Site Context
-								</span>
-								<span class="sf:block sf:text-xs sf:text-slate-600">
-									This may use web search or website fetching through the selected route.
-								</span>
-							</span>
-						</label>
-
-						<Toggle
-							label="Refresh automatically"
-							description="Use WordPress scheduled tasks to refresh context at the selected cadence."
-							bind:checked={autoRefreshEnabled}
-							disabled={!generationConsent}
-						/>
-
-						<label class="sf:block">
-							<span class="sf:text-sm sf:font-semibold sf:text-slate-900">Refresh cadence</span>
-							<select
-								class="sf:mt-1 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-								bind:value={autoRefreshDays}
-								disabled={!generationConsent || !autoRefreshEnabled}
-							>
-								{#each SITE_CONTEXT_REFRESH_DAY_OPTIONS as days}
-									<option value={days}>{days} days</option>
-								{/each}
-							</select>
-						</label>
-
-						<Button
-							class="sf:w-full"
-							disabled={!canGenerate}
-							loading={generating}
-							onclick={generateContext}
-							data-testid="site-context-generate-now"
-						>
-							{generating ? 'Generating…' : 'Generate now'}
-						</Button>
-
-						<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-							<details>
-								<summary class="sf:cursor-pointer sf:text-base sf:font-semibold sf:text-slate-900">
-									Generation model and tools
-								</summary>
-								<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-									Change this when Site Context needs a different web-capable model policy.
-								</p>
-								<div class="sf:mt-4">
-									<ModelSelector
-										label="Generation model"
-										level="global"
-										value={generationModelSelection}
-										readonly={!generationConsent}
-										requiredCapabilities={['web_search']}
-										lockRequiredCapabilities={true}
-										onchange={(selection) => {
-											generationModelSelection = selection;
-										}}
-									/>
-								</div>
-							</details>
-						</div>
-					</div>
-				</Card>
-			</div>
+			<SiteContextNotices />
 		</div>
 
 		{#if showWithdrawConfirm}

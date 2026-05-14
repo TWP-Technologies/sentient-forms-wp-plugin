@@ -6,21 +6,23 @@
 		id?: string;
 		checked?: boolean;
 		disabled?: boolean;
-		label?: string | null;
-		description?: string | null;
-		onchange?: (event: ToggleEvent) => void;
-	} & Omit<HTMLButtonAttributes, 'type' | 'role'>;
+	label?: string | null;
+	description?: string | null;
+	descriptionClass?: string;
+	onchange?: (event: ToggleEvent) => void;
+} & Omit<HTMLButtonAttributes, 'type' | 'role'>;
 
 	const autoId = $props.id();
 	let {
 		id = autoId,
 		checked = $bindable(),
-		disabled = false,
-		label = null,
-		description = null,
-		onchange,
-		...rest
-	}: Props = $props();
+	disabled = false,
+	label = null,
+	description = null,
+	descriptionClass = 'sf:text-slate-500',
+	onchange,
+	...rest
+}: Props = $props();
 
 	let ariaDescribedBy = $derived(description ? `${id}-description` : undefined);
 	let ariaLabelledBy = $derived(label ? `${id}-label` : undefined);
@@ -75,7 +77,7 @@
 		<div class="sf:flex sf:flex-col sf:gap-1">
 			<span class="sf:text-sm sf:font-medium sf:text-slate-700" id={`${id}-label`}>{label}</span>
 			{#if description}
-				<span class="sf:text-xs sf:text-slate-500" id={`${id}-description`}>
+				<span class={`sf:text-xs ${descriptionClass}`} id={`${id}-description`}>
 					{description}
 				</span>
 			{/if}

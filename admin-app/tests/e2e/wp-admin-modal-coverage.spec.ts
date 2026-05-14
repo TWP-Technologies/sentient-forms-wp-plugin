@@ -250,8 +250,8 @@ async function coverSiteContextWarningFlow(page: Page): Promise<void> {
 
 	const generationConsent = page.getByTestId('site-context-generation-consent');
 	await expect(generationConsent).toBeVisible();
-	if (!(await generationConsent.isChecked())) {
-		await generationConsent.check();
+	if ((await generationConsent.getAttribute('aria-checked')) !== 'true') {
+		await generationConsent.click();
 	}
 
 	const generateButton = page.getByTestId('site-context-generate-now');

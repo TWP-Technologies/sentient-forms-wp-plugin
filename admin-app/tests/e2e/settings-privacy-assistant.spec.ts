@@ -195,6 +195,9 @@ test.describe('Privacy setup assistant', () => {
 		await expect(
 			page.getByTestId('privacy-setup-assistant').getByText('Site Context', { exact: true })
 		).toBeVisible();
+		await expect(page.getByTestId('site-context-setup-panel')).toBeVisible();
+		await expect(page.getByTestId('site-context-model-tools')).toBeVisible();
+		await expect(page.getByTestId('site-context-notices')).toBeVisible();
 		await page.getByTestId('privacy-setup-preset-maximum_visibility').click();
 		await page.getByRole('button', { name: 'Apply Maximum visibility' }).click();
 
