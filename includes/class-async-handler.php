@@ -136,6 +136,52 @@ class Sentient_Forms_Async_Handler
         }
     }
 
+    public function complete_remote_cps_async_success( string $execution_request_id, array $context, array $result ): void
+    {
+        $settings  = isset( $context['settings'] ) && is_array( $context['settings'] ) ? $context['settings'] : [];
+        $action_id = sanitize_key( (string) ( $context['action_id'] ?? $context['central_action_id'] ?? 'sentient_forms_cps_async' ) );
+        if ( '' === $action_id )
+        {
+            $action_id = 'sentient_forms_cps_async';
+        }
+
+        $context = $this->normalize_context( $context, $action_id );
+        $this->handle_success(
+            [
+                'action_id'            => $action_id,
+                'data'                 => [],
+                'settings'             => $settings,
+                'execution_request_id' => $execution_request_id,
+                'context'              => $context,
+            ],
+            $result
+        );
+    }
+
+    public function complete_remote_cps_async_failure( string $execution_request_id, array $context, WP_Error $error ): void
+    {
+        $settings  = isset( $context['settings'] ) && is_array( $context['settings'] ) ? $context['settings'] : [];
+        $action_id = sanitize_key( (string) ( $context['action_id'] ?? $context['central_action_id'] ?? 'sentient_forms_cps_async' ) );
+        if ( '' === $action_id )
+        {
+            $action_id = 'sentient_forms_cps_async';
+        }
+
+        $context                 = $this->normalize_context( $context, $action_id );
+        $context['attempt']      = 1;
+        $context['max_attempts'] = 1;
+        $this->handle_failure(
+            [
+                'action_id'            => $action_id,
+                'data'                 => [],
+                'settings'             => $settings,
+                'execution_request_id' => $execution_request_id,
+                'context'              => $context,
+            ],
+            $error
+        );
+    }
+
 	private function handle_success( array $job, array $result ): void
 	{
 		$this->log_success( $job['action_id'], $result );

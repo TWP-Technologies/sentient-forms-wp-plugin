@@ -420,6 +420,7 @@ class ActionExecutorTest extends WP_UnitTestCase {
 		$this->assertSame( [], $call['payload']['file_refs'] );
 		$this->assertArrayHasKey( 'input_manifest', $call['payload'] );
 		$this->assertSame( 'legacy_fallback_field_ids', $call['payload']['input_manifest']['mapping_source'] ?? null );
+		$this->assertSame( [ 'enabled' => true ], $call['payload']['callback'] ?? null );
 		$this->assertSame( 10, $call['payload']['async_options']['delay_seconds'] );
 		$this->assertSame( 43200, $call['payload']['async_options']['max_wait_seconds'] );
 		$this->assertArrayHasKey( 'execution_request_id', $call['payload'] );
@@ -486,6 +487,7 @@ class ActionExecutorTest extends WP_UnitTestCase {
 
 		$call = $client->calls[0];
 		$this->assertSame( '/actions/execute-async', $call['path'] );
+		$this->assertSame( [ 'enabled' => true ], $call['payload']['callback'] ?? null );
 		$this->assertSame( 123, $call['payload']['async_options']['delay_seconds'] );
 		$this->assertSame( 234567, $call['payload']['async_options']['max_wait_seconds'] );
 	}

@@ -208,6 +208,9 @@ class Sentient_Forms_Action_Executor {
 			),
 			'action_context'       => $this->build_action_context( $form, $entry, $context, $execution_request_id, $submission_token ),
 			'async_options'        => $this->normalize_async_options( $context, $async_options ),
+			'callback'             => [
+				'enabled' => true,
+			],
 			'file_refs'            => $attachment_payload['file_refs'],
 		);
 
