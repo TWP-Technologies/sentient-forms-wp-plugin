@@ -10,8 +10,8 @@
 	let { grades = undefined }: Props = $props();
 </script>
 
-<Card>
-	<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-950">Grade distribution</h2>
+<Card data-testid="lead-scoring-grade-distribution">
+	<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-950">Grade Distribution</h2>
 	<div class="sf:mt-7 sf:space-y-5">
 		{#each gradeOrder as grade}
 			<div>

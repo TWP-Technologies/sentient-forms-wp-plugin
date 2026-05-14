@@ -288,65 +288,78 @@
 			</div>
 
 			<div class="sf:space-y-6">
+				<GradeDistribution grades={dashboard?.grades} />
+
 				{#if (dashboard?.unconfigured_forms?.length ?? 0) > 0}
 					<Card>
-						<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-950">Quick jump</h2>
+						<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-950">Quick Jump</h2>
 						<p class="sf:mt-2 sf:text-base sf:text-slate-500">
 							Forms that do not have Lead Scoring setup yet.
 						</p>
-						<div class="sf:mt-5 sf:space-y-3">
-							{#each dashboard?.unconfigured_forms ?? [] as form (`unconfigured-${form.form_source}-${form.form_id}`)}
-								<div
-									class="sf:flex sf:items-center sf:justify-between sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:p-4"
-								>
-									<div class="sf:min-w-0">
-										<p class="sf:truncate sf:text-base sf:font-semibold sf:text-slate-950">
-											{form.form_title || `Form ${form.form_id}`}
-										</p>
-										<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
-											{providerLabel(form.form_source, form.provider_label)}
-										</p>
+						<div
+							class="sf:mt-5 sf:max-h-[17.5rem] sf:overflow-y-auto sf:rounded-xl sf:border sf:border-slate-200 sf:bg-slate-50/55 sf:p-2"
+							data-testid="lead-scoring-quick-jump-list"
+						>
+							<div class="sf:space-y-3">
+								{#each dashboard?.unconfigured_forms ?? [] as form (`unconfigured-${form.form_source}-${form.form_id}`)}
+									<div
+										class="sf:flex sf:items-center sf:justify-between sf:gap-3 sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-4"
+									>
+										<div class="sf:min-w-0">
+											<p class="sf:truncate sf:text-base sf:font-semibold sf:text-slate-950">
+												{form.form_title || `Form ${form.form_id}`}
+											</p>
+											<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
+												{providerLabel(form.form_source, form.provider_label)}
+											</p>
+										</div>
+										<ButtonLink size="sm" variant="secondary" class="sf:whitespace-nowrap" href={setupHref(form)}>
+											<SettingsIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+											Set Up
+										</ButtonLink>
 									</div>
-									<ButtonLink size="sm" variant="secondary" class="sf:whitespace-nowrap" href={setupHref(form)}>
-										<SettingsIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
-										Set Up
-									</ButtonLink>
-								</div>
-							{/each}
+								{/each}
+							</div>
 						</div>
 					</Card>
 				{/if}
 
 				<Card>
-					<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-950">Configured forms</h2>
-					<div class="sf:mt-5 sf:space-y-4">
-						{#each dashboard?.forms ?? [] as form (`${form.form_source}-${form.form_id}`)}
-							<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:p-5">
-								<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
-									<div>
-										<p class="sf:text-xl sf:font-semibold sf:text-slate-950">
-											{form.form_title || `Form ${form.form_id}`}
-										</p>
-										<p class="sf:mt-4 sf:text-base sf:text-slate-500">
-											{form.scored_leads} scored · {form.priority_leads} priority · {form.reply_drafts}
-											drafts
-										</p>
-										{#if form.profile_id}
-											<p class="sf:mt-3 sf:text-base sf:text-primary-600">
-												Setup v{form.profile_version ?? 1} · {form.setup_status || 'draft'}
+					<h2 class="sf:text-2xl sf:font-semibold sf:text-slate-950">Configured Forms</h2>
+					<div
+						class="sf:mt-5 sf:max-h-[27.5rem] sf:overflow-y-auto sf:rounded-xl sf:border sf:border-slate-200 sf:bg-slate-50/55 sf:p-2"
+						data-testid="lead-scoring-configured-forms-list"
+					>
+						<div class="sf:space-y-4">
+							{#each dashboard?.forms ?? [] as form (`${form.form_source}-${form.form_id}`)}
+								<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-5">
+									<div class="sf:flex sf:items-start sf:justify-between sf:gap-3">
+										<div class="sf:min-w-0">
+											<p class="sf:truncate sf:text-xl sf:font-semibold sf:text-slate-950">
+												{form.form_title || `Form ${form.form_id}`}
 											</p>
-										{/if}
+											<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
+												{providerLabel(form.form_source, form.provider_label)}
+											</p>
+											<p class="sf:mt-4 sf:text-base sf:text-slate-500">
+												{form.scored_leads} scored · {form.priority_leads} priority · {form.reply_drafts}
+												drafts
+											</p>
+											{#if form.profile_id}
+												<p class="sf:mt-3 sf:text-base sf:text-primary-600">
+													Setup v{form.profile_version ?? 1} · {form.setup_status || 'draft'}
+												</p>
+											{/if}
+										</div>
+										<ButtonLink size="sm" variant="secondary" class="sf:whitespace-nowrap" href={setupHref(form)}>Setup</ButtonLink>
 									</div>
-									<ButtonLink size="sm" variant="secondary" class="sf:whitespace-nowrap" href={setupHref(form)}>Setup</ButtonLink>
 								</div>
-							</div>
-						{:else}
-							<p class="sf:text-sm sf:text-slate-500">No forms have stored lead scoring results yet.</p>
-						{/each}
+							{:else}
+								<p class="sf:p-4 sf:text-sm sf:text-slate-500">No forms have stored lead scoring results yet.</p>
+							{/each}
+						</div>
 					</div>
 				</Card>
-
-				<GradeDistribution grades={dashboard?.grades} />
 			</div>
 		</div>
 	{/if}

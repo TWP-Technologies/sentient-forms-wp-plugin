@@ -152,6 +152,101 @@ const dashboardResponse = {
 			profile_id: 22,
 			profile_version: 3,
 			setup_status: 'active'
+		},
+		{
+			form_source: 'gravity_forms',
+			form_id: '124',
+			form_title: 'Consultation request',
+			scored_leads: 4,
+			priority_leads: 1,
+			reply_drafts: 3,
+			latest_at: '2030-01-05T09:00:00Z',
+			profile_id: 23,
+			profile_version: 2,
+			setup_status: 'active'
+		},
+		{
+			form_source: 'gravity_forms',
+			form_id: '125',
+			form_title: 'Agency intake',
+			scored_leads: 9,
+			priority_leads: 3,
+			reply_drafts: 7,
+			latest_at: '2030-01-04T09:00:00Z',
+			profile_id: 24,
+			profile_version: 5,
+			setup_status: 'active'
+		},
+		{
+			form_source: 'gravity_forms',
+			form_id: '126',
+			form_title: 'Partner inquiry',
+			scored_leads: 2,
+			priority_leads: 0,
+			reply_drafts: 1,
+			latest_at: '2030-01-03T09:00:00Z',
+			profile_id: 25,
+			profile_version: 1,
+			setup_status: 'draft'
+		},
+		{
+			form_source: 'gravity_forms',
+			form_id: '127',
+			form_title: 'Enterprise demo',
+			scored_leads: 12,
+			priority_leads: 6,
+			reply_drafts: 10,
+			latest_at: '2030-01-02T09:00:00Z',
+			profile_id: 26,
+			profile_version: 4,
+			setup_status: 'active'
+		}
+	],
+	unconfigured_forms: [
+		{
+			form_source: 'gravity_forms',
+			form_id: '128',
+			form_title: 'Newsletter signup',
+			scored_leads: 0,
+			priority_leads: 0,
+			reply_drafts: 0,
+			setup_status: 'not_configured'
+		},
+		{
+			form_source: 'gravity_forms',
+			form_id: '129',
+			form_title: 'Support request',
+			scored_leads: 0,
+			priority_leads: 0,
+			reply_drafts: 0,
+			setup_status: 'not_configured'
+		},
+		{
+			form_source: 'gravity_forms',
+			form_id: '130',
+			form_title: 'Event registration',
+			scored_leads: 0,
+			priority_leads: 0,
+			reply_drafts: 0,
+			setup_status: 'not_configured'
+		},
+		{
+			form_source: 'gravity_forms',
+			form_id: '131',
+			form_title: 'Quote request',
+			scored_leads: 0,
+			priority_leads: 0,
+			reply_drafts: 0,
+			setup_status: 'not_configured'
+		},
+		{
+			form_source: 'gravity_forms',
+			form_id: '132',
+			form_title: 'Careers contact',
+			scored_leads: 0,
+			priority_leads: 0,
+			reply_drafts: 0,
+			setup_status: 'not_configured'
 		}
 	],
 	historical_runs: [
@@ -366,6 +461,21 @@ test.describe('lead scoring workspace', () => {
 		await expect(page.getByRole('table').getByText('Lead intake').first()).toBeVisible();
 		await expect(page.getByRole('table').getByText('#1001')).toBeVisible();
 		await expect(page.getByRole('table').getByText('Route to sales for same-day follow-up.')).toBeVisible();
-		await expect(page.getByRole('heading', { name: 'Configured forms' })).toBeVisible();
+		await expect(page.getByTestId('lead-scoring-grade-distribution')).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Quick Jump' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Configured Forms' })).toBeVisible();
+
+		const gradeBox = await page.getByTestId('lead-scoring-grade-distribution').boundingBox();
+		const quickJumpBox = await page.getByRole('heading', { name: 'Quick Jump' }).boundingBox();
+		const configuredBox = await page.getByRole('heading', { name: 'Configured Forms' }).boundingBox();
+		expect(gradeBox?.y ?? 0).toBeLessThan(quickJumpBox?.y ?? 0);
+		expect(quickJumpBox?.y ?? 0).toBeLessThan(configuredBox?.y ?? 0);
+
+		const quickJumpList = page.getByTestId('lead-scoring-quick-jump-list');
+		const configuredFormsList = page.getByTestId('lead-scoring-configured-forms-list');
+		await expect(quickJumpList).toContainText('Gravity Forms');
+		await expect(configuredFormsList).toContainText('Gravity Forms');
+		expect(await quickJumpList.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
+		expect(await configuredFormsList.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
 	});
 });
