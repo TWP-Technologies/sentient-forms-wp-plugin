@@ -9,13 +9,15 @@
 	import { createClientFromConfig } from '$lib/api/client';
 	import { notifications } from '$lib/stores/notifications';
 	import { Alert, Badge, Button, StateTemplate } from '$lib/components/ui';
-	import type { FormSourceSummary, PluginSettingsResponse, SiteContextStatusResponse } from '$lib/api/types';
+	import type {
+		FormSourceSummary,
+		PluginSettingsResponse,
+		SiteContextStatusResponse
+	} from '$lib/api/types';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { wpFetch } from '$lib/wp';
-	import {
-		normalizeSiteContextResponse,
-		siteContextStatusLabel
-	} from '$lib/utils/site-context';
+	import InfoIcon from '@lucide/svelte/icons/info';
+	import { normalizeSiteContextResponse, siteContextStatusLabel } from '$lib/utils/site-context';
 
 	type PrivacyPresetId = 'balanced' | 'privacy_focused' | 'maximum_privacy' | 'maximum_visibility';
 
@@ -57,6 +59,7 @@
 	let privacySetupCompletedAt = $state<string | null>(null);
 	let siteContextStatus = $state<SiteContextStatusResponse | null>(null);
 	let siteContextLoading = $state(false);
+	let telemetryDetailsOpen = $state(false);
 
 	const privacyPresetDefinitions: Record<PrivacyPresetId, PrivacyPresetDefinition> = {
 		balanced: {
@@ -572,10 +575,7 @@
 				data-testid="settings-manage-site-context"
 			>
 				<svg viewBox="0 0 20 20" class="sf:h-4 sf:w-4" aria-hidden="true">
-					<path
-						fill="currentColor"
-						d="M5 4.5h6.2v1.7H7.9l6.4 6.4-1.2 1.2-6.4-6.4v3.3H5z"
-					/>
+					<path fill="currentColor" d="M5 4.5h6.2v1.7H7.9l6.4 6.4-1.2 1.2-6.4-6.4v3.3H5z" />
 				</svg>
 				Manage Site Context
 			</Button>
@@ -619,16 +619,29 @@
 					improve reliability.
 				</p>
 			</div>
-			<label class="sf:flex sf:items-center sf:gap-3">
-				<span class="sf:text-sm sf:font-semibold">{$telemetry.optIn ? 'On' : 'Off'}</span>
-				<input
-					type="checkbox"
-					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-					checked={$telemetry.optIn}
-					disabled={$telemetry.loading || $telemetry.saving}
-					onchange={toggle}
-				/>
-			</label>
+			<div class="sf:flex sf:items-center sf:gap-3">
+				<Button
+					type="button"
+					variant="secondary"
+					size="sm"
+					class="sf:shrink-0 sf:gap-2 sf:whitespace-nowrap"
+					style="min-width: 8.75rem; white-space: nowrap;"
+					onclick={() => (telemetryDetailsOpen = true)}
+				>
+					<InfoIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+					<span>What&nbsp;is&nbsp;shared?</span>
+				</Button>
+				<label class="sf:flex sf:items-center sf:gap-3">
+					<span class="sf:text-sm sf:font-semibold">{$telemetry.optIn ? 'On' : 'Off'}</span>
+					<input
+						type="checkbox"
+						class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+						checked={$telemetry.optIn}
+						disabled={$telemetry.loading || $telemetry.saving}
+						onchange={toggle}
+					/>
+				</label>
+			</div>
 		</div>
 
 		<div class="sf:mt-4 sf:text-xs sf:text-slate-500 sf:space-y-1">
@@ -667,6 +680,75 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if telemetryDetailsOpen}
+		<div
+			class="sf:fixed sf:inset-0 sf:z-[1000000] sf:flex sf:items-center sf:justify-center sf:bg-slate-950/50 sf:p-4"
+			role="presentation"
+			onclick={(event) => {
+				if (event.currentTarget === event.target) telemetryDetailsOpen = false;
+			}}
+		>
+			<div
+				class="sf:w-full sf:max-w-3xl sf:overflow-hidden sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:shadow-2xl"
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="telemetry-details-title"
+			>
+				<div
+					class="sf:flex sf:flex-col sf:gap-3 sf:border-b sf:border-slate-200 sf:bg-slate-50 sf:p-5 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
+				>
+					<div>
+						<p id="telemetry-details-title" class="sf:text-lg sf:font-semibold sf:text-slate-950">
+							Telemetry and data privacy
+						</p>
+						<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
+							Telemetry is only queued when this site has opted in.
+						</p>
+					</div>
+					<Button
+						type="button"
+						variant="secondary"
+						size="sm"
+						onclick={() => (telemetryDetailsOpen = false)}
+					>
+						Close
+					</Button>
+				</div>
+
+				<div class="sf:grid sf:gap-4 sf:p-5 sf:md:grid-cols-2">
+					<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-4">
+						<p class="sf:text-sm sf:font-semibold sf:text-slate-950">What is shared</p>
+						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-slate-600">
+							Async job success or failure events, background processing warnings, action/form/entry
+							and request identifiers, and reliability status or timing details.
+						</p>
+					</div>
+					<div class="sf:rounded-lg sf:border sf:border-danger-100 sf:bg-danger-50 sf:p-4">
+						<p class="sf:text-sm sf:font-semibold sf:text-danger-900">What is not shared</p>
+						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-danger-800">
+							Prompts, model outputs, form field contents, API keys, saved provider secrets, and
+							billing secrets are not sent as telemetry.
+						</p>
+					</div>
+					<div class="sf:rounded-lg sf:border sf:border-primary-100 sf:bg-primary-50 sf:p-4">
+						<p class="sf:text-sm sf:font-semibold sf:text-primary-900">Why it helps</p>
+						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-primary-800">
+							Operational telemetry helps identify reliability regressions, slow background
+							processing, and action execution issues that are hard to diagnose from one site.
+						</p>
+					</div>
+					<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4">
+						<p class="sf:text-sm sf:font-semibold sf:text-slate-950">Your control</p>
+						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-slate-600">
+							Turn telemetry off here to stop new telemetry queueing. Local consent is cached
+							immediately and synced with Sentient Forms when the managed service is reachable.
+						</p>
+					</div>
+				</div>
+			</div>
+		</div>
+	{/if}
 
 	<div
 		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-3"

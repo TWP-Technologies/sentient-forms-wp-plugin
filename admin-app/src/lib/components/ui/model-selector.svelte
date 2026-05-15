@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Alert, Badge, Button, ReasoningEffortRail, SelectField } from '$lib/components/ui';
+	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 	import type {
 		LocalProvider,
 		LocalProviderCredential,
@@ -9,10 +10,14 @@
 		ModelInfo,
 		ModelPricingEstimate,
 		ModelPreset,
+		OpenRouterModelRefreshConsentState,
 		ModelSelection,
 		ResolvedModelSelection
 	} from '$lib/api/types';
+	import { createClientFromConfig } from '$lib/api/client';
 	import { unwrapRestResponse, type RestEnvelope } from '$lib/api/response';
+	import { OPENROUTER_DISCLOSURE_VERSION } from '$lib/constants/external-services';
+	import { notifications } from '$lib/stores/notifications';
 	import {
 		MODEL_RANK_CATEGORIES,
 		categoryLabel,
@@ -88,6 +93,7 @@
 	const MANAGED_PROVIDER = 'sentient_managed';
 	const CUSTOM_BACKUP_VALUE = '__custom_backup__';
 	const MAX_VISIBLE_MODELS = 80;
+	const client = createClientFromConfig();
 
 	let loading = $state(true);
 	let providerLoading = $state(false);
@@ -123,6 +129,11 @@
 	let highlightedModelId = $state<string | null>(null);
 	let highlightedPresetCode = $state<string | null>(null);
 	let error = $state<string | null>(null);
+	let refreshDisclosureOpen = $state(false);
+	let refreshDisclosureAccepted = $state(false);
+	let refreshConsentState = $state<OpenRouterModelRefreshConsentState | null>(null);
+	let refreshCatalogError = $state<string | null>(null);
+	let refreshingCatalog = $state(false);
 	let resolved = $state<ResolvedModelSelection | null>(null);
 	let pricingEstimate = $state<ModelPricingEstimate | null>(null);
 	let resolving = $state(false);
@@ -522,6 +533,68 @@
 		} finally {
 			providerLoading = false;
 			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
+		}
+	}
+
+	async function loadOpenRouterRefreshConsent() {
+		try {
+			const catalog = await client.getOpenRouterModels({ limit: 1 }, { showNotifications: false });
+			refreshConsentState = catalog.refresh_consent ?? null;
+			refreshDisclosureAccepted = refreshConsentState?.state === 'accepted';
+		} catch (e) {
+			console.warn('Failed to load OpenRouter refresh consent state', e);
+		}
+	}
+
+	function modelRefreshErrorMessage(err: unknown): string {
+		return err instanceof Error ? err.message : 'Unable to refresh the model catalog.';
+	}
+
+	function openModelCatalogRefresh() {
+		refreshCatalogError = null;
+		if (refreshConsentState?.state === 'accepted') {
+			void refreshModelCatalog();
+			return;
+		}
+
+		refreshDisclosureOpen = !refreshDisclosureOpen;
+	}
+
+	async function refreshModelCatalog() {
+		refreshCatalogError = null;
+
+		if (!refreshDisclosureAccepted) {
+			refreshCatalogError = 'Accept the disclosure before refreshing OpenRouter model metadata.';
+			refreshDisclosureOpen = true;
+			return;
+		}
+
+		refreshingCatalog = true;
+		try {
+			const catalog = await client.refreshOpenRouterModels(
+				{
+					disclosure_version: OPENROUTER_DISCLOSURE_VERSION,
+					accepted_external_service_terms: true,
+					output_modalities: 'text'
+				},
+				{ showNotifications: false }
+			);
+			refreshConsentState =
+				catalog.refresh_consent ??
+				({
+					state: 'accepted',
+					disclosure_version: OPENROUTER_DISCLOSURE_VERSION,
+					consent_id: catalog.consent_id ?? null,
+					accepted_at: null
+				} satisfies OpenRouterModelRefreshConsentState);
+			refreshDisclosureAccepted = true;
+			refreshDisclosureOpen = false;
+			await loadModels();
+			notifications.success('OpenRouter model catalog refreshed');
+		} catch (e) {
+			refreshCatalogError = modelRefreshErrorMessage(e);
+		} finally {
+			refreshingCatalog = false;
 		}
 	}
 
@@ -1134,6 +1207,7 @@
 	onMount(() => {
 		void loadModels();
 		void loadProviderCredentials();
+		void loadOpenRouterRefreshConsent();
 	});
 
 	$effect(() => {
@@ -1294,7 +1368,8 @@
 								id={`model-summary-tool-choice-${level}`}
 								class="sf-model-tools-select"
 								bind:value={toolChoiceMode}
-								disabled={readonly || (!selectedModelSupportsTools() && toolChoiceMode === 'inherit')}
+								disabled={readonly ||
+									(!selectedModelSupportsTools() && toolChoiceMode === 'inherit')}
 								onchange={handleSelectionChange}
 								data-testid="model-summary-tool-choice"
 							>
@@ -1329,7 +1404,8 @@
 								id={`model-summary-web-fetch-${level}`}
 								class="sf-model-tools-select"
 								bind:value={webFetchMode}
-								disabled={readonly || (!selectedModelSupportsWebFetch() && webFetchMode === 'inherit')}
+								disabled={readonly ||
+									(!selectedModelSupportsWebFetch() && webFetchMode === 'inherit')}
 								onchange={handleSelectionChange}
 								data-testid="model-summary-web-fetch"
 							>
@@ -1346,7 +1422,8 @@
 								id={`model-summary-datetime-${level}`}
 								class="sf-model-tools-select"
 								bind:value={datetimeMode}
-								disabled={readonly || (!selectedModelSupportsDatetime() && datetimeMode === 'inherit')}
+								disabled={readonly ||
+									(!selectedModelSupportsDatetime() && datetimeMode === 'inherit')}
 								onchange={handleSelectionChange}
 								data-testid="model-summary-datetime"
 							>
@@ -1418,15 +1495,90 @@
 							</p>
 							<p class="sf:mt-1 sf:text-sm sf:text-slate-300">{routeSummary()}</p>
 						</div>
-						<Button
-							size="sm"
-							variant="secondary"
-							onclick={closePicker}
-							data-testid="model-selector-close"
-						>
-							Close
-						</Button>
+						<div class="sf:flex sf:items-center sf:gap-2">
+							<span class="sf:relative sf:inline-flex sf:group">
+								<Button
+									size="sm"
+									variant="secondary"
+									iconOnly
+									onclick={openModelCatalogRefresh}
+									loading={refreshingCatalog}
+									aria-label="Refresh model catalog"
+									data-testid="model-selector-refresh-catalog"
+								>
+									<RefreshCwIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+								</Button>
+								<span
+									role="tooltip"
+									class="sf:pointer-events-none sf:absolute sf:right-0 sf:top-full sf:z-[1000000] sf:mt-2 sf:w-max sf:max-w-xs sf:rounded-md sf:border sf:border-slate-800 sf:bg-slate-950 sf:px-3 sf:py-2 sf:text-xs sf:font-normal sf:leading-relaxed sf:text-white sf:opacity-0 sf:shadow-xl sf:transition sf:duration-150 sf:group-focus-within:opacity-100 sf:group-hover:opacity-100"
+								>
+									Refresh cached OpenRouter model metadata
+								</span>
+							</span>
+							<Button
+								size="sm"
+								variant="secondary"
+								onclick={closePicker}
+								data-testid="model-selector-close"
+							>
+								Close
+							</Button>
+						</div>
 					</div>
+
+					{#if refreshDisclosureOpen}
+						<div
+							class="sf:mt-4 sf:rounded-lg sf:border sf:border-primary-200 sf:bg-primary-50 sf:p-4 sf:text-slate-900"
+							data-testid="model-selector-refresh-disclosure"
+						>
+							<div class="sf:grid sf:gap-4 sf:lg:grid-cols-[minmax(0,1fr)_auto] sf:lg:items-end">
+								<div>
+									<p class="sf:text-sm sf:font-semibold sf:text-slate-950">
+										Refresh OpenRouter model metadata
+									</p>
+									<p class="sf:mt-1 sf:max-w-3xl sf:text-sm sf:leading-6 sf:text-slate-700">
+										Refreshing fetches public model names, pricing, context limits, and capabilities
+										from OpenRouter, then stores a local cache on this WordPress site. No prompts,
+										model outputs, or form entries are sent.
+									</p>
+									<label
+										class="sf:mt-3 sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-800"
+									>
+										<input
+											type="checkbox"
+											class="sf:mt-0.5 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300 sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-primary-50"
+											bind:checked={refreshDisclosureAccepted}
+										/>
+										<span>I understand and agree to fetch model metadata from OpenRouter.</span>
+									</label>
+									{#if refreshCatalogError}
+										<p class="sf:mt-2 sf:text-sm sf:text-danger-700">{refreshCatalogError}</p>
+									{/if}
+								</div>
+								<div class="sf:flex sf:flex-wrap sf:justify-end sf:gap-2">
+									<Button
+										size="sm"
+										variant="ghost"
+										onclick={() => {
+											refreshDisclosureOpen = false;
+											refreshCatalogError = null;
+											refreshDisclosureAccepted = refreshConsentState?.state === 'accepted';
+										}}
+									>
+										Cancel
+									</Button>
+									<Button
+										size="sm"
+										onclick={refreshModelCatalog}
+										loading={refreshingCatalog}
+										disabled={!refreshDisclosureAccepted}
+									>
+										Refresh catalog
+									</Button>
+								</div>
+							</div>
+						</div>
+					{/if}
 				</header>
 
 				<div class="sf:flex-none sf:border-b sf:border-slate-200 sf:bg-slate-50 sf:p-4 sf:sm:p-5">

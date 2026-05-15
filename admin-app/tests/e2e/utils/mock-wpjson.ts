@@ -527,6 +527,25 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
+		if (urlWithoutQuery.endsWith('/models/refresh') && method === 'POST') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope({
+					...defaultModelCatalog,
+					consent_recorded: true,
+					consent_id: 12,
+					stored: defaultModelCatalog.models.length,
+					refresh_consent: {
+						state: 'accepted',
+						consent_id: 12,
+						disclosure_version: '2026-04-local-first-openrouter-v1',
+						accepted_at: '2030-01-05T10:00:00Z'
+					}
+				})
+			});
+		}
+
 		if (urlWithoutQuery.endsWith('/models/resolve') && method === 'POST') {
 			const payload = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			const mapping = payload.mapping_selection as Record<string, unknown> | undefined;

@@ -91,6 +91,17 @@ describe('Form field primitives', () => {
 		dispose();
 	});
 
+	it('keeps search icon spacing out of the placeholder text flow', () => {
+		const content = readFileSync(
+			join(process.cwd(), 'src/lib/components/ui/search-input.svelte'),
+			'utf8'
+		);
+
+		expect(content).toContain('sf:inset-y-0');
+		expect(content).toContain('sf:w-10');
+		expect(content).toContain('sf:pl-10');
+	});
+
 	it('allows bound UI primitives to start with undefined values', () => {
 		for (const field of ['input', 'select', 'textarea', 'toggle', 'model', 'slug', 'prompt']) {
 			const { target, dispose } = mount(BindableUndefinedFieldHarness, { field });
@@ -143,9 +154,11 @@ describe('Form field primitives', () => {
 
 		(target.querySelector('summary') as HTMLElement).click();
 		await tick();
-		(Array.from(target.querySelectorAll('button')).find((button) =>
-			button.textContent?.includes('Entry summary')
-		) as HTMLButtonElement).click();
+		(
+			Array.from(target.querySelectorAll('button')).find((button) =>
+				button.textContent?.includes('Entry summary')
+			) as HTMLButtonElement
+		).click();
 		await tick();
 
 		expect(textarea.value).toBe('Write a note for {{summary_text}}');

@@ -6,7 +6,7 @@
 		ButtonLink,
 		Badge,
 		Alert,
-		Input,
+		SearchInput,
 		SelectField,
 		Toggle,
 		ModelSelector,
@@ -21,7 +21,6 @@
 	import PowerIcon from '@lucide/svelte/icons/power';
 	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 	import RouteIcon from '@lucide/svelte/icons/route';
-	import SearchIcon from '@lucide/svelte/icons/search';
 	import Settings2Icon from '@lucide/svelte/icons/settings-2';
 	import SlidersIcon from '@lucide/svelte/icons/sliders-horizontal';
 	import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
@@ -217,7 +216,9 @@
 		return customActions.filter((action) => customActionSearchText(action).includes(query));
 	});
 	const visibleActionCount = $derived(
-		actionLibraryTab === 'built-in' ? filteredBuiltInDefinitions.length : filteredCustomActions.length
+		actionLibraryTab === 'built-in'
+			? filteredBuiltInDefinitions.length
+			: filteredCustomActions.length
 	);
 	const totalFormCount = $derived(
 		Object.values(formsBySource).reduce((count, forms) => count + forms.length, 0)
@@ -230,6 +231,22 @@
 		}
 		if (err instanceof Error) return err.message ?? fallback;
 		return fallback;
+	}
+
+	function categoryBadgeVariant(
+		category: ActionCategory
+	): 'neutral' | 'success' | 'warning' | 'danger' | 'info' {
+		switch (category) {
+			case 'content_quality':
+				return 'danger';
+			case 'data_processing':
+				return 'info';
+			case 'automation':
+				return 'warning';
+			case 'custom':
+			default:
+				return 'neutral';
+		}
 	}
 
 	function actionDefinitionSearchText(definition: ActionDefinition): string {
@@ -323,10 +340,16 @@
 	}
 
 	function upsertActionDefaultsSummary(actionId: string, config: FormActionConfig) {
-		actionDefaultsById = new Map(actionDefaultsById).set(actionId, normalizeFormActionConfig(config));
+		actionDefaultsById = new Map(actionDefaultsById).set(
+			actionId,
+			normalizeFormActionConfig(config)
+		);
 	}
 
-	function actionDefaultModelSummary(actionId: string, fallbackHint: string | null | undefined): string {
+	function actionDefaultModelSummary(
+		actionId: string,
+		fallbackHint: string | null | undefined
+	): string {
 		const savedDefaults = actionDefaultsById.get(actionId);
 		if (savedDefaults?.model_selection) {
 			return formatModelSelectionPrimary(savedDefaults.model_selection);
@@ -770,9 +793,13 @@
 		class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-3 sf:shadow-sm"
 		data-testid="actions-operations-strip"
 	>
-		<div class="sf:flex sf:flex-col sf:gap-3 sf:xl:flex-row sf:xl:items-center sf:xl:justify-between">
+		<div
+			class="sf:flex sf:flex-col sf:gap-3 sf:xl:flex-row sf:xl:items-center sf:xl:justify-between"
+		>
 			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-				<div class="sf:flex sf:items-center sf:gap-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:px-3 sf:py-2">
+				<div
+					class="sf:flex sf:items-center sf:gap-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:px-3 sf:py-2"
+				>
 					<PowerIcon class="sf:h-4 sf:w-4 sf:text-slate-500" aria-hidden="true" />
 					<span class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
 						Global execution
@@ -892,7 +919,9 @@
 						<Badge variant="neutral">{visibleActionCount} shown</Badge>
 					</div>
 
-					<div class="sf:mt-4 sf:grid sf:grid-cols-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-1">
+					<div
+						class="sf:mt-4 sf:grid sf:grid-cols-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-1"
+					>
 						<Button
 							size="sm"
 							variant={actionLibraryTab === 'built-in' ? 'primary' : 'ghost'}
@@ -915,18 +944,11 @@
 						</Button>
 					</div>
 
-					<div class="sf:relative sf:mt-3">
-						<SearchIcon
-							class="sf:pointer-events-none sf:absolute sf:left-3 sf:top-1/2 sf:h-4 sf:w-4 sf:-translate-y-1/2 sf:text-slate-400"
-							aria-hidden="true"
-						/>
-						<Input
-							type="search"
-							bind:value={actionSearchTerm}
-							placeholder="Search actions..."
-							class="sf:pl-9"
-						/>
-					</div>
+					<SearchInput
+						bind:value={actionSearchTerm}
+						placeholder="Search actions..."
+						wrapperClass="sf:mt-3"
+					/>
 
 					{#if actionLibraryTab === 'built-in' && actionCategoryFilters.length > 1}
 						<div class="sf:mt-3 sf:flex sf:flex-wrap sf:gap-2">
@@ -990,13 +1012,16 @@
 							<ul class="sf:space-y-2">
 								{#each filteredBuiltInDefinitions as definition (definition.id)}
 									{@const formCount = formsPerAction.get(definition.id) ?? 0}
-									{@const meta = getCategoryMeta(getDefinitionCategory(definition))}
+									{@const category = getDefinitionCategory(definition)}
+									{@const meta = getCategoryMeta(category)}
 									<li
 										class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:transition hover:sf:border-primary-200 hover:sf:bg-primary-50/30"
 										data-testid={`actions-built-in-action-${definition.id}`}
 									>
 										<div class="sf:flex sf:items-start sf:gap-3">
-											<div class="sf:flex sf:h-9 sf:w-9 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-md sf:bg-primary-50 sf:text-primary-700">
+											<div
+												class="sf:flex sf:h-9 sf:w-9 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-md sf:bg-primary-50 sf:text-primary-700"
+											>
 												<BotIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
 											</div>
 											<div class="sf:min-w-0 sf:flex-1">
@@ -1004,12 +1029,15 @@
 													<p class="sf:font-semibold sf:text-slate-950 sf:break-words">
 														{definition.label ?? definition.id}
 													</p>
+													<Badge variant={categoryBadgeVariant(category)}>
+														{meta.label}
+													</Badge>
 													<Badge variant={formCount > 0 ? 'info' : 'neutral'}>
 														{formCount} form{formCount !== 1 ? 's' : ''}
 													</Badge>
 												</div>
 												<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
-													{meta.label} · Default model: {actionDefaultModelSummary(
+													Default model: {actionDefaultModelSummary(
 														definition.id,
 														definition.modelHint ?? null
 													)}
@@ -1036,72 +1064,74 @@
 								{/each}
 							</ul>
 						{/if}
+					{:else if filteredCustomActions.length === 0}
+						<StateTemplate
+							variant="empty"
+							title={customActions.length === 0
+								? 'No custom actions yet'
+								: 'No custom actions match'}
+							message={customActions.length === 0
+								? 'Create a custom action to tailor responses for this site.'
+								: 'Clear the search to see all custom actions.'}
+							actionLabel={customActions.length === 0 ? 'Manage custom actions' : undefined}
+							onAction={() => {
+								void navigateToAppPath('/actions/custom');
+							}}
+							inline
+							dense
+							testId="actions-custom-actions-empty-state"
+						/>
 					{:else}
-						{#if filteredCustomActions.length === 0}
-							<StateTemplate
-								variant="empty"
-								title={customActions.length === 0 ? 'No custom actions yet' : 'No custom actions match'}
-								message={customActions.length === 0
-									? 'Create a custom action to tailor responses for this site.'
-									: 'Clear the search to see all custom actions.'}
-								actionLabel={customActions.length === 0 ? 'Manage custom actions' : undefined}
-								onAction={() => {
-									void navigateToAppPath('/actions/custom');
-								}}
-								inline
-								dense
-								testId="actions-custom-actions-empty-state"
-							/>
-						{:else}
-							<ul class="sf:space-y-2">
-								{#each filteredCustomActions as action (action.id)}
-									{@const customFormCount = formsPerAction.get(action.code) ?? 0}
-									<li
-										class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:transition hover:sf:border-primary-200 hover:sf:bg-primary-50/30"
-										data-testid={`actions-custom-action-${action.id}`}
-									>
-										<div class="sf:flex sf:items-start sf:gap-3">
-											<div class="sf:flex sf:h-9 sf:w-9 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-md sf:bg-slate-100 sf:text-slate-700">
-												<WandSparklesIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
-											</div>
-											<div class="sf:min-w-0 sf:flex-1">
-												<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
-													<p class="sf:font-semibold sf:text-slate-950 sf:break-words">
-														{action.display_name}
-													</p>
-													<Badge variant={customFormCount > 0 ? 'info' : 'neutral'}>
-														{customFormCount} form{customFormCount !== 1 ? 's' : ''}
-													</Badge>
-													<Badge variant="success">Active</Badge>
-												</div>
-												<p class="sf:mt-1 sf:text-xs sf:text-slate-600 sf:break-all">
-													{action.code} · Default model: {actionDefaultModelSummary(
-														action.code,
-														action.model_hint ?? null
-													)}
+						<ul class="sf:space-y-2">
+							{#each filteredCustomActions as action (action.id)}
+								{@const customFormCount = formsPerAction.get(action.code) ?? 0}
+								<li
+									class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:transition hover:sf:border-primary-200 hover:sf:bg-primary-50/30"
+									data-testid={`actions-custom-action-${action.id}`}
+								>
+									<div class="sf:flex sf:items-start sf:gap-3">
+										<div
+											class="sf:flex sf:h-9 sf:w-9 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-md sf:bg-slate-100 sf:text-slate-700"
+										>
+											<WandSparklesIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+										</div>
+										<div class="sf:min-w-0 sf:flex-1">
+											<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+												<p class="sf:font-semibold sf:text-slate-950 sf:break-words">
+													{action.display_name}
 												</p>
-												{#if action.description}
-													<p class="sf:mt-1 sf:line-clamp-2 sf:text-xs sf:text-slate-500">
-														{action.description}
-													</p>
-												{/if}
+												<Badge variant={customFormCount > 0 ? 'info' : 'neutral'}>
+													{customFormCount} form{customFormCount !== 1 ? 's' : ''}
+												</Badge>
+												<Badge variant="success">Active</Badge>
 											</div>
+											<p class="sf:mt-1 sf:text-xs sf:text-slate-600 sf:break-all">
+												{action.code} · Default model: {actionDefaultModelSummary(
+													action.code,
+													action.model_hint ?? null
+												)}
+											</p>
+											{#if action.description}
+												<p class="sf:mt-1 sf:line-clamp-2 sf:text-xs sf:text-slate-500">
+													{action.description}
+												</p>
+											{/if}
 										</div>
-										<div class="sf:mt-3 sf:flex sf:items-center sf:justify-end sf:gap-2">
-											<Button
-												size="sm"
-												variant="secondary"
-												onclick={() => loadActionDefaults(action.code)}
-												disabled={actionDefaultsLoading}
-												data-testid={`action-defaults-button-${action.code}`}
-											>
-												Defaults
-											</Button>
-										</div>
-									</li>
-								{/each}
-							</ul>
-						{/if}
+									</div>
+									<div class="sf:mt-3 sf:flex sf:items-center sf:justify-end sf:gap-2">
+										<Button
+											size="sm"
+											variant="secondary"
+											onclick={() => loadActionDefaults(action.code)}
+											disabled={actionDefaultsLoading}
+											data-testid={`action-defaults-button-${action.code}`}
+										>
+											Defaults
+										</Button>
+									</div>
+								</li>
+							{/each}
+						</ul>
 					{/if}
 				</div>
 			</section>
@@ -1111,7 +1141,9 @@
 				data-testid="actions-forms-workspace"
 			>
 				<div class="sf:border-b sf:border-slate-200 sf:bg-white sf:p-4">
-					<div class="sf:flex sf:flex-col sf:gap-3 sf:lg:flex-row sf:lg:items-start sf:lg:justify-between">
+					<div
+						class="sf:flex sf:flex-col sf:gap-3 sf:lg:flex-row sf:lg:items-start sf:lg:justify-between"
+					>
 						<div>
 							<div class="sf:flex sf:items-center sf:gap-2">
 								<RouteIcon class="sf:h-5 sf:w-5 sf:text-primary-600" aria-hidden="true" />
@@ -1121,7 +1153,13 @@
 								{filteredForms.length} visible · {totalFormCount} loaded across active providers.
 							</p>
 						</div>
-						<Button size="sm" variant="secondary" onclick={loadForms} disabled={formsLoading} class="sf:gap-2">
+						<Button
+							size="sm"
+							variant="secondary"
+							onclick={loadForms}
+							disabled={formsLoading}
+							class="sf:gap-2"
+						>
 							<RefreshCwIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
 							Refresh forms
 						</Button>
@@ -1141,18 +1179,11 @@
 								</Button>
 							{/each}
 						</div>
-						<div class="sf:relative sf:min-w-64 sf:flex-1">
-							<SearchIcon
-								class="sf:pointer-events-none sf:absolute sf:left-3 sf:top-1/2 sf:h-4 sf:w-4 sf:-translate-y-1/2 sf:text-slate-400"
-								aria-hidden="true"
-							/>
-							<Input
-								type="search"
-								bind:value={searchTerm}
-								placeholder="Search forms..."
-								class="sf:pl-9"
-							/>
-						</div>
+						<SearchInput
+							bind:value={searchTerm}
+							placeholder="Search forms..."
+							wrapperClass="sf:min-w-64 sf:flex-1"
+						/>
 					</div>
 				</div>
 
@@ -1197,7 +1228,9 @@
 												{providerLabelForForm(form)} · ID {form.id}
 											</p>
 										</div>
-										<div class="sf:flex sf:h-10 sf:w-10 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-md sf:bg-primary-50 sf:text-primary-700">
+										<div
+											class="sf:flex sf:h-10 sf:w-10 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-md sf:bg-primary-50 sf:text-primary-700"
+										>
 											<ActivityIcon class="sf:h-5 sf:w-5" aria-hidden="true" />
 										</div>
 									</div>
@@ -1214,15 +1247,21 @@
 										</span>
 									</div>
 
-									<div class="sf:mt-4 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-3 sf:py-2">
+									<div
+										class="sf:mt-4 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-3 sf:py-2"
+									>
 										<div class="sf:flex sf:items-center sf:justify-between sf:gap-3">
-											<span class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
+											<span
+												class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600"
+											>
 												Configured actions
 											</span>
 											{#if actionCount === null}
 												<span class="sf:text-sm sf:text-slate-500">Checking…</span>
 											{:else}
-												<span class="sf:text-lg sf:font-semibold sf:text-slate-950">{actionCount}</span>
+												<span class="sf:text-lg sf:font-semibold sf:text-slate-950"
+													>{actionCount}</span
+												>
 											{/if}
 										</div>
 										{#if actionCount === 0}
@@ -1232,8 +1271,8 @@
 
 									{#if !providerActive}
 										<p class="sf:mt-3 sf:text-xs sf:text-amber-700">
-											The provider form is inactive. Mappings remain editable, but the form will
-											not accept live submissions until it is reactivated.
+											The provider form is inactive. Mappings remain editable, but the form will not
+											accept live submissions until it is reactivated.
 										</p>
 									{/if}
 
@@ -1268,7 +1307,12 @@
 
 						{#if totalPages > 1}
 							<div class="sf:mt-4 sf:flex sf:items-center sf:justify-center sf:gap-4">
-								<Button size="sm" variant="secondary" onclick={prevPage} disabled={currentPage === 1}>
+								<Button
+									size="sm"
+									variant="secondary"
+									onclick={prevPage}
+									disabled={currentPage === 1}
+								>
 									Previous
 								</Button>
 								<span class="sf:text-sm sf:text-slate-600">
@@ -1454,7 +1498,9 @@
 						/>
 					{/if}
 
-					<div class="sf:grid sf:gap-3 sf:lg:grid-cols-[minmax(16rem,0.9fr)_minmax(0,1.1fr)] sf:lg:items-end">
+					<div
+						class="sf:grid sf:gap-3 sf:lg:grid-cols-[minmax(16rem,0.9fr)_minmax(0,1.1fr)] sf:lg:items-end"
+					>
 						<SelectField
 							id="action-level-context"
 							label="Include Site Context"

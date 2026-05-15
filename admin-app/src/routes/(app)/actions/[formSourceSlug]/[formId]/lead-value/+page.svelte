@@ -34,6 +34,10 @@
 		validateWebhookTags
 	} from '$lib/schemas/lead-scoring';
 	import { notifications } from '$lib/stores/notifications';
+	import {
+		leadScoringViewFromLocation,
+		type LeadScoringViewKey
+	} from '$lib/components/lead-scoring/utils';
 	import type {
 		LeadGrade,
 		LeadValueEntrySearchEntry,
@@ -47,7 +51,7 @@
 	} from '$lib/api/types';
 
 	type Props = { data: { formSourceSlug: string; formId: number } };
-	type ViewKey = 'dashboard' | 'setup' | 'historical';
+	type ViewKey = LeadScoringViewKey;
 	type LeadExampleDraft = {
 		entry_id: string;
 		grade: LeadGrade;
@@ -154,7 +158,9 @@
 		) {
 			return;
 		}
-		const matchedEntry = (dashboard?.entries ?? []).find((entry) => entry.entry_id === requestedEntryId);
+		const matchedEntry = (dashboard?.entries ?? []).find(
+			(entry) => entry.entry_id === requestedEntryId
+		);
 		if (matchedEntry) {
 			selectedEntryDetail = matchedEntry;
 		}
@@ -196,8 +202,7 @@
 
 	function requestedViewFromLocation(): ViewKey | null {
 		if (typeof window === 'undefined') return null;
-		const value = new URLSearchParams(window.location.search).get('view');
-		return value === 'setup' || value === 'historical' || value === 'dashboard' ? value : null;
+		return leadScoringViewFromLocation(window.location.search, window.location.hash);
 	}
 
 	async function loadSpamGuidance() {
@@ -238,7 +243,9 @@
 				? (metadata.profile_generation_settings as Record<string, unknown>)
 				: {};
 		const savedModel =
-			typeof generationSettings.model === 'string' ? generationSettings.model : '~openai/gpt-latest';
+			typeof generationSettings.model === 'string'
+				? generationSettings.model
+				: '~openai/gpt-latest';
 		generationModel =
 			savedModel === '~google/gemini-pro-latest' || savedModel === '~anthropic/claude-opus-latest'
 				? savedModel
@@ -297,28 +304,28 @@
 					rationale: example.rationale,
 					snapshot: example.snapshot
 				})),
-					handoff_rules: {
-						email_recipients: emailRecipients,
-						webhooks: webhookUrls.map((url) => ({ url, method: 'POST' })),
-						grades: selectedGradeList(),
-						entry_notes: {
-							lead_grade: writeLeadGradeNote,
-							suggested_reply: writeSuggestedReplyNote
-						},
-						reply_rules: {
-							skip_reject_grade: skipRejectSuggestedReply
-						}
+				handoff_rules: {
+					email_recipients: emailRecipients,
+					webhooks: webhookUrls.map((url) => ({ url, method: 'POST' })),
+					grades: selectedGradeList(),
+					entry_notes: {
+						lead_grade: writeLeadGradeNote,
+						suggested_reply: writeSuggestedReplyNote
 					},
-					generation_settings: {
-						model: generationModel,
-						reasoning_effort: 'xhigh'
-					},
-					self_improvement: {
-						consent: selfImproveConsent,
-						frequency: selfImproveFrequency,
-						review_required: selfImproveReviewRequired
+					reply_rules: {
+						skip_reject_grade: skipRejectSuggestedReply
 					}
-				});
+				},
+				generation_settings: {
+					model: generationModel,
+					reasoning_effort: 'xhigh'
+				},
+				self_improvement: {
+					consent: selfImproveConsent,
+					frequency: selfImproveFrequency,
+					review_required: selfImproveReviewRequired
+				}
+			});
 			profileResponse = response;
 			if (showNotification) notifications.success('Lead scoring setup saved');
 			return response;
@@ -499,7 +506,9 @@
 			dashboard = response.dashboard ?? dashboard;
 			const updatedEntry = (response.entry as LeadScoringEntry | undefined) ?? correctionEntry;
 			selectedEntryDetail =
-				selectedEntryDetail?.entry_id === updatedEntry.entry_id ? updatedEntry : selectedEntryDetail;
+				selectedEntryDetail?.entry_id === updatedEntry.entry_id
+					? updatedEntry
+					: selectedEntryDetail;
 			correctionEntry = null;
 			correctionJustification = '';
 			notifications.success('Lead grade correction saved');
@@ -510,7 +519,9 @@
 		}
 	}
 
-	async function generateManualSuggestedReply(entry: LeadScoringEntry | null = selectedEntryDetail) {
+	async function generateManualSuggestedReply(
+		entry: LeadScoringEntry | null = selectedEntryDetail
+	) {
 		if (!entry) return;
 		generatingManualReply = true;
 		error = null;
@@ -1187,7 +1198,9 @@
 									/>
 								</summary>
 								<div class="sf:border-t sf:border-slate-200 sf:bg-white sf:p-5">
-									<div class="sf:grid sf:gap-3 sf:md:grid-cols-[minmax(0,1fr)_auto] sf:md:items-end">
+									<div
+										class="sf:grid sf:gap-3 sf:md:grid-cols-[minmax(0,1fr)_auto] sf:md:items-end"
+									>
 										<InputField
 											id="lead-profile-import-source"
 											label="Source setup ID"
@@ -1198,7 +1211,9 @@
 											Import setup
 										</Button>
 									</div>
-									<label class="sf:mt-4 sf:flex sf:items-start sf:gap-2 sf:text-sm sf:text-slate-700">
+									<label
+										class="sf:mt-4 sf:flex sf:items-start sf:gap-2 sf:text-sm sf:text-slate-700"
+									>
 										<input
 											type="checkbox"
 											class="sf:mt-1 sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
@@ -1219,15 +1234,24 @@
 
 									<div>
 										<div class="sf:flex sf:items-center sf:gap-2">
-											<label for="lead-handoff-emails" class="sf:text-base sf:font-semibold sf:text-slate-800">
+											<label
+												for="lead-handoff-emails"
+												class="sf:text-base sf:font-semibold sf:text-slate-800"
+											>
 												Handoff emails
 											</label>
-											<InfoTooltip label="People who should be notified when a scored lead matches the selected handoff grades." />
+											<InfoTooltip
+												label="People who should be notified when a scored lead matches the selected handoff grades."
+											/>
 										</div>
-										<div class="sf:mt-2 sf:min-h-14 sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:p-2 sf:shadow-sm">
+										<div
+											class="sf:mt-2 sf:min-h-14 sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:p-2 sf:shadow-sm"
+										>
 											<div class="sf:flex sf:flex-wrap sf:gap-2">
 												{#each emailRecipients as email}
-													<span class="sf:inline-flex sf:items-center sf:gap-2 sf:rounded-md sf:bg-slate-100 sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:text-slate-900">
+													<span
+														class="sf:inline-flex sf:items-center sf:gap-2 sf:rounded-md sf:bg-slate-100 sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:text-slate-900"
+													>
 														{email}
 														<Button
 															size="sm"
@@ -1268,15 +1292,24 @@
 
 									<div>
 										<div class="sf:flex sf:items-center sf:gap-2">
-											<label for="lead-handoff-webhooks" class="sf:text-base sf:font-semibold sf:text-slate-800">
+											<label
+												for="lead-handoff-webhooks"
+												class="sf:text-base sf:font-semibold sf:text-slate-800"
+											>
 												Handoff webhooks
 											</label>
-											<InfoTooltip label="Webhook URLs receive scored-lead payloads for systems like CRMs, Zapier, Make, or custom intake tools." />
+											<InfoTooltip
+												label="Webhook URLs receive scored-lead payloads for systems like CRMs, Zapier, Make, or custom intake tools."
+											/>
 										</div>
-										<div class="sf:mt-2 sf:min-h-14 sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:p-2 sf:shadow-sm">
+										<div
+											class="sf:mt-2 sf:min-h-14 sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:p-2 sf:shadow-sm"
+										>
 											<div class="sf:flex sf:flex-wrap sf:gap-2">
 												{#each webhookUrls as webhook}
-													<span class="sf:inline-flex sf:max-w-full sf:items-center sf:gap-2 sf:rounded-md sf:bg-slate-100 sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:text-slate-900">
+													<span
+														class="sf:inline-flex sf:max-w-full sf:items-center sf:gap-2 sf:rounded-md sf:bg-slate-100 sf:px-3 sf:py-2 sf:text-sm sf:font-medium sf:text-slate-900"
+													>
 														<span class="sf:truncate">{webhook}</span>
 														<Button
 															size="sm"
@@ -1318,7 +1351,9 @@
 									<div>
 										<div class="sf:flex sf:items-center sf:gap-2">
 											<p class="sf:text-base sf:font-semibold sf:text-slate-800">Handoff grades</p>
-											<InfoTooltip label="Only selected grades trigger the email and webhook handoff rules." />
+											<InfoTooltip
+												label="Only selected grades trigger the email and webhook handoff rules."
+											/>
 										</div>
 										<div class="sf:mt-3 sf:flex sf:flex-wrap sf:gap-3">
 											{#each gradeChoices as grade}
@@ -1329,7 +1364,8 @@
 														type="checkbox"
 														class="sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
 														checked={selectedGrades[grade]}
-														onchange={(event) => setSelectedGrade(grade, event.currentTarget.checked)}
+														onchange={(event) =>
+															setSelectedGrade(grade, event.currentTarget.checked)}
 													/>
 													{grade}
 												</label>
@@ -1345,9 +1381,13 @@
 												bind:checked={writeLeadGradeNote}
 											/>
 											<span>
-												<span class="sf:flex sf:items-center sf:gap-2 sf:font-semibold sf:text-slate-900">
+												<span
+													class="sf:flex sf:items-center sf:gap-2 sf:font-semibold sf:text-slate-900"
+												>
 													Record lead grade and justification
-													<InfoTooltip label="Adds the grade and reasoning as a Gravity Forms entry note for printing, exports, and staff review." />
+													<InfoTooltip
+														label="Adds the grade and reasoning as a Gravity Forms entry note for printing, exports, and staff review."
+													/>
 												</span>
 												<span class="sf:mt-1 sf:block sf:text-sm sf:text-slate-500">
 													Saves as a Gravity Forms entry note.
@@ -1361,9 +1401,13 @@
 												bind:checked={writeSuggestedReplyNote}
 											/>
 											<span>
-												<span class="sf:flex sf:items-center sf:gap-2 sf:font-semibold sf:text-slate-900">
+												<span
+													class="sf:flex sf:items-center sf:gap-2 sf:font-semibold sf:text-slate-900"
+												>
 													Record suggested reply and next best action
-													<InfoTooltip label="Adds the reply draft and staff next step as a Gravity Forms entry note when available." />
+													<InfoTooltip
+														label="Adds the reply draft and staff next step as a Gravity Forms entry note when available."
+													/>
 												</span>
 												<span class="sf:mt-1 sf:block sf:text-sm sf:text-slate-500">
 													Saves as a Gravity Forms entry note.
@@ -1383,7 +1427,9 @@
 											<p class="sf:text-base sf:font-semibold sf:text-slate-800">
 												Setup generation model
 											</p>
-											<InfoTooltip label="This model writes the scoring setup instructions. It is separate from the model that scores live entries." />
+											<InfoTooltip
+												label="This model writes the scoring setup instructions. It is separate from the model that scores live entries."
+											/>
 										</div>
 										<SelectField
 											id="lead-profile-generation-model"
@@ -1392,47 +1438,68 @@
 											options={[
 												{ value: '~openai/gpt-latest', label: 'OpenAI GPT Latest' },
 												{ value: '~google/gemini-pro-latest', label: 'Google Gemini Pro Latest' },
-												{ value: '~anthropic/claude-opus-latest', label: 'Anthropic Claude Opus Latest' }
+												{
+													value: '~anthropic/claude-opus-latest',
+													label: 'Anthropic Claude Opus Latest'
+												}
 											]}
 										/>
 										<p class="sf:mt-3 sf:text-base sf:leading-7 sf:text-slate-500">
-											Lead Scoring setup generation always uses the highest reasoning mode and web-capable tools.
+											Lead Scoring setup generation always uses the highest reasoning mode and
+											web-capable tools.
 										</p>
 									</div>
 
-									<div class="sf:flex sf:items-center sf:justify-between sf:gap-5 sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-5 sf:shadow-sm">
+									<div
+										class="sf:flex sf:items-center sf:justify-between sf:gap-5 sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-5 sf:shadow-sm"
+									>
 										<div>
 											<div class="sf:flex sf:items-center sf:gap-2">
 												<p class="sf:text-base sf:font-semibold sf:text-slate-950">
 													Skip suggested replies for Reject leads
 												</p>
-												<InfoTooltip label="Prevents automatic draft generation for rejected leads. Staff can still manually generate a reply from the detail panel." />
+												<InfoTooltip
+													label="Prevents automatic draft generation for rejected leads. Staff can still manually generate a reply from the detail panel."
+												/>
 											</div>
 											<p class="sf:mt-2 sf:text-base sf:leading-7 sf:text-slate-500">
-												Save reply-generation credits unless a staff member manually generates a draft.
+												Save reply-generation credits unless a staff member manually generates a
+												draft.
 											</p>
 										</div>
-										<Toggle bind:checked={skipRejectSuggestedReply} aria-label="Skip suggested replies for Reject leads" />
+										<Toggle
+											bind:checked={skipRejectSuggestedReply}
+											aria-label="Skip suggested replies for Reject leads"
+										/>
 									</div>
 
-									<div class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-5 sf:shadow-sm">
+									<div
+										class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-5 sf:shadow-sm"
+									>
 										<div class="sf:flex sf:items-start sf:justify-between sf:gap-5">
 											<div>
 												<div class="sf:flex sf:items-center sf:gap-2">
 													<p class="sf:text-base sf:font-semibold sf:text-slate-950">
 														Enable self-improvement
 													</p>
-													<InfoTooltip label="Uses staff grade corrections as calibration examples, then regenerates scoring instructions when the inputs change." />
+													<InfoTooltip
+														label="Uses staff grade corrections as calibration examples, then regenerates scoring instructions when the inputs change."
+													/>
 												</div>
 												<p class="sf:mt-2 sf:text-base sf:leading-7 sf:text-slate-500">
 													Use staff corrections to refresh scoring setup.
 												</p>
 											</div>
-											<Toggle bind:checked={selfImproveConsent} aria-label="Enable self-improvement" />
+											<Toggle
+												bind:checked={selfImproveConsent}
+												aria-label="Enable self-improvement"
+											/>
 										</div>
 
 										<div class="sf:mt-6 sf:border-t sf:border-slate-200 sf:pt-5">
-											<label class="sf:flex sf:items-center sf:gap-3 sf:text-base sf:text-slate-700">
+											<label
+												class="sf:flex sf:items-center sf:gap-3 sf:text-base sf:text-slate-700"
+											>
 												<input
 													type="checkbox"
 													class="sf:h-4 sf:w-4 sf:rounded sf:border-slate-300"
@@ -1440,10 +1507,14 @@
 												/>
 												<span class="sf:flex sf:items-center sf:gap-2">
 													Require review after regeneration
-													<InfoTooltip label="Keeps regenerated setup changes in a review state before they affect live scoring." />
+													<InfoTooltip
+														label="Keeps regenerated setup changes in a review state before they affect live scoring."
+													/>
 												</span>
 											</label>
-											<div class="sf:mt-5 sf:grid sf:gap-4 sf:lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+											<div
+												class="sf:mt-5 sf:grid sf:gap-4 sf:lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+											>
 												<SelectField
 													id="lead-self-improvement-frequency"
 													label="Frequency"
@@ -1469,8 +1540,13 @@
 							</div>
 						</div>
 
-						<div class="sf:flex sf:flex-wrap sf:gap-3 sf:border-t sf:border-slate-200 sf:bg-slate-50 sf:px-6 sf:py-5">
-							<Button onclick={() => saveProfile()} disabled={saving || generating || generationPending}>
+						<div
+							class="sf:flex sf:flex-wrap sf:gap-3 sf:border-t sf:border-slate-200 sf:bg-slate-50 sf:px-6 sf:py-5"
+						>
+							<Button
+								onclick={() => saveProfile()}
+								disabled={saving || generating || generationPending}
+							>
 								{saving ? 'Saving...' : 'Save setup'}
 							</Button>
 							<Button
@@ -1480,7 +1556,11 @@
 							>
 								{generating || generationPending ? 'Generating...' : 'Generate scoring setup'}
 							</Button>
-							<Button variant="secondary" onclick={refreshAssistant} disabled={!profile?.id || saving}>
+							<Button
+								variant="secondary"
+								onclick={refreshAssistant}
+								disabled={!profile?.id || saving}
+							>
 								Refresh setup questions
 							</Button>
 						</div>
@@ -1509,10 +1589,12 @@
 			<div class="sf:mt-12 sf:grid sf:gap-12 sf:xl:grid-cols-[minmax(0,1fr)_24rem]">
 				<div class="sf:min-w-0 sf:space-y-6">
 					<div>
-						<h2 class="sf:text-3xl sf:font-bold sf:tracking-tight sf:text-slate-950">Scored entries</h2>
+						<h2 class="sf:text-3xl sf:font-bold sf:tracking-tight sf:text-slate-950">
+							Scored entries
+						</h2>
 						<p class="sf:mt-3 sf:text-lg sf:text-slate-500">
-							Review grades, justification, follow-up drafts, and next best actions without stretching
-							table rows.
+							Review grades, justification, follow-up drafts, and next best actions without
+							stretching table rows.
 						</p>
 					</div>
 					<form
@@ -1780,7 +1862,7 @@
 		entry={correctionEntry}
 		grade={correctionGrade}
 		justification={correctionJustification}
-		correcting={correcting}
+		{correcting}
 		onClose={() => (correctionEntry = null)}
 		onSave={correctSelectedEntry}
 		onGradeChange={(grade) => (correctionGrade = grade)}

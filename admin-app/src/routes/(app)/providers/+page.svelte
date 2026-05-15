@@ -8,10 +8,22 @@
 		SentientManagedRevokeResponse,
 		SentientManagedSetupResponse
 	} from '$lib/api/types';
-	import { Alert, Badge, Button, Card, InputField, Section, StateTemplate } from '$lib/components/ui';
+	import {
+		Alert,
+		Badge,
+		Button,
+		Card,
+		InputField,
+		Section,
+		StateTemplate
+	} from '$lib/components/ui';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { licenseState } from '$lib/stores/license';
 	import { notifications } from '$lib/stores/notifications';
+	import {
+		OPENROUTER_DISCLOSURE_VERSION,
+		SENTIENT_MANAGED_DISCLOSURE_VERSION
+	} from '$lib/constants/external-services';
 	import { formatTimestamp } from '$lib/utils/date-time';
 	import {
 		isReadyOpenRouterCredential,
@@ -26,8 +38,8 @@
 	} from '$lib/utils/provider-health';
 
 	const client = createClientFromConfig();
-	const DISCLOSURE_VERSION = '2026-04-local-first-openrouter-v1';
-	const MANAGED_DISCLOSURE_VERSION = '2026-04-sentient-managed-proxy-v1';
+	const DISCLOSURE_VERSION = OPENROUTER_DISCLOSURE_VERSION;
+	const MANAGED_DISCLOSURE_VERSION = SENTIENT_MANAGED_DISCLOSURE_VERSION;
 
 	let loading = $state(true);
 	let credentials = $state<LocalProviderCredential[]>([]);
@@ -77,7 +89,9 @@
 		)
 	);
 	let primaryOpenRouterCredential = $derived(openRouterCredentials[0] ?? null);
-	let primaryManagedCredential = $derived(readyManagedCredentials[0] ?? managedCredentials[0] ?? null);
+	let primaryManagedCredential = $derived(
+		readyManagedCredentials[0] ?? managedCredentials[0] ?? null
+	);
 	let managedConsent = $derived(readManagedConsent(primaryManagedCredential));
 	let readyCredentialCount = $derived(readyOpenRouterCredentials.length);
 	let readyProviderCredentials = $derived([
@@ -139,7 +153,9 @@
 
 	function readManagedConsent(credential: LocalProviderCredential | null): ManagedConsentSummary {
 		const statusJson = isRecord(credential?.status_json) ? credential.status_json : null;
-		const managedConsent = isRecord(statusJson?.managed_consent) ? statusJson.managed_consent : null;
+		const managedConsent = isRecord(statusJson?.managed_consent)
+			? statusJson.managed_consent
+			: null;
 		const rawState = typeof managedConsent?.state === 'string' ? managedConsent.state : 'missing';
 		const state =
 			rawState === 'accepted' || rawState === 'revoked' || rawState === 'missing'
@@ -466,8 +482,8 @@
 					and service setup handled for this WordPress site.
 				</p>
 				<p class="sf:mt-3 sf:text-xs sf:font-medium sf:text-slate-700">
-					Managed runs are pass-through: Sentient Forms does not store LLM prompts, form fields,
-					or outputs beyond the billing/support metadata described in the disclosure.
+					Managed runs are pass-through: Sentient Forms does not store LLM prompts, form fields, or
+					outputs beyond the billing/support metadata described in the disclosure.
 				</p>
 			</div>
 			<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-4">
@@ -521,8 +537,8 @@
 					Sentient Forms managed service
 				</h3>
 				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
-					Sentient Forms receives rendered prompts and required form fields only for managed
-					service runs. Direct OpenRouter runs stay outside Sentient Forms billing.
+					Sentient Forms receives rendered prompts and required form fields only for managed service
+					runs. Direct OpenRouter runs stay outside Sentient Forms billing.
 				</p>
 			</div>
 			<div class="sf:flex sf:gap-6">
@@ -561,7 +577,9 @@
 			>
 				<div class="sf:space-y-2">
 					<div class="sf:flex sf:flex-wrap sf:gap-2">
-						<Badge variant={providerStatusVariant(primaryOpenRouterCredential?.status ?? 'missing')}>
+						<Badge
+							variant={providerStatusVariant(primaryOpenRouterCredential?.status ?? 'missing')}
+						>
 							{providerStatusLabel(primaryOpenRouterCredential?.status ?? 'missing')}
 						</Badge>
 						<Badge variant="info">Local credential storage</Badge>
@@ -571,8 +589,8 @@
 						{primaryOpenRouterCredential?.label ?? 'OpenRouter direct'}
 					</h3>
 					<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
-						OpenRouter receives the prompts and form fields needed for direct model calls. Sentient Forms
-						does not receive those direct-call payloads. Use the local vault for the fastest
+						OpenRouter receives the prompts and form fields needed for direct model calls. Sentient
+						Forms does not receive those direct-call payloads. Use the local vault for the fastest
 						setup, or use a server constant or environment variable when you want the key to stay
 						out of the plugin database.
 					</p>
@@ -602,9 +620,9 @@
 			<Alert variant="warning">
 				<p class="sf:font-semibold">Privacy depends on the route you choose</p>
 				<p class="sf:mt-1">
-					OpenRouter Zero Data Retention is only available on supported routes and upstream providers.
-					Many free routes have different retention or training policies, so review the provider privacy
-					posture before using them on sensitive forms.
+					OpenRouter Zero Data Retention is only available on supported routes and upstream
+					providers. Many free routes have different retention or training policies, so review the
+					provider privacy posture before using them on sensitive forms.
 				</p>
 			</Alert>
 		</div>
@@ -857,10 +875,10 @@
 
 						<p class="sf:text-xs sf:text-slate-500">
 							Example:
-							<code class="sf:rounded sf:bg-slate-200 sf:px-1.5 sf:py-0.5 sf:font-mono sf:text-[13px] sf:text-slate-800"
+							<code
+								class="sf:rounded sf:bg-slate-200 sf:px-1.5 sf:py-0.5 sf:font-mono sf:text-[13px] sf:text-slate-800"
 								>SENTIENT_FORMS_OPENROUTER_KEY</code
-							>. The name must already be defined
-							on the server before validation can succeed.
+							>. The name must already be defined on the server before validation can succeed.
 						</p>
 
 						<label class="sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-700">
@@ -872,7 +890,8 @@
 								required
 							/>
 							<span>
-								I understand OpenRouter receives request data for direct model calls and I accept the
+								I understand OpenRouter receives request data for direct model calls and I accept
+								the
 								<a
 									class="sf:font-medium sf:text-slate-900 sf:underline"
 									href="https://openrouter.ai/terms"
@@ -925,10 +944,11 @@
 							</div>
 							<p class="sf:mt-2 sf:text-sm sf:text-success-800">
 								Server secret
-								<code class="sf:rounded sf:bg-slate-200 sf:px-1.5 sf:py-0.5 sf:font-mono sf:text-[13px] sf:text-slate-800"
+								<code
+									class="sf:rounded sf:bg-slate-200 sf:px-1.5 sf:py-0.5 sf:font-mono sf:text-[13px] sf:text-slate-800"
 									>{validationResult.constant_name ?? constantName}</code
-								> is now ready as
-								credential #{validationResult.credential_id}.
+								>
+								is now ready as credential #{validationResult.credential_id}.
 							</p>
 						</div>
 					{/if}
@@ -975,12 +995,15 @@
 								</div>
 							</div>
 							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-								{providerCredentialAuthModeLabel(credential)} · {providerCredentialSecretSummary(credential)}
+								{providerCredentialAuthModeLabel(credential)} · {providerCredentialSecretSummary(
+									credential
+								)}
 							</p>
 							{#if credential.auth_mode === 'constant' && credential.constant_name}
 								<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
 									Reference
-									<code class="sf:rounded sf:bg-slate-200 sf:px-1.5 sf:py-0.5 sf:font-mono sf:text-[13px] sf:text-slate-800"
+									<code
+										class="sf:rounded sf:bg-slate-200 sf:px-1.5 sf:py-0.5 sf:font-mono sf:text-[13px] sf:text-slate-800"
 										>{credential.constant_name}</code
 									>
 								</p>
@@ -1216,7 +1239,10 @@
 			{/if}
 		</Card>
 
-		<Card title="Sentient Forms managed service credentials" data-testid="providers-managed-list-card">
+		<Card
+			title="Sentient Forms managed service credentials"
+			data-testid="providers-managed-list-card"
+		>
 			{#if loading}
 				<StateTemplate variant="loading" title="Loading managed service credentials" dense />
 			{:else if managedCredentials.length === 0}
@@ -1247,7 +1273,9 @@
 								</div>
 							</div>
 							<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-								{providerCredentialAuthModeLabel(credential)} · {providerCredentialSecretSummary(credential)}
+								{providerCredentialAuthModeLabel(credential)} · {providerCredentialSecretSummary(
+									credential
+								)}
 							</p>
 							<p class="sf:mt-1 sf:text-xs sf:text-slate-500">
 								Last checked {formatTimestamp(credential.last_validated_at, 'never')}
@@ -1300,8 +1328,8 @@
 					</div>
 					<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
 						Choose a form in Actions, then use Direct OpenRouter or the Sentient Forms managed
-						service to create an action and mapping from the same screen where you manage hooks,
-						run mode, and mapping health.
+						service to create an action and mapping from the same screen where you manage hooks, run
+						mode, and mapping health.
 					</p>
 				</div>
 				<Button onclick={() => navigateToAppPath('/actions')} data-testid="providers-open-actions">

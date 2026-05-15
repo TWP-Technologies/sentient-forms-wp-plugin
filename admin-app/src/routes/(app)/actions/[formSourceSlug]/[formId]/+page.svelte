@@ -4,6 +4,7 @@
 		Section,
 		Card,
 		Button,
+		ButtonLink,
 		Badge,
 		Alert,
 		InputField,
@@ -39,7 +40,7 @@
 		serializeTriggerSources,
 		validateMappingDependencies
 	} from '$lib/utils/mapping-dependencies';
-	import { navigateToAppPath } from '$lib/navigation';
+	import { appHref, navigateToAppPath } from '$lib/navigation';
 	import { formActionsStore, formActionsState } from '$lib/stores/form-actions.svelte';
 	import { customActionsStore, customActionsState } from '$lib/stores/custom-actions';
 	import { notifications } from '$lib/stores/notifications';
@@ -3732,14 +3733,13 @@
 						)}
 				/>
 			</div>
-			<Button variant="secondary" onclick={() => navigateToAppPath('/actions')}>All forms</Button>
-			<Button
+			<ButtonLink variant="secondary" href={appHref('/actions')}>All forms</ButtonLink>
+			<ButtonLink
 				variant="secondary"
-				onclick={() =>
-					navigateToAppPath(`/actions/${data.formSourceSlug}/${data.formId}/lead-value`)}
+				href={appHref(`/actions/${data.formSourceSlug}/${data.formId}/lead-value`)}
 			>
 				Lead Scoring
-			</Button>
+			</ButtonLink>
 			{#if providerEditUrl}
 				<a
 					href={providerEditUrl}
@@ -3818,9 +3818,9 @@
 								? 'Checking'
 								: providerStatusLabel(openRouterHealth.badgeStatus)}
 					</Badge>
-					<Button size="sm" variant="secondary" onclick={() => navigateToAppPath('/providers')}>
+					<ButtonLink size="sm" variant="secondary" href={appHref('/providers')}>
 						Review OpenRouter
-					</Button>
+					</ButtonLink>
 				</div>
 			</div>
 		</Alert>

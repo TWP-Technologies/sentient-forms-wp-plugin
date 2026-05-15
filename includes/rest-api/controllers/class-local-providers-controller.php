@@ -1045,13 +1045,46 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         }
 
         return [
-            'provider'       => 'openrouter',
-            'source'         => 'local_cache',
-            'total_cached'   => count( $rows ),
-            'total_returned' => count( $models ),
-            'free_count'     => $free_count,
-            'stale_count'    => $stale_count,
-            'models'         => $models,
+            'provider'        => 'openrouter',
+            'source'          => 'local_cache',
+            'total_cached'    => count( $rows ),
+            'total_returned'  => count( $models ),
+            'free_count'      => $free_count,
+            'stale_count'     => $stale_count,
+            'models'          => $models,
+            'refresh_consent' => $this->format_openrouter_model_refresh_consent(),
+        ];
+    }
+
+    private function format_openrouter_model_refresh_consent(): array
+    {
+        $latest = $this->consents->latest_for_provider( 'openrouter' );
+        if ( ! is_array( $latest ) )
+        {
+            return [
+                'state'              => 'missing',
+                'disclosure_version' => null,
+                'consent_id'         => null,
+                'accepted_at'        => null,
+            ];
+        }
+
+        $metadata = is_array( $latest['metadata_json'] ?? null ) ? $latest['metadata_json'] : [];
+        if ( 'refresh_models' !== (string) ( $metadata['action'] ?? '' ) )
+        {
+            return [
+                'state'              => 'missing',
+                'disclosure_version' => null,
+                'consent_id'         => null,
+                'accepted_at'        => null,
+            ];
+        }
+
+        return [
+            'state'              => 'accepted',
+            'disclosure_version' => (string) ( $latest['disclosure_version'] ?? '' ),
+            'consent_id'         => isset( $latest['id'] ) ? (int) $latest['id'] : null,
+            'accepted_at'        => isset( $latest['accepted_at'] ) ? (string) $latest['accepted_at'] : null,
         ];
     }
 

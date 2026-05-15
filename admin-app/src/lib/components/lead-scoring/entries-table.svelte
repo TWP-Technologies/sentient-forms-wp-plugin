@@ -118,7 +118,13 @@
 							>
 								Open detail
 							</ButtonLink>
-							<ButtonLink size="sm" variant="secondary" href={setupHref(entry)}>Setup</ButtonLink>
+							<ButtonLink
+								size="sm"
+								variant="secondary"
+								href={setupHref(entry)}
+							>
+								Setup
+							</ButtonLink>
 						</div>
 					</td>
 				</tr>
@@ -175,7 +181,13 @@
 				>
 					Open detail
 				</ButtonLink>
-				<ButtonLink size="sm" variant="secondary" href={setupHref(entry)}>Setup</ButtonLink>
+				<ButtonLink
+					size="sm"
+					variant="secondary"
+					href={setupHref(entry)}
+				>
+					Setup
+				</ButtonLink>
 			</div>
 		</div>
 	{:else}

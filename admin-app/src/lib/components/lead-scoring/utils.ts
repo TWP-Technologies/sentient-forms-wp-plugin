@@ -1,6 +1,7 @@
 import type { LeadGrade, LeadScoringEntry, LeadScoringFormSummary } from '$lib/api/types';
 
 export const gradeOrder: Array<LeadGrade | 'ungraded'> = ['A', 'B', 'C', 'Reject', 'ungraded'];
+export type LeadScoringViewKey = 'dashboard' | 'setup' | 'historical';
 
 export function providerLabel(source: string, label?: string | null): string {
 	if (label) return label;
@@ -85,6 +86,16 @@ export function setupJumpPath(
 	entry: Pick<LeadScoringEntry | LeadScoringFormSummary, 'form_source' | 'form_id'>
 ): string {
 	return `${setupPath(entry)}?view=setup`;
+}
+
+export function leadScoringViewFromLocation(
+	search: string,
+	hash: string
+): LeadScoringViewKey | null {
+	const hashQuery = hash.includes('?') ? (hash.split('?')[1] ?? '') : '';
+	const value =
+		new URLSearchParams(hashQuery).get('view') ?? new URLSearchParams(search).get('view');
+	return value === 'setup' || value === 'historical' || value === 'dashboard' ? value : null;
 }
 
 export function detailPath(basePath: string, entry: LeadScoringEntry): string {

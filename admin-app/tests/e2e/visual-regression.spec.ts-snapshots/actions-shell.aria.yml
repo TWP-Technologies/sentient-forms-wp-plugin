@@ -1,42 +1,37 @@
 - heading "Actions" [level=2]
 - paragraph: Pair action templates and custom actions with your active forms.
 - button "Refresh"
-- button "Manage custom actions"
-- paragraph: Built-in actions
-- paragraph: Included with Sentient Forms and ready to map.
-- paragraph: 🛡️ Content Quality
+- link "Manage custom actions":
+  - /url: /actions/custom
+- text: Global execution Running
+- switch "Toggle setting" [checked]
+- text: OpenRouter ready Ready Gravity Forms Plugin active Running
+- switch "Toggle setting" [checked]
+- heading "Action Library" [level=2]
+- paragraph: Defaults, templates, and reusable automations.
+- text: 2 shown
+- button "Built-in 2" [pressed]
+- button "Custom 1"
+- searchbox "Search actions..."
 - list:
   - listitem:
     - paragraph: Spam detection
+    - text: Content Quality 1 form
+    - paragraph: "Default model: Recommended preset"
     - button "Defaults"
-    - text: 1 form
   - listitem:
     - paragraph: Spam analysis
+    - text: Content Quality 0 forms
+    - paragraph: "Default model: Recommended preset"
     - button "Defaults"
-    - text: 0 forms
-- paragraph: Custom actions
-- paragraph: Tenant-specific automations.
-- text: 1 active
-- list:
-  - listitem:
-    - paragraph: Alpha action
-    - paragraph: "Code: alpha"
-    - button "Defaults"
-    - text: 0 forms Active
-- paragraph: Form providers
-- paragraph: Global execution
-- paragraph: Pause all Sentient Forms runs without locking mapping edits.
-- text: Running
-- switch "Toggle setting" [checked]
-- paragraph: OpenRouter ready
-- paragraph: Direct actions can run through the saved OpenRouter key.
-- text: Ready Gravity Forms Plugin active Execution running
-- switch "Toggle setting" [checked]
-- button "Gravity Forms"
+- heading "Forms Workspace" [level=2]
+- paragraph: 1 visible · 1 loaded across active providers.
 - button "Refresh forms"
-- textbox "Search forms..."
-- text: 1 form
-- paragraph: Contact us
-- paragraph: "/ID: \\d+/"
-- text: Form active Automation enabled No runs 1 action Gravity Forms
-- button "Configure Actions"
+- button "Gravity Forms"
+- searchbox "Search forms..."
+- article:
+  - paragraph: Contact us
+  - paragraph: /Gravity Forms · ID \d+/
+  - text: Form active Automation enabled No runs Configured actions 1
+  - link "Configure Actions":
+    - /url: /actions/gravity_forms/123

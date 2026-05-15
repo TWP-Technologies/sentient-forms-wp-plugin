@@ -10,7 +10,7 @@
 	import GradeDistribution from '$lib/components/lead-scoring/grade-distribution.svelte';
 	import SummaryStrip from '$lib/components/lead-scoring/summary-strip.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
-	import { appHref, navigateToAppPath } from '$lib/navigation';
+	import { appHref } from '$lib/navigation';
 	import type {
 		LeadGrade,
 		LeadScoringEntry,
@@ -313,7 +313,12 @@
 												{providerLabel(form.form_source, form.provider_label)}
 											</p>
 										</div>
-										<ButtonLink size="sm" variant="secondary" class="sf:whitespace-nowrap" href={setupHref(form)}>
+										<ButtonLink
+											size="sm"
+											variant="secondary"
+											class="sf:whitespace-nowrap"
+											href={setupHref(form)}
+										>
 											<SettingsIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
 											Set Up
 										</ButtonLink>
@@ -351,7 +356,14 @@
 												</p>
 											{/if}
 										</div>
-										<ButtonLink size="sm" variant="secondary" class="sf:whitespace-nowrap" href={setupHref(form)}>Setup</ButtonLink>
+										<ButtonLink
+											size="sm"
+											variant="secondary"
+											class="sf:whitespace-nowrap"
+											href={setupHref(form)}
+										>
+											Setup
+										</ButtonLink>
 									</div>
 								</div>
 							{:else}

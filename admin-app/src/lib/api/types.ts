@@ -452,9 +452,17 @@ export interface OpenRouterModelsResponse {
 	free_count: number;
 	stale_count: number;
 	models: OpenRouterModelCacheItem[];
+	refresh_consent?: OpenRouterModelRefreshConsentState;
 	consent_recorded?: boolean;
 	consent_id?: number;
 	stored?: number;
+}
+
+export interface OpenRouterModelRefreshConsentState {
+	state: 'accepted' | 'missing';
+	disclosure_version: string | null;
+	consent_id: number | null;
+	accepted_at: string | null;
 }
 
 export interface OpenRouterModelsRefreshRequest {
@@ -1363,7 +1371,11 @@ export interface LeadProfileHandoffRules {
 }
 
 export interface LeadProfileGenerationSettings {
-	model: '~openai/gpt-latest' | '~google/gemini-pro-latest' | '~anthropic/claude-opus-latest' | string;
+	model:
+		| '~openai/gpt-latest'
+		| '~google/gemini-pro-latest'
+		| '~anthropic/claude-opus-latest'
+		| string;
 	reasoning_effort?: 'xhigh' | string;
 }
 

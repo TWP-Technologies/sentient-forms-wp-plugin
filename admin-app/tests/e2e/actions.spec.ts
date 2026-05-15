@@ -588,7 +588,10 @@ test.describe('Actions admin flows', () => {
 		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
 		await expect(page.getByText('Contact us')).toBeVisible();
 
-		await page.getByRole('button', { name: 'Configure' }).click();
+		await page
+			.getByTestId(`actions-form-card-${formId}`)
+			.getByRole('link', { name: 'Configure Actions' })
+			.click();
 
 		await expectAppUrl(page, '/actions/gravity_forms/123');
 		await expect(page.getByText('Action Execution Order')).toBeVisible();
@@ -623,7 +626,7 @@ test.describe('Actions admin flows', () => {
 		expect(pageErrors.filter((message) => message.includes('structuredClone'))).toEqual([]);
 	});
 
-	test('shows only built-in definitions in the overview card and hides source chips', async ({
+	test('shows built-in definitions with category badges and hides imported source chips', async ({
 		page
 	}) => {
 		await mockWpJson(page, {
@@ -649,9 +652,11 @@ test.describe('Actions admin flows', () => {
 
 		await page.goto('/#/actions', { waitUntil: 'networkidle' });
 
-		const builtInCard = page.getByTestId('actions-built-in-card');
+		const builtInCard = page.getByTestId('actions-library-panel');
 		await expect(builtInCard.getByText('Spam check', { exact: true })).toBeVisible();
 		await expect(builtInCard.getByText('Summarize', { exact: true })).toBeVisible();
+		await expect(builtInCard.getByText('Content Quality', { exact: true })).toBeVisible();
+		await expect(builtInCard.getByText('Data Processing', { exact: true })).toBeVisible();
 		await expect(builtInCard.getByText('Imported CPS history template')).toHaveCount(0);
 		await expect(builtInCard.getByText('Local templates')).toHaveCount(0);
 		await expect(builtInCard.getByText('Managed templates')).toHaveCount(0);
@@ -708,8 +713,51 @@ test.describe('Actions admin flows', () => {
 		await expect(spamCard).toContainText('Default model: ~google/gemini-flash-latest');
 		await expect(spamCard).not.toContainText('Default model: Recommended preset');
 
+		await page.getByRole('button', { name: /Custom/ }).click();
 		const customCard = page.getByTestId('actions-custom-action-custom-hello');
 		await expect(customCard).toContainText('Default model: Recommended preset');
+	});
+
+	test('model selector refresh requires OpenRouter metadata disclosure acceptance', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam detection',
+						source: 'bundled',
+						hooks: ['gform_validation'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+		await page.getByTestId('action-defaults-button-spam_detection_v1').click();
+		const defaultsModal = page.getByTestId('action-defaults-modal');
+		await expect(defaultsModal).toBeVisible();
+		await defaultsModal.getByTestId('model-selector-open').click();
+
+		await page.getByTestId('model-selector-refresh-catalog').click();
+		const disclosure = page.getByTestId('model-selector-refresh-disclosure');
+		await expect(disclosure).toBeVisible();
+		await expect(disclosure).toContainText('No prompts, model outputs, or form entries are sent.');
+
+		const refreshButton = disclosure.getByRole('button', { name: 'Refresh catalog' });
+		await expect(refreshButton).toBeDisabled();
+		await disclosure
+			.getByRole('checkbox', { name: /fetch model metadata from OpenRouter/i })
+			.check();
+		await expect(refreshButton).toBeEnabled();
 	});
 
 	test('surfaces degraded OpenRouter health on overview and form mapping views', async ({
@@ -732,17 +780,19 @@ test.describe('Actions admin flows', () => {
 
 		const overviewHealth = page.getByTestId('actions-openrouter-health');
 		await expect(overviewHealth).toContainText('OpenRouter key needs attention');
-		await expect(overviewHealth).toContainText('OpenRouter reported insufficient credits');
 		await expect(overviewHealth.getByText('Limited')).toBeVisible();
-		await expect(overviewHealth.getByRole('button', { name: 'Review OpenRouter' })).toBeVisible();
+		await expect(overviewHealth.getByRole('link', { name: 'Review' })).toBeVisible();
 
-		await page.getByRole('button', { name: 'Configure' }).click();
+		await page
+			.getByTestId(`actions-form-card-${formId}`)
+			.getByRole('link', { name: 'Configure Actions' })
+			.click();
 
 		const formHealth = page.getByTestId('form-openrouter-health');
 		await expect(formHealth).toContainText('OpenRouter key needs attention');
 		await expect(formHealth).toContainText('OpenRouter reported insufficient credits');
 		await expect(formHealth.getByText('Limited')).toBeVisible();
-		await expect(formHealth.getByRole('button', { name: 'Review OpenRouter' })).toBeVisible();
+		await expect(formHealth.getByRole('link', { name: 'Review OpenRouter' })).toBeVisible();
 	});
 
 	test('shows overview mapping count from linked form actions', async ({ page }) => {
@@ -761,7 +811,8 @@ test.describe('Actions admin flows', () => {
 
 		const card = page.getByTestId(`actions-form-card-${formId}`);
 		await expect(card.getByText('Contact us')).toBeVisible();
-		await expect(card.getByText('1 action')).toBeVisible();
+		await expect(card.getByText('Configured actions')).toBeVisible();
+		await expect(card.getByText('1', { exact: true })).toBeVisible();
 		await expect(card.getByText('No actions configured')).toHaveCount(0);
 	});
 
@@ -835,6 +886,7 @@ test.describe('Actions admin flows', () => {
 		});
 
 		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+		await page.getByRole('button', { name: /Custom/ }).click();
 
 		const actionCard = page.getByTestId('actions-custom-action-recommended-contact-follow-up');
 		await expect(actionCard).toBeVisible();
