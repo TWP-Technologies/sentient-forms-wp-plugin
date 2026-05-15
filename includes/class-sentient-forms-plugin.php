@@ -657,7 +657,9 @@ final class Sentient_Forms_Plugin
 
         if ( empty( $base_url ) )
         {
-            $base_url = 'https://staging-api.sentientforms.com/v1';
+            $base_url = defined( 'SENTIENT_FORMS_DEFAULT_CPS_BASE_URL' )
+                ? SENTIENT_FORMS_DEFAULT_CPS_BASE_URL
+                : 'https://api.sentientforms.com/v1';
         }
 
         return untrailingslashit( $base_url );

@@ -14,6 +14,8 @@ const kitOutputDir = path.join(projectRoot, '.svelte-kit', 'output', 'client');
 const outputDir = path.join(projectRoot, '..', 'assets', 'dist');
 const manifestSrc = path.join(kitOutputDir, '.vite', 'manifest.json');
 const manifestDest = path.join(outputDir, 'manifest.json');
+const pluginFile = path.join(projectRoot, '..', 'sentient-forms.php');
+const sourceMetadataDest = path.join(outputDir, 'SOURCE.md');
 
 const ensureDir = async (dir) => {
   try {
@@ -70,6 +72,40 @@ const assertManifestAssetsExist = async (outputRoot, manifest) => {
   }
 };
 
+const parsePluginConstant = (contents, constantName) => {
+  const pattern = new RegExp(
+    `const\\s+${constantName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=\\s*['"]([^'"]+)['"]\\s*;`
+  );
+  return contents.match(pattern)?.[1] ?? null;
+};
+
+const writeSourceMetadata = async () => {
+  const pluginContents = await readFile(pluginFile, 'utf8');
+  const version =
+    parsePluginConstant(pluginContents, 'SENTIENT_FORMS_VERSION') ?? 'unknown';
+  const sourceUrl =
+    parsePluginConstant(pluginContents, 'SENTIENT_FORMS_RELEASE_SOURCE_URL') ??
+    'https://github.com/TWP-Technologies/sentient-forms-release-source';
+
+  await writeFile(
+    sourceMetadataDest,
+    `# Sentient Forms Admin App Source
+
+The JavaScript and CSS files in this directory are generated from the SvelteKit admin app source for Sentient Forms ${version}.
+
+Public source for this release: ${sourceUrl}
+
+Build commands:
+
+\`\`\`sh
+cd admin-app
+bun install --frozen-lockfile
+bun run build:wp
+\`\`\`
+`
+  );
+};
+
 const main = async () => {
   if (!existsSync(clientDir)) {
     throw new Error(`Client build directory not found: ${clientDir}`);
@@ -88,6 +124,7 @@ const main = async () => {
 
   const manifest = await readFile(manifestSrc, 'utf8');
   await writeFile(manifestDest, manifest);
+  await writeSourceMetadata();
   await assertManifestAssetsExist(outputDir, JSON.parse(manifest));
   console.log('[copy-build] Assets copied to', outputDir);
 };

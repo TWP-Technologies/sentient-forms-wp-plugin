@@ -41,9 +41,9 @@ The new product direction keeps site-owned configuration in WordPress: provider 
 - `scripts/scan-wporg-package.php` performs early static checks for source/package cleanliness.
 - `docs/plans/option-2-local-first-migration-plan.md` is the authoritative migration plan.
 
-## Still Not Complete
+## Release Readiness
 
-The local-first migration is not finished. The current code proves several core contracts, but the release gates still require the admin SPA rewrite, full Gravity Forms hook integration, local async execution, migration/import or approved reset, managed proxy extraction, Plugin Check, readme validation, license audit, reviewer-perspective install, and beta evidence.
+Release confidence is based on the repository gates and the root Sentient Forms greenlight checklist. A production package should not be promoted until the exact built artifact has passed the WordPress.org package scan, Plugin Check, license audit, focused PHPUnit/SPA checks, and browser-path evidence for the supported Gravity Forms workflows.
 
 ## Git Hooks
 

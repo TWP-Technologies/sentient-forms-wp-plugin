@@ -23,6 +23,8 @@ if ( !defined( 'ABSPATH' ) )
 const SENTIENT_FORMS_VERSION     = '0.1.0';
 const SENTIENT_FORMS_DB_VERSION  = '2026.05.10.lead_value_workflows';
 const SENTIENT_FORMS_PLUGIN_FILE = __FILE__;
+const SENTIENT_FORMS_DEFAULT_CPS_BASE_URL = 'https://api.sentientforms.com/v1';
+const SENTIENT_FORMS_RELEASE_SOURCE_URL   = 'https://github.com/TWP-Technologies/sentient-forms-release-source/tree/v0.1.0';
 define( 'SENTIENT_FORMS_PLUGIN_DIR', plugin_dir_path( SENTIENT_FORMS_PLUGIN_FILE ) );
 define( 'SENTIENT_FORMS_PLUGIN_URL', plugin_dir_url( SENTIENT_FORMS_PLUGIN_FILE ) );
 

@@ -28,7 +28,6 @@ $include_paths = [
     'languages',
     'vendor/woocommerce/action-scheduler',
     'CHANGELOG.md',
-    'README.md',
     'composer.json',
     'sentient-forms.php',
 ];

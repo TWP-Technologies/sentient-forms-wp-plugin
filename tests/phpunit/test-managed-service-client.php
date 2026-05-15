@@ -115,6 +115,36 @@ class Tests_Managed_Service_Client extends WP_UnitTestCase
         }
     }
 
+    public function test_base_url_defaults_to_production_api(): void
+    {
+        $previous_managed_url = getenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
+        $previous_proxy_url   = getenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+        $previous_options     = get_option( 'sentient_forms_settings', null );
+
+        putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' );
+        putenv( 'SENTIENT_FORMS_PROXY_API_URL' );
+        update_option( 'sentient_forms_settings', [] );
+
+        try
+        {
+            $client = new Sentient_Forms_Managed_Service_Client();
+            $this->assertSame( 'https://api.sentientforms.com/v2', $client->get_base_url() );
+        }
+        finally
+        {
+            false === $previous_managed_url
+                ? putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL' )
+                : putenv( 'SENTIENT_FORMS_MANAGED_SERVICE_URL=' . $previous_managed_url );
+            false === $previous_proxy_url
+                ? putenv( 'SENTIENT_FORMS_PROXY_API_URL' )
+                : putenv( 'SENTIENT_FORMS_PROXY_API_URL=' . $previous_proxy_url );
+
+            null === $previous_options
+                ? delete_option( 'sentient_forms_settings' )
+                : update_option( 'sentient_forms_settings', $previous_options );
+        }
+    }
+
     public function test_checkout_posts_sanitized_payload_to_v2_billing_route(): void
     {
         $calls = [];

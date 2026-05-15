@@ -575,6 +575,8 @@ class Sentient_Forms_Managed_Proxy_Client
             return $base_url;
         }
 
-        return 'https://staging-api.sentientforms.com/v1';
+        return defined( 'SENTIENT_FORMS_DEFAULT_CPS_BASE_URL' )
+            ? SENTIENT_FORMS_DEFAULT_CPS_BASE_URL
+            : 'https://api.sentientforms.com/v1';
     }
 }

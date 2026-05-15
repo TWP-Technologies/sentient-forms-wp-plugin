@@ -35,7 +35,7 @@ OpenRouter direct execution:
 Sentient managed execution:
 
 * Service: Sentient Forms
-* Endpoint: https://sentientforms.com/
+* Endpoint: https://api.sentientforms.com/
 * When used: only for optional Sentient managed account, billing, metering, managed model execution, support diagnostics, or other administrator-enabled managed features.
 * Data sent: account/site identifiers, billing state, and, for managed AI execution only, the selected form fields and prompt/action instructions needed to complete the request.
 * Account required: a Sentient Forms account may be required for managed paid features. The direct OpenRouter path does not require Sentient payment.
@@ -83,6 +83,10 @@ The plugin includes WordPress personal data export/erase integration for local e
 = Which form builders are supported? =
 
 Gravity Forms is the first supported adapter.
+
+= Where is the source for the compressed admin JavaScript? =
+
+The JavaScript and CSS files in `assets/dist` are generated from the SvelteKit admin app source. Public source and build tooling for this release are published at https://github.com/TWP-Technologies/sentient-forms-release-source/tree/v0.1.0. Build with `bun install --frozen-lockfile` and `bun run build:wp` from the `admin-app/` directory.
 
 == Changelog ==
 

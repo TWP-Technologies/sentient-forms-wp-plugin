@@ -239,6 +239,10 @@ if ( ! $source_tree && ! is_dir( $root . '/assets/dist' ) )
 {
     $issues[] = 'Missing built admin assets at assets/dist.';
 }
+else
+{
+    $issues = array_merge( $issues, validate_compressed_asset_source_metadata( $root ) );
+}
 
 if ( [] !== $issues )
 {
@@ -365,7 +369,73 @@ function validate_readme( string $readme_path, string $plugin_file ): array
         }
     }
 
+    foreach ( [ 'sentient-forms-release-source', 'bun run build:wp' ] as $required_source_reference )
+    {
+        if ( false === stripos( $readme, $required_source_reference ) )
+        {
+            $issues[] = "readme.txt compressed-source disclosure is missing '{$required_source_reference}'.";
+        }
+    }
+
     return $issues;
+}
+
+/**
+ * Validate source metadata for generated, compressed admin assets.
+ *
+ * @return array<int,string>
+ */
+function validate_compressed_asset_source_metadata( string $root ): array
+{
+    $dist_dir = $root . '/assets/dist';
+    if ( ! is_dir( $dist_dir ) || ! has_runtime_js_asset( $dist_dir ) )
+    {
+        return [];
+    }
+
+    $issues      = [];
+    $source_file = $dist_dir . '/SOURCE.md';
+
+    if ( ! file_exists( $source_file ) )
+    {
+        return [ 'Built admin assets are missing assets/dist/SOURCE.md with source and build instructions.' ];
+    }
+
+    $source = file_get_contents( $source_file );
+    if ( false === $source )
+    {
+        return [ 'Could not read assets/dist/SOURCE.md.' ];
+    }
+
+    foreach ( [ 'sentient-forms-release-source', 'bun run build:wp' ] as $required_source_reference )
+    {
+        if ( false === stripos( $source, $required_source_reference ) )
+        {
+            $issues[] = "assets/dist/SOURCE.md is missing '{$required_source_reference}'.";
+        }
+    }
+
+    return $issues;
+}
+
+/**
+ * Return whether a dist directory contains runtime JavaScript assets.
+ */
+function has_runtime_js_asset( string $dist_dir ): bool
+{
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator( $dist_dir, FilesystemIterator::SKIP_DOTS )
+    );
+
+    foreach ( $iterator as $item )
+    {
+        if ( $item->isFile() && 'js' === strtolower( pathinfo( $item->getFilename(), PATHINFO_EXTENSION ) ) )
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /**

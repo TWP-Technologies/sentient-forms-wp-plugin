@@ -66,6 +66,23 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertArrayHasKey( '/sentient-forms/v1/license/billing/portal-session', $routes, 'Portal-session route should be registered' );
     }
 
+    public function test_cps_base_url_defaults_to_production_api(): void
+    {
+        $plugin           = Sentient_Forms_Plugin::instance();
+        $previous_options = $plugin->get_options();
+
+        $plugin->update_options( [] );
+
+        try
+        {
+            $this->assertSame( 'https://api.sentientforms.com/v1', $plugin->get_cps_base_url_value() );
+        }
+        finally
+        {
+            $plugin->update_options( $previous_options );
+        }
+    }
+
     public function test_get_license_info_returns_masked_key(): void
     {
         $plugin = Sentient_Forms_Plugin::instance();

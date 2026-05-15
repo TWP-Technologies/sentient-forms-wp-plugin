@@ -146,6 +146,14 @@ function validate_readme_locally( string $readme_path, string $plugin_file ): ar
         }
     }
 
+    foreach ( [ 'sentient-forms-release-source', 'bun run build:wp' ] as $required_source_reference )
+    {
+        if ( false === stripos( $readme, $required_source_reference ) )
+        {
+            $issues[] = "readme.txt compressed-source disclosure is missing '{$required_source_reference}'.";
+        }
+    }
+
     return $issues;
 }
 
