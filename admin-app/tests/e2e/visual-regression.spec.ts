@@ -72,6 +72,8 @@ async function expectNoSeriousAxeViolations(page: Page, routeName: string): Prom
 }
 
 test.describe('Preview visual regression and accessibility @visual @a11y', () => {
+	test.use({ timezoneId: 'America/Chicago' });
+
 	test.beforeEach(async ({ page }) => {
 		await page.clock.setFixedTime(visualBaselineNow);
 		await seedRuntimeConfig(page, {
