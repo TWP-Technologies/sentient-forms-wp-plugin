@@ -85,7 +85,7 @@ const writeSourceMetadata = async () => {
     parsePluginConstant(pluginContents, 'SENTIENT_FORMS_VERSION') ?? 'unknown';
   const sourceUrl =
     parsePluginConstant(pluginContents, 'SENTIENT_FORMS_RELEASE_SOURCE_URL') ??
-    'https://github.com/TWP-Technologies/sentient-forms-release-source';
+    'https://github.com/TWP-Technologies/sentient-forms-wp-plugin';
 
   await writeFile(
     sourceMetadataDest,

@@ -9,3 +9,4 @@ tests/wp.tar.gz
 assets/dist/
 !assets/dist/.gitkeep
 in-memoria*.db
+agent-logs/

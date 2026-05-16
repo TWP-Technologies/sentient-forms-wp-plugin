@@ -197,10 +197,8 @@ async function load(formSourceSlug: string, formId: number) {
 }
 
 async function create(formSourceSlug: string, formId: number, payload: FormActionMutationPayload) {
-	console.log('formActionsStore.create payload', formSourceSlug, formId, payload);
 	try {
 		const created = await client.createFormAction(formSourceSlug, formId, payload);
-		console.log('formActionsStore.create success', created);
 		formActionsState.items = [...formActionsState.items, created];
 		notifications.success('Action mapping created');
 		await refresh(formSourceSlug, formId);

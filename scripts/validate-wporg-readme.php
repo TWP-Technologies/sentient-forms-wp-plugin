@@ -146,7 +146,7 @@ function validate_readme_locally( string $readme_path, string $plugin_file ): ar
         }
     }
 
-    foreach ( [ 'sentient-forms-release-source', 'bun run build:wp' ] as $required_source_reference )
+    foreach ( [ 'TWP-Technologies/sentient-forms-wp-plugin', 'bun run build:wp' ] as $required_source_reference )
     {
         if ( false === stripos( $readme, $required_source_reference ) )
         {

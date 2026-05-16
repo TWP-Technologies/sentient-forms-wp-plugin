@@ -86,7 +86,7 @@ Gravity Forms is the first supported adapter.
 
 = Where is the source for the compressed admin JavaScript? =
 
-The JavaScript and CSS files in `assets/dist` are generated from the SvelteKit admin app source. Public source and build tooling for this release are published at https://github.com/TWP-Technologies/sentient-forms-release-source/tree/v0.1.0. Build with `bun install --frozen-lockfile` and `bun run build:wp` from the `admin-app/` directory.
+The JavaScript and CSS files in `assets/dist` are generated from the SvelteKit admin app source. Public source and build tooling for this release are published at https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.1.0. Build with `bun install --frozen-lockfile` and `bun run build:wp` from the `admin-app/` directory.
 
 == Changelog ==
 

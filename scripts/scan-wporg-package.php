@@ -369,7 +369,7 @@ function validate_readme( string $readme_path, string $plugin_file ): array
         }
     }
 
-    foreach ( [ 'sentient-forms-release-source', 'bun run build:wp' ] as $required_source_reference )
+    foreach ( [ 'TWP-Technologies/sentient-forms-wp-plugin', 'bun run build:wp' ] as $required_source_reference )
     {
         if ( false === stripos( $readme, $required_source_reference ) )
         {
@@ -407,7 +407,7 @@ function validate_compressed_asset_source_metadata( string $root ): array
         return [ 'Could not read assets/dist/SOURCE.md.' ];
     }
 
-    foreach ( [ 'sentient-forms-release-source', 'bun run build:wp' ] as $required_source_reference )
+    foreach ( [ 'TWP-Technologies/sentient-forms-wp-plugin', 'bun run build:wp' ] as $required_source_reference )
     {
         if ( false === stripos( $source, $required_source_reference ) )
         {

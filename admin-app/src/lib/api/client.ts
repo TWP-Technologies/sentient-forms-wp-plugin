@@ -1045,16 +1045,10 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<FormActionLinkage> {
 		const slug = encodeURIComponent(formSourceSlug);
-		console.log('client.createFormAction', {
-			slug,
-			formId,
-			body: payload
-		});
 		const response = await this.request<RestEnvelope<FormActionLinkage>>(
 			`${slug}/forms/${formId}/actions`,
 			{ method: 'POST', body: payload, ...options }
 		);
-		console.log('client.createFormAction response', response);
 		return this.unwrap(response);
 	}
 

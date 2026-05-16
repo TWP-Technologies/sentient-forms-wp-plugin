@@ -347,17 +347,11 @@
 	let showClearConfirm = $state(false);
 
 	async function purgeStaleJobs() {
-		const result = await asyncHealth.purge({ status: 'queued,failed', olderThan: 10080 });
-		if (result) {
-			console.log('Purged stale jobs:', result);
-		}
+		await asyncHealth.purge({ status: 'queued,failed', olderThan: 10080 });
 	}
 
 	async function clearAllJobs() {
-		const result = await asyncHealth.purge({ clearAll: true });
-		if (result) {
-			console.log('Cleared all jobs:', result);
-		}
+		await asyncHealth.purge({ clearAll: true });
 		showClearConfirm = false;
 	}
 
