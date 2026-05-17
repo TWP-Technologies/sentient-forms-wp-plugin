@@ -45,6 +45,10 @@ The new product direction keeps site-owned configuration in WordPress: provider 
 
 Release confidence is based on the repository gates and the root Sentient Forms greenlight checklist. A production package should not be promoted until the exact built artifact has passed the WordPress.org package scan, Plugin Check, license audit, focused PHPUnit/SPA checks, and browser-path evidence for the supported Gravity Forms workflows.
 
+## License
+
+First-party Sentient Forms plugin and admin app code is licensed under GPL-2.0-or-later. Bundled dependencies retain their own GPL-compatible license notices.
+
 ## Git Hooks
 
 This repo ships a tracked pre-commit hook that parses every `.github/*.yml` file. Enable it once per clone:

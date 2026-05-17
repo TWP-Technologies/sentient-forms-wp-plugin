@@ -47,6 +47,7 @@ $issues = [];
 $issues = array_merge( $issues, audit_plugin_header_license( $root ) );
 $issues = array_merge( $issues, audit_readme_license( $root ) );
 $issues = array_merge( $issues, audit_composer_license( $root ) );
+$issues = array_merge( $issues, audit_admin_app_package_license( $root ) );
 $issues = array_merge( $issues, audit_bundled_dependency_licenses( $root ) );
 
 if ( $package_mode )
@@ -87,17 +88,23 @@ function audit_plugin_header_license( string $root ): array
     }
 
     $issues      = [];
-    $license     = parse_header_value( $contents, 'License' );
-    $license_uri = parse_header_value( $contents, 'License URI' );
+    $license      = parse_header_value( $contents, 'License' );
+    $license_uri  = parse_header_value( $contents, 'License URI' );
+    $spdx_license = parse_header_value( $contents, 'SPDX-License-Identifier' );
 
     if ( null === $license || ! is_gpl_2_or_later_license( $license ) )
     {
-        $issues[] = 'sentient-forms.php License header must remain GPL v2 or later.';
+        $issues[] = 'sentient-forms.php License header must remain GPLv2 or later.';
     }
 
     if ( null === $license_uri || ! str_contains( strtolower( $license_uri ), 'gnu.org/licenses/gpl-2.0' ) )
     {
         $issues[] = 'sentient-forms.php License URI must point to the GPL-2.0 license.';
+    }
+
+    if ( 'GPL-2.0-or-later' !== $spdx_license )
+    {
+        $issues[] = 'sentient-forms.php SPDX-License-Identifier must remain GPL-2.0-or-later.';
     }
 
     return $issues;
@@ -162,6 +169,40 @@ function audit_composer_license( string $root ): array
     if ( 'GPL-2.0-or-later' !== $license )
     {
         return [ 'composer.json license must remain GPL-2.0-or-later.' ];
+    }
+
+    return [];
+}
+
+/**
+ * Validate admin app package metadata when source is present.
+ *
+ * @return array<int,string>
+ */
+function audit_admin_app_package_license( string $root ): array
+{
+    $admin_app = $root . '/admin-app';
+    if ( ! is_dir( $admin_app ) )
+    {
+        return [];
+    }
+
+    $package = $admin_app . '/package.json';
+    if ( ! file_exists( $package ) )
+    {
+        return [ 'admin-app/package.json is missing from the source tree.' ];
+    }
+
+    $decoded = json_decode( (string) file_get_contents( $package ), true );
+    if ( ! is_array( $decoded ) )
+    {
+        return [ 'admin-app/package.json is not valid JSON.' ];
+    }
+
+    $license = $decoded['license'] ?? null;
+    if ( 'GPL-2.0-or-later' !== $license )
+    {
+        return [ 'admin-app/package.json license must remain GPL-2.0-or-later.' ];
     }
 
     return [];

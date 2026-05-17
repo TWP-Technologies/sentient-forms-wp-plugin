@@ -32,6 +32,10 @@ bun run dev
 
 Tailwind CSS (prefixed with `sf-`) and linting are configured; see `tailwind.config.cjs` and `eslint.config.js` for details.
 
+## License
+
+The first-party admin app source is part of the Sentient Forms WordPress plugin and is licensed under GPL-2.0-or-later. Build-time dependencies retain their own license notices.
+
 ## End-to-end tests
 
 Playwright tests interact with the Dockerized WordPress stack (`docker compose up -d` from the repo root). Before running `bun run --bun e2e` or `../scripts/run-full-qa.sh`, ensure:

@@ -2,6 +2,7 @@
   "name": "sentient-forms-admin-app",
   "version": "0.0.1",
   "private": true,
+  "license": "GPL-2.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "node scripts/select-layout.mjs && vite dev",
