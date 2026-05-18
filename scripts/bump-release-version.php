@@ -15,7 +15,7 @@ if ( ! isset( $argv[0] ) || realpath( (string) $argv[0] ) !== __FILE__ )
     exit( 1 );
 }
 
-$plugin_root = dirname( __DIR__ );
+$plugin_root = getenv( 'SENTIENT_FORMS_PLUGIN_ROOT' ) ?: dirname( __DIR__ );
 $bump        = $argv[1] ?? 'patch';
 
 if ( ! in_array( $bump, [ 'patch', 'minor', 'major' ], true ) )
@@ -73,6 +73,27 @@ if ( file_exists( $package_file ) )
         $pretty
     );
     file_put_contents( $package_file, $pretty . PHP_EOL );
+}
+
+$manifest_file = $plugin_root . '/.release-please-manifest.json';
+if ( file_exists( $manifest_file ) )
+{
+    $json = json_decode( file_get_contents( $manifest_file ), true );
+    if ( ! is_array( $json ) )
+    {
+        fwrite( STDERR, "Unable to parse {$manifest_file}\n" );
+        exit( 1 );
+    }
+
+    $json['.'] = $next_version;
+    $pretty = json_encode( $json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
+    if ( ! is_string( $pretty ) )
+    {
+        fwrite( STDERR, "Unable to encode {$manifest_file}\n" );
+        exit( 1 );
+    }
+
+    file_put_contents( $manifest_file, $pretty . PHP_EOL );
 }
 
 printf( "Bumped Sentient Forms from %s to %s (%s)\n", $current_version, $next_version, $tag );

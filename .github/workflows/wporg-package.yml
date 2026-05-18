@@ -10,6 +10,7 @@ name: WordPress.org Package Preflight
       - 'includes/**'
       - 'languages/**'
       - 'readme.txt'
+      - 'CHANGELOG.md'
       - 'sentient-forms.php'
       - 'composer.json'
       - 'composer.lock'
@@ -17,16 +18,21 @@ name: WordPress.org Package Preflight
       - 'scripts/bump-release-version.php'
       - 'scripts/scan-wporg-package.php'
       - 'scripts/audit-wporg-licenses.php'
+      - 'scripts/validate-release-version.php'
       - 'scripts/validate-wporg-readme.php'
       - 'admin-app/**'
       - '.github/workflows/wporg-package.yml'
-      - '.github/workflows/release-prep.yml'
+      - '.github/workflows/release-please.yml'
+      - '.github/workflows/release-pr-sync.yml'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
   pull_request:
     paths:
       - 'assets/**'
       - 'includes/**'
       - 'languages/**'
       - 'readme.txt'
+      - 'CHANGELOG.md'
       - 'sentient-forms.php'
       - 'composer.json'
       - 'composer.lock'
@@ -34,10 +40,14 @@ name: WordPress.org Package Preflight
       - 'scripts/bump-release-version.php'
       - 'scripts/scan-wporg-package.php'
       - 'scripts/audit-wporg-licenses.php'
+      - 'scripts/validate-release-version.php'
       - 'scripts/validate-wporg-readme.php'
       - 'admin-app/**'
       - '.github/workflows/wporg-package.yml'
-      - '.github/workflows/release-prep.yml'
+      - '.github/workflows/release-please.yml'
+      - '.github/workflows/release-pr-sync.yml'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
   workflow_dispatch:
     inputs:
       official_readme_validation:
@@ -57,8 +67,7 @@ jobs:
   wporg-package:
     runs-on: ubuntu-latest
     permissions:
-      actions: write
-      contents: write
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -120,6 +129,7 @@ jobs:
 
       - name: Run source-tree WordPress.org preflight
         run: |
+          php scripts/validate-release-version.php
           php scripts/scan-wporg-package.php --source-tree
           php scripts/audit-wporg-licenses.php
           php scripts/validate-wporg-readme.php --offline
@@ -151,45 +161,3 @@ jobs:
           path: ${{ steps.package.outputs.package-dir }}
           if-no-files-found: error
           retention-days: 7
-
-      - name: Create release zip
-        id: release_zip
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-        run: |
-          set -euo pipefail
-          package_dir="${{ steps.package.outputs.package-dir }}"
-          version="$(php -r '$contents = file_get_contents("sentient-forms.php"); if (! preg_match("/^\\s*\\*\\s*Version:\\s*(.+)$/mi", $contents, $matches)) { fwrite(STDERR, "Missing plugin version\\n"); exit(1); } echo trim($matches[1]);')"
-          tag="v${version}"
-          zip_path="${RUNNER_TEMP}/sentient-forms-${version}.zip"
-          sha_path="${zip_path}.sha256"
-          cd "$(dirname "${package_dir}")"
-          zip -qry "${zip_path}" "$(basename "${package_dir}")"
-          sha256sum "${zip_path}" > "${sha_path}"
-          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "zip-path=${zip_path}" >> "${GITHUB_OUTPUT}"
-          echo "sha-path=${sha_path}" >> "${GITHUB_OUTPUT}"
-
-      - name: Publish GitHub release
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="${{ steps.release_zip.outputs.tag }}"
-          version="${{ steps.release_zip.outputs.version }}"
-          zip_path="${{ steps.release_zip.outputs.zip-path }}"
-          sha_path="${{ steps.release_zip.outputs.sha-path }}"
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            echo "Release ${tag} already exists; refusing to overwrite immutable production artifacts." >&2
-            exit 1
-          fi
-          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
-            echo "Tag ${tag} already exists; refusing to retarget a production release." >&2
-            exit 1
-          fi
-          gh release create "${tag}" "${zip_path}" "${sha_path}" \
-            --target "${GITHUB_SHA}" \
-            --title "Sentient Forms ${version}" \
-            --notes "Production package generated from the master branch by the WordPress.org package workflow." \
-            --latest

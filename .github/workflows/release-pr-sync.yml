@@ -1,0 +1,137 @@
+---
+name: Release PR Sync
+
+'on':
+  pull_request_target:
+    branches:
+      - master
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+  pull-requests: read
+
+env:
+  BUN_VERSION: '1.3.0'
+  PHP_VERSION: '8.3'
+
+jobs:
+  sync-version-surfaces:
+    name: Sync WordPress Version Surfaces
+    if: ${{ contains(github.head_ref, 'release-please') && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect release bot token configuration
+        id: release-token-mode
+        env:
+          RELEASE_BOT_APP_ID: ${{ vars.RELEASE_BOT_APP_ID }}
+          RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+        run: |
+          if [ -n "${RELEASE_BOT_APP_ID}" ] && [ -n "${RELEASE_BOT_PRIVATE_KEY}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require release bot token configuration
+        if: ${{ steps.release-token-mode.outputs.enabled != 'true' }}
+        run: |
+          echo "::error::Configure repository variable RELEASE_BOT_APP_ID and secret RELEASE_BOT_PRIVATE_KEY before enabling production releases."
+          exit 1
+
+      - name: Verify trusted release PR
+        env:
+          EXPECTED_RELEASE_BOT_LOGIN: ${{ vars.RELEASE_BOT_LOGIN }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${EXPECTED_RELEASE_BOT_LOGIN}" ]]; then
+            echo "::error::Configure repository variable RELEASE_BOT_LOGIN to the GitHub App bot login that owns Release Please PRs."
+            exit 1
+          fi
+          if [[ "${PR_AUTHOR}" != "${EXPECTED_RELEASE_BOT_LOGIN}" ]]; then
+            echo "::error::Release PR author ${PR_AUTHOR} does not match expected bot ${EXPECTED_RELEASE_BOT_LOGIN}."
+            exit 1
+          fi
+          if [[ ! "${HEAD_REF}" =~ ^release-please(--branches--master(--components--.*)?|/branches/master(/components/.*)?)$ ]]; then
+            echo "::error::Unexpected Release Please branch name: ${HEAD_REF}"
+            exit 1
+          fi
+
+      - name: Create release bot token
+        id: release-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout trusted base scripts
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted-base
+          persist-credentials: false
+
+      - name: Checkout release PR branch
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          path: release-head
+          token: ${{ steps.release-token.outputs.token }}
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          coverage: none
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install admin app dependencies
+        working-directory: release-head/admin-app
+        run: bun install --frozen-lockfile
+
+      - name: Sync version and rebuild assets
+        run: |
+          set -euo pipefail
+          release_root="${PWD}/release-head"
+          trusted_root="${PWD}/trusted-base"
+          version="$(php -r '$m = json_decode(file_get_contents("release-head/.release-please-manifest.json"), true); if (!is_array($m) || empty($m["."])) { fwrite(STDERR, "Missing release-please manifest version\n"); exit(1); } echo $m["."];')"
+          SENTIENT_FORMS_PLUGIN_ROOT="${release_root}" php "${trusted_root}/scripts/bump-release-version.php" patch "${version}"
+          (cd "${release_root}/admin-app" && bun run build:wp)
+          SENTIENT_FORMS_PLUGIN_ROOT="${release_root}" php "${trusted_root}/scripts/validate-release-version.php"
+          php "${trusted_root}/scripts/scan-wporg-package.php" --source-tree "${release_root}"
+          php "${trusted_root}/scripts/audit-wporg-licenses.php" "${release_root}"
+          php "${trusted_root}/scripts/validate-wporg-readme.php" --offline "${release_root}"
+
+      - name: Commit synced release surfaces
+        working-directory: release-head
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${HEAD_REF}" =~ ^release-please(--branches--master(--components--.*)?|/branches/master(/components/.*)?)$ ]]; then
+            echo "Unexpected release PR branch name: ${HEAD_REF}" >&2
+            exit 1
+          fi
+          version="$(php -r '$m = json_decode(file_get_contents(".release-please-manifest.json"), true); echo $m["."];')"
+          git config user.name "sentient-forms-release[bot]"
+          git config user.email "sentient-forms-release[bot]@users.noreply.github.com"
+          git add sentient-forms.php readme.txt admin-app/package.json assets/dist
+          if git diff --cached --quiet; then
+            echo "Release version surfaces already synchronized."
+            exit 0
+          fi
+          git config --unset-all core.hooksPath || true
+          git -c core.hooksPath=/dev/null commit -m "chore(release): sync WordPress version surfaces ${version}"
+          git -c core.hooksPath=/dev/null -c credential.helper= -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer ${GH_TOKEN}" push origin "HEAD:${HEAD_REF}"

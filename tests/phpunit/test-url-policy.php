@@ -22,13 +22,21 @@ class Tests_Url_Policy extends WP_UnitTestCase
             Sentient_Forms_Url_Policy::validate_outbound_url( 'https://api.sentientforms.com/v2/health', 'service' )
         );
 
-        $private = Sentient_Forms_Url_Policy::validate_outbound_url( 'http://127.0.0.1:8080/v1/health', 'service' );
+        $private = Sentient_Forms_Url_Policy::validate_outbound_url( 'https://127.0.0.1:8080/v1/health', 'service' );
         $this->assertInstanceOf( WP_Error::class, $private );
         $this->assertSame( 'sentient_forms_outbound_url_private_host', $private->get_error_code() );
 
         $untrusted = Sentient_Forms_Url_Policy::validate_outbound_url( 'https://example.com/api', 'service' );
         $this->assertInstanceOf( WP_Error::class, $untrusted );
         $this->assertSame( 'sentient_forms_untrusted_service_host', $untrusted->get_error_code() );
+    }
+
+    public function test_service_urls_require_https_even_for_trusted_hosts(): void
+    {
+        $plaintext = Sentient_Forms_Url_Policy::validate_outbound_url( 'http://api.sentientforms.com/v1/health', 'service' );
+
+        $this->assertInstanceOf( WP_Error::class, $plaintext );
+        $this->assertSame( 'sentient_forms_service_url_requires_https', $plaintext->get_error_code() );
     }
 
     public function test_webhook_urls_allow_public_arbitrary_hosts_but_reject_private_targets(): void

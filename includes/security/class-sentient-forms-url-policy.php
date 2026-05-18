@@ -57,6 +57,11 @@ class Sentient_Forms_Url_Policy
             return self::error( 'sentient_forms_invalid_outbound_url_scheme', __( 'Outbound URL must use http or https.', 'sentient-forms' ) );
         }
 
+        if ( 'service' === $context && 'https' !== $scheme && ! self::allow_insecure_development_url( $sanitized, $context ) )
+        {
+            return self::error( 'sentient_forms_service_url_requires_https', __( 'Service URLs must use https.', 'sentient-forms' ) );
+        }
+
         $host = strtolower( trim( (string) $parts['host'], " \t\n\r\0\x0B." ) );
         if ( '' === $host || preg_match( '/[:#?\[\]]/', $host ) )
         {

@@ -1,0 +1,285 @@
+---
+name: Release Please
+
+'on':
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  BUN_VERSION: '1.3.0'
+  PHP_VERSION: '8.3'
+
+jobs:
+  release-please:
+    name: Prepare or Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect release bot token configuration
+        id: release-token-mode
+        env:
+          RELEASE_BOT_APP_ID: ${{ vars.RELEASE_BOT_APP_ID }}
+          RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+        run: |
+          if [ -n "${RELEASE_BOT_APP_ID}" ] && [ -n "${RELEASE_BOT_PRIVATE_KEY}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require release bot token configuration
+        if: ${{ steps.release-token-mode.outputs.enabled != 'true' }}
+        run: |
+          echo "::error::Configure repository variable RELEASE_BOT_APP_ID and secret RELEASE_BOT_PRIVATE_KEY before enabling production releases."
+          exit 1
+
+      - name: Create release bot token
+        id: release-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Run Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.release-token.outputs.token }}
+          target-branch: master
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-release: true
+
+  publish-release:
+    name: Publish Validated Release
+    if: ${{ github.ref == 'refs/heads/master' }}
+    needs: release-please
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect release bot token configuration
+        id: release-token-mode
+        env:
+          RELEASE_BOT_APP_ID: ${{ vars.RELEASE_BOT_APP_ID }}
+          RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+        run: |
+          if [ -n "${RELEASE_BOT_APP_ID}" ] && [ -n "${RELEASE_BOT_PRIVATE_KEY}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require release bot token configuration
+        if: ${{ steps.release-token-mode.outputs.enabled != 'true' }}
+        run: |
+          echo "::error::Configure repository variable RELEASE_BOT_APP_ID and secret RELEASE_BOT_PRIVATE_KEY before enabling production releases."
+          exit 1
+
+      - name: Create release bot token
+        id: release-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout release source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ steps.release-token.outputs.token }}
+
+      - name: Resolve release state
+        id: release-state
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${PUSH_BEFORE}" && ! "${PUSH_BEFORE}" =~ ^0+$ ]] && git rev-parse "${PUSH_BEFORE}" >/dev/null 2>&1; then
+            changed_files="$(git diff --name-only "${PUSH_BEFORE}" "${GITHUB_SHA}")"
+            commit_subjects="$(git log --format=%s "${PUSH_BEFORE}..${GITHUB_SHA}")"
+          else
+            changed_files="$(git diff-tree --no-commit-id --name-only -r "${GITHUB_SHA}")"
+            commit_subjects="$(git log -1 --format=%s "${GITHUB_SHA}")"
+          fi
+          if ! grep -Fxq ".release-please-manifest.json" <<< "${changed_files}" || ! grep -Fxq "CHANGELOG.md" <<< "${changed_files}"; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Current push is not a Release Please release commit."
+            exit 0
+          fi
+          if ! grep -Eiq '^chore(\(.+\))?: release' <<< "${commit_subjects}"; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Current push changed release files but does not include a Release Please release commit subject."
+            exit 0
+          fi
+
+          version="$(php -r '$contents = file_get_contents("sentient-forms.php"); if (! preg_match("/^\s*\*\s*Version:\s*(.+)$/mi", $contents, $matches)) { fwrite(STDERR, "Missing plugin version\n"); exit(1); } echo trim($matches[1]);')"
+          tag="v${version}"
+          zip_name="sentient-forms-${version}.zip"
+          sha_name="${zip_name}.sha256"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "zip-name=${zip_name}" >> "$GITHUB_OUTPUT"
+          echo "sha-name=${sha_name}" >> "$GITHUB_OUTPUT"
+
+          verify_tag_target() {
+            git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}" >/dev/null 2>&1 || {
+              echo "::error::Release ${tag} exists but the matching tag could not be fetched."
+              exit 1
+            }
+            tag_target="$(git rev-list -n 1 "refs/tags/${tag}")"
+            if [[ "${tag_target}" != "${GITHUB_SHA}" ]]; then
+              echo "::error::Release ${tag} resolves to ${tag_target}, not current release commit ${GITHUB_SHA}."
+              exit 1
+            fi
+          }
+
+          if gh release view "${tag}" --json assets --jq '.assets[].name' > "${RUNNER_TEMP}/release-assets.txt" 2>/dev/null; then
+            verify_tag_target
+            if grep -Fxq "${zip_name}" "${RUNNER_TEMP}/release-assets.txt" && grep -Fxq "${sha_name}" "${RUNNER_TEMP}/release-assets.txt"; then
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              echo "Release ${tag} already has required package assets."
+              exit 0
+            fi
+            echo "release-exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release-exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Set up PHP
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          coverage: none
+
+      - name: Set up Bun
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install PHP dependencies
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        run: composer install --no-interaction --prefer-dist --no-dev --optimize-autoloader
+
+      - name: Install admin app dependencies
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        working-directory: admin-app
+        run: bun install --frozen-lockfile
+
+      - name: Build WordPress admin assets
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        working-directory: admin-app
+        run: bun run build:wp
+
+      - name: Run WordPress.org release preflight
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        run: |
+          php scripts/validate-release-version.php
+          php scripts/scan-wporg-package.php --source-tree
+          php scripts/audit-wporg-licenses.php
+          php scripts/validate-wporg-readme.php --offline
+
+      - name: Build clean WordPress.org package
+        id: package
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        run: |
+          package_base="${RUNNER_TEMP}/sentient-forms-wporg"
+          php scripts/build-wporg-package.php "$package_base"
+          package_dir="${package_base}/sentient-forms"
+          test -d "$package_dir"
+          echo "package-dir=$package_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Run package WordPress.org preflight
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        run: |
+          package_dir="${{ steps.package.outputs.package-dir }}"
+          php scripts/scan-wporg-package.php "$package_dir"
+          php scripts/audit-wporg-licenses.php --package "$package_dir"
+          php scripts/validate-wporg-readme.php --offline "$package_dir"
+
+      - name: Create release zip
+        id: release-zip
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        run: |
+          set -euo pipefail
+          package_dir="${{ steps.package.outputs.package-dir }}"
+          version="${{ steps.release-state.outputs.version }}"
+          zip_path="${RUNNER_TEMP}/sentient-forms-${version}.zip"
+          sha_path="${zip_path}.sha256"
+          cd "$(dirname "${package_dir}")"
+          zip -qry "${zip_path}" "$(basename "${package_dir}")"
+          sha256sum "${zip_path}" > "${sha_path}"
+          echo "zip-path=${zip_path}" >> "${GITHUB_OUTPUT}"
+          echo "sha-path=${sha_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload release package assets
+        if: ${{ steps.release-state.outputs.publish == 'true' && steps.release-state.outputs.release-exists == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          TAG_NAME: ${{ steps.release-state.outputs.tag }}
+          ZIP_PATH: ${{ steps.release-zip.outputs.zip-path }}
+          SHA_PATH: ${{ steps.release-zip.outputs.sha-path }}
+          ZIP_NAME: ${{ steps.release-state.outputs.zip-name }}
+          SHA_NAME: ${{ steps.release-state.outputs.sha-name }}
+        run: |
+          set -euo pipefail
+          gh release view "${TAG_NAME}" --json assets --jq '.assets[].name' > "${RUNNER_TEMP}/release-assets.txt"
+          uploads=()
+          if ! grep -Fxq "${ZIP_NAME}" "${RUNNER_TEMP}/release-assets.txt"; then
+            uploads+=("${ZIP_PATH}")
+          fi
+          if ! grep -Fxq "${SHA_NAME}" "${RUNNER_TEMP}/release-assets.txt"; then
+            uploads+=("${SHA_PATH}")
+          fi
+          if (( ${#uploads[@]} > 0 )); then
+            gh release upload "${TAG_NAME}" "${uploads[@]}"
+          fi
+
+      - name: Create GitHub release with package assets
+        if: ${{ steps.release-state.outputs.publish == 'true' && steps.release-state.outputs.release-exists != 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
+          TAG_NAME: ${{ steps.release-state.outputs.tag }}
+          VERSION: ${{ steps.release-state.outputs.version }}
+          ZIP_PATH: ${{ steps.release-zip.outputs.zip-path }}
+          SHA_PATH: ${{ steps.release-zip.outputs.sha-path }}
+        run: |
+          set -euo pipefail
+          create_args=(
+            "${TAG_NAME}"
+            "${ZIP_PATH}"
+            "${SHA_PATH}"
+            --title "Sentient Forms ${VERSION}"
+            --notes "Production WordPress.org package generated from the validated master branch release workflow."
+            --latest
+          )
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/${TAG_NAME}:refs/tags/${TAG_NAME}" >/dev/null 2>&1
+            tag_target="$(git rev-list -n 1 "refs/tags/${TAG_NAME}")"
+            if [[ "${tag_target}" != "${GITHUB_SHA}" ]]; then
+              echo "::error::Existing tag ${TAG_NAME} resolves to ${tag_target}, not current release commit ${GITHUB_SHA}."
+              exit 1
+            fi
+            create_args+=(--verify-tag)
+          else
+            create_args+=(--target "${GITHUB_SHA}")
+          fi
+          gh release create "${create_args[@]}"
+
+      - name: Upload package artifact
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: sentient-forms-wporg-package-${{ steps.release-state.outputs.version }}
+          path: ${{ steps.package.outputs.package-dir }}
+          if-no-files-found: error
+          retention-days: 30
