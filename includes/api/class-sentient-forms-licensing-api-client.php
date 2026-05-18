@@ -34,10 +34,7 @@ class Sentient_Forms_Licensing_Api_Client
             'local_site_identifier'  => $local_site_identifier,
         ];
 
-        $response = wp_remote_post(
-            $this->api_url . '/license/activate',
-            $this->build_request_args( $payload )
-        );
+        $response = $this->request( '/license/activate', $this->build_request_args( $payload ) );
 
         return $this->parse_response( $response );
     }
@@ -49,10 +46,7 @@ class Sentient_Forms_Licensing_Api_Client
             'local_site_identifier' => $local_site_identifier,
         ];
 
-        $response = wp_remote_post(
-            $this->api_url . '/license/bootstrap',
-            $this->build_request_args( $payload )
-        );
+        $response = $this->request( '/license/bootstrap', $this->build_request_args( $payload ) );
 
         return $this->parse_response( $response );
     }
@@ -64,30 +58,21 @@ class Sentient_Forms_Licensing_Api_Client
             'site_id'    => $site_id,
         ];
 
-        $response = wp_remote_post(
-            $this->api_url . '/license/deactivate',
-            $this->build_request_args( $payload, $proxy_api_key )
-        );
+        $response = $this->request( '/license/deactivate', $this->build_request_args( $payload, $proxy_api_key ) );
 
         return $this->parse_response( $response );
     }
 
     public function create_checkout_session( string $proxy_api_key, array $payload ): WP_Error | array
     {
-        $response = wp_remote_post(
-            $this->api_url . '/billing/checkout/session',
-            $this->build_request_args( $payload, $proxy_api_key )
-        );
+        $response = $this->request( '/billing/checkout/session', $this->build_request_args( $payload, $proxy_api_key ) );
 
         return $this->parse_response( $response );
     }
 
     public function change_subscription( string $proxy_api_key, array $payload ): WP_Error | array
     {
-        $response = wp_remote_post(
-            $this->api_url . '/billing/subscription/change',
-            $this->build_request_args( $payload, $proxy_api_key )
-        );
+        $response = $this->request( '/billing/subscription/change', $this->build_request_args( $payload, $proxy_api_key ) );
 
         return $this->parse_response( $response );
     }
@@ -111,30 +96,21 @@ class Sentient_Forms_Licensing_Api_Client
             $payload['subscription_id'] = trim( $subscription_id );
         }
 
-        $response = wp_remote_post(
-            $this->api_url . '/billing/portal/session',
-            $this->build_request_args( $payload, $proxy_api_key )
-        );
+        $response = $this->request( '/billing/portal/session', $this->build_request_args( $payload, $proxy_api_key ) );
 
         return $this->parse_response( $response );
     }
 
     public function create_top_up_checkout_session( string $proxy_api_key, array $payload ): WP_Error | array
     {
-        $response = wp_remote_post(
-            $this->api_url . '/billing/checkout/top-up-session',
-            $this->build_request_args( $payload, $proxy_api_key )
-        );
+        $response = $this->request( '/billing/checkout/top-up-session', $this->build_request_args( $payload, $proxy_api_key ) );
 
         return $this->parse_response( $response );
     }
 
     public function get_billing_state( string $proxy_api_key ): WP_Error | array
     {
-        $response = wp_remote_get(
-            $this->api_url . '/billing/state',
-            $this->build_request_args( [], $proxy_api_key, 'GET' )
-        );
+        $response = $this->request( '/billing/state', $this->build_request_args( [], $proxy_api_key, 'GET' ) );
 
         return $this->parse_response( $response );
     }
@@ -158,6 +134,11 @@ class Sentient_Forms_Licensing_Api_Client
             'headers'     => $headers,
             'body'        => 'GET' === strtoupper( $method ) ? null : wp_json_encode( $payload ),
         ];
+    }
+
+    private function request( string $path, array $args ): WP_Error | array
+    {
+        return Sentient_Forms_Url_Policy::remote_request( $this->api_url . $path, $args, 'service' );
     }
 
     private function parse_response( WP_Error | array $response ): WP_Error | array

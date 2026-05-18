@@ -4791,7 +4791,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      */
     private function run_post_execution_webhook_action( int $entry_id, array $context, array $result, array $action, int $index, string $type ): array
     {
-        if ( ! function_exists( 'wp_remote_request' ) )
+        if ( ! function_exists( 'wp_safe_remote_request' ) )
         {
             return [
                 'index'   => $index,
@@ -4816,6 +4816,17 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             ];
         }
 
+        $validated_url = Sentient_Forms_Url_Policy::validate_outbound_url( $url, 'webhook' );
+        if ( is_wp_error( $validated_url ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => $validated_url->get_error_message(),
+            ];
+        }
+
         $method = isset( $action['method'] ) && is_scalar( $action['method'] )
             ? strtoupper( sanitize_key( (string) $action['method'] ) )
             : 'POST';
@@ -4824,13 +4835,13 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             : [];
         $headers['Content-Type'] = $headers['Content-Type'] ?? 'application/json';
 
-        $response = wp_remote_request(
-            $url,
+        $response = Sentient_Forms_Url_Policy::remote_request(
+            $validated_url,
             [
-                'method'  => in_array( $method, [ 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) ? $method : 'POST',
-                'timeout' => 5,
-                'headers' => $headers,
-                'body'    => wp_json_encode(
+                'method'             => in_array( $method, [ 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) ? $method : 'POST',
+                'timeout'            => 5,
+                'headers'            => $headers,
+                'body'               => wp_json_encode(
                     [
                         'entry_id' => $entry_id,
                         'context'  => $context,
@@ -4838,7 +4849,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                         'action'   => $action,
                     ]
                 ),
-            ]
+            ],
+            'webhook'
         );
 
         if ( is_wp_error( $response ) )

@@ -12,7 +12,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms_Base_Controller {
 	protected string $rest_base = '(?P<form_source_slug>[a-z0-9_]+)/forms/(?P<form_id>\\d+)/actions';
 
-	private const RATE_LIMIT_PER_MINUTE = 120;
+	private const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;
+	private const DEFAULT_MAX_PAYLOAD_BYTES = 32768;
 
 	private Sentient_Forms_Plugin $plugin;
 	private Sentient_Forms_Form_Adapter_Registry $adapter_registry;
@@ -133,6 +134,11 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 		$rate_limit_result = $this->enforce_rate_limit( $form_id );
 		if ( is_wp_error( $rate_limit_result ) ) {
 			return $rate_limit_result;
+		}
+
+		$payload_size_result = $this->validate_payload_size( $request );
+		if ( is_wp_error( $payload_size_result ) ) {
+			return $payload_size_result;
 		}
 
 		$adapter = $this->adapter_registry->get_adapter_by_id( $form_source_slug );
@@ -547,10 +553,15 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 	 * @return true|WP_Error
 	 */
 	private function enforce_rate_limit( int $form_id ) {
-		$ip = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( (string) $_SERVER['REMOTE_ADDR'] ) ) : 'unknown';
+		$limit = (int) apply_filters( 'sentient_forms_realtime_suggest_rate_limit_per_minute', self::DEFAULT_RATE_LIMIT_PER_MINUTE, $form_id );
+		if ( $limit < 1 ) {
+			$limit = self::DEFAULT_RATE_LIMIT_PER_MINUTE;
+		}
+
+		$ip = $this->get_rate_limit_client_identifier( $form_id );
 		$key = 'sentient_forms_rt_suggest_rl_' . md5( $form_id . '|' . $ip );
 		$current = (int) get_transient( $key );
-		if ( $current >= self::RATE_LIMIT_PER_MINUTE ) {
+		if ( $current >= $limit ) {
 			return $this->prepare_error_response(
 				'rest_too_many_requests',
 				__( 'Suggestion rate limit exceeded. Please wait and retry.', 'sentient-forms' ),
@@ -559,6 +570,50 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 		}
 
 		set_transient( $key, $current + 1, MINUTE_IN_SECONDS );
+		return true;
+	}
+
+	private function get_rate_limit_client_identifier( int $form_id ): string {
+		$remote_addr = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( (string) $_SERVER['REMOTE_ADDR'] ) ) : 'unknown';
+		$identifier = apply_filters( 'sentient_forms_realtime_suggest_client_identifier', $remote_addr, $form_id );
+
+		return is_scalar( $identifier ) && '' !== trim( (string) $identifier )
+			? sanitize_text_field( (string) $identifier )
+			: 'unknown';
+	}
+
+	/**
+	 * @return true|WP_Error
+	 */
+	private function validate_payload_size( WP_REST_Request $request ) {
+		$limit = (int) apply_filters( 'sentient_forms_realtime_suggest_max_payload_bytes', self::DEFAULT_MAX_PAYLOAD_BYTES, $request );
+		if ( $limit < 1024 ) {
+			$limit = self::DEFAULT_MAX_PAYLOAD_BYTES;
+		}
+
+		$payload = wp_json_encode(
+			[
+				'all_known_field_values' => $request->get_param( 'all_known_field_values' ),
+				'visible_field_ids'      => $request->get_param( 'visible_field_ids' ),
+				'panel_state'            => $request->get_param( 'panel_state' ),
+			]
+		);
+		if ( false === $payload ) {
+			return $this->prepare_error_response(
+				'rest_invalid_suggestion_payload',
+				__( 'Suggestion payload could not be encoded.', 'sentient-forms' ),
+				400
+			);
+		}
+
+		if ( strlen( $payload ) > $limit ) {
+			return $this->prepare_error_response(
+				'rest_suggestion_payload_too_large',
+				__( 'Suggestion payload is too large.', 'sentient-forms' ),
+				413
+			);
+		}
+
 		return true;
 	}
 

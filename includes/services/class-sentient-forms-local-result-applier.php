@@ -1130,19 +1130,30 @@ class Sentient_Forms_Local_Result_Applier
             ];
         }
 
+        $validated_url = Sentient_Forms_Url_Policy::validate_outbound_url( $url, 'webhook' );
+        if ( is_wp_error( $validated_url ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'failed',
+                'message' => $validated_url->get_error_message(),
+            ];
+        }
+
         $method = isset( $post_execution_action['method'] ) && is_scalar( $post_execution_action['method'] )
             ? strtoupper( sanitize_key( (string) $post_execution_action['method'] ) )
             : 'POST';
         $headers = $this->sanitize_webhook_headers( $post_execution_action['headers'] ?? [] );
         $headers['Content-Type'] = $headers['Content-Type'] ?? 'application/json';
 
-        $response = wp_remote_request(
-            $url,
+        $response = Sentient_Forms_Url_Policy::remote_request(
+            $validated_url,
             [
-                'method'  => in_array( $method, [ 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) ? $method : 'POST',
-                'timeout' => 5,
-                'headers' => $headers,
-                'body'    => wp_json_encode(
+                'method'             => in_array( $method, [ 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) ? $method : 'POST',
+                'timeout'            => 5,
+                'headers'            => $headers,
+                'body'               => wp_json_encode(
                     [
                         'entry_id' => $entry_id,
                         'context'  => $this->build_post_execution_context( $mapping, $form, $entry, $execution_result, $action ),
@@ -1150,7 +1161,8 @@ class Sentient_Forms_Local_Result_Applier
                         'action'   => $post_execution_action,
                     ]
                 ),
-            ]
+            ],
+            'webhook'
         );
 
         if ( is_wp_error( $response ) )

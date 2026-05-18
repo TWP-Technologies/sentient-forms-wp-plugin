@@ -768,19 +768,8 @@ Promise.all([
 
         // Sanitize settings data before saving
         $sanitized_settings = [];
-        if (isset($settings_data['api_key'])) {
-            $sanitized_settings['api_key'] = sanitize_text_field($settings_data['api_key']);
-        }
         if (isset($settings_data['default_llm'])) {
             $sanitized_settings['default_llm'] = sanitize_text_field($settings_data['default_llm']);
-        }
-        if (isset($settings_data['license_key'])) {
-            $sanitized_settings['license_key'] = sanitize_text_field($settings_data['license_key']);
-        }
-        if (isset($settings_data['enforce_nonce_verification'])) {
-            $sanitized_settings['enforce_nonce_verification'] = rest_sanitize_boolean($settings_data['enforce_nonce_verification']);
-        } else {
-            $sanitized_settings['enforce_nonce_verification'] = false;
         }
         if ( isset( $settings_data['enable_logging'] ) ) {
             $sanitized_settings['enable_logging'] = rest_sanitize_boolean( $settings_data['enable_logging'] );
@@ -1131,9 +1120,7 @@ Promise.all([
      * AJAX handler for testing API connection.
      */
     public function ajax_test_connection(): void {
-        $options       = get_option( 'sentient_forms_settings', [] );
-        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
-        if ( $enforce_nonce ) {
+        if ( ! $this->development_nonce_bypass_allowed() ) {
             check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
         }
         if ( ! current_user_can( 'manage_options' ) ) {
@@ -1164,9 +1151,7 @@ Promise.all([
      */
     public function ajax_get_credit_balance(): void
     {
-        $options       = get_option( 'sentient_forms_settings', [] );
-        $enforce_nonce = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
-        if ( $enforce_nonce ) {
+        if ( ! $this->development_nonce_bypass_allowed() ) {
             check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
         }
         if ( ! current_user_can( 'manage_options' ) ) {
@@ -1180,6 +1165,14 @@ Promise.all([
             ],
             410
         );
+    }
+
+    private function development_nonce_bypass_allowed(): bool
+    {
+        $allowed = defined( 'SENTIENT_FORMS_ALLOW_INSECURE_NONCE_BYPASS' )
+            && true === constant( 'SENTIENT_FORMS_ALLOW_INSECURE_NONCE_BYPASS' );
+
+        return (bool) apply_filters( 'sentient_forms_allow_insecure_nonce_bypass', $allowed, null );
     }
 
 }

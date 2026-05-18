@@ -113,7 +113,7 @@ class Sentient_Forms_Llm_Api_Client
         ];
 
         // Send the request
-        $response = wp_remote_post( $url, $args );
+        $response = $this->safe_remote_request( $url, $args );
 
         // Check for errors
         if ( is_wp_error( $response ) )
@@ -189,7 +189,7 @@ class Sentient_Forms_Llm_Api_Client
         ];
 
         // Send the request
-        $response = wp_remote_post( $url, $args );
+        $response = $this->safe_remote_request( $url, $args );
 
         // Check for errors
         if ( is_wp_error( $response ) )
@@ -278,7 +278,7 @@ class Sentient_Forms_Llm_Api_Client
         ];
 
         // Send the request
-        $response = wp_remote_get( $url, $args );
+        $response = $this->safe_remote_request( $url, $args );
 
         // Check for errors
         if ( is_wp_error( $response ) )
@@ -354,7 +354,7 @@ class Sentient_Forms_Llm_Api_Client
             'cookies'     => [],
         ];
 
-        $response = wp_remote_post( $url, $args );
+        $response = $this->safe_remote_request( $url, $args );
 
         if ( is_wp_error( $response ) )
         {
@@ -423,7 +423,7 @@ class Sentient_Forms_Llm_Api_Client
             'cookies'     => [],
         ];
 
-        $response = wp_remote_get( $url, $args );
+        $response = $this->safe_remote_request( $url, $args );
 
         if ( is_wp_error( $response ) )
         {
@@ -492,7 +492,7 @@ class Sentient_Forms_Llm_Api_Client
             'cookies'     => [],
         ];
 
-        $response = wp_remote_post( $url, $args );
+        $response = $this->safe_remote_request( $url, $args );
 
         if ( is_wp_error( $response ) )
         {
@@ -557,7 +557,7 @@ class Sentient_Forms_Llm_Api_Client
             'cookies'     => [],
         ];
 
-        $response = wp_remote_request( $url, $args );
+        $response = $this->safe_remote_request( $url, $args );
 
         if ( is_wp_error( $response ) )
         {
@@ -588,5 +588,10 @@ class Sentient_Forms_Llm_Api_Client
         }
 
         return $data;
+    }
+
+    private function safe_remote_request( string $url, array $args ): WP_Error | array
+    {
+        return Sentient_Forms_Url_Policy::remote_request( $url, $args, 'service' );
     }
 }

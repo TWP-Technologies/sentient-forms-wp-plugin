@@ -34,9 +34,7 @@ else
 }
 
 $options                = get_option( 'sentient_forms_settings', [] );
-$api_key                = $options[ 'api_key' ] ?? '';
 $default_llm_id         = $options[ 'default_llm' ] ?? '';
-$enforce_nonce_setting  = isset( $options['enforce_nonce_verification'] ) ? rest_sanitize_boolean( $options['enforce_nonce_verification'] ) : true;
 
 // If no default_llm_id is set, try to get a system default (e.g., the one marked as default for free tier).
 if ( empty( $default_llm_id ) && $llm_registry instanceof Sentient_Forms_Llm_Model_Registry )
@@ -54,7 +52,6 @@ if ( empty( $default_llm_id ) && $llm_registry instanceof Sentient_Forms_Llm_Mod
     }
 }
 
-$license_key    = $options[ 'license_key' ] ?? '';
 $license_status = get_option( 'sentient_forms_license_status', 'inactive' );
 
 ?>
@@ -66,27 +63,6 @@ $license_status = get_option( 'sentient_forms_license_status', 'inactive' );
         <?php do_settings_sections( 'sentient_forms_settings_group' ); ?>
 
         <table class="form-table">
-            <tr valign="top">
-                <th scope="row"><?php esc_html_e( 'Sentient Forms API Key', 'sentient-forms' ); ?></th>
-                <td>
-                    <input type="text" name="sentient_forms_settings[api_key]" value="<?php echo esc_attr( $api_key ); ?>" class="regular-text"/>
-                    <p class="description">
-                        <?php
-                        echo wp_kses_post(
-                            sprintf(
-                            // translators: %s: Link to Sentient Forms website.
-                                __(
-                                    'Enter your API key to connect to the Sentient Forms service. Get your API key from <a href="%s" target="_blank">your account</a>.',
-                                    'sentient-forms',
-                                ),
-                                'https://sentientforms.com/account/', // gx todo - replace with actual link.
-                            ),
-                        );
-                        ?>
-                    </p>
-                </td>
-            </tr>
-
             <tr valign="top">
                 <th scope="row"><?php esc_html_e( 'Default LLM Model', 'sentient-forms' ); ?></th>
                 <td>
@@ -150,23 +126,8 @@ $license_status = get_option( 'sentient_forms_license_status', 'inactive' );
                 <tr valign="top">
                     <th scope="row"><?php esc_html_e( 'License Key', 'sentient-forms' ); ?></th>
                     <td>
-                        <input type="text"
-                               name="sentient_forms_settings[license_key]"
-                               value="<?php echo esc_attr( $license_key ); ?>"
-                               class="regular-text"/>
                         <p class="description">
-                            <?php
-                            echo wp_kses_post(
-                                sprintf(
-                                // translators: %s: Link to Sentient Forms website.
-                                    __(
-                                        'Enter your license key to receive updates for the Pro version. Get your license key from <a href="%s" target="_blank">your account</a>.',
-                                        'sentient-forms',
-                                    ),
-                                    'https://sentientforms.com/account/', // gx todo - replace with actual link.
-                                ),
-                            );
-                            ?>
+                            <?php esc_html_e( 'License keys are managed through the current Licensing screen.', 'sentient-forms' ); ?>
                             <br>
                             <?php if ( $license_status === 'valid' ) : ?>
                                 <span style="color: green;"><?php esc_html_e( 'License active.', 'sentient-forms' ); ?></span>
@@ -179,19 +140,6 @@ $license_status = get_option( 'sentient_forms_license_status', 'inactive' );
                     </td>
                 </tr>
             <?php endif; ?>
-
-            <tr valign="top">
-                <th scope="row"><?php esc_html_e( 'Enforce Nonce Verification', 'sentient-forms' ); ?></th>
-                <td>
-                    <label>
-                        <input type="checkbox" name="sentient_forms_settings[enforce_nonce_verification]" value="1" <?php checked( $enforce_nonce_setting ); ?> />
-                        <?php esc_html_e( 'Require a nonce for all data-changing requests.', 'sentient-forms' ); ?>
-                    </label>
-                    <p class="description">
-                        <?php esc_html_e( 'Disable only to troubleshoot external integrations.', 'sentient-forms' ); ?>
-                    </p>
-                </td>
-            </tr>
 
         </table>
 

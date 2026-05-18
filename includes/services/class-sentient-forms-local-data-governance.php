@@ -672,12 +672,8 @@ class Sentient_Forms_Local_Data_Governance
             $wpdb->query( 'DROP TABLE IF EXISTS ' . esc_sql( $wpdb->prefix . $suffix ) );
         }
 
-        delete_option( 'sentient_forms_db_version' );
-        delete_option( self::OPTION_RETENTION_DAYS );
-        delete_option( self::OPTION_DELETE_ON_UNINSTALL );
-        delete_option( self::OPTION_STORE_FULL_AI_OUTPUTS );
-        delete_option( self::OPTION_PRIVACY_SETUP_PROFILE );
-        delete_option( self::OPTION_PRIVACY_SETUP_COMPLETED_AT );
+        self::delete_plugin_options();
+        self::delete_gravity_forms_entry_meta();
     }
 
     /**
@@ -700,6 +696,86 @@ class Sentient_Forms_Local_Data_Governance
             'sentient_migration_runs',
             'sentient_model_cache',
         ];
+    }
+
+    private static function delete_plugin_options(): void
+    {
+        global $wpdb;
+
+        $option_names = [
+            'sentient_forms_db_version',
+            'sentient_forms_settings',
+            'sentient_forms_plugin_settings',
+            'sentient_forms_license_status',
+            'sentient_forms_proxy_api_key',
+            self::OPTION_RETENTION_DAYS,
+            self::OPTION_DELETE_ON_UNINSTALL,
+            self::OPTION_STORE_FULL_AI_OUTPUTS,
+            self::OPTION_PRIVACY_SETUP_PROFILE,
+            self::OPTION_PRIVACY_SETUP_COMPLETED_AT,
+        ];
+
+        foreach ( $option_names as $option_name )
+        {
+            delete_option( $option_name );
+        }
+
+        self::delete_plugin_transients();
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Explicit uninstall cleanup for plugin-owned options and transients.
+        $wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s OR option_name LIKE %s",
+                $wpdb->esc_like( 'sentient_forms_' ) . '%',
+                $wpdb->esc_like( '_transient_sentient_forms_' ) . '%',
+                $wpdb->esc_like( '_transient_timeout_sentient_forms_' ) . '%'
+            )
+        );
+    }
+
+    private static function delete_plugin_transients(): void
+    {
+        global $wpdb;
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Explicit uninstall cleanup for plugin-owned transients and their object-cache entries.
+        $option_names = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s",
+                $wpdb->esc_like( '_transient_sentient_forms_' ) . '%'
+            )
+        );
+
+        foreach ( $option_names as $option_name )
+        {
+            $transient_name = substr( (string) $option_name, strlen( '_transient_' ) );
+            if ( '' !== $transient_name )
+            {
+                delete_transient( $transient_name );
+            }
+        }
+    }
+
+    private static function delete_gravity_forms_entry_meta(): void
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'gf_entry_meta';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Explicit uninstall cleanup for plugin-owned Gravity Forms entry metadata.
+        $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+        if ( ! is_string( $exists ) || '' === $exists )
+        {
+            return;
+        }
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Explicit uninstall cleanup for plugin-owned Gravity Forms entry metadata.
+        $wpdb->query(
+            $wpdb->prepare(
+                'DELETE FROM %i WHERE meta_key LIKE %s OR meta_key LIKE %s',
+                $table,
+                $wpdb->esc_like( 'sentient_forms_' ) . '%',
+                $wpdb->esc_like( '_sentient_forms_' ) . '%'
+            )
+        );
     }
 
     private static function format_export_item( array $row ): array

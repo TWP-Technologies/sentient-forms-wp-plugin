@@ -113,6 +113,14 @@ if ( ! defined( 'WP_TESTS_CONFIG_FILE_PATH' ) ) {
     define( 'WP_TESTS_CONFIG_FILE_PATH', __DIR__ . '/wp-tests-config.php' );
 }
 
+if ( ! defined( 'SENTIENT_FORMS_ALLOW_INSECURE_NONCE_BYPASS' ) ) {
+    define( 'SENTIENT_FORMS_ALLOW_INSECURE_NONCE_BYPASS', true );
+}
+
+if ( ! defined( 'SENTIENT_FORMS_ALLOW_INSECURE_OUTBOUND_URLS' ) ) {
+    define( 'SENTIENT_FORMS_ALLOW_INSECURE_OUTBOUND_URLS', true );
+}
+
 require $includes_dir . '/functions.php';
 require_once __DIR__ . '/phpunit/helpers/async-fixtures.php';
 

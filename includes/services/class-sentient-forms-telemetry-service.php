@@ -129,16 +129,34 @@ class Sentient_Forms_Telemetry_Service
             'site_id'         => $license['site_id'] ?? '',
         ];
 
-        $response = wp_safe_remote_post(
+        $endpoint = Sentient_Forms_Url_Policy::validate_outbound_url(
             trailingslashit( $this->plugin->get_cps_base_url_value() ) . self::TELEMETRY_ENDPOINT,
+            'service'
+        );
+        if ( is_wp_error( $endpoint ) )
+        {
+            $this->plugin->set_telemetry_settings(
+                [
+                    'telemetry_opt_in' => $opt_in,
+                    'last_error'       => $endpoint->get_error_message(),
+                    'updated_at'       => current_time( 'mysql' ),
+                ]
+            );
+
+            return $this->plugin->get_telemetry_settings();
+        }
+
+        $response = Sentient_Forms_Url_Policy::remote_post(
+            $endpoint,
             [
-                'timeout' => 10,
-                'headers' => [
+                'timeout'            => 10,
+                'headers'            => [
                     'Content-Type'  => 'application/json',
                     'Authorization' => 'Bearer ' . $license['proxy_api_key'],
                 ],
-                'body'    => wp_json_encode( $body ),
-            ]
+                'body'               => wp_json_encode( $body ),
+            ],
+            'service'
         );
 
         if ( is_wp_error( $response ) )
@@ -220,6 +238,16 @@ class Sentient_Forms_Telemetry_Service
             return;
         }
 
+        $endpoint = Sentient_Forms_Url_Policy::validate_outbound_url(
+            trailingslashit( $this->plugin->get_cps_base_url_value() ) . 'telemetry/async',
+            'service'
+        );
+        if ( is_wp_error( $endpoint ) )
+        {
+            $this->log_debug( 'flush_queue skipped: invalid endpoint', [ 'error' => $endpoint->get_error_message() ] );
+            return;
+        }
+
         $batch = $this->store()->claim_telemetry_batch( self::DEFAULT_BATCH_SIZE );
         if ( empty( $batch ) )
         {
@@ -227,7 +255,6 @@ class Sentient_Forms_Telemetry_Service
             return;
         }
 
-        $endpoint = trailingslashit( $this->plugin->get_cps_base_url_value() ) . 'telemetry/async';
         $headers  = [
             'Content-Type'  => 'application/json',
             'Authorization' => 'Bearer ' . $proxy_key,
@@ -245,13 +272,14 @@ class Sentient_Forms_Telemetry_Service
                 continue;
             }
 
-            $response = wp_safe_remote_post(
+            $response = Sentient_Forms_Url_Policy::remote_post(
                 $endpoint,
                 [
-                    'timeout' => 5,
-                    'headers' => $headers,
-                    'body'    => wp_json_encode( $payload ),
-                ]
+                    'timeout'            => 5,
+                    'headers'            => $headers,
+                    'body'               => wp_json_encode( $payload ),
+                ],
+                'service'
             );
 
             if ( is_wp_error( $response ) )

@@ -154,8 +154,8 @@ class Sentient_Forms_Api_Client
 
     private function request( string $path, array $args ): WP_Error | array
     {
-        $url      = $this->base_url . '/' . ltrim( $path, '/' );
-        $response = wp_remote_request( $url, $args );
+        $url = $this->base_url . '/' . ltrim( $path, '/' );
+        $response = Sentient_Forms_Url_Policy::remote_request( $url, $args, 'service' );
 
         return $this->parse_response( $response );
     }

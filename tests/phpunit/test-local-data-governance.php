@@ -180,6 +180,86 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         }
     }
 
+    public function test_uninstall_deletes_plugin_options_transients_and_gravity_forms_meta_when_enabled(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $gf_entry_meta_table = $this->wpdb->prefix . 'gf_entry_meta';
+
+        update_option(
+            'sentient_forms_settings',
+            [
+                'api_key'       => 'legacy-api-key',
+                'license_key'   => 'legacy-license-key',
+                'proxy_api_key' => 'legacy-proxy-key',
+            ]
+        );
+        update_option( 'sentient_forms_plugin_settings', [ 'enable_logging' => true ] );
+        set_transient( 'sentient_forms_cps_version', 'test-version', MINUTE_IN_SECONDS );
+        update_option( 'sentient_forms_delete_data_on_uninstall', true );
+        remove_filter( 'query', [ $this, '_create_temporary_tables' ] );
+        remove_filter( 'query', [ $this, '_drop_temporary_tables' ] );
+
+        try
+        {
+            $this->wpdb->query(
+                "CREATE TABLE IF NOT EXISTS {$gf_entry_meta_table} (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    meta_key VARCHAR(255) NULL,
+                    meta_value LONGTEXT NULL,
+                    PRIMARY KEY  (id)
+                )"
+            );
+            $this->wpdb->insert(
+                $gf_entry_meta_table,
+                [
+                    'meta_key'   => 'sentient_forms_realtime_clarification_qna.v1',
+                    'meta_value' => 'stored qna',
+                ],
+                [ '%s', '%s' ]
+            );
+            $this->wpdb->insert(
+                $gf_entry_meta_table,
+                [
+                    'meta_key'   => '_sentient_forms_local_result',
+                    'meta_value' => 'hidden stored result',
+                ],
+                [ '%s', '%s' ]
+            );
+
+            Sentient_Forms_Installer::uninstall();
+
+            $this->assertNull( $this->wpdb->get_var( $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) );
+            $this->assertFalse( get_option( 'sentient_forms_settings', false ) );
+            $this->assertFalse( get_option( 'sentient_forms_plugin_settings', false ) );
+            $this->assertFalse( get_transient( 'sentient_forms_cps_version' ) );
+            $this->assertSame(
+                '0',
+                (string) $this->wpdb->get_var(
+                    $this->wpdb->prepare(
+                        "SELECT COUNT(*) FROM {$gf_entry_meta_table} WHERE meta_key LIKE %s",
+                        $this->wpdb->esc_like( 'sentient_forms_' ) . '%'
+                    )
+                )
+            );
+            $this->assertSame(
+                '0',
+                (string) $this->wpdb->get_var(
+                    $this->wpdb->prepare(
+                        "SELECT COUNT(*) FROM {$gf_entry_meta_table} WHERE meta_key LIKE %s",
+                        $this->wpdb->esc_like( '_sentient_forms_' ) . '%'
+                    )
+                )
+            );
+
+            Sentient_Forms_Installer::maybe_upgrade();
+        }
+        finally
+        {
+            add_filter( 'query', [ $this, '_create_temporary_tables' ] );
+            add_filter( 'query', [ $this, '_drop_temporary_tables' ] );
+        }
+    }
+
     public function test_sanitize_execution_result_for_storage_strips_full_output_by_default(): void
     {
         $result = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage(

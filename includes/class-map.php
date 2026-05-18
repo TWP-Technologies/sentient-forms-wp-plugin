@@ -119,6 +119,7 @@ return [
 	'Sentient_Forms_Spam_Analysis_Action' => __DIR__ . '/actions/class-sentient-forms-spam-analysis-action.php',
 	'Sentient_Forms_Telemetry_Controller' => __DIR__ . '/rest-api/controllers/class-telemetry-controller.php',
 	'Sentient_Forms_Telemetry_Service' => __DIR__ . '/services/class-sentient-forms-telemetry-service.php',
+	'Sentient_Forms_Url_Policy' => __DIR__ . '/security/class-sentient-forms-url-policy.php',
 	'Trait_Sentient_Forms_Permission_Utils' => __DIR__ . '/rest-api/permissions/trait-permission-utils.php',
 	'Trait_Sentient_Forms_Validation_Utils' => __DIR__ . '/rest-api/validators/trait-validation-utils.php',
 ];

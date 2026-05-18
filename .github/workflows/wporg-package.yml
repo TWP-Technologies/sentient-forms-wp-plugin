@@ -14,11 +14,13 @@ name: WordPress.org Package Preflight
       - 'composer.json'
       - 'composer.lock'
       - 'scripts/build-wporg-package.php'
+      - 'scripts/bump-release-version.php'
       - 'scripts/scan-wporg-package.php'
       - 'scripts/audit-wporg-licenses.php'
       - 'scripts/validate-wporg-readme.php'
       - 'admin-app/**'
       - '.github/workflows/wporg-package.yml'
+      - '.github/workflows/release-prep.yml'
   pull_request:
     paths:
       - 'assets/**'
@@ -29,11 +31,13 @@ name: WordPress.org Package Preflight
       - 'composer.json'
       - 'composer.lock'
       - 'scripts/build-wporg-package.php'
+      - 'scripts/bump-release-version.php'
       - 'scripts/scan-wporg-package.php'
       - 'scripts/audit-wporg-licenses.php'
       - 'scripts/validate-wporg-readme.php'
       - 'admin-app/**'
       - '.github/workflows/wporg-package.yml'
+      - '.github/workflows/release-prep.yml'
   workflow_dispatch:
     inputs:
       official_readme_validation:
@@ -150,7 +154,7 @@ jobs:
 
       - name: Create release zip
         id: release_zip
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/production' }}
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
         run: |
           set -euo pipefail
           package_dir="${{ steps.package.outputs.package-dir }}"
@@ -167,7 +171,7 @@ jobs:
           echo "sha-path=${sha_path}" >> "${GITHUB_OUTPUT}"
 
       - name: Publish GitHub release
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/production' }}
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -177,11 +181,15 @@ jobs:
           zip_path="${{ steps.release_zip.outputs.zip-path }}"
           sha_path="${{ steps.release_zip.outputs.sha-path }}"
           if gh release view "${tag}" >/dev/null 2>&1; then
-            gh release upload "${tag}" "${zip_path}" "${sha_path}" --clobber
-            gh release edit "${tag}" --target "${GITHUB_SHA}" --latest
-          else
-            gh release create "${tag}" "${zip_path}" "${sha_path}" \
-              --target "${GITHUB_SHA}" \
-              --title "Sentient Forms ${version}" \
-              --notes "Production package generated from the production branch by the WordPress.org package workflow."
+            echo "Release ${tag} already exists; refusing to overwrite immutable production artifacts." >&2
+            exit 1
           fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Tag ${tag} already exists; refusing to retarget a production release." >&2
+            exit 1
+          fi
+          gh release create "${tag}" "${zip_path}" "${sha_path}" \
+            --target "${GITHUB_SHA}" \
+            --title "Sentient Forms ${version}" \
+            --notes "Production package generated from the master branch by the WordPress.org package workflow." \
+            --latest

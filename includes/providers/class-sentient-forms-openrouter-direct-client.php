@@ -108,7 +108,7 @@ class Sentient_Forms_OpenRouter_Direct_Client implements Sentient_Forms_Provider
 
         $base_url = (string) apply_filters( 'sentient_forms_openrouter_base_url', self::DEFAULT_BASE_URL );
         $url      = rtrim( $base_url, '/' ) . '/' . ltrim( $path, '/' );
-        $response = wp_remote_request( $url, $args );
+        $response = Sentient_Forms_Url_Policy::remote_request( $url, $args, 'service' );
 
         return $this->parse_response( $response );
     }

@@ -85,6 +85,29 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         $this->assertTrue( Sentient_Forms_Local_Data_Governance::store_full_ai_outputs_enabled() );
     }
 
+    public function test_legacy_nonce_disable_option_does_not_bypass_mutating_rest_nonce(): void
+    {
+        add_filter( 'sentient_forms_allow_insecure_nonce_bypass', '__return_false', PHP_INT_MAX );
+        update_option( 'sentient_forms_settings', [ 'enforce_nonce_verification' => false ] );
+
+        try
+        {
+            $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' );
+            $request->set_body_params(
+                [
+                    'enable_logging' => true,
+                ]
+            );
+
+            $response = rest_get_server()->dispatch( $request );
+            $this->assertSame( 403, $response->get_status() );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_allow_insecure_nonce_bypass', '__return_false', PHP_INT_MAX );
+        }
+    }
+
     public function test_settings_update_rejects_unsupported_retention_window(): void
     {
         update_option( 'sentient_forms_execution_event_retention_days', 90 );

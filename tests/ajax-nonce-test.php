@@ -12,6 +12,7 @@ class AjaxNonceIntegrationTest extends WP_Ajax_UnitTestCase {
         parent::setUp();
         wp_set_current_user( self::$admin_id );
         update_option( 'sentient_forms_settings', [ 'enforce_nonce_verification' => true ] );
+        add_filter( 'sentient_forms_allow_insecure_nonce_bypass', '__return_false', PHP_INT_MAX );
         $plugin = Sentient_Forms_Plugin::instance();
         $admin  = new Sentient_Forms_Admin( $plugin );
         $admin->init();
@@ -35,15 +36,16 @@ class AjaxNonceIntegrationTest extends WP_Ajax_UnitTestCase {
             remove_filter( 'pre_http_request', $this->http_mock, 10 );
             $this->http_mock = null;
         }
+        remove_filter( 'sentient_forms_allow_insecure_nonce_bypass', '__return_false', PHP_INT_MAX );
         parent::tearDown();
     }
 
     public function test_missing_nonce_rejected() {
         try {
             $this->_handleAjax( 'sentient_forms_test_connection' );
-            $this->fail( 'Expected WPAjaxDieContinueException was not thrown' );
-        } catch ( WPAjaxDieContinueException $e ) {
-            $this->assertEquals( 403, $e->getCode() );
+            $this->fail( 'Expected WPAjaxDieStopException was not thrown' );
+        } catch ( WPAjaxDieStopException $e ) {
+            $this->assertSame( '-1', $e->getMessage() );
         }
     }
 
@@ -54,18 +56,20 @@ class AjaxNonceIntegrationTest extends WP_Ajax_UnitTestCase {
             $this->_handleAjax( 'sentient_forms_test_connection' );
             $this->fail( 'Expected WPAjaxDieContinueException was not thrown' );
         } catch ( WPAjaxDieContinueException $e ) {
-            $this->assertEquals( 200, $e->getCode() );
+            $response = json_decode( $this->_last_response, true );
+            $this->assertIsArray( $response );
+            $this->assertTrue( $response['success'] ?? false );
         }
     }
 
-    public function test_flag_disables_nonce_check() {
+    public function test_legacy_flag_does_not_disable_nonce_check() {
         update_option( 'sentient_forms_settings', [ 'enforce_nonce_verification' => false ] );
         $_POST['api_key'] = 'dummy';
         try {
             $this->_handleAjax( 'sentient_forms_test_connection' );
-            $this->fail( 'Expected WPAjaxDieContinueException was not thrown' );
-        } catch ( WPAjaxDieContinueException $e ) {
-            $this->assertEquals( 200, $e->getCode() );
+            $this->fail( 'Expected WPAjaxDieStopException was not thrown' );
+        } catch ( WPAjaxDieStopException $e ) {
+            $this->assertSame( '-1', $e->getMessage() );
         }
     }
 }
