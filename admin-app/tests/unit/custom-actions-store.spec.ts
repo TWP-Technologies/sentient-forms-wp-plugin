@@ -166,6 +166,20 @@ describe('customActionsStore', () => {
 		expect(notifyErrorSpy).toHaveBeenCalled();
 	});
 
+	it('does not describe missing proxy key as a managed-service gate', async () => {
+		const apiError = new ApiClientError('Request failed', 422, {
+			error_code: 'cps_missing_proxy_key',
+			error: { code: 'cps_missing_proxy_key', message: 'proxy key missing' }
+		});
+		stubClient.getCustomActions.mockRejectedValue(apiError);
+
+		await customActionsStore.load();
+		const state = snapshotState();
+
+		expect(state.error).toContain('Custom Actions are available locally');
+		expect(state.error).not.toContain('before managing custom actions');
+	});
+
 	it('creates actions and updates quota data', async () => {
 		stubClient.getCustomActions.mockResolvedValue({
 			actions: [],

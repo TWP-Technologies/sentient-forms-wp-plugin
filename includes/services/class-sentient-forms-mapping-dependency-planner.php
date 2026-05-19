@@ -289,14 +289,14 @@ class Sentient_Forms_Mapping_Dependency_Planner
                 ? sanitize_key( (string) $source['type'] )
                 : '';
 
-            if ( 'mapping' !== $type && 'hook_root' !== $type )
+            if ( 'mapping' !== $type && 'hook_root' !== $type && 'unbound' !== $type )
             {
                 continue;
             }
 
-            if ( 'hook_root' === $type )
+            if ( 'hook_root' === $type || 'unbound' === $type )
             {
-                $normalized[ $hook_key ] = [ 'type' => 'hook_root' ];
+                $normalized[ $hook_key ] = [ 'type' => $type ];
                 continue;
             }
 

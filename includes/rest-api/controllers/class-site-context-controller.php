@@ -447,7 +447,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         $selection = $this->sanitize_model_selection( $settings['generation_model_selection'] ?? null );
-        $provider  = sanitize_key( (string) ( $selection['provider'] ?? 'sentient_managed' ) );
+        $provider  = sanitize_key( (string) ( $selection['provider'] ?? 'openrouter' ) );
         $model     = $this->resolve_generation_model( $selection );
         $prompt    = $this->build_generation_prompt();
         $content   = null;
@@ -851,7 +851,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         return [
             'primary'   => 'sf_research',
             'is_preset' => true,
-            'provider'  => 'sentient_managed',
+            'provider'  => 'openrouter',
             'tools'     => [
                 'tool_choice' => 'auto',
                 'web_search'  => [

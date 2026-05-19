@@ -28,6 +28,7 @@ class MetaControllerTest extends WP_UnitTestCase
     protected function tearDown(): void
     {
         Sentient_Forms_Plugin::instance()->clear_license_data();
+        remove_filter( 'sentient_forms_enable_legacy_cps_custom_actions', '__return_true' );
         add_filter( 'sentient_forms_rest_api_controller_classes', '__return_empty_array' );
         parent::tearDown();
     }
@@ -60,7 +61,7 @@ class MetaControllerTest extends WP_UnitTestCase
         $this->assertArrayHasKey( 'cps_version', $data );
     }
 
-    public function test_capabilities_returns_limited_without_license(): void
+    public function test_capabilities_returns_local_custom_actions_without_license(): void
     {
         Sentient_Forms_Plugin::instance()->clear_license_data();
 
@@ -71,9 +72,24 @@ class MetaControllerTest extends WP_UnitTestCase
         $this->assertSame( 200, $response->get_status() );
         $data = $response->get_data();
 
-        $this->assertFalse( $data['supports_custom_actions'] );
+        $this->assertTrue( $data['supports_custom_actions'] );
         $this->assertTrue( $data['supports_status'] );
         $this->assertFalse( $data['supports_credits'] );
+    }
+
+    public function test_capabilities_keep_legacy_cps_custom_actions_behind_proxy_key_when_enabled(): void
+    {
+        add_filter( 'sentient_forms_enable_legacy_cps_custom_actions', '__return_true' );
+        Sentient_Forms_Plugin::instance()->clear_license_data();
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/meta/capabilities' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+
+        $this->assertFalse( $data['supports_custom_actions'] );
     }
 
     public function test_capabilities_requires_authentication(): void

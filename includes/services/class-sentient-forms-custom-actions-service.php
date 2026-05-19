@@ -135,7 +135,7 @@ class Sentient_Forms_Custom_Actions_Service
         {
             return new WP_Error(
                 'cps_missing_proxy_key',
-                __( 'Sentient Forms proxy key is missing; activate your license before managing custom actions.', 'sentient-forms' )
+                __( 'Legacy CPS custom-action sync requires a Sentient Forms site credential. Local custom actions remain available without managed service activation.', 'sentient-forms' )
             );
         }
 

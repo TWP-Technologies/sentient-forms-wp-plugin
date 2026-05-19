@@ -45,9 +45,9 @@ function initialState(): CustomActionsState {
 
 const friendlyMessages: Record<string, string> = {
 	cps_missing_proxy_key:
-		'Activate your Sentient Forms managed service before managing custom actions.',
+		'Custom Actions are available locally. Configure Direct OpenRouter or Sentient managed execution before running actions through that provider.',
 	quota_exceeded:
-		'You reached the custom action quota for your tier. Archive an existing one or upgrade your plan.'
+		'You reached the custom action quota for the selected provider path. Archive an existing action or adjust provider limits before retrying.'
 };
 
 export const customActionsState = $state(initialState());

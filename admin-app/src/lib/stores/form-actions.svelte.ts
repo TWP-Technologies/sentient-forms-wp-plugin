@@ -61,7 +61,7 @@ const friendlyMessages: Record<string, string> = {
 	invalid_request:
 		'Sentient Forms sent an invalid execution payload. Review your action configuration and try again.',
 	cps_missing_proxy_key:
-		'Sentient Forms managed service key is missing. Activate your license on the Managed Service tab to resume execution.',
+		'The selected managed execution route needs a Sentient Forms site credential. Switch the action provider to Direct OpenRouter or connect managed execution before retrying.',
 	duplicate_execution:
 		'Sentient Forms already processed this submission. Refresh the status to review the previous result.'
 };

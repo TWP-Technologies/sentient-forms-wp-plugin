@@ -14,9 +14,17 @@ if ( defined( 'WP_CLI' ) && WP_CLI )
         'sentient-forms dev-telemetry',
         function () {
             $svc = Sentient_Forms_Plugin::instance()->get_telemetry_service();
-            $svc->queue_event( 'manual_test', [ 'note' => 'dev-cli' ] );
+            $svc->queue_event(
+                'async_health_warning',
+                [
+                    'provider_path' => 'dev_cli',
+                    'job_type'      => 'manual_test',
+                    'status'        => 'warning',
+                    'warning_code'  => 'dev_cli_manual_test',
+                ]
+            );
             $svc->flush_queue();
-            WP_CLI::success( 'Queued and flushed manual_test telemetry event.' );
+            WP_CLI::success( 'Queued and flushed async_health_warning telemetry event.' );
         }
     );
 }

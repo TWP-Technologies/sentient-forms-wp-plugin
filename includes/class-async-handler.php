@@ -1729,7 +1729,7 @@ class Sentient_Forms_Async_Handler
     }
 
     /**
-     * Ensure evaluation payload carries identifiers needed by CPS telemetry/logs.
+     * Ensure evaluation payload carries identifiers needed by local execution logs.
      */
     private function enrich_evaluation_payload_ids( array $payload, array $job ): array
     {

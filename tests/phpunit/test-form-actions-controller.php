@@ -767,6 +767,395 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'structured.message', $stored_mappings[0]['effect_mapping_json']['entry_note']['path'] ?? null );
     }
 
+    public function test_add_form_action_rejects_missing_bundled_local_first_dependency(): void
+    {
+        global $wpdb;
+
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/21/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 21 );
+        $request->set_param( 'central_action_id', 'spam_detection_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
+        $request->set_param( 'trigger_hooks', [ 'gform_validation' ] );
+        $request->set_param(
+            'settings',
+            [
+                'trigger_sources' => [
+                    'gform_validation' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => 'local_first_999999',
+                    ],
+                ],
+                'dependency_ids'   => [ 'local_first_999999' ],
+            ]
+        );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_dependency_missing', $response->get_error_code() );
+        $this->assertSame( 400, $response->get_error_data()['status'] ?? null );
+        $this->assertSame( [], $mappings->list_for_form( 'gravity_forms', '21' ) );
+    }
+
+    public function test_add_form_action_maps_existing_custom_action_to_local_first_execution(): void
+    {
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'route_lead_custom',
+                'display_name'         => 'Route Lead Custom',
+                'definition_json'      => [
+                    'action_kind'     => 'custom_definition',
+                    'prompt_template' => 'Route {{entry}}.',
+                    'response_format' => [ 'type' => 'json_object' ],
+                ],
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'primary'  => 'openrouter/auto',
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/15/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 15 );
+        $request->set_param( 'central_action_id', 'route_lead_custom' );
+        $request->set_param( 'action_type_indicator', 'custom' );
+        $request->set_param( 'trigger_hooks', [ 'gform_after_submission' ] );
+        $request->set_param(
+            'settings',
+            [
+                'input_mapping' => [
+                    'email' => '3',
+                ],
+            ]
+        );
+
+        $response = $this->controller->add_form_action( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 201, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'local_first', $data['action_type_indicator'] ?? null );
+        $this->assertSame( 'route_lead_custom', $data['central_action_id'] ?? null );
+        $this->assertSame( 'Route Lead Custom', $data['action_name_label'] ?? null );
+
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $stored_mappings = $mappings->list_for_form( 'gravity_forms', '15' );
+
+        $this->assertCount( 1, $stored_mappings );
+        $this->assertSame( $action_id, (int) ( $stored_mappings[0]['action_id'] ?? 0 ) );
+        $this->assertSame( 'custom_action', $stored_mappings[0]['action_kind'] ?? null );
+        $this->assertSame( 'async', $stored_mappings[0]['execution_mode'] ?? null );
+        $this->assertSame( [ 'email' => '3' ], $stored_mappings[0]['input_bindings_json'] ?? null );
+    }
+
+    public function test_add_form_action_preserves_custom_action_trigger_sources(): void
+    {
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+
+        $parent_action_id = $custom_actions->create(
+            [
+                'code'                 => 'parent_custom_action',
+                'display_name'         => 'Parent Custom Action',
+                'definition_json'      => [ 'prompt_template' => 'Parent {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $parent_action_id );
+
+        $parent_mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '16',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $parent_action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $parent_mapping_id );
+
+        $child_action_id = $custom_actions->create(
+            [
+                'code'                 => 'child_custom_action',
+                'display_name'         => 'Child Custom Action',
+                'definition_json'      => [ 'prompt_template' => 'Child {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $child_action_id );
+
+        $parent_linkage_id = 'local_first_' . $parent_mapping_id;
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/16/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 16 );
+        $request->set_param( 'central_action_id', 'child_custom_action' );
+        $request->set_param( 'action_type_indicator', 'custom' );
+        $request->set_param( 'trigger_hooks', [ 'gform_after_submission' ] );
+        $request->set_param(
+            'settings',
+            [
+                'trigger_sources' => [
+                    'gform_after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => $parent_linkage_id,
+                    ],
+                ],
+                'dependency_ids'   => [ $parent_linkage_id ],
+            ]
+        );
+
+        $response = $this->controller->add_form_action( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 201, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( $parent_linkage_id, $data['settings']['trigger_sources']['gform_after_submission']['mapping_id'] ?? null );
+        $this->assertSame( [ $parent_linkage_id ], $data['settings']['dependency_ids'] ?? null );
+
+        $stored_mappings = $mappings->list_for_form( 'gravity_forms', '16' );
+        $child_mapping = null;
+        foreach ( $stored_mappings as $mapping )
+        {
+            if ( $child_action_id === (int) ( $mapping['action_id'] ?? 0 ) )
+            {
+                $child_mapping = $mapping;
+                break;
+            }
+        }
+
+        $this->assertIsArray( $child_mapping );
+        $this->assertSame( $parent_linkage_id, $child_mapping['settings_json']['trigger_sources']['gform_after_submission']['mapping_id'] ?? null );
+        $this->assertSame( [ $parent_linkage_id ], $child_mapping['settings_json']['dependency_ids'] ?? null );
+    }
+
+    public function test_add_form_action_allows_existing_custom_action_dependency_on_option_backed_mapping(): void
+    {
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'                 => 'option_parent_dependent_custom_action',
+                'display_name'         => 'Option Parent Dependent Custom Action',
+                'definition_json'      => [ 'prompt_template' => 'Use {{entry}} after parent.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $option_key = 'sentient_forms_actions_gravity_forms_19';
+        update_option(
+            $option_key,
+            [
+                'map_parent' => [
+                    'local_mapping_id'           => 'map_parent',
+                    'central_action_id'          => 'entry_summary_v1',
+                    'action_type_indicator'      => 'master',
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'is_action_enabled_for_form' => true,
+                    'settings'                   => [
+                        'execution_mode' => 'after_submission',
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/19/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 19 );
+        $request->set_param( 'central_action_id', 'option_parent_dependent_custom_action' );
+        $request->set_param( 'action_type_indicator', 'custom' );
+        $request->set_param( 'trigger_hooks', [ 'gform_after_submission' ] );
+        $request->set_param(
+            'settings',
+            [
+                'execution_mode'  => 'after_submission',
+                'trigger_sources' => [
+                    'gform_after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => 'map_parent',
+                    ],
+                ],
+                'dependency_ids'   => [ 'map_parent' ],
+            ]
+        );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 201, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'map_parent', $data['settings']['trigger_sources']['gform_after_submission']['mapping_id'] ?? null );
+
+        delete_option( $option_key );
+    }
+
+    public function test_add_form_action_rejects_missing_custom_action_dependency(): void
+    {
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'                 => 'orphan_dependency_custom_action',
+                'display_name'         => 'Orphan Dependency Custom Action',
+                'definition_json'      => [ 'prompt_template' => 'Run {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/17/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 17 );
+        $request->set_param( 'central_action_id', 'orphan_dependency_custom_action' );
+        $request->set_param( 'action_type_indicator', 'custom' );
+        $request->set_param( 'trigger_hooks', [ 'gform_after_submission' ] );
+        $request->set_param(
+            'settings',
+            [
+                'trigger_sources' => [
+                    'gform_after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => 'local_first_999999',
+                    ],
+                ],
+                'dependency_ids'   => [ 'local_first_999999' ],
+            ]
+        );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_dependency_missing', $response->get_error_code() );
+        $this->assertSame( 400, $response->get_error_data()['status'] ?? null );
+        $this->assertSame( [], $mappings->list_for_form( 'gravity_forms', '17' ) );
+    }
+
+    public function test_add_form_action_rejects_multi_hook_custom_action_without_partial_write(): void
+    {
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'                 => 'multi_hook_partial_custom_action',
+                'display_name'         => 'Multi Hook Partial Custom Action',
+                'definition_json'      => [ 'prompt_template' => 'Run {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/20/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 20 );
+        $request->set_param( 'central_action_id', 'multi_hook_partial_custom_action' );
+        $request->set_param( 'action_type_indicator', 'custom' );
+        $request->set_param( 'trigger_hooks', [ 'gform_validation', 'gform_after_submission' ] );
+        $request->set_param(
+            'settings',
+            [
+                'trigger_sources' => [
+                    'gform_validation'       => [
+                        'type' => 'hook_root',
+                    ],
+                    'gform_after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => 'local_first_999999',
+                    ],
+                ],
+                'dependency_ids'   => [ 'local_first_999999' ],
+            ]
+        );
+
+        $response = $this->controller->add_form_action( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_dependency_missing', $response->get_error_code() );
+        $this->assertSame( 400, $response->get_error_data()['status'] ?? null );
+        $this->assertSame( [], $mappings->list_for_form( 'gravity_forms', '20' ) );
+    }
+
+    public function test_update_form_action_rejects_missing_custom_action_dependency(): void
+    {
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $action_id      = $custom_actions->create(
+            [
+                'code'                 => 'update_dependency_custom_action',
+                'display_name'         => 'Update Dependency Custom Action',
+                'definition_json'      => [ 'prompt_template' => 'Update {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '18',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $request = new WP_REST_Request( 'PATCH', '/sentient-forms/v1/gravity_forms/forms/18/actions/local_first_' . $mapping_id );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 18 );
+        $request->set_param( 'local_mapping_id', 'local_first_' . $mapping_id );
+        $request->set_param(
+            'settings',
+            [
+                'trigger_sources' => [
+                    'gform_after_submission' => [
+                        'type'       => 'mapping',
+                        'mapping_id' => 'local_first_999999',
+                    ],
+                ],
+                'dependency_ids'   => [ 'local_first_999999' ],
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'rest_invalid_dependency_missing', $response->get_error_code() );
+        $this->assertSame( 400, $response->get_error_data()['status'] ?? null );
+        $stored = $mappings->get( $mapping_id );
+        $this->assertArrayNotHasKey( 'trigger_sources', $stored['settings_json'] ?? [] );
+    }
+
     public function test_add_form_action_creates_local_first_entry_summary_mapping_only_on_supported_hook(): void
     {
         $data = $this->create_bundled_local_first_mapping(
@@ -1733,6 +2122,88 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'unbound', $stored['map_b']['settings']['trigger_sources']['gform_after_submission']['type'] ?? null );
 
         delete_option( $option_key );
+    }
+
+    public function test_delete_form_action_item_removes_local_first_dependency_reference(): void
+    {
+        global $wpdb;
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+
+        $parent_action_id = $custom_actions->create(
+            [
+                'code'                 => 'delete_parent_custom_action',
+                'display_name'         => 'Delete Parent Custom Action',
+                'definition_json'      => [ 'prompt_template' => 'Parent {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $parent_action_id );
+
+        $parent_mapping_id = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '21',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $parent_action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $parent_mapping_id );
+
+        $child_action_id = $custom_actions->create(
+            [
+                'code'                 => 'delete_child_custom_action',
+                'display_name'         => 'Delete Child Custom Action',
+                'definition_json'      => [ 'prompt_template' => 'Child {{entry}}.' ],
+                'model_selection_json' => [ 'provider' => 'openrouter' ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $child_action_id );
+
+        $parent_linkage_id = 'local_first_' . $parent_mapping_id;
+        $child_mapping_id  = $mappings->create(
+            [
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '21',
+                'hook'                => 'gform_after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $child_action_id,
+                'input_bindings_json' => [],
+                'execution_mode'      => 'async',
+                'settings_json'       => [
+                    'trigger_sources' => [
+                        'gform_after_submission' => [
+                            'type'       => 'mapping',
+                            'mapping_id' => $parent_linkage_id,
+                        ],
+                    ],
+                    'dependency_ids'   => [ $parent_linkage_id ],
+                ],
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $child_mapping_id );
+
+        $request = new WP_REST_Request( 'DELETE', '/sentient-forms/v1/gravity_forms/forms/21/actions/' . $parent_linkage_id );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 21 );
+        $request->set_param( 'local_mapping_id', $parent_linkage_id );
+
+        $response = $this->controller->delete_form_action_item( $request );
+        $data     = $response->get_data();
+        $child    = $mappings->get( $child_mapping_id );
+
+        $this->assertTrue( $data['deleted'] ?? false );
+        $this->assertNull( $mappings->get( $parent_mapping_id ) );
+        $this->assertSame( 'unbound', $child['settings_json']['trigger_sources']['gform_after_submission']['type'] ?? null );
+        $this->assertArrayNotHasKey( 'dependency_ids', $child['settings_json'] ?? [] );
     }
 
     public function test_duplicate_form_action_item_inserts_duplicate_and_rewires_parent_children(): void

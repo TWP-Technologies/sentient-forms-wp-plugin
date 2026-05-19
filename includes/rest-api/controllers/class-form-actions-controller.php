@@ -298,6 +298,14 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $settings['conditions'] = $row['conditions_json'];
         }
 
+        $stored_trigger_sources = isset( $row['settings_json']['trigger_sources'] ) && is_array( $row['settings_json']['trigger_sources'] )
+            ? $this->sanitize_trigger_sources( $row['settings_json']['trigger_sources'] )
+            : [];
+        if ( [] !== $stored_trigger_sources )
+        {
+            $settings['trigger_sources'] = $stored_trigger_sources;
+        }
+
         return [
             'local_mapping_id'           => $this->build_local_first_mapping_id( $id ),
             'local_form_mapping_id'      => $id,
@@ -314,6 +322,161 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             'repair_state'               => $identity['repair_state'],
             'source'                     => 'local_first',
         ];
+    }
+
+    /**
+     * Validate a candidate custom-table mapping against the form's dependency graph.
+     *
+     * @param string               $form_source_slug Form source slug.
+     * @param string               $form_id          Form id.
+     * @param array<string, mixed> $candidate_row    Candidate mapping row payload.
+     * @param int|null             $existing_id      Existing local mapping id when updating.
+     *
+     * @return true|WP_Error
+     */
+    private function validate_local_first_mapping_dependencies_for_row(
+        string $form_source_slug,
+        string $form_id,
+        array $candidate_row,
+        ?int $existing_id = null
+    ): true | WP_Error
+    {
+        return $this->validate_local_first_mapping_dependencies_for_rows(
+            $form_source_slug,
+            $form_id,
+            [
+                [
+                    'payload'     => $candidate_row,
+                    'existing_id' => $existing_id,
+                ],
+            ]
+        );
+    }
+
+    /**
+     * Validate pending custom-table mapping rows against the complete local graph.
+     *
+     * @param string $form_source_slug Form source slug.
+     * @param string $form_id          Form id.
+     * @param array<int, array{payload: array<string, mixed>, existing_id?: int|null}> $candidate_rows Pending rows.
+     *
+     * @return true|WP_Error
+     */
+    private function validate_local_first_mapping_dependencies_for_rows(
+        string $form_source_slug,
+        string $form_id,
+        array $candidate_rows
+    ): true | WP_Error
+    {
+        if ( ! $this->local_form_mappings )
+        {
+            return true;
+        }
+
+        $rows    = $this->local_form_mappings->list_for_form( $form_source_slug, $form_id );
+        $actions = $this->option_backed_dependency_actions_for_form( $form_source_slug, $form_id );
+
+        $excluded_ids = [];
+        foreach ( $candidate_rows as $candidate )
+        {
+            $existing_id = absint( $candidate['existing_id'] ?? 0 );
+            if ( $existing_id > 0 )
+            {
+                $excluded_ids[] = $existing_id;
+            }
+        }
+
+        foreach ( $rows as $row )
+        {
+            $row_id = absint( $row['id'] ?? 0 );
+            if ( $row_id > 0 && in_array( $row_id, $excluded_ids, true ) )
+            {
+                continue;
+            }
+
+            $linkage = $this->transform_local_first_mapping_to_linkage( $row );
+            if ( null !== $linkage )
+            {
+                $actions[ (string) $linkage['local_mapping_id'] ] = $linkage;
+            }
+        }
+
+        $next_id = $this->next_local_first_validation_mapping_id( $rows );
+        foreach ( $candidate_rows as $candidate )
+        {
+            $candidate_row = isset( $candidate['payload'] ) && is_array( $candidate['payload'] )
+                ? $candidate['payload']
+                : [];
+            $existing_id   = absint( $candidate['existing_id'] ?? 0 );
+
+            $candidate_row['id'] = $existing_id > 0 ? $existing_id : $next_id++;
+
+            $candidate_linkage = $this->transform_local_first_mapping_to_linkage( $candidate_row );
+            if ( null === $candidate_linkage )
+            {
+                return $this->prepare_error_response(
+                    'rest_local_first_mapping_invalid',
+                    __( 'Local form mapping could not be validated.', 'sentient-forms' ),
+                    400
+                );
+            }
+
+            $actions[ (string) $candidate_linkage['local_mapping_id'] ] = $candidate_linkage;
+        }
+
+        return $this->dependency_validation_response( $this->validate_mapping_dependencies( $actions ) );
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function option_backed_dependency_actions_for_form( string $form_source_slug, string $form_id ): array
+    {
+        $option_key = $this->get_actions_option_key( $form_source_slug, (int) $form_id );
+        $stored     = get_option( $option_key, [] );
+        if ( ! is_array( $stored ) )
+        {
+            return [];
+        }
+
+        return $this->normalize_local_action_mappings(
+            $this->extract_action_linkages_from_option( $stored )
+        );
+    }
+
+    private function dependency_validation_response( true | WP_Error $result ): true | WP_Error
+    {
+        if ( ! is_wp_error( $result ) )
+        {
+            return true;
+        }
+
+        $data = $result->get_error_data();
+        if ( is_array( $data ) && isset( $data['status'] ) )
+        {
+            return $result;
+        }
+
+        return $this->prepare_error_response(
+            $result->get_error_code(),
+            $result->get_error_message(),
+            400,
+            is_array( $data ) ? $data : []
+        );
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows Existing custom-table mapping rows.
+     */
+    private function next_local_first_validation_mapping_id( array $rows ): int
+    {
+        $max_id = 0;
+        foreach ( $rows as $row )
+        {
+            $max_id = max( $max_id, absint( $row['id'] ?? 0 ) );
+        }
+
+        return $max_id + 1;
     }
 
     /**
@@ -1965,6 +2128,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             return $this->create_bundled_local_first_action( $request );
         }
 
+        if ( $this->should_create_existing_local_custom_action_mapping( $request ) )
+        {
+            return $this->create_existing_local_custom_action_mapping( $request );
+        }
+
         $option_key = $this->get_actions_option_key( $request->get_param( 'form_source_slug' ), (int)$request->get_param( 'form_id' ) );
         $actions    = get_option( $option_key, [] );
         if ( !is_array( $actions ) )
@@ -2061,6 +2229,177 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         return Sentient_Forms_Bundled_Action_Templates::has( $central_action_id );
     }
 
+    private function should_create_existing_local_custom_action_mapping( WP_REST_Request $request ): bool
+    {
+        if ( ! $this->local_form_mappings || ! $this->local_custom_actions )
+        {
+            return false;
+        }
+
+        $action_type_indicator = sanitize_key( (string) $request->get_param( 'action_type_indicator' ) );
+        if ( 'custom' !== $action_type_indicator )
+        {
+            return false;
+        }
+
+        $custom_action_code = sanitize_key( (string) $request->get_param( 'central_action_id' ) );
+        return '' !== $custom_action_code && is_array( $this->local_custom_actions->get_by_code( $custom_action_code ) );
+    }
+
+    private function create_existing_local_custom_action_mapping( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $custom_action_code = sanitize_key( (string) $request->get_param( 'central_action_id' ) );
+        $custom_action      = $this->local_custom_actions ? $this->local_custom_actions->get_by_code( $custom_action_code ) : null;
+        if ( ! is_array( $custom_action ) )
+        {
+            return $this->prepare_error_response(
+                'rest_local_custom_action_not_found',
+                __( 'Local custom action could not be found.', 'sentient-forms' ),
+                404
+            );
+        }
+
+        if ( 'active' !== sanitize_key( (string) ( $custom_action['status'] ?? '' ) ) )
+        {
+            return $this->prepare_error_response(
+                'rest_local_custom_action_inactive',
+                __( 'Local custom action must be active before it can be mapped.', 'sentient-forms' ),
+                409
+            );
+        }
+
+        if ( $request->has_param( 'settings' ) )
+        {
+            $settings_validation = $this->validate_settings_write_payload( $request->get_param( 'settings' ) );
+            if ( is_wp_error( $settings_validation ) )
+            {
+                return $settings_validation;
+            }
+        }
+
+        $form_source = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
+        $form_id     = sanitize_text_field( (string) (int) $request->get_param( 'form_id' ) );
+        $settings      = $request->has_param( 'settings' ) ? $this->sanitize_settings( $request->get_param( 'settings' ) ) : [];
+        $trigger_hooks = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
+        if ( [] === $trigger_hooks )
+        {
+            $trigger_hooks = [ 'gform_after_submission' ];
+        }
+
+        $storage_validation = $this->validate_realtime_storage_target( $form_source, $form_id, $settings );
+        if ( is_wp_error( $storage_validation ) )
+        {
+            return $storage_validation;
+        }
+
+        $realtime_policy = $this->validate_realtime_trigger_policy( $trigger_hooks, $custom_action_code, $settings );
+        if ( is_wp_error( $realtime_policy ) )
+        {
+            return $realtime_policy;
+        }
+
+        $definition = is_array( $custom_action['definition_json'] ?? null ) ? $custom_action['definition_json'] : [];
+        $enabled    = $request->has_param( 'is_action_enabled_for_form' )
+            ? rest_sanitize_boolean( $request->get_param( 'is_action_enabled_for_form' ) )
+            : true;
+        $first_row         = null;
+        $action_id         = absint( $custom_action['id'] ?? 0 );
+        $pending_mappings  = [];
+
+        foreach ( $trigger_hooks as $hook )
+        {
+            $payload = [
+                'form_source'         => $form_source,
+                'form_id'             => $form_id,
+                'hook'                => $hook,
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'conditions_json'     => isset( $settings['conditions'] ) && is_array( $settings['conditions'] )
+                    ? $settings['conditions']
+                    : null,
+                'input_bindings_json' => isset( $settings['input_mapping'] ) && is_array( $settings['input_mapping'] )
+                    ? $settings['input_mapping']
+                    : [],
+                'execution_mode'      => $this->resolve_local_first_execution_mode_for_hook( $hook, $settings, $definition ),
+                'effect_mapping_json' => $this->build_local_first_effect_mapping( $definition, $settings ),
+                'settings_json'       => $this->build_local_first_runtime_settings( $settings ),
+                'enabled'             => $enabled,
+            ];
+
+            $existing = $this->find_existing_local_first_mapping( $form_source, $form_id, $hook, $action_id );
+            $pending_mappings[] = [
+                'payload'     => $payload,
+                'existing'    => is_array( $existing ) ? $existing : null,
+                'existing_id' => is_array( $existing ) ? absint( $existing['id'] ?? 0 ) : null,
+            ];
+        }
+
+        $dependency_validation = $this->validate_local_first_mapping_dependencies_for_rows(
+            $form_source,
+            $form_id,
+            $pending_mappings
+        );
+        if ( is_wp_error( $dependency_validation ) )
+        {
+            return $dependency_validation;
+        }
+
+        foreach ( $pending_mappings as $pending_mapping )
+        {
+            $payload  = $pending_mapping['payload'];
+            $existing = $pending_mapping['existing'];
+
+            $row      = is_array( $existing )
+                ? $this->local_form_mappings->update( absint( $existing['id'] ?? 0 ), $payload )
+                : $this->local_form_mappings->create( $payload );
+
+            if ( is_wp_error( $row ) )
+            {
+                return $row;
+            }
+
+            if ( ! is_array( $row ) )
+            {
+                $row = $this->local_form_mappings->get( (int) $row );
+            }
+
+            if ( ! is_array( $row ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_local_first_mapping_not_found',
+                    __( 'Local form mapping could not be created.', 'sentient-forms' ),
+                    500
+                );
+            }
+
+            if ( null === $first_row )
+            {
+                $first_row = $row;
+            }
+        }
+
+        if ( ! is_array( $first_row ) )
+        {
+            return $this->prepare_error_response(
+                'rest_local_first_mapping_not_created',
+                __( 'Local custom action could not be linked to the form.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        $linkage = $this->transform_local_first_mapping_to_linkage( $first_row );
+        if ( null === $linkage )
+        {
+            return $this->prepare_error_response(
+                'rest_local_first_mapping_invalid',
+                __( 'Local custom action mapping could not be normalized.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        return $this->prepare_item_for_response( $linkage, 201 );
+    }
+
     private function create_bundled_local_first_action( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
         $template_code = sanitize_key( (string) $request->get_param( 'central_action_id' ) );
@@ -2151,8 +2490,9 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $enabled    = $request->has_param( 'is_action_enabled_for_form' )
             ? rest_sanitize_boolean( $request->get_param( 'is_action_enabled_for_form' ) )
             : true;
-        $first_row  = null;
-        $action_id  = absint( $custom_action['id'] ?? 0 );
+        $first_row        = null;
+        $action_id        = absint( $custom_action['id'] ?? 0 );
+        $pending_mappings = [];
 
         foreach ( $trigger_hooks as $hook )
         {
@@ -2175,7 +2515,29 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             ];
 
             $existing = $this->find_existing_local_first_mapping( $form_source, $form_id, $hook, $action_id );
-            $row      = $existing
+            $pending_mappings[] = [
+                'payload'     => $payload,
+                'existing'    => is_array( $existing ) ? $existing : null,
+                'existing_id' => is_array( $existing ) ? absint( $existing['id'] ?? 0 ) : null,
+            ];
+        }
+
+        $dependency_validation = $this->validate_local_first_mapping_dependencies_for_rows(
+            $form_source,
+            $form_id,
+            $pending_mappings
+        );
+        if ( is_wp_error( $dependency_validation ) )
+        {
+            return $dependency_validation;
+        }
+
+        foreach ( $pending_mappings as $pending_mapping )
+        {
+            $payload  = $pending_mapping['payload'];
+            $existing = $pending_mapping['existing'];
+
+            $row      = is_array( $existing )
                 ? $this->local_form_mappings->update( absint( $existing['id'] ?? 0 ), $payload )
                 : $this->local_form_mappings->create( $payload );
 
@@ -2433,7 +2795,6 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             'suppress_webhooks_on_spam',
             'skip_downstream_on_spam',
             'trigger_hooks',
-            'trigger_sources',
         ];
 
         $runtime_settings = [];
@@ -2847,6 +3208,17 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 if ( is_wp_error( $realtime_policy ) )
                 {
                     return $realtime_policy;
+                }
+
+                $dependency_validation = $this->validate_local_first_mapping_dependencies_for_row(
+                    sanitize_key( (string) $request->get_param( 'form_source_slug' ) ),
+                    sanitize_text_field( (string) (int) $request->get_param( 'form_id' ) ),
+                    array_merge( $local_first_row, $update ),
+                    absint( $local_first_row['id'] ?? 0 )
+                );
+                if ( is_wp_error( $dependency_validation ) )
+                {
+                    return $dependency_validation;
                 }
 
                 $updated = $this->local_form_mappings->update(
@@ -3308,6 +3680,112 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         return $actions;
     }
 
+    private function remove_dependency_references_from_local_first_mappings( string $form_source_slug, string $form_id, string $id ): true | WP_Error
+    {
+        if ( ! $this->local_form_mappings )
+        {
+            return true;
+        }
+
+        $planner = Sentient_Forms_Plugin::instance()->get_mapping_dependency_planner();
+        foreach ( $this->local_form_mappings->list_for_form( $form_source_slug, $form_id ) as $row )
+        {
+            $row_id = absint( $row['id'] ?? 0 );
+            if ( $row_id <= 0 )
+            {
+                continue;
+            }
+
+            $settings = is_array( $row['settings_json'] ?? null ) ? $row['settings_json'] : [];
+            $trigger_hooks = $this->sanitize_trigger_hooks( [ (string) ( $row['hook'] ?? '' ) ] );
+            if ( [] === $trigger_hooks )
+            {
+                continue;
+            }
+
+            $mapping = [
+                'local_mapping_id' => $this->build_local_first_mapping_id( $row_id ),
+                'central_action_id' => 'sentient_forms_local_custom_action',
+                'trigger_hooks'    => $trigger_hooks,
+                'settings'         => $settings,
+            ];
+
+            $trigger_sources = $this->build_mapping_trigger_sources_for_hooks( $mapping, $trigger_hooks, $planner );
+            $rewired_to_unbound = false;
+
+            foreach ( $trigger_sources as $hook => $source )
+            {
+                if (
+                    ! is_array( $source ) ||
+                    ! isset( $source['type'], $source['mapping_id'] ) ||
+                    'mapping' !== $source['type'] ||
+                    $id !== $source['mapping_id']
+                )
+                {
+                    continue;
+                }
+
+                $trigger_sources[ $hook ] = [ 'type' => 'unbound' ];
+                $rewired_to_unbound = true;
+            }
+
+            $changed = $rewired_to_unbound;
+            if ( $rewired_to_unbound )
+            {
+                $settings['trigger_sources'] = $this->serialize_trigger_sources_for_storage( $trigger_sources );
+                $dependency_ids = $this->derive_dependency_ids_from_trigger_sources( $trigger_sources );
+                if ( empty( $dependency_ids ) )
+                {
+                    unset( $settings['dependency_ids'] );
+                }
+                else
+                {
+                    $settings['dependency_ids'] = $dependency_ids;
+                }
+            }
+            elseif ( isset( $settings['dependency_ids'] ) && is_array( $settings['dependency_ids'] ) )
+            {
+                $dependency_ids = $this->sanitize_dependency_ids( $settings['dependency_ids'] );
+                $updated_dependency_ids = array_values(
+                    array_filter(
+                        $dependency_ids,
+                        static fn( string $dependency_id ): bool => $dependency_id !== $id
+                    )
+                );
+
+                if ( $updated_dependency_ids !== $dependency_ids )
+                {
+                    $changed = true;
+                    if ( empty( $updated_dependency_ids ) )
+                    {
+                        unset( $settings['dependency_ids'] );
+                    }
+                    else
+                    {
+                        $settings['dependency_ids'] = $updated_dependency_ids;
+                    }
+                }
+            }
+
+            if ( ! $changed )
+            {
+                continue;
+            }
+
+            $updated = $this->local_form_mappings->update( $row_id, [ 'settings_json' => $settings ] );
+            if ( is_wp_error( $updated ) )
+            {
+                return $this->prepare_error_response(
+                    'rest_dependency_rewire_failed',
+                    __( 'Dependent local-first mappings could not be rewired after deleting a mapping.', 'sentient-forms' ),
+                    500
+                );
+            }
+        }
+
+        return true;
+    }
+
     /** Delete an action linkage. */
     public function delete_form_action_item( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
@@ -3332,6 +3810,16 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     update_option( $option_key, $actions, false );
                 }
 
+                $local_rewire = $this->remove_dependency_references_from_local_first_mappings(
+                    sanitize_key( (string) $request->get_param( 'form_source_slug' ) ),
+                    sanitize_text_field( (string) (int) $request->get_param( 'form_id' ) ),
+                    sanitize_text_field( (string) $id )
+                );
+                if ( is_wp_error( $local_rewire ) )
+                {
+                    return $local_rewire;
+                }
+
                 return $this->prepare_item_for_response( [ 'deleted' => true, 'previous' => $previous ] );
             }
 
@@ -3341,6 +3829,15 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $deleted = $actions[ $id ];
         unset( $actions[ $id ] );
         $actions = $this->remove_dependency_references_from_actions( $actions, sanitize_text_field( (string) $id ) );
+        $local_rewire = $this->remove_dependency_references_from_local_first_mappings(
+            sanitize_key( (string) $request->get_param( 'form_source_slug' ) ),
+            sanitize_text_field( (string) (int) $request->get_param( 'form_id' ) ),
+            sanitize_text_field( (string) $id )
+        );
+        if ( is_wp_error( $local_rewire ) )
+        {
+            return $local_rewire;
+        }
 
         update_option( $option_key, $actions, false );
         $this->sync_form_mappings_after_local_change(
@@ -4219,6 +4716,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 $hook_dependency_ids = $planner->extract_dependency_ids_for_hook( $mapping, $hook );
                 if ( empty( $hook_dependency_ids ) )
                 {
+                    $trigger_source = is_array( $trigger_sources[ $hook ] ?? null ) ? $trigger_sources[ $hook ] : [];
+                    if ( 'unbound' === sanitize_key( (string) ( $trigger_source['type'] ?? '' ) ) )
+                    {
+                        continue;
+                    }
+
                     $edge_id = sprintf( 'hook_root:%s->%s:%s', $hook, $mapping_id, $hook );
                     if ( isset( $edge_lookup[ $edge_id ] ) )
                     {

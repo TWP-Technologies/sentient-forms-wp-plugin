@@ -609,8 +609,8 @@
 			<div>
 				<p class="sf:font-medium sf:text-slate-900">Enable telemetry sharing</p>
 				<p class="sf:text-sm sf:text-slate-600">
-					Share aggregated action metrics and local reliability diagnostics to help Sentient Forms
-					improve reliability.
+					Share metadata-only reliability events with Sentient Forms after this site has a
+					connected Sentient identity.
 				</p>
 			</div>
 			<div class="sf:flex sf:items-center sf:gap-3">
@@ -697,7 +697,7 @@
 							Telemetry and data privacy
 						</p>
 						<p class="sf:mt-1 sf:text-sm sf:text-slate-600">
-							Telemetry is only queued when this site has opted in.
+							Telemetry is only queued after opt-in and Sentient site identity are both present.
 						</p>
 					</div>
 					<Button
@@ -714,15 +714,18 @@
 					<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-4">
 						<p class="sf:text-sm sf:font-semibold sf:text-slate-950">What is shared</p>
 						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-slate-600">
-							Async job success or failure events, background processing warnings, action/form/entry
-							and request identifiers, and reliability status or timing details.
+							Async job success or failure events, background processing warnings,
+							plugin/runtime versions, provider path, action code, execution request ID,
+							adapter, status, attempt counts, timing details, and sanitized error or warning
+							codes.
 						</p>
 					</div>
 					<div class="sf:rounded-lg sf:border sf:border-danger-100 sf:bg-danger-50 sf:p-4">
 						<p class="sf:text-sm sf:font-semibold sf:text-danger-900">What is not shared</p>
 						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-danger-800">
-							Prompts, model outputs, form field contents, API keys, saved provider secrets, and
-							billing secrets are not sent as telemetry.
+							Form field contents, prompts, model outputs, raw error messages, visitor
+							identifiers, API keys, saved provider secrets, and billing secrets are not sent
+							as telemetry.
 						</p>
 					</div>
 					<div class="sf:rounded-lg sf:border sf:border-primary-100 sf:bg-primary-50 sf:p-4">
@@ -735,8 +738,9 @@
 					<div class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-4">
 						<p class="sf:text-sm sf:font-semibold sf:text-slate-950">Your control</p>
 						<p class="sf:mt-2 sf:text-sm sf:leading-6 sf:text-slate-600">
-							Turn telemetry off here to stop new telemetry queueing. Local consent is cached
-							immediately and synced with Sentient Forms when the managed service is reachable.
+							Turn telemetry off here to stop new telemetry queueing. Local consent is saved
+							immediately; remote telemetry sync and delivery remain inactive until a Sentient
+							site identity exists.
 						</p>
 					</div>
 				</div>

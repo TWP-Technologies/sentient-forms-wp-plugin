@@ -26,8 +26,8 @@ OpenRouter direct execution:
 
 * Service: OpenRouter
 * Endpoint: https://openrouter.ai/
-* When used: when an administrator connects OpenRouter and runs a direct provider validation or form action.
-* Data sent: the selected form fields, prompt/action instructions, model identifier, and request metadata needed to complete the AI request.
+* When used: when an administrator connects OpenRouter and runs a direct provider validation, form action, or AI-generated Site Context refresh through the direct provider path.
+* Data sent: for form actions, the selected form fields, prompt/action instructions, model identifier, and request metadata needed to complete the AI request. For AI-generated Site Context, the site URL, public-site research prompt, selected model identifier, and request metadata are sent, and enabled web-capable models may use web search or fetch against public site pages.
 * Account required: an OpenRouter account and API key are required for direct execution.
 * Terms: https://openrouter.ai/terms
 * Privacy policy: https://openrouter.ai/privacy
@@ -37,8 +37,19 @@ Sentient managed execution:
 * Service: Sentient Forms
 * Endpoint: https://api.sentientforms.com/
 * When used: only for optional Sentient managed account, billing, metering, managed model execution, support diagnostics, or other administrator-enabled managed features.
-* Data sent: account/site identifiers, billing state, and, for managed AI execution only, the selected form fields and prompt/action instructions needed to complete the request.
+* Data sent: account/site identifiers, billing state, and, for managed AI execution only, the selected form fields and prompt/action instructions needed to complete the request. For managed AI-generated Site Context, the site URL, public-site research prompt, selected model identifier, and request metadata are sent, and enabled web-capable models may use web search or fetch against public site pages.
 * Account required: a Sentient Forms account may be required for managed paid features. The direct OpenRouter path does not require Sentient payment.
+* Terms: https://sentientforms.com/terms
+* Privacy policy: https://sentientforms.com/privacy
+
+Optional Sentient Forms telemetry:
+
+* Service: Sentient Forms
+* Endpoint: https://api.sentientforms.com/v1/sites/telemetry and https://api.sentientforms.com/v1/telemetry/async
+* When used: only after an administrator opts into telemetry and this site has a connected Sentient Forms site identity.
+* Data sent: telemetry consent state and metadata-only operational events such as plugin/runtime versions, provider path, action code, execution request ID, adapter, job status, attempt counts, and sanitized error or warning codes.
+* Data not sent: form field contents, prompts, model outputs/results, raw error messages, visitor identifiers, saved provider secrets, billing secrets, or OpenRouter BYOK payloads.
+* Account required: a Sentient Forms site identity is required for telemetry sync and delivery.
 * Terms: https://sentientforms.com/terms
 * Privacy policy: https://sentientforms.com/privacy
 
@@ -52,7 +63,7 @@ Administrator-configured webhooks:
 * Terms: provided by the administrator-chosen webhook receiver.
 * Privacy policy: provided by the administrator-chosen webhook receiver.
 
-No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure.
+No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure. No telemetry event should be queued or sent until an administrator opts in and a Sentient Forms site identity exists.
 
 == Installation ==
 

@@ -29,14 +29,22 @@ test.describe('Telemetry ingestion @telemetry-e2e', () => {
 		setTelemetryOptIn(true);
 		const proxyKey = ensureCpsSeeded();
 
-		const event = `playwright_telemetry_${Date.now()}`;
+		const event = 'async_job_success';
 		const timestamp = new Date().toISOString();
+		const executionRequestId = `playwright-telemetry-${Date.now()}`;
 		const payload = {
-			entry_id: 777,
-			form_id: 3,
-			result: {
-				status: 'ok'
-			}
+			schema_version: 'sentient_forms_telemetry_metadata.v1',
+			plugin_version: 'playwright-e2e',
+			wp_version: '6.9',
+			php_version: '8.2',
+			provider_path: 'openrouter',
+			action_code: 'playwright_telemetry',
+			execution_request_id: executionRequestId,
+			adapter: 'gravity_forms',
+			job_type: 'execution',
+			status: 'success',
+			attempt: 1,
+			max_attempts: 3
 		};
 
 		const response = await request.post(`${cpsBaseUrl}/telemetry/async`, {
@@ -61,12 +69,25 @@ test.describe('Telemetry ingestion @telemetry-e2e', () => {
 		expect(body?.data?.accepted).toBe(true);
 
 		let latest = getLatestTelemetryEvent();
-		for (let attempt = 0; attempt < 6 && latest?.event !== event; attempt += 1) {
+		for (
+			let attempt = 0;
+			attempt < 6 &&
+			(latest?.event !== event ||
+				(latest?.payload as { execution_request_id?: string } | null)?.execution_request_id !==
+					executionRequestId);
+			attempt += 1
+		) {
 			await page.waitForTimeout(500);
 			latest = getLatestTelemetryEvent();
 		}
 
 		expect(latest?.event).toBe(event);
-		expect((latest?.payload as { entry_id?: number } | null)?.entry_id).toBe(payload.entry_id);
+		expect((latest?.payload as { schema_version?: string } | null)?.schema_version).toBe(
+			payload.schema_version
+		);
+		expect((latest?.payload as { execution_request_id?: string } | null)?.execution_request_id).toBe(
+			payload.execution_request_id
+		);
+		expect((latest?.payload as { entry_id?: number } | null)?.entry_id).toBeUndefined();
 	});
 });

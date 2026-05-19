@@ -87,7 +87,7 @@
 		<div class="sf:mt-9 sf:grid sf:gap-8 sf:lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1.35fr)]">
 			<Toggle
 				label="Allow AI-generated Site Context"
-				description="Uses a web-capable model to read public site evidence."
+				description="Sends this site URL and public-site research prompt to the selected provider, which may use web search or fetch."
 				descriptionClass="sf:text-slate-600"
 				bind:checked={generationConsent}
 				data-testid="site-context-generation-consent"

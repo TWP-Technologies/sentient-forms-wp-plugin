@@ -4930,6 +4930,75 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertStringContainsString( 'Legacy output text', $excerpt_legacy );
     }
 
+    public function test_normalize_local_first_form_mapping_preserves_stored_trigger_sources(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'normalize_local_first_form_mapping' );
+        $method->setAccessible( true );
+
+        $mapping = $method->invoke(
+            $this->adapter,
+            [
+                'id'               => 44,
+                'hook'             => 'gform_after_submission',
+                'action_kind'      => 'custom_action',
+                'action_id'        => 0,
+                'execution_mode'   => 'async',
+                'settings_json'    => [
+                    'trigger_sources' => [
+                        'gform_after_submission' => [
+                            'type'       => 'mapping',
+                            'mapping_id' => 'local_first_41',
+                        ],
+                    ],
+                    'dependency_ids'   => [ 'local_first_41' ],
+                ],
+                'input_bindings_json' => [],
+                'conditions_json'     => [],
+                'effect_mapping_json' => [],
+                'enabled'          => true,
+            ]
+        );
+
+        $this->assertIsArray( $mapping );
+        $this->assertSame(
+            'local_first_41',
+            $mapping['settings']['trigger_sources']['gform_after_submission']['mapping_id'] ?? null
+        );
+        $this->assertSame( [ 'local_first_41' ], $mapping['settings']['dependency_ids'] ?? null );
+    }
+
+    public function test_planner_preserves_unbound_trigger_sources_for_runtime_skip(): void
+    {
+        $planner = new Sentient_Forms_Mapping_Dependency_Planner();
+        $plan    = $planner->build_execution_plan(
+            [
+                'local_first_44' => [
+                    'local_mapping_id'           => 'local_first_44',
+                    'central_action_id'          => 'child_custom_action',
+                    'trigger_hooks'              => [ 'gform_after_submission' ],
+                    'is_action_enabled_for_form' => true,
+                    'settings'                   => [
+                        'trigger_sources' => [
+                            'gform_after_submission' => [
+                                'type' => 'unbound',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            'gform_after_submission'
+        );
+
+        $node = $plan['nodes']['local_first_44'] ?? null;
+        $this->assertIsArray( $node );
+        $this->assertSame( 'unbound', $node['trigger_sources']['gform_after_submission']['type'] ?? null );
+        $this->assertSame( [], $node['dependency_ids'] ?? null );
+
+        $method = new ReflectionMethod( $this->adapter, 'is_plan_node_trigger_unbound' );
+        $method->setAccessible( true );
+        $this->assertTrue( $method->invoke( $this->adapter, $node, 'gform_after_submission' ) );
+    }
+
     private function truncate_local_first_runtime_tables(): void
     {
         global $wpdb;

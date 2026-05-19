@@ -66,11 +66,10 @@ class Sentient_Forms_Meta_Controller extends Abstract_Sentient_Forms_Base_Contro
     {
         $plugin       = Sentient_Forms_Plugin::instance();
         $license_data = $plugin->get_license_data();
-        $has_license  = ! empty( $license_data['proxy_api_key'] );
 
         // Determine capabilities based on license status and local-first route availability.
         $capabilities = [
-            'supports_custom_actions' => $has_license,
+            'supports_custom_actions' => $this->supports_custom_actions( $license_data ),
             'supports_status'         => true,
             'supports_credits'        => false,
             'cps_version'             => $this->get_cps_version(),
@@ -95,6 +94,17 @@ class Sentient_Forms_Meta_Controller extends Abstract_Sentient_Forms_Base_Contro
     private function get_cps_version(): ?string
     {
         return get_transient( 'sentient_forms_cps_version' ) ?: null;
+    }
+
+    private function supports_custom_actions( array $license_data ): bool
+    {
+        $legacy_cps_custom_actions = (bool) apply_filters( 'sentient_forms_enable_legacy_cps_custom_actions', false );
+        if ( ! $legacy_cps_custom_actions )
+        {
+            return class_exists( 'Sentient_Forms_Local_Custom_Actions_Repository' );
+        }
+
+        return ! empty( $license_data['proxy_api_key'] );
     }
 
     public function get_item_schema(): ?array

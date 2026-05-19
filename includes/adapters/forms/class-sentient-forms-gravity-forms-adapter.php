@@ -475,6 +475,21 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
+            if ( $this->is_plan_node_trigger_unbound( $node, 'gform_validation' ) )
+            {
+                $mapping_outcomes[ $mapping_id ] = 'skipped';
+                $logger->info(
+                    'validation skipped due to unbound trigger source',
+                    [
+                        'hook'           => 'gform_validation',
+                        'mapping_id'     => $mapping_id,
+                        'form_id'        => $form_id,
+                        'correlation_id' => $correlation_id,
+                    ]
+                );
+                continue;
+            }
+
             $blocked_by_dependency = $this->resolve_dependency_blocking_mapping(
                 is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [],
                 $mapping_outcomes,
@@ -746,6 +761,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
+            if ( $this->is_plan_node_trigger_unbound( $node, 'gform_after_submission' ) )
+            {
+                continue;
+            }
+
             $central_action_id = (string) ( $action_settings['central_action_id'] ?? '' );
             if ( '' === $central_action_id )
             {
@@ -778,6 +798,22 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             if ( empty( $node['enabled'] ) || empty( $node['hook_enabled'] ) )
             {
                 $mapping_outcomes[ $mapping_id ] = 'skipped';
+                continue;
+            }
+
+            if ( $this->is_plan_node_trigger_unbound( $node, 'gform_after_submission' ) )
+            {
+                $mapping_outcomes[ $mapping_id ] = 'skipped';
+                $logger->info(
+                    'after-submission skipped due to unbound trigger source',
+                    [
+                        'hook'           => 'gform_after_submission',
+                        'mapping_id'     => $mapping_id,
+                        'form_id'        => $form_id,
+                        'entry_id'       => $entry['id'] ?? null,
+                        'correlation_id' => $correlation_id,
+                    ]
+                );
                 continue;
             }
 
@@ -1139,6 +1175,29 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         return null;
+    }
+
+    /**
+     * Determine whether a planner node was explicitly detached from its hook root.
+     *
+     * @param array<string, mixed> $node Planner node.
+     */
+    private function is_plan_node_trigger_unbound( array $node, string $hook ): bool
+    {
+        $hook = sanitize_key( $hook );
+        if ( '' === $hook )
+        {
+            return false;
+        }
+
+        $trigger_sources = is_array( $node['trigger_sources'] ?? null )
+            ? $node['trigger_sources']
+            : [];
+        $source = is_array( $trigger_sources[ $hook ] ?? null )
+            ? $trigger_sources[ $hook ]
+            : null;
+
+        return 'unbound' === sanitize_key( (string) ( $source['type'] ?? '' ) );
     }
 
     /**
@@ -3482,9 +3541,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $settings['input_mapping']         = is_array( $row['input_bindings_json'] ?? null )
             ? $row['input_bindings_json']
             : [];
-        $settings['trigger_sources']       = [
-            $hook => [ 'type' => 'hook_root' ],
-        ];
+        if ( ! isset( $settings['trigger_sources'] ) || ! is_array( $settings['trigger_sources'] ) )
+        {
+            $settings['trigger_sources'] = [
+                $hook => [ 'type' => 'hook_root' ],
+            ];
+        }
 
         if ( isset( $row['conditions_json'] ) && is_array( $row['conditions_json'] ) )
         {
@@ -6417,6 +6479,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 continue;
             }
 
+            if ( $this->is_plan_node_trigger_unbound( $node, 'gform_after_submission' ) )
+            {
+                continue;
+            }
+
             $mapping = $node['mapping'];
             $mapping['local_mapping_id'] = $mapping['local_mapping_id'] ?? $mapping_id;
 
@@ -6478,6 +6545,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             }
 
             if ( empty( $node['enabled'] ) || empty( $node['hook_enabled'] ) )
+            {
+                continue;
+            }
+
+            if ( $this->is_plan_node_trigger_unbound( $node, 'gform_after_submission' ) )
             {
                 continue;
             }

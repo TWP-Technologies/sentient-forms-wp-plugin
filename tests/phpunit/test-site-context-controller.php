@@ -53,6 +53,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertNull( $data['context'] ?? null );
         $this->assertSame( 'empty', $data['status'] ?? null );
         $this->assertSame( 'unset', $data['settings']['consent_status'] ?? null );
+        $this->assertSame( 'openrouter', $data['settings']['generation_model_selection']['provider'] ?? null );
     }
 
     public function test_create_context_stores_local_context_without_http_request(): void

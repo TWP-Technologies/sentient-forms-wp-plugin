@@ -1774,9 +1774,9 @@
 				case 'cps_missing_proxy_key':
 					return {
 						variant: 'warning',
-						title: 'Managed service activation required',
+						title: 'Provider credential required',
 						description:
-							'Sentient Forms managed service credentials are missing. Activate this site on the Managed Service page, then retry the submission.',
+							'The selected managed execution route needs a Sentient Forms site credential. Switch this action to Direct OpenRouter or connect managed execution, then retry.',
 						actions: [
 							{ id: 'licensing', label: 'Open Managed Service', variant: 'primary' },
 							{ id: 'refresh', label: 'Refresh status' }

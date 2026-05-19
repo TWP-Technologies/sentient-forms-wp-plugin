@@ -11,7 +11,7 @@ export const SITE_CONTEXT_REFRESH_DAY_OPTIONS = [7, 14, 30, 60, 90] as const;
 export const DEFAULT_SITE_CONTEXT_MODEL_SELECTION: ModelSelection = {
 	primary: 'sf_research',
 	is_preset: true,
-	provider: 'sentient_managed',
+	provider: 'openrouter',
 	tools: {
 		tool_choice: 'auto',
 		web_search: {
