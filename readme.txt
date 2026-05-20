@@ -16,7 +16,7 @@ Sentient Forms adds AI-assisted actions to WordPress forms. Gravity Forms is the
 
 The plugin is moving to a local-first architecture. Site-owned configuration, action definitions, form mappings, execution logs, provider settings, and saved results are stored in your WordPress database.
 
-You can use the plugin without a paid Sentient Forms account by connecting your own OpenRouter API key and choosing models available to your OpenRouter account, including OpenRouter free models when available. Optional Sentient managed execution is intended for users who want Sentient Forms to handle paid proxy execution, billing, and metering.
+You can use the plugin without a paid Sentient Forms account by connecting your own OpenRouter API key and choosing models available to your OpenRouter account, including OpenRouter free models when available. Optional Sentient Forms Managed Execution is intended for users who want Sentient Forms to handle paid proxy execution, billing, and metering.
 
 = External services =
 
@@ -32,11 +32,11 @@ OpenRouter direct execution:
 * Terms: https://openrouter.ai/terms
 * Privacy policy: https://openrouter.ai/privacy
 
-Sentient managed execution:
+Sentient Forms Managed Execution:
 
 * Service: Sentient Forms
 * Endpoint: https://api.sentientforms.com/
-* When used: only for optional Sentient managed account, billing, metering, managed model execution, support diagnostics, or other administrator-enabled managed features.
+* When used: only for optional Sentient Forms managed account, billing, metering, managed model execution, support diagnostics, or other administrator-enabled managed features.
 * Data sent: account/site identifiers, billing state, and, for managed AI execution only, the selected form fields and prompt/action instructions needed to complete the request. For managed AI-generated Site Context, the site URL, public-site research prompt, selected model identifier, and request metadata are sent, and enabled web-capable models may use web search or fetch against public site pages.
 * Account required: a Sentient Forms account may be required for managed paid features. The direct OpenRouter path does not require Sentient payment.
 * Terms: https://sentientforms.com/terms
@@ -70,14 +70,14 @@ No OpenRouter or Sentient AI execution request should be sent until an administr
 1. Upload the `sentient-forms` folder to `/wp-content/plugins/`, or install the plugin through the WordPress plugin installer.
 2. Activate Sentient Forms in WordPress.
 3. Open the Sentient Forms admin screen.
-4. Connect OpenRouter for direct local-first execution, or connect Sentient managed execution if you want managed paid usage.
+4. Connect OpenRouter for direct local-first execution, or connect Sentient Forms Managed Execution if you want managed paid usage.
 5. Create or select an action, map it to a Gravity Forms form, and run a test submission.
 
 == Frequently Asked Questions ==
 
 = Do I need a paid Sentient Forms account? =
 
-No. The plugin is intended to provide a functional direct path through your own OpenRouter credentials. Sentient managed execution is optional.
+No. The plugin is intended to provide a functional direct path through your own OpenRouter credentials. Sentient Forms Managed Execution is optional.
 
 = Does Sentient Forms receive my form data when I use direct OpenRouter execution? =
 

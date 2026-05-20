@@ -138,7 +138,7 @@ function validate_readme_locally( string $readme_path, string $plugin_file ): ar
         }
     }
 
-    foreach ( [ 'OpenRouter', 'Sentient managed', 'Data sent', 'Terms', 'Privacy policy' ] as $required_disclosure )
+    foreach ( [ 'OpenRouter', 'Sentient Forms Managed Execution', 'Data sent', 'Terms', 'Privacy policy' ] as $required_disclosure )
     {
         if ( false === stripos( $readme, $required_disclosure ) )
         {
