@@ -361,7 +361,7 @@ function validate_readme( string $readme_path, string $plugin_file ): array
         }
     }
 
-    foreach ( [ 'OpenRouter', 'Sentient managed', 'Data sent', 'Terms', 'Privacy policy' ] as $required_disclosure )
+    foreach ( [ 'OpenRouter', 'Sentient Forms Managed Execution', 'Data sent', 'Terms', 'Privacy policy' ] as $required_disclosure )
     {
         if ( false === stripos( $readme, $required_disclosure ) )
         {
