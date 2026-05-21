@@ -1297,7 +1297,13 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             [
                 'execution_mode' => 'real_time',
                 'realtime_settings' => [
+                    'auto_refresh_enabled' => false,
+                    'field_checkpoints_enabled' => true,
                     'checkpoint_field_ids' => [ '1' ],
+                    'page_checkpoints_enabled' => true,
+                    'page_checkpoint_mode' => 'include_pages',
+                    'page_checkpoint_pages' => [ 1 ],
+                    'page_checkpoint_timeout_ms' => 2600,
                     'storage_target_field_id' => '9',
                     'blocking_mode' => 'require_answers',
                 ],
@@ -1309,7 +1315,13 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( [ 'real_time' ], $data['trigger_hooks'] ?? null );
         $this->assertSame( 'real_time', $data['execution_mode'] ?? null );
         $this->assertSame( 'real_time', $data['settings']['execution_mode'] ?? null );
+        $this->assertFalse( $data['settings']['realtime_settings']['auto_refresh_enabled'] ?? true );
+        $this->assertTrue( $data['settings']['realtime_settings']['field_checkpoints_enabled'] ?? false );
         $this->assertSame( [ '1' ], $data['settings']['realtime_settings']['checkpoint_field_ids'] ?? null );
+        $this->assertTrue( $data['settings']['realtime_settings']['page_checkpoints_enabled'] ?? false );
+        $this->assertSame( 'include_pages', $data['settings']['realtime_settings']['page_checkpoint_mode'] ?? null );
+        $this->assertSame( [ 1 ], $data['settings']['realtime_settings']['page_checkpoint_pages'] ?? null );
+        $this->assertSame( 2600, $data['settings']['realtime_settings']['page_checkpoint_timeout_ms'] ?? null );
         $this->assertSame( '9', $data['settings']['realtime_settings']['storage_target_field_id'] ?? null );
 
         global $wpdb;
@@ -1321,6 +1333,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'real_time', $stored_mappings[0]['hook'] ?? null );
         $this->assertSame( 'real_time', $stored_mappings[0]['execution_mode'] ?? null );
         $this->assertSame( '9', $stored_mappings[0]['settings_json']['realtime_settings']['storage_target_field_id'] ?? null );
+        $this->assertTrue( $stored_mappings[0]['settings_json']['realtime_settings']['page_checkpoints_enabled'] ?? false );
     }
 
     public function test_add_form_action_rejects_non_clarification_realtime_trigger(): void
@@ -2665,6 +2678,79 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'yes', $stored['settings_json']['include_site_context'] ?? null );
         $this->assertTrue( $stored['conditions_json']['enabled'] ?? false );
         $this->assertSame( 'enterprise', $stored['conditions_json']['root']['value'] ?? null );
+    }
+
+    public function test_update_form_action_item_updates_wrapped_option_duplicate(): void
+    {
+        $option_key = 'sentient_forms_actions_gravity_forms_1';
+        $mapping_id = 'map_rt_stale_wrapper';
+        $base_mapping = [
+            'local_mapping_id'           => $mapping_id,
+            'central_action_id'          => 'clarification_assistant_v1',
+            'action_type_indicator'      => 'master',
+            'trigger_hooks'              => [ 'gform_validation' ],
+            'is_action_enabled_for_form' => true,
+            'settings'                   => [
+                'execution_mode'     => 'real_time',
+                'realtime_settings'  => [
+                    'storage_target_field_id'   => '9',
+                    'pre_submit_run_enabled'    => false,
+                    'hidden_field_exposure_mode' => 'label_hidden',
+                ],
+            ],
+        ];
+
+        update_option(
+            $option_key,
+            [
+                'enabled' => true,
+                'actions' => [
+                    $mapping_id => $base_mapping,
+                ],
+                $mapping_id => $base_mapping,
+            ],
+            false
+        );
+
+        GFAPI::$forms[1] = [
+            'id'     => 1,
+            'title'  => 'Realtime wrapper save',
+            'fields' => [
+                (object) [ 'id' => 9, 'label' => 'Sentient Forms Realtime Q&A', 'type' => 'hidden' ],
+            ],
+        ];
+
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/' . $mapping_id );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 1 );
+        $request->set_param( 'local_mapping_id', $mapping_id );
+        $request->set_param( 'trigger_hooks', [ 'gform_validation' ] );
+        $request->set_param(
+            'settings',
+            [
+                'execution_mode'    => 'real_time',
+                'realtime_settings' => [
+                    'storage_target_field_id'    => '9',
+                    'pre_submit_run_enabled'     => true,
+                    'pre_submit_timeout_ms'      => 2500,
+                    'hidden_field_exposure_mode' => 'label_hidden',
+                ],
+            ]
+        );
+
+        $response = $this->controller->update_form_action_item( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $stored = get_option( $option_key, [] );
+
+        $this->assertTrue(
+            $stored[ $mapping_id ]['settings']['realtime_settings']['pre_submit_run_enabled'] ?? false
+        );
+        $this->assertTrue(
+            $stored['actions'][ $mapping_id ]['settings']['realtime_settings']['pre_submit_run_enabled'] ?? false
+        );
+
+        delete_option( $option_key );
     }
 
     public function test_update_form_action_item_rejects_realtime_for_non_clarification_local_first_mapping(): void

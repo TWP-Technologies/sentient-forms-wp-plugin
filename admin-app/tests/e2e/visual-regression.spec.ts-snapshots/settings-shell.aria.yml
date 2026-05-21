@@ -17,7 +17,8 @@
 - paragraph: Describe what this website does so spam checks, summaries, and other actions can make site-specific decisions instead of generic guesses.
 - button "Manage Site Context"
 - paragraph: Enable telemetry sharing
-- paragraph: Share aggregated action metrics and local reliability diagnostics to help Sentient Forms improve reliability.
+- paragraph: Share metadata-only reliability events with Sentient Forms after this site has a connected Sentient identity.
+- button "What is shared?"
 - text: "Off"
 - checkbox "Off"
 - paragraph: /Synced \d+-\d+-24T00:\d+:00Z/

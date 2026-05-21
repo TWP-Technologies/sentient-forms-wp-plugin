@@ -26,6 +26,7 @@
 	import WandSparklesIcon from '@lucide/svelte/icons/wand-sparkles';
 	import AlignedSelectGrid from '$lib/components/aligned-select-grid.svelte';
 	import ActionCustomizationEditor from '$lib/components/action-customization-editor.svelte';
+	import RealtimeSettingsEditor from '$lib/components/realtime-settings-editor.svelte';
 	import SiteContextWarning from '$lib/components/site-context-warning.svelte';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { notifications } from '$lib/stores/notifications';
@@ -58,6 +59,7 @@
 		type InheritableBooleanMode,
 		normalizeFormActionConfig
 	} from '$lib/utils/action-config';
+	import { isRealtimeEligibleActionId, normalizeRealtimeSettings } from '$lib/utils/realtime-settings';
 	import {
 		openRouterActionHealth,
 		providerStatusLabel,
@@ -734,7 +736,13 @@
 
 		try {
 			const result = await client.getActionDefaults(actionId);
-			actionDefaults = normalizeFormActionConfig(result);
+			const config = normalizeFormActionConfig(result);
+			actionDefaults = isRealtimeEligibleActionId(actionId)
+				? {
+						...config,
+						realtime_settings: normalizeRealtimeSettings(config.realtime_settings)
+					}
+				: config;
 			upsertActionDefaultsSummary(actionId, actionDefaults);
 		} catch (error) {
 			console.warn('[ActionDefaults] Failed to load action defaults:', error);
@@ -1425,6 +1433,20 @@
 						level="action"
 						bind:value={actionDefaults.action_customization}
 					/>
+
+					{#if configuringActionId && isRealtimeEligibleActionId(configuringActionId)}
+						<RealtimeSettingsEditor
+							idPrefix="action-defaults"
+							scope="action"
+							value={actionDefaults.realtime_settings}
+							onchange={(settings) => {
+								actionDefaults = {
+									...actionDefaults,
+									realtime_settings: settings
+								};
+							}}
+						/>
+					{/if}
 
 					{#if configuringActionId && isSpamActionCode(configuringActionId)}
 						<SpamCriteriaEditor

@@ -110,6 +110,25 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         return $row ? $this->decode_row( $row ) : null;
     }
 
+    public function get_by_id( int $id ): ?array
+    {
+        $id = absint( $id );
+        if ( $id <= 0 )
+        {
+            return null;
+        }
+
+        $wpdb = $this->wpdb;
+        $row  = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE id = %d',
+                $id
+            ),
+            ARRAY_A
+        );
+        return $row ? $this->decode_row( $row ) : null;
+    }
+
     public function list_recent( int $limit = 50 ): array
     {
         $wpdb = $this->wpdb;
@@ -134,6 +153,75 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
             ARRAY_A
         ) ?: [];
         return array_map( [ $this, 'decode_row' ], $rows );
+    }
+
+    public function list_for_action_log( array $filters = [], int $limit = 20, int $offset = 0 ): array
+    {
+        $wpdb = $this->wpdb;
+        $filter_values = $this->action_log_filter_values( $filters );
+
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM " . esc_sql( $this->table_name() ) . " WHERE (%d = 0 OR form_id = %s)
+                    AND (
+                        %s = ''
+                        OR (%s = 'success' AND status IN ('succeeded', 'success'))
+                        OR (%s = 'error' AND status IN ('failed', 'error'))
+                        OR (%s = 'blocked' AND status IN ('blocked', 'skipped'))
+                        OR (%s = 'pending' AND status IN ('queued', 'running', 'pending'))
+                    )
+                    AND (%s = '' OR created_at >= %s)
+                    AND (%s = '' OR created_at <= %s)
+                    ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d",
+                $filter_values['form_id'],
+                $filter_values['form_id_text'],
+                $filter_values['status'],
+                $filter_values['status'],
+                $filter_values['status'],
+                $filter_values['status'],
+                $filter_values['status'],
+                $filter_values['date_from'],
+                $filter_values['date_from'],
+                $filter_values['date_to'],
+                $filter_values['date_to'],
+                max( 1, min( 500, $limit ) ),
+                max( 0, $offset )
+            ),
+            ARRAY_A
+        ) ?: [];
+        return array_map( [ $this, 'decode_row' ], $rows );
+    }
+
+    public function count_for_action_log( array $filters = [] ): int
+    {
+        $wpdb = $this->wpdb;
+        $filter_values = $this->action_log_filter_values( $filters );
+
+        return (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM " . esc_sql( $this->table_name() ) . " WHERE (%d = 0 OR form_id = %s)
+                    AND (
+                        %s = ''
+                        OR (%s = 'success' AND status IN ('succeeded', 'success'))
+                        OR (%s = 'error' AND status IN ('failed', 'error'))
+                        OR (%s = 'blocked' AND status IN ('blocked', 'skipped'))
+                        OR (%s = 'pending' AND status IN ('queued', 'running', 'pending'))
+                    )
+                    AND (%s = '' OR created_at >= %s)
+                    AND (%s = '' OR created_at <= %s)",
+                $filter_values['form_id'],
+                $filter_values['form_id_text'],
+                $filter_values['status'],
+                $filter_values['status'],
+                $filter_values['status'],
+                $filter_values['status'],
+                $filter_values['status'],
+                $filter_values['date_from'],
+                $filter_values['date_from'],
+                $filter_values['date_to'],
+                $filter_values['date_to']
+            )
+        );
     }
 
     public function get_latest_for_form( string $form_source, int $form_id ): ?array
@@ -170,6 +258,22 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $row['cost_json']        = $this->decode_json_field( $row['cost_json'] ?? null );
         $row['result_json']      = $this->decode_json_field( $row['result_json'] ?? null );
         return $row;
+    }
+
+    private function action_log_filter_values( array $filters ): array
+    {
+        $form_id   = absint( $filters['form_id'] ?? 0 );
+        $status    = sanitize_key( (string) ( $filters['status'] ?? '' ) );
+        $date_from = isset( $filters['date_from'] ) ? sanitize_text_field( (string) $filters['date_from'] ) : '';
+        $date_to   = isset( $filters['date_to'] ) ? sanitize_text_field( (string) $filters['date_to'] ) : '';
+
+        return [
+            'form_id'      => $form_id,
+            'form_id_text' => (string) $form_id,
+            'status'       => $status,
+            'date_from'    => $date_from,
+            'date_to'      => $date_to,
+        ];
     }
 
     private function resolve_expires_at( array $data ): ?string

@@ -369,10 +369,13 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                             'cooldown_ms' => 9000,
 	                            'manual_refresh_enabled' => true,
 	                            'storage_target_field_id' => '4',
-	                            'blocking_mode' => 'require_answers',
-	                            'refresh_mode' => 'checkpoint',
-	                            'initial_panel_state' => 'hidden_until_interaction',
-	                        ],
+		                            'blocking_mode' => 'require_answers',
+		                            'refresh_mode' => 'checkpoint',
+		                            'initial_panel_state' => 'hidden_until_interaction',
+		                            'hidden_field_exposure_mode' => 'label_hidden_value',
+		                            'pre_submit_run_enabled' => true,
+		                            'pre_submit_timeout_ms' => 3500,
+		                        ],
                     ],
                 ],
             ],
@@ -395,12 +398,133 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 9000, $runtime['mappings'][0]['cooldown_ms'] ?? null );
 	        $this->assertSame( [ '1' ], $runtime['mappings'][0]['checkpoint_field_ids'] ?? [] );
 	        $this->assertSame( '4', $runtime['mappings'][0]['storage_target_field_id'] ?? null );
-	        $this->assertSame( 'require_answers', $runtime['mappings'][0]['blocking_mode'] ?? null );
-	        $this->assertSame( 'checkpoint', $runtime['mappings'][0]['refresh_mode'] ?? null );
-	        $this->assertSame( 'hidden_until_interaction', $runtime['mappings'][0]['initial_panel_state'] ?? null );
-	        $this->assertCount( 2, $runtime['field_manifest'] ?? [] );
+		        $this->assertSame( 'require_answers', $runtime['mappings'][0]['blocking_mode'] ?? null );
+		        $this->assertSame( 'checkpoint', $runtime['mappings'][0]['refresh_mode'] ?? null );
+		        $this->assertSame( 'hidden_until_interaction', $runtime['mappings'][0]['initial_panel_state'] ?? null );
+		        $this->assertSame( 'label_hidden_value', $runtime['mappings'][0]['hidden_field_exposure_mode'] ?? null );
+		        $this->assertTrue( $runtime['mappings'][0]['pre_submit_run_enabled'] ?? false );
+		        $this->assertSame( 3500, $runtime['mappings'][0]['pre_submit_timeout_ms'] ?? null );
+		        $this->assertCount( 2, $runtime['field_manifest'] ?? [] );
 	        $this->assertSame( [ '1.3', '1.6' ], $runtime['field_manifest'][0]['input_ids'] ?? [] );
 	    }
+
+    public function test_get_form_settings_prefers_top_level_mapping_over_stale_actions_wrapper(): void
+    {
+        $form_id = 15;
+        $option_key = 'sentient_forms_actions_gravity_forms_' . $form_id;
+        $mapping_id = 'map_rt_wrapper_overlay';
+        $stale_mapping = [
+            'local_mapping_id'           => $mapping_id,
+            'central_action_id'          => 'clarification_assistant_v1',
+            'action_type_indicator'      => 'master',
+            'trigger_hooks'              => [ 'gform_validation' ],
+            'is_action_enabled_for_form' => true,
+            'settings'                   => [
+                'execution_mode'    => 'real_time',
+                'realtime_settings' => [
+                    'storage_target_field_id'    => '9',
+                    'pre_submit_run_enabled'     => false,
+                    'hidden_field_exposure_mode' => 'label_hidden',
+                ],
+            ],
+        ];
+        $fresh_mapping = $stale_mapping;
+        $fresh_mapping['settings']['realtime_settings']['pre_submit_run_enabled'] = true;
+
+        update_option(
+            $option_key,
+            [
+                'enabled' => true,
+                'actions' => [
+                    $mapping_id => $stale_mapping,
+                ],
+                $mapping_id => $fresh_mapping,
+            ],
+            false
+        );
+
+        $settings = $this->adapter->get_form_settings( $form_id );
+
+        $this->assertTrue(
+            $settings['actions'][ $mapping_id ]['settings']['realtime_settings']['pre_submit_run_enabled'] ?? false
+        );
+
+        delete_option( $option_key );
+    }
+
+    public function test_realtime_runtime_config_inherits_action_and_form_defaults(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'build_realtime_runtime_config' );
+        $method->setAccessible( true );
+
+        $form = [
+            'id'     => 31,
+            'title'  => 'Realtime Inherited Defaults',
+            'fields' => [
+                (object) [ 'id' => 1, 'label' => 'Message', 'type' => 'textarea', 'pageNumber' => 1 ],
+            ],
+        ];
+        GFAPI::$forms[31] = $form;
+
+        update_option(
+            'sentient_forms_action_defaults_clarification_assistant_v1',
+            [
+                'realtime_settings' => [
+                    'debounce_ms'                => 1200,
+                    'page_checkpoints_enabled'   => true,
+                    'page_checkpoint_mode'       => 'include_pages',
+                    'page_checkpoint_pages'      => [ 1 ],
+                    'hidden_field_exposure_mode' => 'omit_hidden',
+                ],
+            ],
+            false
+        );
+        update_option(
+            'sentient_forms_form_config_gravity_forms_31',
+            [
+                'clarification_assistant_v1' => [
+                    'realtime_settings' => [
+                        'debounce_ms'            => 800,
+                        'pre_submit_run_enabled' => true,
+                    ],
+                ],
+            ],
+            false
+        );
+
+        update_option(
+            'sentient_forms_actions_gravity_forms_31',
+            [
+                'actions' => [
+                    'map_rt_inherited' => [
+                        'local_mapping_id'           => 'map_rt_inherited',
+                        'central_action_id'          => 'clarification_assistant_v1',
+                        'action_name_label'          => 'Realtime Action',
+                        'is_action_enabled_for_form' => true,
+                        'settings'                   => [
+                            'execution_mode' => 'real_time',
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $runtime = $method->invoke( $this->adapter, $form, $this->adapter->get_form_settings( 31 ) );
+
+        $this->assertIsArray( $runtime );
+        $mapping = $runtime['mappings'][0] ?? [];
+        $this->assertSame( 800, $mapping['debounce_ms'] ?? null );
+        $this->assertTrue( $mapping['page_checkpoints_enabled'] ?? false );
+        $this->assertSame( 'include_pages', $mapping['page_checkpoint_mode'] ?? null );
+        $this->assertSame( [ 1 ], $mapping['page_checkpoint_pages'] ?? null );
+        $this->assertTrue( $mapping['pre_submit_run_enabled'] ?? false );
+        $this->assertSame( 'omit_hidden', $mapping['hidden_field_exposure_mode'] ?? null );
+
+        delete_option( 'sentient_forms_action_defaults_clarification_assistant_v1' );
+        delete_option( 'sentient_forms_form_config_gravity_forms_31' );
+        delete_option( 'sentient_forms_actions_gravity_forms_31' );
+    }
 
     public function test_build_realtime_runtime_config_auto_provisions_native_storage_field_without_mapping_setting(): void
     {

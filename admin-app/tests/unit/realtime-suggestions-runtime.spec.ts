@@ -7,6 +7,9 @@ const runtimeScript = readFileSync(
 	'utf8'
 );
 
+type PreSubmissionData = { form: HTMLFormElement; abort?: boolean };
+type PreSubmissionFilter = (data: PreSubmissionData) => Promise<PreSubmissionData>;
+
 function evaluateRuntimeScript(): void {
 	const execute = new Function(runtimeScript);
 	execute();
@@ -46,17 +49,20 @@ function setupRuntimeConfig(overrides: Record<string, unknown> = {}): void {
 				action_name_label: 'Realtime Action',
 				debounce_ms: 100,
 				cooldown_ms: 0,
+				auto_refresh_enabled: false,
+				field_checkpoints_enabled: true,
 				manual_refresh_enabled: true,
 				storage_target_field_id: '9',
 				blocking_mode: 'advisory',
 				checkpoint_field_ids: ['1']
 			}
 		],
-		field_manifest: [
-			{ field_id: '1', label: 'Name', type: 'text', page_index: 1 },
-			{ field_id: '2', label: 'Details', type: 'textarea', page_index: 2 }
-		]
-	};
+			field_manifest: [
+				{ field_id: '1', label: 'Name', type: 'text', page_index: 1 },
+				{ field_id: '2', label: 'Details', type: 'textarea', page_index: 2 },
+				{ field_id: '9', label: 'Sentient Forms Realtime Q&A', type: 'hidden', page_index: 1 }
+			]
+		};
 
 	(window as unknown as { sentientFormsRealtimeSuggestions: unknown }).sentientFormsRealtimeSuggestions = {
 		forms: {
@@ -108,6 +114,7 @@ describe('realtime suggestions runtime', () => {
 		document.body.innerHTML = '';
 		delete (window as Record<string, unknown>).sentientFormsRealtimeSuggestions;
 		delete (window as Record<string, unknown>).__sentientRealtimeSuggestionsRuntime;
+		delete (window as Record<string, unknown>).gform;
 	});
 
 	it('runs mappings only for configured checkpoint fields', async () => {
@@ -116,7 +123,24 @@ describe('realtime suggestions runtime', () => {
 			json: async () => ({ suggestions: [] })
 		});
 		vi.stubGlobal('fetch', fetchMock);
-		setupRuntimeConfig();
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+					action_name_label: 'Realtime Action',
+					debounce_ms: 100,
+					cooldown_ms: 0,
+					auto_refresh_enabled: false,
+					field_checkpoints_enabled: true,
+					page_checkpoints_enabled: true,
+					manual_refresh_enabled: true,
+					storage_target_field_id: '9',
+					blocking_mode: 'advisory',
+					checkpoint_field_ids: ['1']
+				}
+			]
+		});
 		evaluateRuntimeScript();
 
 		triggerChangeOnField('2');
@@ -130,11 +154,66 @@ describe('realtime suggestions runtime', () => {
 		const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
 		const payload = JSON.parse(String(requestInit.body));
 		const headers = requestInit.headers as Record<string, string>;
-		expect(payload.mapping_id).toBe('map_rt_1');
-		expect(payload.visible_field_ids).toEqual(['1']);
-		expect(headers['X-Sentient-Forms-Suggest-Nonce']).toBe('nonce-42');
-		expect(headers['X-WP-Nonce']).toBe('rest-nonce-42');
-	});
+			expect(payload.mapping_id).toBe('map_rt_1');
+			expect(payload.visible_field_ids).toEqual(['1']);
+			expect(payload.all_known_field_values).toEqual({ '1': 'hello' });
+			expect(payload.hidden_field_exposure_mode).toBe('label_hidden');
+			expect(payload.supplemental_field_context).toEqual([
+				{
+					field_id: '2',
+					label: 'Details',
+					type: 'textarea',
+					page_index: 2,
+					hidden: true
+				}
+			]);
+			expect(headers['X-Sentient-Forms-Suggest-Nonce']).toBe('nonce-42');
+			expect(headers['X-WP-Nonce']).toBe('rest-nonce-42');
+		});
+
+		it('can include hidden values when the mapping explicitly allows them', async () => {
+			const fetchMock = vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({ suggestions: [] })
+			});
+			vi.stubGlobal('fetch', fetchMock);
+			setupRuntimeConfig({
+				mappings: [
+					{
+						mapping_id: 'map_rt_1',
+						central_action_id: 'central_rt_1',
+							action_name_label: 'Realtime Action',
+							debounce_ms: 100,
+							cooldown_ms: 0,
+							auto_refresh_enabled: false,
+							field_checkpoints_enabled: true,
+							manual_refresh_enabled: true,
+							storage_target_field_id: '9',
+						blocking_mode: 'advisory',
+						checkpoint_field_ids: ['1'],
+						hidden_field_exposure_mode: 'label_hidden_value'
+					}
+				]
+			});
+			evaluateRuntimeScript();
+
+			triggerBlurOnField('1');
+			await flushRuntime();
+
+			const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+			const payload = JSON.parse(String(requestInit.body));
+			expect(payload.all_known_field_values).toEqual({ '1': 'hello', '2': 'hidden' });
+			expect(payload.supplemental_field_context).toEqual([
+				{
+					field_id: '2',
+					label: 'Details',
+					type: 'textarea',
+					page_index: 2,
+					hidden: true,
+					value: 'hidden'
+				}
+			]);
+		});
 
 	it('starts minimized by default so embedded forms are not covered on first paint', () => {
 		vi.stubGlobal(
@@ -184,7 +263,24 @@ describe('realtime suggestions runtime', () => {
 			})
 		});
 		vi.stubGlobal('fetch', fetchMock);
-		setupRuntimeConfig();
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+					action_name_label: 'Realtime Action',
+					debounce_ms: 100,
+					cooldown_ms: 0,
+					auto_refresh_enabled: false,
+					field_checkpoints_enabled: true,
+					page_checkpoints_enabled: true,
+					manual_refresh_enabled: true,
+					storage_target_field_id: '9',
+					blocking_mode: 'advisory',
+					checkpoint_field_ids: ['1']
+				}
+			]
+		});
 		evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
@@ -262,32 +358,7 @@ describe('realtime suggestions runtime', () => {
 		]);
 	});
 
-	it('runs page-change suggestions when source page index changes after next click', async () => {
-		const fetchMock = vi.fn().mockResolvedValue({
-			ok: true,
-			json: async () => ({ suggestions: [] })
-		});
-		vi.stubGlobal('fetch', fetchMock);
-		setupRuntimeConfig();
-		evaluateRuntimeScript();
-
-		setTimeout(() => {
-			const sourceInput = document.querySelector<HTMLInputElement>('#gform_source_page_number_42');
-			if (sourceInput) {
-				sourceInput.value = '2';
-			}
-		}, 30);
-
-		triggerNextPageClick();
-		await flushRuntime(600);
-
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-		const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
-		const payload = JSON.parse(String(requestInit.body));
-		expect(payload.current_page_index).toBe(2);
-	});
-
-	it('bypasses cooldown for page-change triggers', async () => {
+	it('runs page checkpoint suggestions before the next page click continues', async () => {
 		const fetchMock = vi.fn().mockResolvedValue({
 			ok: true,
 			json: async () => ({ suggestions: [] })
@@ -300,9 +371,46 @@ describe('realtime suggestions runtime', () => {
 					central_action_id: 'central_rt_1',
 					action_name_label: 'Realtime Action',
 					debounce_ms: 100,
-					cooldown_ms: 5000,
+					cooldown_ms: 0,
+					auto_refresh_enabled: false,
+					field_checkpoints_enabled: true,
+					page_checkpoints_enabled: true,
 					manual_refresh_enabled: true,
 					checkpoint_field_ids: ['1']
+				}
+			]
+		});
+		evaluateRuntimeScript();
+
+		triggerNextPageClick();
+		await flushRuntime();
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+		const payload = JSON.parse(String(requestInit.body));
+		expect(payload.request_reason).toBe('page_checkpoint');
+		expect(payload.current_page_index).toBe(1);
+	});
+
+	it('bypasses cooldown for page checkpoint triggers', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({ suggestions: [] })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+						action_name_label: 'Realtime Action',
+						debounce_ms: 100,
+						cooldown_ms: 5000,
+						auto_refresh_enabled: false,
+						field_checkpoints_enabled: true,
+						page_checkpoints_enabled: true,
+						manual_refresh_enabled: true,
+						checkpoint_field_ids: ['1']
 				}
 			]
 		});
@@ -312,20 +420,165 @@ describe('realtime suggestions runtime', () => {
 		await flushRuntime();
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 
-		setTimeout(() => {
-			const sourceInput = document.querySelector<HTMLInputElement>('#gform_source_page_number_42');
-			if (sourceInput) {
-				sourceInput.value = '2';
-			}
-		}, 30);
-
 		triggerNextPageClick();
-		await flushRuntime(600);
+		await flushRuntime();
 
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		const secondRequestInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
 		const secondPayload = JSON.parse(String(secondRequestInit.body));
-		expect(secondPayload.current_page_index).toBe(2);
+		expect(secondPayload.request_reason).toBe('page_checkpoint');
+		expect(secondPayload.current_page_index).toBe(1);
+	});
+
+	it('runs enabled mappings during Gravity Forms async pre-submit', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({ suggestions: [] })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		let preSubmissionFilter: PreSubmissionFilter | null = null;
+		const gform = {
+			utils: {
+				addAsyncFilter: vi.fn((_name: string, callback: PreSubmissionFilter) => {
+					preSubmissionFilter = callback;
+				})
+			}
+		};
+		(window as unknown as { gform: typeof gform }).gform = gform;
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+						action_name_label: 'Realtime Action',
+						debounce_ms: 100,
+						cooldown_ms: 5000,
+						auto_refresh_enabled: false,
+						field_checkpoints_enabled: true,
+						manual_refresh_enabled: true,
+						storage_target_field_id: '9',
+					blocking_mode: 'advisory',
+					checkpoint_field_ids: ['1'],
+					pre_submit_run_enabled: true,
+					pre_submit_timeout_ms: 500
+				}
+			]
+		});
+		evaluateRuntimeScript();
+
+		const form = document.querySelector<HTMLFormElement>('#gform_42');
+		expect(form).not.toBeNull();
+		expect(preSubmissionFilter).not.toBeNull();
+		const result = await preSubmissionFilter?.({ form: form as HTMLFormElement });
+
+		expect(result?.abort).toBeUndefined();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+		const payload = JSON.parse(String(requestInit.body));
+		expect(payload.request_reason).toBe('pre_submit');
+	});
+
+	it('does not run pre-submit mappings during Gravity Forms pagination navigation', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({ suggestions: [] })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		let preSubmissionFilter: PreSubmissionFilter | null = null;
+		const gform = {
+			utils: {
+				addAsyncFilter: vi.fn((_name: string, callback: PreSubmissionFilter) => {
+					preSubmissionFilter = callback;
+				})
+			}
+		};
+		(window as unknown as { gform: typeof gform }).gform = gform;
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+						action_name_label: 'Realtime Action',
+						debounce_ms: 100,
+						cooldown_ms: 5000,
+						auto_refresh_enabled: false,
+						field_checkpoints_enabled: true,
+						manual_refresh_enabled: true,
+						storage_target_field_id: '9',
+					blocking_mode: 'advisory',
+					checkpoint_field_ids: ['1'],
+					pre_submit_run_enabled: true,
+					pre_submit_timeout_ms: 500
+				}
+			]
+		});
+		evaluateRuntimeScript();
+
+		const form = document.querySelector<HTMLFormElement>('#gform_42');
+		expect(form).not.toBeNull();
+		const targetPageInput = document.createElement('input');
+		targetPageInput.type = 'hidden';
+		targetPageInput.id = 'gform_target_page_number_42';
+		targetPageInput.value = '2';
+		form?.appendChild(targetPageInput);
+
+		const result = await preSubmissionFilter?.({ form: form as HTMLFormElement });
+
+		expect(result?.abort).toBeUndefined();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('fails open when pre-submit suggestions time out', async () => {
+		const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+			return new Promise((_resolve, reject) => {
+				const signal = init?.signal as AbortSignal | undefined;
+				signal?.addEventListener('abort', () => {
+					const error = new Error('Aborted');
+					error.name = 'AbortError';
+					reject(error);
+				});
+			});
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		let preSubmissionFilter: PreSubmissionFilter | null = null;
+		const gform = {
+			utils: {
+				addAsyncFilter: vi.fn((_name: string, callback: PreSubmissionFilter) => {
+					preSubmissionFilter = callback;
+				})
+			}
+		};
+		(window as unknown as { gform: typeof gform }).gform = gform;
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+						action_name_label: 'Realtime Action',
+						debounce_ms: 100,
+						cooldown_ms: 5000,
+						auto_refresh_enabled: false,
+						field_checkpoints_enabled: true,
+						manual_refresh_enabled: true,
+						storage_target_field_id: '9',
+					blocking_mode: 'advisory',
+					checkpoint_field_ids: ['1'],
+					pre_submit_run_enabled: true,
+					pre_submit_timeout_ms: 500
+				}
+			]
+		});
+		evaluateRuntimeScript();
+
+		const form = document.querySelector<HTMLFormElement>('#gform_42');
+		expect(form).not.toBeNull();
+		const resultPromise = preSubmissionFilter?.({ form: form as HTMLFormElement });
+		await vi.advanceTimersByTimeAsync(500);
+		const result = await resultPromise;
+
+		expect(result?.abort).toBeUndefined();
+		const error = document.querySelector<HTMLElement>('[data-role="error"]');
+		expect(error?.hidden).toBe(true);
 	});
 
 	it('does not run page-change suggestions when page index stays the same', async () => {
@@ -366,11 +619,13 @@ describe('realtime suggestions runtime', () => {
 				{
 					mapping_id: 'map_rt_1',
 					central_action_id: 'central_rt_1',
-					action_name_label: 'Realtime Action',
-					debounce_ms: 100,
-					cooldown_ms: 0,
-					manual_refresh_enabled: true,
-					checkpoint_field_ids: ['4']
+						action_name_label: 'Realtime Action',
+						debounce_ms: 100,
+						cooldown_ms: 0,
+						auto_refresh_enabled: false,
+						field_checkpoints_enabled: true,
+						manual_refresh_enabled: true,
+						checkpoint_field_ids: ['4']
 				}
 			],
 			field_manifest: [{ field_id: '4', label: 'Details', type: 'textarea', page_index: 2 }]
@@ -410,11 +665,14 @@ describe('realtime suggestions runtime', () => {
 				{
 					mapping_id: 'map_rt_1',
 					central_action_id: 'central_rt_1',
-					action_name_label: 'Realtime Action',
-					debounce_ms: 100,
-					cooldown_ms: 0,
-					manual_refresh_enabled: true,
-					checkpoint_field_ids: ['1']
+						action_name_label: 'Realtime Action',
+						debounce_ms: 100,
+						cooldown_ms: 0,
+						auto_refresh_enabled: false,
+						field_checkpoints_enabled: true,
+						page_checkpoints_enabled: true,
+						manual_refresh_enabled: true,
+						checkpoint_field_ids: ['1']
 				}
 			],
 			field_manifest: [{ field_id: '4', label: 'Details', type: 'textarea', page_index: 2 }]
@@ -538,11 +796,13 @@ describe('realtime suggestions runtime', () => {
 				{
 					mapping_id: 'map_rt_1',
 					central_action_id: 'central_rt_1',
-					action_name_label: 'Realtime Action',
-					debounce_ms: 100,
-					cooldown_ms: 0,
-					manual_refresh_enabled: true,
-					storage_target_field_id: '',
+						action_name_label: 'Realtime Action',
+						debounce_ms: 100,
+						cooldown_ms: 0,
+						auto_refresh_enabled: false,
+						field_checkpoints_enabled: true,
+						manual_refresh_enabled: true,
+						storage_target_field_id: '',
 					blocking_mode: 'advisory',
 					checkpoint_field_ids: ['1']
 				}
@@ -713,7 +973,24 @@ describe('realtime suggestions runtime', () => {
 				})
 			});
 		vi.stubGlobal('fetch', fetchMock);
-		setupRuntimeConfig();
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+					action_name_label: 'Realtime Action',
+					debounce_ms: 100,
+					cooldown_ms: 0,
+					auto_refresh_enabled: false,
+					field_checkpoints_enabled: true,
+					page_checkpoints_enabled: true,
+					manual_refresh_enabled: true,
+					storage_target_field_id: '9',
+					blocking_mode: 'advisory',
+					checkpoint_field_ids: ['1']
+				}
+			]
+		});
 		evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
@@ -809,11 +1086,13 @@ describe('realtime suggestions runtime', () => {
 				{
 					mapping_id: 'map_rt_1',
 					central_action_id: 'central_rt_1',
-					action_name_label: 'Realtime Action',
-					debounce_ms: 100,
-					cooldown_ms: 0,
-					manual_refresh_enabled: true,
-					storage_target_field_id: '9',
+						action_name_label: 'Realtime Action',
+						debounce_ms: 100,
+						cooldown_ms: 0,
+						auto_refresh_enabled: false,
+						field_checkpoints_enabled: true,
+						manual_refresh_enabled: true,
+						storage_target_field_id: '9',
 					blocking_mode: 'require_answers',
 					checkpoint_field_ids: ['1']
 				}
@@ -857,11 +1136,13 @@ describe('realtime suggestions runtime', () => {
 				{
 					mapping_id: 'map_rt_1',
 					central_action_id: 'central_rt_1',
-					action_name_label: 'Realtime Action',
-					debounce_ms: 100,
-					cooldown_ms: 0,
-					manual_refresh_enabled: true,
-					storage_target_field_id: '9',
+						action_name_label: 'Realtime Action',
+						debounce_ms: 100,
+						cooldown_ms: 0,
+						auto_refresh_enabled: false,
+						field_checkpoints_enabled: true,
+						manual_refresh_enabled: true,
+						storage_target_field_id: '9',
 					blocking_mode: 'require_answers',
 					checkpoint_field_ids: ['1']
 				}
@@ -892,11 +1173,13 @@ describe('realtime suggestions runtime', () => {
 				{
 					mapping_id: 'map_rt_1',
 					central_action_id: 'central_rt_1',
-					action_name_label: 'Realtime Action',
-					debounce_ms: 100,
-					cooldown_ms: 0,
-					manual_refresh_enabled: false,
-					checkpoint_field_ids: ['1']
+						action_name_label: 'Realtime Action',
+						debounce_ms: 100,
+						cooldown_ms: 0,
+						auto_refresh_enabled: false,
+						field_checkpoints_enabled: true,
+						manual_refresh_enabled: false,
+						checkpoint_field_ids: ['1']
 				}
 			]
 		});

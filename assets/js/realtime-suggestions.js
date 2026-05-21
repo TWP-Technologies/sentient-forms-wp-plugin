@@ -56,6 +56,9 @@
 			lastUpdatedAt: null,
 			lastObservedPage: 1,
 			pageProbeTimerId: null,
+			pageCheckpointBypass: false,
+			pageCheckpointPending: false,
+			preSubmitPending: false,
 			preSubmissionFilterRegistered: false
 		};
 	}
@@ -207,6 +210,17 @@
 		return 1;
 	}
 
+	function isFinalFormSubmission(formState) {
+		var formId = formState && formState.config ? formState.config.form_id : '';
+		var targetInput = formState.formElement.querySelector('#gform_target_page_number_' + formId);
+		if (!targetInput) {
+			return true;
+		}
+
+		var targetPage = parseInt(targetInput.value, 10);
+		return !Number.isFinite(targetPage) || targetPage <= 0;
+	}
+
 	function isElementVisible(element) {
 		if (!(element instanceof HTMLElement)) {
 			return false;
@@ -260,7 +274,7 @@
 		return Array.from(new Set(visible));
 	}
 
-	function collectKnownValues(formElement) {
+	function collectAllKnownValues(formElement) {
 		var values = {};
 		var fields = formElement.querySelectorAll('input[name^="input_"], select[name^="input_"], textarea[name^="input_"]');
 
@@ -292,6 +306,102 @@
 		return values;
 	}
 
+	function normalizeHiddenFieldExposureMode(value) {
+		var normalized = normalizeFieldId(value || 'label_hidden').toLowerCase();
+		if (['omit_hidden', 'label_hidden', 'label_hidden_value', 'label_value'].indexOf(normalized) >= 0) {
+			return normalized;
+		}
+		return 'label_hidden';
+	}
+
+	function hiddenFieldModeIncludesValue(mode) {
+		return mode === 'label_hidden_value' || mode === 'label_value';
+	}
+
+	function rootFieldId(fieldId) {
+		var normalized = normalizeFieldId(fieldId);
+		var dotIndex = normalized.indexOf('.');
+		return dotIndex > 0 ? normalized.slice(0, dotIndex) : normalized;
+	}
+
+	function fieldMetaForValueId(config, fieldId) {
+		var normalized = normalizeFieldId(fieldId);
+		var rootId = rootFieldId(normalized);
+		var manifest = asArray(config.field_manifest);
+		for (var index = 0; index < manifest.length; index += 1) {
+			var fieldMeta = manifest[index];
+			if (!fieldMeta || typeof fieldMeta !== 'object') {
+				continue;
+			}
+			var manifestFieldId = normalizeFieldId(fieldMeta.field_id);
+			if (manifestFieldId === normalized || manifestFieldId === rootId) {
+				return fieldMeta;
+			}
+			var inputIds = asArray(fieldMeta.input_ids).map(normalizeFieldId);
+			if (inputIds.indexOf(normalized) >= 0) {
+				return fieldMeta;
+			}
+		}
+		return null;
+	}
+
+	function isVisibleValueField(fieldId, visibleSet) {
+		var normalized = normalizeFieldId(fieldId);
+		return visibleSet.has(normalized) || visibleSet.has(rootFieldId(normalized));
+	}
+
+	function isRealtimeStorageField(mapping, fieldId) {
+		var targetFieldId = normalizeFieldId(mapping && mapping.storage_target_field_id);
+		if (!targetFieldId || targetFieldId === '__sentient_forms_realtime_qna') {
+			return false;
+		}
+		var normalized = normalizeFieldId(fieldId);
+		return normalized === targetFieldId || rootFieldId(normalized) === targetFieldId;
+	}
+
+	function buildRealtimeFieldContext(config, mapping, allValues, visibleFieldIds) {
+		var mode = normalizeHiddenFieldExposureMode(mapping && mapping.hidden_field_exposure_mode);
+		var includeHiddenValues = hiddenFieldModeIncludesValue(mode);
+		var visibleSet = new Set(asArray(visibleFieldIds).map(normalizeFieldId).filter(Boolean));
+		var knownValues = {};
+		var supplementalFieldContext = [];
+
+		Object.keys(allValues).forEach(function (fieldId) {
+			var visible = isVisibleValueField(fieldId, visibleSet);
+			var storageField = isRealtimeStorageField(mapping, fieldId);
+			if (visible && !storageField) {
+				knownValues[fieldId] = allValues[fieldId];
+				return;
+			}
+
+			if (storageField || mode === 'omit_hidden') {
+				return;
+			}
+
+			var fieldMeta = fieldMetaForValueId(config, fieldId);
+			var context = {
+				field_id: fieldId,
+				label: fieldMeta && fieldMeta.label ? String(fieldMeta.label) : '',
+				type: fieldMeta && fieldMeta.type ? String(fieldMeta.type) : '',
+				page_index: fieldMeta && fieldMeta.page_index ? parseInt(fieldMeta.page_index, 10) || 1 : 1
+			};
+			if (mode !== 'label_value') {
+				context.hidden = true;
+			}
+			if (includeHiddenValues) {
+				context.value = allValues[fieldId];
+				knownValues[fieldId] = allValues[fieldId];
+			}
+			supplementalFieldContext.push(context);
+		});
+
+		return {
+			hiddenFieldExposureMode: mode,
+			knownValues: knownValues,
+			supplementalFieldContext: supplementalFieldContext
+		};
+	}
+
 	function collectFutureFieldManifest(config, currentPage) {
 		return asArray(config.field_manifest).filter(function (fieldMeta) {
 			var pageIndex = parseInt(fieldMeta.page_index, 10) || 1;
@@ -320,32 +430,67 @@
 		return '';
 	}
 
-	function shouldTriggerMapping(mapping, eventFieldId, reason, manual) {
+	function normalizeRefreshMode(mapping) {
+		var refreshMode = normalizeFieldId(mapping && mapping.refresh_mode || 'auto').toLowerCase();
+		return ['auto', 'checkpoint', 'manual'].indexOf(refreshMode) >= 0 ? refreshMode : 'auto';
+	}
+
+	function realtimeBoolean(mapping, key, fallback) {
+		return typeof (mapping && mapping[key]) === 'boolean' ? mapping[key] : fallback;
+	}
+
+	function mappingAutoRefreshEnabled(mapping) {
+		return realtimeBoolean(mapping, 'auto_refresh_enabled', normalizeRefreshMode(mapping) === 'auto');
+	}
+
+	function mappingFieldCheckpointsEnabled(mapping) {
+		return realtimeBoolean(mapping, 'field_checkpoints_enabled', normalizeRefreshMode(mapping) === 'checkpoint');
+	}
+
+	function mappingPageCheckpointsEnabled(mapping) {
+		return realtimeBoolean(mapping, 'page_checkpoints_enabled', false);
+	}
+
+	function pageCheckpointApplies(mapping, currentPage) {
+		if (!mappingPageCheckpointsEnabled(mapping)) {
+			return false;
+		}
+
+		var page = Math.max(1, parseInt(currentPage, 10) || 1);
+		var mode = normalizeFieldId(mapping.page_checkpoint_mode || 'all_pages').toLowerCase();
+		if (['all_pages', 'include_pages', 'exclude_pages'].indexOf(mode) < 0) {
+			mode = 'all_pages';
+		}
+
+		if (mode === 'all_pages') {
+			return true;
+		}
+
+		var pages = asArray(mapping.page_checkpoint_pages)
+			.map(function (item) {
+				return Math.max(1, parseInt(item, 10) || 0);
+			})
+			.filter(Boolean);
+		var selected = pages.indexOf(page) >= 0;
+
+		return mode === 'include_pages' ? selected : !selected;
+	}
+
+	function shouldTriggerMapping(mapping, eventFieldId, reason, manual, currentPage) {
 		if (manual) {
 			return true;
 		}
 
-		var refreshMode = normalizeFieldId(mapping.refresh_mode || 'auto').toLowerCase();
-		if (['auto', 'checkpoint', 'manual'].indexOf(refreshMode) < 0) {
-			refreshMode = 'auto';
-		}
-		if (refreshMode === 'manual') {
-			return false;
-		}
-
-		if (reason === 'page_change') {
-			return true;
+		if (reason === 'page_checkpoint' || reason === 'page_change') {
+			return pageCheckpointApplies(mapping, currentPage);
 		}
 
 		var checkpoints = asArray(mapping.checkpoint_field_ids).map(normalizeFieldId).filter(Boolean);
-		if (refreshMode === 'checkpoint' && !checkpoints.length) {
-			return false;
-		}
-		if (!checkpoints.length) {
+		if (mappingAutoRefreshEnabled(mapping)) {
 			return true;
 		}
 
-		if (!eventFieldId) {
+		if (!mappingFieldCheckpointsEnabled(mapping) || !checkpoints.length || !eventFieldId) {
 			return false;
 		}
 
@@ -356,6 +501,7 @@
 		if (!formState.mappingStates[mappingId]) {
 			formState.mappingStates[mappingId] = {
 					inFlight: false,
+					inFlightPromise: null,
 					lastRunAt: 0,
 					timerId: null,
 					suggestions: [],
@@ -654,7 +800,15 @@
 			return;
 		}
 
-		if (!shouldTriggerMapping(mapping, triggerContext.eventFieldId, triggerContext.reason, triggerContext.manual)) {
+		if (
+			!shouldTriggerMapping(
+				mapping,
+				triggerContext.eventFieldId,
+				triggerContext.reason,
+				triggerContext.manual,
+				triggerContext.currentPageIndex
+			)
+		) {
 			return;
 		}
 
@@ -679,25 +833,29 @@
 		var cooldownMs = Math.max(0, parseInt(mapping.cooldown_ms, 10) || 0);
 		var manual = !!(triggerOptions && triggerOptions.manual);
 		var reason = normalizeFieldId(triggerOptions && triggerOptions.reason).toLowerCase();
-		var bypassCooldown = manual || reason === 'page_change';
+		var bypassCooldown = manual || reason === 'page_change' || reason === 'page_checkpoint' || reason === 'pre_submit';
+		var timeoutMs = Math.max(0, parseInt(triggerOptions && triggerOptions.timeoutMs, 10) || 0);
+		var isPreSubmit = reason === 'pre_submit';
 
 		if (!bypassCooldown && state.lastRunAt > 0 && now - state.lastRunAt < cooldownMs) {
 			renderWidget(formState);
-			return;
+			return Promise.resolve({ status: 'skipped', reason: 'cooldown' });
 		}
 
 		if (state.inFlight) {
-			return;
+			return state.inFlightPromise || Promise.resolve({ status: 'skipped', reason: 'in_flight' });
 		}
 
 		state.inFlight = true;
+		state.inFlightPromise = null;
 		state.error = null;
 		formState.lastGlobalError = null;
 		renderWidget(formState);
 
 		var currentPage = collectCurrentPage(formState.formElement, formState.config.form_id);
-		var knownValues = collectKnownValues(formState.formElement);
+		var allValues = collectAllKnownValues(formState.formElement);
 		var visibleFieldIds = collectVisibleFieldIds(formState.formElement, formState.config.form_id);
+		var fieldContext = buildRealtimeFieldContext(formState.config, mapping, allValues, visibleFieldIds);
 		var futureFieldManifest = collectFutureFieldManifest(formState.config, currentPage);
 		var totalPages = parseInt(formState.config.total_pages, 10) || 1;
 		var executionRequestId = 'rt-' + mappingId + '-' + now + '-' + Math.random().toString(16).slice(2, 10);
@@ -706,11 +864,13 @@
 				mapping_id: mappingId,
 				execution_request_id: executionRequestId,
 				request_reason: reason || 'field_change',
-				all_known_field_values: knownValues,
+				all_known_field_values: fieldContext.knownValues,
 				visible_field_ids: visibleFieldIds,
 				current_page_index: currentPage,
 				total_pages: totalPages,
 				future_field_manifest: futureFieldManifest,
+				hidden_field_exposure_mode: fieldContext.hiddenFieldExposureMode,
+				supplemental_field_context: fieldContext.supplementalFieldContext,
 				panel_state: serializePanelStateForRequest(formState, mappingId)
 			};
 
@@ -722,12 +882,26 @@
 			headers['X-WP-Nonce'] = formState.config.rest_nonce;
 		}
 
-		window.fetch(formState.config.suggest_endpoint_url, {
+		var controller = timeoutMs > 0 && typeof window.AbortController === 'function'
+			? new window.AbortController()
+			: null;
+		var timeoutId = controller
+			? window.setTimeout(function () {
+				controller.abort();
+			}, timeoutMs)
+			: null;
+
+		var requestOptions = {
 			method: 'POST',
 			headers: headers,
 			credentials: 'same-origin',
 			body: JSON.stringify(payload)
-		})
+		};
+		if (controller) {
+			requestOptions.signal = controller.signal;
+		}
+
+		state.inFlightPromise = window.fetch(formState.config.suggest_endpoint_url, requestOptions)
 			.then(function (response) {
 				if (!response.ok) {
 					return response.text().then(function (bodyText) {
@@ -773,15 +947,28 @@
 				formState.lastUpdatedAt = state.lastRunAt;
 				persistQuestionAnswers(formState);
 				dispatchConditionalDecisions(formState, mapping, state.conditionalDecisions);
+				return { status: 'success' };
 			})
 			.catch(function (error) {
-				state.error = error && error.message ? error.message : 'Suggestion request failed.';
-				formState.lastGlobalError = state.error;
+				var message = error && error.name === 'AbortError'
+					? 'Suggestion request timed out.'
+					: (error && error.message ? error.message : 'Suggestion request failed.');
+				if (!isPreSubmit) {
+					state.error = message;
+					formState.lastGlobalError = state.error;
+				}
+				return { status: 'error', error: message };
 			})
 			.finally(function () {
+				if (timeoutId) {
+					window.clearTimeout(timeoutId);
+				}
 				state.inFlight = false;
+				state.inFlightPromise = null;
 				renderWidget(formState);
 			});
+
+		return state.inFlightPromise;
 	}
 
 	function focusField(formElement, formId, fieldId) {
@@ -1088,6 +1275,7 @@
 		var subtitle = widget.querySelector('[data-role="subtitle"]');
 		var toggleButton = widget.querySelector('[data-role="toggle"]');
 		var metering = widget.querySelector('[data-role="metering"]');
+		var refreshButton = widget.querySelector('[data-role="refresh"]');
 		var list = widget.querySelector('[data-role="list"]');
 		var questions = widget.querySelector('[data-role="questions"]');
 		var empty = widget.querySelector('[data-role="empty"]');
@@ -1103,6 +1291,11 @@
 			toggleButton.textContent = formState.isOpen ? 'Hide' : 'Show';
 		toggleButton.setAttribute('aria-expanded', formState.isOpen ? 'true' : 'false');
 		body.hidden = !formState.isOpen;
+		if (refreshButton instanceof HTMLElement) {
+			refreshButton.hidden = !asArray(formState.config.mappings).some(function (mapping) {
+				return mapping && mapping.manual_refresh_enabled !== false;
+			});
+		}
 
 		var meteringSummary = summarizeMetering(formState);
 		if (meteringSummary) {
@@ -1263,6 +1456,117 @@
 		});
 	}
 
+	function normalizePageCheckpointTimeoutMs(mapping) {
+		var value = parseInt(mapping && mapping.page_checkpoint_timeout_ms, 10);
+		if (!Number.isFinite(value)) {
+			value = 2500;
+		}
+		return Math.min(10000, Math.max(500, value));
+	}
+
+	function normalizePreSubmitTimeoutMs(mapping) {
+		var value = parseInt(mapping && mapping.pre_submit_timeout_ms, 10);
+		if (!Number.isFinite(value)) {
+			value = 2500;
+		}
+		return Math.min(10000, Math.max(500, value));
+	}
+
+	function preSubmitTimeoutResult(timeoutMs) {
+		return new Promise(function (resolve) {
+			window.setTimeout(function () {
+				resolve({ status: 'timeout' });
+			}, timeoutMs);
+		});
+	}
+
+	function runPreSubmitMappings(formState) {
+		var mappings = asArray(formState.config.mappings).filter(function (mapping) {
+			return mapping && typeof mapping === 'object' && mapping.pre_submit_run_enabled === true;
+		});
+		if (!mappings.length) {
+			return Promise.resolve([]);
+		}
+
+		formState.preSubmitPending = true;
+		renderWidget(formState);
+
+		var runs = mappings.map(function (mapping) {
+			var mappingId = normalizeFieldId(mapping.mapping_id);
+			var state = mappingStateFor(formState, mappingId);
+			if (state.timerId) {
+				window.clearTimeout(state.timerId);
+				state.timerId = null;
+			}
+			var timeoutMs = normalizePreSubmitTimeoutMs(mapping);
+			return Promise.race([
+				runMapping(formState, mapping, {
+					manual: true,
+					reason: 'pre_submit',
+					timeoutMs: timeoutMs
+				}),
+				preSubmitTimeoutResult(timeoutMs)
+			]).catch(function (error) {
+				return {
+					status: 'error',
+					error: error && error.message ? error.message : 'Suggestion request failed.'
+				};
+			});
+		});
+
+		return Promise.all(runs).finally(function () {
+			formState.preSubmitPending = false;
+			persistQuestionAnswers(formState);
+			renderWidget(formState);
+		});
+	}
+
+	function pageCheckpointMappingsForCurrentPage(formState, currentPage) {
+		return asArray(formState.config.mappings).filter(function (mapping) {
+			return mapping && typeof mapping === 'object' && pageCheckpointApplies(mapping, currentPage);
+		});
+	}
+
+	function runPageCheckpointMappings(formState, currentPage) {
+		var mappings = pageCheckpointMappingsForCurrentPage(formState, currentPage);
+		if (!mappings.length) {
+			return Promise.resolve([]);
+		}
+
+		formState.pageCheckpointPending = true;
+		renderWidget(formState);
+
+		var runs = mappings.map(function (mapping) {
+			var mappingId = normalizeFieldId(mapping.mapping_id);
+			var state = mappingStateFor(formState, mappingId);
+			if (state.timerId) {
+				window.clearTimeout(state.timerId);
+				state.timerId = null;
+			}
+
+			var timeoutMs = normalizePageCheckpointTimeoutMs(mapping);
+			return Promise.race([
+				runMapping(formState, mapping, {
+					manual: false,
+					reason: 'page_checkpoint',
+					timeoutMs: timeoutMs
+				}),
+				preSubmitTimeoutResult(timeoutMs)
+			]).catch(function (error) {
+				return {
+					status: 'error',
+					error: error && error.message ? error.message : 'Suggestion request failed.'
+				};
+			});
+		});
+
+		return Promise.all(runs).finally(function () {
+			formState.pageCheckpointPending = false;
+			persistQuestionAnswers(formState);
+			renderWidget(formState);
+		});
+	}
+
 	function markFormInteraction(formState) {
 		if (formState.hasUserInteracted) {
 			return;
@@ -1281,7 +1585,8 @@
 		runMappings(formState, {
 			reason: 'page_change',
 			manual: false,
-			eventFieldId: ''
+			eventFieldId: '',
+			currentPageIndex: currentPage
 		});
 
 		return true;
@@ -1329,6 +1634,11 @@
 					return data;
 				}
 
+				if (!isFinalFormSubmission(formState)) {
+					return data;
+				}
+
+				await runPreSubmitMappings(formState);
 				if (!guardRequiredVirtualAnswers(formState)) {
 					data.abort = true;
 				}
@@ -1376,7 +1686,8 @@
 				runMappings(formState, {
 					reason: 'page_change',
 					manual: false,
-					eventFieldId: ''
+					eventFieldId: '',
+					currentPageIndex: formState.lastObservedPage
 				});
 			}, 0);
 		}
@@ -1425,11 +1736,35 @@
 						return;
 					}
 					markFormInteraction(formState);
+					if (formState.pageCheckpointBypass) {
+						formState.pageCheckpointBypass = false;
+						schedulePageChangeProbe(formState);
+						return;
+					}
 					if (target.matches('.gform_next_button') && !guardRequiredVirtualAnswers(formState)) {
 					event.preventDefault();
 					event.stopPropagation();
 					event.stopImmediatePropagation();
 					return;
+				}
+
+				if (target.matches('.gform_next_button')) {
+					var currentPage = collectCurrentPage(formState.formElement, formId);
+					if (pageCheckpointMappingsForCurrentPage(formState, currentPage).length) {
+						event.preventDefault();
+						event.stopPropagation();
+						event.stopImmediatePropagation();
+
+						runPageCheckpointMappings(formState, currentPage).then(function () {
+							if (!guardRequiredVirtualAnswers(formState)) {
+								return;
+							}
+
+							formState.pageCheckpointBypass = true;
+							target.click();
+						});
+						return;
+					}
 				}
 
 				schedulePageChangeProbe(formState);

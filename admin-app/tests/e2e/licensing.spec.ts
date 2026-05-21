@@ -553,7 +553,7 @@ test('licensing screen explains the v2 managed billing boundary', async ({ page 
 	await expect(page.getByTestId('licensing-managed-usage-summary')).toContainText('$0.01 billed');
 });
 
-test('existing subscriptions use billing portal for plan management', async ({ page }) => {
+test('existing subscriptions use subscription update portal for plan changes', async ({ page }) => {
 	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
 	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
 
@@ -645,9 +645,14 @@ test('existing subscriptions use billing portal for plan management', async ({ p
 		const body = route.request().postDataJSON() as
 			| { flow_type?: string; subscription_id?: string; return_url?: string }
 			| undefined;
-		expect(body?.flow_type).toBe('home');
-		expect(body?.subscription_id).toBeUndefined();
+		expect(body?.flow_type).toBe('subscription_update');
+		expect(body?.subscription_id).toBe('sub_trial_next_cycle_123');
 		expect(typeof body?.return_url).toBe('string');
+		const returnUrl = new URL(body?.return_url ?? '');
+		expect(returnUrl.origin).toBe(process.env.PREVIEW_ORIGIN ?? 'http://127.0.0.1:4175');
+		expect(returnUrl.hash === '#/licensing' || returnUrl.pathname.endsWith('/licensing')).toBe(
+			true
+		);
 
 		return route.fulfill({
 			status: 200,
@@ -671,10 +676,130 @@ test('existing subscriptions use billing portal for plan management', async ({ p
 		'Use the Stripe billing portal'
 	);
 
-	await page.getByRole('button', { name: 'Manage billing' }).first().click();
+	await page.getByRole('button', { name: 'Upgrade to Pro' }).click();
 
 	await expect.poll(() => portalAttempts).toBe(1);
 	await expect(page).toHaveURL(/about:blank#stripe-plan-management/);
+});
+
+test('larger subscriptions use the same subscription update portal for downgrades', async ({
+	page
+}) => {
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+
+	let portalAttempts = 0;
+
+	await page.route('**/wp-json/sentient-forms/v1/license', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					status: 'active',
+					license_key_masked: 'LIC-****-****-****',
+					proxy_key_present: true,
+					tier: 'pro',
+					expires_at: '2030-02-01T00:00:00Z',
+					last_synced: '2030-01-01T00:00:00Z',
+					license_id: 'lic-pro-downgrade',
+					site_id: 'site-pro-downgrade',
+					site_url: 'https://example.test'
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) => {
+		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
+	});
+
+	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+		route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					provider: 'stripe',
+					license_status: 'active',
+					tier: {
+						code: 'pro',
+						display_name: 'Pro',
+						site_limit: 10,
+						monthly_credit_quota: 4000
+					},
+					subscription: {
+						provider_subscription_id: 'sub_pro_downgrade_123',
+						status: 'active',
+						quantity: 1,
+						cancel_at_period_end: false,
+						current_period_start: '2030-01-01T00:00:00Z',
+						current_period_end: '2030-02-01T00:00:00Z',
+						trial_end: null,
+						provider_price_id: 'price_test_pro'
+					},
+					credits: {
+						current_balance: 3800,
+						tier_quota: 4000,
+						ledger_delta: 0,
+						top_up_available: 0
+					},
+					allocation: {
+						seat_quantity: 1,
+						tier_site_limit: 10,
+						allowed_sites: 10,
+						active_sites: 1,
+						over_limit: false,
+						blocked_new_activations: false,
+						grace_expires_at: null,
+						capacity_policy: 'tier_x_quantity_v1'
+					},
+					policy: {
+						paid_trial_days: 14,
+						free_plan_monthly_credits: 50,
+						free_plan_indefinite: true,
+						private_beta_trial_enabled: true
+					}
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		})
+	);
+
+	await page.route('**/wp-json/sentient-forms/v1/license/billing/subscription-change', (route) => {
+		throw new Error(`Obsolete subscription-change route was called: ${route.request().url()}`);
+	});
+
+	await page.route('**/wp-json/sentient-forms/v1/license/billing/portal-session', (route) => {
+		portalAttempts += 1;
+		const body = route.request().postDataJSON() as
+			| { flow_type?: string; subscription_id?: string; return_url?: string }
+			| undefined;
+		expect(body?.flow_type).toBe('subscription_update');
+		expect(body?.subscription_id).toBe('sub_pro_downgrade_123');
+		const returnUrl = new URL(body?.return_url ?? '');
+		expect(returnUrl.origin).toBe(process.env.PREVIEW_ORIGIN ?? 'http://127.0.0.1:4175');
+
+		return route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					session_id: 'bps_plan_downgrade_123',
+					portal_url: 'about:blank#stripe-plan-downgrade',
+					customer_id: 'cus_test_123'
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+
+	await page.goto('/#/licensing', { waitUntil: 'networkidle' });
+	await page.getByRole('button', { name: 'Downgrade to Starter' }).click();
+
+	await expect.poll(() => portalAttempts).toBe(1);
+	await expect(page).toHaveURL(/about:blank#stripe-plan-downgrade/);
 });
 
 test('licensing billing error state maps portal failures to actionable copy', async ({ page }) => {

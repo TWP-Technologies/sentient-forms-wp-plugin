@@ -19,6 +19,7 @@
 	} from '$lib/components/ui';
 	import AlignedSelectGrid from '$lib/components/aligned-select-grid.svelte';
 	import ActionCustomizationEditor from '$lib/components/action-customization-editor.svelte';
+	import RealtimeSettingsEditor from '$lib/components/realtime-settings-editor.svelte';
 	import SiteContextWarning from '$lib/components/site-context-warning.svelte';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
 	import { DEFAULT_BATCH_SETTINGS, sanitizeBatchSettings } from '$lib/utils/batch';
@@ -66,9 +67,6 @@
 		LocalFormMappingRecord,
 		LocalProviderCredential,
 		ModelSelection,
-		RealtimeBlockingMode,
-		RealtimeInitialPanelState,
-		RealtimeRefreshMode,
 		RealtimeSettings,
 		RepairState,
 		ResolvedModelSelection,
@@ -93,6 +91,12 @@
 		resolveModelSelectionChain,
 		type InheritableBooleanMode
 	} from '$lib/utils/action-config';
+	import {
+		REALTIME_ACTION_ID,
+		isRealtimeEligibleActionId,
+		normalizeRealtimeSettings,
+		summarizeRealtimeSettings
+	} from '$lib/utils/realtime-settings';
 	import {
 		isReadyOpenRouterCredential,
 		openRouterActionHealth,
@@ -308,22 +312,6 @@
 		gform_after_submission: '📝 After Submission (Background)',
 		real_time: 'Realtime (Form Page)'
 	};
-	const REALTIME_ACTION_ID = 'clarification_assistant_v1';
-	const REALTIME_BLOCKING_OPTIONS = [
-		{ value: 'advisory', label: 'Advisory: never block submit' },
-		{ value: 'require_answers', label: 'Require answers to required AI questions' }
-	];
-	const REALTIME_REFRESH_MODE_OPTIONS = [
-		{ value: 'auto', label: 'Auto-refresh after input' },
-		{ value: 'checkpoint', label: 'Only configured checkpoints' },
-		{ value: 'manual', label: 'Only manual refresh' }
-	];
-	const REALTIME_INITIAL_PANEL_OPTIONS = [
-		{ value: 'minimized', label: 'Minimized on form start' },
-		{ value: 'hidden_until_interaction', label: 'Hidden until visitor starts' },
-		{ value: 'open', label: 'Open on form start' }
-	];
-
 	const providerEditUrl = $derived(
 		data.formSourceSlug === 'gravity_forms'
 			? `admin.php?page=gf_edit_forms&id=${encodeURIComponent(String(data.formId))}`
@@ -423,23 +411,6 @@
 	let formFields = $state<FormFieldInfo[]>([]);
 	let fieldsLoading = $state(false);
 
-	function createDefaultRealtimeSettings(): RealtimeSettings {
-		return {
-			checkpoint_field_ids: [],
-			storage_target_field_id: '',
-			debounce_ms: 900,
-			cooldown_ms: 8000,
-			manual_refresh_enabled: true,
-			blocking_mode: 'advisory',
-			refresh_mode: 'auto',
-			initial_panel_state: 'minimized'
-		};
-	}
-
-	function isRealtimeEligibleActionId(actionId: string | null | undefined): boolean {
-		return actionId === REALTIME_ACTION_ID;
-	}
-
 	function hookEntriesForAction(actionId: string | null | undefined): [string, string][] {
 		const fallbackEntries = hookEntries.filter(
 			([hookKey]) => hookKey !== 'real_time' || isRealtimeEligibleActionId(actionId)
@@ -476,60 +447,42 @@
 		return normalized.filter((hook) => hook !== 'real_time');
 	}
 
-	function normalizeRealtimeSettings(value: unknown): RealtimeSettings {
-		const defaults = createDefaultRealtimeSettings();
-		if (!value || typeof value !== 'object' || Array.isArray(value)) {
-			return defaults;
-		}
-
-		const candidate = value as Record<string, unknown>;
-		const checkpointFieldIds = Array.isArray(candidate.checkpoint_field_ids)
-			? candidate.checkpoint_field_ids.map((fieldId) => fieldId?.toString().trim()).filter(Boolean)
-			: defaults.checkpoint_field_ids;
-		const debounceMs = Number.parseInt(String(candidate.debounce_ms ?? defaults.debounce_ms), 10);
-		const cooldownMs = Number.parseInt(String(candidate.cooldown_ms ?? defaults.cooldown_ms), 10);
-		const blockingMode =
-			candidate.blocking_mode === 'require_answers' ? 'require_answers' : 'advisory';
-		const refreshMode = ['auto', 'checkpoint', 'manual'].includes(
-			String(candidate.refresh_mode ?? '')
-		)
-			? (candidate.refresh_mode as RealtimeRefreshMode)
-			: defaults.refresh_mode;
-		const initialPanelState = ['open', 'minimized', 'hidden_until_interaction'].includes(
-			String(candidate.initial_panel_state ?? '')
-		)
-			? (candidate.initial_panel_state as RealtimeInitialPanelState)
-			: defaults.initial_panel_state;
-
-		return {
-			checkpoint_field_ids: Array.from(new Set(checkpointFieldIds)),
-			storage_target_field_id:
-				typeof candidate.storage_target_field_id === 'string'
-					? candidate.storage_target_field_id.trim()
-					: defaults.storage_target_field_id,
-			debounce_ms: Number.isFinite(debounceMs) ? Math.min(5000, Math.max(250, debounceMs)) : 900,
-			cooldown_ms: Number.isFinite(cooldownMs) ? Math.min(60000, Math.max(0, cooldownMs)) : 8000,
-			manual_refresh_enabled:
-				typeof candidate.manual_refresh_enabled === 'boolean'
-					? candidate.manual_refresh_enabled
-					: defaults.manual_refresh_enabled,
-			blocking_mode: blockingMode,
-			refresh_mode: refreshMode,
-			initial_panel_state: initialPanelState
-		};
-	}
-
 	function deriveExecutionModeForHooks(hooks: Iterable<string>, current?: unknown): ExecutionMode {
 		const normalizedHooks = normalizeHookIds(hooks);
 		if (normalizedHooks.includes('real_time')) {
 			return 'real_time';
 		}
 
-		if (current === 'validation' || current === 'after_submission') {
+		if (current === 'real_time' || current === 'validation' || current === 'after_submission') {
 			return current;
 		}
 
 		return normalizedHooks.includes('gform_validation') ? 'validation' : 'after_submission';
+	}
+
+	function resolveRealtimeSettingsChain(
+		actionConfig: FormActionConfig,
+		formConfig: FormActionConfig,
+		mappingRealtimeSettings?: unknown
+	): RealtimeSettings {
+		const actionSettings =
+			actionConfig.realtime_settings && typeof actionConfig.realtime_settings === 'object'
+				? actionConfig.realtime_settings
+				: {};
+		const formSettings =
+			formConfig.realtime_settings && typeof formConfig.realtime_settings === 'object'
+				? formConfig.realtime_settings
+				: {};
+		const mappingSettings =
+			mappingRealtimeSettings && typeof mappingRealtimeSettings === 'object'
+				? mappingRealtimeSettings
+				: {};
+
+		return normalizeRealtimeSettings({
+			...actionSettings,
+			...formSettings,
+			...mappingSettings
+		});
 	}
 
 	function updateRealtimeSettings(partial: Partial<RealtimeSettings>) {
@@ -542,17 +495,6 @@
 				...partial
 			}
 		};
-	}
-
-	function toggleRealtimeCheckpointField(fieldId: string) {
-		const current = normalizeRealtimeSettings(draftSettings.realtime_settings);
-		const next = new Set(current.checkpoint_field_ids ?? []);
-		if (next.has(fieldId)) {
-			next.delete(fieldId);
-		} else {
-			next.add(fieldId);
-		}
-		updateRealtimeSettings({ checkpoint_field_ids: Array.from(next) });
 	}
 
 	function createBlankFormActionConfig(): FormActionConfig {
@@ -756,7 +698,13 @@
 		}
 
 		const client = createClientFromConfig();
-		const config = normalizeFormActionConfig(await client.getActionDefaults(actionId));
+		const normalizedConfig = normalizeFormActionConfig(await client.getActionDefaults(actionId));
+		const config = isRealtimeEligibleActionId(actionId)
+			? {
+					...normalizedConfig,
+					realtime_settings: normalizeRealtimeSettings(normalizedConfig.realtime_settings)
+				}
+			: normalizedConfig;
 		actionDefaultsByActionId = {
 			...actionDefaultsByActionId,
 			[actionId]: config
@@ -785,8 +733,17 @@
 
 		try {
 			if (!shouldForce && formLevelConfigByActionId[actionId]) {
-				await actionDefaultsPromise;
-				const cachedConfig = formLevelConfigByActionId[actionId];
+				const actionDefaults = await actionDefaultsPromise;
+				const cachedConfig = isRealtimeEligibleActionId(actionId)
+					? {
+							...formLevelConfigByActionId[actionId],
+							realtime_settings: resolveRealtimeSettingsChain(
+								actionDefaults,
+								formLevelConfigByActionId[actionId],
+								formLevelConfigByActionId[actionId].realtime_settings
+							)
+						}
+					: formLevelConfigByActionId[actionId];
 				if (shouldOpenModal) {
 					formLevelConfig = cachedConfig;
 				}
@@ -794,11 +751,21 @@
 			}
 
 			const client = createClientFromConfig();
-			const [, rawConfig] = await Promise.all([
+			const [actionDefaults, rawConfig] = await Promise.all([
 				actionDefaultsPromise,
 				client.getFormActionConfig(data.formSourceSlug, data.formId, actionId)
 			]);
-			const config = normalizeFormActionConfig(rawConfig);
+			const normalizedConfig = normalizeFormActionConfig(rawConfig);
+			const config = isRealtimeEligibleActionId(actionId)
+				? {
+						...normalizedConfig,
+						realtime_settings: resolveRealtimeSettingsChain(
+							actionDefaults,
+							normalizedConfig,
+							normalizedConfig.realtime_settings
+						)
+					}
+				: normalizedConfig;
 			formLevelConfigByActionId = {
 				...formLevelConfigByActionId,
 				[actionId]: config
@@ -1182,6 +1149,9 @@
 			label: `${field.adminLabel || field.label || `Field ${field.id}`} (${field.id})`
 		}))
 	]);
+	const realtimeTotalPages = $derived.by(() =>
+		Math.max(1, ...formFields.map((field) => Number(field.page_index ?? 1) || 1))
+	);
 	const isDraftAfterSubmissionOnly = $derived(effectiveDraftExecutionKind === 'background');
 	const isBlockingSpamMapping = $derived(
 		isSpamMapping && effectiveDraftExecutionKind !== 'background'
@@ -1383,19 +1353,7 @@
 	});
 	const realtimeSummary = $derived.by(() => {
 		if (!isRealtimeDraft) return 'Disabled';
-		const checkpointCount = realtimeSettings.checkpoint_field_ids?.length ?? 0;
-		const storageLabel = realtimeSettings.storage_target_field_id
-			? `stores in ${realtimeSettings.storage_target_field_id}`
-			: 'no Q&A storage';
-		const submitPolicy =
-			realtimeSettings.blocking_mode === 'require_answers' ? 'required answers' : 'advisory';
-		const refresh =
-			realtimeSettings.refresh_mode === 'manual'
-				? 'manual'
-				: realtimeSettings.refresh_mode === 'checkpoint'
-					? 'checkpoints'
-					: 'auto';
-		return `${refresh} · ${checkpointCount || 'all'} checkpoint${checkpointCount === 1 ? '' : 's'} · ${storageLabel} · ${submitPolicy}`;
+		return summarizeRealtimeSettings(realtimeSettings);
 	});
 	const conditionsSummary = $derived.by(() => {
 		const conditions = (draftSettings.conditions ?? createDefaultConditionConfig()) as Record<
@@ -2645,7 +2603,11 @@
 			execution_mode: executionMode,
 			realtime_settings:
 				executionMode === 'real_time'
-					? normalizeRealtimeSettings(baseSettings.realtime_settings)
+					? resolveRealtimeSettingsChain(
+							inheritedActionConfig,
+							inheritedFormConfig,
+							baseSettings.realtime_settings
+						)
 					: baseSettings.realtime_settings,
 			// CB-EXEC-003/004: Batch settings with sensible defaults.
 			batch_settings: sanitizeBatchSettings(baseBatchSettings),
@@ -3307,6 +3269,13 @@
 			const customPostExecutionActions =
 				createKind === 'custom' ? getCustomActionPostExecutionActions(chosenCustom) : [];
 			const executionMode = deriveExecutionModeForHooks(hooks);
+			const realtimeSettingsForCreate =
+				executionMode === 'real_time'
+					? resolveRealtimeSettingsChain(
+							await loadActionDefaultsForAction(centralActionId, { force: false }),
+							await loadFormLevelConfig(centralActionId, { openModal: false, force: false })
+						)
+					: null;
 			await formActionsStore.create(data.formSourceSlug, data.formId, {
 				central_action_id: centralActionId,
 				action_type_indicator: createKind === 'template' ? 'master' : 'custom',
@@ -3314,9 +3283,7 @@
 				action_name_label: label,
 				settings: {
 					execution_mode: executionMode,
-					...(executionMode === 'real_time'
-						? { realtime_settings: createDefaultRealtimeSettings() }
-						: {}),
+					...(realtimeSettingsForCreate ? { realtime_settings: realtimeSettingsForCreate } : {}),
 					...(dependencyIds.length > 0 ? { dependency_ids: dependencyIds } : {}),
 					trigger_sources: triggerSources,
 					...(customPostExecutionActions.length > 0
@@ -3573,6 +3540,23 @@
 								? 'action'
 								: null}
 						/>
+
+						{#if configuringActionId && isRealtimeEligibleActionId(configuringActionId)}
+							<RealtimeSettingsEditor
+								idPrefix="form-defaults"
+								scope="form"
+								value={formLevelConfig.realtime_settings}
+								{formFields}
+								storageFieldOptions={realtimeStorageFieldOptions}
+								totalPages={realtimeTotalPages}
+								onchange={(settings) => {
+									formLevelConfig = {
+										...formLevelConfig,
+										realtime_settings: settings
+									};
+								}}
+							/>
+						{/if}
 
 						{#if configuringActionId && isSpamActionCode(configuringActionId)}
 							<SpamCriteriaEditor
@@ -4904,138 +4888,25 @@
 								hidden={!mappingSectionExpansion.realtime}
 							>
 								{#if mappingSectionExpansion.realtime}
-									<Alert variant="warning">
-										<p class="sf:text-sm">
-											Real-time analysis holds the visitor on the form while the selected model
-											responds. Use faster models unless the form is important enough to justify the
-											wait.
-										</p>
-									</Alert>
-									<div class="sf:grid sf:gap-4 sf:lg:grid-cols-2">
-										<InputField
-											id="realtime-debounce"
-											label="Debounce (ms)"
-											type="number"
-											min="250"
-											max="5000"
-											placeholder="900"
-											value={realtimeSettings.debounce_ms}
-											oninput={(event) =>
-												updateRealtimeSettings({
-													debounce_ms: Number.parseInt(
-														(event.currentTarget as HTMLInputElement).value || '900',
-														10
-													)
-												})}
-										/>
-										<InputField
-											id="realtime-cooldown"
-											label="Cooldown (ms)"
-											type="number"
-											min="0"
-											max="60000"
-											placeholder="8000"
-											value={realtimeSettings.cooldown_ms}
-											oninput={(event) =>
-												updateRealtimeSettings({
-													cooldown_ms: Number.parseInt(
-														(event.currentTarget as HTMLInputElement).value || '8000',
-														10
-													)
-												})}
-										/>
-										<SelectField
-											id="realtime-storage-target"
-											label="Virtual Q&A storage field"
-											description="Sentient Forms automatically creates a dedicated hidden Gravity Forms field. Choose another hidden field or textarea only if you want to control where the JSON is stored."
-											value={realtimeSettings.storage_target_field_id}
-											options={realtimeStorageFieldOptions}
-											onchange={(event) =>
-												updateRealtimeSettings({
-													storage_target_field_id: event.currentTarget.value
-												})}
-										/>
-										<SelectField
-											id="realtime-submit-policy"
-											label="Submit policy"
-											value={realtimeSettings.blocking_mode}
-											options={REALTIME_BLOCKING_OPTIONS}
-											onchange={(event) =>
-												updateRealtimeSettings({
-													blocking_mode: event.currentTarget.value as RealtimeBlockingMode
-												})}
-										/>
-										<SelectField
-											id="realtime-refresh-mode"
-											label="Refresh mode"
-											description="Choose whether recommendations update continuously, only at checkpoint fields, or only when the visitor clicks refresh."
-											value={realtimeSettings.refresh_mode}
-											options={REALTIME_REFRESH_MODE_OPTIONS}
-											onchange={(event) =>
-												updateRealtimeSettings({
-													refresh_mode: event.currentTarget.value as RealtimeRefreshMode
-												})}
-										/>
-										<SelectField
-											id="realtime-initial-panel-state"
-											label="Initial panel"
-											description="Keep embedded forms quiet by default, then let the assistant appear after the visitor starts."
-											value={realtimeSettings.initial_panel_state}
-											options={REALTIME_INITIAL_PANEL_OPTIONS}
-											onchange={(event) =>
-												updateRealtimeSettings({
-													initial_panel_state: event.currentTarget
-														.value as RealtimeInitialPanelState
-												})}
-										/>
-									</div>
-									<Toggle
-										checked={realtimeSettings.manual_refresh_enabled}
-										label="Manual refresh"
-										description="Show a refresh control in the visitor-facing suggestion panel."
-										onchange={(event) =>
-											updateRealtimeSettings({
-												manual_refresh_enabled: event.detail.checked
-											})}
-									/>
-									<div class="sf:border-t sf:border-slate-200 sf:pt-4">
-										<p
-											class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-500 sf:mb-2"
-										>
-											Checkpoint fields
-										</p>
-										{#if formFields.length === 0}
-											<p class="sf:text-sm sf:text-slate-500">
-												No fields loaded for this form yet.
+										<Alert variant="warning">
+											<p class="sf:text-sm">
+												Real-time analysis holds the visitor on the form while the selected model
+												responds. Use faster models unless the form is important enough to justify the
+												wait.
 											</p>
-										{:else}
-											<div class="sf:grid sf:gap-2 sf:sm:grid-cols-2">
-												{#each formFields as field (field.id)}
-													<label
-														class="sf:flex sf:items-center sf:gap-2 sf:p-2 sf:rounded sf:border sf:border-slate-100 hover:sf:bg-slate-50 sf:cursor-pointer"
-													>
-														<input
-															type="checkbox"
-															class="sf:w-4 sf:h-4 sf:text-primary-600 sf:rounded sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-															checked={realtimeSettings.checkpoint_field_ids?.includes(field.id)}
-															onchange={() => toggleRealtimeCheckpointField(field.id)}
-															data-testid={`realtime-checkpoint-${field.id}`}
-														/>
-														<span class="sf:text-sm sf:text-slate-700">
-															{field.adminLabel || field.label} ({field.id})
-														</span>
-													</label>
-												{/each}
-											</div>
-											<p class="sf:mt-2 sf:text-xs sf:text-slate-500">
-												If no checkpoints are selected, visible field changes can trigger this
-												action.
-											</p>
-										{/if}
-									</div>
-								{/if}
-							</div>
-						</section>
+										</Alert>
+										<RealtimeSettingsEditor
+											idPrefix="mapping-realtime"
+											scope="mapping"
+											value={realtimeSettings}
+											{formFields}
+											storageFieldOptions={realtimeStorageFieldOptions}
+											totalPages={realtimeTotalPages}
+											onchange={updateRealtimeSettings}
+										/>
+									{/if}
+								</div>
+							</section>
 					{/if}
 
 					<section class="sf:border sf:border-slate-200 sf:rounded-md">

@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { SESSION_EXPIRED_EVENT } from '$lib/api/session-expiry';
+	import sentientFormsLogo from '$lib/assets/sentient-forms-logo-horizontal.svg';
 	import PrivacySetupAssistant from '$lib/components/privacy-setup-assistant.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
 	import type { PluginSettingsResponse } from '$lib/api/types';
@@ -177,7 +178,14 @@
 	<div data-sentient-admin-frame class="sf:flex sf:min-w-0 sf:flex-col sf:md:flex-row">
 		<aside class="sf:w-full sf:shrink-0 sf:bg-white sf:md:w-64 sf:shadow-sm">
 			<div class="sf:p-4 sf:sm:p-6 sf:border-b sf:border-slate-200">
-				<h1 class="sf:text-lg sf:font-semibold">Sentient Forms</h1>
+				<h1 class="sf:sr-only">Sentient Forms</h1>
+				<img
+					src={sentientFormsLogo}
+					alt="Sentient Forms"
+					class="sf:h-10 sf:w-auto sf:max-w-full"
+					width="2161"
+					height="361"
+				/>
 				<p class="sf:text-sm sf:text-slate-600">Local-first AI form automation</p>
 			</div>
 			<nav class="sf:p-4 sf:flex sf:flex-col sf:gap-2">

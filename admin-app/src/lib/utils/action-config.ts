@@ -6,6 +6,7 @@ import type {
 } from '$lib/api/types';
 import { normalizeSpamGuidanceExamples } from '$lib/schemas/action-config';
 import { normalizeModelReasoningEffort } from '$lib/utils/model-selection';
+import { normalizeRealtimeSettings } from '$lib/utils/realtime-settings';
 
 export const DEFAULT_MODEL_SELECTION: ModelSelection = {
 	primary: 'sf_default',
@@ -260,12 +261,16 @@ export function normalizeFormActionConfig(value: unknown): FormActionConfig {
 			typeof candidate.action_customization === 'string'
 				? candidate.action_customization.trim().slice(0, 2000)
 				: undefined,
-		model_selection: normalizeModelSelection(
-			candidate.model_selection ?? candidate.model_override ?? null
-		),
-		updated_at: updatedAt
-	};
-}
+			model_selection: normalizeModelSelection(
+				candidate.model_selection ?? candidate.model_override ?? null
+			),
+			realtime_settings:
+				candidate.realtime_settings && typeof candidate.realtime_settings === 'object'
+					? normalizeRealtimeSettings(candidate.realtime_settings)
+					: undefined,
+			updated_at: updatedAt
+		};
+	}
 
 export function normalizeOptionalBoolean(value: unknown): boolean | undefined {
 	if (value === true || value === false) {

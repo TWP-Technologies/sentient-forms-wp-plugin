@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Section, Card, Button, Badge, Input, StateTemplate } from '$lib/components/ui';
+	import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
+	import EyeIcon from '@lucide/svelte/icons/eye';
+	import FileTextIcon from '@lucide/svelte/icons/file-text';
+	import PanelsTopLeftIcon from '@lucide/svelte/icons/panels-top-left';
+	import Rows3Icon from '@lucide/svelte/icons/rows-3';
+	import { Section, Card, Button, ButtonLink, Badge, Input, StateTemplate } from '$lib/components/ui';
 	import { formatTimestamp } from '$lib/utils/date-time';
 	import {
 		buildActionLogRowPresentation,
@@ -48,8 +53,43 @@
 			amount_usd?: number | null;
 		} | null;
 		details?: Record<string, unknown> | null;
+		form_context?: ActionLogFormContext | null;
 		created_at: string;
 		completed_at: string | null;
+	}
+
+	interface ActionLogFormContext {
+		provider_slug: string;
+		provider_label: string;
+		form_id: number;
+		form_name: string;
+		entry_id: number | null;
+		links: {
+			provider_admin_url?: string | null;
+			form_admin_url?: string | null;
+			entries_admin_url?: string | null;
+			entry_admin_url?: string | null;
+		};
+		entry_preview_available: boolean;
+		form_missing?: boolean;
+	}
+
+	interface ActionLogEntryPreviewField {
+		field_id: string;
+		label: string;
+		value: string;
+	}
+
+	interface ActionLogEntryPreview {
+		log_id: string;
+		provider_label: string;
+		form_id: number;
+		form_name: string;
+		entry_id: number;
+		date_created: string | null;
+		status: string | null;
+		fields: ActionLogEntryPreviewField[];
+		links: ActionLogFormContext['links'];
 	}
 
 	interface LogResponse {
@@ -73,6 +113,10 @@
 	let totalPages = $state(1);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let previewEntry = $state<ActionLogEntry | null>(null);
+	let previewCache = $state<Record<string, ActionLogEntryPreview>>({});
+	let previewLoadingId = $state<string | null>(null);
+	let previewError = $state<string | null>(null);
 
 	let draftFilters = $state<ActionLogFilters>({ ...EMPTY_FILTERS });
 	let appliedFilters = $state<ActionLogFilters>({ ...EMPTY_FILTERS });
@@ -92,6 +136,7 @@
 			totalPages
 		})
 	);
+	let activePreview = $derived(previewEntry ? (previewCache[previewEntry.id] ?? null) : null);
 
 	async function fetchLogs(): Promise<void> {
 		loading = true;
@@ -170,6 +215,78 @@
 		if (page > 1) {
 			page -= 1;
 			void fetchLogs();
+		}
+	}
+
+	function formContext(entry: ActionLogEntry): ActionLogFormContext {
+		return (
+			entry.form_context ?? {
+				provider_slug: entry.form_source,
+				provider_label: providerLabel(entry.form_source),
+				form_id: entry.form_id,
+				form_name: `Form #${entry.form_id}`,
+				entry_id: entry.entry_id,
+				links: {},
+				entry_preview_available: Boolean(entry.entry_id)
+			}
+		);
+	}
+
+	function providerLabel(formSource: string): string {
+		if (formSource === 'gravity_forms' || formSource === 'gravity-forms') return 'Gravity Forms';
+		if (!formSource) return 'Unknown provider';
+		return formSource
+			.replace(/[_-]+/g, ' ')
+			.replace(/\b\w/g, (letter) => letter.toUpperCase());
+	}
+
+	function entryContextLabel(entry: ActionLogEntry): string {
+		const context = formContext(entry);
+		const parts = [context.provider_label, `Form #${context.form_id || entry.form_id || '-'}`];
+		parts.push(context.entry_id ? `Entry #${context.entry_id}` : 'Entry pending');
+		return parts.join(' · ');
+	}
+
+	async function openPreview(entry: ActionLogEntry): Promise<void> {
+		previewEntry = entry;
+		previewError = null;
+
+		if (previewCache[entry.id]) {
+			return;
+		}
+
+		previewLoadingId = entry.id;
+		try {
+			const preview = await wpFetch<ActionLogEntryPreview>(
+				`actions/log/${encodeURIComponent(entry.id)}/entry-preview`
+			);
+			previewCache = {
+				...previewCache,
+				[entry.id]: preview
+			};
+		} catch (requestError) {
+			previewError =
+				requestError instanceof Error ? requestError.message : 'Failed to load entry preview';
+		} finally {
+			previewLoadingId = null;
+		}
+	}
+
+	function closePreview(): void {
+		previewEntry = null;
+		previewError = null;
+		previewLoadingId = null;
+	}
+
+	function closePreviewFromBackdrop(event: MouseEvent): void {
+		if (event.target === event.currentTarget) {
+			closePreview();
+		}
+	}
+
+	function handlePreviewKeydown(event: KeyboardEvent): void {
+		if (event.key === 'Escape' && previewEntry) {
+			closePreview();
 		}
 	}
 
@@ -329,6 +446,8 @@
 	});
 </script>
 
+<svelte:window onkeydown={handlePreviewKeydown} />
+
 <Section heading="Action Log" description="View local and managed AI action execution history.">
 	{#snippet actions()}
 		<Button variant="secondary" onclick={fetchLogs} disabled={loading}>
@@ -457,14 +576,14 @@
 				<table class="sf:w-full sf:text-sm" data-testid="action-log-table">
 					<thead>
 						<tr class="sf:border-b sf:text-left sf:text-slate-500">
-							<th class="sf:pb-2 sf:pr-4">Form</th>
-							<th class="sf:pb-2 sf:pr-4">Entry</th>
+							<th class="sf:pb-2 sf:pr-4">Source</th>
 							<th class="sf:pb-2 sf:pr-4">Action</th>
 							<th class="sf:pb-2 sf:pr-4">Status</th>
 							<th class="sf:pb-2 sf:pr-4">Output</th>
 							<th class="sf:pb-2 sf:pr-4">Result</th>
 							<th class="sf:pb-2 sf:pr-4">Usage cost</th>
-							<th class="sf:pb-2">Time</th>
+							<th class="sf:pb-2 sf:pr-4">Time</th>
+							<th class="sf:pb-2">Actions</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -477,9 +596,17 @@
 								errorCode: entry.error_code,
 								errorMessage: entry.error_message
 							})}
+							{@const context = formContext(entry)}
 							<tr class="sf:border-b sf:last:border-0 sf:hover:bg-slate-50" data-testid={`action-log-row-${entry.id}`}>
-								<td class="sf:py-3 sf:pr-4 sf:font-medium sf:text-slate-700">{entry.form_id}</td>
-								<td class="sf:py-3 sf:pr-4 sf:text-slate-700">{entry.entry_id ?? '—'}</td>
+								<td class="sf:py-3 sf:pr-4 sf:min-w-[220px] sf:align-top">
+									<div class="sf:flex sf:flex-col sf:gap-1">
+										<span class="sf:font-medium sf:text-slate-900">{context.form_name}</span>
+										<span class="sf:text-xs sf:text-slate-500">{entryContextLabel(entry)}</span>
+										{#if context.form_missing}
+											<Badge variant="warning">Form missing</Badge>
+										{/if}
+									</div>
+								</td>
 								<td class="sf:py-3 sf:pr-4">
 									<span class="sf:font-medium sf:text-slate-900">{entry.action_label}</span>
 									<br />
@@ -518,6 +645,73 @@
 								</td>
 								<td class="sf:py-3 sf:text-slate-500 sf:text-xs">
 									{formatTimestamp(entry.created_at)}
+								</td>
+								<td class="sf:py-3 sf:align-top">
+									<div class="sf:flex sf:min-w-[210px] sf:flex-wrap sf:gap-2" data-testid={`action-log-actions-${entry.id}`}>
+										{#if context.links.provider_admin_url}
+											<ButtonLink
+												size="xs"
+												variant="ghost"
+												href={context.links.provider_admin_url}
+												data-sveltekit-reload
+												rel="external"
+												data-testid={`action-log-provider-link-${entry.id}`}
+											>
+												<PanelsTopLeftIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
+												Provider
+											</ButtonLink>
+										{/if}
+										{#if context.links.form_admin_url}
+											<ButtonLink
+												size="xs"
+												variant="ghost"
+												href={context.links.form_admin_url}
+												data-sveltekit-reload
+												rel="external"
+												data-testid={`action-log-form-link-${entry.id}`}
+											>
+												<ExternalLinkIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
+												Form
+											</ButtonLink>
+										{/if}
+										{#if context.links.entries_admin_url}
+											<ButtonLink
+												size="xs"
+												variant="ghost"
+												href={context.links.entries_admin_url}
+												data-sveltekit-reload
+												rel="external"
+												data-testid={`action-log-entries-link-${entry.id}`}
+											>
+												<Rows3Icon class="sf:h-3 sf:w-3" aria-hidden="true" />
+												Entries
+											</ButtonLink>
+										{/if}
+										{#if context.links.entry_admin_url}
+											<ButtonLink
+												size="xs"
+												variant="secondary"
+												href={context.links.entry_admin_url}
+												data-sveltekit-reload
+												rel="external"
+												data-testid={`action-log-entry-link-${entry.id}`}
+											>
+												<FileTextIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
+												Entry
+											</ButtonLink>
+										{/if}
+										<Button
+											size="xs"
+											variant={context.entry_preview_available ? 'secondary' : 'ghost'}
+											disabled={!context.entry_preview_available}
+											onclick={() => void openPreview(entry)}
+											title={context.entry_preview_available ? 'Preview this entry' : 'Preview is available after an entry is saved'}
+											data-testid={`action-log-preview-button-${entry.id}`}
+										>
+											<EyeIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
+											Preview
+										</Button>
+									</div>
 								</td>
 							</tr>
 							{#if hasOperationalDetails(entry)}
@@ -624,3 +818,117 @@
 		</Card>
 	{/if}
 </Section>
+
+{#if previewEntry}
+	<div
+		class="sf:fixed sf:inset-0 sf:z-[999999] sf:flex sf:justify-end sf:bg-slate-950/35 sf:backdrop-blur-[1px]"
+		role="presentation"
+		onclick={closePreviewFromBackdrop}
+		data-testid="action-log-preview-backdrop"
+	>
+		<div
+			class="sf:h-full sf:w-full sf:max-w-2xl sf:overflow-y-auto sf:bg-slate-50 sf:p-5 sf:shadow-2xl sf:sm:p-6"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="action-log-entry-preview-title"
+			data-action-log-preview-sheet
+			data-testid="action-log-preview-sheet"
+		>
+			<div class="sf:flex sf:items-start sf:justify-between sf:gap-4 sf:border-b sf:border-slate-200 sf:pb-4">
+				<div class="sf:min-w-0">
+					<p class="sf:text-xs sf:font-bold sf:uppercase sf:tracking-[0.12em] sf:text-slate-400">
+						Entry preview
+					</p>
+					<h2 id="action-log-entry-preview-title" class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-950">
+						{formContext(previewEntry).form_name}
+					</h2>
+					<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
+						{entryContextLabel(previewEntry)}
+					</p>
+				</div>
+				<Button variant="secondary" onclick={closePreview}>Close</Button>
+			</div>
+
+			{#if previewLoadingId === previewEntry.id}
+				<div class="sf:mt-6 sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-5" data-testid="action-log-preview-loading">
+					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Loading entry preview...</p>
+					<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
+						Pulling the entry from Gravity Forms only for this row.
+					</p>
+				</div>
+			{:else if previewError}
+				<div class="sf:mt-6 sf:rounded sf:border sf:border-danger-200 sf:bg-danger-50 sf:p-5" data-testid="action-log-preview-error">
+					<p class="sf:text-sm sf:font-medium sf:text-danger-800">Preview unavailable</p>
+					<p class="sf:mt-1 sf:text-sm sf:text-danger-700">{previewError}</p>
+				</div>
+			{:else if activePreview}
+				<div class="sf:mt-5 sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+					<Badge variant="info">{activePreview.provider_label}</Badge>
+					<Badge variant="neutral">Form #{activePreview.form_id}</Badge>
+					<Badge variant="neutral">Entry #{activePreview.entry_id}</Badge>
+					{#if activePreview.status}
+						<Badge variant="neutral">{activePreview.status}</Badge>
+					{/if}
+				</div>
+
+				<div class="sf:mt-5 sf:flex sf:flex-wrap sf:gap-2">
+					{#if activePreview.links.form_admin_url}
+						<ButtonLink size="sm" variant="secondary" href={activePreview.links.form_admin_url} data-sveltekit-reload rel="external">
+							<ExternalLinkIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+							Open form
+						</ButtonLink>
+					{/if}
+					{#if activePreview.links.entry_admin_url}
+						<ButtonLink size="sm" variant="secondary" href={activePreview.links.entry_admin_url} data-sveltekit-reload rel="external">
+							<FileTextIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+							Open entry
+						</ButtonLink>
+					{/if}
+				</div>
+
+				<section class="sf:mt-6">
+					<h3 class="sf:text-base sf:font-semibold sf:text-slate-950">Visible fields</h3>
+					<div class="sf:mt-3 sf:grid sf:gap-3">
+						{#each activePreview.fields as field (`${field.field_id}-${field.label}`)}
+							<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-4" data-testid="action-log-preview-field">
+								<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-[0.08em] sf:text-slate-400">
+									{field.label}
+								</p>
+								<p class="sf:mt-2 sf:whitespace-pre-wrap sf:text-sm sf:leading-6 sf:text-slate-800">
+									{field.value}
+								</p>
+							</div>
+						{:else}
+							<p class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-4 sf:text-sm sf:text-slate-500">
+								No visible field values were available for this entry.
+							</p>
+						{/each}
+					</div>
+				</section>
+			{/if}
+		</div>
+	</div>
+{/if}
+
+<style>
+	:global([data-action-log-preview-sheet]) {
+		animation: action-log-preview-sheet-enter 160ms ease-out;
+	}
+
+	@keyframes action-log-preview-sheet-enter {
+		from {
+			opacity: 0;
+			transform: translateX(32px);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(0);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		:global([data-action-log-preview-sheet]) {
+			animation: none;
+		}
+	}
+</style>

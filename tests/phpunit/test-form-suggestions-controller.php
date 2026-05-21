@@ -190,14 +190,20 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 						'type' => 'text',
 						'pageNumber' => 1,
 					],
-					(object) [
-						'id' => 4,
-						'label' => 'Notes',
-						'type' => 'textarea',
-						'pageNumber' => 2,
+						(object) [
+							'id' => 4,
+							'label' => 'Notes',
+							'type' => 'textarea',
+							'pageNumber' => 2,
+						],
+						(object) [
+							'id' => 9,
+							'label' => 'Internal routing',
+							'type' => 'hidden',
+							'pageNumber' => 1,
+						],
 					],
 				],
-			],
 		];
 
 		update_option(
@@ -351,6 +357,79 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 			$stub_executor->calls[0]['suggestion_context']['panel_state']['virtual_questions'][0]['answer'] ?? null
 		);
 		$this->assertTrue( $stub_executor->calls[0]['context']['suggestion_context']['panel_state']['virtual_questions'][0]['completed'] ?? false );
+	}
+
+	public function test_suggest_endpoint_strips_hidden_values_by_default_and_keeps_label_context(): void {
+		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
+		$this->executor_property->setValue( $this->plugin, $stub_executor );
+
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_param( 'mapping_id', 'map_rt_1' );
+		$request->set_param( 'all_known_field_values', [ '1' => 'hello', '9' => 'route-secret' ] );
+		$request->set_param( 'visible_field_ids', [ '1' ] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 2 );
+		$request->set_param(
+			'supplemental_field_context',
+			[
+				[
+					'field_id' => '9',
+					'label' => 'Attacker label',
+					'type' => 'hidden',
+					'page_index' => 1,
+					'hidden' => true,
+					'value' => 'route-secret',
+				],
+			]
+		);
+
+		$response = $this->controller->suggest( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$this->assertCount( 1, $stub_executor->calls );
+		$context = $stub_executor->calls[0]['suggestion_context'];
+		$this->assertSame( [ '1' => 'hello' ], $context['all_known_field_values'] ?? [] );
+		$this->assertSame( 'label_hidden', $context['hidden_field_exposure_mode'] ?? null );
+		$this->assertSame( '9', $context['supplemental_field_context'][0]['field_id'] ?? null );
+		$this->assertSame( 'Internal routing', $context['supplemental_field_context'][0]['label'] ?? null );
+		$this->assertTrue( $context['supplemental_field_context'][0]['hidden'] ?? false );
+		$this->assertArrayNotHasKey( 'value', $context['supplemental_field_context'][0] ?? [] );
+	}
+
+	public function test_suggest_endpoint_allows_hidden_values_when_mapping_policy_allows_them(): void {
+		$settings = get_option( 'sentient_forms_actions_gravity_forms_42' );
+		$settings['actions'][0]['settings']['realtime_settings']['hidden_field_exposure_mode'] = 'label_hidden_value';
+		update_option( 'sentient_forms_actions_gravity_forms_42', $settings );
+
+		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
+		$this->executor_property->setValue( $this->plugin, $stub_executor );
+
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_param( 'mapping_id', 'map_rt_1' );
+		$request->set_param( 'all_known_field_values', [ '1' => 'hello', '9' => 'route-secret' ] );
+		$request->set_param( 'visible_field_ids', [ '1' ] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 2 );
+		$request->set_param(
+			'supplemental_field_context',
+			[
+				[
+					'field_id' => '9',
+					'value' => 'route-secret',
+				],
+			]
+		);
+
+		$response = $this->controller->suggest( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$context = $stub_executor->calls[0]['suggestion_context'];
+		$this->assertSame( [ '1' => 'hello', '9' => 'route-secret' ], $context['all_known_field_values'] ?? [] );
+		$this->assertSame( 'route-secret', $context['supplemental_field_context'][0]['value'] ?? null );
 	}
 
 	public function test_suggest_endpoint_executes_local_first_realtime_mapping_without_cps_fallback(): void {

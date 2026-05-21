@@ -540,6 +540,55 @@ class Sentient_Forms_Action_Executor {
 			}
 		}
 
+		$hidden_field_exposure_mode = isset( $suggestion_context['hidden_field_exposure_mode'] ) && is_scalar( $suggestion_context['hidden_field_exposure_mode'] )
+			? sanitize_key( (string) $suggestion_context['hidden_field_exposure_mode'] )
+			: 'label_hidden';
+		if ( ! in_array( $hidden_field_exposure_mode, [ 'omit_hidden', 'label_hidden', 'label_hidden_value', 'label_value' ], true ) ) {
+			$hidden_field_exposure_mode = 'label_hidden';
+		}
+
+		$supplemental_field_context = array();
+		if ( isset( $suggestion_context['supplemental_field_context'] ) && is_array( $suggestion_context['supplemental_field_context'] ) ) {
+			foreach ( $suggestion_context['supplemental_field_context'] as $field_context ) {
+				if ( ! is_array( $field_context ) ) {
+					continue;
+				}
+				$field_id = isset( $field_context['field_id'] ) && is_scalar( $field_context['field_id'] )
+					? sanitize_text_field( (string) $field_context['field_id'] )
+					: '';
+				if ( '' === $field_id ) {
+					continue;
+				}
+				$entry = array(
+					'field_id'   => $field_id,
+					'label'      => isset( $field_context['label'] ) && is_scalar( $field_context['label'] ) ? sanitize_text_field( (string) $field_context['label'] ) : '',
+					'type'       => isset( $field_context['type'] ) && is_scalar( $field_context['type'] ) ? sanitize_key( (string) $field_context['type'] ) : '',
+					'page_index' => isset( $field_context['page_index'] ) ? max( 1, (int) $field_context['page_index'] ) : 1,
+				);
+				if ( array_key_exists( 'hidden', $field_context ) ) {
+					$entry['hidden'] = rest_sanitize_boolean( $field_context['hidden'] );
+				}
+				if ( array_key_exists( 'value', $field_context ) ) {
+					if ( is_array( $field_context['value'] ) ) {
+						$entry['value'] = array_values(
+							array_filter(
+								array_map(
+									static fn( mixed $item ): string => is_scalar( $item ) ? sanitize_text_field( (string) $item ) : '',
+									$field_context['value']
+								),
+								static fn( string $item ): bool => '' !== $item
+							)
+						);
+					} else {
+						$entry['value'] = is_scalar( $field_context['value'] )
+							? sanitize_text_field( (string) $field_context['value'] )
+							: '';
+					}
+				}
+				$supplemental_field_context[] = $entry;
+			}
+		}
+
 			$all_known_field_values = isset( $suggestion_context['all_known_field_values'] ) && is_array( $suggestion_context['all_known_field_values'] )
 				? $suggestion_context['all_known_field_values']
 				: $entry;
@@ -563,6 +612,8 @@ class Sentient_Forms_Action_Executor {
 				'checkpoint_field_ids'  => $checkpoint_field_ids,
 				'all_known_field_values'=> $all_known_field_values,
 				'future_field_manifest' => $future_field_manifest,
+				'hidden_field_exposure_mode' => $hidden_field_exposure_mode,
+				'supplemental_field_context' => $supplemental_field_context,
 				'panel_state'           => $panel_state,
 			);
 		}

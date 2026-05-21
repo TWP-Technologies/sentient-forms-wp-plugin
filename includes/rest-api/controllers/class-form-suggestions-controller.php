@@ -14,6 +14,12 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 
 	private const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;
 	private const DEFAULT_MAX_PAYLOAD_BYTES = 32768;
+	private const HIDDEN_FIELD_EXPOSURE_MODES = [
+		'omit_hidden',
+		'label_hidden',
+		'label_hidden_value',
+		'label_value',
+	];
 
 	private Sentient_Forms_Plugin $plugin;
 	private Sentient_Forms_Form_Adapter_Registry $adapter_registry;
@@ -89,6 +95,15 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 							'panel_state' => [
 								'required' => false,
 								'type'     => 'object',
+							],
+							'hidden_field_exposure_mode' => [
+								'required'          => false,
+								'type'              => 'string',
+								'sanitize_callback' => 'sanitize_key',
+							],
+							'supplemental_field_context' => [
+								'required' => false,
+								'type'     => 'array',
 							],
 						],
 					],
@@ -593,11 +608,12 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 
 		$payload = wp_json_encode(
 			[
-				'all_known_field_values' => $request->get_param( 'all_known_field_values' ),
-				'visible_field_ids'      => $request->get_param( 'visible_field_ids' ),
-				'panel_state'            => $request->get_param( 'panel_state' ),
-			]
-		);
+					'all_known_field_values' => $request->get_param( 'all_known_field_values' ),
+					'visible_field_ids'      => $request->get_param( 'visible_field_ids' ),
+					'supplemental_field_context' => $request->get_param( 'supplemental_field_context' ),
+					'panel_state'            => $request->get_param( 'panel_state' ),
+				]
+			);
 		if ( false === $payload ) {
 			return $this->prepare_error_response(
 				'rest_invalid_suggestion_payload',
@@ -707,6 +723,183 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 		return null;
 	}
 
+	private function normalize_hidden_field_exposure_mode( array $realtime_settings ): string {
+		$mode = isset( $realtime_settings['hidden_field_exposure_mode'] ) && is_scalar( $realtime_settings['hidden_field_exposure_mode'] )
+			? sanitize_key( (string) $realtime_settings['hidden_field_exposure_mode'] )
+			: 'label_hidden';
+
+		return in_array( $mode, self::HIDDEN_FIELD_EXPOSURE_MODES, true ) ? $mode : 'label_hidden';
+	}
+
+	private function root_field_id( string $field_id ): string {
+		$dot_position = strpos( $field_id, '.' );
+		return false === $dot_position ? $field_id : substr( $field_id, 0, $dot_position );
+	}
+
+	/**
+	 * @param array<int,string> $visible_field_ids
+	 */
+	private function is_visible_value_field( string $field_id, array $visible_field_ids ): bool {
+		$visible_lookup = array_fill_keys( $visible_field_ids, true );
+		return isset( $visible_lookup[ $field_id ] ) || isset( $visible_lookup[ $this->root_field_id( $field_id ) ] );
+	}
+
+	private function is_realtime_storage_field( string $field_id, array $realtime_settings ): bool {
+		$target_field_id = isset( $realtime_settings['storage_target_field_id'] ) && is_scalar( $realtime_settings['storage_target_field_id'] )
+			? sanitize_text_field( (string) $realtime_settings['storage_target_field_id'] )
+			: '';
+		if ( '' === $target_field_id || '__sentient_forms_realtime_qna' === $target_field_id ) {
+			return false;
+		}
+
+		return $field_id === $target_field_id || $this->root_field_id( $field_id ) === $target_field_id;
+	}
+
+	/**
+	 * @return array{field_id:string,label:string,type:string,page_index:int}|null
+	 */
+	private function form_field_meta_for_value_id( array $form, string $field_id ): ?array {
+		$root_field_id = $this->root_field_id( $field_id );
+		$fields = isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
+
+		foreach ( $fields as $field ) {
+			if ( ! is_object( $field ) ) {
+				continue;
+			}
+			$current_field_id = isset( $field->id ) ? sanitize_text_field( (string) $field->id ) : '';
+			if ( '' === $current_field_id ) {
+				continue;
+			}
+
+			$matches_field = $field_id === $current_field_id || $root_field_id === $current_field_id;
+			if ( ! $matches_field && isset( $field->inputs ) && is_array( $field->inputs ) ) {
+				foreach ( $field->inputs as $input ) {
+					$input_id = is_array( $input ) && isset( $input['id'] )
+						? sanitize_text_field( (string) $input['id'] )
+						: ( is_object( $input ) && isset( $input->id ) ? sanitize_text_field( (string) $input->id ) : '' );
+					if ( $field_id === $input_id ) {
+						$matches_field = true;
+						break;
+					}
+				}
+			}
+			if ( ! $matches_field ) {
+				continue;
+			}
+
+			return [
+				'field_id'   => $current_field_id,
+				'label'      => isset( $field->label ) ? sanitize_text_field( (string) $field->label ) : '',
+				'type'       => isset( $field->type ) ? sanitize_key( (string) $field->type ) : '',
+				// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Gravity Forms field objects expose pageNumber.
+				'page_index' => isset( $field->pageNumber ) ? max( 1, (int) $field->pageNumber ) : 1,
+			];
+		}
+
+		return null;
+	}
+
+	private function sanitize_realtime_context_value( mixed $value ): mixed {
+		if ( is_array( $value ) ) {
+			$items = [];
+			foreach ( $value as $item ) {
+				if ( is_scalar( $item ) ) {
+					$items[] = sanitize_text_field( (string) $item );
+				}
+			}
+			return $items;
+		}
+
+		return is_scalar( $value ) ? sanitize_text_field( (string) $value ) : '';
+	}
+
+	/**
+	 * @param array<string,string> $known_values
+	 * @param array<int,string>    $visible_field_ids
+	 *
+	 * @return array<string,string>
+	 */
+	private function filter_known_values_for_realtime_policy( array $known_values, array $visible_field_ids, array $form, array $realtime_settings, string $hidden_field_exposure_mode ): array {
+		$include_hidden_values = in_array( $hidden_field_exposure_mode, [ 'label_hidden_value', 'label_value' ], true );
+		$filtered = [];
+
+		foreach ( $known_values as $field_id => $value ) {
+			$field_id = sanitize_text_field( (string) $field_id );
+			if ( '' === $field_id || $this->is_realtime_storage_field( $field_id, $realtime_settings ) ) {
+				continue;
+			}
+
+			if ( $this->is_visible_value_field( $field_id, $visible_field_ids ) || $include_hidden_values ) {
+				$filtered[ $field_id ] = sanitize_text_field( (string) $value );
+			}
+		}
+
+		return $filtered;
+	}
+
+	/**
+	 * @param array<string,string> $known_values
+	 * @param array<int,string>    $visible_field_ids
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function build_supplemental_field_context( mixed $raw_context, array $known_values, array $visible_field_ids, array $form, array $realtime_settings, string $hidden_field_exposure_mode ): array {
+		if ( 'omit_hidden' === $hidden_field_exposure_mode ) {
+			return [];
+		}
+
+		$include_hidden_values = in_array( $hidden_field_exposure_mode, [ 'label_hidden_value', 'label_value' ], true );
+		$candidate_ids = [];
+		foreach ( is_array( $raw_context ) ? $raw_context : [] as $item ) {
+			if ( is_array( $item ) && isset( $item['field_id'] ) && is_scalar( $item['field_id'] ) ) {
+				$field_id = sanitize_text_field( (string) $item['field_id'] );
+				if ( '' !== $field_id ) {
+					$candidate_ids[ $field_id ] = is_array( $item ) && array_key_exists( 'value', $item )
+						? $this->sanitize_realtime_context_value( $item['value'] )
+						: null;
+				}
+			}
+		}
+		foreach ( $known_values as $field_id => $value ) {
+			$field_id = sanitize_text_field( (string) $field_id );
+			if ( '' !== $field_id && ! isset( $candidate_ids[ $field_id ] ) ) {
+				$candidate_ids[ $field_id ] = $value;
+			}
+		}
+
+		$context = [];
+		foreach ( $candidate_ids as $raw_field_id => $value ) {
+			$field_id = sanitize_text_field( (string) $raw_field_id );
+			if ( '' === $field_id ) {
+				continue;
+			}
+
+			if (
+				$this->is_visible_value_field( $field_id, $visible_field_ids )
+				|| $this->is_realtime_storage_field( $field_id, $realtime_settings )
+			) {
+				continue;
+			}
+
+			$field_meta = $this->form_field_meta_for_value_id( $form, $field_id );
+			$entry = [
+				'field_id'   => $field_id,
+				'label'      => $field_meta['label'] ?? '',
+				'type'       => $field_meta['type'] ?? '',
+				'page_index' => $field_meta['page_index'] ?? 1,
+			];
+			if ( 'label_value' !== $hidden_field_exposure_mode ) {
+				$entry['hidden'] = true;
+			}
+			if ( $include_hidden_values ) {
+				$entry['value'] = $this->sanitize_realtime_context_value( $value );
+			}
+			$context[] = $entry;
+		}
+
+		return $context;
+	}
+
 	/**
 	 * @param array<string,mixed> $mapping
 	 * @param array<string,string> $known_values
@@ -725,9 +918,10 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 		$settings = isset( $mapping['settings'] ) && is_array( $mapping['settings'] )
 			? $mapping['settings']
 			: [];
-		$realtime_settings = isset( $settings['realtime_settings'] ) && is_array( $settings['realtime_settings'] )
-			? $settings['realtime_settings']
-			: [];
+			$realtime_settings = isset( $settings['realtime_settings'] ) && is_array( $settings['realtime_settings'] )
+				? $settings['realtime_settings']
+				: [];
+			$hidden_field_exposure_mode = $this->normalize_hidden_field_exposure_mode( $realtime_settings );
 
 		$visible_field_ids = [];
 		if ( isset( $request['visible_field_ids'] ) && is_array( $request['visible_field_ids'] ) ) {
@@ -741,16 +935,25 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 				}
 			}
 		}
-		$visible_field_ids = array_values( array_unique( $visible_field_ids ) );
-		if ( empty( $visible_field_ids ) ) {
-			$visible_field_ids = array_values(
-				array_filter(
-					array_map(
-						static function ( $field_id ): string {
-							return sanitize_text_field( (string) $field_id );
-						},
-						array_keys( $known_values )
-					),
+			$visible_field_ids = array_values( array_unique( $visible_field_ids ) );
+			if ( empty( $visible_field_ids ) ) {
+				$visible_field_ids = array_values(
+					array_filter(
+						array_map(
+							function ( $field_id ) use ( $form, $realtime_settings ): string {
+								$normalized = sanitize_text_field( (string) $field_id );
+								$field_meta = $this->form_field_meta_for_value_id( $form, $normalized );
+								if (
+									'' === $normalized
+									|| $this->is_realtime_storage_field( $normalized, $realtime_settings )
+									|| 'hidden' === ( $field_meta['type'] ?? '' )
+								) {
+									return '';
+								}
+								return $normalized;
+							},
+							array_keys( $known_values )
+						),
 					static fn( string $field_id ): bool => '' !== $field_id
 				)
 			);
@@ -811,23 +1014,40 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 			if ( empty( $future_field_manifest ) ) {
 				$future_field_manifest = $this->build_future_field_manifest( $form, $current_page_index );
 			}
-			$request_reason = isset( $request['request_reason'] ) && is_scalar( $request['request_reason'] )
-				? sanitize_key( (string) $request['request_reason'] )
-				: 'manual_refresh';
-			$panel_state = $this->sanitize_panel_state( $request['panel_state'] ?? [] );
+				$request_reason = isset( $request['request_reason'] ) && is_scalar( $request['request_reason'] )
+					? sanitize_key( (string) $request['request_reason'] )
+					: 'manual_refresh';
+				$panel_state = $this->sanitize_panel_state( $request['panel_state'] ?? [] );
+				$filtered_known_values = $this->filter_known_values_for_realtime_policy(
+					$known_values,
+					$visible_field_ids,
+					$form,
+					$realtime_settings,
+					$hidden_field_exposure_mode
+				);
+				$supplemental_field_context = $this->build_supplemental_field_context(
+					$request['supplemental_field_context'] ?? [],
+					$known_values,
+					$visible_field_ids,
+					$form,
+					$realtime_settings,
+					$hidden_field_exposure_mode
+				);
 
-			return [
-				'form_id'               => (string) $form_id,
+				return [
+					'form_id'               => (string) $form_id,
 				'source'                => $form_source_slug,
 				'request_reason'        => $request_reason,
 				'current_page_index'    => $current_page_index,
 				'total_pages'           => $total_pages,
-				'visible_field_ids'     => $visible_field_ids,
-				'checkpoint_field_ids'  => $checkpoint_field_ids,
-				'all_known_field_values'=> $known_values,
-				'future_field_manifest' => $future_field_manifest,
-				'panel_state'           => $panel_state,
-			];
+					'visible_field_ids'     => $visible_field_ids,
+					'checkpoint_field_ids'  => $checkpoint_field_ids,
+					'all_known_field_values'=> $filtered_known_values,
+					'future_field_manifest' => $future_field_manifest,
+					'hidden_field_exposure_mode' => $hidden_field_exposure_mode,
+					'supplemental_field_context' => $supplemental_field_context,
+					'panel_state'           => $panel_state,
+				];
 		}
 
 		/**

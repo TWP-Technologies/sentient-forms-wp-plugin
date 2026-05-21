@@ -694,6 +694,8 @@ export interface FormFieldInfo {
 	type: string;
 	/** Admin label override */
 	adminLabel?: string;
+	/** Gravity Forms page number for paginated forms */
+	page_index?: number;
 }
 
 /**
@@ -857,14 +859,32 @@ export interface BatchSettings {
 
 export type RealtimeBlockingMode = 'advisory' | 'require_answers';
 export type RealtimeRefreshMode = 'auto' | 'checkpoint' | 'manual';
+export type RealtimePageCheckpointMode = 'all_pages' | 'include_pages' | 'exclude_pages';
 export type RealtimeInitialPanelState = 'open' | 'minimized' | 'hidden_until_interaction';
+export type RealtimeHiddenFieldExposureMode =
+	| 'omit_hidden'
+	| 'label_hidden'
+	| 'label_hidden_value'
+	| 'label_value';
 
 /**
  * Runtime settings for real-time suggestion and clarification mappings.
  */
 export interface RealtimeSettings {
+	/** Whether visible field changes trigger automatic refreshes */
+	auto_refresh_enabled?: boolean;
+	/** Whether selected field completions trigger refreshes */
+	field_checkpoints_enabled?: boolean;
 	/** Fields that trigger automatic analysis when changed or blurred */
 	checkpoint_field_ids?: string[];
+	/** Whether selected page transitions trigger refreshes before navigation */
+	page_checkpoints_enabled?: boolean;
+	/** Page selection behavior for paginated forms */
+	page_checkpoint_mode?: RealtimePageCheckpointMode;
+	/** Page numbers included or excluded by the page checkpoint mode */
+	page_checkpoint_pages?: number[];
+	/** Maximum time to wait for a page checkpoint before navigation continues */
+	page_checkpoint_timeout_ms?: number;
 	/** Field that receives serialized virtual question/answer JSON before submit */
 	storage_target_field_id?: string;
 	/** Delay after user input before the suggestion request is sent */
@@ -879,6 +899,12 @@ export interface RealtimeSettings {
 	refresh_mode?: RealtimeRefreshMode;
 	/** Initial visitor-facing assistant panel visibility */
 	initial_panel_state?: RealtimeInitialPanelState;
+	/** How hidden and currently non-visible fields are represented in LLM context */
+	hidden_field_exposure_mode?: RealtimeHiddenFieldExposureMode;
+	/** Whether the assistant runs once in the Gravity Forms async pre-submit filter */
+	pre_submit_run_enabled?: boolean;
+	/** Maximum time to wait for a pre-submit assistant run before submit continues */
+	pre_submit_timeout_ms?: number;
 }
 
 /**
@@ -1325,6 +1351,8 @@ export interface FormActionConfig {
 	model_selection?: ModelSelection;
 	/** Legacy string model override retained for transition reads */
 	model_override?: string;
+	/** Default realtime behavior for realtime-capable actions */
+	realtime_settings?: RealtimeSettings;
 	/** Last update timestamp */
 	updated_at?: string;
 }

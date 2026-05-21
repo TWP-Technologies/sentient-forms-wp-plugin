@@ -17,6 +17,21 @@ const mockLogEntries = [
 		error_code: null,
 		error_message: null,
 		structured_output_valid: true,
+		form_context: {
+			provider_slug: 'gravity_forms',
+			provider_label: 'Gravity Forms',
+			form_id: 1,
+			form_name: 'Contact form',
+			entry_id: 100,
+			links: {
+				provider_admin_url: 'http://localhost:4173/wp-admin/admin.php?page=gf_edit_forms',
+				form_admin_url: 'http://localhost:4173/wp-admin/admin.php?page=gf_edit_forms&id=1',
+				entries_admin_url: 'http://localhost:4173/wp-admin/admin.php?page=gf_entries&id=1',
+				entry_admin_url:
+					'http://localhost:4173/wp-admin/admin.php?page=gf_entries&view=entry&id=1&lid=100'
+			},
+			entry_preview_available: true
+		},
 		execution_request_id: 'req-uuid-1',
 		mapping_id: 'map-spam-detection',
 		resolved_model_id: 'gemini-pro',
@@ -55,6 +70,21 @@ const mockLogEntries = [
 		error_code: null,
 		error_message: null,
 		structured_output_valid: false,
+		form_context: {
+			provider_slug: 'gravity_forms',
+			provider_label: 'Gravity Forms',
+			form_id: 1,
+			form_name: 'Contact form',
+			entry_id: 101,
+			links: {
+				provider_admin_url: 'http://localhost:4173/wp-admin/admin.php?page=gf_edit_forms',
+				form_admin_url: 'http://localhost:4173/wp-admin/admin.php?page=gf_edit_forms&id=1',
+				entries_admin_url: 'http://localhost:4173/wp-admin/admin.php?page=gf_entries&id=1',
+				entry_admin_url:
+					'http://localhost:4173/wp-admin/admin.php?page=gf_entries&view=entry&id=1&lid=101'
+			},
+			entry_preview_available: true
+		},
 		created_at: '2025-12-26T12:05:00Z',
 		completed_at: '2025-12-26T12:05:02Z'
 	},
@@ -72,6 +102,21 @@ const mockLogEntries = [
 		error_code: 'timeout',
 		error_message: 'CPS request timed out after 30 seconds',
 		structured_output_valid: false,
+		form_context: {
+			provider_slug: 'gravity_forms',
+			provider_label: 'Gravity Forms',
+			form_id: 2,
+			form_name: 'Support request',
+			entry_id: 200,
+			links: {
+				provider_admin_url: 'http://localhost:4173/wp-admin/admin.php?page=gf_edit_forms',
+				form_admin_url: 'http://localhost:4173/wp-admin/admin.php?page=gf_edit_forms&id=2',
+				entries_admin_url: 'http://localhost:4173/wp-admin/admin.php?page=gf_entries&id=2',
+				entry_admin_url:
+					'http://localhost:4173/wp-admin/admin.php?page=gf_entries&view=entry&id=2&lid=200'
+			},
+			entry_preview_available: true
+		},
 		created_at: '2025-12-26T12:10:00Z',
 		completed_at: null
 	}
@@ -121,6 +166,69 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 		await expect(errorRow.getByText('Error')).toBeVisible();
 		await expect(errorRow.getByText('Not available')).toBeVisible();
 		await expect(errorRow.getByText(/timeout/i)).toBeVisible();
+	});
+
+	test('action log exposes form context, quick jumps, and lazy entry preview', async ({ page }) => {
+		const requestedPreviewUrls: string[] = [];
+
+		await page.route('**/wp-json/sentient-forms/v1/actions/log**', (route) => {
+			if (route.request().url().includes('/entry-preview')) {
+				requestedPreviewUrls.push(route.request().url());
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						log_id: 'uuid-1',
+						provider_label: 'Gravity Forms',
+						form_id: 1,
+						form_name: 'Contact form',
+						entry_id: 100,
+						date_created: '2025-12-26T12:00:00Z',
+						status: 'active',
+						links: mockLogEntries[0].form_context.links,
+						fields: [
+							{ field_id: '1', label: 'Name', value: 'Grace Buyer' },
+							{ field_id: '2', label: 'Project Details', value: 'Needs implementation help.' }
+						]
+					})
+				});
+			}
+
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					entries: mockLogEntries,
+					total: 3,
+					total_pages: 1,
+					page: 1,
+					per_page: 20
+				})
+			});
+		});
+
+		await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
+
+		const row = page.getByTestId('action-log-row-uuid-1');
+		await expect(row.getByText('Contact form')).toBeVisible();
+		await expect(row.getByText('Gravity Forms · Form #1 · Entry #100')).toBeVisible();
+		await expect(row.getByTestId('action-log-provider-link-uuid-1')).toHaveAttribute(
+			'href',
+			/http:\/\/localhost:4173\/wp-admin\/admin.php\?page=gf_edit_forms$/
+		);
+		await expect(row.getByTestId('action-log-form-link-uuid-1')).toHaveAttribute('href', /id=1$/);
+		await expect(row.getByTestId('action-log-entry-link-uuid-1')).toHaveAttribute(
+			'href',
+			/view=entry&id=1&lid=100$/
+		);
+
+		expect(requestedPreviewUrls).toHaveLength(0);
+		await row.getByTestId('action-log-preview-button-uuid-1').click();
+
+		await expect(page.getByTestId('action-log-preview-sheet')).toBeVisible();
+		await expect(page.getByTestId('action-log-preview-sheet').getByText('Grace Buyer')).toBeVisible();
+		await expect(page.getByTestId('action-log-preview-sheet').getByText('Needs implementation help.')).toBeVisible();
+		expect(requestedPreviewUrls).toHaveLength(1);
 	});
 
 	test('action log exposes execution details in a disclosure without cluttering the main table', async ({

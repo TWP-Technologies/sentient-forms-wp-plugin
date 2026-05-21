@@ -1204,7 +1204,12 @@ Known answers:
 {{entry}}
 </UNTRUSTED_SUBMISSION_DATA>
 
-Realtime runtime context is supplied to the action as suggestion_context. Use current_page_index, visible_field_ids, all_known_field_values, future_field_manifest, request_reason, and panel_state. panel_state contains existing suggestions, follow-up questions, visitor answers, and completed flags; preserve in-progress answers, avoid asking duplicates, and update prior guidance when that is better than replacing it.
+Realtime runtime context:
+<UNTRUSTED_REALTIME_CONTEXT encoding="json">
+{{context.suggestion_context}}
+</UNTRUSTED_REALTIME_CONTEXT>
+
+Use current_page_index, visible_field_ids, all_known_field_values, supplemental_field_context, hidden_field_exposure_mode, future_field_manifest, request_reason, and panel_state. panel_state contains existing suggestions, follow-up questions, visitor answers, and completed flags; preserve in-progress answers, avoid asking duplicates, and update prior guidance when that is better than replacing it. Respect hidden_field_exposure_mode: when supplemental_field_context marks a field hidden, use it only as private context for targeting and do not reveal hidden field names, hidden values, or hidden status to the visitor.
 PROMPT,
                 'default_model'            => 'sf_realtime',
                 'structured_output_schema' => [

@@ -211,6 +211,11 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
                 'type'              => 'object',
                 'sanitize_callback' => [ $this, 'sanitize_model_selection' ],
             ],
+            'realtime_settings' => [
+                'description'       => __( 'Realtime Clarification Assistant defaults for this action scope.', 'sentient-forms' ),
+                'type'              => 'object',
+                'sanitize_callback' => [ $this, 'sanitize_realtime_settings' ],
+            ],
             'suppress_notifications_on_spam' => [
                 'description'       => __( 'Whether blocking spam classifications should suppress form-submission notifications.', 'sentient-forms' ),
                 'type'              => 'boolean',
@@ -464,6 +469,154 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
     }
 
     /**
+     * Sanitizes realtime assistant defaults for action and form scopes.
+     *
+     * @param mixed $value Raw realtime settings.
+     * @return array<string, mixed>
+     */
+    public function sanitize_realtime_settings( $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $auto_refresh_enabled       = array_key_exists( 'auto_refresh_enabled', $value )
+            ? rest_sanitize_boolean( $value['auto_refresh_enabled'] )
+            : $this->derive_legacy_auto_refresh_enabled( $value );
+        $field_checkpoints_enabled  = array_key_exists( 'field_checkpoints_enabled', $value )
+            ? rest_sanitize_boolean( $value['field_checkpoints_enabled'] )
+            : $this->derive_legacy_field_checkpoints_enabled( $value );
+        $page_checkpoints_enabled   = array_key_exists( 'page_checkpoints_enabled', $value )
+            ? rest_sanitize_boolean( $value['page_checkpoints_enabled'] )
+            : false;
+        $manual_refresh_enabled     = array_key_exists( 'manual_refresh_enabled', $value )
+            ? rest_sanitize_boolean( $value['manual_refresh_enabled'] )
+            : true;
+        $pre_submit_run_enabled     = array_key_exists( 'pre_submit_run_enabled', $value )
+            ? rest_sanitize_boolean( $value['pre_submit_run_enabled'] )
+            : false;
+        $page_checkpoint_mode       = sanitize_key( (string) ( $value['page_checkpoint_mode'] ?? 'all_pages' ) );
+        if ( ! in_array( $page_checkpoint_mode, [ 'all_pages', 'include_pages', 'exclude_pages' ], true ) )
+        {
+            $page_checkpoint_mode = 'all_pages';
+        }
+
+        $blocking_mode = 'require_answers' === sanitize_key( (string) ( $value['blocking_mode'] ?? '' ) )
+            ? 'require_answers'
+            : 'advisory';
+        $initial_panel_state = sanitize_key( (string) ( $value['initial_panel_state'] ?? 'minimized' ) );
+        if ( ! in_array( $initial_panel_state, [ 'open', 'minimized', 'hidden_until_interaction' ], true ) )
+        {
+            $initial_panel_state = 'minimized';
+        }
+        $hidden_field_exposure_mode = sanitize_key( (string) ( $value['hidden_field_exposure_mode'] ?? 'label_hidden' ) );
+        if ( ! in_array( $hidden_field_exposure_mode, [ 'omit_hidden', 'label_hidden', 'label_hidden_value', 'label_value' ], true ) )
+        {
+            $hidden_field_exposure_mode = 'label_hidden';
+        }
+
+        $refresh_mode = $auto_refresh_enabled
+            ? 'auto'
+            : ( $field_checkpoints_enabled || $page_checkpoints_enabled ? 'checkpoint' : 'manual' );
+
+        return [
+            'auto_refresh_enabled'        => $auto_refresh_enabled,
+            'field_checkpoints_enabled'   => $field_checkpoints_enabled,
+            'checkpoint_field_ids'        => $this->sanitize_string_array( $value['checkpoint_field_ids'] ?? [] ),
+            'page_checkpoints_enabled'    => $page_checkpoints_enabled,
+            'page_checkpoint_mode'        => $page_checkpoint_mode,
+            'page_checkpoint_pages'       => $this->sanitize_positive_int_array( $value['page_checkpoint_pages'] ?? [] ),
+            'page_checkpoint_timeout_ms'  => $this->normalize_millis( $value['page_checkpoint_timeout_ms'] ?? 2500, 500, 10000, 2500 ),
+            'storage_target_field_id'     => isset( $value['storage_target_field_id'] ) && is_scalar( $value['storage_target_field_id'] )
+                ? sanitize_text_field( (string) $value['storage_target_field_id'] )
+                : '',
+            'debounce_ms'                 => $this->normalize_millis( $value['debounce_ms'] ?? 900, 250, 5000, 900 ),
+            'cooldown_ms'                 => $this->normalize_millis( $value['cooldown_ms'] ?? 8000, 0, 60000, 8000 ),
+            'manual_refresh_enabled'      => $manual_refresh_enabled,
+            'blocking_mode'               => $blocking_mode,
+            'refresh_mode'                => $refresh_mode,
+            'initial_panel_state'         => $initial_panel_state,
+            'hidden_field_exposure_mode'  => $hidden_field_exposure_mode,
+            'pre_submit_run_enabled'      => $pre_submit_run_enabled,
+            'pre_submit_timeout_ms'       => $this->normalize_millis( $value['pre_submit_timeout_ms'] ?? 2500, 500, 10000, 2500 ),
+        ];
+    }
+
+    /**
+     * @param mixed $value
+     * @return array<int, int>
+     */
+    private function sanitize_positive_int_array( $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $items = [];
+        foreach ( $value as $item )
+        {
+            if ( ! is_scalar( $item ) )
+            {
+                continue;
+            }
+
+            $number = absint( $item );
+            if ( $number > 0 )
+            {
+                $items[] = min( 200, $number );
+            }
+        }
+
+        $items = array_values( array_unique( $items ) );
+        sort( $items, SORT_NUMERIC );
+
+        return $items;
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function normalize_millis( $value, int $min, int $max, int $fallback ): int
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return $fallback;
+        }
+
+        $parsed = (int) $value;
+        if ( $parsed < $min )
+        {
+            return $min;
+        }
+        if ( $parsed > $max )
+        {
+            return $max;
+        }
+
+        return $parsed;
+    }
+
+    /**
+     * @param array<string, mixed> $value
+     */
+    private function derive_legacy_auto_refresh_enabled( array $value ): bool
+    {
+        $refresh_mode = sanitize_key( (string) ( $value['refresh_mode'] ?? 'auto' ) );
+        return 'auto' === $refresh_mode;
+    }
+
+    /**
+     * @param array<string, mixed> $value
+     */
+    private function derive_legacy_field_checkpoints_enabled( array $value ): bool
+    {
+        $refresh_mode = sanitize_key( (string) ( $value['refresh_mode'] ?? '' ) );
+        return 'checkpoint' === $refresh_mode;
+    }
+
+    /**
      * @param mixed $value
      */
     public function sanitize_spam_result_display_mode( $value ): string
@@ -546,6 +699,11 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
         if ( array_key_exists( 'spam_indicators_display', $config ) )
         {
             $config['spam_indicators_display'] = $this->sanitize_spam_indicators_display( $config['spam_indicators_display'] );
+        }
+
+        if ( array_key_exists( 'realtime_settings', $config ) )
+        {
+            $config['realtime_settings'] = $this->sanitize_realtime_settings( $config['realtime_settings'] );
         }
 
         return $config;
@@ -674,6 +832,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
             'include_site_context',
             'model_override',
             'model_selection',
+            'realtime_settings',
             'suppress_notifications_on_spam',
             'suppress_webhooks_on_spam',
             'skip_downstream_on_spam',
@@ -837,6 +996,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
             'include_site_context',
             'model_override',
             'model_selection',
+            'realtime_settings',
             'suppress_notifications_on_spam',
             'suppress_webhooks_on_spam',
             'skip_downstream_on_spam',

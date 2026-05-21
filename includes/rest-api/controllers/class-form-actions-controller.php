@@ -59,6 +59,17 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
 
     /** The only bundled action currently allowed to use the visitor-facing realtime hook. */
     private const REALTIME_ACTION_ID = 'clarification_assistant_v1';
+    private const REALTIME_HIDDEN_FIELD_EXPOSURE_MODES = [
+        'omit_hidden',
+        'label_hidden',
+        'label_hidden_value',
+        'label_value',
+    ];
+    private const REALTIME_PAGE_CHECKPOINT_MODES = [
+        'all_pages',
+        'include_pages',
+        'exclude_pages',
+    ];
 
     /** Policy version exposed to admin workflow planner clients. */
     private const WORKFLOW_POLICY_VERSION = '2026-02-mixed-sync-async-v1';
@@ -158,6 +169,55 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     private function get_actions_option_key( string $form_source_slug, int $form_id ): string
     {
         return self::FORM_ACTIONS_OPTION_BASE . sanitize_key( $form_source_slug ) . '_' . absint( $form_id );
+    }
+
+    /**
+     * Resolve an option-backed mapping from either supported storage shape.
+     *
+     * The admin app still encounters both the original top-level action shape and
+     * the newer wrapped `actions` shape. Treat them as aliases so writes do not
+     * silently update only the copy the current endpoint happened to read first.
+     *
+     * @param array<string,mixed> $actions Raw per-form option payload.
+     */
+    private function get_option_backed_action_linkage( array $actions, string $id ): ?array
+    {
+        if ( isset( $actions[ $id ] ) && is_array( $actions[ $id ] ) )
+        {
+            return $actions[ $id ];
+        }
+
+        if (
+            isset( $actions['actions'] ) &&
+            is_array( $actions['actions'] ) &&
+            isset( $actions['actions'][ $id ] ) &&
+            is_array( $actions['actions'][ $id ] )
+        )
+        {
+            return $actions['actions'][ $id ];
+        }
+
+        return null;
+    }
+
+    /**
+     * Persist an option-backed mapping to every supported option shape present.
+     *
+     * @param array<string,mixed> $actions Raw per-form option payload.
+     * @param array<string,mixed> $linkage Normalized mapping payload.
+     *
+     * @return array<string,mixed>
+     */
+    private function upsert_option_backed_action_linkage( array $actions, string $id, array $linkage ): array
+    {
+        $actions[ $id ] = $linkage;
+
+        if ( isset( $actions['actions'] ) && is_array( $actions['actions'] ) )
+        {
+            $actions['actions'][ $id ] = $linkage;
+        }
+
+        return $actions;
     }
 
     private function build_local_first_mapping_id( int $id ): string
@@ -970,7 +1030,10 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $actions = [];
         }
 
-        if ( in_array( $request->get_method(), [ 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) && !isset( $actions[ $value ] ) )
+        if (
+            in_array( $request->get_method(), [ 'GET', 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) &&
+            null === $this->get_option_backed_action_linkage( $actions, $value )
+        )
         {
             $local_first_row = $this->get_local_first_mapping_row(
                 $value,
@@ -2109,6 +2172,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 'label'      => $field->label ?? '',
                 'type'       => $field_type,
                 'adminLabel' => $field->{'adminLabel'} ?? null,
+                'page_index' => isset( $field->pageNumber ) ? max( 1, (int) $field->pageNumber ) : 1,
             ];
         }
 
@@ -3091,7 +3155,8 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $option_key = $this->get_actions_option_key( $request->get_param( 'form_source_slug' ), (int)$request->get_param( 'form_id' ) );
         $actions    = get_option( $option_key, [] );
         $id         = $request->get_param( 'local_mapping_id' );
-        if ( !isset( $actions[ $id ] ) )
+        $option_linkage = $this->get_option_backed_action_linkage( is_array( $actions ) ? $actions : [], (string) $id );
+        if ( null === $option_linkage )
         {
             $local_first_row = $this->get_local_first_mapping_row_for_request( $request );
             if ( $local_first_row && $this->local_form_mappings )
@@ -3241,7 +3306,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             return $this->prepare_error_response( 'rest_action_not_found', __( 'Action linkage not found to update.', 'sentient-forms' ), 404 );
         }
 
-        $linkage = $actions[ $id ];
+        $linkage = $option_linkage;
 
         if ( $request->has_param( 'central_action_id' ) )
         {
@@ -3312,7 +3377,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             );
         }
 
-        $actions[ $id ] = $linkage;
+        $actions = $this->upsert_option_backed_action_linkage( $actions, (string) $id, $linkage );
         update_option( $option_key, $actions, false );
         $this->sync_form_mappings_after_local_change(
             $request->get_param( 'form_source_slug' ),
@@ -5280,6 +5345,66 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             }
         }
 
+        if ( array_key_exists( 'realtime_settings', $settings ) )
+        {
+            $validation = $this->validate_realtime_settings_for_write( $settings['realtime_settings'] );
+            if ( is_wp_error( $validation ) )
+            {
+                return $validation;
+            }
+        }
+
+        return null;
+    }
+
+    private function validate_realtime_settings_for_write( mixed $value ): ?WP_Error
+    {
+        if ( null === $value )
+        {
+            return null;
+        }
+
+        if ( ! is_array( $value ) )
+        {
+            return $this->invalid_settings_write_error(
+                'realtime_settings',
+                __( 'Realtime settings must be an object.', 'sentient-forms' )
+            );
+        }
+
+        foreach ( [ 'auto_refresh_enabled', 'field_checkpoints_enabled', 'page_checkpoints_enabled', 'manual_refresh_enabled', 'pre_submit_run_enabled' ] as $field )
+        {
+            if ( array_key_exists( $field, $value ) && ! is_bool( $value[ $field ] ) )
+            {
+                return $this->invalid_settings_write_error(
+                    'realtime_settings.' . $field,
+                    __( 'Realtime toggle controls must be JSON booleans.', 'sentient-forms' )
+                );
+            }
+        }
+
+        foreach ( [ 'debounce_ms', 'cooldown_ms', 'page_checkpoint_timeout_ms', 'pre_submit_timeout_ms' ] as $field )
+        {
+            if ( array_key_exists( $field, $value ) && ! is_int( $value[ $field ] ) && ! is_float( $value[ $field ] ) )
+            {
+                return $this->invalid_settings_write_error(
+                    'realtime_settings.' . $field,
+                    __( 'Realtime timing controls must be JSON numbers.', 'sentient-forms' )
+                );
+            }
+        }
+
+        foreach ( [ 'checkpoint_field_ids', 'page_checkpoint_pages' ] as $field )
+        {
+            if ( array_key_exists( $field, $value ) && ! is_array( $value[ $field ] ) )
+            {
+                return $this->invalid_settings_write_error(
+                    'realtime_settings.' . $field,
+                    __( 'Realtime checkpoint controls must be JSON arrays.', 'sentient-forms' )
+                );
+            }
+        }
+
         return null;
     }
 
@@ -5429,6 +5554,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 continue;
             }
 
+            if ( 'realtime_settings' === $key )
+            {
+                $sanitized[ $key ] = $this->sanitize_realtime_settings_for_mapping( $value );
+                continue;
+            }
+
             if ( is_array( $value ) )
             {
                 $sanitized[ $key ] = $this->sanitize_settings( $value );
@@ -5445,6 +5576,157 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         return $sanitized;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function sanitize_realtime_settings_for_mapping( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $legacy_refresh_mode = isset( $value['refresh_mode'] ) && is_scalar( $value['refresh_mode'] )
+            ? sanitize_key( (string) $value['refresh_mode'] )
+            : 'auto';
+        if ( ! in_array( $legacy_refresh_mode, [ 'auto', 'checkpoint', 'manual' ], true ) )
+        {
+            $legacy_refresh_mode = 'auto';
+        }
+
+        $auto_refresh_enabled = array_key_exists( 'auto_refresh_enabled', $value )
+            ? rest_sanitize_boolean( $value['auto_refresh_enabled'] )
+            : 'auto' === $legacy_refresh_mode;
+        $field_checkpoints_enabled = array_key_exists( 'field_checkpoints_enabled', $value )
+            ? rest_sanitize_boolean( $value['field_checkpoints_enabled'] )
+            : 'checkpoint' === $legacy_refresh_mode;
+        $page_checkpoints_enabled = array_key_exists( 'page_checkpoints_enabled', $value )
+            ? rest_sanitize_boolean( $value['page_checkpoints_enabled'] )
+            : false;
+        $refresh_mode = $auto_refresh_enabled
+            ? 'auto'
+            : ( $field_checkpoints_enabled || $page_checkpoints_enabled ? 'checkpoint' : 'manual' );
+
+        $hidden_field_exposure_mode = isset( $value['hidden_field_exposure_mode'] ) && is_scalar( $value['hidden_field_exposure_mode'] )
+            ? sanitize_key( (string) $value['hidden_field_exposure_mode'] )
+            : 'label_hidden';
+        if ( ! in_array( $hidden_field_exposure_mode, self::REALTIME_HIDDEN_FIELD_EXPOSURE_MODES, true ) )
+        {
+            $hidden_field_exposure_mode = 'label_hidden';
+        }
+
+        $initial_panel_state = isset( $value['initial_panel_state'] ) && is_scalar( $value['initial_panel_state'] )
+            ? sanitize_key( (string) $value['initial_panel_state'] )
+            : 'minimized';
+        if ( ! in_array( $initial_panel_state, [ 'open', 'minimized', 'hidden_until_interaction' ], true ) )
+        {
+            $initial_panel_state = 'minimized';
+        }
+
+        $page_checkpoint_mode = isset( $value['page_checkpoint_mode'] ) && is_scalar( $value['page_checkpoint_mode'] )
+            ? sanitize_key( (string) $value['page_checkpoint_mode'] )
+            : 'all_pages';
+        if ( ! in_array( $page_checkpoint_mode, self::REALTIME_PAGE_CHECKPOINT_MODES, true ) )
+        {
+            $page_checkpoint_mode = 'all_pages';
+        }
+
+        return [
+            'auto_refresh_enabled'       => $auto_refresh_enabled,
+            'field_checkpoints_enabled'  => $field_checkpoints_enabled,
+            'checkpoint_field_ids'       => $this->sanitize_realtime_string_list( $value['checkpoint_field_ids'] ?? [] ),
+            'page_checkpoints_enabled'   => $page_checkpoints_enabled,
+            'page_checkpoint_mode'       => $page_checkpoint_mode,
+            'page_checkpoint_pages'      => $this->sanitize_realtime_positive_int_list( $value['page_checkpoint_pages'] ?? [] ),
+            'page_checkpoint_timeout_ms' => $this->normalize_realtime_millis( $value['page_checkpoint_timeout_ms'] ?? 2500, 500, 10000, 2500 ),
+            'storage_target_field_id'    => isset( $value['storage_target_field_id'] ) && is_scalar( $value['storage_target_field_id'] )
+                ? sanitize_text_field( (string) $value['storage_target_field_id'] )
+                : '',
+            'debounce_ms'                => $this->normalize_realtime_millis( $value['debounce_ms'] ?? 900, 250, 5000, 900 ),
+            'cooldown_ms'                => $this->normalize_realtime_millis( $value['cooldown_ms'] ?? 8000, 0, 60000, 8000 ),
+            'manual_refresh_enabled'     => array_key_exists( 'manual_refresh_enabled', $value )
+                ? rest_sanitize_boolean( $value['manual_refresh_enabled'] )
+                : true,
+            'blocking_mode'              => isset( $value['blocking_mode'] )
+                && 'require_answers' === sanitize_key( (string) $value['blocking_mode'] )
+                ? 'require_answers'
+                : 'advisory',
+            'refresh_mode'               => $refresh_mode,
+            'initial_panel_state'        => $initial_panel_state,
+            'hidden_field_exposure_mode' => $hidden_field_exposure_mode,
+            'pre_submit_run_enabled'     => array_key_exists( 'pre_submit_run_enabled', $value )
+                ? rest_sanitize_boolean( $value['pre_submit_run_enabled'] )
+                : false,
+            'pre_submit_timeout_ms'      => $this->normalize_realtime_millis( $value['pre_submit_timeout_ms'] ?? 2500, 500, 10000, 2500 ),
+        ];
+    }
+
+    private function normalize_realtime_millis( mixed $value, int $min, int $max, int $fallback ): int
+    {
+        $normalized = is_numeric( $value ) ? (int) $value : $fallback;
+
+        return max( $min, min( $max, $normalized ) );
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function sanitize_realtime_string_list( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $items = [];
+        foreach ( $value as $item )
+        {
+            if ( ! is_scalar( $item ) )
+            {
+                continue;
+            }
+
+            $normalized = trim( sanitize_text_field( (string) $item ) );
+            if ( '' !== $normalized )
+            {
+                $items[] = $normalized;
+            }
+        }
+
+        return array_values( array_unique( $items ) );
+    }
+
+    /**
+     * @return array<int,int>
+     */
+    private function sanitize_realtime_positive_int_list( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $items = [];
+        foreach ( $value as $item )
+        {
+            if ( ! is_scalar( $item ) )
+            {
+                continue;
+            }
+
+            $number = absint( $item );
+            if ( $number > 0 )
+            {
+                $items[] = min( 200, $number );
+            }
+        }
+
+        $items = array_values( array_unique( $items ) );
+        sort( $items );
+
+        return $items;
     }
 
     /**

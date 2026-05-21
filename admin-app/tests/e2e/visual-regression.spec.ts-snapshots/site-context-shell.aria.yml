@@ -7,7 +7,7 @@
 - paragraph: Give actions a site-specific baseline for better spam and summary decisions.
 - text: Ready
 - switch "Allow AI-generated Site Context" [checked]
-- text: Allow AI-generated Site Context Uses a web-capable model to read public site evidence.
+- text: Allow AI-generated Site Context Sends this site URL and public-site research prompt to the selected provider, which may use web search or fetch.
 - switch "Refresh automatically"
 - text: Refresh automatically Schedule updates through WordPress. Refresh every
 - combobox "Refresh every" [disabled]:

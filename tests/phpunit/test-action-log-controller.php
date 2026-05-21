@@ -6,6 +6,74 @@
  * @package Sentient_Forms
  */
 
+if ( ! class_exists( 'GFAPI' ) )
+{
+    class GFAPI
+    {
+        /** @var array<int,array<string,mixed>> */
+        public static array $entries = [];
+
+        /** @var array<int,array<string,mixed>> */
+        public static array $forms = [];
+
+        public static function get_entry( $entry_id )
+        {
+            $entry_id = (int) $entry_id;
+            if ( isset( self::$entries[ $entry_id ] ) )
+            {
+                return self::$entries[ $entry_id ];
+            }
+
+            return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+        }
+
+        public static function get_form( $form_id )
+        {
+            $form_id = (int) $form_id;
+            return self::$forms[ $form_id ] ?? false;
+        }
+
+        public static function get_forms(): array
+        {
+            return array_values( self::$forms );
+        }
+
+        public static function update_form( $form, $form_id = null )
+        {
+            $form_id = null === $form_id && is_array( $form ) && isset( $form['id'] )
+                ? (int) $form['id']
+                : (int) $form_id;
+
+            if ( $form_id <= 0 )
+            {
+                return new WP_Error( 'missing_form_id', 'Missing form id.' );
+            }
+
+            if ( is_array( $form ) )
+            {
+                $form['id'] = $form_id;
+            }
+
+            self::$forms[ $form_id ] = $form;
+
+            return true;
+        }
+
+        public static function update_entry_property( $entry_id, $property, $value )
+        {
+            $entry_id = (int) $entry_id;
+            if ( ! isset( self::$entries[ $entry_id ] ) )
+            {
+                return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+            }
+
+            self::$entries[ $entry_id ][ (string) $property ] = $value;
+
+            return true;
+        }
+    }
+}
+
 class Tests_Action_Log_Controller extends WP_UnitTestCase
 {
     private Sentient_Forms_Action_Log_Controller $controller;
@@ -17,6 +85,8 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         Sentient_Forms_Installer::maybe_upgrade();
         $this->truncate_local_workspace_tables();
         delete_option( self::OPTION_KEY );
+        GFAPI::$entries = [];
+        GFAPI::$forms   = [];
         Sentient_Forms_Plugin::instance()->clear_license_data();
         $this->controller = new Sentient_Forms_Action_Log_Controller();
     }
@@ -25,6 +95,8 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
     {
         delete_option( self::OPTION_KEY );
         $this->truncate_local_workspace_tables();
+        GFAPI::$entries = [];
+        GFAPI::$forms   = [];
         Sentient_Forms_Plugin::instance()->clear_license_data();
         remove_all_filters( 'pre_http_request' );
         parent::tearDown();
@@ -45,6 +117,11 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
             '/sentient-forms/v1/actions/log',
             $routes,
             'Action log route should be registered'
+        );
+        $this->assertArrayHasKey(
+            '/sentient-forms/v1/actions/log/(?P<log_id>[A-Za-z0-9_-]+)/entry-preview',
+            $routes,
+            'Action log entry preview route should be registered'
         );
     }
 
@@ -138,6 +215,112 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 8, $entry['credits_used'] );
         $this->assertNotEmpty( $entry['id'] ); // UUID should be generated
         $this->assertNotEmpty( $entry['created_at'] ); // Timestamp should be set
+    }
+
+    public function test_get_log_entries_includes_form_context_and_quick_links(): void
+    {
+        GFAPI::$forms = [
+            5 => [
+                'id'     => 5,
+                'title'  => 'Lead intake',
+                'fields' => [],
+            ],
+        ];
+
+        Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'    => 'gravity_forms',
+            'form_id'        => 5,
+            'entry_id'       => 500,
+            'action_code'    => 'entry_summary_v1',
+            'action_label'   => 'Entry Summary',
+            'status'         => 'success',
+            'result_summary' => 'This is a valid lead inquiry about pricing.',
+        ] );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+        $context  = $data['entries'][0]['form_context'];
+
+        $this->assertSame( 'Gravity Forms', $context['provider_label'] );
+        $this->assertSame( 'Lead intake', $context['form_name'] );
+        $this->assertSame( 5, $context['form_id'] );
+        $this->assertSame( 500, $context['entry_id'] );
+        $this->assertTrue( $context['entry_preview_available'] );
+        $this->assertStringContainsString( 'page=gf_edit_forms', $context['links']['provider_admin_url'] );
+        $this->assertStringContainsString( 'page=gf_edit_forms&id=5', $context['links']['form_admin_url'] );
+        $this->assertStringContainsString( 'page=gf_entries&id=5', $context['links']['entries_admin_url'] );
+        $this->assertStringContainsString( 'view=entry&id=5&lid=500', $context['links']['entry_admin_url'] );
+    }
+
+    public function test_entry_preview_endpoint_returns_safe_visible_field_summary(): void
+    {
+        GFAPI::$forms = [
+            5 => [
+                'id'     => 5,
+                'title'  => 'Lead intake',
+                'fields' => [
+                    [
+                        'id'    => 1,
+                        'label' => 'Name',
+                        'type'  => 'text',
+                    ],
+                    [
+                        'id'         => 2,
+                        'label'      => 'Internal Routing',
+                        'type'       => 'text',
+                        'visibility' => 'hidden',
+                    ],
+                    [
+                        'id'    => 3,
+                        'label' => 'Attachment',
+                        'type'  => 'fileupload',
+                    ],
+                    [
+                        'id'    => 4,
+                        'label' => 'Project Details',
+                        'type'  => 'textarea',
+                    ],
+                ],
+            ],
+        ];
+        GFAPI::$entries = [
+            500 => [
+                'id'           => 500,
+                'form_id'      => 5,
+                'date_created' => '2026-05-21 09:15:00',
+                'status'       => 'active',
+                '1'            => 'Grace Buyer',
+                '2'            => 'Do not expose this hidden routing value.',
+                '3'            => '/private/uploads/contract.pdf',
+                '4'            => 'We need help improving our intake workflow.',
+            ],
+        ];
+
+        Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'  => 'gravity_forms',
+            'form_id'      => 5,
+            'entry_id'     => 500,
+            'action_code'  => 'entry_summary_v1',
+            'action_label' => 'Entry Summary',
+            'status'       => 'success',
+        ] );
+
+        $entries = get_option( self::OPTION_KEY, [] );
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log/' . $entries[0]['id'] . '/entry-preview' );
+        $request->set_param( 'log_id', $entries[0]['id'] );
+
+        $response = $this->controller->get_entry_preview( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 'Lead intake', $data['form_name'] );
+        $this->assertSame( 500, $data['entry_id'] );
+        $this->assertSame( 'Name', $data['fields'][0]['label'] );
+        $this->assertSame( 'Grace Buyer', $data['fields'][0]['value'] );
+        $this->assertSame( 'Project Details', $data['fields'][1]['label'] );
+        $this->assertCount( 2, $data['fields'], 'Hidden and file-upload fields should not be exposed in previews.' );
+        $this->assertStringNotContainsString( 'hidden routing', wp_json_encode( $data['fields'] ) );
+        $this->assertStringNotContainsString( 'contract.pdf', wp_json_encode( $data['fields'] ) );
     }
 
     /**

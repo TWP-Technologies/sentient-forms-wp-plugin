@@ -34,3 +34,23 @@ add_filter(
     10,
     3
 );
+
+add_filter(
+    'sentient_forms_allow_insecure_outbound_url',
+    function ( $allowed, $url, $context ) {
+        if ( 'service' !== $context ) {
+            return $allowed;
+        }
+
+        $host = wp_parse_url( $url, PHP_URL_HOST );
+        $allow = array(
+            '172.18.0.5',  // cps-api container IP in compose
+            'cps-api',     // cps-api container hostname
+            'localhost',   // browser/manual localhost smoke paths
+        );
+
+        return in_array( $host, $allow, true ) ? true : $allowed;
+    },
+    10,
+    3
+);

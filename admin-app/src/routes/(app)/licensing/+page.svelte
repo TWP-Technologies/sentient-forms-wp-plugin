@@ -427,11 +427,18 @@
 		return defaultBillingErrorMessage(context);
 	}
 
-	function buildPortalSessionRequest(): BillingPortalSessionRequest {
-		return {
+	function buildPortalSessionRequest(
+		flowType: BillingPortalSessionRequest['flow_type'] = 'home',
+		subscriptionId?: string | null
+	): BillingPortalSessionRequest {
+		const request: BillingPortalSessionRequest = {
 			return_url: currentRouteUrl(),
-			flow_type: 'home'
+			flow_type: flowType
 		};
+		if (subscriptionId?.trim()) {
+			request.subscription_id = subscriptionId.trim();
+		}
+		return request;
 	}
 
 	function setBillingError(
@@ -609,12 +616,15 @@
 		await refreshLicenseAndBilling();
 	}
 
-	async function handleOpenBillingPortal() {
+	async function handleOpenBillingPortal(
+		flowType: BillingPortalSessionRequest['flow_type'] = 'home',
+		subscriptionId?: string | null
+	) {
 		portalLoading = true;
 		billingError = null;
 
 		try {
-			const session = await client.createPortalSession(buildPortalSessionRequest(), {
+			const session = await client.createPortalSession(buildPortalSessionRequest(flowType, subscriptionId), {
 				showNotifications: false
 			});
 			if (typeof window !== 'undefined') {
@@ -622,7 +632,9 @@
 			}
 		} catch (error) {
 			console.error('Failed to create billing portal session', error);
-			setBillingError(error, 'portal', handleOpenBillingPortal);
+			setBillingError(error, 'portal', async () => {
+				await handleOpenBillingPortal(flowType, subscriptionId);
+			});
 		} finally {
 			portalLoading = false;
 		}
@@ -630,7 +642,10 @@
 
 	async function handleCheckout(plan: CheckoutPlanOption) {
 		if (hasExistingSubscription) {
-			await handleOpenBillingPortal();
+			await handleOpenBillingPortal(
+				'subscription_update',
+				billingSubscription?.provider_subscription_id ?? null
+			);
 			return;
 		}
 

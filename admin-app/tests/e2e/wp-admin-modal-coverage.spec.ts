@@ -117,6 +117,17 @@ async function coverProvidersDisclosures(page: Page): Promise<void> {
 		return;
 	}
 
+	const managedConsentState = managedCard.getByTestId('providers-managed-consent-state');
+	if (
+		(await managedConsentState.count()) > 0 &&
+		(await managedConsentState.getByText(/Consent accepted/i).count()) > 0
+	) {
+		await expect(managedConsentState.getByText(/Consent accepted/i)).toBeVisible();
+		await expect(managedCard.getByRole('button', { name: /Revoke managed-service consent/i })).toBeVisible();
+		await attachLocatorScreenshot(page, managedCard, 'providers-managed-disclosure-accepted');
+		return;
+	}
+
 	const managedDisclosure = managedCard.getByLabel(
 		/I understand Sentient Forms receives the rendered prompt/i
 	);
@@ -139,16 +150,15 @@ async function coverActionsOverviewDefaults(page: Page): Promise<void> {
 	await defaultsModal.getByTestId('action-defaults-close').click();
 	await expect(defaultsModal).toBeHidden();
 
-	const customActionsCard = page.getByTestId('actions-custom-actions-card');
-	await expect(customActionsCard).toBeVisible();
+	const customTab = page.getByRole('button', { name: /Custom\s+\d+/i });
+	await expect(customTab).toBeVisible();
+	await customTab.click();
 
-	let customDefaultsButton = customActionsCard.getByTestId(
+	let customDefaultsButton = page.getByTestId(
 		`action-defaults-button-${modalCoverageCustomActionCode}`
 	);
 	if ((await customDefaultsButton.count()) === 0) {
-		customDefaultsButton = customActionsCard
-			.locator('button[data-testid^="action-defaults-button-"]')
-			.first();
+		customDefaultsButton = page.locator('button[data-testid^="action-defaults-button-"]').first();
 	}
 	await expect(customDefaultsButton).toBeVisible();
 	await customDefaultsButton.click();
@@ -279,11 +289,11 @@ async function coverMigrationGuards(page: Page): Promise<void> {
 
 async function openFirstFormActions(page: Page): Promise<void> {
 	await ensureSentientFormsSpa(page, '/actions');
-	const configureButton = page.getByRole('button', { name: 'Configure Actions' }).first();
-	await expect(configureButton).toBeVisible();
+	const configureLink = page.getByRole('link', { name: 'Configure Actions' }).first();
+	await expect(configureLink).toBeVisible();
 	await Promise.all([
 		page.waitForURL(/#\/actions\/[^/]+\/\d+$/, { timeout: 10000 }),
-		configureButton.click()
+		configureLink.click()
 	]);
 	await expect(page.getByTestId('form-execution-status')).toBeVisible();
 	await expect(page.getByText('Action Execution Order')).toBeVisible();

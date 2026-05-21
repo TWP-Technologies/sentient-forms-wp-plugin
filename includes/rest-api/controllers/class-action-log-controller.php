@@ -32,6 +32,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
     private array $local_mapping_cache = [];
     private array $local_custom_action_cache = [];
     private array $local_action_template_cache = [];
+    private array $form_context_cache = [];
 
     public function __construct()
     {
@@ -57,6 +58,27 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                     'args'                => $this->get_collection_params(),
                 ],
                 'schema' => [ $this, 'get_item_schema' ],
+            ],
+        );
+
+        // GET /actions/log/{id}/entry-preview - Lazy-load a safe form entry preview for one log row
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/(?P<log_id>[A-Za-z0-9_-]+)/entry-preview',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_entry_preview' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'log_id' => [
+                            'description'       => __( 'Action log row identifier.', 'sentient-forms' ),
+                            'type'              => 'string',
+                            'required'          => true,
+                            'sanitize_callback' => 'sanitize_text_field',
+                        ],
+                    ],
+                ],
             ],
         );
 
@@ -98,7 +120,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                         'status' => [
                             'required'          => true,
                             'type'              => 'string',
-                            'enum'              => [ 'pending', 'success', 'error' ],
+                            'enum'              => [ 'pending', 'success', 'blocked', 'error' ],
                         ],
                         'result_summary' => [
                             'required'          => false,
@@ -168,46 +190,27 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         $date_from = $request->get_param( 'date_from' );
         $date_to  = $request->get_param( 'date_to' );
 
-        $all_entries = $this->get_all_entries();
+        $filters = [
+            'form_id'     => $form_id,
+            'action_code' => $action_code,
+            'status'      => $status,
+            'date_from'   => $date_from,
+            'date_to'     => $date_to,
+        ];
 
-        // Apply filters
-        $filtered = array_filter( $all_entries, function ( $entry ) use ( $form_id, $action_code, $status, $date_from, $date_to ) {
-            if ( $form_id && ( $entry['form_id'] ?? 0 ) !== (int) $form_id )
-            {
-                return false;
-            }
-            if ( $action_code && ( $entry['action_code'] ?? '' ) !== $action_code )
-            {
-                return false;
-            }
-            if ( $status && ( $entry['status'] ?? '' ) !== $status )
-            {
-                return false;
-            }
-            if ( $date_from && ( $entry['created_at'] ?? '' ) < $date_from )
-            {
-                return false;
-            }
-            if ( $date_to && ( $entry['created_at'] ?? '' ) > $date_to )
-            {
-                return false;
-            }
-            return true;
-        } );
-
-        $total = count( $filtered );
-        $total_pages = (int) ceil( $total / $per_page );
-        $offset = ( $page - 1 ) * $per_page;
-
-        // Sort by created_at descending (newest first)
-        usort( $filtered, fn ( $a, $b ) => strcmp( $b['created_at'] ?? '', $a['created_at'] ?? '' ) );
-
-        $paginated = array_slice( $filtered, $offset, $per_page );
+        if ( $action_code )
+        {
+            $page_data = $this->get_filtered_entries_page_from_all_entries( $filters, $page, $per_page );
+        }
+        else
+        {
+            $page_data = $this->get_filtered_entries_page( $filters, $page, $per_page );
+        }
 
         return $this->prepare_item_for_response( [
-            'entries'     => array_values( $paginated ),
-            'total'       => $total,
-            'total_pages' => $total_pages,
+            'entries'     => $this->enrich_log_entries( $page_data['entries'] ),
+            'total'       => $page_data['total'],
+            'total_pages' => $page_data['total_pages'],
             'page'        => $page,
             'per_page'    => $per_page,
         ] );
@@ -258,6 +261,97 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         }
 
         return $this->prepare_item_for_response( $entry, 201 );
+    }
+
+    public function get_entry_preview( WP_REST_Request $request ): WP_REST_Response | WP_Error
+    {
+        $log_id = sanitize_text_field( (string) $request->get_param( 'log_id' ) );
+        $entry  = $this->find_log_entry_by_id( $log_id );
+
+        if ( ! $entry )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_action_log_entry_not_found',
+                __( 'Action log entry not found.', 'sentient-forms' ),
+                404
+            );
+        }
+
+        $form_source = $this->normalize_form_source( (string) ( $entry['form_source'] ?? '' ) );
+        if ( ! in_array( $form_source, [ 'gravity_forms', 'gravity-forms' ], true ) )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_action_log_preview_unsupported_provider',
+                __( 'Entry preview is currently available for Gravity Forms entries only.', 'sentient-forms' ),
+                400
+            );
+        }
+
+        if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_form' ] ) || ! is_callable( [ 'GFAPI', 'get_entry' ] ) )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_gfapi_unavailable',
+                __( 'Gravity Forms entry preview is unavailable.', 'sentient-forms' ),
+                503
+            );
+        }
+
+        $form_id  = absint( $entry['form_id'] ?? 0 );
+        $entry_id = absint( $entry['entry_id'] ?? 0 );
+        if ( $form_id <= 0 || $entry_id <= 0 )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_action_log_preview_unavailable',
+                __( 'This action log row does not have a saved form entry to preview yet.', 'sentient-forms' ),
+                400
+            );
+        }
+
+        $form = GFAPI::get_form( $form_id );
+        if ( ! is_array( $form ) )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_action_log_form_not_found',
+                __( 'The form for this action log row could not be found.', 'sentient-forms' ),
+                404
+            );
+        }
+
+        $gf_entry = GFAPI::get_entry( $entry_id );
+        if ( is_wp_error( $gf_entry ) || ! is_array( $gf_entry ) )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_action_log_entry_preview_not_found',
+                __( 'The form entry for this action log row could not be found.', 'sentient-forms' ),
+                404
+            );
+        }
+
+        if ( absint( $gf_entry['form_id'] ?? 0 ) !== $form_id )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_action_log_entry_form_mismatch',
+                __( 'The form entry no longer belongs to the expected form.', 'sentient-forms' ),
+                409
+            );
+        }
+
+        $context = $this->build_form_context( $entry );
+
+        return $this->prepare_item_for_response(
+            [
+                'log_id'       => $entry['id'],
+                'form_source'  => $form_source,
+                'provider_label' => $context['provider_label'],
+                'form_id'      => $form_id,
+                'form_name'    => $context['form_name'],
+                'entry_id'     => $entry_id,
+                'date_created' => isset( $gf_entry['date_created'] ) ? sanitize_text_field( (string) $gf_entry['date_created'] ) : null,
+                'status'       => isset( $gf_entry['status'] ) ? sanitize_key( (string) $gf_entry['status'] ) : null,
+                'fields'       => $this->summarize_gravity_forms_entry_fields( $form, $gf_entry ),
+                'links'        => $context['links'],
+            ]
+        );
     }
 
     /**
@@ -462,6 +556,122 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         );
     }
 
+    private function get_filtered_entries_page_from_all_entries( array $filters, int $page, int $per_page ): array
+    {
+        $filtered = array_filter(
+            $this->get_all_entries(),
+            fn ( array $entry ): bool => $this->log_entry_matches_filters( $entry, $filters )
+        );
+
+        usort( $filtered, fn ( $a, $b ) => strcmp( $b['created_at'] ?? '', $a['created_at'] ?? '' ) );
+
+        $total = count( $filtered );
+        $offset = ( $page - 1 ) * $per_page;
+
+        return [
+            'entries'     => array_values( array_slice( $filtered, $offset, $per_page ) ),
+            'total'       => $total,
+            'total_pages' => (int) ceil( $total / $per_page ),
+        ];
+    }
+
+    private function get_filtered_entries_page( array $filters, int $page, int $per_page ): array
+    {
+        $offset = ( $page - 1 ) * $per_page;
+
+        $legacy_entries = get_option( self::OPTION_KEY, [] );
+        if ( ! is_array( $legacy_entries ) )
+        {
+            $legacy_entries = [];
+        }
+
+        $repository = $this->get_execution_events_repository();
+        $local_rows = [];
+        $local_total = 0;
+        $legacy_truth_rows = [];
+        if ( $repository )
+        {
+            $local_query_limit = min( self::MAX_LOG_ENTRIES, $offset + $per_page );
+            $local_rows        = $repository->list_for_action_log( $filters, $local_query_limit, 0 );
+            $local_total       = $repository->count_for_action_log( $filters );
+
+            if ( ! empty( $legacy_entries ) )
+            {
+                $legacy_truth_rows = $repository->list_recent_for_action_log( self::MAX_LOG_ENTRIES );
+            }
+        }
+
+        $local_entries = array_values(
+            array_filter(
+                array_map( [ $this, 'format_local_execution_event_for_log' ], $local_rows )
+            )
+        );
+
+        $legacy_filtered = array_values(
+            array_filter(
+                $this->filter_legacy_entries_for_runtime_truth( $legacy_entries, $legacy_truth_rows ),
+                fn ( array $entry ): bool => $this->log_entry_matches_filters( $entry, $filters )
+            )
+        );
+
+        $candidates = array_merge( $local_entries, $legacy_filtered );
+        usort( $candidates, fn ( $a, $b ) => strcmp( $b['created_at'] ?? '', $a['created_at'] ?? '' ) );
+
+        $total = $local_total + count( $legacy_filtered );
+
+        return [
+            'entries'     => array_values( array_slice( $candidates, $offset, $per_page ) ),
+            'total'       => $total,
+            'total_pages' => (int) ceil( $total / $per_page ),
+        ];
+    }
+
+    private function log_entry_matches_filters( array $entry, array $filters ): bool
+    {
+        $form_id = absint( $filters['form_id'] ?? 0 );
+        if ( $form_id > 0 && absint( $entry['form_id'] ?? 0 ) !== $form_id )
+        {
+            return false;
+        }
+
+        $action_code = isset( $filters['action_code'] ) ? sanitize_text_field( (string) $filters['action_code'] ) : '';
+        if ( '' !== $action_code && ( $entry['action_code'] ?? '' ) !== $action_code )
+        {
+            return false;
+        }
+
+        $status = isset( $filters['status'] ) ? sanitize_key( (string) $filters['status'] ) : '';
+        if ( '' !== $status && ( $entry['status'] ?? '' ) !== $status )
+        {
+            return false;
+        }
+
+        $date_from = isset( $filters['date_from'] ) ? sanitize_text_field( (string) $filters['date_from'] ) : '';
+        if ( '' !== $date_from && ( $entry['created_at'] ?? '' ) < $date_from )
+        {
+            return false;
+        }
+
+        $date_to = isset( $filters['date_to'] ) ? sanitize_text_field( (string) $filters['date_to'] ) : '';
+        if ( '' !== $date_to && ( $entry['created_at'] ?? '' ) > $date_to )
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function get_execution_events_repository(): ?Sentient_Forms_Execution_Events_Repository
+    {
+        if ( ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
+        {
+            return null;
+        }
+
+        global $wpdb;
+        return new Sentient_Forms_Execution_Events_Repository( $wpdb );
+    }
+
     /**
      * Save a new entry to storage.
      *
@@ -475,15 +685,352 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
 
     private function get_local_execution_event_rows(): array
     {
-        if ( ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
+        $repository = $this->get_execution_events_repository();
+        if ( ! $repository )
         {
             return [];
         }
 
-        global $wpdb;
-
-        $repository = new Sentient_Forms_Execution_Events_Repository( $wpdb );
         return $repository->list_recent_for_action_log( self::MAX_LOG_ENTRIES );
+    }
+
+    private function enrich_log_entries( array $entries ): array
+    {
+        foreach ( $entries as $index => $entry )
+        {
+            if ( ! is_array( $entry ) )
+            {
+                continue;
+            }
+
+            $entries[ $index ]['form_context'] = $this->build_form_context( $entry );
+        }
+
+        return $entries;
+    }
+
+    private function find_log_entry_by_id( string $log_id ): ?array
+    {
+        $log_id = sanitize_text_field( $log_id );
+        if ( '' === $log_id )
+        {
+            return null;
+        }
+
+        if ( str_starts_with( $log_id, 'local-event-' ) )
+        {
+            $event_id = absint( substr( $log_id, strlen( 'local-event-' ) ) );
+            $repository = $this->get_execution_events_repository();
+            if ( $repository && $event_id > 0 )
+            {
+                $event = $repository->get_by_id( $event_id );
+                return $event ? $this->format_local_execution_event_for_log( $event ) : null;
+            }
+        }
+
+        $entries = get_option( self::OPTION_KEY, [] );
+        foreach ( is_array( $entries ) ? $entries : [] as $entry )
+        {
+            if ( ! is_array( $entry ) )
+            {
+                continue;
+            }
+
+            if ( isset( $entry['id'] ) && is_scalar( $entry['id'] ) && sanitize_text_field( (string) $entry['id'] ) === $log_id )
+            {
+                return $entry;
+            }
+        }
+
+        return null;
+    }
+
+    private function build_form_context( array $entry ): array
+    {
+        $form_source = $this->normalize_form_source( (string) ( $entry['form_source'] ?? '' ) );
+        $form_id     = absint( $entry['form_id'] ?? 0 );
+        $entry_id    = $this->normalize_log_entry_id( $entry['entry_id'] ?? null );
+        $cache_key   = $form_source . ':' . $form_id;
+
+        if ( ! isset( $this->form_context_cache[ $cache_key ] ) )
+        {
+            $this->form_context_cache[ $cache_key ] = $this->build_base_form_context( $form_source, $form_id );
+        }
+
+        $context = $this->form_context_cache[ $cache_key ];
+        $links   = is_array( $context['links'] ?? null ) ? $context['links'] : [];
+
+        if ( $entry_id && 'gravity_forms' === $form_source )
+        {
+            $links['entry_admin_url'] = $this->gravity_forms_entry_admin_url( $form_id, $entry_id );
+        }
+
+        $context['entry_id'] = $entry_id;
+        $context['links']    = $links;
+        $context['entry_preview_available'] = 'gravity_forms' === $form_source
+            && $form_id > 0
+            && null !== $entry_id
+            && empty( $context['form_missing'] )
+            && class_exists( 'GFAPI' )
+            && is_callable( [ 'GFAPI', 'get_form' ] )
+            && is_callable( [ 'GFAPI', 'get_entry' ] );
+
+        return $context;
+    }
+
+    private function build_base_form_context( string $form_source, int $form_id ): array
+    {
+        $provider_label = $this->provider_label( $form_source );
+        $form_name      = $form_id > 0 ? sprintf(
+            /* translators: %d: Form ID. */
+            __( 'Form #%d', 'sentient-forms' ),
+            $form_id
+        ) : __( 'Unknown form', 'sentient-forms' );
+        $form_missing = false;
+        $links = [
+            'provider_admin_url' => null,
+            'form_admin_url'     => null,
+            'entries_admin_url'  => null,
+            'entry_admin_url'    => null,
+        ];
+
+        if ( 'gravity_forms' === $form_source )
+        {
+            $links['provider_admin_url'] = admin_url( 'admin.php?page=gf_edit_forms' );
+            if ( $form_id > 0 )
+            {
+                $links['form_admin_url']    = admin_url( sprintf( 'admin.php?page=gf_edit_forms&id=%d', $form_id ) );
+                $links['entries_admin_url'] = admin_url( sprintf( 'admin.php?page=gf_entries&id=%d', $form_id ) );
+            }
+
+            $form = null;
+            if ( $form_id > 0 && class_exists( 'GFAPI' ) && is_callable( [ 'GFAPI', 'get_form' ] ) )
+            {
+                $form = GFAPI::get_form( $form_id );
+            }
+
+            if ( is_array( $form ) )
+            {
+                $title = isset( $form['title'] ) && is_scalar( $form['title'] ) ? trim( (string) $form['title'] ) : '';
+                if ( '' !== $title )
+                {
+                    $form_name = sanitize_text_field( $title );
+                }
+            }
+            elseif ( $form_id > 0 && class_exists( 'GFAPI' ) )
+            {
+                $form_missing = true;
+            }
+        }
+
+        return [
+            'provider_slug'            => $form_source,
+            'provider_label'           => $provider_label,
+            'form_id'                  => $form_id,
+            'form_name'                => $form_name,
+            'entry_id'                 => null,
+            'links'                    => $links,
+            'entry_preview_available'  => false,
+            'form_missing'             => $form_missing,
+        ];
+    }
+
+    private function normalize_form_source( string $form_source ): string
+    {
+        return match ( sanitize_key( $form_source ) ) {
+            'gravity-forms' => 'gravity_forms',
+            ''              => 'unknown',
+            default         => sanitize_key( $form_source ),
+        };
+    }
+
+    private function provider_label( string $form_source ): string
+    {
+        return match ( $this->normalize_form_source( $form_source ) ) {
+            'gravity_forms' => __( 'Gravity Forms', 'sentient-forms' ),
+            'unknown'       => __( 'Unknown provider', 'sentient-forms' ),
+            default         => ucwords( str_replace( [ '_', '-' ], ' ', sanitize_key( $form_source ) ) ),
+        };
+    }
+
+    private function gravity_forms_entry_admin_url( int $form_id, int $entry_id ): ?string
+    {
+        if ( $form_id <= 0 || $entry_id <= 0 )
+        {
+            return null;
+        }
+
+        return admin_url( sprintf( 'admin.php?page=gf_entries&view=entry&id=%d&lid=%d', $form_id, $entry_id ) );
+    }
+
+    private function summarize_gravity_forms_entry_fields( array $form, array $entry ): array
+    {
+        $summary = [];
+        foreach ( is_array( $form['fields'] ?? null ) ? $form['fields'] : [] as $field )
+        {
+            if ( $this->should_skip_preview_field( $field ) )
+            {
+                continue;
+            }
+
+            $field_id = $this->field_property( $field, 'id' );
+            if ( '' === $field_id )
+            {
+                continue;
+            }
+
+            $label = $this->field_property( $field, 'label' );
+            if ( '' === $label )
+            {
+                $label = $field_id;
+            }
+
+            $value = $this->entry_field_preview_value( $field, $entry, $field_id );
+            if ( '' === $value )
+            {
+                continue;
+            }
+
+            $summary[] = [
+                'field_id' => sanitize_text_field( $field_id ),
+                'label'    => sanitize_text_field( $label ),
+                'value'    => $this->truncate_preview_value( $value ),
+            ];
+
+            if ( count( $summary ) >= 12 )
+            {
+                return $summary;
+            }
+        }
+
+        if ( [] === $summary )
+        {
+            $summary = $this->fallback_entry_field_preview( $entry );
+        }
+
+        return array_slice( $summary, 0, 12 );
+    }
+
+    private function should_skip_preview_field( mixed $field ): bool
+    {
+        $type       = sanitize_key( $this->field_property( $field, 'type' ) );
+        $visibility = sanitize_key( $this->field_property( $field, 'visibility' ) );
+
+        return in_array( $visibility, [ 'hidden', 'administrative' ], true )
+            || in_array( $type, [ 'hidden', 'html', 'section', 'page', 'fileupload', 'signature', 'captcha' ], true );
+    }
+
+    private function field_property( mixed $field, string $property ): string
+    {
+        if ( is_object( $field ) && isset( $field->{$property} ) && is_scalar( $field->{$property} ) )
+        {
+            return trim( (string) $field->{$property} );
+        }
+
+        if ( is_array( $field ) && isset( $field[ $property ] ) && is_scalar( $field[ $property ] ) )
+        {
+            return trim( (string) $field[ $property ] );
+        }
+
+        return '';
+    }
+
+    private function entry_field_preview_value( mixed $field, array $entry, string $field_id ): string
+    {
+        $value = $entry[ $field_id ] ?? '';
+        if ( is_scalar( $value ) && '' !== trim( (string) $value ) )
+        {
+            return sanitize_textarea_field( (string) $value );
+        }
+
+        $inputs = is_object( $field ) && isset( $field->inputs ) ? $field->inputs : ( is_array( $field ) ? ( $field['inputs'] ?? [] ) : [] );
+        if ( ! is_array( $inputs ) )
+        {
+            return '';
+        }
+
+        $parts = [];
+        foreach ( $inputs as $input )
+        {
+            $input_id = is_array( $input ) && isset( $input['id'] ) ? (string) $input['id'] : ( is_object( $input ) && isset( $input->id ) ? (string) $input->id : '' );
+            if ( '' === $input_id || ! isset( $entry[ $input_id ] ) || ! is_scalar( $entry[ $input_id ] ) )
+            {
+                continue;
+            }
+
+            $input_value = trim( (string) $entry[ $input_id ] );
+            if ( '' === $input_value )
+            {
+                continue;
+            }
+
+            $input_label = is_array( $input ) && isset( $input['label'] ) ? (string) $input['label'] : ( is_object( $input ) && isset( $input->label ) ? (string) $input->label : '' );
+            $parts[] = '' !== trim( $input_label )
+                ? sanitize_text_field( $input_label ) . ': ' . sanitize_textarea_field( $input_value )
+                : sanitize_textarea_field( $input_value );
+        }
+
+        return implode( "\n", $parts );
+    }
+
+    private function fallback_entry_field_preview( array $entry ): array
+    {
+        $summary = [];
+        $blocked = [
+            'id',
+            'form_id',
+            'post_id',
+            'date_created',
+            'date_updated',
+            'is_starred',
+            'is_read',
+            'ip',
+            'source_url',
+            'user_agent',
+            'currency',
+            'payment_status',
+            'payment_date',
+            'payment_amount',
+            'payment_method',
+            'transaction_id',
+            'transaction_type',
+            'is_fulfilled',
+            'created_by',
+            'status',
+        ];
+
+        foreach ( $entry as $key => $value )
+        {
+            $key = (string) $key;
+            if ( count( $summary ) >= 8 || in_array( $key, $blocked, true ) || ! is_scalar( $value ) || '' === trim( (string) $value ) )
+            {
+                continue;
+            }
+
+            if ( ! preg_match( '/^\d+(?:\.\d+)?$/', $key ) )
+            {
+                continue;
+            }
+
+            $summary[] = [
+                'field_id' => sanitize_text_field( $key ),
+                'label'    => sanitize_text_field( $key ),
+                'value'    => $this->truncate_preview_value( sanitize_textarea_field( (string) $value ) ),
+            ];
+        }
+
+        return $summary;
+    }
+
+    private function truncate_preview_value( string $value ): string
+    {
+        $value = sanitize_textarea_field( $value );
+        if ( function_exists( 'mb_substr' ) )
+        {
+            return mb_substr( $value, 0, 300 );
+        }
+
+        return substr( $value, 0, 300 );
     }
 
     private function filter_legacy_entries_for_runtime_truth( array $legacy_entries, array $local_execution_events ): array
@@ -1191,6 +1738,11 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                 'structured_output_valid' => [
                     'description' => __( 'Whether execution produced valid structured output.', 'sentient-forms' ),
                     'type'        => 'boolean',
+                    'readonly'    => true,
+                ],
+                'form_context' => [
+                    'description' => __( 'Human-friendly form provider, form, entry, and admin jump-link context.', 'sentient-forms' ),
+                    'type'        => 'object',
                     'readonly'    => true,
                 ],
             ],
