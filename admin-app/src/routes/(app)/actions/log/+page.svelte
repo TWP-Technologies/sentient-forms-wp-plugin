@@ -5,7 +5,15 @@
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import PanelsTopLeftIcon from '@lucide/svelte/icons/panels-top-left';
 	import Rows3Icon from '@lucide/svelte/icons/rows-3';
-	import { Section, Card, Button, ButtonLink, Badge, Input, StateTemplate } from '$lib/components/ui';
+	import {
+		Section,
+		Card,
+		Button,
+		ButtonLink,
+		Badge,
+		Input,
+		StateTemplate
+	} from '$lib/components/ui';
 	import { formatTimestamp } from '$lib/utils/date-time';
 	import {
 		buildActionLogRowPresentation,
@@ -162,8 +170,7 @@
 			perPage = response.per_page;
 			totalPages = Math.max(1, response.total_pages);
 		} catch (requestError) {
-			error =
-				requestError instanceof Error ? requestError.message : 'Failed to fetch action logs';
+			error = requestError instanceof Error ? requestError.message : 'Failed to fetch action logs';
 		} finally {
 			loading = false;
 		}
@@ -235,9 +242,7 @@
 	function providerLabel(formSource: string): string {
 		if (formSource === 'gravity_forms' || formSource === 'gravity-forms') return 'Gravity Forms';
 		if (!formSource) return 'Unknown provider';
-		return formSource
-			.replace(/[_-]+/g, ' ')
-			.replace(/\b\w/g, (letter) => letter.toUpperCase());
+		return formSource.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 	}
 
 	function entryContextLabel(entry: ActionLogEntry): string {
@@ -367,7 +372,9 @@
 		return 'Unknown';
 	}
 
-	function usageCostVariant(entry: ActionLogEntry): 'neutral' | 'success' | 'warning' | 'danger' | 'info' {
+	function usageCostVariant(
+		entry: ActionLogEntry
+	): 'neutral' | 'success' | 'warning' | 'danger' | 'info' {
 		const kind = entry.usage_cost?.kind ?? '';
 		if (kind === 'openrouter_free') return 'success';
 		if (kind === 'openrouter_currency') return 'info';
@@ -409,15 +416,15 @@
 	function hasOperationalDetails(entry: ActionLogEntry): boolean {
 		return Boolean(
 			entry.execution_request_id ||
-				entry.mapping_id ||
-				entry.resolved_model_id ||
-				entry.pricing?.pricing_policy_version ||
-				storedResult(entry) !== null ||
-				readStringPath(entry.details, ['meta', 'request_id']) ||
-				readStringPath(entry.details, ['evaluation_payload', 'result_data', 'justification']) ||
-				readStringPath(entry.details, ['evaluation_payload', 'result_data', 'reasoning']) ||
-				readNumberPath(entry.details, ['evaluation_payload', 'result_data', 'confidence']) !== null ||
-				readArrayPath(entry.details, ['evaluation_payload', 'result_data', 'indicators']).length > 0
+			entry.mapping_id ||
+			entry.resolved_model_id ||
+			entry.pricing?.pricing_policy_version ||
+			storedResult(entry) !== null ||
+			readStringPath(entry.details, ['meta', 'request_id']) ||
+			readStringPath(entry.details, ['evaluation_payload', 'result_data', 'justification']) ||
+			readStringPath(entry.details, ['evaluation_payload', 'result_data', 'reasoning']) ||
+			readNumberPath(entry.details, ['evaluation_payload', 'result_data', 'confidence']) !== null ||
+			readArrayPath(entry.details, ['evaluation_payload', 'result_data', 'indicators']).length > 0
 		);
 	}
 
@@ -458,7 +465,9 @@
 	<Card data-testid="action-log-filter-card">
 		<div class="sf:flex sf:flex-wrap sf:gap-4 sf:items-end">
 			<div class="sf:flex-1 sf:min-w-[120px]">
-				<label for="filter-form-id" class="sf:text-sm sf:font-medium sf:text-slate-600">Form ID</label>
+				<label for="filter-form-id" class="sf:text-sm sf:font-medium sf:text-slate-600"
+					>Form ID</label
+				>
 				<Input
 					id="filter-form-id"
 					type="number"
@@ -467,7 +476,8 @@
 				/>
 			</div>
 			<div class="sf:flex-1 sf:min-w-[120px]">
-				<label for="filter-status" class="sf:text-sm sf:font-medium sf:text-slate-600">Status</label>
+				<label for="filter-status" class="sf:text-sm sf:font-medium sf:text-slate-600">Status</label
+				>
 				<select
 					id="filter-status"
 					bind:value={draftFilters.status}
@@ -481,7 +491,8 @@
 				</select>
 			</div>
 			<div class="sf:flex-1 sf:min-w-[120px]">
-				<label for="filter-action" class="sf:text-sm sf:font-medium sf:text-slate-600">Action</label>
+				<label for="filter-action" class="sf:text-sm sf:font-medium sf:text-slate-600">Action</label
+				>
 				<Input
 					id="filter-action"
 					type="text"
@@ -578,12 +589,8 @@
 						<tr class="sf:border-b sf:text-left sf:text-slate-500">
 							<th class="sf:pb-2 sf:pr-4">Source</th>
 							<th class="sf:pb-2 sf:pr-4">Action</th>
-							<th class="sf:pb-2 sf:pr-4">Status</th>
-							<th class="sf:pb-2 sf:pr-4">Output</th>
-							<th class="sf:pb-2 sf:pr-4">Result</th>
-							<th class="sf:pb-2 sf:pr-4">Usage cost</th>
-							<th class="sf:pb-2 sf:pr-4">Time</th>
-							<th class="sf:pb-2">Actions</th>
+							<th class="sf:pb-2 sf:pr-4">Outcome</th>
+							<th class="sf:pb-2">Run</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -597,120 +604,145 @@
 								errorMessage: entry.error_message
 							})}
 							{@const context = formContext(entry)}
-							<tr class="sf:border-b sf:last:border-0 sf:hover:bg-slate-50" data-testid={`action-log-row-${entry.id}`}>
-								<td class="sf:py-3 sf:pr-4 sf:min-w-[220px] sf:align-top">
-									<div class="sf:flex sf:flex-col sf:gap-1">
+							{@const justification =
+								readStringPath(entry.details, [
+									'evaluation_payload',
+									'result_data',
+									'justification'
+								]) ??
+								readStringPath(entry.details, ['evaluation_payload', 'result_data', 'reasoning'])}
+							{@const confidence = readNumberPath(entry.details, [
+								'evaluation_payload',
+								'result_data',
+								'confidence'
+							])}
+							{@const indicators = readArrayPath(entry.details, [
+								'evaluation_payload',
+								'result_data',
+								'indicators'
+							])}
+							<tr
+								class="sf:border-b sf:last:border-0 sf:hover:bg-slate-50"
+								data-testid={`action-log-row-${entry.id}`}
+							>
+								<td class="sf:py-3 sf:pr-4 sf:min-w-[240px] sf:align-top">
+									<div class="sf:flex sf:flex-col sf:gap-2">
 										<span class="sf:font-medium sf:text-slate-900">{context.form_name}</span>
 										<span class="sf:text-xs sf:text-slate-500">{entryContextLabel(entry)}</span>
 										{#if context.form_missing}
 											<Badge variant="warning">Form missing</Badge>
 										{/if}
+										<div
+											class="sf:flex sf:flex-wrap sf:gap-2"
+											data-testid={`action-log-actions-${entry.id}`}
+										>
+											{#if context.links.provider_admin_url}
+												<ButtonLink
+													size="xs"
+													variant="ghost"
+													href={context.links.provider_admin_url}
+													data-sveltekit-reload
+													rel="external"
+													data-testid={`action-log-provider-link-${entry.id}`}
+												>
+													<PanelsTopLeftIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
+													Provider
+												</ButtonLink>
+											{/if}
+											{#if context.links.form_admin_url}
+												<ButtonLink
+													size="xs"
+													variant="ghost"
+													href={context.links.form_admin_url}
+													data-sveltekit-reload
+													rel="external"
+													data-testid={`action-log-form-link-${entry.id}`}
+												>
+													<ExternalLinkIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
+													Form
+												</ButtonLink>
+											{/if}
+											{#if context.links.entries_admin_url}
+												<ButtonLink
+													size="xs"
+													variant="ghost"
+													href={context.links.entries_admin_url}
+													data-sveltekit-reload
+													rel="external"
+													data-testid={`action-log-entries-link-${entry.id}`}
+												>
+													<Rows3Icon class="sf:h-3 sf:w-3" aria-hidden="true" />
+													Entries
+												</ButtonLink>
+											{/if}
+											{#if context.links.entry_admin_url}
+												<ButtonLink
+													size="xs"
+													variant="secondary"
+													href={context.links.entry_admin_url}
+													data-sveltekit-reload
+													rel="external"
+													data-testid={`action-log-entry-link-${entry.id}`}
+												>
+													<FileTextIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
+													Entry
+												</ButtonLink>
+											{/if}
+											<Button
+												size="xs"
+												variant={context.entry_preview_available ? 'secondary' : 'ghost'}
+												disabled={!context.entry_preview_available}
+												onclick={() => void openPreview(entry)}
+												title={context.entry_preview_available
+													? 'Preview this entry'
+													: 'Preview is available after an entry is saved'}
+												data-testid={`action-log-preview-button-${entry.id}`}
+											>
+												<EyeIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
+												Preview
+											</Button>
+										</div>
 									</div>
 								</td>
-								<td class="sf:py-3 sf:pr-4">
+								<td class="sf:py-3 sf:pr-4 sf:min-w-[120px] sf:align-top">
 									<span class="sf:font-medium sf:text-slate-900">{entry.action_label}</span>
 									<br />
 									<span class="sf:text-xs sf:font-mono sf:text-slate-500">{entry.action_code}</span>
 								</td>
-								<td class="sf:py-3 sf:pr-4">
-									<Badge variant={rowPresentation.statusVariant}>
-										{rowPresentation.statusLabel}
-									</Badge>
-								</td>
-								<td class="sf:py-3 sf:pr-4">
-									<Badge variant={rowPresentation.outputVariant}>
-										{rowPresentation.outputLabel}
-									</Badge>
-								</td>
-								<td class="sf:py-3 sf:pr-4 sf:max-w-[220px] sf:align-top">
-									{#if rowPresentation.resultKind === 'badge'}
-										<Badge variant={rowPresentation.resultVariant}>
-											{rowPresentation.resultLabel}
-										</Badge>
-									{:else}
-										<span
-											class={resultTextClass(rowPresentation.resultVariant)}
-											title={rowPresentation.resultTitle ?? rowPresentation.resultLabel}
-										>
-											{rowPresentation.resultLabel}
-										</span>
-									{/if}
-								</td>
-								<td class="sf:py-3 sf:pr-4">
-									<span title={usageCostTitle(entry)}>
-										<Badge variant={usageCostVariant(entry)}>
-											{usageCostLabel(entry)}
-										</Badge>
-									</span>
-								</td>
-								<td class="sf:py-3 sf:text-slate-500 sf:text-xs">
-									{formatTimestamp(entry.created_at)}
+								<td class="sf:py-3 sf:pr-4 sf:min-w-[150px] sf:align-top">
+									<div class="sf:flex sf:flex-col sf:gap-2">
+										<div class="sf:flex sf:flex-wrap sf:gap-2">
+											<Badge variant={rowPresentation.statusVariant}>
+												{rowPresentation.statusLabel}
+											</Badge>
+											<Badge variant={rowPresentation.outputVariant}>
+												{rowPresentation.outputLabel}
+											</Badge>
+										</div>
+										{#if rowPresentation.resultKind === 'badge'}
+											<Badge variant={rowPresentation.resultVariant}>
+												{rowPresentation.resultLabel}
+											</Badge>
+										{:else}
+											<span
+												class={resultTextClass(rowPresentation.resultVariant)}
+												title={rowPresentation.resultTitle ?? rowPresentation.resultLabel}
+											>
+												{rowPresentation.resultLabel}
+											</span>
+										{/if}
+									</div>
 								</td>
 								<td class="sf:py-3 sf:align-top">
-									<div class="sf:flex sf:min-w-[210px] sf:flex-wrap sf:gap-2" data-testid={`action-log-actions-${entry.id}`}>
-										{#if context.links.provider_admin_url}
-											<ButtonLink
-												size="xs"
-												variant="ghost"
-												href={context.links.provider_admin_url}
-												data-sveltekit-reload
-												rel="external"
-												data-testid={`action-log-provider-link-${entry.id}`}
-											>
-												<PanelsTopLeftIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
-												Provider
-											</ButtonLink>
-										{/if}
-										{#if context.links.form_admin_url}
-											<ButtonLink
-												size="xs"
-												variant="ghost"
-												href={context.links.form_admin_url}
-												data-sveltekit-reload
-												rel="external"
-												data-testid={`action-log-form-link-${entry.id}`}
-											>
-												<ExternalLinkIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
-												Form
-											</ButtonLink>
-										{/if}
-										{#if context.links.entries_admin_url}
-											<ButtonLink
-												size="xs"
-												variant="ghost"
-												href={context.links.entries_admin_url}
-												data-sveltekit-reload
-												rel="external"
-												data-testid={`action-log-entries-link-${entry.id}`}
-											>
-												<Rows3Icon class="sf:h-3 sf:w-3" aria-hidden="true" />
-												Entries
-											</ButtonLink>
-										{/if}
-										{#if context.links.entry_admin_url}
-											<ButtonLink
-												size="xs"
-												variant="secondary"
-												href={context.links.entry_admin_url}
-												data-sveltekit-reload
-												rel="external"
-												data-testid={`action-log-entry-link-${entry.id}`}
-											>
-												<FileTextIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
-												Entry
-											</ButtonLink>
-										{/if}
-										<Button
-											size="xs"
-											variant={context.entry_preview_available ? 'secondary' : 'ghost'}
-											disabled={!context.entry_preview_available}
-											onclick={() => void openPreview(entry)}
-											title={context.entry_preview_available ? 'Preview this entry' : 'Preview is available after an entry is saved'}
-											data-testid={`action-log-preview-button-${entry.id}`}
-										>
-											<EyeIcon class="sf:h-3 sf:w-3" aria-hidden="true" />
-											Preview
-										</Button>
+									<div class="sf:flex sf:min-w-[115px] sf:flex-col sf:gap-2">
+										<span title={usageCostTitle(entry)}>
+											<Badge variant={usageCostVariant(entry)}>
+												{usageCostLabel(entry)}
+											</Badge>
+										</span>
+										<span class="sf:text-xs sf:text-slate-500">
+											{formatTimestamp(entry.created_at)}
+										</span>
 									</div>
 								</td>
 							</tr>
@@ -719,40 +751,54 @@
 									class="sf:border-b sf:last:border-0 sf:bg-slate-50/60"
 									data-testid={`action-log-details-row-${entry.id}`}
 								>
-									<td colspan="8" class="sf:px-4 sf:pb-4 sf:pt-1">
+									<td colspan="4" class="sf:px-4 sf:pb-4 sf:pt-1">
 										<details data-testid={`action-log-details-${entry.id}`}>
-											<summary class="sf:cursor-pointer sf:text-sm sf:font-medium sf:text-slate-700">
+											<summary
+												class="sf:cursor-pointer sf:text-sm sf:font-medium sf:text-slate-700"
+											>
 												Execution details
 											</summary>
-											<div class="sf:mt-3 sf:grid sf:gap-3 sf:text-xs sf:text-slate-600 md:sf:grid-cols-3 xl:sf:grid-cols-5">
+											<div
+												class="sf:mt-3 sf:grid sf:gap-3 sf:text-xs sf:text-slate-600 md:sf:grid-cols-3 xl:sf:grid-cols-5"
+											>
 												{#if entry.execution_request_id}
 													<div class="sf:min-w-0">
 														<p class="sf:font-semibold sf:text-slate-700">Execution Request</p>
-														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.execution_request_id}</p>
+														<p class="sf:font-mono sf:text-[11px] sf:break-all">
+															{entry.execution_request_id}
+														</p>
 													</div>
 												{/if}
 												{#if readStringPath(entry.details, ['meta', 'request_id'])}
 													<div class="sf:min-w-0">
 														<p class="sf:font-semibold sf:text-slate-700">Managed request</p>
-														<p class="sf:font-mono sf:text-[11px] sf:break-all">{readStringPath(entry.details, ['meta', 'request_id'])}</p>
+														<p class="sf:font-mono sf:text-[11px] sf:break-all">
+															{readStringPath(entry.details, ['meta', 'request_id'])}
+														</p>
 													</div>
 												{/if}
 												{#if entry.mapping_id}
 													<div class="sf:min-w-0">
 														<p class="sf:font-semibold sf:text-slate-700">Mapping</p>
-														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.mapping_id}</p>
+														<p class="sf:font-mono sf:text-[11px] sf:break-all">
+															{entry.mapping_id}
+														</p>
 													</div>
 												{/if}
 												{#if entry.resolved_model_id}
 													<div class="sf:min-w-0">
 														<p class="sf:font-semibold sf:text-slate-700">Resolved Model</p>
-														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.resolved_model_id}</p>
+														<p class="sf:font-mono sf:text-[11px] sf:break-all">
+															{entry.resolved_model_id}
+														</p>
 													</div>
 												{/if}
 												{#if entry.pricing?.pricing_policy_version}
 													<div class="sf:min-w-0">
 														<p class="sf:font-semibold sf:text-slate-700">Usage policy</p>
-														<p class="sf:font-mono sf:text-[11px] sf:break-all">{entry.pricing.pricing_policy_version}</p>
+														<p class="sf:font-mono sf:text-[11px] sf:break-all">
+															{entry.pricing.pricing_policy_version}
+														</p>
 														<p class="sf:mt-1">
 															Usage cost {usageCostLabel(entry)}
 															{#if entry.pricing.base_floor_credits !== null && entry.pricing.base_floor_credits !== undefined}
@@ -764,26 +810,23 @@
 														</p>
 													</div>
 												{/if}
-												{#if readStringPath(entry.details, ['evaluation_payload', 'result_data', 'justification']) || readStringPath(entry.details, ['evaluation_payload', 'result_data', 'reasoning'])}
+												{#if justification}
 													<div class="md:sf:col-span-3 xl:sf:col-span-5">
 														<p class="sf:font-semibold sf:text-slate-700">Justification</p>
-														<p>
-															{readStringPath(entry.details, ['evaluation_payload', 'result_data', 'justification']) ??
-																readStringPath(entry.details, ['evaluation_payload', 'result_data', 'reasoning'])}
-														</p>
+														<p>{justification}</p>
 													</div>
 												{/if}
-												{#if readNumberPath(entry.details, ['evaluation_payload', 'result_data', 'confidence']) !== null}
+												{#if confidence !== null}
 													<div>
 														<p class="sf:font-semibold sf:text-slate-700">Confidence</p>
-														<p>{readNumberPath(entry.details, ['evaluation_payload', 'result_data', 'confidence'])}</p>
+														<p>{confidence}</p>
 													</div>
 												{/if}
-												{#if readArrayPath(entry.details, ['evaluation_payload', 'result_data', 'indicators']).length > 0}
+												{#if indicators.length > 0}
 													<div class="md:sf:col-span-3 xl:sf:col-span-5">
 														<p class="sf:font-semibold sf:text-slate-700">Indicators</p>
 														<div class="sf:flex sf:flex-wrap sf:gap-2 sf:mt-1">
-															{#each readArrayPath(entry.details, ['evaluation_payload', 'result_data', 'indicators']) as indicator}
+															{#each indicators as indicator}
 																<Badge variant="warning">{indicatorLabel(indicator)}</Badge>
 															{/each}
 														</div>
@@ -792,7 +835,10 @@
 												{#if storedResult(entry) !== null}
 													<div class="md:sf:col-span-3 xl:sf:col-span-5">
 														<p class="sf:font-semibold sf:text-slate-700">Stored result</p>
-														<pre class="sf:mt-1 sf:max-h-80 sf:overflow-auto sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:text-[11px] sf:leading-relaxed sf:text-slate-800">{formatJson(storedResult(entry))}</pre>
+														<pre
+															class="sf:mt-1 sf:max-h-80 sf:overflow-auto sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-3 sf:text-[11px] sf:leading-relaxed sf:text-slate-800">{formatJson(
+																storedResult(entry)
+															)}</pre>
 													</div>
 												{/if}
 											</div>
@@ -805,7 +851,10 @@
 				</table>
 			</div>
 
-			<div class="sf:flex sf:flex-wrap sf:justify-between sf:items-center sf:gap-3 sf:mt-4 sf:pt-4 sf:border-t" data-testid="action-log-pagination">
+			<div
+				class="sf:flex sf:flex-wrap sf:justify-between sf:items-center sf:gap-3 sf:mt-4 sf:pt-4 sf:border-t"
+				data-testid="action-log-pagination"
+			>
 				<div class="sf:flex sf:flex-col sf:gap-1 sf:text-sm sf:text-slate-500">
 					<span data-testid="action-log-pagination-range">{pagination.rangeLabel}</span>
 					<span data-testid="action-log-pagination-page">{pagination.pageLabel}</span>
@@ -834,12 +883,17 @@
 			data-action-log-preview-sheet
 			data-testid="action-log-preview-sheet"
 		>
-			<div class="sf:flex sf:items-start sf:justify-between sf:gap-4 sf:border-b sf:border-slate-200 sf:pb-4">
+			<div
+				class="sf:flex sf:items-start sf:justify-between sf:gap-4 sf:border-b sf:border-slate-200 sf:pb-4"
+			>
 				<div class="sf:min-w-0">
 					<p class="sf:text-xs sf:font-bold sf:uppercase sf:tracking-[0.12em] sf:text-slate-400">
 						Entry preview
 					</p>
-					<h2 id="action-log-entry-preview-title" class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-950">
+					<h2
+						id="action-log-entry-preview-title"
+						class="sf:mt-1 sf:text-2xl sf:font-semibold sf:text-slate-950"
+					>
 						{formContext(previewEntry).form_name}
 					</h2>
 					<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
@@ -850,14 +904,20 @@
 			</div>
 
 			{#if previewLoadingId === previewEntry.id}
-				<div class="sf:mt-6 sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-5" data-testid="action-log-preview-loading">
+				<div
+					class="sf:mt-6 sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-5"
+					data-testid="action-log-preview-loading"
+				>
 					<p class="sf:text-sm sf:font-medium sf:text-slate-700">Loading entry preview...</p>
 					<p class="sf:mt-1 sf:text-sm sf:text-slate-500">
 						Pulling the entry from Gravity Forms only for this row.
 					</p>
 				</div>
 			{:else if previewError}
-				<div class="sf:mt-6 sf:rounded sf:border sf:border-danger-200 sf:bg-danger-50 sf:p-5" data-testid="action-log-preview-error">
+				<div
+					class="sf:mt-6 sf:rounded sf:border sf:border-danger-200 sf:bg-danger-50 sf:p-5"
+					data-testid="action-log-preview-error"
+				>
 					<p class="sf:text-sm sf:font-medium sf:text-danger-800">Preview unavailable</p>
 					<p class="sf:mt-1 sf:text-sm sf:text-danger-700">{previewError}</p>
 				</div>
@@ -873,13 +933,25 @@
 
 				<div class="sf:mt-5 sf:flex sf:flex-wrap sf:gap-2">
 					{#if activePreview.links.form_admin_url}
-						<ButtonLink size="sm" variant="secondary" href={activePreview.links.form_admin_url} data-sveltekit-reload rel="external">
+						<ButtonLink
+							size="sm"
+							variant="secondary"
+							href={activePreview.links.form_admin_url}
+							data-sveltekit-reload
+							rel="external"
+						>
 							<ExternalLinkIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
 							Open form
 						</ButtonLink>
 					{/if}
 					{#if activePreview.links.entry_admin_url}
-						<ButtonLink size="sm" variant="secondary" href={activePreview.links.entry_admin_url} data-sveltekit-reload rel="external">
+						<ButtonLink
+							size="sm"
+							variant="secondary"
+							href={activePreview.links.entry_admin_url}
+							data-sveltekit-reload
+							rel="external"
+						>
 							<FileTextIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
 							Open entry
 						</ButtonLink>
@@ -890,8 +962,13 @@
 					<h3 class="sf:text-base sf:font-semibold sf:text-slate-950">Visible fields</h3>
 					<div class="sf:mt-3 sf:grid sf:gap-3">
 						{#each activePreview.fields as field (`${field.field_id}-${field.label}`)}
-							<div class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-4" data-testid="action-log-preview-field">
-								<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-[0.08em] sf:text-slate-400">
+							<div
+								class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-4"
+								data-testid="action-log-preview-field"
+							>
+								<p
+									class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-[0.08em] sf:text-slate-400"
+								>
 									{field.label}
 								</p>
 								<p class="sf:mt-2 sf:whitespace-pre-wrap sf:text-sm sf:leading-6 sf:text-slate-800">
@@ -899,7 +976,9 @@
 								</p>
 							</div>
 						{:else}
-							<p class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-4 sf:text-sm sf:text-slate-500">
+							<p
+								class="sf:rounded sf:border sf:border-slate-200 sf:bg-white sf:p-4 sf:text-sm sf:text-slate-500"
+							>
 								No visible field values were available for this entry.
 							</p>
 						{/each}

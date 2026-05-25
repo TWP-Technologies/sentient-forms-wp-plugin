@@ -131,7 +131,9 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 		});
 	});
 
-	test('action log page displays entries with scanable status/output/result cues', async ({ page }) => {
+	test('action log page displays entries with scanable status/output/result cues', async ({
+		page
+	}) => {
 		await page.route('**/wp-json/sentient-forms/v1/actions/log**', (route) =>
 			route.fulfill({
 				status: 200,
@@ -221,13 +223,18 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 			'href',
 			/view=entry&id=1&lid=100$/
 		);
+		await expect(row.getByTestId('action-log-preview-button-uuid-1')).toBeInViewport();
 
 		expect(requestedPreviewUrls).toHaveLength(0);
 		await row.getByTestId('action-log-preview-button-uuid-1').click();
 
 		await expect(page.getByTestId('action-log-preview-sheet')).toBeVisible();
-		await expect(page.getByTestId('action-log-preview-sheet').getByText('Grace Buyer')).toBeVisible();
-		await expect(page.getByTestId('action-log-preview-sheet').getByText('Needs implementation help.')).toBeVisible();
+		await expect(
+			page.getByTestId('action-log-preview-sheet').getByText('Grace Buyer')
+		).toBeVisible();
+		await expect(
+			page.getByTestId('action-log-preview-sheet').getByText('Needs implementation help.')
+		).toBeVisible();
 		expect(requestedPreviewUrls).toHaveLength(1);
 	});
 
@@ -261,7 +268,9 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 		await expect(details).toContainText('trusted sender');
 	});
 
-	test('action log filtering by status shows active chips and allows chip clear', async ({ page }) => {
+	test('action log filtering by status shows active chips and allows chip clear', async ({
+		page
+	}) => {
 		const requestedUrls: string[] = [];
 
 		await page.route('**/wp-json/sentient-forms/v1/actions/log**', (route) => {
@@ -295,11 +304,15 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 		await expect(page.getByTestId('action-log-active-filters')).toBeVisible();
 		await expect(page.getByTestId('action-log-filter-chip-status')).toContainText('Status:');
 		await expect(page.getByTestId('action-log-filter-chip-status')).toContainText('Error');
-		await expect.poll(() => requestedUrls[requestedUrls.length - 1] ?? '').toContain('status=error');
+		await expect
+			.poll(() => requestedUrls[requestedUrls.length - 1] ?? '')
+			.toContain('status=error');
 
 		await page.getByTestId('action-log-filter-chip-status').click();
 
-		await expect.poll(() => requestedUrls[requestedUrls.length - 1] ?? '').not.toContain('status=error');
+		await expect
+			.poll(() => requestedUrls[requestedUrls.length - 1] ?? '')
+			.not.toContain('status=error');
 		await expect(page.getByTestId('action-log-active-filters')).toHaveCount(0);
 	});
 
