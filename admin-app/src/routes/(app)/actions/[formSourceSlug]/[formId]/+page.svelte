@@ -3854,7 +3854,7 @@
 												Hooks: {summarizeDefinitionHooks(definition.hooks)}
 											</p>
 											<p class="sf:break-words sf:text-xs sf:text-slate-500">
-												Base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+												Base credits: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
 													definition
 												)}
 											</p>
@@ -5367,7 +5367,7 @@
 											</p>
 											<p class="sf:text-xs sf:text-slate-500">ID: {definition.id}</p>
 											<p class="sf:text-xs sf:text-slate-500">
-												Base cost: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
+												Base credits: {formatBaseCreditCost(definition)} · Model: {formatModelHint(
 													definition
 												)}
 											</p>
@@ -5408,7 +5408,7 @@
 											<p class="sf:text-xs sf:text-slate-500">Code: {action.code}</p>
 											{#if action.base_credit_cost !== null}
 												<p class="sf:text-xs sf:text-slate-500">
-													Base cost: {action.base_credit_cost} credits
+													Base credits: {action.base_credit_cost} credits
 												</p>
 											{/if}
 										</div>

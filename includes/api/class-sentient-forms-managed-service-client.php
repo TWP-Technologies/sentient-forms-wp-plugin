@@ -232,12 +232,16 @@ class Sentient_Forms_Managed_Service_Client
             return $proxy_api_key;
         }
 
-        return $this->client->get(
+        $response = $this->client->get(
             '/billing/state',
             [
                 'bearer_token' => $proxy_api_key,
             ]
         );
+
+        return is_wp_error( $response )
+            ? $response
+            : Sentient_Forms_Managed_Usage_Sanitizer::sanitize_billing_state( $response );
     }
 
     public function get_base_url(): string

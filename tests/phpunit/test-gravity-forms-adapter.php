@@ -3535,6 +3535,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                                     'billed_amount_microusd' => 1000,
                                     'currency'               => 'USD',
                                     'free_usage'             => false,
+                                    'debited_credits'        => 1,
                                 ],
                             ],
                         ]
@@ -3571,7 +3572,9 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
         $this->assertSame( 'sentient_managed', $recent_events[0]['provider'] ?? null );
         $this->assertSame( '~openai/gpt-latest', $recent_events[0]['model'] ?? null );
-        $this->assertSame( 1000, $recent_events[0]['cost_json']['billed_amount_microusd'] ?? null );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $recent_events[0]['cost_json'] );
+        $this->assertArrayNotHasKey( 'currency', $recent_events[0]['cost_json'] );
+        $this->assertSame( 1, $recent_events[0]['cost_json']['debited_credits'] ?? null );
         $this->assertSame( 'sentient_forms_metering', $recent_events[0]['cost_json']['source'] ?? null );
 
         $this->assertContains(

@@ -1086,6 +1086,13 @@
 	}
 
 	function priceLabel(model: ModelInfo): string {
+		if (selectedProvider === MANAGED_PROVIDER) {
+			if (pricingEstimate?.kind === 'sentient_credits') {
+				return pricingEstimate.label ?? `${pricingEstimate.estimated_debit_credits} credits`;
+			}
+			return 'Route-defined credits';
+		}
+
 		if (modelIsFree(model)) return 'Free';
 		const prompt = model.pricing?.prompt;
 		const completion = model.pricing?.completion;
@@ -1126,7 +1133,7 @@
 		}
 
 		if (pricingEstimate.label) return pricingEstimate.label;
-		if (typeof pricingEstimate.amount_usd === 'number')
+		if (selectedProvider !== MANAGED_PROVIDER && typeof pricingEstimate.amount_usd === 'number')
 			return `OR est. ${formatUsd(pricingEstimate.amount_usd)}`;
 		if (pricingEstimate.kind === 'sentient_credits') {
 			return `SF: ${pricingEstimate.estimated_debit_credits} credits`;
@@ -1317,7 +1324,7 @@
 					<div class="sf:w-full sf:min-w-0 sf:lg:w-80 sf:lg:flex-none">
 						<div class="sf:rounded-md sf:bg-slate-50 sf:px-3 sf:py-2 sf:text-left sf:lg:text-right">
 							<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">
-								Usage cost
+								{selectedProvider === MANAGED_PROVIDER ? 'Managed credits' : 'Provider cost'}
 							</p>
 							<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
 								{pricingEstimateLabel()}
@@ -2138,7 +2145,7 @@
 								</div>
 								<div class="sf:rounded-md sf:bg-white sf:p-3">
 									<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">
-										Price
+										{selectedProvider === MANAGED_PROVIDER ? 'Managed credits' : 'Provider price'}
 									</p>
 									<p class="sf:mt-1 sf:text-sm sf:font-medium sf:text-slate-900">
 										{detailModel ? priceLabel(detailModel) : 'Route-defined'}

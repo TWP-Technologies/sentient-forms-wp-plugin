@@ -70,13 +70,17 @@ class Sentient_Forms_Managed_Proxy_Client
             return $payload;
         }
 
-        return $this->client->post(
+        $response = $this->client->post(
             '/managed/execute',
             $payload,
             [
                 'bearer_token' => $proxy_api_key,
             ]
         );
+
+        return is_wp_error( $response )
+            ? $response
+            : Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $response );
     }
 
     /**
@@ -113,12 +117,16 @@ class Sentient_Forms_Managed_Proxy_Client
             $path .= '?' . http_build_query( [ 'site_id' => $site_id ], '', '&', PHP_QUERY_RFC3986 );
         }
 
-        return $this->client->get(
+        $response = $this->client->get(
             $path,
             [
                 'bearer_token' => $proxy_api_key,
             ]
         );
+
+        return is_wp_error( $response )
+            ? $response
+            : Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $response );
     }
 
     /**

@@ -226,7 +226,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         {
             $cached_result = is_array( $existing['result_json'] ?? null ) ? $existing['result_json'] : [];
 
-            return [
+            $cached_response = [
                 'execution_request_id' => $execution_request_id,
                 'status'               => 'succeeded',
                 'provider'             => $provider,
@@ -235,6 +235,13 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'result'               => $cached_result,
                 'effects'              => is_array( $cached_result['effects'] ?? null ) ? $cached_result['effects'] : [],
             ];
+            if ( 'sentient_managed' === $provider && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
+            {
+                $cached_response['result'] = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $cached_response['result'] );
+                $cached_response['effects'] = is_array( $cached_response['result']['effects'] ?? null ) ? $cached_response['result']['effects'] : [];
+            }
+
+            return $cached_response;
         }
 
         $this->events->record(
@@ -302,8 +309,12 @@ class Sentient_Forms_Local_Action_Execution_Service
                     'provider'             => $provider,
                     'model'                => $model,
                     'status'               => 'failed',
-                    'token_usage_json'     => is_array( $response['usage'] ?? null ) ? $response['usage'] : null,
-                    'cost_json'            => $this->extract_openrouter_usage_cost( is_array( $response['usage'] ?? null ) ? $response['usage'] : [] ),
+                    'token_usage_json'     => 'sentient_managed' === $provider
+                        ? ( is_array( $response['token_usage'] ?? null ) ? $response['token_usage'] : null )
+                        : ( is_array( $response['usage'] ?? null ) ? $response['usage'] : null ),
+                    'cost_json'            => 'sentient_managed' === $provider
+                        ? $this->extract_managed_metering_cost( is_array( $response['metering'] ?? null ) ? $response['metering'] : [] )
+                        : $this->extract_openrouter_usage_cost( is_array( $response['usage'] ?? null ) ? $response['usage'] : [] ),
                     'error_code'           => $result->get_error_code(),
                     'error_message'        => $result->get_error_message(),
                     'payload_digest'       => $payload_digest,
@@ -336,7 +347,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $result['effects'] = $effects;
-        $stored_result     = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result );
+        $stored_result     = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result, $provider );
         $this->events->record(
             [
                 'execution_request_id' => $execution_request_id,
@@ -1695,6 +1706,9 @@ class Sentient_Forms_Local_Action_Execution_Service
         $output        = is_array( $response['output'] ?? null ) ? $response['output'] : [];
         $content       = is_scalar( $output['text'] ?? null ) ? (string) $output['text'] : '';
         $structured    = $this->decode_structured_content( $content );
+        $metering      = is_array( $response['metering'] ?? null )
+            ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $response['metering'] )
+            : null;
 
         $result = [
             'provider_response_id' => is_scalar( $response['execution_request_id'] ?? null ) ? (string) $response['execution_request_id'] : null,
@@ -1702,12 +1716,12 @@ class Sentient_Forms_Local_Action_Execution_Service
             'content'              => $content,
             'finish_reason'        => null,
             'usage'                => is_array( $response['token_usage'] ?? null ) ? $response['token_usage'] : null,
-            'metering'             => is_array( $response['metering'] ?? null ) ? $response['metering'] : null,
+            'metering'             => $metering,
         ];
 
-        if ( is_array( $response['metering'] ?? null ) )
+        if ( is_array( $metering ) )
         {
-            $result['cost'] = $this->extract_managed_metering_cost( $response['metering'] );
+            $result['cost'] = $this->extract_managed_metering_cost( $metering );
         }
 
         if ( null !== $structured )
@@ -1761,20 +1775,15 @@ class Sentient_Forms_Local_Action_Execution_Service
      */
     private function extract_managed_metering_cost( array $metering ): array
     {
+        $metering = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $metering );
         $cost = [
             'provider' => 'sentient_forms',
-            'currency' => 'USD',
             'source'   => 'sentient_forms_metering',
         ];
 
         if ( isset( $metering['debited_credits'] ) && is_numeric( $metering['debited_credits'] ) )
         {
             $cost['debited_credits'] = absint( $metering['debited_credits'] );
-        }
-
-        if ( isset( $metering['billed_amount_microusd'] ) && is_numeric( $metering['billed_amount_microusd'] ) )
-        {
-            $cost['billed_amount_microusd'] = absint( $metering['billed_amount_microusd'] );
         }
 
         if ( isset( $metering['free_usage'] ) )

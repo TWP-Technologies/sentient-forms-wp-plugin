@@ -68,6 +68,8 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
 
         $this->assertIsArray( $result );
         $this->assertSame( 'succeeded', $result['status'] );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $result['metering'] );
+        $this->assertArrayNotHasKey( 'currency', $result['metering'] );
         $this->assertSame( 'https://minimal.sentient.test/v2', $client->get_base_url() );
         $this->assertCount( 1, $calls );
         $this->assertSame( 'https://minimal.sentient.test/v2/managed/execute', $calls[0]['url'] );
@@ -307,10 +309,6 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
                                     'output_tokens' => 5,
                                     'total_tokens'  => 15,
                                 ],
-                                'billing'         => [
-                                    'billed_amount_microusd' => 1000,
-                                    'currency'               => 'USD',
-                                ],
                             ],
                         ]
                     ),
@@ -324,6 +322,7 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
 
         $this->assertIsArray( $result );
         $this->assertSame( 2, $result['execution_count'] );
+        $this->assertArrayNotHasKey( 'billing', $result );
         $this->assertCount( 1, $calls );
         $this->assertSame(
             'https://minimal.sentient.test/v2/metering/summary?site_id=22222222-2222-4222-8222-222222222222',

@@ -1168,6 +1168,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                     'billed_amount_microusd' => 1200,
                     'currency'               => 'USD',
                     'free_usage'             => false,
+                    'debited_credits'        => 2,
                 ],
             ]
         );
@@ -1322,6 +1323,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                     'billed_amount_microusd' => 1000,
                     'currency'               => 'USD',
                     'free_usage'             => false,
+                    'debited_credits'        => 1,
                 ],
             ]
         );
@@ -1368,7 +1370,11 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'succeeded', $event['status'] );
         $this->assertSame( 'sentient_managed', $event['provider'] );
         $this->assertSame( 14, $event['token_usage_json']['input_tokens'] );
-        $this->assertSame( 1000, $event['result_json']['metering']['billed_amount_microusd'] );
+        $this->assertSame( 1, $event['result_json']['metering']['debited_credits'] );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['result_json']['metering'] );
+        $this->assertArrayNotHasKey( 'currency', $event['result_json']['metering'] );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['cost_json'] );
+        $this->assertArrayNotHasKey( 'currency', $event['cost_json'] );
         $this->assertStringNotContainsString( $fixture['proxy_api_key'], wp_json_encode( $event ) );
     }
 
@@ -2719,9 +2725,8 @@ class Sentient_Forms_Test_Managed_Proxy_Client extends Sentient_Forms_Managed_Pr
             ],
             'metering'             => [
                 'event_id'               => '33333333-3333-4333-8333-333333333333',
-                'billed_amount_microusd' => 1000,
-                'currency'               => 'USD',
                 'free_usage'             => false,
+                'debited_credits'        => 1,
             ],
         ];
     }

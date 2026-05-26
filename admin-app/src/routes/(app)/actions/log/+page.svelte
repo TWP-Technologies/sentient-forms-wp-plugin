@@ -358,6 +358,45 @@
 		return current;
 	}
 
+	function isManagedEntry(entry: ActionLogEntry): boolean {
+		return (
+			entry.usage_cost?.route === 'sentient_forms_managed' ||
+			readStringPath(entry.details, ['provider']) === 'sentient_managed'
+		);
+	}
+
+	function sanitizeManagedDisplayValue(value: unknown): unknown {
+		if (Array.isArray(value)) {
+			return value.map(sanitizeManagedDisplayValue);
+		}
+		if (!isRecord(value)) {
+			return value;
+		}
+
+		const sanitized: Record<string, unknown> = {};
+		for (const [key, child] of Object.entries(value)) {
+			if (
+				key === 'amount_usd' ||
+				key === 'billed_amount_microusd' ||
+				key === 'total_billed_micro_usd' ||
+				key === 'currency' ||
+				key === 'provider_cost'
+			) {
+				continue;
+			}
+			const sanitizedChild = sanitizeManagedDisplayValue(child);
+			if (
+				(key === 'billing' || key === 'cost' || key === 'details') &&
+				isRecord(sanitizedChild) &&
+				Object.keys(sanitizedChild).length === 0
+			) {
+				continue;
+			}
+			sanitized[key] = sanitizedChild;
+		}
+		return sanitized;
+	}
+
 	function usageCostLabel(entry: ActionLogEntry): string {
 		const label = entry.usage_cost?.label;
 		if (typeof label === 'string' && label.trim().length > 0) {
@@ -397,12 +436,17 @@
 		return 'Usage route could not be determined from stored execution metadata.';
 	}
 
+	function usagePolicyLabel(entry: ActionLogEntry): string {
+		return entry.usage_cost?.route === 'sentient_forms_managed' ? 'Managed credits' : 'Provider cost';
+	}
+
 	function storedResult(entry: ActionLogEntry): unknown {
-		return (
+		const result =
 			readUnknownPath(entry.details, ['stored_result']) ??
 			readUnknownPath(entry.details, ['evaluation_payload', 'result_data']) ??
-			null
-		);
+			null;
+
+		return isManagedEntry(entry) ? sanitizeManagedDisplayValue(result) : result;
 	}
 
 	function formatJson(value: unknown): string {
@@ -800,7 +844,7 @@
 															{entry.pricing.pricing_policy_version}
 														</p>
 														<p class="sf:mt-1">
-															Usage cost {usageCostLabel(entry)}
+															{usagePolicyLabel(entry)} {usageCostLabel(entry)}
 															{#if entry.pricing.base_floor_credits !== null && entry.pricing.base_floor_credits !== undefined}
 																, base floor {entry.pricing.base_floor_credits}
 															{/if}

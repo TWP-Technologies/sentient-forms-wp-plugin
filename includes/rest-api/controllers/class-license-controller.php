@@ -596,7 +596,9 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             return $this->prepare_cps_error( $response );
         }
 
-        $payload = $this->normalize_activation_payload( $response );
+        $payload = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_billing_state(
+            $this->normalize_activation_payload( $response )
+        );
         $this->sync_cached_license_from_billing_state( $payload );
 
         return $this->prepare_item_for_response(

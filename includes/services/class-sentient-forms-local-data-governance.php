@@ -332,11 +332,20 @@ class Sentient_Forms_Local_Data_Governance
      * @param array<string, mixed> $result Raw execution result payload.
      * @return array<string, mixed>
      */
-    public static function sanitize_execution_result_for_storage( array $result ): array
+    public static function sanitize_execution_result_for_storage( array $result, ?string $provider = null ): array
     {
+        $is_managed = class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+            && Sentient_Forms_Managed_Usage_Sanitizer::is_managed_payload( $result );
+        if ( null !== $provider && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
+        {
+            $is_managed = $is_managed || Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $provider );
+        }
+
         if ( self::store_full_ai_outputs_enabled() )
         {
-            return $result;
+            return $is_managed && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+                ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $result )
+                : $result;
         }
 
         $filtered = [];
@@ -367,7 +376,9 @@ class Sentient_Forms_Local_Data_Governance
             $filtered['result_summary'] = $summary;
         }
 
-        return $filtered;
+        return $is_managed && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+            ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $filtered )
+            : $filtered;
     }
 
     /**
@@ -378,16 +389,22 @@ class Sentient_Forms_Local_Data_Governance
      */
     public static function sanitize_execution_payload_for_storage( array $payload ): array
     {
+        $provider   = isset( $payload['provider'] ) && is_scalar( $payload['provider'] ) ? sanitize_key( (string) $payload['provider'] ) : null;
+        $is_managed = class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+            && ( Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $provider ) || Sentient_Forms_Managed_Usage_Sanitizer::is_managed_payload( $payload ) );
+
         if ( self::store_full_ai_outputs_enabled() )
         {
-            return $payload;
+            return $is_managed && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+                ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $payload )
+                : $payload;
         }
 
         $filtered = $payload;
 
         if ( is_array( $filtered['result'] ?? null ) )
         {
-            $filtered['result'] = self::sanitize_execution_result_for_storage( $filtered['result'] );
+            $filtered['result'] = self::sanitize_execution_result_for_storage( $filtered['result'], $provider );
         }
 
         if ( is_array( $filtered['result_data'] ?? null ) )
@@ -420,7 +437,9 @@ class Sentient_Forms_Local_Data_Governance
             }
         }
 
-        return $filtered;
+        return $is_managed && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+            ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $filtered )
+            : $filtered;
     }
 
     /**
@@ -781,6 +800,10 @@ class Sentient_Forms_Local_Data_Governance
     private static function format_export_item( array $row ): array
     {
         $result = json_decode( (string) ( $row['result_json'] ?? '' ), true );
+        if ( is_array( $result ) && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) && Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $row['provider'] ?? null ) )
+        {
+            $result = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $result );
+        }
 
         return [
             'group_id'          => 'sentient-forms-execution-events',

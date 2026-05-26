@@ -150,11 +150,6 @@
 		return 'neutral';
 	}
 
-	function formatMicroUsd(microUsd: number): string {
-		const dollars = microUsd / 1_000_000;
-		return dollars >= 0.01 ? `$${dollars.toFixed(2)}` : `$${dollars.toFixed(4)}`;
-	}
-
 	function normalizeManagedUsageMetric(value: unknown): number {
 		return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 	}
@@ -171,9 +166,6 @@
 			),
 			outputTokens: normalizeManagedUsageMetric(
 				usage?.total_output_tokens ?? usage?.token_usage?.output_tokens
-			),
-			billedMicroUsd: normalizeManagedUsageMetric(
-				usage?.total_billed_micro_usd ?? usage?.billing?.billed_amount_microusd
 			)
 		};
 	}
@@ -318,7 +310,7 @@
 	);
 	let managedUsageTokens = $derived(
 		managedUsage
-			? `${managedUsageMetrics.inputTokens.toLocaleString()} input tokens, ${managedUsageMetrics.outputTokens.toLocaleString()} output tokens, ${formatMicroUsd(managedUsageMetrics.billedMicroUsd)} billed.`
+			? `${managedUsageMetrics.inputTokens.toLocaleString()} input tokens, ${managedUsageMetrics.outputTokens.toLocaleString()} output tokens. Managed usage is shown in credits.`
 			: 'Sentient Forms metering starts only after managed-service execution is enabled.'
 	);
 

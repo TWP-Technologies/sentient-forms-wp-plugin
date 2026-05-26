@@ -611,6 +611,9 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'trial', $data['status'] );
         $this->assertSame( 'starter', $data['plan']['code'] );
         $this->assertSame( 0, $data['managed_usage']['execution_count'] );
+        $this->assertArrayNotHasKey( 'billing', $data['managed_usage'] );
+        $this->assertStringNotContainsString( 'microusd', wp_json_encode( $data['managed_usage'] ) );
+        $this->assertStringNotContainsString( '"currency"', wp_json_encode( $data['managed_usage'] ) );
         $this->assertFalse( $data['billing_boundary']['direct_openrouter_billed_by_sentient'] );
         $this->assertTrue( $data['billing_boundary']['managed_proxy_billed_by_sentient'] );
 

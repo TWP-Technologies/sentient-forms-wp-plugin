@@ -169,6 +169,45 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 400, $response->get_status() );
     }
 
+    public function test_managed_execution_events_are_sanitized_on_write_and_read(): void
+    {
+        $event = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/execution-events',
+            [
+                'execution_request_id' => 'managed-local-workspace-1',
+                'provider'             => 'sentient_managed',
+                'model'                => 'openai/gpt-4.1-mini',
+                'status'               => 'succeeded',
+                'cost_json'            => [
+                    'provider'               => 'sentient_forms',
+                    'currency'               => 'USD',
+                    'source'                 => 'sentient_forms_metering',
+                    'debited_credits'        => 4,
+                    'billed_amount_microusd' => 4000,
+                ],
+                'result_json'          => [
+                    'metering' => [
+                        'debited_credits'        => 4,
+                        'billed_amount_microusd' => 4000,
+                        'currency'               => 'USD',
+                    ],
+                ],
+            ],
+            201
+        );
+
+        $this->assertSame( 4, $event['cost_json']['debited_credits'] );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['cost_json'] );
+        $this->assertArrayNotHasKey( 'currency', $event['cost_json'] );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['result_json']['metering'] );
+        $this->assertArrayNotHasKey( 'currency', $event['result_json']['metering'] );
+
+        $events = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/execution-events?limit=10' );
+        $this->assertStringNotContainsString( 'microusd', wp_json_encode( $events ) );
+        $this->assertStringNotContainsString( '"currency"', wp_json_encode( $events ) );
+    }
+
     public function test_migration_readiness_reports_local_and_legacy_cutover_state(): void
     {
         $this->seed_local_cutover_state();

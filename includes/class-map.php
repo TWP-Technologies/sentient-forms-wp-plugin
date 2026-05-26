@@ -92,6 +92,7 @@ return [
 	'Sentient_Forms_Managed_Execution_Callback_Controller' => __DIR__ . '/rest-api/controllers/class-managed-execution-callback-controller.php',
 	'Sentient_Forms_Managed_Proxy_Client' => __DIR__ . '/providers/class-sentient-forms-managed-proxy-client.php',
 	'Sentient_Forms_Managed_Service_Client' => __DIR__ . '/api/class-sentient-forms-managed-service-client.php',
+	'Sentient_Forms_Managed_Usage_Sanitizer' => __DIR__ . '/services/class-sentient-forms-managed-usage-sanitizer.php',
 	'Sentient_Forms_Mapping_Dependency_Planner' => __DIR__ . '/services/class-sentient-forms-mapping-dependency-planner.php',
 	'Sentient_Forms_Mappings_Controller' => __DIR__ . '/rest-api/controllers/class-mappings-controller.php',
 	'Sentient_Forms_Mappings_Migrate_CLI_Command' => __DIR__ . '/cli/class-sentient-forms-mappings-migrate-cli-command.php',

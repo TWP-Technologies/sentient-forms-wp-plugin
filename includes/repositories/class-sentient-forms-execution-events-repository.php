@@ -24,6 +24,20 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
             return new WP_Error( 'sentient_forms_missing_execution_request_id', __( 'Execution request ID is required.', 'sentient-forms' ) );
         }
 
+        $provider = sanitize_key( (string) ( $data['provider'] ?? 'openrouter' ) );
+        if ( class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) && Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $provider ) )
+        {
+            if ( isset( $data['cost_json'] ) && is_array( $data['cost_json'] ) )
+            {
+                $data['cost_json'] = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $data['cost_json'] );
+            }
+
+            if ( isset( $data['result_json'] ) && is_array( $data['result_json'] ) )
+            {
+                $data['result_json'] = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $data['result_json'] );
+            }
+        }
+
         $token_usage_json = $this->encode_json_field( $data['token_usage_json'] ?? null, 'token_usage_json' );
         if ( is_wp_error( $token_usage_json ) )
         {
@@ -49,7 +63,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
             'form_source'          => isset( $data['form_source'] ) ? sanitize_key( (string) $data['form_source'] ) : null,
             'form_id'              => isset( $data['form_id'] ) ? sanitize_text_field( (string) $data['form_id'] ) : null,
             'entry_id'             => isset( $data['entry_id'] ) ? sanitize_text_field( (string) $data['entry_id'] ) : null,
-            'provider'             => sanitize_key( (string) ( $data['provider'] ?? 'openrouter' ) ),
+            'provider'             => $provider,
             'model'                => isset( $data['model'] ) ? sanitize_text_field( (string) $data['model'] ) : null,
             'status'               => sanitize_key( (string) ( $data['status'] ?? 'queued' ) ),
             'token_usage_json'     => $token_usage_json,

@@ -106,6 +106,20 @@ test('licensing screen handles activation flow', async ({ page }) => {
 						free_plan_monthly_credits: 50,
 						free_plan_indefinite: true,
 						private_beta_trial_enabled: true
+					},
+					managed_usage: {
+						execution_count: 12,
+						succeeded_count: 11,
+						failed_count: 1,
+						token_usage: {
+							input_tokens: 3200,
+							output_tokens: 900,
+							total_tokens: 4100
+						},
+						billing: {
+							billed_amount_microusd: 18000,
+							currency: 'USD'
+						}
 					}
 				}
 			}),
@@ -161,6 +175,11 @@ test('licensing screen handles activation flow', async ({ page }) => {
 	await expect(page.getByTestId('licensing-business-cap-note')).toContainText(
 		'Each Sentient Forms managed-service license covers one WordPress site'
 	);
+	await expect(
+		page.getByText('3,200 input tokens, 900 output tokens. Managed usage is shown in credits.')
+	).toBeVisible();
+	await expect(page.getByText('$0.0180')).toHaveCount(0);
+	await expect(page.getByText('USD')).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Choose Starter' })).toBeDisabled();
 	await page.getByTestId('licensing-managed-checkout-disclosure').locator('input').check();
 	await page.getByRole('button', { name: 'Choose Starter' }).click();
@@ -550,7 +569,11 @@ test('licensing screen explains the v2 managed billing boundary', async ({ page 
 	await expect(page.getByTestId('licensing-managed-usage-summary')).toContainText(
 		'8 managed runs, 7 succeeded, 1 failed'
 	);
-	await expect(page.getByTestId('licensing-managed-usage-summary')).toContainText('$0.01 billed');
+	await expect(page.getByTestId('licensing-managed-usage-summary')).toContainText(
+		'1,234 input tokens, 567 output tokens. Managed usage is shown in credits.'
+	);
+	await expect(page.getByTestId('licensing-managed-usage-summary')).not.toContainText('$0.01');
+	await expect(page.getByTestId('licensing-managed-usage-summary')).not.toContainText('USD');
 });
 
 test('existing subscriptions use subscription update portal for plan changes', async ({ page }) => {

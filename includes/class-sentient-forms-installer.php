@@ -110,6 +110,7 @@ class Sentient_Forms_Installer
 
         self::seed_bundled_action_templates();
         self::repair_local_first_action_integrity();
+        Sentient_Forms_Managed_Usage_Sanitizer::scrub_local_storage();
     }
 
     private static function create_async_requests_table(): void

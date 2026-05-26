@@ -206,7 +206,6 @@ export class MockSentientFormsApiClient {
 				failed_events: 1,
 				total_input_tokens: 3200,
 				total_output_tokens: 900,
-				total_billed_micro_usd: 18000,
 				free_usage_events: 0,
 				first_event_at: new Date(Date.now() - 20 * 24 * 3600 * 1000).toISOString(),
 				last_event_at: new Date(Date.now() - 1 * 24 * 3600 * 1000).toISOString()

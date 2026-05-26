@@ -153,6 +153,84 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertSame( [ 'created_at', 'id' ], $this->execution_event_index_columns( $table, 'created_id_idx' ) );
     }
 
+    public function test_maybe_upgrade_scrubs_existing_managed_currency_fields(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $now   = current_time( 'mysql' );
+
+        $inserted = $this->wpdb->insert(
+            $table,
+            [
+                'execution_request_id' => 'managed-repair-1',
+                'provider'             => 'sentient_managed',
+                'model'                => 'openai/gpt-4.1-mini',
+                'status'               => 'succeeded',
+                'cost_json'            => wp_json_encode(
+                    [
+                        'provider'               => 'sentient_forms',
+                        'currency'               => 'USD',
+                        'source'                 => 'sentient_forms_metering',
+                        'debited_credits'        => 3,
+                        'billed_amount_microusd' => 2300,
+                    ]
+                ),
+                'result_json'          => wp_json_encode(
+                    [
+                        'metering' => [
+                            'debited_credits'        => 3,
+                            'billed_amount_microusd' => 2300,
+                            'currency'               => 'USD',
+                        ],
+                        'details'  => [
+                            'cost' => [
+                                'amount_usd' => 0.0023,
+                                'currency'   => 'USD',
+                            ],
+                        ],
+                    ]
+                ),
+                'created_at'           => $now,
+                'updated_at'           => $now,
+            ],
+            [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+        );
+        $this->assertNotFalse( $inserted );
+
+        update_option(
+            'sentient_forms_site_context',
+            [
+                'summary_text'  => 'AI generated context.',
+                'source'        => 'ai_generated',
+                'auto_include'  => true,
+                'pii_ack'       => true,
+                'metadata'      => [
+                    'route'    => 'sentient_managed',
+                    'metering' => [
+                        'debited_credits'        => 1,
+                        'billed_amount_microusd' => 1000,
+                        'currency'               => 'USD',
+                    ],
+                ],
+            ],
+            false
+        );
+
+        update_option( 'sentient_forms_db_version', '2026.05.10.lead_value_workflows' );
+        Sentient_Forms_Installer::maybe_upgrade();
+
+        $event = $this->events->get_by_request_id( 'managed-repair-1' );
+        $this->assertSame( 3, $event['cost_json']['debited_credits'] );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['cost_json'] );
+        $this->assertArrayNotHasKey( 'currency', $event['cost_json'] );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $event['result_json']['metering'] );
+        $this->assertArrayNotHasKey( 'currency', $event['result_json']['metering'] );
+        $this->assertArrayNotHasKey( 'details', $event['result_json'] );
+
+        $context = get_option( 'sentient_forms_site_context' );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $context['metadata']['metering'] );
+        $this->assertArrayNotHasKey( 'currency', $context['metadata']['metering'] );
+    }
+
     public function test_uninstall_deletes_data_by_default_and_can_be_disabled(): void
     {
         $table = $this->wpdb->prefix . 'sentient_execution_events';

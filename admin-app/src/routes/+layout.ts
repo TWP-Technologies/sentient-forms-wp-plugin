@@ -1,3 +1,1 @@
-export const ssr = false;
-export const csr = true;
-export const prerender = false;
+// Hash router builds reject page options; SPA behavior is controlled by svelte.config.js.

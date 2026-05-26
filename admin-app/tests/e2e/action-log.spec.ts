@@ -170,6 +170,86 @@ test.describe('Action Log UI (T-E2E-001, T-E2E-002, T-E2E-003)', () => {
 		await expect(errorRow.getByText(/timeout/i)).toBeVisible();
 	});
 
+	test('managed action log details never render currency fields from stale payloads', async ({
+		page
+	}) => {
+		await page.route('**/wp-json/sentient-forms/v1/actions/log**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					entries: [
+						{
+							id: 'uuid-managed',
+							form_source: 'gravity_forms',
+							form_id: 1,
+							entry_id: 100,
+							action_code: 'entry_summary_v1',
+							action_label: 'Entry Summary',
+							status: 'success',
+							result_summary: 'Managed run completed',
+							classification: null,
+							credits_used: 0,
+							error_code: null,
+							error_message: null,
+							structured_output_valid: true,
+							execution_request_id: 'req-managed-ui',
+							pricing: {
+								pricing_policy_version: 'sentient-managed-v1',
+								debited_credits: 2,
+								provider_cost: {
+									amount_usd: 0.004,
+									currency: 'USD'
+								}
+							},
+							usage_cost: {
+								route: 'sentient_forms_managed',
+								kind: 'sentient_credits',
+								label: 'SF 2 credits',
+								credits: 2,
+								amount_usd: 0.004,
+								known: true
+							},
+							details: {
+								provider: 'sentient_managed',
+								stored_result: {
+									metering: {
+										debited_credits: 2,
+										billed_amount_microusd: 4000,
+										currency: 'USD'
+									},
+									details: {
+										cost: {
+											amount_usd: 0.004,
+											currency: 'USD'
+										}
+									}
+								}
+							},
+							created_at: '2025-12-26T12:00:00Z',
+							completed_at: '2025-12-26T12:00:01Z'
+						}
+					],
+					total: 1,
+					total_pages: 1,
+					page: 1,
+					per_page: 20
+				})
+			})
+		);
+
+		await page.goto('/#/actions/log', { waitUntil: 'networkidle' });
+		await expect(page.getByTestId('action-log-row-uuid-managed').getByText('SF 2 credits')).toBeVisible();
+
+		await page.getByTestId('action-log-details-uuid-managed').locator('summary').click();
+		const details = page.getByTestId('action-log-details-uuid-managed');
+		await expect(details).toContainText('debited_credits');
+		await expect(details).not.toContainText('billed_amount_microusd');
+		await expect(details).not.toContainText('amount_usd');
+		await expect(details).not.toContainText('USD');
+		await expect(details.locator('pre')).not.toContainText('"cost"');
+	});
+
 	test('action log exposes form context, quick jumps, and lazy entry preview', async ({ page }) => {
 		const requestedPreviewUrls: string[] = [];
 

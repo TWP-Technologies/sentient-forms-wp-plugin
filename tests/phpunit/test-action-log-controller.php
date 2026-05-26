@@ -504,6 +504,76 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'Submission looks legitimate.', $data['entries'][0]['details']['stored_result']['content'] );
     }
 
+    public function test_get_log_entries_sanitizes_managed_currency_from_local_events(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $recorded = $events->record(
+            [
+                'execution_request_id' => 'req-managed-log-1',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'entry_id'             => '77',
+                'provider'             => 'sentient_managed',
+                'model'                => 'openai/gpt-4.1-mini',
+                'status'               => 'succeeded',
+                'token_usage_json'     => [
+                    'input_tokens'  => 11,
+                    'output_tokens' => 5,
+                    'total_tokens'  => 16,
+                ],
+                'cost_json'            => [
+                    'provider'               => 'sentient_forms',
+                    'currency'               => 'USD',
+                    'source'                 => 'sentient_forms_metering',
+                    'debited_credits'        => 2,
+                    'billed_amount_microusd' => 1400,
+                ],
+                'result_json'          => [
+                    'structured' => [
+                        'summary' => 'Managed result.',
+                    ],
+                    'metering'   => [
+                        'debited_credits'        => 2,
+                        'billed_amount_microusd' => 1400,
+                        'currency'               => 'USD',
+                    ],
+                    'details'    => [
+                        'cost'          => [
+                            'amount_usd' => 0.0014,
+                            'currency'   => 'USD',
+                        ],
+                        'provider_cost' => [
+                            'amount_usd' => 0.0002,
+                            'currency'   => 'USD',
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $recorded );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+        $entry    = $data['entries'][0];
+
+        $this->assertSame( 'sentient_forms_managed', $entry['usage_cost']['route'] );
+        $this->assertSame( 'sentient_forms_managed_action', $entry['action_code'] );
+        $this->assertSame( 'Sentient Forms managed action', $entry['action_label'] );
+        $this->assertSame( 2, $entry['usage_cost']['credits'] );
+        $this->assertArrayNotHasKey( 'amount_usd', $entry['usage_cost'] );
+        $this->assertArrayNotHasKey( 'provider_cost', $entry['pricing'] );
+        $this->assertArrayNotHasKey( 'cost', $entry['details'] );
+        $this->assertArrayNotHasKey( 'billed_amount_microusd', $entry['details']['stored_result']['metering'] );
+        $this->assertArrayNotHasKey( 'currency', $entry['details']['stored_result']['metering'] );
+        $this->assertArrayNotHasKey( 'details', $entry['details']['stored_result'] );
+        $this->assertStringNotContainsString( 'microusd', wp_json_encode( $entry ) );
+        $this->assertStringNotContainsString( '"cost"', wp_json_encode( $entry ) );
+        $this->assertStringNotContainsString( '"currency"', wp_json_encode( $entry ) );
+    }
+
     public function test_get_log_entries_filters_unbacked_local_first_legacy_success_rows(): void
     {
         update_option(

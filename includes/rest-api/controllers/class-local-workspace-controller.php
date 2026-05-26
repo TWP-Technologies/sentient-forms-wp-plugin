@@ -262,6 +262,15 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
     public function record_execution_event( WP_REST_Request $request ): WP_REST_Response | WP_Error
     {
         $payload = $request->get_params();
+        $provider = sanitize_key( (string) ( $payload['provider'] ?? 'openrouter' ) );
+        $cost_json = $this->array_param( $payload, 'cost_json' );
+        $result_json = $this->array_param( $payload, 'result_json' );
+        if ( class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) && Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $provider ) )
+        {
+            $cost_json   = is_array( $cost_json ) ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $cost_json ) : $cost_json;
+            $result_json = is_array( $result_json ) ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $result_json ) : $result_json;
+        }
+
         $id      = $this->events->record(
             [
                 'execution_request_id' => $payload['execution_request_id'] ?? '',
@@ -269,12 +278,12 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
                 'form_source'          => $payload['form_source'] ?? null,
                 'form_id'              => $payload['form_id'] ?? null,
                 'entry_id'             => $payload['entry_id'] ?? null,
-                'provider'             => $payload['provider'] ?? 'openrouter',
+                'provider'             => $provider,
                 'model'                => $payload['model'] ?? null,
                 'status'               => $payload['status'] ?? 'queued',
                 'token_usage_json'     => $this->array_param( $payload, 'token_usage_json' ),
-                'cost_json'            => $this->array_param( $payload, 'cost_json' ),
-                'result_json'          => $this->array_param( $payload, 'result_json' ),
+                'cost_json'            => $cost_json,
+                'result_json'          => $result_json,
                 'error_code'           => $payload['error_code'] ?? null,
                 'error_message'        => $payload['error_message'] ?? null,
                 'payload_digest'       => $payload['payload_digest'] ?? null,
@@ -606,6 +615,10 @@ class Sentient_Forms_Local_Workspace_Controller extends Abstract_Sentient_Forms_
 
     private function format_execution_event( array $row ): array
     {
+        $row = class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' )
+            ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_event_fields( $row )
+            : $row;
+
         return [
             'id'                   => (int) ( $row['id'] ?? 0 ),
             'execution_request_id' => $row['execution_request_id'] ?? null,

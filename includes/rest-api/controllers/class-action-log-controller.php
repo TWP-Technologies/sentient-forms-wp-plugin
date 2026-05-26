@@ -400,6 +400,11 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             'completed_at'   => ( $data['status'] ?? '' ) !== 'pending' ? gmdate( 'c' ) : null,
         ];
 
+        if ( class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) && Sentient_Forms_Managed_Usage_Sanitizer::is_managed_payload( $entry ) )
+        {
+            $entry = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $entry );
+        }
+
         $entries = get_option( self::OPTION_KEY, [] );
         if ( ! is_array( $entries ) )
         {
@@ -1129,6 +1134,11 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         $action      = $this->resolve_local_execution_action( $event );
         $cost        = is_array( $event['cost_json'] ?? null ) ? $event['cost_json'] : [];
         $provider    = sanitize_key( (string) ( $event['provider'] ?? 'openrouter' ) );
+        if ( 'sentient_managed' === $provider && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
+        {
+            $result_json = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $result_json );
+            $cost        = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $cost );
+        }
         $metering    = is_array( $result_json['metering'] ?? null ) ? $result_json['metering'] : [];
 
         $pricing = [
@@ -1153,9 +1163,23 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             ];
         }
 
-        if ( ! empty( $cost ) )
+        if ( ! empty( $cost ) && 'sentient_managed' !== $provider )
         {
             $pricing['provider_cost'] = $cost;
+        }
+
+        $details = [
+            'source'             => 'local_execution_events',
+            'provider'           => $provider,
+            'token_usage'        => is_array( $event['token_usage_json'] ?? null ) ? $event['token_usage_json'] : [],
+            'stored_result'      => $result_json,
+            'evaluation_payload' => [
+                'result_data' => $result_data,
+            ],
+        ];
+        if ( 'sentient_managed' !== $provider )
+        {
+            $details['cost'] = $cost;
         }
 
         return [
@@ -1176,16 +1200,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
             'resolved_model_id'       => isset( $event['model'] ) ? sanitize_text_field( (string) $event['model'] ) : null,
             'pricing'                 => $pricing,
             'usage_cost'              => $this->build_local_usage_cost_summary( $provider, $event, $result_json, $cost, $pricing ),
-            'details'                 => [
-                'source'             => 'local_execution_events',
-                'provider'           => $provider,
-                'token_usage'        => is_array( $event['token_usage_json'] ?? null ) ? $event['token_usage_json'] : [],
-                'cost'               => $cost,
-                'stored_result'      => $result_json,
-                'evaluation_payload' => [
-                    'result_data' => $result_data,
-                ],
-            ],
+            'details'                 => $details,
             'structured_output_valid' => 'success' === $status && ! empty( $result_data ),
             'created_at'              => sanitize_text_field( (string) ( $event['created_at'] ?? '' ) ),
             'completed_at'            => $this->is_terminal_log_status( $status )
@@ -1223,12 +1238,25 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
     private function resolve_local_execution_action( array $event ): array
     {
         $mapping_id = absint( $event['mapping_id'] ?? 0 );
+        $provider   = sanitize_key( (string) ( $event['provider'] ?? '' ) );
+        $is_managed = 'sentient_managed' === $provider;
+        if ( ! $is_managed && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
+        {
+            $is_managed = Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $provider );
+        }
+
         $fallback   = [
-            'code'  => $mapping_id > 0 ? 'local_first_' . $mapping_id : 'local_openrouter_action',
+            'code'  => $mapping_id > 0
+                ? 'local_first_' . $mapping_id
+                : ( $is_managed ? 'sentient_forms_managed_action' : 'local_openrouter_action' ),
             'label' => $mapping_id > 0
                 /* translators: %d: Local form mapping database ID. */
                 ? sprintf( __( 'Local mapping #%d', 'sentient-forms' ), $mapping_id )
-                : __( 'Local OpenRouter action', 'sentient-forms' ),
+                : (
+                    $is_managed
+                    ? __( 'Sentient Forms managed action', 'sentient-forms' )
+                    : __( 'Local OpenRouter action', 'sentient-forms' )
+                ),
         ];
 
         if ( $mapping_id <= 0 )
@@ -1406,7 +1434,6 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                 ),
                 'kind'        => 'sentient_credits',
                 'credits'     => $credits,
-                'amount_usd'  => $this->microusd_to_usd( $cost['billed_amount_microusd'] ?? ( $result_json['metering']['billed_amount_microusd'] ?? null ) ),
                 'known'       => true,
             ];
         }
@@ -1492,16 +1519,6 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
         }
 
         return null;
-    }
-
-    private function microusd_to_usd( mixed $value ): ?float
-    {
-        if ( ! is_numeric( $value ) )
-        {
-            return null;
-        }
-
-        return max( 0, (float) $value ) / 1000000;
     }
 
     private function format_usd( float $amount ): string

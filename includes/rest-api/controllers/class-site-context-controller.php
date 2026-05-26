@@ -466,7 +466,9 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             }
             $output  = is_array( $response['output'] ?? null ) ? $response['output'] : [];
             $content = is_scalar( $output['text'] ?? null ) ? (string) $output['text'] : '';
-            $metadata['metering'] = is_array( $response['metering'] ?? null ) ? $response['metering'] : null;
+            $metadata['metering'] = is_array( $response['metering'] ?? null )
+                ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $response['metering'] )
+                : null;
         }
         else
         {
@@ -1127,7 +1129,9 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         }
         if ( isset( $context['metadata'] ) && is_array( $context['metadata'] ) )
         {
-            $normalized['metadata'] = $context['metadata'];
+            $normalized['metadata'] = class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) && Sentient_Forms_Managed_Usage_Sanitizer::is_managed_provider( $context['metadata']['route'] ?? null )
+                ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $context['metadata'] )
+                : $context['metadata'];
         }
 
         return $normalized;
