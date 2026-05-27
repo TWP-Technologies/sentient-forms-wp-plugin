@@ -1,12 +1,17 @@
 import dagre from '@dagrejs/dagre';
 import { MarkerType, Position, type Edge, type Node } from '@xyflow/svelte';
 import type { FormActionLinkage } from '$lib/api/types';
-import { buildDependencyGraph } from '$lib/utils/mapping-dependencies';
+import {
+	buildDependencyGraph,
+	type DependencyGraphEdge,
+	type DependencyGraphNode
+} from '$lib/utils/mapping-dependencies';
 
 const MAPPING_NODE_WIDTH = 320;
 const MAPPING_NODE_HEIGHT = 184;
 const HOOK_ROOT_NODE_WIDTH = 220;
 const HOOK_ROOT_NODE_HEIGHT = 92;
+const ROOT_FAMILY_VERTICAL_GAP = 96;
 const GRAPH_LAYOUT_OPTIONS = {
 	rankdir: 'LR',
 	align: 'UL',
@@ -19,6 +24,11 @@ const GRAPH_LAYOUT_OPTIONS = {
 const HOOK_ROOT_PREFIX = '__hook_root__:';
 const ROOT_EDGE_LANE_STRIDE = 12;
 const ROOT_FAMILY_LANE_STRIDE = 42;
+const KNOWN_HOOK_ORDER: Record<string, number> = {
+	real_time: 5,
+	gform_validation: 10,
+	gform_after_submission: 20
+};
 
 export const DEPENDENCY_SOURCE_HANDLE_ID = 'dependency-source';
 export const DEPENDENCY_TARGET_HANDLE_ID = 'dependency-target';
@@ -113,12 +123,14 @@ export function buildXyflowDependencyGraph(items: FormActionLinkage[]): XyflowDe
 		});
 	}
 
-	const rootLanes = assignRootEdgeLanes(graph.edges, nodeCenters);
-	const rootSourceSlots = assignRootEdgeSourceSlots(graph.edges, nodeCenters);
+	const packedNodeCenters = packRootFamilies(graph.nodes, graph.edges, nodeCenters);
+
+	const rootLanes = assignRootEdgeLanes(graph.edges, packedNodeCenters);
+	const rootSourceSlots = assignRootEdgeSourceSlots(graph.edges, packedNodeCenters);
 	const rootSourceCounts = buildRootSourceHandleCounts(rootSourceSlots);
 
 	const nodes: Node<XyflowDependencyNodeData>[] = graph.nodes.map((node) => {
-		const center = nodeCenters.get(node.id);
+		const center = packedNodeCenters.get(node.id);
 		const width = node.kind === 'hook_root' ? HOOK_ROOT_NODE_WIDTH : MAPPING_NODE_WIDTH;
 		const height = node.kind === 'hook_root' ? HOOK_ROOT_NODE_HEIGHT : MAPPING_NODE_HEIGHT;
 		const x = (center?.x ?? 0) - width / 2;
@@ -226,6 +238,184 @@ export function buildXyflowDependencyGraph(items: FormActionLinkage[]): XyflowDe
 	};
 }
 
+type NodeBounds = {
+	top: number;
+	bottom: number;
+};
+
+type RootFamily = {
+	rootIds: string[];
+	nodeIds: Set<string>;
+	order: number;
+};
+
+function nodeDimensions(node: DependencyGraphNode): { width: number; height: number } {
+	return node.kind === 'hook_root'
+		? { width: HOOK_ROOT_NODE_WIDTH, height: HOOK_ROOT_NODE_HEIGHT }
+		: { width: MAPPING_NODE_WIDTH, height: MAPPING_NODE_HEIGHT };
+}
+
+function compareHookIds(left: string, right: string): number {
+	const leftRank = KNOWN_HOOK_ORDER[left] ?? 1000;
+	const rightRank = KNOWN_HOOK_ORDER[right] ?? 1000;
+	if (leftRank !== rightRank) return leftRank - rightRank;
+	return left.localeCompare(right);
+}
+
+function rootOrder(rootId: string): number {
+	const hook = extractHookFromRootId(rootId) ?? rootId;
+	return KNOWN_HOOK_ORDER[hook] ?? 1000;
+}
+
+function compareRootIds(left: string, right: string): number {
+	const leftHook = extractHookFromRootId(left) ?? left;
+	const rightHook = extractHookFromRootId(right) ?? right;
+	return compareHookIds(leftHook, rightHook);
+}
+
+function buildRootFamilies(nodes: DependencyGraphNode[], edges: DependencyGraphEdge[]): RootFamily[] {
+	const rootIds = nodes
+		.filter((node) => node.kind === 'hook_root')
+		.map((node) => node.id)
+		.sort(compareRootIds);
+	if (rootIds.length <= 1) return [];
+
+	const dependencyOutgoing = new Map<string, string[]>();
+	for (const edge of edges) {
+		if (edge.kind !== 'dependency') continue;
+		const targets = dependencyOutgoing.get(edge.from) ?? [];
+		targets.push(edge.to);
+		dependencyOutgoing.set(edge.from, targets);
+	}
+
+	const families: RootFamily[] = rootIds.map((rootId) => {
+		const nodeIds = new Set<string>([rootId]);
+		const queue = edges
+			.filter((edge) => edge.kind === 'hook_root' && edge.from === rootId)
+			.map((edge) => edge.to);
+
+		while (queue.length > 0) {
+			const nodeId = queue.shift();
+			if (!nodeId || nodeIds.has(nodeId)) continue;
+			nodeIds.add(nodeId);
+			for (const targetId of dependencyOutgoing.get(nodeId) ?? []) {
+				queue.push(targetId);
+			}
+		}
+
+		return {
+			rootIds: [rootId],
+			nodeIds,
+			order: rootOrder(rootId)
+		};
+	});
+
+	return mergeIntersectingRootFamilies(families);
+}
+
+function mergeIntersectingRootFamilies(families: RootFamily[]): RootFamily[] {
+	const merged: RootFamily[] = [];
+	for (const family of families) {
+		const overlaps = merged.filter((candidate) =>
+			Array.from(family.nodeIds).some((nodeId) => candidate.nodeIds.has(nodeId))
+		);
+		if (overlaps.length === 0) {
+			merged.push({
+				rootIds: [...family.rootIds],
+				nodeIds: new Set(family.nodeIds),
+				order: family.order
+			});
+			continue;
+		}
+
+		const nextFamily: RootFamily = {
+			rootIds: [...family.rootIds],
+			nodeIds: new Set(family.nodeIds),
+			order: family.order
+		};
+		for (const overlap of overlaps) {
+			nextFamily.rootIds.push(...overlap.rootIds);
+			for (const nodeId of overlap.nodeIds) {
+				nextFamily.nodeIds.add(nodeId);
+			}
+			nextFamily.order = Math.min(nextFamily.order, overlap.order);
+			merged.splice(merged.indexOf(overlap), 1);
+		}
+		merged.push(nextFamily);
+	}
+
+	return merged.sort((left, right) => left.order - right.order || left.rootIds[0]!.localeCompare(right.rootIds[0]!));
+}
+
+function familyBounds(
+	family: RootFamily,
+	nodesById: Map<string, DependencyGraphNode>,
+	nodeCenters: Map<string, NodeCenter>
+): NodeBounds | null {
+	let top = Number.POSITIVE_INFINITY;
+	let bottom = Number.NEGATIVE_INFINITY;
+	for (const nodeId of family.nodeIds) {
+		const node = nodesById.get(nodeId);
+		const center = nodeCenters.get(nodeId);
+		if (!node || !center) continue;
+		const { height } = nodeDimensions(node);
+		top = Math.min(top, center.y - height / 2);
+		bottom = Math.max(bottom, center.y + height / 2);
+	}
+
+	if (!Number.isFinite(top) || !Number.isFinite(bottom)) {
+		return null;
+	}
+
+	return { top, bottom };
+}
+
+function offsetFamily(
+	family: RootFamily,
+	nodeCenters: Map<string, NodeCenter>,
+	offsetY: number
+): void {
+	if (offsetY <= 0) return;
+	for (const nodeId of family.nodeIds) {
+		const center = nodeCenters.get(nodeId);
+		if (!center) continue;
+		nodeCenters.set(nodeId, {
+			x: center.x,
+			y: center.y + offsetY
+		});
+	}
+}
+
+function packRootFamilies(
+	nodes: DependencyGraphNode[],
+	edges: DependencyGraphEdge[],
+	nodeCenters: Map<string, NodeCenter>
+): Map<string, NodeCenter> {
+	const adjusted = new Map(nodeCenters);
+	const nodesById = new Map(nodes.map((node) => [node.id, node]));
+	const families = buildRootFamilies(nodes, edges);
+	if (families.length <= 1) return adjusted;
+
+	let previousBottom: number | null = null;
+	for (const family of families) {
+		const bounds = familyBounds(family, nodesById, adjusted);
+		if (!bounds) continue;
+		if (previousBottom === null) {
+			previousBottom = bounds.bottom;
+			continue;
+		}
+
+		const requiredTop = previousBottom + ROOT_FAMILY_VERTICAL_GAP;
+		const offsetY = Math.max(0, requiredTop - bounds.top);
+		offsetFamily(family, adjusted, offsetY);
+
+		const updatedBounds = familyBounds(family, nodesById, adjusted);
+		previousBottom = updatedBounds?.bottom ?? bounds.bottom + offsetY;
+	}
+
+	return adjusted;
+}
+
 function assignRootEdgeLanes(
 	edges: Array<{ from: string; to: string; kind: DependencyEdgeKind; hook?: string }>,
 	nodeCenters: Map<string, NodeCenter>
@@ -312,6 +502,7 @@ function createLayoutSignature(
 ): string {
 	const nodeSignature = [...nodeIds].sort().join('|');
 	const edgeSignature = [...edges]
+		.filter((edge) => edge.kind === 'hook_root')
 		.map((edge) => `${edge.kind}:${edge.from}->${edge.to}:${edge.hook ?? 'any'}`)
 		.sort()
 		.join('|');

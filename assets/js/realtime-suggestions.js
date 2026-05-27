@@ -32,6 +32,59 @@
 			: 'minimized';
 	}
 
+	function publicSuggestionErrorMessage(message, status) {
+		var raw = normalizeFieldId(message);
+		if (!raw && status) {
+			raw = 'Suggestion request failed with HTTP ' + status + '.';
+		}
+
+		if (
+			/structured_output/i.test(raw) ||
+			/local action schema/i.test(raw) ||
+			/provider response did not match/i.test(raw) ||
+			/required property/i.test(raw) ||
+			/virtual_questions/i.test(raw) ||
+			/conditional_decisions/i.test(raw)
+		) {
+			return 'Suggestions are temporarily unavailable. Try again shortly.';
+		}
+
+		return raw || 'Suggestion request failed.';
+	}
+
+	function resolveInitialPanelState(config) {
+		if (
+			config &&
+			Object.prototype.hasOwnProperty.call(config, 'initial_panel_state')
+		) {
+			return normalizePanelInitialState(config.initial_panel_state);
+		}
+
+		var hasHiddenUntilInteraction = false;
+		asArray(config && config.mappings).forEach(function (mapping) {
+			if (!mapping || typeof mapping !== 'object') {
+				return;
+			}
+
+			var state = normalizeFieldId(mapping.initial_panel_state).toLowerCase();
+			if (state === 'open') {
+				hasHiddenUntilInteraction = false;
+				return 'open';
+			}
+			if (state === 'hidden_until_interaction') {
+				hasHiddenUntilInteraction = true;
+			}
+		});
+
+		if (asArray(config && config.mappings).some(function (mapping) {
+			return normalizeFieldId(mapping && mapping.initial_panel_state).toLowerCase() === 'open';
+		})) {
+			return 'open';
+		}
+
+		return hasHiddenUntilInteraction ? 'hidden_until_interaction' : 'minimized';
+	}
+
 	function hashString(value) {
 		var text = normalizeFieldId(value).toLowerCase();
 		var hash = 0;
@@ -43,7 +96,7 @@
 	}
 
 	function createFormState(config, formElement) {
-		var initialPanelState = normalizePanelInitialState(config.initial_panel_state);
+		var initialPanelState = resolveInitialPanelState(config);
 		return {
 			config: config,
 			formElement: formElement,
@@ -915,7 +968,7 @@
 						var message = payload && payload.message
 							? payload.message
 							: 'Suggestion request failed with HTTP ' + response.status + '.';
-						throw new Error(message);
+						throw new Error(publicSuggestionErrorMessage(message, response.status));
 					});
 				}
 				return response.json();
@@ -952,7 +1005,9 @@
 			.catch(function (error) {
 				var message = error && error.name === 'AbortError'
 					? 'Suggestion request timed out.'
-					: (error && error.message ? error.message : 'Suggestion request failed.');
+					: publicSuggestionErrorMessage(
+						error && error.message ? error.message : 'Suggestion request failed.'
+					);
 				if (!isPreSubmit) {
 					state.error = message;
 					formState.lastGlobalError = state.error;

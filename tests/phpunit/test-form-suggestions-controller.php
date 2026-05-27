@@ -107,6 +107,7 @@ final class Sentient_Forms_Test_Local_Form_Mappings_Repository extends Sentient_
 
 final class Sentient_Forms_Test_Local_Suggest_Execution_Service extends Sentient_Forms_Local_Action_Execution_Service {
 	public array $calls = [];
+	public mixed $next_result = null;
 
 	public function __construct() {}
 
@@ -117,6 +118,10 @@ final class Sentient_Forms_Test_Local_Suggest_Execution_Service extends Sentient
 			'entry'      => $entry,
 			'context'    => $context,
 		];
+
+		if ( null !== $this->next_result ) {
+			return $this->next_result;
+		}
 
 		return [
 			'execution_request_id' => $context['execution_request_id'] ?? 'rt-local-first-test',
@@ -507,6 +512,131 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$this->assertSame( 'When do you need this quote returned?', $data['virtual_questions'][0]['question'] ?? null );
 		$this->assertSame( 'quote_request', $data['conditional_decisions'][0]['condition_key'] ?? null );
 		$this->assertSame( 'rt-local-first-42', $data['meta']['execution_request_id'] ?? null );
+	}
+
+	public function test_suggest_endpoint_maps_local_schema_errors_to_unprocessable_json_error(): void {
+		update_option(
+			'sentient_forms_actions_gravity_forms_42',
+			[
+				'actions' => [
+					[
+						'id' => 'local_first_99',
+						'central_action_id' => 'clarification_assistant_v1',
+						'action_name_label' => 'Realtime Clarification Assistant',
+						'action_type_indicator' => 'master',
+						'is_action_enabled_for_form' => true,
+						'settings' => [
+							'execution_mode' => 'real_time',
+							'realtime_settings' => [
+								'checkpoint_field_ids' => [ '1' ],
+							],
+						],
+					],
+				],
+			]
+		);
+
+		$legacy_executor = new Sentient_Forms_Test_Suggest_Executor();
+		$this->executor_property->setValue( $this->plugin, $legacy_executor );
+
+		$local_repository = new Sentient_Forms_Test_Local_Form_Mappings_Repository(
+			[
+				99 => [
+					'id' => 99,
+					'form_source' => 'gravity_forms',
+					'form_id' => '42',
+					'hook' => 'real_time',
+					'execution_mode' => 'real_time',
+					'enabled' => 1,
+				],
+			]
+		);
+		$local_execution = new Sentient_Forms_Test_Local_Suggest_Execution_Service();
+		$local_execution->next_result = new WP_Error(
+			'sentient_forms_structured_output_validation_failed',
+			'The provider response did not match the local action schema: virtual_questions is a required property of structured_output.',
+			[ 'schema_source' => 'template' ]
+		);
+		$controller = new Sentient_Forms_Form_Suggestions_Controller( $local_repository, $local_execution );
+
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_param( 'mapping_id', 'local_first_99' );
+		$request->set_param( 'all_known_field_values', [ '1' => 'Quote product 183671 at 500pcs' ] );
+		$request->set_param( 'visible_field_ids', [ '1' ] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 2 );
+
+		$response = $controller->suggest( $request );
+
+		$this->assertInstanceOf( WP_Error::class, $response );
+		$this->assertSame( 'sentient_forms_structured_output_validation_failed', $response->get_error_code() );
+		$this->assertSame( 'Suggestions are temporarily unavailable. Try again shortly.', $response->get_error_message() );
+		$this->assertStringNotContainsString( 'virtual_questions', $response->get_error_message() );
+		$this->assertStringNotContainsString( 'structured_output', $response->get_error_message() );
+		$this->assertSame( 422, (int) ( $response->get_error_data()['status'] ?? 0 ) );
+		$this->assertSame( 'template', $response->get_error_data()['schema_source'] ?? null );
+		$this->assertCount( 1, $local_execution->calls );
+		$this->assertSame( [], $legacy_executor->calls );
+	}
+
+	public function test_suggest_endpoint_preserves_local_execution_error_status(): void {
+		update_option(
+			'sentient_forms_actions_gravity_forms_42',
+			[
+				'actions' => [
+					[
+						'id' => 'local_first_99',
+						'central_action_id' => 'clarification_assistant_v1',
+						'action_name_label' => 'Realtime Clarification Assistant',
+						'action_type_indicator' => 'master',
+						'is_action_enabled_for_form' => true,
+						'settings' => [
+							'execution_mode' => 'real_time',
+							'realtime_settings' => [
+								'checkpoint_field_ids' => [ '1' ],
+							],
+						],
+					],
+				],
+			]
+		);
+
+		$local_repository = new Sentient_Forms_Test_Local_Form_Mappings_Repository(
+			[
+				99 => [
+					'id' => 99,
+					'form_source' => 'gravity_forms',
+					'form_id' => '42',
+					'hook' => 'real_time',
+					'execution_mode' => 'real_time',
+					'enabled' => 1,
+				],
+			]
+		);
+		$local_execution = new Sentient_Forms_Test_Local_Suggest_Execution_Service();
+		$local_execution->next_result = new WP_Error(
+			'sentient_forms_provider_rate_limited',
+			'Provider rate limit exceeded.',
+			[ 'status' => 429 ]
+		);
+		$controller = new Sentient_Forms_Form_Suggestions_Controller( $local_repository, $local_execution );
+
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_param( 'mapping_id', 'local_first_99' );
+		$request->set_param( 'all_known_field_values', [ '1' => 'Quote product 183671 at 500pcs' ] );
+		$request->set_param( 'visible_field_ids', [ '1' ] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 2 );
+
+		$response = $controller->suggest( $request );
+
+		$this->assertInstanceOf( WP_Error::class, $response );
+		$this->assertSame( 'sentient_forms_provider_rate_limited', $response->get_error_code() );
+		$this->assertSame( 429, (int) ( $response->get_error_data()['status'] ?? 0 ) );
 	}
 
 	public function test_suggest_endpoint_falls_back_to_known_values_for_visible_fields_and_builds_future_manifest(): void {

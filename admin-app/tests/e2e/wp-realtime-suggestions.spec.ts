@@ -243,6 +243,58 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		expect(requests.length).toBe(1);
 	});
 
+	test('hidden-until-interaction keeps the realtime widget hidden until the visitor edits the form', async ({
+		page
+	}) => {
+		const hiddenFormId = ensureGravityForm(`Playwright Realtime Hidden ${Date.now()}`, fields);
+		await routeSuggestRequests(page, async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					status: 'success',
+					suggestions: [],
+					meta: { execution_request_id: 'rt-hidden-until-interaction' }
+				})
+			});
+		});
+
+		configureGravityActionMapping({
+			formId: hiddenFormId,
+			actionId: 'realtime_hidden',
+			localMappingId: 'map_realtime_hidden',
+			centralActionId: 'clarification_assistant_v1',
+			actionNameLabel: 'Realtime Clarification',
+			hooks: ['gform_validation'],
+			async: false,
+			rejectSubmission: false,
+			markAsSpam: false,
+			executionPriority: 1,
+			actionTypeIndicator: 'master',
+			executionMode: 'real_time',
+			realtimeSettings: {
+				checkpointFieldIds: ['1'],
+				debounceMs: 300,
+				cooldownMs: 1000,
+				manualRefreshEnabled: true,
+				initialPanelState: 'hidden_until_interaction'
+			}
+		});
+
+		await loginToWpAdmin(page);
+		await page.goto(`${wpBaseUrl}/?gf_page=preview&id=${hiddenFormId}`, {
+			waitUntil: 'domcontentloaded'
+		});
+		await waitForPreviewInputs(page, hiddenFormId);
+
+		const widget = page.locator('.sentient-forms-realtime-widget');
+		await expect(widget).toBeHidden();
+
+		await page.fill('input[name="input_1"]', 'Need more guidance');
+		await expect(widget).toBeVisible();
+		await expect(widget.locator('[data-role="toggle"]')).toHaveText('Show');
+	});
+
 	test('virtual questions persist exact Q&A and can block next-page navigation', async ({
 		page
 	}) => {
@@ -406,6 +458,37 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await expect(widget.locator('.sentient-forms-realtime-widget__error')).toContainText(
 			'Suggestion rate limit exceeded. Please wait and retry.'
 		);
+
+		const nextButton = page.locator('.gform_next_button').first();
+		await expect(nextButton).toBeEnabled();
+		await nextButton.click();
+		await expect(page.locator('textarea[name="input_4"]')).toBeVisible();
+	});
+
+	test('raw provider schema failures are sanitized and do not block form progress', async ({
+		page
+	}) => {
+		await routeSuggestRequests(page, async (route) => {
+			await route.fulfill({
+				status: 502,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					message:
+						'The provider response did not match the local action schema: virtual_questions is a required property of structured_output.'
+				})
+			});
+		});
+
+		await openRealtimePreview(page, true);
+
+		await page.fill('input[name="input_1"]', 'checkpoint trigger');
+		await page.locator('input[name="input_2"]').click();
+		const widget = await openRealtimeWidget(page);
+		const error = widget.locator('.sentient-forms-realtime-widget__error');
+		await expect(error).toContainText('Suggestions are temporarily unavailable. Try again shortly.');
+		await expect(error).not.toContainText('virtual_questions');
+		await expect(error).not.toContainText('structured_output');
+		await expect(error).not.toContainText('local action schema');
 
 		const nextButton = page.locator('.gform_next_button').first();
 		await expect(nextButton).toBeEnabled();

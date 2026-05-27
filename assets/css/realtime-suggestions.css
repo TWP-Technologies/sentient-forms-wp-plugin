@@ -15,6 +15,11 @@
 	color: #0f172a;
 }
 
+.sentient-forms-realtime-widget[hidden],
+.sentient-forms-realtime-widget [hidden] {
+	display: none !important;
+}
+
 .sentient-forms-realtime-widget__header {
 	display: flex;
 	align-items: flex-start;

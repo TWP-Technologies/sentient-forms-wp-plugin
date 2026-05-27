@@ -2008,6 +2008,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             [
                 'schema_source' => $source,
                 'schema_path'   => $path,
+                'status'        => 422,
             ]
         );
     }
@@ -2035,7 +2036,10 @@ class Sentient_Forms_Local_Action_Execution_Service
             return new WP_Error(
                 'sentient_forms_structured_output_missing',
                 __( 'The provider response did not include structured JSON required by the local action schema.', 'sentient-forms' ),
-                [ 'schema_source' => $contract['source'] ]
+                [
+                    'schema_source' => $contract['source'],
+                    'status'        => 422,
+                ]
             );
         }
 
@@ -2054,6 +2058,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 [
                     'schema_source'   => $contract['source'],
                     'validation_code' => $validation->get_error_code(),
+                    'status'          => 422,
                 ]
             );
         }
@@ -2077,6 +2082,14 @@ class Sentient_Forms_Local_Action_Execution_Service
         if ( ! $this->is_realtime_suggestion_schema( $contract['schema'] ) )
         {
             return $structured;
+        }
+
+        foreach ( [ 'suggestions', 'virtual_questions', 'conditional_decisions' ] as $key )
+        {
+            if ( ! array_key_exists( $key, $structured ) || null === $structured[ $key ] )
+            {
+                $structured[ $key ] = [];
+            }
         }
 
         if ( isset( $structured['suggestions'] ) )

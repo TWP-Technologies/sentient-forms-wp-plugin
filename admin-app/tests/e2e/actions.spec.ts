@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
 import { mockWpJson } from './utils/mock-wpjson';
@@ -133,6 +133,37 @@ async function ensureDependencyGraphVisible(page: Parameters<typeof test>[0]['pa
 async function saveMappingConfigModal(page: Parameters<typeof test>[0]['page']) {
 	const modal = page.getByTestId('mapping-config-modal');
 	await modal.locator('footer').getByRole('button', { name: 'Save mapping' }).click();
+}
+
+async function installFixedWpAdminBar(page: Page, height = 64) {
+	await page.addInitScript((adminBarHeight: number) => {
+		const install = () => {
+			document.body.classList.add('wp-admin');
+			const existing = document.getElementById('wpadminbar');
+			if (existing) {
+				existing.remove();
+			}
+			const adminBar = document.createElement('div');
+			adminBar.id = 'wpadminbar';
+			adminBar.setAttribute('aria-hidden', 'true');
+			Object.assign(adminBar.style, {
+				position: 'fixed',
+				top: '0',
+				left: '0',
+				right: '0',
+				height: `${adminBarHeight}px`,
+				zIndex: '99999'
+			});
+			document.body.prepend(adminBar);
+		};
+
+		if (document.readyState === 'loading') {
+			document.addEventListener('DOMContentLoaded', install, { once: true });
+			return;
+		}
+
+		install();
+	}, height);
 }
 
 async function ensureMappingSectionExpanded(
@@ -595,7 +626,59 @@ test.describe('Actions admin flows', () => {
 
 		await expectAppUrl(page, '/actions/gravity_forms/123');
 		await expect(page.getByText('Action Execution Order')).toBeVisible();
+		await expect(page.getByTestId('form-context-band')).toBeVisible();
+		await expect(page.getByTestId('form-context-title')).toHaveText('Contact us');
+		await expect(page.getByTestId('form-context-band').getByText('Form #123')).toBeVisible();
 		await expect(page.locator('header').getByRole('button', { name: 'Add action' })).toBeVisible();
+	});
+
+	test('keeps Add Action controls visible below the WordPress admin bar with long action lists', async ({
+		page
+	}) => {
+		await page.setViewportSize({ width: 1280, height: 720 });
+		await installFixedWpAdminBar(page, 68);
+		const manyDefinitions = Array.from({ length: 30 }, (_, index) => ({
+			id: `bulk_action_${index + 1}`,
+			label: `Bulk action ${index + 1}`,
+			source: 'bundled',
+			hooks: ['gform_validation'],
+			base_credit_cost: 1,
+			model_hint: 'openrouter/auto'
+		}));
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: manyDefinitions,
+				status: statusUnknown,
+				formsActions: [],
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+
+		const drawer = page.getByTestId('add-action-drawer');
+		const footer = page.getByTestId('link-action-footer');
+		const submit = page.getByTestId('link-action-submit');
+		await expect(drawer).toBeVisible();
+		await expect(footer).toBeVisible();
+		await expect(submit).toBeVisible();
+		await expect(submit).toBeInViewport({ ratio: 1 });
+		await expect(page.getByTestId('link-action-selected-summary')).toBeVisible();
+
+		const adminBarBottom = await page
+			.locator('#wpadminbar')
+			.evaluate((element) => element.getBoundingClientRect().bottom);
+		await expect
+			.poll(async () => {
+				const box = await drawer.boundingBox();
+				return box?.y ?? 0;
+			})
+			.toBeGreaterThanOrEqual(adminBarBottom);
 	});
 
 	test('opens mapping editor from table without cloning Svelte state proxies', async ({ page }) => {
@@ -1458,6 +1541,122 @@ test.describe('Actions admin flows', () => {
 		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toHaveCount(0);
 	});
 
+	test('keeps realtime root DAG family separated from existing root actions', async ({ page }) => {
+		const linkages = [
+			{
+				local_mapping_id: 'map-validation',
+				central_action_id: 'spam_detection_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Validation Spam Block',
+				trigger_hooks: ['gform_validation'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-summary',
+				central_action_id: 'entry_summary',
+				action_type_indicator: 'master',
+				action_name_label: 'Entry Summary',
+				trigger_hooks: ['gform_after_submission'],
+				is_action_enabled_for_form: true,
+				settings: {}
+			},
+			{
+				local_mapping_id: 'map-realtime',
+				central_action_id: 'clarification_assistant_v1',
+				action_type_indicator: 'master',
+				action_name_label: 'Realtime Clarification Assistant',
+				trigger_hooks: ['real_time'],
+				is_action_enabled_for_form: true,
+				settings: {
+					execution_mode: 'real_time',
+					trigger_sources: {
+						real_time: { type: 'hook_root' }
+					}
+				}
+			}
+		];
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam Detection',
+						source: 'bundled',
+						hooks: ['gform_validation'],
+						base_credit_cost: 2,
+						model_hint: 'openrouter/auto'
+					},
+					{
+						id: 'entry_summary',
+						label: 'Entry Summary',
+						source: 'bundled',
+						hooks: ['gform_after_submission'],
+						base_credit_cost: 4,
+						model_hint: 'openrouter/auto'
+					},
+					{
+						id: 'clarification_assistant_v1',
+						label: 'Realtime Clarification Assistant',
+						source: 'bundled',
+						hooks: ['real_time'],
+						base_credit_cost: 4,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: linkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+		await ensureDependencyGraphVisible(page);
+
+		const nodes = [
+			page.getByTestId('dependency-hook-root-real_time'),
+			page.getByTestId('dependency-node-card-map-realtime'),
+			page.getByTestId('dependency-hook-root-gform_validation'),
+			page.getByTestId('dependency-node-card-map-validation'),
+			page.getByTestId('dependency-hook-root-gform_after_submission'),
+			page.getByTestId('dependency-node-card-map-summary')
+		];
+		for (const node of nodes) {
+			await expect(node).toBeVisible();
+		}
+
+		const rects = await Promise.all(
+			nodes.map(async (node) => {
+				const box = await node.boundingBox();
+				expect(box).toBeTruthy();
+				if (!box) throw new Error('Missing dependency graph node box.');
+				return {
+					left: box.x,
+					top: box.y,
+					right: box.x + box.width,
+					bottom: box.y + box.height
+				};
+			})
+		);
+
+		for (let leftIndex = 0; leftIndex < rects.length; leftIndex += 1) {
+			for (let rightIndex = leftIndex + 1; rightIndex < rects.length; rightIndex += 1) {
+				const left = rects[leftIndex]!;
+				const right = rects[rightIndex]!;
+				const overlaps =
+					left.left < right.right &&
+					left.right > right.left &&
+					left.top < right.bottom &&
+					left.bottom > right.top;
+				expect(overlaps, `node ${leftIndex} should not overlap node ${rightIndex}`).toBe(false);
+			}
+		}
+	});
+
 	test('creates a custom action mapping from the drawer', async ({ page }) => {
 		await page.addInitScript(() => {
 			try {
@@ -1841,11 +2040,12 @@ test.describe('Actions admin flows', () => {
 		const drawer = page.getByTestId('link-action-form');
 		await expect(drawer).toBeVisible();
 		await page.getByRole('button', { name: 'Built-in actions' }).click();
-		await expect(drawer.getByText('Spam Detection')).toBeVisible();
-		await expect(drawer.getByText('Content Quality Validation')).toBeVisible();
-		await expect(drawer.getByText('Entry Summary')).toBeVisible();
-		await expect(drawer.getByText('Spam Analysis')).toHaveCount(0);
-		await expect(drawer.getByText('Entry Evaluation')).toHaveCount(0);
+		const actionList = page.getByTestId('link-action-scroll-region');
+		await expect(actionList.getByText('Spam Detection')).toBeVisible();
+		await expect(actionList.getByText('Content Quality Validation')).toBeVisible();
+		await expect(actionList.getByText('Entry Summary')).toBeVisible();
+		await expect(actionList.getByText('Spam Analysis')).toHaveCount(0);
+		await expect(actionList.getByText('Entry Evaluation')).toHaveCount(0);
 	});
 
 	test('surfaces repair-needed local-first mappings in the table and modal', async ({ page }) => {
@@ -2048,13 +2248,14 @@ test.describe('Actions admin flows', () => {
 		const form = page.getByTestId('link-action-form');
 		await expect(form).toBeVisible({ timeout: 10_000 });
 		await expect(page.getByPlaceholder('Search by name or id')).toBeVisible();
-		await expect(form.getByText('Spam Detection', { exact: true })).toBeVisible();
+		const actionList = page.getByTestId('link-action-scroll-region');
+		await expect(actionList.getByText('Spam Detection', { exact: true })).toBeVisible();
 
 		// Switch to custom actions tab and ensure the sample action is shown
 		const customActionsTab = page.getByRole('button', { name: 'Custom actions' });
 		await expect(customActionsTab).toBeEnabled();
 		await customActionsTab.click();
-		await expect(form.getByText('Hello action')).toBeVisible();
+		await expect(actionList.getByText('Hello action')).toBeVisible();
 	});
 
 	test('saves conditional run settings from mapping editor', async ({ page }) => {

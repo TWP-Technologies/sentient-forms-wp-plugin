@@ -393,6 +393,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             '/sentient-forms/v1/gravity_forms/forms/14/actions/suggest',
             (string) ( $runtime['suggest_endpoint_url'] ?? '' )
         );
+        $this->assertSame( 'hidden_until_interaction', $runtime['initial_panel_state'] ?? null );
         $this->assertCount( 1, $runtime['mappings'] ?? [] );
         $this->assertSame( 700, $runtime['mappings'][0]['debounce_ms'] ?? null );
         $this->assertSame( 9000, $runtime['mappings'][0]['cooldown_ms'] ?? null );

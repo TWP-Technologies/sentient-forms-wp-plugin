@@ -4,6 +4,7 @@
 	import { SESSION_EXPIRED_EVENT } from '$lib/api/session-expiry';
 	import sentientFormsLogo from '$lib/assets/sentient-forms-logo-horizontal.svg';
 	import PrivacySetupAssistant from '$lib/components/privacy-setup-assistant.svelte';
+	import WpAdminNoticeTray from '$lib/components/wp-admin-notice-tray.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
 	import type { PluginSettingsResponse } from '$lib/api/types';
 	import {
@@ -60,6 +61,30 @@
 	function reloadAdminPage(): void {
 		if (typeof window === 'undefined') return;
 		window.location.reload();
+	}
+
+	function updateWpAdminOffset(): void {
+		if (typeof window === 'undefined') return;
+
+		const adminBar = document.getElementById('wpadminbar');
+		let offset = 0;
+		if (adminBar instanceof HTMLElement) {
+			const rect = adminBar.getBoundingClientRect();
+			const position = window.getComputedStyle(adminBar).position;
+			if (position === 'fixed' && rect.height > 0) {
+				offset = Math.max(0, Math.ceil(rect.bottom));
+			}
+		}
+
+		if (offset === 0 && document.body.classList.contains('wp-admin')) {
+			offset = window.innerWidth <= 782 ? 46 : 32;
+		}
+
+		const offsetValue = `${offset}px`;
+		document.documentElement.style.setProperty('--sentient-forms-wp-admin-offset', offsetValue);
+		document
+			.getElementById('sentient-forms-admin-app')
+			?.style.setProperty('--sentient-forms-wp-admin-offset', offsetValue);
 	}
 
 	$effect(() => {
@@ -146,6 +171,7 @@
 		}
 
 		void loadPrivacySettings();
+		updateWpAdminOffset();
 
 		const openAssistant = () => {
 			privacyAssistantOpen = true;
@@ -166,15 +192,25 @@
 		};
 
 		window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+		window.addEventListener('resize', updateWpAdminOffset);
+		const adminOffsetObserver = new MutationObserver(updateWpAdminOffset);
+		adminOffsetObserver.observe(document.body, {
+			attributes: true,
+			childList: true,
+			subtree: true
+		});
 
 		return () => {
 			window.removeEventListener('sentient-forms:open-privacy-setup', openAssistant);
 			window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+			window.removeEventListener('resize', updateWpAdminOffset);
+			adminOffsetObserver.disconnect();
 		};
 	});
 </script>
 
 <div data-sentient-admin-shell class="sf:min-w-0 sf:bg-slate-100 sf:text-slate-900 sf:font-sans">
+	<WpAdminNoticeTray />
 	<div data-sentient-admin-frame class="sf:flex sf:min-w-0 sf:flex-col sf:md:flex-row">
 		<aside class="sf:w-full sf:shrink-0 sf:bg-white sf:md:w-64 sf:shadow-sm">
 			<div class="sf:p-4 sf:sm:p-6 sf:border-b sf:border-slate-200">

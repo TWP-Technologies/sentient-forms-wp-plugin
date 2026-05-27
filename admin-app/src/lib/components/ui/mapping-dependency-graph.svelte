@@ -551,6 +551,7 @@
 	});
 
 	const viewOnlyPositions = new Map<string, { x: number; y: number }>();
+	let cachedLayoutSignature = '';
 
 	function clamp(value: number, min: number, max: number): number {
 		return Math.min(Math.max(value, min), max);
@@ -657,6 +658,10 @@
 	}
 
 	function ensureCachedPositionsForGraphNodes(): void {
+		if (cachedLayoutSignature !== graph.layoutSignature) {
+			viewOnlyPositions.clear();
+			cachedLayoutSignature = graph.layoutSignature;
+		}
 		pruneStaleCachedPositions();
 		for (const node of graph.nodes) {
 			if (!viewOnlyPositions.has(node.id)) {

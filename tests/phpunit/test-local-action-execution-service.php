@@ -1925,6 +1925,52 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertTrue( $result['result']['structured']['conditional_decisions'][0]['met'] );
     }
 
+    public function test_normalizes_missing_realtime_optional_arrays_before_schema_validation(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [ 'structured_output_schema' => $this->realtime_suggestion_schema() ]
+        );
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'suggestions' => [
+                        [
+                            'field_id'             => '1',
+                            'severity'             => 'info',
+                            'message'              => 'Add the requested quantity.',
+                            'jump_target_field_id' => '1',
+                        ],
+                    ],
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'real_time' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertTrue( $result['result']['structured_output_valid'] );
+        $this->assertSame( 'Add the requested quantity.', $result['result']['structured']['suggestions'][0]['message'] );
+        $this->assertSame( [], $result['result']['structured']['virtual_questions'] );
+        $this->assertSame( [], $result['result']['structured']['conditional_decisions'] );
+
+        $event = $this->events->get_by_request_id( $result['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertSame( [], $event['result_json']['structured']['virtual_questions'] );
+        $this->assertSame( [], $event['result_json']['structured']['conditional_decisions'] );
+    }
+
     public function test_uses_template_structured_output_schema_when_custom_action_has_no_schema(): void
     {
         $template_id = $this->templates->upsert_by_code(
@@ -2140,6 +2186,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
 
         $this->assertWPError( $result );
         $this->assertSame( 'sentient_forms_structured_output_validation_failed', $result->get_error_code() );
+        $this->assertSame( 422, (int) ( $result->get_error_data()['status'] ?? 0 ) );
         $this->assertStringContainsString( 'summary', $result->get_error_message() );
         $this->assertCount( 1, $client->chat_calls );
         $this->assertSame( [], GFFormsModel::$notes );
@@ -2184,6 +2231,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
 
         $this->assertWPError( $result );
         $this->assertSame( 'sentient_forms_structured_output_schema_invalid', $result->get_error_code() );
+        $this->assertSame( 422, (int) ( $result->get_error_data()['status'] ?? 0 ) );
         $this->assertSame( 'structured_output_schema.properties.summary', $result->get_error_data()['schema_path'] );
         $this->assertCount( 0, $client->chat_calls );
         $this->assertSame( [], $this->events->list_recent() );

@@ -61,6 +61,7 @@
 		FormActionMutationPayload,
 		FormExecutionStatus,
 		FormFieldInfo,
+		FormSummary,
 		LinkedActionStatus,
 		InputMapping,
 		LocalCustomActionRecord,
@@ -312,15 +313,18 @@
 		gform_after_submission: '📝 After Submission (Background)',
 		real_time: 'Realtime (Form Page)'
 	};
-	const providerEditUrl = $derived(
-		data.formSourceSlug === 'gravity_forms'
-			? `admin.php?page=gf_edit_forms&id=${encodeURIComponent(String(data.formId))}`
-			: null
-	);
-
 	const actionsState = formActionsState;
 	const customState = customActionsState;
 	const providerClient = createClientFromConfig();
+	let currentFormSummary = $state<FormSummary | null>(null);
+	let currentFormSummaryLoading = $state(false);
+	let currentFormSummaryError = $state<string | null>(null);
+	const providerEditUrl = $derived(
+		currentFormSummary?.provider_edit_url ??
+			(data.formSourceSlug === 'gravity_forms'
+				? `admin.php?page=gf_edit_forms&id=${encodeURIComponent(String(data.formId))}`
+				: null)
+	);
 
 	let createKind = $state<CreateKind>('template');
 	let selectedTemplateId = $state('');
@@ -917,6 +921,23 @@
 		}
 	}
 
+	async function loadCurrentFormSummary() {
+		currentFormSummaryLoading = true;
+		currentFormSummaryError = null;
+
+		try {
+			const forms = await providerClient.getForms(data.formSourceSlug, { showNotifications: false });
+			currentFormSummary =
+				forms.find((form) => String(form.id) === String(data.formId)) ?? null;
+		} catch (error) {
+			currentFormSummary = null;
+			currentFormSummaryError =
+				error instanceof Error ? error.message : 'Unable to load form title.';
+		} finally {
+			currentFormSummaryLoading = false;
+		}
+	}
+
 	async function loadProviderCredentials() {
 		providerCredentialsLoading = true;
 		providerCredentialsError = null;
@@ -1444,6 +1465,39 @@
 	const selectedCustomAction = $derived(
 		selectedCustomId ? (customLookupById[selectedCustomId] ?? null) : null
 	);
+	const currentFormTitle = $derived(currentFormSummary?.title?.trim() || `Form #${data.formId}`);
+	const currentFormAdapterLabel = $derived(
+		currentFormSummary?.adapter_name?.trim() ||
+			(data.formSourceSlug === 'gravity_forms' ? 'Gravity Forms' : data.formSourceSlug)
+	);
+	const sectionDescription = $derived(`Link actions and execution settings for ${currentFormTitle}.`);
+	const selectedCreateActionLabel = $derived.by(() => {
+		if (createKind === 'template') {
+			return selectedDefinition?.label ?? selectedTemplateId ?? 'Built-in action';
+		}
+
+		if (createKind === 'custom') {
+			return (
+				selectedCustomAction?.display_name ??
+				selectedCustomAction?.code ??
+				selectedCustomId ??
+				'Custom action'
+			);
+		}
+
+		return localBuilderActionName.trim() || localBuilderTemplate.label;
+	});
+	const selectedCreateActionSummary = $derived.by(() => {
+		const hooks = [...selectedHooks].map((hook) => hookOptions[hook] ?? hook);
+		return hooks.length > 0 ? hooks.join(', ') : 'No trigger selected';
+	});
+	const linkActionDisabled = $derived(
+		creating ||
+			selectedHooks.size === 0 ||
+			(!hasDefinitions && createKind === 'template') ||
+			(createKind === 'custom' && customActions.length === 0) ||
+			(createKind === 'local_openrouter' && !selectedLocalBuilderCredential)
+	);
 	const selectedActionKey = $derived(
 		`${createKind}:${
 			createKind === 'template'
@@ -1608,6 +1662,7 @@
 	onMount(() => {
 		formActionsStore.load(data.formSourceSlug, data.formId);
 		customActionsStore.load({ status: 'active' });
+		loadCurrentFormSummary();
 		loadFormFields(); // CA-MAP-001: Load form fields for FieldSelector
 		loadProviderCredentials();
 		loadFormActionConfigIndex();
@@ -3328,6 +3383,7 @@
 
 	function refresh() {
 		formActionsStore.refresh(data.formSourceSlug, data.formId);
+		loadCurrentFormSummary();
 		loadProviderCredentials();
 		loadFormActionConfigIndex();
 	}
@@ -3440,7 +3496,7 @@
 
 <Section
 	heading="Actions"
-	description="Link built-in actions, direct OpenRouter actions, or custom actions to this form."
+	description={sectionDescription}
 >
 	<!-- Form-Level Action Config Modal - Inside Section slot for Svelte 5 reactivity -->
 	{#if configuringActionId}
@@ -3743,6 +3799,50 @@
 			<Button variant="secondary" onclick={checkEntryStatus}>Check Sentient Forms log entry</Button>
 		</div>
 	{/snippet}
+
+	<div
+		class="sf:flex sf:flex-col sf:gap-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:px-4 sf:py-3 sf:shadow-sm sf:md:flex-row sf:md:items-center sf:md:justify-between"
+		data-testid="form-context-band"
+	>
+		<div class="sf:min-w-0">
+			<p class="sf:text-xs sf:font-medium sf:uppercase sf:tracking-wide sf:text-slate-500">
+				Current form
+			</p>
+			<h3
+				class="sf:mt-1 sf:break-words sf:text-lg sf:font-semibold sf:leading-6 sf:text-slate-900"
+				data-testid="form-context-title"
+			>
+				{currentFormTitle}
+			</h3>
+			<div class="sf:mt-2 sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+				<Badge variant="neutral">{currentFormAdapterLabel}</Badge>
+				<Badge variant="neutral">Form #{data.formId}</Badge>
+				<Badge variant={actionsState.effectiveDisabled ? 'warning' : 'success'}>
+					{actionsState.effectiveDisabled ? 'Paused' : 'Running'}
+				</Badge>
+				{#if currentFormSummaryLoading}
+					<Badge variant="neutral">Loading title</Badge>
+				{/if}
+				{#if currentFormSummaryError}
+					<Badge variant="warning">Title unavailable</Badge>
+				{/if}
+			</div>
+		</div>
+		<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+			{#if providerEditUrl}
+				<a
+					href={providerEditUrl}
+					class="sf:inline-flex sf:h-9 sf:items-center sf:justify-center sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:text-sm sf:font-medium sf:text-slate-700 hover:sf:bg-slate-50 hover:sf:text-slate-900"
+					data-sveltekit-reload
+					rel="external"
+					data-testid="form-context-provider-edit-link"
+				>
+					Open in Gravity Forms
+				</a>
+			{/if}
+			<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
+		</div>
+	</div>
 
 	<!-- CB-FORMS-001: Warning banner when form is disabled -->
 	{#if actionsState.effectiveDisabled}
@@ -5262,10 +5362,16 @@
 	{/if}
 
 	{#if showAddPanel}
-		<div class="sf:fixed sf:inset-0 sf:z-30 sf:bg-black/40 sf:flex sf:justify-end">
-			<div class="sf:h-full sf:w-full sf:max-w-xl sf:bg-white sf:shadow-2xl sf:flex sf:flex-col">
+		<div
+			class="sf-wp-drawer-backdrop sf:bg-black/40 sf:flex sf:justify-end"
+			data-testid="add-action-drawer-backdrop"
+		>
+			<div
+				class="sf-wp-drawer-panel sf:w-full sf:max-w-xl sf:bg-white sf:shadow-2xl sf:flex sf:flex-col"
+				data-testid="add-action-drawer"
+			>
 				<div
-					class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:border-b sf:border-slate-200 sf:px-4 sf:py-3"
+					class="sf:flex sf:shrink-0 sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:border-b sf:border-slate-200 sf:px-4 sf:py-3"
 				>
 					<div>
 						<p class="sf:text-sm sf:font-semibold sf:text-slate-800">Add action</p>
@@ -5287,7 +5393,7 @@
 					</Button>
 				</div>
 
-				<div class="sf:flex sf:flex-wrap sf:items-end sf:gap-2 sf:px-4 sf:py-3">
+				<div class="sf:flex sf:shrink-0 sf:flex-wrap sf:items-end sf:gap-2 sf:border-b sf:border-slate-200 sf:bg-white sf:px-4 sf:py-3">
 					<Button
 						size="sm"
 						variant={createKind === 'template' ? 'primary' : 'secondary'}
@@ -5337,9 +5443,13 @@
 				</div>
 
 				<form
-					class="sf:flex sf:flex-col sf:gap-4 sf:px-4 sf:pb-4 sf:overflow-y-auto"
+					class="sf:flex sf:min-h-0 sf:flex-1 sf:flex-col"
 					data-testid="link-action-form"
 				>
+					<div
+						class="sf:min-h-0 sf:flex-1 sf:space-y-4 sf:overflow-y-auto sf:px-4 sf:py-4"
+						data-testid="link-action-scroll-region"
+					>
 					{#if createKind === 'template'}
 						{#if !hasDefinitions}
 							<Alert variant="warning">No built-in actions available right now.</Alert>
@@ -5708,43 +5818,60 @@
 							hook{localBuilderResult.mappings.length === 1 ? '' : 's'} from local WordPress tables.
 						</Alert>
 					{/if}
-
-					{#if createError}
-						<Alert variant="danger">{createError}</Alert>
-					{/if}
-
-					<div class="sf:flex sf:justify-end sf:gap-2 sf:pb-2">
-						<Button
-							type="button"
-							variant="secondary"
-							onclick={() => {
-								selectedCreateDependencyIds = new Set();
-								createError = null;
-								localBuilderResult = null;
-								showAddPanel = false;
-							}}
-						>
-							Cancel
-						</Button>
-						<Button
-							type="button"
-							onclick={() => handleCreate(new Event('submit', { cancelable: true }))}
-							disabled={creating ||
-								selectedHooks.size === 0 ||
-								(!hasDefinitions && createKind === 'template') ||
-								(createKind === 'custom' && customActions.length === 0) ||
-								(createKind === 'local_openrouter' && !selectedLocalBuilderCredential)}
-							data-testid="link-action-submit"
-						>
-							{creating
-								? createKind === 'local_openrouter'
-									? 'Creating...'
-									: 'Linking...'
-								: createKind === 'local_openrouter'
-									? 'Create Direct OpenRouter action'
-									: 'Link action'}
-						</Button>
 					</div>
+
+					<footer
+						class="sf:shrink-0 sf:space-y-3 sf:border-t sf:border-slate-200 sf:bg-white sf:px-4 sf:py-3"
+						data-testid="link-action-footer"
+					>
+						<div
+							class="sf:flex sf:flex-col sf:gap-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-3 sf:py-2 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between"
+							data-testid="link-action-selected-summary"
+						>
+							<div class="sf:min-w-0">
+								<p class="sf:text-xs sf:font-medium sf:uppercase sf:tracking-wide sf:text-slate-500">
+									Selected action
+								</p>
+								<p class="sf:truncate sf:text-sm sf:font-semibold sf:text-slate-900">
+									{selectedCreateActionLabel}
+								</p>
+							</div>
+							<p class="sf:text-xs sf:text-slate-500">{selectedCreateActionSummary}</p>
+						</div>
+
+						{#if createError}
+							<Alert variant="danger">{createError}</Alert>
+						{/if}
+
+						<div class="sf:flex sf:justify-end sf:gap-2">
+							<Button
+								type="button"
+								variant="secondary"
+								onclick={() => {
+									selectedCreateDependencyIds = new Set();
+									createError = null;
+									localBuilderResult = null;
+									showAddPanel = false;
+								}}
+							>
+								Cancel
+							</Button>
+							<Button
+								type="button"
+								onclick={() => handleCreate(new Event('submit', { cancelable: true }))}
+								disabled={linkActionDisabled}
+								data-testid="link-action-submit"
+							>
+								{creating
+									? createKind === 'local_openrouter'
+										? 'Creating...'
+										: 'Linking...'
+									: createKind === 'local_openrouter'
+										? 'Create Direct OpenRouter action'
+										: 'Link action'}
+							</Button>
+						</div>
+					</footer>
 				</form>
 			</div>
 		</div>

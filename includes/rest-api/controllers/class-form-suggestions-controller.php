@@ -299,9 +299,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 
 		$result = $this->local_execution->execute_mapping( $local_mapping_id, $form, $known_values, $local_context );
 		if ( is_wp_error( $result ) ) {
-			if ( ! is_array( $result->get_error_data() ) || ! isset( $result->get_error_data()['status'] ) ) {
-				$result->add_data( [ 'status' => 502 ] );
-			}
+			$status = $this->status_for_local_execution_error( $result );
+			$result = $this->sanitize_public_local_execution_error( $result, $status );
 
 			return $result;
 		}
@@ -336,6 +335,54 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 		}
 
 		return 0;
+	}
+
+	private function status_for_local_execution_error( WP_Error $error ): int {
+		$data = $error->get_error_data();
+		if ( is_array( $data ) && isset( $data['status'] ) && is_numeric( $data['status'] ) ) {
+			return (int) $data['status'];
+		}
+
+		return match ( $error->get_error_code() ) {
+			'sentient_forms_structured_output_schema_invalid',
+			'sentient_forms_structured_output_missing',
+			'sentient_forms_structured_output_validation_failed',
+			'sentient_forms_local_action_kind_unsupported',
+			'sentient_forms_local_action_not_found',
+			'sentient_forms_local_action_inactive',
+			'sentient_forms_local_mapping_disabled',
+			'sentient_forms_provider_not_supported_locally',
+			'sentient_forms_lead_profile_required' => 422,
+			default => 502,
+		};
+	}
+
+	private function sanitize_public_local_execution_error( WP_Error $error, int $status ): WP_Error {
+		$data = is_array( $error->get_error_data() ) ? $error->get_error_data() : [];
+		$data['status'] = $status;
+
+		if ( $this->is_structured_output_execution_error( $error ) ) {
+			return new WP_Error(
+				$error->get_error_code(),
+				__( 'Suggestions are temporarily unavailable. Try again shortly.', 'sentient-forms' ),
+				$data
+			);
+		}
+
+		$error->add_data( $data );
+		return $error;
+	}
+
+	private function is_structured_output_execution_error( WP_Error $error ): bool {
+		return in_array(
+			$error->get_error_code(),
+			[
+				'sentient_forms_structured_output_schema_invalid',
+				'sentient_forms_structured_output_missing',
+				'sentient_forms_structured_output_validation_failed',
+			],
+			true
+		);
 	}
 
 	/**

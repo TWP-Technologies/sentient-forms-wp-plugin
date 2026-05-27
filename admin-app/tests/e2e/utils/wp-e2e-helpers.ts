@@ -50,6 +50,7 @@ export type RealtimeSettings = {
 	manualRefreshEnabled?: boolean;
 	storageTargetFieldId?: string;
 	blockingMode?: 'advisory' | 'require_answers';
+	initialPanelState?: 'open' | 'minimized' | 'hidden_until_interaction';
 };
 
 export type ExecutionMode = 'validation' | 'after_submission' | 'real_time';
@@ -1181,7 +1182,8 @@ export function configureGravityActionMapping(args: ActionMappingArgs): void {
 				cooldown_ms: args.realtimeSettings.cooldownMs ?? 8000,
 				manual_refresh_enabled: args.realtimeSettings.manualRefreshEnabled ?? true,
 				storage_target_field_id: args.realtimeSettings.storageTargetFieldId ?? '',
-				blocking_mode: args.realtimeSettings.blockingMode ?? 'advisory'
+				blocking_mode: args.realtimeSettings.blockingMode ?? 'advisory',
+				initial_panel_state: args.realtimeSettings.initialPanelState ?? 'minimized'
 			}
 		: undefined;
 	const mappingSettings: Record<string, unknown> = {

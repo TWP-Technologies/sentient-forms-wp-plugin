@@ -90,6 +90,21 @@
 		z-index: 100010;
 	}
 
+	.sf-wp-drawer-backdrop {
+		position: fixed;
+		top: var(--sentient-forms-wp-admin-offset, 0px);
+		right: 0;
+		bottom: 0;
+		left: 0;
+		z-index: 100000;
+	}
+
+	.sf-wp-drawer-panel {
+		height: calc(100dvh - var(--sentient-forms-wp-admin-offset, 0px));
+		max-height: calc(100dvh - var(--sentient-forms-wp-admin-offset, 0px));
+		min-height: 0;
+	}
+
 	.sf-model-selector-shell {
 		height: min(calc(95dvh - 0.5rem), calc(100% - 0.5rem));
 		min-height: min(42rem, calc(100% - 0.5rem));
@@ -97,7 +112,11 @@
 	}
 
 	body.wp-admin #sentient-forms-admin-app .sf-wp-modal-backdrop {
-		top: 32px;
+		top: var(--sentient-forms-wp-admin-offset, 32px);
+		left: 160px;
+	}
+
+	body.wp-admin #sentient-forms-admin-app .sf-wp-drawer-backdrop {
 		left: 160px;
 	}
 
@@ -105,8 +124,16 @@
 		left: 36px;
 	}
 
+	body.wp-admin.folded #sentient-forms-admin-app .sf-wp-drawer-backdrop {
+		left: 36px;
+	}
+
 	@media screen and (max-width: 960px) {
 		body.wp-admin.auto-fold #sentient-forms-admin-app .sf-wp-modal-backdrop {
+			left: 36px;
+		}
+
+		body.wp-admin.auto-fold #sentient-forms-admin-app .sf-wp-drawer-backdrop {
 			left: 36px;
 		}
 	}
@@ -117,7 +144,11 @@
 		}
 
 		body.wp-admin #sentient-forms-admin-app .sf-wp-modal-backdrop {
-			top: 46px;
+			top: var(--sentient-forms-wp-admin-offset, 46px);
+			left: 0;
+		}
+
+		body.wp-admin #sentient-forms-admin-app .sf-wp-drawer-backdrop {
 			left: 0;
 		}
 

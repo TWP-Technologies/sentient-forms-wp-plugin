@@ -2859,9 +2859,37 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             'suggest_endpoint_url' => rest_url( sprintf( 'sentient-forms/v1/gravity_forms/forms/%d/actions/suggest', $form_id ) ),
             'nonce'                => wp_create_nonce( 'sentient_forms_realtime_suggest_' . $form_id ),
             'rest_nonce'           => wp_create_nonce( 'wp_rest' ),
+            'initial_panel_state'  => $this->resolve_realtime_initial_panel_state( $mappings ),
             'mappings'             => $mappings,
             'field_manifest'       => $field_manifest,
         ];
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $mappings
+     */
+    private function resolve_realtime_initial_panel_state( array $mappings ): string
+    {
+        $has_hidden_until_interaction = false;
+
+        foreach ( $mappings as $mapping )
+        {
+            $state = isset( $mapping['initial_panel_state'] ) && is_scalar( $mapping['initial_panel_state'] )
+                ? sanitize_key( (string) $mapping['initial_panel_state'] )
+                : 'minimized';
+
+            if ( 'open' === $state )
+            {
+                return 'open';
+            }
+
+            if ( 'hidden_until_interaction' === $state )
+            {
+                $has_hidden_until_interaction = true;
+            }
+        }
+
+        return $has_hidden_until_interaction ? 'hidden_until_interaction' : 'minimized';
     }
 
     /**

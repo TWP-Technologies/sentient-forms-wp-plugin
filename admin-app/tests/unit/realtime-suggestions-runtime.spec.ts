@@ -232,7 +232,7 @@ describe('realtime suggestions runtime', () => {
 		expect(toggle?.textContent).toBe('Show');
 	});
 
-	it('can hide the assistant until a visitor starts interacting with the form', () => {
+	it('can hide the assistant from mapping-level config until a visitor starts interacting with the form', () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue({
@@ -240,7 +240,24 @@ describe('realtime suggestions runtime', () => {
 				json: async () => ({ suggestions: [] })
 			})
 		);
-		setupRuntimeConfig({ initial_panel_state: 'hidden_until_interaction' });
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+					action_name_label: 'Realtime Action',
+					debounce_ms: 100,
+					cooldown_ms: 0,
+					auto_refresh_enabled: false,
+					field_checkpoints_enabled: true,
+					manual_refresh_enabled: true,
+					storage_target_field_id: '9',
+					blocking_mode: 'advisory',
+					checkpoint_field_ids: ['1'],
+					initial_panel_state: 'hidden_until_interaction'
+				}
+			]
+		});
 		evaluateRuntimeScript();
 
 		const widget = document.querySelector<HTMLElement>('.sentient-forms-realtime-widget');
@@ -249,6 +266,42 @@ describe('realtime suggestions runtime', () => {
 		const input = document.querySelector<HTMLInputElement>('[name="input_1"]');
 		input?.dispatchEvent(new Event('input', { bubbles: true }));
 		expect(widget?.hidden).toBe(false);
+	});
+
+	it('honors an open mapping-level initial state when no top-level state is present', () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({ suggestions: [] })
+			})
+		);
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+					action_name_label: 'Realtime Action',
+					debounce_ms: 100,
+					cooldown_ms: 0,
+					auto_refresh_enabled: false,
+					field_checkpoints_enabled: true,
+					manual_refresh_enabled: true,
+					storage_target_field_id: '9',
+					blocking_mode: 'advisory',
+					checkpoint_field_ids: ['1'],
+					initial_panel_state: 'open'
+				}
+			]
+		});
+		evaluateRuntimeScript();
+
+		const widget = document.querySelector<HTMLElement>('.sentient-forms-realtime-widget');
+		const body = document.querySelector<HTMLElement>('[data-role="body"]');
+		const toggle = document.querySelector<HTMLButtonElement>('[data-role="toggle"]');
+		expect(widget?.hidden).toBe(false);
+		expect(body?.hidden).toBe(false);
+		expect(toggle?.textContent).toBe('Hide');
 	});
 
 	it('renders metering summary with credits and correlation id', async () => {
@@ -311,6 +364,61 @@ describe('realtime suggestions runtime', () => {
 		expect(error?.hidden).toBe(false);
 		expect(error?.textContent).toContain('Suggestion request failed with HTTP 502.');
 		expect(error?.textContent).not.toContain('Unexpected token');
+	});
+
+	it('hides realtime schema diagnostics behind a visitor-safe error message', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 422,
+			text: async () =>
+				JSON.stringify({
+					code: 'sentient_forms_structured_output_validation_failed',
+					message:
+						'The provider response did not match the local action schema: virtual_questions is a required property of structured_output.'
+				})
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig();
+		evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		const error = document.querySelector<HTMLElement>('[data-role="error"]');
+		expect(error).not.toBeNull();
+		expect(error?.hidden).toBe(false);
+		expect(error?.textContent).toContain(
+			'Suggestions are temporarily unavailable. Try again shortly.'
+		);
+		expect(error?.textContent).not.toContain('virtual_questions');
+		expect(error?.textContent).not.toContain('structured_output');
+		expect(error?.textContent).not.toContain('local action schema');
+	});
+
+	it('renders suggestions when optional realtime arrays are absent from a successful response', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				suggestions: [
+					{
+						field_id: '1',
+						severity: 'info',
+						message: 'Add the requested quantity.',
+						jump_target_field_id: '1'
+					}
+				]
+			})
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig();
+		evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		const error = document.querySelector<HTMLElement>('[data-role="error"]');
+		expect(error?.hidden ?? true).toBe(true);
+		expect(document.body.textContent).toContain('Add the requested quantity.');
 	});
 
 	it('dispatches conditional decision events with mapping context', async () => {
