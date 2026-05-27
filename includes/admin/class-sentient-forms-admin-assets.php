@@ -167,6 +167,12 @@ class Sentient_Forms_Admin_Assets {
     }
 
     private function get_assets_base_url(): string {
+        $default = trailingslashit( SENTIENT_FORMS_PLUGIN_URL ) . 'assets/dist/';
+
+        if ( ! $this->development_asset_overrides_allowed() ) {
+            return $default;
+        }
+
         if ( defined( 'SENTIENT_FORMS_ADMIN_ASSET_BASE_URL' ) ) {
             return trailingslashit( esc_url_raw( SENTIENT_FORMS_ADMIN_ASSET_BASE_URL ) );
         }
@@ -180,15 +186,15 @@ class Sentient_Forms_Admin_Assets {
             return $this->dev_base_url;
         }
 
-        // If an explicit dev host is provided via env/const/filter, trust it and bypass the cached "none".
         $explicit_dev_host = $this->explicit_dev_host();
         if ( $explicit_dev_host ) {
-            $this->dev_base_url = trailingslashit( esc_url_raw( $explicit_dev_host ) );
-            set_transient( self::DEV_TRANSIENT, untrailingslashit( $this->dev_base_url ), 5 * MINUTE_IN_SECONDS );
-            return $this->dev_base_url;
+            $detected = $this->maybe_detect_dev_server( $explicit_dev_host );
+            if ( $detected ) {
+                $this->dev_base_url = $detected;
+                set_transient( self::DEV_TRANSIENT, untrailingslashit( $detected ), 5 * MINUTE_IN_SECONDS );
+                return $this->dev_base_url;
+            }
         }
-
-        $default = trailingslashit( SENTIENT_FORMS_PLUGIN_URL ) . 'assets/dist/';
 
         $cached = get_transient( self::DEV_TRANSIENT );
         if ( is_string( $cached ) && '' !== $cached && 'none' !== $cached ) {
@@ -199,22 +205,14 @@ class Sentient_Forms_Admin_Assets {
             return $default;
         }
 
-        $detected = $this->maybe_detect_dev_server();
-        if ( $detected ) {
-            $this->dev_base_url = $detected;
-            set_transient( self::DEV_TRANSIENT, untrailingslashit( $detected ), 5 * MINUTE_IN_SECONDS );
-            return $this->dev_base_url;
-        }
-
         set_transient( self::DEV_TRANSIENT, 'none', MINUTE_IN_SECONDS );
         return $default;
     }
 
-    private function maybe_detect_dev_server(): ?string {
-        $host = $this->dev_host_candidate();
+    private function maybe_detect_dev_server( string $host ): ?string {
         $host = trailingslashit( $host );
         $timeout = apply_filters( 'sentient_forms_admin_dev_timeout', 1.5 );
-        $show_probe_notice = (bool) apply_filters( 'sentient_forms_admin_show_implicit_dev_probe_failures', false );
+        $show_probe_notice = (bool) apply_filters( 'sentient_forms_admin_show_dev_probe_failures', false );
 
         $response = wp_remote_get( $host, [
             'timeout' => $timeout,
@@ -240,27 +238,6 @@ class Sentient_Forms_Admin_Assets {
     }
 
     /**
-     * Determine which dev host to probe.
-     */
-    private function dev_host_candidate(): string {
-        if ( defined( 'SENTIENT_FORMS_ADMIN_DEV_HOST' ) && is_string( constant( 'SENTIENT_FORMS_ADMIN_DEV_HOST' ) ) ) {
-            return constant( 'SENTIENT_FORMS_ADMIN_DEV_HOST' );
-        }
-
-        $env = getenv( 'SENTIENT_FORMS_ADMIN_DEV_HOST' );
-        if ( $env ) {
-            return (string) $env;
-        }
-
-        $filtered = apply_filters( 'sentient_forms_admin_dev_host', null );
-        if ( is_string( $filtered ) && '' !== trim( $filtered ) ) {
-            return $filtered;
-        }
-
-        return 'http://localhost:5173/';
-    }
-
-    /**
      * Return a dev host only if explicitly provided via env/const/filter; otherwise null.
      */
     private function explicit_dev_host(): ?string {
@@ -279,6 +256,21 @@ class Sentient_Forms_Admin_Assets {
         }
 
         return null;
+    }
+
+    private function development_asset_overrides_allowed(): bool {
+        $allowed = false;
+
+        if ( defined( 'SENTIENT_FORMS_ENABLE_ADMIN_DEV_ASSETS' ) ) {
+            $allowed = true === constant( 'SENTIENT_FORMS_ENABLE_ADMIN_DEV_ASSETS' );
+        }
+
+        $env = getenv( 'SENTIENT_FORMS_ENABLE_ADMIN_DEV_ASSETS' );
+        if ( false !== $env && '' !== trim( (string) $env ) ) {
+            $allowed = in_array( strtolower( trim( (string) $env ) ), [ '1', 'true', 'yes', 'on' ], true );
+        }
+
+        return (bool) apply_filters( 'sentient_forms_admin_dev_assets_enabled', $allowed );
     }
 
     public function is_dev_mode(): bool {

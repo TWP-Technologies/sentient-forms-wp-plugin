@@ -36,6 +36,13 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         parent::tearDown();
     }
 
+    private function add_rest_nonce( WP_REST_Request $request ): WP_REST_Request
+    {
+        $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+
+        return $request;
+    }
+
     public function test_settings_response_includes_local_retention_controls(): void
     {
         $response = rest_get_server()->dispatch( new WP_REST_Request( 'GET', '/sentient-forms/v1/settings' ) );
@@ -54,7 +61,7 @@ class Tests_Settings_Controller extends WP_UnitTestCase
 
     public function test_settings_update_persists_local_retention_controls_in_governance_options(): void
     {
-        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' ) );
         $request->set_body_params(
             [
                 'enable_logging'                 => false,
@@ -85,34 +92,26 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         $this->assertTrue( Sentient_Forms_Local_Data_Governance::store_full_ai_outputs_enabled() );
     }
 
-    public function test_legacy_nonce_disable_option_does_not_bypass_mutating_rest_nonce(): void
+    public function test_nonce_disable_option_does_not_bypass_mutating_rest_nonce(): void
     {
-        add_filter( 'sentient_forms_allow_insecure_nonce_bypass', '__return_false', PHP_INT_MAX );
         update_option( 'sentient_forms_settings', [ 'enforce_nonce_verification' => false ] );
 
-        try
-        {
-            $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' );
-            $request->set_body_params(
-                [
-                    'enable_logging' => true,
-                ]
-            );
+        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' );
+        $request->set_body_params(
+            [
+                'enable_logging' => true,
+            ]
+        );
 
-            $response = rest_get_server()->dispatch( $request );
-            $this->assertSame( 403, $response->get_status() );
-        }
-        finally
-        {
-            remove_filter( 'sentient_forms_allow_insecure_nonce_bypass', '__return_false', PHP_INT_MAX );
-        }
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( 403, $response->get_status() );
     }
 
     public function test_settings_update_rejects_unsupported_retention_window(): void
     {
         update_option( 'sentient_forms_execution_event_retention_days', 90 );
 
-        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' ) );
         $request->set_body_params(
             [
                 'execution_event_retention_days' => 365,
@@ -127,7 +126,7 @@ class Tests_Settings_Controller extends WP_UnitTestCase
 
     public function test_settings_update_applies_privacy_setup_profile_defaults(): void
     {
-        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' ) );
         $request->set_body_params(
             [
                 'privacy_setup_profile' => 'maximum_visibility',
@@ -153,7 +152,7 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         update_option( 'sentient_forms_execution_event_retention_days', 30 );
         update_option( 'sentient_forms_delete_data_on_uninstall', false );
 
-        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' ) );
         $request->set_header( 'content-type', 'application/json' );
         $request->set_body(
             wp_json_encode(

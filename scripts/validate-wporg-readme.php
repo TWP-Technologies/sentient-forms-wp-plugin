@@ -138,7 +138,7 @@ function validate_readme_locally( string $readme_path, string $plugin_file ): ar
         }
     }
 
-    foreach ( [ 'OpenRouter', 'Sentient Forms Managed Execution', 'Data sent', 'Terms', 'Privacy policy' ] as $required_disclosure )
+    foreach ( [ 'OpenRouter', 'Sentient Forms Managed Execution', 'Data sent', 'Terms', 'Privacy policy', 'Realtime Clarification Assistant', 'Gravity Forms' ] as $required_disclosure )
     {
         if ( false === stripos( $readme, $required_disclosure ) )
         {
@@ -146,7 +146,7 @@ function validate_readme_locally( string $readme_path, string $plugin_file ): ar
         }
     }
 
-    foreach ( [ 'TWP-Technologies/sentient-forms-wp-plugin', 'bun run build:wp' ] as $required_source_reference )
+    foreach ( [ 'admin-app', 'bun install --frozen-lockfile', 'bun run restore:source', 'bun run build:wp' ] as $required_source_reference )
     {
         if ( false === stripos( $readme, $required_source_reference ) )
         {

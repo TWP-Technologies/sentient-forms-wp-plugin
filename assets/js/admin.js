@@ -54,6 +54,17 @@
      * Initialize settings page functionality
      */
     function initSettingsPage() {
+        function setResultMessage($result, className, message) {
+            $result.empty();
+            $('<span />').addClass(className).text(message).appendTo($result);
+        }
+
+        function setResultSpinner($result, message) {
+            $result.empty();
+            $('<span />').addClass('spinner is-active').appendTo($result);
+            $result.append(document.createTextNode(' ' + message));
+        }
+
         // Test connection button
         $('#sentient-forms-test-connection').on('click', function() {
             var $button = $(this);
@@ -61,14 +72,14 @@
             var apiKey = $('#sentient_forms_proxy_api_key').val();
             
             if (!apiKey) {
-                $result.html('<span class="error">' + sentientFormsAdmin.i18n.apiKeyRequired + '</span>');
+                setResultMessage($result, 'error', sentientFormsAdmin.i18n.apiKeyRequired);
                 return;
             }
             
             var originalText = $button.text();
             $button.text(sentientFormsAdmin.i18n.testingConnection);
             $button.prop('disabled', true);
-            $result.html('');
+            $result.empty();
             
             $.ajax({
                 url: sentientFormsAdmin.ajaxUrl,
@@ -80,13 +91,13 @@
                 },
                 success: function(response) {
                     if (response.success) {
-                        $result.html('<span class="success">' + response.data.message + '</span>');
+                        setResultMessage($result, 'success', response.data.message);
                     } else {
-                        $result.html('<span class="error">' + sentientFormsAdmin.i18n.connectionFailed + response.data.message + '</span>');
+                        setResultMessage($result, 'error', sentientFormsAdmin.i18n.connectionFailed + response.data.message);
                     }
                 },
                 error: function() {
-                    $result.html('<span class="error">' + sentientFormsAdmin.i18n.connectionError + '</span>');
+                    setResultMessage($result, 'error', sentientFormsAdmin.i18n.connectionError);
                 },
                 complete: function() {
                     $button.text(originalText);
@@ -238,7 +249,7 @@
             var $result = $('#sentient-forms-form-settings-result');
             
             $button.prop('disabled', true);
-            $result.html('<span class="spinner is-active"></span> ' + sentientFormsAdmin.i18n.savingSettings);
+            setResultSpinner($result, sentientFormsAdmin.i18n.savingSettings);
             
             $.ajax({
                 url: sentientFormsAdmin.ajaxUrl,
@@ -252,17 +263,17 @@
                 },
                 success: function(response) {
                     if (response.success) {
-                        $result.html('<span class="success">' + response.data.message + '</span>');
+                        setResultMessage($result, 'success', response.data.message);
                         setTimeout(function() {
                             window.location.reload();
                         }, 1000);
                     } else {
-                        $result.html('<span class="error">' + sentientFormsAdmin.i18n.settingsFailed + response.data.message + '</span>');
+                        setResultMessage($result, 'error', sentientFormsAdmin.i18n.settingsFailed + response.data.message);
                         $button.prop('disabled', false);
                     }
                 },
                 error: function() {
-                    $result.html('<span class="error">' + sentientFormsAdmin.i18n.settingsError + '</span>');
+                    setResultMessage($result, 'error', sentientFormsAdmin.i18n.settingsError);
                     $button.prop('disabled', false);
                 }
             });

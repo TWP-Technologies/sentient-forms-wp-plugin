@@ -570,6 +570,7 @@ SVG;
 
         $content  = '<p>' . esc_html__( 'Sentient Forms stores local AI action configuration, provider connection status, form mapping metadata, and execution logs in this WordPress database. Execution logs can include model outputs or error details created from submitted form data depending on the actions an administrator configures.', 'sentient-forms' ) . '</p>';
         $content .= '<p>' . esc_html__( 'When an administrator enables OpenRouter direct execution, selected form data and prompts are sent from this site to OpenRouter for processing. When an administrator enables Sentient Forms managed execution, selected form data and prompts are sent to the Sentient Forms managed service for paid pass-through execution, metering, and billing. AI-generated Site Context may send the site URL and public-site research prompt to the selected provider, and web-capable models may search or fetch public site pages. These external-service choices require administrator acceptance before calls are made.', 'sentient-forms' ) . '</p>';
+        $content .= '<p>' . esc_html__( 'When an administrator enables the Realtime Clarification Assistant for a Gravity Forms form, selected in-progress visitor field values can be sent to the selected AI provider before final form submission so the visitor can receive suggestions. Site owners should disclose this behavior near the form or in their privacy policy before enabling realtime suggestions.', 'sentient-forms' ) . '</p>';
         $content .= '<p>' . esc_html__( 'Sentient Forms can send metadata-only operational telemetry to the Sentient Forms service only after an administrator opts in and the site has a connected Sentient Forms site identity. Telemetry can include plugin/runtime versions, provider path, action code, execution request ID, adapter, job status, attempt counts, and sanitized error or warning codes. Telemetry does not include form field contents, prompts, model outputs, raw error messages, visitor identifiers, saved provider secrets, or billing secrets, and consent can be revoked at any time.', 'sentient-forms' ) . '</p>';
         $content .= '<p>' . esc_html__( 'Site owners can use WordPress personal data export and erase tools for local Sentient Forms execution records that directly contain a verified email address. Local execution logs are subject to the retention period configured by the site administrator.', 'sentient-forms' ) . '</p>';
 
@@ -1129,9 +1130,7 @@ Promise.all([
      * AJAX handler for testing API connection.
      */
     public function ajax_test_connection(): void {
-        if ( ! $this->development_nonce_bypass_allowed() ) {
-            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
-        }
+        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
         if ( ! current_user_can( 'manage_options' ) ) {
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
         }
@@ -1160,9 +1159,7 @@ Promise.all([
      */
     public function ajax_get_credit_balance(): void
     {
-        if ( ! $this->development_nonce_bypass_allowed() ) {
-            check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
-        }
+        check_ajax_referer( 'sentient_forms_admin_nonce', 'nonce' );
         if ( ! current_user_can( 'manage_options' ) ) {
             wp_send_json_error( [ 'message' => __( 'Permission denied.', 'sentient-forms' ) ], 403 );
         }
@@ -1174,14 +1171,6 @@ Promise.all([
             ],
             410
         );
-    }
-
-    private function development_nonce_bypass_allowed(): bool
-    {
-        $allowed = defined( 'SENTIENT_FORMS_ALLOW_INSECURE_NONCE_BYPASS' )
-            && true === constant( 'SENTIENT_FORMS_ALLOW_INSECURE_NONCE_BYPASS' );
-
-        return (bool) apply_filters( 'sentient_forms_allow_insecure_nonce_bypass', $allowed, null );
     }
 
 }

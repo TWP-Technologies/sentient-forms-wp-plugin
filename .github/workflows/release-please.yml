@@ -4,7 +4,7 @@ name: Release Please
 'on':
   push:
     branches:
-      - master
+      - production
   workflow_dispatch:
 
 permissions:
@@ -51,14 +51,14 @@ jobs:
         uses: googleapis/release-please-action@v4
         with:
           token: ${{ steps.release-token.outputs.token }}
-          target-branch: master
+          target-branch: production
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           skip-github-release: true
 
   publish-release:
     name: Publish Validated Release
-    if: ${{ github.ref == 'refs/heads/master' }}
+    if: ${{ github.ref == 'refs/heads/production' }}
     needs: release-please
     runs-on: ubuntu-latest
     steps:
@@ -122,10 +122,12 @@ jobs:
           tag="v${version}"
           zip_name="sentient-forms-${version}.zip"
           sha_name="${zip_name}.sha256"
+          manifest_name="sentient-forms-${version}-wporg-manifest.json"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "zip-name=${zip_name}" >> "$GITHUB_OUTPUT"
           echo "sha-name=${sha_name}" >> "$GITHUB_OUTPUT"
+          echo "manifest-name=${manifest_name}" >> "$GITHUB_OUTPUT"
 
           verify_tag_target() {
             git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}" >/dev/null 2>&1 || {
@@ -141,7 +143,7 @@ jobs:
 
           if gh release view "${tag}" --json assets --jq '.assets[].name' > "${RUNNER_TEMP}/release-assets.txt" 2>/dev/null; then
             verify_tag_target
-            if grep -Fxq "${zip_name}" "${RUNNER_TEMP}/release-assets.txt" && grep -Fxq "${sha_name}" "${RUNNER_TEMP}/release-assets.txt"; then
+            if grep -Fxq "${zip_name}" "${RUNNER_TEMP}/release-assets.txt" && grep -Fxq "${sha_name}" "${RUNNER_TEMP}/release-assets.txt" && grep -Fxq "${manifest_name}" "${RUNNER_TEMP}/release-assets.txt"; then
               echo "publish=false" >> "$GITHUB_OUTPUT"
               echo "Release ${tag} already has required package assets."
               exit 0
@@ -184,6 +186,7 @@ jobs:
         if: ${{ steps.release-state.outputs.publish == 'true' }}
         run: |
           php scripts/validate-release-version.php
+          php scripts/verify-wporg-source.php
           php scripts/scan-wporg-package.php --source-tree
           php scripts/audit-wporg-licenses.php
           php scripts/validate-wporg-readme.php --offline
@@ -192,7 +195,7 @@ jobs:
         id: package
         if: ${{ steps.release-state.outputs.publish == 'true' }}
         run: |
-          package_base="${RUNNER_TEMP}/sentient-forms-wporg"
+          package_base="${GITHUB_WORKSPACE}/.wporg-package"
           php scripts/build-wporg-package.php "$package_base"
           package_dir="${package_base}/sentient-forms"
           test -d "$package_dir"
@@ -205,6 +208,16 @@ jobs:
           php scripts/scan-wporg-package.php "$package_dir"
           php scripts/audit-wporg-licenses.php --package "$package_dir"
           php scripts/validate-wporg-readme.php --offline "$package_dir"
+          php scripts/verify-wporg-source.php "$package_dir"
+
+      - name: Run Plugin Check
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        uses: wordpress/plugin-check-action@v1.1.6
+        with:
+          build-dir: ${{ steps.package.outputs.package-dir }}
+          slug: sentient-forms
+          strict: true
+          exclude-directories: vendor
 
       - name: Create release zip
         id: release-zip
@@ -221,6 +234,14 @@ jobs:
           echo "zip-path=${zip_path}" >> "${GITHUB_OUTPUT}"
           echo "sha-path=${sha_path}" >> "${GITHUB_OUTPUT}"
 
+      - name: Write release manifest
+        id: release-manifest
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        run: |
+          manifest_path="${RUNNER_TEMP}/sentient-forms-${{ steps.release-state.outputs.version }}-wporg-manifest.json"
+          php scripts/write-wporg-release-manifest.php "${{ steps.package.outputs.package-dir }}" "${{ steps.release-zip.outputs.zip-path }}" "${manifest_path}"
+          echo "manifest-path=${manifest_path}" >> "${GITHUB_OUTPUT}"
+
       - name: Upload release package assets
         if: ${{ steps.release-state.outputs.publish == 'true' && steps.release-state.outputs.release-exists == 'true' }}
         env:
@@ -228,8 +249,10 @@ jobs:
           TAG_NAME: ${{ steps.release-state.outputs.tag }}
           ZIP_PATH: ${{ steps.release-zip.outputs.zip-path }}
           SHA_PATH: ${{ steps.release-zip.outputs.sha-path }}
+          MANIFEST_PATH: ${{ steps.release-manifest.outputs.manifest-path }}
           ZIP_NAME: ${{ steps.release-state.outputs.zip-name }}
           SHA_NAME: ${{ steps.release-state.outputs.sha-name }}
+          MANIFEST_NAME: ${{ steps.release-state.outputs.manifest-name }}
         run: |
           set -euo pipefail
           gh release view "${TAG_NAME}" --json assets --jq '.assets[].name' > "${RUNNER_TEMP}/release-assets.txt"
@@ -239,6 +262,9 @@ jobs:
           fi
           if ! grep -Fxq "${SHA_NAME}" "${RUNNER_TEMP}/release-assets.txt"; then
             uploads+=("${SHA_PATH}")
+          fi
+          if ! grep -Fxq "${MANIFEST_NAME}" "${RUNNER_TEMP}/release-assets.txt"; then
+            uploads+=("${MANIFEST_PATH}")
           fi
           if (( ${#uploads[@]} > 0 )); then
             gh release upload "${TAG_NAME}" "${uploads[@]}"
@@ -252,14 +278,16 @@ jobs:
           VERSION: ${{ steps.release-state.outputs.version }}
           ZIP_PATH: ${{ steps.release-zip.outputs.zip-path }}
           SHA_PATH: ${{ steps.release-zip.outputs.sha-path }}
+          MANIFEST_PATH: ${{ steps.release-manifest.outputs.manifest-path }}
         run: |
           set -euo pipefail
           create_args=(
             "${TAG_NAME}"
             "${ZIP_PATH}"
             "${SHA_PATH}"
+            "${MANIFEST_PATH}"
             --title "Sentient Forms ${VERSION}"
-            --notes "Production WordPress.org package generated from the validated master branch release workflow."
+            --notes "Production WordPress.org package generated from the validated production branch release workflow. WordPress.org SVN/upload remains a manual approval step."
             --latest
           )
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
@@ -280,6 +308,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sentient-forms-wporg-package-${{ steps.release-state.outputs.version }}
-          path: ${{ steps.package.outputs.package-dir }}
+          path: |
+            ${{ steps.package.outputs.package-dir }}
+            ${{ steps.release-zip.outputs.zip-path }}
+            ${{ steps.release-zip.outputs.sha-path }}
+            ${{ steps.release-manifest.outputs.manifest-path }}
           if-no-files-found: error
           retention-days: 30

@@ -19,7 +19,8 @@
         "wporg-readme-validate": "php scripts/validate-wporg-readme.php",
         "wporg-release-version-check": "php scripts/validate-release-version.php",
         "wporg-scan": "php scripts/scan-wporg-package.php --source-tree",
-        "wporg-scan-package": "php scripts/scan-wporg-package.php"
+        "wporg-scan-package": "php scripts/scan-wporg-package.php",
+        "wporg-source-check": "php scripts/verify-wporg-source.php"
     },
     "config": {
         "allow-plugins": {

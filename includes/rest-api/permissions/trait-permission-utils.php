@@ -120,22 +120,9 @@ trait Trait_Sentient_Forms_Permission_Utils
 
         if ( in_array( $r->get_method(), [ 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) )
         {
-            if ( $this->development_nonce_bypass_allowed( $r ) )
-            {
-                return true;
-            }
-
             return $this->verify_nonce( $r );
         }
 
         return true;
-    }
-
-    protected function development_nonce_bypass_allowed( WP_REST_Request $request ): bool
-    {
-        $allowed = defined( 'SENTIENT_FORMS_ALLOW_INSECURE_NONCE_BYPASS' )
-            && true === constant( 'SENTIENT_FORMS_ALLOW_INSECURE_NONCE_BYPASS' );
-
-        return (bool) apply_filters( 'sentient_forms_allow_insecure_nonce_bypass', $allowed, $request );
     }
 }

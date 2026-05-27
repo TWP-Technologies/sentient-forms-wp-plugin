@@ -1,6 +1,6 @@
 {
   "name": "sentient-forms-admin-app",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "GPL-2.0-or-later",
   "type": "module",
@@ -9,6 +9,7 @@
     "build": "node scripts/select-layout.mjs && vite build",
     "preview": "node scripts/select-layout.mjs && vite preview",
     "preview:ci": "SENTIENT_FORMS_ROUTER=pathname bun run build && SENTIENT_FORMS_ROUTER=pathname node scripts/select-layout.mjs && SENTIENT_FORMS_ROUTER=pathname vite preview --host 127.0.0.1 --port 4173",
+    "restore:source": "node scripts/restore-package-source.mjs",
     "build:spa": "bun run build",
     "build:clean": "rimraf ../assets/dist",
     "build:copy": "node scripts/copy-build.mjs",

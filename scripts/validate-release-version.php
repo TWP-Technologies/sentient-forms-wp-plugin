@@ -62,18 +62,23 @@ if ( 1 !== count( $unique_versions ) )
 }
 
 $version = $unique_versions[0];
-$source_url = read_regex( $plugin_file, "/const\s+SENTIENT_FORMS_RELEASE_SOURCE_URL\s*=\s*'([^']+)';/" );
-$expected_source_url = 'https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v' . $version;
-if ( $source_url !== $expected_source_url )
+$source_reference = read_regex( $plugin_file, "/const\s+SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE\s*=\s*'([^']+)';/" );
+if ( '' === $source_reference )
 {
-    fwrite( STDERR, "Release source URL mismatch. Expected {$expected_source_url}, got {$source_url}.\n" );
+    fwrite( STDERR, "Release source reference is empty.\n" );
     exit( 1 );
 }
 
 $readme = (string) file_get_contents( $readme_file );
-if ( ! str_contains( $readme, $expected_source_url ) )
+if ( ! str_contains( $readme, $source_reference ) )
 {
-    fwrite( STDERR, "readme.txt is missing release source URL {$expected_source_url}.\n" );
+    fwrite( STDERR, "readme.txt is missing release source reference {$source_reference}.\n" );
+    exit( 1 );
+}
+
+if ( str_contains( $readme, 'github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.1.0' ) )
+{
+    fwrite( STDERR, "readme.txt still references stale v0.1.0 source.\n" );
     exit( 1 );
 }
 

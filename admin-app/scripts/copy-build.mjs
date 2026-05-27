@@ -83,9 +83,14 @@ const writeSourceMetadata = async () => {
   const pluginContents = await readFile(pluginFile, 'utf8');
   const version =
     parsePluginConstant(pluginContents, 'SENTIENT_FORMS_VERSION') ?? 'unknown';
-  const sourceUrl =
+  const sourceReference =
+    parsePluginConstant(pluginContents, 'SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE') ??
     parsePluginConstant(pluginContents, 'SENTIENT_FORMS_RELEASE_SOURCE_URL') ??
-    'https://github.com/TWP-Technologies/sentient-forms-wp-plugin';
+    'admin-app';
+
+  const sourceLine = /^https?:\/\//i.test(sourceReference)
+    ? `Public source for this release: ${sourceReference}`
+    : `Source included in the WordPress.org package: ${sourceReference}`;
 
   await writeFile(
     sourceMetadataDest,
@@ -93,13 +98,14 @@ const writeSourceMetadata = async () => {
 
 The JavaScript and CSS files in this directory are generated from the SvelteKit admin app source for Sentient Forms ${version}.
 
-Public source for this release: ${sourceUrl}
+${sourceLine}
 
 Build commands:
 
 \`\`\`sh
 cd admin-app
 bun install --frozen-lockfile
+bun run restore:source
 bun run build:wp
 \`\`\`
 `

@@ -148,7 +148,7 @@ $license_data = $license_data ?? [];
                     <li><?php _e('1,000 managed action credits/month', 'sentient-forms'); ?></li>
                     <li><?php _e('Managed model access and spend controls', 'sentient-forms'); ?></li>
                 </ul>
-                <a href="https://sentientforms.com/pricing/?utm_source=plugin&utm_medium=license_page&utm_campaign=starter" class="button button-primary" target="_blank">
+                <a href="<?php echo esc_url( 'https://sentientforms.com/pricing/' ); ?>" class="button button-primary" target="_blank" rel="noopener noreferrer">
                     <?php _e('Choose Starter', 'sentient-forms'); ?>
                 </a>
             </div>
@@ -165,7 +165,7 @@ $license_data = $license_data ?? [];
                     <li><?php _e('3,000 managed action credits/month', 'sentient-forms'); ?></li>
                     <li><?php _e('Managed model access and spend controls', 'sentient-forms'); ?></li>
                 </ul>
-                <a href="https://sentientforms.com/pricing/?utm_source=plugin&utm_medium=license_page&utm_campaign=pro" class="button button-primary" target="_blank">
+                <a href="<?php echo esc_url( 'https://sentientforms.com/pricing/' ); ?>" class="button button-primary" target="_blank" rel="noopener noreferrer">
                     <?php _e('Choose Pro', 'sentient-forms'); ?>
                 </a>
             </div>
@@ -181,7 +181,7 @@ $license_data = $license_data ?? [];
                     <li><?php _e('10,000 managed action credits/month', 'sentient-forms'); ?></li>
                     <li><?php _e('Business capacity packs available', 'sentient-forms'); ?></li>
                 </ul>
-                <a href="https://sentientforms.com/pricing/?utm_source=plugin&utm_medium=license_page&utm_campaign=business" class="button button-primary" target="_blank">
+                <a href="<?php echo esc_url( 'https://sentientforms.com/pricing/' ); ?>" class="button button-primary" target="_blank" rel="noopener noreferrer">
                     <?php _e('Choose Business', 'sentient-forms'); ?>
                 </a>
             </div>

@@ -15,7 +15,9 @@ class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
     /** @var callable|null */
     private $dev_host_filter = null;
     /** @var callable|null */
-    private $implicit_probe_notice_filter = null;
+    private $dev_probe_notice_filter = null;
+    /** @var callable */
+    private $dev_assets_enabled_filter;
     /** @var string|false */
     private $original_admin_dev_host_env = false;
 
@@ -30,6 +32,10 @@ class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
         };
 
         add_filter( 'sentient_forms_admin_asset_base_url', $this->asset_base_url_filter );
+        $this->dev_assets_enabled_filter = static function () {
+            return true;
+        };
+        add_filter( 'sentient_forms_admin_dev_assets_enabled', $this->dev_assets_enabled_filter );
         delete_transient( 'sentient_forms_admin_dev_url' );
 
         $this->assets = new Sentient_Forms_Admin_Assets();
@@ -47,12 +53,13 @@ class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
             $this->dev_host_filter = null;
         }
 
-        if ( $this->implicit_probe_notice_filter ) {
-            remove_filter( 'sentient_forms_admin_show_implicit_dev_probe_failures', $this->implicit_probe_notice_filter );
-            $this->implicit_probe_notice_filter = null;
+        if ( $this->dev_probe_notice_filter ) {
+            remove_filter( 'sentient_forms_admin_show_dev_probe_failures', $this->dev_probe_notice_filter );
+            $this->dev_probe_notice_filter = null;
         }
 
         remove_filter( 'sentient_forms_admin_asset_base_url', $this->asset_base_url_filter );
+        remove_filter( 'sentient_forms_admin_dev_assets_enabled', $this->dev_assets_enabled_filter );
         delete_transient( 'sentient_forms_admin_dev_url' );
         $this->restore_admin_dev_host_env();
         parent::tearDown();
@@ -172,16 +179,16 @@ class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
     }
 
     /**
-     * Probe failures from the default localhost dev host should not show admin notices.
+     * Dev-server probing must not happen without an explicit dev host.
      */
-    public function test_default_dev_probe_failure_is_silent(): void
+    public function test_dev_probe_is_skipped_without_explicit_host(): void
     {
         $this->clear_admin_dev_host_env_for_probe_tests();
         remove_filter( 'sentient_forms_admin_asset_base_url', $this->asset_base_url_filter );
         delete_transient( 'sentient_forms_admin_dev_url' );
 
         $this->http_request_filter = static function () {
-            return new WP_Error( 'http_request_failed', 'Synthetic probe failure' );
+            return new WP_Error( 'unexpected_probe', 'Dev host should not be probed without explicit opt-in host.' );
         };
         add_filter( 'pre_http_request', $this->http_request_filter, 10, 3 );
 
@@ -190,7 +197,7 @@ class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
 
         $this->assertNull(
             $assets->get_dev_notice(),
-            'Implicit localhost probe failures should remain silent in non-dev environments'
+            'Dev host probing should stay disabled unless a host is explicitly provided'
         );
     }
 
@@ -203,10 +210,15 @@ class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
         remove_filter( 'sentient_forms_admin_asset_base_url', $this->asset_base_url_filter );
         delete_transient( 'sentient_forms_admin_dev_url' );
 
-        $this->implicit_probe_notice_filter = static function () {
+        $this->dev_probe_notice_filter = static function () {
             return true;
         };
-        add_filter( 'sentient_forms_admin_show_implicit_dev_probe_failures', $this->implicit_probe_notice_filter );
+        add_filter( 'sentient_forms_admin_show_dev_probe_failures', $this->dev_probe_notice_filter );
+
+        $this->dev_host_filter = static function () {
+            return 'http://localhost:5173/';
+        };
+        add_filter( 'sentient_forms_admin_dev_host', $this->dev_host_filter );
 
         $this->http_request_filter = static function () {
             return new WP_Error( 'http_request_failed', 'Synthetic probe failure' );

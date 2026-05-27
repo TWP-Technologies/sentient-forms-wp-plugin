@@ -82,7 +82,7 @@ Never commit API keys or tenant secrets; store them in WordPress settings or env
 
 ### Admin SPA Asset Overrides
 - Production builds must ship the contents of `assets/dist/` generated via `bun run build:wp`.
-- For local iteration, the plugin automatically probes `http://localhost:5173/`; if a Vite dev server is running there, assets are served from it. You can tailor the host timeout via filters (`sentient_forms_admin_dev_host`, `sentient_forms_admin_dev_timeout`).
+- For local iteration, dev-server assets are opt-in only. Enable them with the `sentient_forms_admin_dev_assets_enabled` filter or `SENTIENT_FORMS_ENABLE_ADMIN_DEV_ASSETS`, then provide a host with `SENTIENT_FORMS_ADMIN_DEV_HOST` or the `sentient_forms_admin_dev_host` filter. You can tailor the host timeout via `sentient_forms_admin_dev_timeout`.
 - To explicitly override the asset location (e.g., custom tunnel), define `SENTIENT_FORMS_ADMIN_ASSET_BASE_URL` or filter `sentient_forms_admin_asset_base_url`. Ensure the alternate location serves the same file structure as `assets/dist/`.
 - The runtime payload published to `window.sentientFormsConfig` exposes `assetBaseUrl`, enabling client-side fetchers to derive absolute URLs when needed.
 

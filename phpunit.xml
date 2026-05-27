@@ -8,7 +8,6 @@
             <exclude>./tests/wordpress-tests-lib</exclude>
             <exclude>./tests/wp-temp</exclude>
             <exclude>./tests/phpunit/tests</exclude>
-            <exclude>./tests/ajax-nonce-test.php</exclude>
         </testsuite>
     </testsuites>
 </phpunit>

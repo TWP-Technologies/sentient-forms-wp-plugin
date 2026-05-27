@@ -133,26 +133,29 @@ $actions = $actions ?? [];
                     </div>
 
                     <div class="sentient-forms-action-card-footer">
-                        <a href="<?php echo admin_url( 'admin.php?page=sentient_forms_forms' ); ?>" class="button button-primary">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=sentient_forms_forms' ) ); ?>" class="button button-primary">
                             <?php _e( 'Configure for Forms', 'sentient-forms' ); ?>
                         </a>
 
                         <?php if ( $action->get_id() === 'spam_analysis' ): ?>
-                            <a href="https://sentientforms.com/docs/actions/spam-analysis/?utm_source=plugin&utm_medium=actions_page"
+                            <a href="<?php echo esc_url( 'https://sentientforms.com/docs/actions/spam-analysis/' ); ?>"
                                class="button button-secondary"
-                               target="_blank">
+                               target="_blank"
+                               rel="noopener noreferrer">
                                 <?php _e( 'Learn More', 'sentient-forms' ); ?>
                             </a>
                         <?php elseif ( $action->get_id() === 'entry_evaluation' ): ?>
-                            <a href="https://sentientforms.com/docs/actions/entry-evaluation/?utm_source=plugin&utm_medium=actions_page"
+                            <a href="<?php echo esc_url( 'https://sentientforms.com/docs/actions/entry-evaluation/' ); ?>"
                                class="button button-secondary"
-                               target="_blank">
+                               target="_blank"
+                               rel="noopener noreferrer">
                                 <?php _e( 'Learn More', 'sentient-forms' ); ?>
                             </a>
                         <?php else: ?>
-                            <a href="https://sentientforms.com/docs/actions/?utm_source=plugin&utm_medium=actions_page"
+                            <a href="<?php echo esc_url( 'https://sentientforms.com/docs/actions/' ); ?>"
                                class="button button-secondary"
-                               target="_blank">
+                               target="_blank"
+                               rel="noopener noreferrer">
                                 <?php _e( 'Learn More', 'sentient-forms' ); ?>
                             </a>
                         <?php endif; ?>
@@ -168,7 +171,7 @@ $actions = $actions ?? [];
                         'We\'re constantly developing new AI-powered actions for Sentient Forms. Have an idea for a new action? Let us know!',
                         'sentient-forms',
                     ); ?></p>
-                <a href="https://sentientforms.com/contact/?utm_source=plugin&utm_medium=actions_page" class="button button-primary" target="_blank">
+                <a href="<?php echo esc_url( 'https://sentientforms.com/contact/' ); ?>" class="button button-primary" target="_blank" rel="noopener noreferrer">
                     <?php _e( 'Request an Action', 'sentient-forms' ); ?>
                 </a>
             </div>

@@ -45,8 +45,13 @@ $forbidden_dirs = [
     '.git',
     '.github',
     '.githooks',
-    'admin-app',
+    'admin-app/.svelte-kit',
+    'admin-app/build',
+    'admin-app/docs',
     'admin-app/node_modules',
+    'admin-app/playwright-report',
+    'admin-app/test-results',
+    'admin-app/tests',
     'agent-logs',
     'build',
     'docs',
@@ -80,7 +85,6 @@ $forbidden_file_patterns = [
     '/\.map$/',
     '/\.env(?:\..*)?$/',
     '/composer\.lock$/',
-    '/bun\.lock$/',
     '/package-lock\.json$/',
     '/pnpm-lock\.yaml$/',
     '/yarn\.lock$/',
@@ -172,6 +176,15 @@ foreach ( $iterator as $item )
         }
     }
 
+    if ( preg_match( '/bun\.lock$/', $relative ) && 'admin-app/bun.lock' !== $relative )
+    {
+        if ( ! $source_tree )
+        {
+            $issues[] = "Forbidden file in package: {$relative}";
+        }
+        continue;
+    }
+
     $extension = strtolower( pathinfo( $relative, PATHINFO_EXTENSION ) );
     if ( ! in_array( $extension, $runtime_extensions, true ) )
     {
@@ -242,6 +255,11 @@ if ( ! $source_tree && ! is_dir( $root . '/assets/dist' ) )
 else
 {
     $issues = array_merge( $issues, validate_compressed_asset_source_metadata( $root ) );
+}
+
+if ( ! $source_tree )
+{
+    $issues = array_merge( $issues, validate_package_composer_metadata( $root ) );
 }
 
 if ( [] !== $issues )
@@ -361,7 +379,7 @@ function validate_readme( string $readme_path, string $plugin_file ): array
         }
     }
 
-    foreach ( [ 'OpenRouter', 'Sentient Forms Managed Execution', 'Data sent', 'Terms', 'Privacy policy' ] as $required_disclosure )
+    foreach ( [ 'OpenRouter', 'Sentient Forms Managed Execution', 'Data sent', 'Terms', 'Privacy policy', 'Realtime Clarification Assistant', 'Gravity Forms' ] as $required_disclosure )
     {
         if ( false === stripos( $readme, $required_disclosure ) )
         {
@@ -369,7 +387,7 @@ function validate_readme( string $readme_path, string $plugin_file ): array
         }
     }
 
-    foreach ( [ 'TWP-Technologies/sentient-forms-wp-plugin', 'bun run build:wp' ] as $required_source_reference )
+    foreach ( [ 'admin-app', 'bun install --frozen-lockfile', 'bun run restore:source', 'bun run build:wp' ] as $required_source_reference )
     {
         if ( false === stripos( $readme, $required_source_reference ) )
         {
@@ -407,12 +425,48 @@ function validate_compressed_asset_source_metadata( string $root ): array
         return [ 'Could not read assets/dist/SOURCE.md.' ];
     }
 
-    foreach ( [ 'TWP-Technologies/sentient-forms-wp-plugin', 'bun run build:wp' ] as $required_source_reference )
+    foreach ( [ 'admin-app', 'bun install --frozen-lockfile', 'bun run restore:source', 'bun run build:wp' ] as $required_source_reference )
     {
         if ( false === stripos( $source, $required_source_reference ) )
         {
             $issues[] = "assets/dist/SOURCE.md is missing '{$required_source_reference}'.";
         }
+    }
+
+    return $issues;
+}
+
+/**
+ * Validate packaged Composer metadata does not describe omitted dev tooling.
+ *
+ * @return array<int,string>
+ */
+function validate_package_composer_metadata( string $root ): array
+{
+    $composer = $root . '/composer.json';
+    if ( ! file_exists( $composer ) )
+    {
+        return [];
+    }
+
+    $decoded = json_decode( (string) file_get_contents( $composer ), true );
+    if ( ! is_array( $decoded ) )
+    {
+        return [ 'Package composer.json is not valid JSON.' ];
+    }
+
+    $issues = [];
+    foreach ( [ 'require-dev', 'scripts' ] as $field )
+    {
+        if ( ! empty( $decoded[ $field ] ) )
+        {
+            $issues[] = "Package composer.json must not include {$field}.";
+        }
+    }
+
+    if ( ! empty( $decoded['config']['allow-plugins'] ) )
+    {
+        $issues[] = 'Package composer.json must not include development allow-plugins config.';
     }
 
     return $issues;

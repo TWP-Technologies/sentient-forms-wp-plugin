@@ -1,5 +1,8 @@
 <?php
 
+/**
+ * @group ajax
+ */
 class AjaxNonceIntegrationTest extends WP_Ajax_UnitTestCase {
     protected static $admin_id;
     private $http_mock;
@@ -12,7 +15,6 @@ class AjaxNonceIntegrationTest extends WP_Ajax_UnitTestCase {
         parent::setUp();
         wp_set_current_user( self::$admin_id );
         update_option( 'sentient_forms_settings', [ 'enforce_nonce_verification' => true ] );
-        add_filter( 'sentient_forms_allow_insecure_nonce_bypass', '__return_false', PHP_INT_MAX );
         $plugin = Sentient_Forms_Plugin::instance();
         $admin  = new Sentient_Forms_Admin( $plugin );
         $admin->init();
@@ -36,7 +38,6 @@ class AjaxNonceIntegrationTest extends WP_Ajax_UnitTestCase {
             remove_filter( 'pre_http_request', $this->http_mock, 10 );
             $this->http_mock = null;
         }
-        remove_filter( 'sentient_forms_allow_insecure_nonce_bypass', '__return_false', PHP_INT_MAX );
         parent::tearDown();
     }
 

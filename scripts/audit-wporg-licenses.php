@@ -269,6 +269,29 @@ function audit_package_runtime_shape( string $root ): array
         $issues[] = 'Package must not include vendor/bin development executables.';
     }
 
+    $composer = $root . '/composer.json';
+    if ( file_exists( $composer ) )
+    {
+        $decoded = json_decode( (string) file_get_contents( $composer ), true );
+        if ( is_array( $decoded ) )
+        {
+            if ( ! empty( $decoded['require-dev'] ) )
+            {
+                $issues[] = 'Package composer.json must not include require-dev metadata.';
+            }
+
+            if ( ! empty( $decoded['scripts'] ) )
+            {
+                $issues[] = 'Package composer.json must not include development scripts.';
+            }
+
+            if ( ! empty( $decoded['config']['allow-plugins'] ) )
+            {
+                $issues[] = 'Package composer.json must not include development allow-plugins config.';
+            }
+        }
+    }
+
     $allowed_vendor_paths = [
         'vendor/woocommerce',
         'vendor/woocommerce/action-scheduler',
@@ -292,8 +315,7 @@ function audit_package_runtime_shape( string $root ): array
             continue;
         }
 
-        $relative = ltrim( str_replace( $root, '', $item->getPathname() ), DIRECTORY_SEPARATOR );
-        $relative = str_replace( DIRECTORY_SEPARATOR, '/', $relative );
+        $relative = normalize_relative_path( $root, $item->getPathname() );
 
         if ( is_allowed_vendor_runtime_path( $relative, $allowed_vendor_paths ) )
         {
@@ -304,6 +326,22 @@ function audit_package_runtime_shape( string $root ): array
     }
 
     return $issues;
+}
+
+/**
+ * Normalize a filesystem path relative to a root directory.
+ */
+function normalize_relative_path( string $root, string $path ): string
+{
+    $normalized_root = str_replace( '\\', '/', rtrim( $root, '/\\' ) );
+    $normalized_path = str_replace( '\\', '/', $path );
+
+    if ( str_starts_with( $normalized_path, $normalized_root . '/' ) )
+    {
+        $normalized_path = substr( $normalized_path, strlen( $normalized_root ) + 1 );
+    }
+
+    return ltrim( $normalized_path, '/' );
 }
 
 /**

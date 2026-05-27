@@ -11,7 +11,7 @@ const projectRoot = path.resolve(__dirname, '..');
 const templatesDir = path.join(__dirname, 'layout-templates');
 const routesDir = path.join(projectRoot, 'src', 'routes');
 
-const sourceFile = path.join(templatesDir, `+layout.${routerType}.ts`);
+const sourceFile = path.join(templatesDir, `layout.${routerType}.ts`);
 const targetFile = path.join(routesDir, '+layout.ts');
 
 if (!existsSync(sourceFile)) {

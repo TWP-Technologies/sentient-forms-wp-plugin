@@ -20,6 +20,8 @@ name: WordPress.org Package Preflight
       - 'scripts/audit-wporg-licenses.php'
       - 'scripts/validate-release-version.php'
       - 'scripts/validate-wporg-readme.php'
+      - 'scripts/verify-wporg-source.php'
+      - 'scripts/write-wporg-release-manifest.php'
       - 'admin-app/**'
       - '.github/workflows/wporg-package.yml'
       - '.github/workflows/release-please.yml'
@@ -42,6 +44,8 @@ name: WordPress.org Package Preflight
       - 'scripts/audit-wporg-licenses.php'
       - 'scripts/validate-release-version.php'
       - 'scripts/validate-wporg-readme.php'
+      - 'scripts/verify-wporg-source.php'
+      - 'scripts/write-wporg-release-manifest.php'
       - 'admin-app/**'
       - '.github/workflows/wporg-package.yml'
       - '.github/workflows/release-please.yml'
@@ -130,6 +134,7 @@ jobs:
       - name: Run source-tree WordPress.org preflight
         run: |
           php scripts/validate-release-version.php
+          php scripts/verify-wporg-source.php
           php scripts/scan-wporg-package.php --source-tree
           php scripts/audit-wporg-licenses.php
           php scripts/validate-wporg-readme.php --offline
@@ -137,7 +142,7 @@ jobs:
       - name: Build clean WordPress.org package
         id: package
         run: |
-          package_base="${RUNNER_TEMP}/sentient-forms-wporg"
+          package_base="${GITHUB_WORKSPACE}/.wporg-package"
           php scripts/build-wporg-package.php "$package_base"
           package_dir="${package_base}/sentient-forms"
           test -d "$package_dir"
@@ -149,15 +154,45 @@ jobs:
           php scripts/scan-wporg-package.php "$package_dir"
           php scripts/audit-wporg-licenses.php --package "$package_dir"
           php scripts/validate-wporg-readme.php --offline "$package_dir"
+          php scripts/verify-wporg-source.php "$package_dir"
+
+      - name: Run Plugin Check
+        uses: wordpress/plugin-check-action@v1.1.6
+        with:
+          build-dir: ${{ steps.package.outputs.package-dir }}
+          slug: sentient-forms
+          strict: true
+          exclude-directories: vendor
 
       - name: Run official WordPress.org readme validator
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.official_readme_validation }}
         run: php scripts/validate-wporg-readme.php "${{ steps.package.outputs.package-dir }}"
 
+      - name: Create package zip and manifest
+        id: package-artifacts
+        run: |
+          set -euo pipefail
+          package_dir="${{ steps.package.outputs.package-dir }}"
+          zip_path="${GITHUB_WORKSPACE}/.wporg-package/sentient-forms.zip"
+          sha_path="${zip_path}.sha256"
+          manifest_path="${GITHUB_WORKSPACE}/.wporg-package/sentient-forms-wporg-manifest.json"
+          cd "$(dirname "${package_dir}")"
+          zip -qry "${zip_path}" "$(basename "${package_dir}")"
+          sha256sum "${zip_path}" > "${sha_path}"
+          cd "${GITHUB_WORKSPACE}"
+          php scripts/write-wporg-release-manifest.php "${package_dir}" "${zip_path}" "${manifest_path}"
+          echo "zip-path=${zip_path}" >> "$GITHUB_OUTPUT"
+          echo "sha-path=${sha_path}" >> "$GITHUB_OUTPUT"
+          echo "manifest-path=${manifest_path}" >> "$GITHUB_OUTPUT"
+
       - name: Upload package artifact
         uses: actions/upload-artifact@v7
         with:
           name: sentient-forms-wporg-package
-          path: ${{ steps.package.outputs.package-dir }}
+          path: |
+            ${{ steps.package.outputs.package-dir }}
+            ${{ steps.package-artifacts.outputs.zip-path }}
+            ${{ steps.package-artifacts.outputs.sha-path }}
+            ${{ steps.package-artifacts.outputs.manifest-path }}
           if-no-files-found: error
           retention-days: 7

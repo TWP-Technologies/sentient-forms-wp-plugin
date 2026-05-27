@@ -4,7 +4,7 @@ Tags: forms, ai, gravity-forms, openrouter, automation
 Requires at least: 6.8.0
 Tested up to: 7.0
 Requires PHP: 8.2
-Stable tag: 0.1.0
+Stable tag: 0.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -12,7 +12,7 @@ Run AI-powered form actions from WordPress with local settings, local logs, and 
 
 == Description ==
 
-Sentient Forms adds AI-assisted actions to WordPress forms. Gravity Forms is the first supported form builder.
+Sentient Forms adds AI-assisted actions to WordPress forms. Gravity Forms is required for the current form-action workflows; other form builders are not supported in this release.
 
 The plugin is moving to a local-first architecture. Site-owned configuration, action definitions, form mappings, execution logs, provider settings, and saved results are stored in your WordPress database.
 
@@ -63,6 +63,16 @@ Administrator-configured webhooks:
 * Terms: provided by the administrator-chosen webhook receiver.
 * Privacy policy: provided by the administrator-chosen webhook receiver.
 
+Realtime Clarification Assistant:
+
+* Service: OpenRouter direct execution or Sentient Forms Managed Execution, depending on the provider path selected by the administrator.
+* Endpoint: the same provider endpoint disclosed above for the selected execution path.
+* When used: only when an administrator maps the Realtime Clarification Assistant to a Gravity Forms form and enables realtime suggestions for that form.
+* Data sent: visible form field values collected before submission, realtime action instructions, form metadata needed to map suggestions to fields, selected model identifier, and request metadata needed to return suggestions.
+* Account required: depends on the selected provider path. OpenRouter direct execution requires an OpenRouter account and API key. Managed execution may require a Sentient Forms account.
+* Visitor disclosure: site owners should disclose realtime AI suggestions in their public privacy policy or form copy before enabling this feature, because selected in-progress visitor field values can be sent before final form submission.
+* Terms and privacy policy: the same provider terms and privacy policy disclosed above for the selected execution path.
+
 No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure. No telemetry event should be queued or sent until an administrator opts in and a Sentient Forms site identity exists.
 
 == Installation ==
@@ -71,7 +81,7 @@ No OpenRouter or Sentient AI execution request should be sent until an administr
 2. Activate Sentient Forms in WordPress.
 3. Open the Sentient Forms admin screen.
 4. Connect OpenRouter for direct local-first execution, or connect Sentient Forms Managed Execution if you want managed paid usage.
-5. Create or select an action, map it to a Gravity Forms form, and run a test submission.
+5. Create or select an action, map it to a Gravity Forms form, and run a test submission. Current form-action workflows require Gravity Forms.
 
 == Frequently Asked Questions ==
 
@@ -93,13 +103,17 @@ The plugin includes WordPress personal data export/erase integration for local e
 
 = Which form builders are supported? =
 
-Gravity Forms is the first supported adapter.
+Gravity Forms is required for the current form-action workflows. Other form builders are planned but are not supported in this release.
 
 = Where is the source for the compressed admin JavaScript? =
 
-The JavaScript and CSS files in `assets/dist` are generated from the SvelteKit admin app source. Public source and build tooling for this release are published at https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.1.0. Build with `bun install --frozen-lockfile` and `bun run build:wp` from the `admin-app/` directory.
+The JavaScript and CSS files in `assets/dist` are generated from the SvelteKit admin app source. The exact source and build tooling for the packaged admin app are included in the plugin package under `admin-app`; source files are stored with WordPress.org-safe filenames plus `admin-app/source/source-map.json`. Build from the `admin-app/` directory with `bun install --frozen-lockfile`, `bun run restore:source`, and `bun run build:wp`.
 
 == Changelog ==
+
+= 0.1.1 =
+
+* Prepare the WordPress.org production package pipeline, include admin app source for generated assets, and harden serviceware disclosures.
 
 = 0.1.0 =
 

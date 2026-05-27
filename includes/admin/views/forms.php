@@ -597,18 +597,29 @@ if ( $_form_adapter_registry )
             {
                 const $button = $( this );
                 const $result = $( '#sentient-forms-form-settings-result' );
+                const setResultMessage = function( className, message )
+                {
+                    $result.empty();
+                    $( '<span />' ).addClass( className ).text( message ).appendTo( $result );
+                };
+                const setResultSpinner = function( message )
+                {
+                    $result.empty();
+                    $( '<span />' ).addClass( 'spinner is-active' ).appendTo( $result );
+                    $result.append( document.createTextNode( ' ' + message ) );
+                };
 
                 // Ensure sentientFormsAdmin is defined before trying to access its properties
                 if ( typeof sentientFormsAdmin === 'undefined' || !sentientFormsAdmin.i18n || !sentientFormsAdmin.ajaxUrl ||
                      !sentientFormsAdmin.nonce )
                 {
-                    $result.html( '<span class="error">' + 'Critical JavaScript error: Admin data not loaded.' + '</span>' );
+                    setResultMessage( 'error', 'Critical JavaScript error: Admin data not loaded.' );
                     console.error( 'sentientFormsAdmin or its properties are not defined for AJAX call.' );
                     return;
                 }
 
                 $button.prop( 'disabled', true );
-                $result.html( '<span class="spinner is-active"></span> ' + sentientFormsAdmin.i18n.savingSettings );
+                setResultSpinner( sentientFormsAdmin.i18n.savingSettings );
 
                 $.ajax( {
                     url      : sentientFormsAdmin.ajaxUrl, // CORRECTED: Use sentientFormsAdmin
@@ -624,7 +635,7 @@ if ( $_form_adapter_registry )
                     {
                         if ( response.success )
                         {
-                            $result.html( '<span class="success">' + response.data.message + '</span>' );
+                            setResultMessage( 'success', response.data.message );
                             // Update the `formsForModalPopulation` array with the new settings
                             const formId    = $( '#sentient-forms-form-id' ).val();
                             const adapterId = $( '#sentient-forms-adapter-id' ).val();
@@ -637,7 +648,7 @@ if ( $_form_adapter_registry )
                             setTimeout( function()
                             {
                                 modal.removeClass( 'sentient-forms-modal-open' );
-                                $result.html( '' ); // Clear message
+                                $result.empty(); // Clear message
                                 // No full page reload, just update the table row visually if needed or rely on next open
                                 // For simplicity, we'll just close the modal. A full table refresh is more complex.
                                 // Or, you could update the specific row in the main table.
@@ -647,15 +658,20 @@ if ( $_form_adapter_registry )
                             }, 1500 );
                         } else
                         {
-                            $result.html( '<span class="error">' + ( sentientFormsAdmin.i18n.settingsFailed || 'Settings failed: ' ) +
-                                          ( response.data.message || 'Unknown error' ) + '</span>' );
+                            setResultMessage(
+                                'error',
+                                ( sentientFormsAdmin.i18n.settingsFailed || 'Settings failed: ' ) +
+                                ( response.data.message || 'Unknown error' )
+                            );
                             $button.prop( 'disabled', false );
                         }
                     },
                     error    : function( jqXHR, textStatus, errorThrown )
                     {
-                        $result.html( '<span class="error">' + ( sentientFormsAdmin.i18n.settingsError || 'An error occurred.' ) + ' ' + errorThrown +
-                                      '</span>' );
+                        setResultMessage(
+                            'error',
+                            ( sentientFormsAdmin.i18n.settingsError || 'An error occurred.' ) + ' ' + errorThrown
+                        );
                         console.error( 'AJAX Error: ', textStatus, errorThrown, jqXHR.responseText );
                         $button.prop( 'disabled', false );
                     },
