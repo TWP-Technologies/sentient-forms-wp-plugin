@@ -9,7 +9,9 @@ const MIN_PORT = 1;
 const MAX_PORT = 65_535;
 
 function isBunNodeShim(candidate) {
-	return typeof candidate === 'string' && candidate.includes('/tmp/bun-node-');
+	if (typeof candidate !== 'string') return false;
+	const normalized = candidate.replaceAll('\\', '/').toLowerCase();
+	return normalized.includes('/tmp/bun-node-') || normalized.includes('/temp/bun-node-');
 }
 
 function resolveRealNodeCommand() {

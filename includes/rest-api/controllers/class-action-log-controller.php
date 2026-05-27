@@ -1702,7 +1702,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                     'type'        => [ 'string', 'null' ],
                 ],
                 'credits_used' => [
-                    'description' => __( 'Sentient Forms managed credits debited; zero for direct local provider runs.', 'sentient-forms' ),
+					'description' => __( 'Sentient Forms managed action credits debited; zero for direct local provider runs.', 'sentient-forms' ),
                     'type'        => 'integer',
                 ],
                 'error_code' => [
@@ -1731,7 +1731,7 @@ class Sentient_Forms_Action_Log_Controller extends Abstract_Sentient_Forms_Base_
                     'readonly'    => true,
                 ],
                 'usage_cost' => [
-                    'description' => __( 'Human-readable billing route and provider cost summary.', 'sentient-forms' ),
+					'description' => __( 'Human-readable billing route and usage summary.', 'sentient-forms' ),
                     'type'        => 'object',
                     'readonly'    => true,
                 ],

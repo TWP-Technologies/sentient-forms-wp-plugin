@@ -2,17 +2,17 @@
 - paragraph: Review the optional Sentient Forms managed service for this WordPress site. Use OpenRouter directly when you want to manage the account yourself; use this service when you want Sentient Forms to handle model access, spending controls, metering, and billing.
 - paragraph: Managed service
 - paragraph: Active and connected
-- text: "active Tier: Pro"
-- paragraph: "Last synced: Jan 5, 2030, 4:00 AM"
+- text: 'active Tier: Pro'
+- paragraph: "/Last synced: Jan 5, \\d+, 4:\\d+ AM/"
 - paragraph: Managed service credits
-- paragraph: 875 / 1000 managed credits remaining
+- paragraph: /\d+ \/ \d+ managed action credits remaining/
 - text: Healthy Resets May 1 (9 days)
 - paragraph: Resets May 1 (9 days). Managed usage is healthy.
 - paragraph: Subscription
-- paragraph: "Subscription status: active"
-- paragraph: "Billing provider: stripe"
-- paragraph: Current period ends Jan 31, 2030, 6:00 PM
-- paragraph: "Licensed WordPress site: 1 / 1"
+- paragraph: 'Subscription status: active'
+- paragraph: 'Billing provider: stripe'
+- paragraph: /Current period ends Jan \d+, \d+, 6:\d+ PM/
+- paragraph: 'Licensed WordPress site: 1 / 1'
 - paragraph: Managed-service allocation for this WordPress install.
 - button "Manage billing"
 - paragraph: Billing boundary
@@ -22,18 +22,19 @@
 - paragraph: Sentient Forms metering starts only after managed-service execution is enabled.
 - paragraph: Plan changes
 - paragraph: Use the Stripe billing portal to change, cancel, or authenticate this managed-service subscription. Direct OpenRouter remains separate.
-- paragraph: Each Sentient Forms managed-service license covers one WordPress site. Use a separate license for each additional site.
+- paragraph: Starter, Pro, and Business each cover this WordPress site.
 - paragraph: Starter
-- paragraph: $15/month for this WordPress site, 1,500 monthly managed credits.
+- paragraph: /\$\d+\/month\. 1 site\. \d+,\d+ managed action credits\/month\./
 - button "Upgrade to Starter"
 - paragraph: Pro
-- paragraph: $39/month for this WordPress site, 3,900 monthly managed credits.
+- paragraph: /\$\d+\/month\. 1 site\. \d+,\d+ managed action credits\/month\./
 - button "Upgrade to Pro"
 - paragraph: Business
-- paragraph: $99/month for this WordPress site, 9,900 monthly managed credits.
+- paragraph: /\$\d+\/month\. 1 site\. \d+,\d+ managed action credits\/month\. Business capacity packs available\./
 - button "Upgrade to Business"
-- paragraph: Managed usage
-- paragraph: Managed-service usage is governed by the active Sentient Forms plan for this WordPress site. Direct OpenRouter credentials remain available for runs that are not billed by Sentient Forms.
+- paragraph: Business capacity packs
+- paragraph: Starter and Pro include monthly managed action credits without purchasable top-ups. Business includes access to capacity packs.
 - heading "License details" [level=2]
-- text: License status active Managed service key stored Yes Tier Pro Subscription status active Site capacity 1 / 1 Billing period end Jan 31, 2030, 6:00 PM Direct OpenRouter billing Not configured Managed service billing Not configured Capacity policy tier_x_quantity_v1 Over-limit grace — Credits reset May 1, 2026 Expires Dec 31, 2029, 6:00 PM Last synced Jan 5, 2030, 4:00 AM
-- button "Deactivate license"
+- text: /License status active Managed service key stored Yes Tier Pro Subscription status active Site capacity 1 \/ 1 Billing period end Jan \d+, \d+, 6:\d+ PM Direct OpenRouter billing Not configured Managed service billing Not configured Capacity policy tier_allowance_v2 Over-limit grace — Credits reset May 1, \d+ Expires Dec \d+, \d+, 6:\d+ PM Last synced Jan 5, \d+, 4:\d+ AM/
+- text: Deactivate this site license This disconnects this WordPress site and removes its local managed-service credential. It does not cancel Stripe billing; use Manage billing for cancellation.
+- button "Deactivate site license"

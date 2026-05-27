@@ -134,6 +134,36 @@ class Sentient_Forms_Managed_Service_Client
     }
 
     /**
+     * Create a Business-only managed-service top-up Checkout session.
+     *
+     * @param array<string, mixed> $payload Top-up checkout payload.
+     *
+     * @return array<string, mixed>|WP_Error
+     */
+    public function create_top_up_checkout_session( string $proxy_api_key, array $payload ): array | WP_Error
+    {
+        $proxy_api_key = $this->normalize_proxy_api_key( $proxy_api_key, 'sentient_managed_billing_missing_proxy_key' );
+        if ( is_wp_error( $proxy_api_key ) )
+        {
+            return $proxy_api_key;
+        }
+
+        $payload = $this->normalize_top_up_checkout_payload( $payload );
+        if ( is_wp_error( $payload ) )
+        {
+            return $payload;
+        }
+
+        return $this->client->post(
+            '/billing/checkout/top-up-session',
+            $payload,
+            [
+                'bearer_token' => $proxy_api_key,
+            ]
+        );
+    }
+
+    /**
      * Start a first-time managed-service Stripe Checkout session.
      *
      * This route intentionally does not require a proxy key because it is the
@@ -346,6 +376,32 @@ class Sentient_Forms_Managed_Service_Client
      *
      * @return array<string, mixed>|WP_Error
      */
+    private function normalize_top_up_checkout_payload( array $payload ): array | WP_Error
+    {
+        $normalized = $this->normalize_checkout_payload( $payload );
+        if ( is_wp_error( $normalized ) )
+        {
+            return $normalized;
+        }
+
+        if ( ! isset( $payload['pack_code'] ) || ! is_scalar( $payload['pack_code'] ) || '' === trim( (string) $payload['pack_code'] ) )
+        {
+            return new WP_Error(
+                'sentient_managed_billing_invalid_payload',
+                __( 'Managed billing top-up payload is missing pack_code.', 'sentient-forms' )
+            );
+        }
+
+        $normalized['pack_code'] = sanitize_key( (string) $payload['pack_code'] );
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>|WP_Error
+     */
     private function normalize_managed_checkout_start_payload( array $payload ): array | WP_Error
     {
         $normalized = [];
@@ -395,6 +451,9 @@ class Sentient_Forms_Managed_Service_Client
         }
 
         $normalized['plan_code']                       = sanitize_key( (string) $payload['plan_code'] );
+        $normalized['billing_interval']                = isset( $payload['billing_interval'] ) && is_scalar( $payload['billing_interval'] )
+            ? sanitize_key( (string) $payload['billing_interval'] )
+            : 'monthly';
         $normalized['site_url']                        = $site_url;
         $normalized['local_site_identifier']           = sanitize_text_field( (string) $payload['local_site_identifier'] );
         $normalized['disclosure_version']              = sanitize_text_field( (string) $payload['disclosure_version'] );
@@ -414,6 +473,14 @@ class Sentient_Forms_Managed_Service_Client
             return new WP_Error(
                 'sentient_managed_checkout_invalid_plan',
                 __( 'Choose a valid managed-service plan.', 'sentient-forms' )
+            );
+        }
+
+        if ( 'monthly' !== $normalized['billing_interval'] )
+        {
+            return new WP_Error(
+                'sentient_managed_checkout_invalid_interval',
+                __( 'Monthly managed-service billing is the only public launch checkout interval.', 'sentient-forms' )
             );
         }
 

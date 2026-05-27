@@ -41,7 +41,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 						over_limit: false,
 						blocked_new_activations: false,
 						grace_expires_at: null,
-						capacity_policy: 'tier_x_quantity_v1'
+						capacity_policy: 'tier_allowance_v2'
 					}
 				})
 			})
@@ -659,7 +659,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 						over_limit: false,
 						blocked_new_activations: false,
 						grace_expires_at: null,
-						capacity_policy: 'tier_x_quantity_v1'
+						capacity_policy: 'tier_allowance_v2'
 					}
 				})
 			})
@@ -671,7 +671,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByTestId('licensing-overview-card')).toBeVisible();
 		await expect(page.getByTestId('licensing-status-badge')).toContainText('active');
 		await expect(page.getByTestId('licensing-credits-headline')).toContainText(
-			'Low managed credits: 8 / 100'
+			'Low managed action credits: 8 / 100'
 		);
 		await expect(page.getByTestId('licensing-credit-severity')).toContainText('Low');
 		await expect(page.getByTestId('licensing-reset-summary')).toContainText('Resets');

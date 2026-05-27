@@ -215,24 +215,24 @@ export function buildCreditPresentation(
 			? clampPercentage(Math.round((balance / quota) * 100))
 			: null;
 
-	let headline = 'Managed credit balance unavailable';
-	let calloutTitle = 'Managed credit balance unavailable';
+	let headline = 'Managed action credit balance unavailable';
+	let calloutTitle = 'Managed action credit balance unavailable';
 	if (balance !== null && quota !== null) {
-		headline = `${balance} / ${quota} managed credits remaining`;
+		headline = `${balance} / ${quota} managed action credits remaining`;
 	}
 
 	if (hasNegativeBalance && balance !== null) {
-		headline = `Negative managed balance: ${balance} credits`;
-		calloutTitle = 'Negative managed credit balance';
+		headline = `Negative managed action credit balance: ${balance} credits`;
+		calloutTitle = 'Negative managed action credit balance';
 	} else if (severity === 'critical') {
-		headline = 'No managed credits remaining';
-		calloutTitle = 'No managed credits remaining';
+		headline = 'No managed action credits remaining';
+		calloutTitle = 'No managed action credits remaining';
 	} else if (severity === 'warning' && balance !== null && quota !== null) {
-		headline = `Low managed credits: ${balance} / ${quota}`;
-		calloutTitle = 'Low managed credits remaining';
+		headline = `Low managed action credits: ${balance} / ${quota}`;
+		calloutTitle = 'Low managed action credits remaining';
 	} else if (severity === 'unknown' && balance !== null) {
-		headline = `${balance} managed credits remaining`;
-		calloutTitle = 'Managed credit balance unavailable';
+		headline = `${balance} managed action credits remaining`;
+		calloutTitle = 'Managed action credit balance unavailable';
 	} else if (severity === 'normal') {
 		calloutTitle = 'Managed usage healthy';
 	}
@@ -247,7 +247,7 @@ export function buildCreditPresentation(
 	} else if (severity === 'critical') {
 		detail = `Managed-service runs may pause until credits reset or the plan changes. ${resetSummary}.`;
 	} else if (severity === 'unknown') {
-		detail = `Managed credit details are currently unavailable. ${resetSummary}.`;
+		detail = `Managed action credit details are currently unavailable. ${resetSummary}.`;
 	}
 
 	return {

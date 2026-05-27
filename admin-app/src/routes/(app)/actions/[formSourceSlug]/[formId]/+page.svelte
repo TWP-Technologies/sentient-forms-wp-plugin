@@ -5190,7 +5190,7 @@
 											/>
 										</div>
 										<p class="sf:text-xs sf:text-slate-500 sf:mb-3">
-											Delay execution to reduce peak load. Managed credit pricing is calculated at
+											Delay execution to reduce peak load. Managed action credit pricing is calculated at
 											execution time.
 										</p>
 

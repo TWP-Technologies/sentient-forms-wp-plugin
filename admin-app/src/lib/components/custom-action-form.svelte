@@ -111,7 +111,7 @@
 			value: item.templateId,
 			label: `${definitionLabel(item.definition)}${
 				item.definition.baseCreditCost !== null && item.definition.baseCreditCost !== undefined
-					? ` (${item.definition.baseCreditCost} managed credits)`
+					? ` (${item.definition.baseCreditCost} managed action credits)`
 					: ''
 			}`
 		}))

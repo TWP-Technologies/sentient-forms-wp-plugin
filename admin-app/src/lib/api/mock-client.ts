@@ -27,7 +27,9 @@ import type {
 	LicenseActivationResult,
 	LicenseInfoResponse,
 	PluginSettingsResponse,
-	TelemetrySettingsResponse
+	TelemetrySettingsResponse,
+	TopUpCheckoutSessionRequest,
+	TopUpCheckoutSessionResponse
 } from './types';
 
 type AsyncSettingsPayload = {
@@ -150,7 +152,7 @@ export class MockSentientFormsApiClient {
 			plan: {
 				code: this.creditBalance.tier?.code ?? 'starter',
 				display_name: this.creditBalance.tier?.display_name ?? 'Starter',
-				monthly_credit_quota: this.creditBalance.tier?.monthly_credit_quota ?? 100,
+				monthly_credit_quota: this.creditBalance.tier?.monthly_credit_quota ?? 1000,
 				site_limit: 1
 			},
 			account: {
@@ -158,7 +160,7 @@ export class MockSentientFormsApiClient {
 				tier: {
 					code: this.creditBalance.tier?.code ?? 'starter',
 					display_name: this.creditBalance.tier?.display_name ?? 'Starter',
-					monthly_credit_quota: this.creditBalance.tier?.monthly_credit_quota ?? 100,
+					monthly_credit_quota: this.creditBalance.tier?.monthly_credit_quota ?? 1000,
 					site_limit: 1
 				}
 			},
@@ -174,12 +176,12 @@ export class MockSentientFormsApiClient {
 					current_period_start: new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString(),
 					current_period_end: new Date(Date.now() + 23 * 24 * 3600 * 1000).toISOString(),
 					trial_end: null,
-					provider_price_id: 'price_mock_starter'
+				provider_price_id: 'price_mock_starter'
 				}
 			},
 			credits: {
 				current_balance: this.creditBalance.current_balance,
-				tier_quota: this.creditBalance.tier?.monthly_credit_quota ?? 100,
+				tier_quota: this.creditBalance.tier?.monthly_credit_quota ?? 1000,
 				ledger_delta: this.creditBalance.ledger_delta ?? 0,
 				top_up_available: 0
 			},
@@ -191,7 +193,7 @@ export class MockSentientFormsApiClient {
 				over_limit: false,
 				blocked_new_activations: false,
 				grace_expires_at: null,
-				capacity_policy: 'tier_x_quantity_v1'
+				capacity_policy: 'tier_allowance_v2'
 			},
 			policy: {
 				paid_trial_days: 14,
@@ -237,6 +239,24 @@ export class MockSentientFormsApiClient {
 			session_id: `bps_mock_${Date.now()}`,
 			portal_url: `https://billing.stripe.com/p/session/mock?return_url=${target}`,
 			customer_id: 'cus_mock_123'
+		};
+	}
+
+	async createTopUpCheckoutSession(
+		payload: TopUpCheckoutSessionRequest
+	): Promise<TopUpCheckoutSessionResponse> {
+		const creditsByPack: Record<string, number> = {
+			top_up_small: 1000,
+			top_up_medium: 5000,
+			top_up_large: 10000
+		};
+		const packCode = payload.pack_code;
+		return {
+			session_id: `cs_top_up_mock_${Date.now()}`,
+			checkout_url: `https://checkout.stripe.com/c/pay/mock-${packCode}`,
+			customer_id: 'cus_mock_123',
+			top_up_credits: creditsByPack[packCode] ?? 1000,
+			pack_code: packCode
 		};
 	}
 

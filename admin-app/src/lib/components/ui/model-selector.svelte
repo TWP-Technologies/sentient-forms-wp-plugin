@@ -1161,7 +1161,7 @@
 			return `Managed Service credit estimate from ${source}${suffix}.`;
 		}
 
-		return `Provider-cost estimate from ${source}${suffix}. Local OpenRouter runs do not spend managed credits. Provider charges are billed by OpenRouter or the configured provider account.`;
+		return `Provider-billed estimate from ${source}${suffix}. Local OpenRouter runs do not spend managed action credits. Provider charges are billed by OpenRouter or the configured provider account.`;
 	}
 
 	function formatUsd(amount: number): string {
@@ -1324,7 +1324,7 @@
 					<div class="sf:w-full sf:min-w-0 sf:lg:w-80 sf:lg:flex-none">
 						<div class="sf:rounded-md sf:bg-slate-50 sf:px-3 sf:py-2 sf:text-left sf:lg:text-right">
 							<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">
-								{selectedProvider === MANAGED_PROVIDER ? 'Managed credits' : 'Provider cost'}
+								{selectedProvider === MANAGED_PROVIDER ? 'Managed action credits' : 'Provider estimate'}
 							</p>
 							<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
 								{pricingEstimateLabel()}
@@ -2145,7 +2145,7 @@
 								</div>
 								<div class="sf:rounded-md sf:bg-white sf:p-3">
 									<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">
-										{selectedProvider === MANAGED_PROVIDER ? 'Managed credits' : 'Provider price'}
+										{selectedProvider === MANAGED_PROVIDER ? 'Managed action credits' : 'Provider price'}
 									</p>
 									<p class="sf:mt-1 sf:text-sm sf:font-medium sf:text-slate-900">
 										{detailModel ? priceLabel(detailModel) : 'Route-defined'}

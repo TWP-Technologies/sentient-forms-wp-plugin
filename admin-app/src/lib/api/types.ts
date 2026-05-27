@@ -53,8 +53,24 @@ export interface BillingCheckoutSessionResponse {
 	subscription_id?: string | null;
 }
 
+export interface TopUpCheckoutSessionRequest {
+	pack_code: string;
+	success_url: string;
+	cancel_url: string;
+	quantity?: number;
+}
+
+export interface TopUpCheckoutSessionResponse {
+	session_id: string;
+	checkout_url: string;
+	customer_id: string;
+	top_up_credits: number;
+	pack_code: string;
+}
+
 export interface ManagedCheckoutStartRequest {
 	plan_code: string;
+	billing_interval?: 'monthly';
 	success_url: string;
 	cancel_url: string;
 	disclosure_version: string;
@@ -66,6 +82,7 @@ export interface ManagedCheckoutStartResponse {
 	checkout_session_id: string;
 	checkout_url: string;
 	plan_code?: string;
+	billing_interval?: string;
 	status?: string;
 	consent_recorded?: boolean;
 	consent_id?: number;

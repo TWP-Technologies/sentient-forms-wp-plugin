@@ -425,7 +425,7 @@
 		const route = entry.usage_cost?.route;
 		const known = entry.usage_cost?.known;
 		if (route === 'openrouter_direct' && known === false) {
-			return 'OpenRouter direct run. Provider cost was not returned with this execution.';
+			return 'OpenRouter direct run. Provider-billed estimate was not returned with this execution.';
 		}
 		if (route === 'openrouter_direct') {
 			return 'OpenRouter direct run. Provider charges belong to the site owner OpenRouter account.';
@@ -437,7 +437,9 @@
 	}
 
 	function usagePolicyLabel(entry: ActionLogEntry): string {
-		return entry.usage_cost?.route === 'sentient_forms_managed' ? 'Managed credits' : 'Provider cost';
+		return entry.usage_cost?.route === 'sentient_forms_managed'
+			? 'Managed action credits'
+			: 'Provider estimate';
 	}
 
 	function storedResult(entry: ActionLogEntry): unknown {

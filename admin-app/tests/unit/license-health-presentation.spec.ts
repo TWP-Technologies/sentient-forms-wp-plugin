@@ -25,20 +25,20 @@ function withCredits(balance: number, quota: number | null): CreditBalanceRespon
 }
 
 describe('license-health-presentation', () => {
-	it('marks managed credits as normal when usage is above warning threshold', () => {
+	it('marks managed action credits as normal when usage is above warning threshold', () => {
 		const presentation = buildCreditPresentation(withCredits(75, 100), 'Resets Mar 1 (5 days)');
 		expect(presentation.severity).toBe('normal');
-		expect(presentation.headline).toBe('75 / 100 managed credits remaining');
+		expect(presentation.headline).toBe('75 / 100 managed action credits remaining');
 		expect(presentation.detail).toContain('Managed usage is healthy.');
 		expect(presentation.percentage).toBe(75);
 		expect(presentation.quotaCta).toBeNull();
 	});
 
-	it('marks managed credits as warning when usage is at or below 10%', () => {
+	it('marks managed action credits as warning when usage is at or below 10%', () => {
 		expect(resolveCreditSeverity(10, 100)).toBe('warning');
 		expect(resolveCreditSeverity(1, 100)).toBe('warning');
 		const presentation = buildCreditPresentation(withCredits(10, 100), 'Resets Mar 1 (5 days)');
-		expect(presentation.headline).toBe('Low managed credits: 10 / 100');
+		expect(presentation.headline).toBe('Low managed action credits: 10 / 100');
 		expect(presentation.detail).toContain('Low balance');
 		expect(presentation.quotaCta).toEqual({
 			label: 'Review billing',
@@ -48,10 +48,10 @@ describe('license-health-presentation', () => {
 		});
 	});
 
-	it('marks managed credits as critical when balance is zero', () => {
+	it('marks managed action credits as critical when balance is zero', () => {
 		const presentation = buildCreditPresentation(withCredits(0, 100), 'Resets Mar 1 (5 days)');
 		expect(presentation.severity).toBe('critical');
-		expect(presentation.headline).toBe('No managed credits remaining');
+		expect(presentation.headline).toBe('No managed action credits remaining');
 		expect(presentation.detail).toContain('Managed-service runs may pause until credits reset');
 		expect(presentation.percentage).toBe(0);
 		expect(presentation.quotaCta?.enabled).toBe(true);
@@ -61,7 +61,7 @@ describe('license-health-presentation', () => {
 	it('returns unknown severity when quota metadata is missing', () => {
 		const presentation = buildCreditPresentation(withCredits(42, null), 'Resets Mar 1 (5 days)');
 		expect(presentation.severity).toBe('unknown');
-		expect(presentation.headline).toBe('42 managed credits remaining');
+		expect(presentation.headline).toBe('42 managed action credits remaining');
 		expect(presentation.detail).toContain('currently unavailable');
 		expect(presentation.percentage).toBeNull();
 		expect(presentation.quotaCta).toEqual({
@@ -77,7 +77,7 @@ describe('license-health-presentation', () => {
 		expect(presentation.severity).toBe('unknown');
 		expect(presentation.balance).toBeNull();
 		expect(presentation.quota).toBeNull();
-		expect(presentation.headline).toBe('Managed credit balance unavailable');
+		expect(presentation.headline).toBe('Managed action credit balance unavailable');
 		expect(presentation.quotaCta?.enabled).toBe(false);
 		expect(presentation.quotaCta?.action).toBe('none');
 	});
@@ -116,8 +116,8 @@ describe('license-health-presentation', () => {
 		);
 
 		expect(presentation.severity).toBe('critical');
-		expect(presentation.calloutTitle).toBe('Negative managed credit balance');
-		expect(presentation.headline).toBe('Negative managed balance: -4 credits');
+		expect(presentation.calloutTitle).toBe('Negative managed action credit balance');
+		expect(presentation.headline).toBe('Negative managed action credit balance: -4 credits');
 		expect(presentation.detail).toContain('settled above its estimate');
 		expect(presentation.percentage).toBe(0);
 		expect(presentation.quotaCta).toEqual({

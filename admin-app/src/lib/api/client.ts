@@ -82,6 +82,8 @@ import type {
 	SentientManagedSetupResponse,
 	TelemetrySettingsResponse,
 	PluginSettingsResponse,
+	TopUpCheckoutSessionRequest,
+	TopUpCheckoutSessionResponse,
 	UpdateFormMappingRequest
 } from '$lib/api/types';
 
@@ -251,6 +253,21 @@ export class SentientFormsApiClient {
 	): Promise<BillingPortalSessionResponse> {
 		const response = await this.request<RestEnvelope<BillingPortalSessionResponse>>(
 			'license/billing/portal-session',
+			{
+				method: 'POST',
+				body: payload,
+				...options
+			}
+		);
+		return this.unwrap(response);
+	}
+
+	async createTopUpCheckoutSession(
+		payload: TopUpCheckoutSessionRequest,
+		options: RequestOptions = {}
+	): Promise<TopUpCheckoutSessionResponse> {
+		const response = await this.request<RestEnvelope<TopUpCheckoutSessionResponse>>(
+			'license/billing/top-up-session',
 			{
 				method: 'POST',
 				body: payload,

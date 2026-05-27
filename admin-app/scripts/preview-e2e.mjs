@@ -15,13 +15,8 @@ function getNodeCommand() {
 	return process.platform === 'win32' ? 'node.exe' : 'node';
 }
 
-function getViteCommand() {
-	return path.resolve(
-		process.cwd(),
-		'node_modules',
-		'.bin',
-		process.platform === 'win32' ? 'vite.cmd' : 'vite'
-	);
+function getViteCliPath() {
+	return path.resolve(process.cwd(), 'node_modules', 'vite', 'bin', 'vite.js');
 }
 
 function parsePort(rawValue, fieldName) {
@@ -90,7 +85,8 @@ async function main() {
 	await ensureExitCodeZero('node', ['scripts/kill-preview-port.mjs'], env);
 	await ensureExitCodeZero(getBunCommand(), ['run', 'build'], env);
 	await ensureExitCodeZero(getNodeCommand(), ['scripts/select-layout.mjs'], env);
-	await ensureExitCodeZero(getViteCommand(), [
+	await ensureExitCodeZero(getNodeCommand(), [
+		getViteCliPath(),
 		'preview',
 		'--host',
 		previewHost,

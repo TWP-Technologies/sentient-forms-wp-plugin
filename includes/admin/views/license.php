@@ -119,8 +119,11 @@ $license_data = $license_data ?? [];
                     <input type="submit" name="submit" id="submit" class="button button-primary" value="<?php _e('Activate License', 'sentient-forms'); ?>">
                 <?php else: ?>
                     <button type="button" class="button button-secondary" id="sentient-forms-deactivate-license">
-                        <?php _e('Deactivate License', 'sentient-forms'); ?>
+                        <?php _e('Deactivate Site License', 'sentient-forms'); ?>
                     </button>
+                    <span class="description" style="display:block;margin-top:6px;">
+                        <?php _e('Deactivation disconnects this WordPress site. It does not cancel Stripe billing.', 'sentient-forms'); ?>
+                    </span>
                 <?php endif; ?>
                 <button type="button" class="button button-secondary" id="sentient-forms-check-license">
                     <?php _e('Check License Status', 'sentient-forms'); ?>
@@ -130,25 +133,23 @@ $license_data = $license_data ?? [];
     </div>
     
     <div class="sentient-forms-license-section">
-        <h2><?php _e('Need a License?', 'sentient-forms'); ?></h2>
-        <p><?php _e('Purchase a license to unlock all features and receive updates.', 'sentient-forms'); ?></p>
+        <h2><?php _e('Need Managed Service?', 'sentient-forms'); ?></h2>
+        <p><?php _e('Choose monthly managed form intelligence for this WordPress site.', 'sentient-forms'); ?></p>
         
         <div class="sentient-forms-license-plans">
             <div class="sentient-forms-license-plan">
-                <h3><?php _e('Basic', 'sentient-forms'); ?></h3>
+                <h3><?php _e('Starter', 'sentient-forms'); ?></h3>
                 <div class="sentient-forms-license-plan-price">
-                    <span class="sentient-forms-license-plan-amount">$49</span>
-                    <span class="sentient-forms-license-plan-period">/year</span>
+                    <span class="sentient-forms-license-plan-amount">$15</span>
+                    <span class="sentient-forms-license-plan-period">/month</span>
                 </div>
                 <ul class="sentient-forms-license-plan-features">
-                    <li><?php _e('1 Site License', 'sentient-forms'); ?></li>
-                    <li><?php _e('Spam Analysis', 'sentient-forms'); ?></li>
-                    <li><?php _e('Entry Evaluation', 'sentient-forms'); ?></li>
-                    <li><?php _e('5,000 Credits/month', 'sentient-forms'); ?></li>
-                    <li><?php _e('1 Year Updates & Support', 'sentient-forms'); ?></li>
+                    <li><?php _e('1 site', 'sentient-forms'); ?></li>
+                    <li><?php _e('1,000 managed action credits/month', 'sentient-forms'); ?></li>
+                    <li><?php _e('Managed model access and spend controls', 'sentient-forms'); ?></li>
                 </ul>
-                <a href="https://sentientforms.com/pricing/?utm_source=plugin&utm_medium=license_page&utm_campaign=basic" class="button button-primary" target="_blank">
-                    <?php _e('Purchase Basic', 'sentient-forms'); ?>
+                <a href="https://sentientforms.com/pricing/?utm_source=plugin&utm_medium=license_page&utm_campaign=starter" class="button button-primary" target="_blank">
+                    <?php _e('Choose Starter', 'sentient-forms'); ?>
                 </a>
             </div>
             
@@ -156,36 +157,32 @@ $license_data = $license_data ?? [];
                 <div class="sentient-forms-license-plan-badge"><?php _e('Popular', 'sentient-forms'); ?></div>
                 <h3><?php _e('Pro', 'sentient-forms'); ?></h3>
                 <div class="sentient-forms-license-plan-price">
-                    <span class="sentient-forms-license-plan-amount">$99</span>
-                    <span class="sentient-forms-license-plan-period">/year</span>
+                    <span class="sentient-forms-license-plan-amount">$39</span>
+                    <span class="sentient-forms-license-plan-period">/month</span>
                 </div>
                 <ul class="sentient-forms-license-plan-features">
-                    <li><?php _e('3 Site License', 'sentient-forms'); ?></li>
-                    <li><?php _e('All Basic Features', 'sentient-forms'); ?></li>
-                    <li><?php _e('Advanced Prompt Templates', 'sentient-forms'); ?></li>
-                    <li><?php _e('15,000 Credits/month', 'sentient-forms'); ?></li>
-                    <li><?php _e('1 Year Updates & Support', 'sentient-forms'); ?></li>
+                    <li><?php _e('1 site', 'sentient-forms'); ?></li>
+                    <li><?php _e('3,000 managed action credits/month', 'sentient-forms'); ?></li>
+                    <li><?php _e('Managed model access and spend controls', 'sentient-forms'); ?></li>
                 </ul>
                 <a href="https://sentientforms.com/pricing/?utm_source=plugin&utm_medium=license_page&utm_campaign=pro" class="button button-primary" target="_blank">
-                    <?php _e('Purchase Pro', 'sentient-forms'); ?>
+                    <?php _e('Choose Pro', 'sentient-forms'); ?>
                 </a>
             </div>
             
             <div class="sentient-forms-license-plan">
-                <h3><?php _e('Agency', 'sentient-forms'); ?></h3>
+                <h3><?php _e('Business', 'sentient-forms'); ?></h3>
                 <div class="sentient-forms-license-plan-price">
-                    <span class="sentient-forms-license-plan-amount">$199</span>
-                    <span class="sentient-forms-license-plan-period">/year</span>
+                    <span class="sentient-forms-license-plan-amount">$99</span>
+                    <span class="sentient-forms-license-plan-period">/month</span>
                 </div>
                 <ul class="sentient-forms-license-plan-features">
-                    <li><?php _e('Unlimited Site License', 'sentient-forms'); ?></li>
-                    <li><?php _e('All Pro Features', 'sentient-forms'); ?></li>
-                    <li><?php _e('White Label Option', 'sentient-forms'); ?></li>
-                    <li><?php _e('50,000 Credits/month', 'sentient-forms'); ?></li>
-                    <li><?php _e('1 Year Updates & Support', 'sentient-forms'); ?></li>
+                    <li><?php _e('1 site', 'sentient-forms'); ?></li>
+                    <li><?php _e('10,000 managed action credits/month', 'sentient-forms'); ?></li>
+                    <li><?php _e('Business capacity packs available', 'sentient-forms'); ?></li>
                 </ul>
-                <a href="https://sentientforms.com/pricing/?utm_source=plugin&utm_medium=license_page&utm_campaign=agency" class="button button-primary" target="_blank">
-                    <?php _e('Purchase Agency', 'sentient-forms'); ?>
+                <a href="https://sentientforms.com/pricing/?utm_source=plugin&utm_medium=license_page&utm_campaign=business" class="button button-primary" target="_blank">
+                    <?php _e('Choose Business', 'sentient-forms'); ?>
                 </a>
             </div>
         </div>
@@ -196,7 +193,7 @@ $license_data = $license_data ?? [];
     jQuery(document).ready(function($) {
         // Deactivate license
         $('#sentient-forms-deactivate-license').on('click', function() {
-            if (confirm('<?php _e('Are you sure you want to deactivate your license? This will disable premium features.', 'sentient-forms'); ?>')) {
+            if (confirm('<?php _e('Deactivate this site license? This disconnects this WordPress site and does not cancel Stripe billing.', 'sentient-forms'); ?>')) {
                 // Clear the license key field and submit the form
                 $('#sentient_forms_license_key').val('');
                 $('#sentient-forms-license-form').submit();

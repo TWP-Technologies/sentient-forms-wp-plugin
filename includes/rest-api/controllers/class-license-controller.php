@@ -517,6 +517,7 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         $response = $client->start_managed_checkout(
             [
                 'plan_code'                      => $plan_code,
+                'billing_interval'               => sanitize_key( (string) ( $request->get_param( 'billing_interval' ) ?: 'monthly' ) ),
                 'site_url'                       => home_url(),
                 'local_site_identifier'          => Sentient_Forms_Plugin::instance()->get_local_site_identifier(),
                 'success_url'                    => (string) $request->get_param( 'success_url' ),
@@ -662,10 +663,41 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             return $proxy_key;
         }
 
-        return $this->prepare_error_response(
-            'managed_top_up_unsupported',
-            __( 'Top-up credit packs are not available in the local-first managed service. Use plan billing or direct OpenRouter credentials instead.', 'sentient-forms' ),
-            410,
+        $payload = [
+            'pack_code'   => sanitize_key( (string) $request->get_param( 'pack_code' ) ),
+            'success_url' => (string) $request->get_param( 'success_url' ),
+            'cancel_url'  => (string) $request->get_param( 'cancel_url' ),
+            'quantity'    => max( 1, (int) $request->get_param( 'quantity' ) ),
+        ];
+
+        $client   = $this->get_managed_service_client();
+        $billing_state = $client->get_billing_state( $proxy_key );
+        if ( is_wp_error( $billing_state ) )
+        {
+            return $this->prepare_cps_error( $billing_state );
+        }
+
+        $billing_state = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_billing_state( $billing_state );
+        $this->sync_cached_license_from_billing_state( $billing_state );
+
+        if ( ! $this->billing_state_allows_top_up_checkout( $billing_state ) )
+        {
+            return $this->prepare_error_response(
+                'managed_top_up_business_required',
+                __( 'Top-up capacity packs are available only for active Business managed-service subscriptions.', 'sentient-forms' ),
+                403,
+            );
+        }
+
+        $response = $client->create_top_up_checkout_session( $proxy_key, $payload );
+        if ( is_wp_error( $response ) )
+        {
+            return $this->prepare_cps_error( $response );
+        }
+
+        return $this->prepare_item_for_response(
+            $this->normalize_activation_payload( $response ),
+            200
         );
     }
 
@@ -1040,6 +1072,54 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
 
         $updates['last_synced'] = current_time( 'mysql' );
         Sentient_Forms_Plugin::instance()->set_license_data( $updates );
+    }
+
+    private function billing_state_allows_top_up_checkout( array $payload ): bool
+    {
+        return 'business' === $this->extract_billing_tier_code( $payload )
+            && 'active' === $this->extract_billing_subscription_status( $payload );
+    }
+
+    private function extract_billing_tier_code( array $payload ): string
+    {
+        $tier = $payload['tier'] ?? $payload['plan'] ?? null;
+        if (
+            null === $tier &&
+            isset( $payload['account'] ) &&
+            is_array( $payload['account'] ) &&
+            isset( $payload['account']['tier'] )
+        )
+        {
+            $tier = $payload['account']['tier'];
+        }
+
+        if ( is_array( $tier ) && isset( $tier['code'] ) && is_string( $tier['code'] ) )
+        {
+            return sanitize_key( $tier['code'] );
+        }
+
+        return is_string( $tier ) ? sanitize_key( $tier ) : '';
+    }
+
+    private function extract_billing_subscription_status( array $payload ): string
+    {
+        $subscription = $payload['subscription'] ?? null;
+        if (
+            null === $subscription &&
+            isset( $payload['billing'] ) &&
+            is_array( $payload['billing'] ) &&
+            isset( $payload['billing']['subscription'] )
+        )
+        {
+            $subscription = $payload['billing']['subscription'];
+        }
+
+        if ( is_array( $subscription ) && isset( $subscription['status'] ) && is_string( $subscription['status'] ) )
+        {
+            return sanitize_key( $subscription['status'] );
+        }
+
+        return '';
     }
 
     private function prepare_cps_error( WP_Error $error ): WP_Error

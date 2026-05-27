@@ -7,6 +7,10 @@ type ResponsiveApiOptions = {
 
 type JsonObject = Record<string, unknown>;
 
+const DEFAULT_PRO_MONTHLY_CREDITS = 3000;
+const DEFAULT_PRO_REMAINING_CREDITS = 2875;
+const DEFAULT_PRO_SITE_LIMIT = 1;
+
 const defaultLicense = {
 	status: 'active',
 	license_key_masked: 'LIC-****-****-1234',
@@ -14,7 +18,7 @@ const defaultLicense = {
 	tier: {
 		code: 'pro',
 		display_name: 'Pro',
-		monthly_credit_quota: 1000
+		monthly_credit_quota: DEFAULT_PRO_MONTHLY_CREDITS
 	},
 	expires_at: '2030-01-01T00:00:00Z',
 	last_synced: '2030-01-05T10:00:00Z',
@@ -24,11 +28,11 @@ const defaultLicense = {
 };
 
 const defaultCredits = {
-	current_balance: 875,
+	current_balance: DEFAULT_PRO_REMAINING_CREDITS,
 	tier: {
 		code: 'pro',
 		display_name: 'Pro',
-		monthly_credit_quota: 1000
+		monthly_credit_quota: DEFAULT_PRO_MONTHLY_CREDITS
 	}
 };
 
@@ -132,20 +136,20 @@ const defaultBillingState = {
 		provider_price_id: 'price_mock_pro'
 	},
 	credits: {
-		current_balance: 875,
-		tier_quota: 1000,
+		current_balance: DEFAULT_PRO_REMAINING_CREDITS,
+		tier_quota: DEFAULT_PRO_MONTHLY_CREDITS,
 		ledger_delta: 0,
 		top_up_available: 0
 	},
 	allocation: {
 		seat_quantity: 1,
-		tier_site_limit: 1,
-		allowed_sites: 1,
+		tier_site_limit: DEFAULT_PRO_SITE_LIMIT,
+		allowed_sites: DEFAULT_PRO_SITE_LIMIT,
 		active_sites: 1,
 		over_limit: false,
 		blocked_new_activations: false,
 		grace_expires_at: null,
-		capacity_policy: 'tier_x_quantity_v1'
+		capacity_policy: 'tier_allowance_v2'
 	}
 };
 
@@ -364,7 +368,10 @@ export async function mockResponsiveApi(
 	let asyncSettingsState: JsonObject = { ...initialAsyncSettingsState };
 	let asyncHealthState: JsonObject = { ...initialAsyncHealthState };
 
-	await page.context().unroute('**/wp-json/sentient-forms/v1/**').catch(() => {});
+	await page
+		.context()
+		.unroute('**/wp-json/sentient-forms/v1/**')
+		.catch(() => {});
 
 	await page.context().route('**/wp-json/sentient-forms/v1/**', async (route) => {
 		const request = route.request();
@@ -439,8 +446,7 @@ export async function mockResponsiveApi(
 				route,
 				{
 					error_code: 'managed_top_up_unsupported',
-					message:
-						'Top-up credit packs are not available in the local-first managed service.'
+					message: 'Top-up credit packs are not available in the local-first managed service.'
 				},
 				410
 			);
@@ -527,7 +533,10 @@ export async function mockResponsiveApi(
 			return respondJson(route, formFields);
 		}
 
-		if (method === 'GET' && endpoint.startsWith(`${formSourceSlug}/forms/${formId}/actions/workflow-plan`)) {
+		if (
+			method === 'GET' &&
+			endpoint.startsWith(`${formSourceSlug}/forms/${formId}/actions/workflow-plan`)
+		) {
 			return respondJson(route, workflowPlan);
 		}
 
@@ -631,8 +640,7 @@ export async function mockResponsiveApi(
 					typeof payload.auto_include === 'boolean'
 						? payload.auto_include
 						: siteContext.auto_include,
-				pii_ack:
-					typeof payload.pii_ack === 'boolean' ? payload.pii_ack : siteContext.pii_ack
+				pii_ack: typeof payload.pii_ack === 'boolean' ? payload.pii_ack : siteContext.pii_ack
 			});
 		}
 

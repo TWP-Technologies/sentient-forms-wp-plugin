@@ -138,7 +138,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                         'code'                 => 'starter',
                         'display_name'         => 'Starter',
                         'site_limit'           => 1,
-                        'monthly_credit_quota' => 1500,
+                        'monthly_credit_quota' => 1000,
                     ],
                     'expiry_date'   => '2025-12-31T23:59:59Z',
                 ],
@@ -191,6 +191,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                 $body = json_decode( (string) ( $args['body'] ?? '' ), true );
                 $this->assertIsArray( $body );
                 $this->assertSame( 'starter', $body['plan_code'] ?? null );
+                $this->assertSame( 'monthly', $body['billing_interval'] ?? null );
                 $this->assertSame( home_url(), $body['site_url'] ?? null );
                 $this->assertNotEmpty( $body['local_site_identifier'] ?? '' );
                 $this->assertSame( 'managed-service-v1', $body['disclosure_version'] ?? null );
@@ -337,6 +338,39 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'sentient_managed_checkout_consent_required', $data['code'] ?? null );
     }
 
+    public function test_start_managed_checkout_rejects_annual_interval_before_remote_call(): void
+    {
+        $guard = function ( $preempt, $args, $url ) {
+            $this->fail( 'Annual checkout should be rejected before remote checkout start: ' . $url );
+            return $preempt;
+        };
+        add_filter( 'pre_http_request', $guard, 1, 3 );
+
+        try
+        {
+            $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/managed-checkout/start' );
+            $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+            $request->add_header( 'Content-Type', 'application/json' );
+            $request->set_body( wp_json_encode( [
+                'plan_code'                      => 'starter',
+                'billing_interval'               => 'annual',
+                'success_url'                    => 'https://example.test/success',
+                'cancel_url'                     => 'https://example.test/cancel',
+                'disclosure_version'             => 'managed-service-v1',
+                'accepted_managed_service_terms' => true,
+            ] ) );
+            $response = rest_get_server()->dispatch( $request );
+        }
+        finally
+        {
+            remove_filter( 'pre_http_request', $guard, 1 );
+        }
+
+        $this->assertSame( 400, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'sentient_managed_checkout_invalid_interval', $data['code'] ?? null );
+    }
+
     public function test_complete_managed_checkout_stores_license_and_enables_managed_provider(): void
     {
         $this->mock_http_response(
@@ -355,7 +389,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                         'code'                 => 'starter',
                         'display_name'         => 'Starter',
                         'site_limit'           => 1,
-                        'monthly_credit_quota' => 1500,
+                        'monthly_credit_quota' => 1000,
                     ],
                     'expires_at'       => null,
                 ],
@@ -497,7 +531,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                         'code'                 => 'starter',
                         'display_name'         => 'Starter',
                         'site_limit'           => 1,
-                        'monthly_credit_quota' => 1500,
+                        'monthly_credit_quota' => 1000,
                     ],
                     'expiry_date'   => null,
                 ],
@@ -544,7 +578,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                         'code'                 => 'starter',
                         'display_name'         => 'Starter',
                         'site_limit'           => 1,
-                        'monthly_credit_quota' => 1500,
+                        'monthly_credit_quota' => 1000,
                     ],
                     'billing' => [
                         'provider'        => 'stripe',
@@ -564,7 +598,7 @@ class LicenseControllerTest extends WP_UnitTestCase
                         'over_limit'               => false,
                         'blocked_new_activations'  => false,
                         'grace_expires_at'         => null,
-                        'capacity_policy'          => 'tier_x_quantity_v1',
+                        'capacity_policy'          => 'tier_allowance_v2',
                     ],
                     'managed_usage' => [
                         'execution_count' => 0,
@@ -811,7 +845,7 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'bps_test_456', $data['session_id'] );
     }
 
-    public function test_create_top_up_checkout_session_returns_unsupported(): void
+    public function test_create_top_up_checkout_session_proxies_business_pack(): void
     {
         $plugin = Sentient_Forms_Plugin::instance();
         $plugin->set_license_data( [
@@ -819,13 +853,51 @@ class LicenseControllerTest extends WP_UnitTestCase
             'proxy_api_key'  => 'proxy-key-123',
             'license_id'     => 'lic-uuid-123',
             'site_id'        => 'site-uuid-456',
+            'tier'           => 'business',
         ] );
 
-        $guard = function ( $preempt, $args, $url ) {
-            $this->fail( 'Top-up checkout should not call the legacy billing service: ' . $url );
-            return $preempt;
-        };
-        add_filter( 'pre_http_request', $guard, 1, 3 );
+        $this->mock_http_response(
+            '/v2/billing/state',
+            [
+                'success' => true,
+                'data'    => [
+                    'license_status' => 'active',
+                    'tier'           => [
+                        'code'                 => 'business',
+                        'display_name'         => 'Business',
+                        'site_limit'           => 1,
+                        'monthly_credit_quota' => 10000,
+                    ],
+                    'subscription'   => [
+                        'provider_subscription_id' => 'sub_business_123',
+                        'status'                   => 'active',
+                    ],
+                ],
+            ]
+        );
+
+        $this->mock_http_response(
+            '/v2/billing/checkout/top-up-session',
+            [
+                'success' => true,
+                'data'    => [
+                    'session_id'     => 'cs_top_up_test_123',
+                    'checkout_url'   => 'https://checkout.stripe.com/c/pay/cs_top_up_test_123',
+                    'customer_id'    => 'cus_test_123',
+                    'top_up_credits' => 1000,
+                    'pack_code'      => 'top_up_small',
+                ],
+            ],
+            function ( array $args ): void {
+                $this->assertSame( 'Bearer proxy-key-123', $args['headers']['Authorization'] ?? null );
+                $body = json_decode( (string) ( $args['body'] ?? '' ), true );
+                $this->assertIsArray( $body );
+                $this->assertSame( 'top_up_small', $body['pack_code'] ?? null );
+                $this->assertSame( 'https://example.test/success', $body['success_url'] ?? null );
+                $this->assertSame( 'https://example.test/cancel', $body['cancel_url'] ?? null );
+                $this->assertSame( 1, $body['quantity'] ?? null );
+            }
+        );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/top-up-session' );
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
@@ -837,11 +909,74 @@ class LicenseControllerTest extends WP_UnitTestCase
             'quantity'    => 1,
         ] ) );
         $response = rest_get_server()->dispatch( $request );
-        remove_filter( 'pre_http_request', $guard, 1 );
 
-        $this->assertSame( 410, $response->get_status() );
+        $this->assertSame( 200, $response->get_status() );
         $data = $response->get_data();
-        $this->assertSame( 'managed_top_up_unsupported', $data['code'] ?? null );
+        $this->assertSame( 'cs_top_up_test_123', $data['session_id'] ?? null );
+        $this->assertSame( 1000, $data['top_up_credits'] ?? null );
+    }
+
+    public function test_create_top_up_checkout_session_rejects_non_business_plan_before_proxying(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-123',
+            'license_id'     => 'lic-uuid-123',
+            'site_id'        => 'site-uuid-456',
+            'tier'           => 'starter',
+        ] );
+
+        $this->mock_http_response(
+            '/v2/billing/state',
+            [
+                'success' => true,
+                'data'    => [
+                    'license_status' => 'active',
+                    'tier'           => [
+                        'code'                 => 'starter',
+                        'display_name'         => 'Starter',
+                        'site_limit'           => 1,
+                        'monthly_credit_quota' => 1000,
+                    ],
+                    'subscription'   => [
+                        'provider_subscription_id' => 'sub_starter_123',
+                        'status'                   => 'active',
+                    ],
+                ],
+            ]
+        );
+
+        $guard = function ( $preempt, $args, $url ) {
+            if ( str_ends_with( $url, '/v2/billing/checkout/top-up-session' ) ) {
+                $this->fail( 'Starter top-up checkout should be rejected before proxying to CPS.' );
+            }
+
+            return $preempt;
+        };
+        add_filter( 'pre_http_request', $guard, 1, 3 );
+
+        try
+        {
+            $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/license/billing/top-up-session' );
+            $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+            $request->add_header( 'Content-Type', 'application/json' );
+            $request->set_body( wp_json_encode( [
+                'pack_code'   => 'top_up_small',
+                'success_url' => 'https://example.test/success',
+                'cancel_url'  => 'https://example.test/cancel',
+                'quantity'    => 1,
+            ] ) );
+            $response = rest_get_server()->dispatch( $request );
+        }
+        finally
+        {
+            remove_filter( 'pre_http_request', $guard, 1 );
+        }
+
+        $this->assertSame( 403, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'managed_top_up_business_required', $data['code'] ?? null );
     }
 
     public function test_get_billing_state_requires_active_proxy_key(): void

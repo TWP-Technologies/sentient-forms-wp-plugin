@@ -6,7 +6,8 @@
 		BillingSubscriptionState,
 		BillingStateResponse,
 		CreditBalanceResponse,
-		TierSummary
+		TierSummary,
+		TopUpCheckoutSessionRequest
 	} from '$lib/api/types';
 	import {
 		Badge,
@@ -43,6 +44,13 @@
 		quantity?: number;
 	}
 
+	interface BusinessTopUpPack {
+		code: TopUpCheckoutSessionRequest['pack_code'];
+		label: string;
+		priceLabel: string;
+		description: string;
+	}
+
 	interface ManagedCheckoutReference {
 		checkoutIntentId?: string | null;
 		checkoutSessionId?: string | null;
@@ -62,22 +70,43 @@
 		{
 			code: 'starter',
 			label: 'Starter',
-			priceDescription: '$15/month for this WordPress site, 1,500 monthly managed credits.',
+			priceDescription: '$15/month. 1 site. 1,000 managed action credits/month.',
 			ctaLabel: 'Choose Starter'
 		},
 		{
 			code: 'pro',
 			label: 'Pro',
-			priceDescription: '$39/month for this WordPress site, 3,900 monthly managed credits.',
+			priceDescription: '$39/month. 1 site. 3,000 managed action credits/month.',
 			ctaLabel: 'Choose Pro'
 		},
 		{
 			code: 'business',
 			label: 'Business',
-			priceDescription: '$99/month for this WordPress site, 9,900 monthly managed credits.',
+			priceDescription:
+				'$99/month. 1 site. 10,000 managed action credits/month. Business capacity packs available.',
 			ctaLabel: 'Choose Business'
 		}
 	] as const;
+	const businessTopUpPacks: BusinessTopUpPack[] = [
+		{
+			code: 'top_up_small',
+			label: '1,000 credits',
+			priceLabel: '$20',
+			description: 'Business capacity pack'
+		},
+		{
+			code: 'top_up_medium',
+			label: '5,000 credits',
+			priceLabel: '$85',
+			description: 'Business capacity pack'
+		},
+		{
+			code: 'top_up_large',
+			label: '10,000 credits',
+			priceLabel: '$150',
+			description: 'Business capacity pack'
+		}
+	];
 	const checkoutPlanRank: Record<string, number> = {
 		starter: 1,
 		pro: 2,
@@ -185,7 +214,7 @@
 		}
 
 		if (monthlyQuota !== null) {
-			return `${monthlyQuota.toLocaleString()} monthly managed credits included`;
+			return `${monthlyQuota.toLocaleString()} monthly managed action credits included`;
 		}
 
 		return headline;
@@ -201,7 +230,7 @@
 		}
 
 		if (monthlyQuota !== null) {
-			return `Managed-service usage is metered by Sentient Forms. This plan includes ${monthlyQuota.toLocaleString()} monthly managed credits; direct OpenRouter runs stay outside Sentient Forms billing.`;
+			return `Managed-service usage is metered as managed action credits. This plan includes ${monthlyQuota.toLocaleString()} credits each month; direct OpenRouter runs stay outside Sentient Forms billing.`;
 		}
 
 		return detail;
@@ -215,6 +244,7 @@
 	let billingLoading = $state(false);
 	let billingError = $state<BillingUiError | null>(null);
 	let checkoutPlanPending = $state<string | null>(null);
+	let topUpPackPending = $state<string | null>(null);
 	let portalLoading = $state(false);
 	let billingControlsElement = $state<HTMLDivElement | null>(null);
 	let acceptedManagedCheckoutDisclosure = $state(false);
@@ -260,7 +290,11 @@
 			'—'
 	);
 	let hasExistingSubscription = $derived(Boolean(billingSubscription?.provider_subscription_id));
-	let billingBusy = $derived(Boolean(checkoutPlanPending || portalLoading));
+	let isBusinessPlan = $derived(billingTier?.code === 'business');
+	let hasActiveBusinessSubscription = $derived(
+		isBusinessPlan && billingSubscription?.status === 'active'
+	);
+	let billingBusy = $derived(Boolean(checkoutPlanPending || topUpPackPending || portalLoading));
 	let hasConnectedLicense = $derived(
 		isConnectedLicenseStatus($licenseStore.status) && $licenseStore.proxyKeyPresent
 	);
@@ -310,7 +344,7 @@
 	);
 	let managedUsageTokens = $derived(
 		managedUsage
-			? `${managedUsageMetrics.inputTokens.toLocaleString()} input tokens, ${managedUsageMetrics.outputTokens.toLocaleString()} output tokens. Managed usage is shown in credits.`
+			? 'Detailed provider token counts stay in internal diagnostics; this screen shows managed action credit usage.'
 			: 'Sentient Forms metering starts only after managed-service execution is enabled.'
 	);
 
@@ -616,9 +650,12 @@
 		billingError = null;
 
 		try {
-			const session = await client.createPortalSession(buildPortalSessionRequest(flowType, subscriptionId), {
-				showNotifications: false
-			});
+			const session = await client.createPortalSession(
+				buildPortalSessionRequest(flowType, subscriptionId),
+				{
+					showNotifications: false
+				}
+			);
 			if (typeof window !== 'undefined') {
 				window.location.assign(session.portal_url);
 			}
@@ -659,6 +696,7 @@
 			const session = await client.startManagedCheckout(
 				{
 					plan_code: plan.code,
+					billing_interval: 'monthly',
 					success_url: managedCheckoutReturnUrl(),
 					cancel_url: managedCheckoutReturnUrl(),
 					disclosure_version: MANAGED_DISCLOSURE_VERSION,
@@ -676,6 +714,33 @@
 			});
 		} finally {
 			checkoutPlanPending = null;
+		}
+	}
+
+	async function handleTopUpCheckout(pack: BusinessTopUpPack) {
+		topUpPackPending = pack.code;
+		billingError = null;
+
+		try {
+			const session = await client.createTopUpCheckoutSession(
+				{
+					pack_code: pack.code,
+					success_url: currentRouteUrl(),
+					cancel_url: currentRouteUrl(),
+					quantity: 1
+				},
+				{ showNotifications: false }
+			);
+			if (typeof window !== 'undefined') {
+				window.location.assign(session.checkout_url);
+			}
+		} catch (error) {
+			console.error('Failed to create top-up checkout session', error);
+			setBillingError(error, 'checkout', async () => {
+				await handleTopUpCheckout(pack);
+			});
+		} finally {
+			topUpPackPending = null;
 		}
 	}
 
@@ -1045,7 +1110,7 @@
 							<span class="sf:block sf:font-semibold">Use Sentient Forms managed execution</span>
 							<span class="sf:block">
 								I understand Sentient Forms will provision managed OpenRouter access, apply the plan
-								spending cap for this WordPress site, and bill usage as Sentient Forms credits.
+								spend controls, and bill usage as managed action credits.
 							</span>
 						</span>
 					</label>
@@ -1072,8 +1137,7 @@
 						class="sf:md:col-span-3 sf:text-xs sf:text-slate-600"
 						data-testid="licensing-business-cap-note"
 					>
-						Each Sentient Forms managed-service license covers one WordPress site. Use a separate
-						license for each additional site.
+						Starter, Pro, and Business each cover this WordPress site.
 					</p>
 					{#each checkoutPlans as plan}
 						<div
@@ -1102,13 +1166,39 @@
 					data-testid="licensing-managed-top-up-note"
 				>
 					<p class="sf:text-xs sf:font-semibold sf:uppercase sf:tracking-wide sf:text-slate-600">
-						Managed usage
+						Business capacity packs
 					</p>
-					<p class="sf:text-xs sf:text-slate-600">
-						Managed-service usage is governed by the active Sentient Forms plan for this WordPress
-						site. Direct OpenRouter credentials remain available for runs that are not billed by
-						Sentient Forms.
-					</p>
+					{#if hasActiveBusinessSubscription}
+						<p class="sf:text-xs sf:text-slate-600">
+							Top-up credits are available only on Business, expire after 12 months, and are used
+							after included monthly managed action credits.
+						</p>
+						<div class="sf:grid sf:gap-2 sf:md:grid-cols-3">
+							{#each businessTopUpPacks as pack}
+								<div class="sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:p-2">
+									<p class="sf:text-xs sf:font-semibold sf:text-slate-900">
+										{pack.priceLabel} / {pack.label}
+									</p>
+									<p class="sf:text-[11px] sf:text-slate-600">{pack.description}</p>
+									<Button
+										variant="secondary"
+										class="sf:mt-2 sf:w-full"
+										disabled={Boolean(topUpPackPending)}
+										onclick={() => {
+											void handleTopUpCheckout(pack);
+										}}
+									>
+										{topUpPackPending === pack.code ? 'Redirecting…' : 'Add capacity'}
+									</Button>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<p class="sf:text-xs sf:text-slate-600">
+							Starter and Pro include monthly managed action credits without purchasable top-ups.
+							Business includes access to capacity packs.
+						</p>
+					{/if}
 				</div>
 
 				{#if billingError}
@@ -1229,6 +1319,16 @@
 		{/if}
 
 		{#if hasConnectedLicense}
+			<div
+				class="sf:mt-4 sf:rounded-md sf:border sf:border-warning-200 sf:bg-warning-50 sf:p-3 sf:text-sm sf:text-warning-900"
+				data-testid="licensing-deactivate-boundary"
+			>
+				<p class="sf:font-semibold">Deactivate this site license</p>
+				<p class="sf:mt-1">
+					This disconnects this WordPress site and removes its local managed-service credential. It
+					does not cancel Stripe billing; use Manage billing for cancellation.
+				</p>
+			</div>
 			<Button
 				variant="secondary"
 				class="sf:mt-4"
@@ -1237,7 +1337,7 @@
 					void handleDeactivateLicense();
 				}}
 			>
-				{$licenseStore.loading ? 'Processing…' : 'Deactivate license'}
+				{$licenseStore.loading ? 'Processing…' : 'Deactivate site license'}
 			</Button>
 		{/if}
 	</Card>
