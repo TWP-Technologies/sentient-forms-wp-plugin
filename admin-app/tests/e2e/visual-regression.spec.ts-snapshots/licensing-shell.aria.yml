@@ -2,17 +2,17 @@
 - paragraph: Review the optional Sentient Forms managed service for this WordPress site. Use OpenRouter directly when you want to manage the account yourself; use this service when you want Sentient Forms to handle model access, spending controls, metering, and billing.
 - paragraph: Managed service
 - paragraph: Active and connected
-- text: 'active Tier: Pro'
+- text: "active Tier: Pro"
 - paragraph: "/Last synced: Jan 5, \\d+, 4:\\d+ AM/"
 - paragraph: Managed service credits
 - paragraph: /\d+ \/ \d+ managed action credits remaining/
 - text: Healthy Resets May 1 (9 days)
 - paragraph: Resets May 1 (9 days). Managed usage is healthy.
 - paragraph: Subscription
-- paragraph: 'Subscription status: active'
-- paragraph: 'Billing provider: stripe'
+- paragraph: "Subscription status: active"
+- paragraph: "Billing provider: stripe"
 - paragraph: /Current period ends Jan \d+, \d+, 6:\d+ PM/
-- paragraph: 'Licensed WordPress site: 1 / 1'
+- paragraph: "Licensed WordPress site: 1 / 1"
 - paragraph: Managed-service allocation for this WordPress install.
 - button "Manage billing"
 - paragraph: Billing boundary
@@ -28,7 +28,7 @@
 - button "Upgrade to Starter"
 - paragraph: Pro
 - paragraph: /\$\d+\/month\. 1 site\. \d+,\d+ managed action credits\/month\./
-- button "Upgrade to Pro"
+- button "Current plan" [disabled]
 - paragraph: Business
 - paragraph: /\$\d+\/month\. 1 site\. \d+,\d+ managed action credits\/month\. Business capacity packs available\./
 - button "Upgrade to Business"
@@ -36,5 +36,6 @@
 - paragraph: Starter and Pro include monthly managed action credits without purchasable top-ups. Business includes access to capacity packs.
 - heading "License details" [level=2]
 - text: /License status active Managed service key stored Yes Tier Pro Subscription status active Site capacity 1 \/ 1 Billing period end Jan \d+, \d+, 6:\d+ PM Direct OpenRouter billing Not configured Managed service billing Not configured Capacity policy tier_allowance_v2 Over-limit grace — Credits reset May 1, \d+ Expires Dec \d+, \d+, 6:\d+ PM Last synced Jan 5, \d+, 4:\d+ AM/
-- text: Deactivate this site license This disconnects this WordPress site and removes its local managed-service credential. It does not cancel Stripe billing; use Manage billing for cancellation.
+- paragraph: Deactivate this site license
+- paragraph: This disconnects this WordPress site and removes its local managed-service credential. It does not cancel Stripe billing; use Manage billing for cancellation.
 - button "Deactivate site license"

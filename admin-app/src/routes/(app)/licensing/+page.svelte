@@ -312,7 +312,24 @@
 	);
 
 	function isCurrentCheckoutPlan(plan: CheckoutPlanOption): boolean {
-		return plan.code === billingTier?.code;
+		const currentTierCode = resolveTierCode(
+			billingTier ?? $licenseStore.tier ?? effectiveCredits?.tier ?? null
+		);
+		return plan.code === currentTierCode;
+	}
+
+	function resolveTierCode(tier: string | TierSummary | null | undefined): string | null {
+		if (typeof tier === 'string') {
+			const normalized = tier.trim().toLowerCase();
+			return normalized.length > 0 ? normalized : null;
+		}
+
+		if (tier && typeof tier === 'object') {
+			const normalized = tier.code?.trim().toLowerCase();
+			return normalized && normalized.length > 0 ? normalized : null;
+		}
+
+		return null;
 	}
 
 	function checkoutPlanActionLabel(plan: CheckoutPlanOption): string {
@@ -1149,7 +1166,7 @@
 								variant="secondary"
 								class="sf:w-full"
 								disabled={billingBusy ||
-									isCurrentCheckoutPlan(plan) ||
+									(hasExistingSubscription && isCurrentCheckoutPlan(plan)) ||
 									(!hasExistingSubscription && !acceptedManagedCheckoutDisclosure)}
 								onclick={() => {
 									void handleCheckout(plan);
