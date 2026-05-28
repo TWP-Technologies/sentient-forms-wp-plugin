@@ -136,4 +136,5 @@ jobs:
           fi
           git config --unset-all core.hooksPath || true
           git -c core.hooksPath=/dev/null commit -m "chore(release): sync WordPress version surfaces ${version}"
-          git -c core.hooksPath=/dev/null -c credential.helper= -c "http.extraheader=Authorization: Bearer ${GH_TOKEN}" push origin "HEAD:${HEAD_REF}"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git -c core.hooksPath=/dev/null push origin "HEAD:${HEAD_REF}"
