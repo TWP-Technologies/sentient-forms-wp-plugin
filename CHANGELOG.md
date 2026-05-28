@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/sentient-forms-v0.1.1...sentient-forms-v0.2.0) (2026-05-28)
+
+
+### Features
+
+* **admin:** add action log context and billing plan updates ([85c2e83](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/85c2e83c6a50ea379819fc9946669f2d1beddb9a))
+
+
+### Bug Fixes
+
+* **admin:** harden realtime mapping greenlight ([a92da97](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a92da97f956c6248f8ae3679f5582e7152fc2135))
+* **admin:** keep action log actions visible ([d49a93d](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/d49a93d4c15c4d01db7f17260cbd7126ecc472e2))
+* **admin:** make release asset build deterministic ([ec4ad79](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ec4ad79a964d2312ced74c227eb0d71094dfba70))
+* **ci:** authenticate release sync push ([b85a0ca](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b85a0ca62d69326d23ccc9dc197d05df4a1cbb35))
+* **ci:** force add release assets during sync ([c1da89e](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c1da89efbc1fc64ab5b774a019c5b02b3cde760e))
+* **ci:** pin plugin check runtime ([7114f5a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/7114f5a9866c3dad59826be733e73432271cc057))
+* **ci:** push release sync with app token remote ([eb7adb7](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/eb7adb7dc5abf06891c007f6195a516341e098a2))
+* **managed:** harden launch licensing UI ([ebad7bc](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ebad7bcb47d9e25752e0a47fad79ca9c11fd9db7))
+* **managed:** hide service costs behind credits ([08210a5](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/08210a50b4c0da210225da90263f0f3fe5f8d6ec))
+* **managed:** simplify launch licensing ([ad585b3](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ad585b3841da3308d94ec9f8c368fa1405f9f0ee))
+* **wporg:** align package scan disclosure term ([da1addb](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/da1addb473e3e80770f4ee11719d8079ab6a5397))
+* **wporg:** harden production release package ([6fda8a4](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/6fda8a4aa2d5d310e0ea86969b0d9ad2fa169294))
+* **wporg:** harden telemetry and custom actions ([0fa2a6c](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0fa2a6c465e2a3779f49f2586d6d7230b67acac8))
+
+## Changelog
+
 ## Unreleased
 - Security: Hardened all REST API and legacy admin-ajax.php endpoints with nonce verification and added a feature flag to disable checks if necessary.
 - Tooling: Added Sentient Forms PHPCS ruleset and Composer scripts; GitHub Actions now runs PHPCS (PHP 8.3) and a licensing PHPUnit smoke test on PHP 8.3/8.4.

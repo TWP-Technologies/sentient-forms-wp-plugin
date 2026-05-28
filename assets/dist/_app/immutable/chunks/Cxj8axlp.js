@@ -1,0 +1,1 @@
+import{$ as e,J as t,Q as n,Y as r,at as i,d as a,it as o}from"./B5HeLmm_.js";function s(s,c){var l=t,u=r,d=s();let f=a(d,a=>{var c=d!==s(),f,p=r,m=t;e(u),n(l);try{f=o(()=>{i(()=>{let e=s();c&&a(e)})})}finally{e(p),n(m)}return c=!0,f});return c?{set:c,update:e=>c(e(s())),subscribe:f.subscribe}:{subscribe:f.subscribe}}export{s as t};
