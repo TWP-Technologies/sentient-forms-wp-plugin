@@ -157,11 +157,10 @@ jobs:
           php scripts/verify-wporg-source.php "$package_dir"
 
       - name: Run Plugin Check
-        uses: wordpress/plugin-check-action@v1.1.6
+        uses: ./.github/actions/run-plugin-check
         with:
           build-dir: ${{ steps.package.outputs.package-dir }}
           slug: sentient-forms
-          strict: true
           exclude-directories: vendor
 
       - name: Run official WordPress.org readme validator

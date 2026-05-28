@@ -1,0 +1,135 @@
+---
+name: Run WordPress Plugin Check
+description: Run Plugin Check against a prepared WordPress.org package.
+
+inputs:
+  build-dir:
+    description: Prepared plugin directory to mount into WordPress.
+    required: true
+  slug:
+    description: Plugin slug to check.
+    required: true
+  exclude-directories:
+    description: Comma-separated directories to exclude from Plugin Check.
+    required: false
+    default: ''
+  wp-version:
+    description: WordPress version to use. Supports latest or trunk.
+    required: false
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      with:
+        # The official plugin-check-action currently asks for "24", which picked
+        # up Node 24.16.0 in CI and made wp-env exit before booting WordPress.
+        node-version: '24.15.0'
+
+    - name: Resolve Plugin Check paths
+      shell: bash
+      env:
+        BUILD_DIR: ${{ inputs.build-dir }}
+        INPUT_SLUG: ${{ inputs.slug }}
+      run: |
+        set -euo pipefail
+        plugin_dir="$(realpath "${BUILD_DIR}")"
+        plugin_slug="${INPUT_SLUG:-$(basename "${plugin_dir}")}"
+        echo "PLUGIN_DIR=${plugin_dir}" >> "${GITHUB_ENV}"
+        echo "PLUGIN_SLUG=${plugin_slug}" >> "${GITHUB_ENV}"
+        if [ -f "${plugin_dir}/.wp-env.json" ]; then
+          echo "WP_ENV_JSON_EXISTS=true" >> "${GITHUB_ENV}"
+        else
+          echo "WP_ENV_JSON_EXISTS=false" >> "${GITHUB_ENV}"
+        fi
+
+    - name: Install wp-env
+      shell: bash
+      env:
+        WP_VERSION: ${{ inputs.wp-version == 'trunk' && '"WordPress/WordPress#master"' || 'null' }}
+      run: |
+        set -euo pipefail
+        cat > .wp-env.json <<JSON
+        { "core": ${WP_VERSION}, "port": 8880, "testsPort": 8881, "plugins": [ "https://downloads.wordpress.org/plugin/plugin-check.zip" ], "mappings": { "wp-content/plugins/${PLUGIN_SLUG}": "${PLUGIN_DIR}" } }
+        JSON
+        cat .wp-env.json
+        npm -g --no-fund i @wordpress/env@11.7.0
+
+    - name: Start WordPress test environment
+      uses: nick-fields/retry@v4
+      with:
+        timeout_minutes: 10
+        max_attempts: 3
+        shell: bash
+        retry_wait_seconds: 10
+        polling_interval_seconds: 1
+        command: |
+          wp-env start --update
+          wp-env run cli wp cli info >/dev/null
+
+    - name: Run Plugin Check
+      shell: bash
+      env:
+        EXCLUDE_DIRS_INPUT: ${{ inputs.exclude-directories }}
+      run: |
+        set -euo pipefail
+        exclude_files=""
+        if [ "${WP_ENV_JSON_EXISTS}" = "false" ]; then
+          exclude_files="--exclude-files=.wp-env.json"
+        fi
+        exclude_dirs=""
+        if [ -n "${EXCLUDE_DIRS_INPUT}" ]; then
+          exclude_dirs="--exclude-directories=${EXCLUDE_DIRS_INPUT}"
+        fi
+
+        echo "::group::Debugging information"
+        wp-env run cli wp cli info
+        wp-env run cli wp plugin list
+        wp-env run cli wp plugin list-checks
+        wp-env run cli wp plugin list-check-categories
+        echo "::endgroup::"
+
+        echo "::group::Install dependencies"
+        dependencies="$(wp-env run cli wp plugin get "${PLUGIN_SLUG}" --field=requires_plugins | tr ',' ' ')"
+        if [ -z "${dependencies}" ]; then
+          echo "Plugin has no dependencies"
+        else
+          echo "Installing plugin dependencies: ${dependencies}"
+          wp-env run cli wp plugin install --activate ${dependencies}
+        fi
+        echo "::endgroup::"
+
+        wp-env run cli wp plugin activate "${PLUGIN_SLUG}"
+
+        results_path="${RUNNER_TEMP}/plugin-check-results.txt"
+        echo "::group::Run Plugin Check"
+        wp-env run cli wp plugin check "${PLUGIN_SLUG}" --format=json ${exclude_files} ${exclude_dirs} --slug="${PLUGIN_SLUG}" --require=./wp-content/plugins/plugin-check/cli.php > "${results_path}"
+        cat "${results_path}"
+        echo "::endgroup::"
+
+        result="$(tr -d '\r' < "${results_path}")"
+        if [ "${result}" = "Success: Checks complete. No errors found." ]; then
+          echo "Plugin Check completed with no findings."
+          exit 0
+        fi
+
+        echo "::error::Plugin Check reported findings or unexpected output. Strict mode fails closed."
+        exit 1
+
+    - name: Upload Plugin Check results
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: plugin-check-results-${{ inputs.slug }}
+        path: ${{ runner.temp }}/plugin-check-results.txt
+        if-no-files-found: ignore
+
+    - name: Stop WordPress test environment
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        if command -v wp-env >/dev/null 2>&1; then
+          wp-env stop || true
+        fi
