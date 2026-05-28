@@ -35,6 +35,13 @@ class Tests_Models_Controller extends WP_UnitTestCase
         return [ Sentient_Forms_Models_Controller::class ];
     }
 
+    private function add_rest_nonce( WP_REST_Request $request ): WP_REST_Request
+    {
+        $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+
+        return $request;
+    }
+
     public function test_list_models_uses_local_cache_without_proxy_key(): void
     {
         $this->seed_model_cache();
@@ -217,7 +224,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
     {
         $this->seed_model_cache();
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
         $request->set_body_params(
             [
                 'global_selection' => [
@@ -258,7 +265,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
     {
         $this->seed_model_cache();
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
         $request->set_body_params(
             [
                 'mapping_selection' => [
@@ -294,7 +301,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
     {
         $this->seed_model_cache();
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
         $request->set_body_params(
             [
                 'mapping_selection' => [
@@ -319,7 +326,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
     {
         $this->seed_model_cache();
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
         $request->set_body_params( [ 'template_model_hint' => 'anthropic/claude-sonnet-4.6' ] );
 
         $response = rest_get_server()->dispatch( $request );
@@ -333,7 +340,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
 
     public function test_resolve_model_falls_back_to_bundled_recommended_model_when_cache_empty(): void
     {
-        $request  = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' );
+        $request  = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 200, $response->get_status() );
@@ -348,7 +355,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
     {
         $this->seed_model_cache();
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/estimate' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/estimate' ) );
         $request->set_body_params(
             [
                 'action_id'        => 'entry_summary',
@@ -405,7 +412,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
         );
         $this->assertIsInt( $record );
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/estimate' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/estimate' ) );
         $request->set_body_params(
             [
                 'action_id'         => 'entry_summary',
@@ -433,7 +440,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
     {
         $this->seed_model_cache();
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/models/estimate' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/estimate' ) );
         $request->set_body_params(
             [
                 'action_id'        => 'entry_summary',

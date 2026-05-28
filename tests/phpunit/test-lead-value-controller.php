@@ -721,6 +721,11 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
     private function dispatch_json( string $method, string $route, array $body = [], int $expected_status = 200 ): array
     {
         $request = new WP_REST_Request( $method, $route );
+        if ( in_array( $method, [ 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) )
+        {
+            $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        }
+
         if ( [] !== $body )
         {
             $request->set_body_params( $body );

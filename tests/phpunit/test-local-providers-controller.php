@@ -47,12 +47,19 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         return [ Sentient_Forms_Local_Providers_Controller::class ];
     }
 
+    private function add_rest_nonce( WP_REST_Request $request ): WP_REST_Request
+    {
+        $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+
+        return $request;
+    }
+
     public function test_validate_openrouter_key_records_consent_without_saving_by_default(): void
     {
         $secret = 'sk-or-local-test-secret';
         $this->mock_openrouter_key_response();
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/validate' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/validate' ) );
         $request->set_body_params(
             [
                 'api_key'                         => $secret,
@@ -87,7 +94,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $secret = 'sk-or-local-save-secret';
         $this->mock_openrouter_key_response();
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/validate' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/validate' ) );
         $request->set_body_params(
             [
                 'api_key'                         => $secret,
@@ -137,7 +144,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         {
             $this->mock_openrouter_key_response();
 
-            $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/constant' );
+            $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/constant' ) );
             $request->set_body_params(
                 [
                     'constant_name'                  => $constant_name,
@@ -193,7 +200,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
             }
         );
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/constant' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/constant' ) );
         $request->set_body_params(
             [
                 'constant_name'                  => $constant_name,
@@ -231,7 +238,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         );
         $this->assertIsInt( $id );
 
-        $request  = new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id );
+        $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/' . $id ) );
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 200, $response->get_status() );
@@ -246,7 +253,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
 
     public function test_delete_credential_returns_not_found_for_missing_row(): void
     {
-        $request  = new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/999999' );
+        $request  = $this->add_rest_nonce( new WP_REST_Request( 'DELETE', '/sentient-forms/v1/local/providers/credentials/999999' ) );
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 404, $response->get_status() );
@@ -289,7 +296,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
             }
         );
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/validate' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/validate' ) );
         $request->set_body_params(
             [
                 'api_key'                         => 'sk-or-consent-blocked',
@@ -383,7 +390,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
             }
         );
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/models/refresh' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/models/refresh' ) );
         $request->set_body_params(
             [
                 'disclosure_version'              => '2026-04-18',
@@ -411,7 +418,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
             }
         );
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/models/refresh' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/models/refresh' ) );
         $request->set_body_params(
             [
                 'disclosure_version'              => '2026-04-18',
@@ -448,7 +455,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
     {
         $this->set_active_managed_license();
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' ) );
         $request->set_body_params(
             [
                 'label'                           => 'Sentient Forms managed service',
@@ -470,7 +477,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
 
     public function test_setup_sentient_managed_requires_active_managed_account(): void
     {
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' ) );
         $request->set_body_params(
             [
                 'label'                           => 'Sentient Forms managed service',
@@ -497,7 +504,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->set_active_managed_license();
         $secret = 'proxy-secret-managed';
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' ) );
         $request->set_body_params(
             [
                 'label'                           => 'Primary Sentient Forms managed service',
@@ -571,7 +578,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         );
         $this->assertIsInt( $first_id );
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' );
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/sentient-managed/setup' ) );
         $request->set_body_params(
             [
                 'label'                           => 'Updated label is not needed for existing proxy',

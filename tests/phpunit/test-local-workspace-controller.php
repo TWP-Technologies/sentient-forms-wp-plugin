@@ -531,6 +531,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/migration/import/apply' );
+        $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->set_body_params( [ 'bundle' => $bundle ] );
         $response = rest_get_server()->dispatch( $request );
 
@@ -576,6 +577,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/migration/import/apply' );
+        $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->set_body_params( [ 'bundle' => $bundle ] );
         $response = rest_get_server()->dispatch( $request );
 
@@ -716,6 +718,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 0, $this->table_count( 'sentient_execution_events' ) );
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/migration/import/apply' );
+        $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->set_body_params( [ 'bundle' => $bundle ] );
         $response = rest_get_server()->dispatch( $request );
 
@@ -731,6 +734,7 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->seed_local_cutover_state();
 
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/local/migration/approved-reset' );
+        $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $request->set_body_params( [ 'confirmation_phrase' => 'reset now' ] );
 
         $response = rest_get_server()->dispatch( $request );
@@ -859,6 +863,11 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         }
 
         $request = new WP_REST_Request( $method, $route );
+        if ( in_array( $method, [ 'POST', 'PUT', 'PATCH', 'DELETE' ], true ) )
+        {
+            $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        }
+
         if ( [] !== $query )
         {
             $request->set_query_params( $query );
