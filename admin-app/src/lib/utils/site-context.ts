@@ -2,6 +2,7 @@ import type {
 	ModelSelection,
 	SiteContext,
 	SiteContextConsentStatus,
+	SiteContextGenerationAccess,
 	SiteContextStatusResponse
 } from '$lib/api/types';
 
@@ -24,6 +25,20 @@ export const DEFAULT_SITE_CONTEXT_MODEL_SELECTION: ModelSelection = {
 	}
 };
 
+export function defaultSiteContextGenerationAccess(
+	overrides: Partial<SiteContextGenerationAccess> = {}
+): SiteContextGenerationAccess {
+	return {
+		can_generate: false,
+		reason_code: 'site_context_generation_consent_required',
+		message: 'Allow AI-generated Site Context before running generation.',
+		setup_target: 'site_context_consent',
+		provider: 'openrouter',
+		model: 'openai/gpt-5.5',
+		...overrides
+	};
+}
+
 export function emptySiteContextStatus(): SiteContextStatusResponse {
 	return {
 		context: null,
@@ -36,13 +51,20 @@ export function emptySiteContextStatus(): SiteContextStatusResponse {
 			next_refresh_at: null,
 			last_generated_at: null,
 			last_error: null,
-			generation_model_selection: DEFAULT_SITE_CONTEXT_MODEL_SELECTION
+			generation_model_selection: DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
+			first_generation_started_at: null,
+			first_generation_next_attempt_at: null,
+			first_generation_last_attempt_at: null,
+			first_generation_attempt_count: 0,
+			first_generation_last_error: null,
+			first_generation_exhausted_at: null
 		},
 		has_context: false,
 		is_empty: true,
 		is_stale: false,
 		stale_after_days: 90,
-		status: 'empty'
+		status: 'empty',
+		generation_access: defaultSiteContextGenerationAccess()
 	};
 }
 
@@ -58,7 +80,24 @@ type LegacySiteContextResponse =
 			is_stale?: boolean;
 			stale_after_days?: number;
 			status?: SiteContextStatusResponse['status'];
+			generation_access?: Partial<SiteContextGenerationAccess> | null;
 	  };
+
+function fallbackGenerationAccessForLegacyResponse(
+	settings: SiteContextStatusResponse['settings'],
+	empty: SiteContextStatusResponse
+): SiteContextGenerationAccess {
+	if (settings.consent_status !== 'granted') return empty.generation_access;
+
+	return defaultSiteContextGenerationAccess({
+		reason_code: 'site_context_generation_setup_required',
+		message:
+			'Set up Sentient Forms Managed Service billing or a paid OpenRouter key before generating Site Context.',
+		setup_target: 'providers',
+		provider: settings.generation_model_selection.provider ?? empty.generation_access.provider,
+		model: settings.generation_model_selection.primary ?? empty.generation_access.model
+	});
+}
 
 export function normalizeSiteContextResponse(
 	response: LegacySiteContextResponse | SiteContextStatusResponse
@@ -68,17 +107,26 @@ export function normalizeSiteContextResponse(
 
 	if ('summary_text' in response) {
 		const context = response;
+		const hasGenerationConsent = context.pii_ack === true;
 		return {
 			...empty,
 			context,
 			settings: {
 				...empty.settings,
-				consent_status: context.pii_ack ? 'granted' : 'unset',
+				consent_status: hasGenerationConsent ? 'granted' : 'unset',
 				auto_refresh_enabled: false
 			},
 			has_context: context.summary_text.trim().length > 0,
 			is_empty: context.summary_text.trim().length === 0,
-			status: context.summary_text.trim().length > 0 ? 'ready' : 'empty'
+			status: context.summary_text.trim().length > 0 ? 'ready' : 'empty',
+			generation_access: hasGenerationConsent
+				? defaultSiteContextGenerationAccess({
+						reason_code: 'site_context_generation_setup_required',
+						message:
+							'Set up Sentient Forms Managed Service billing or a paid OpenRouter key before generating Site Context.',
+						setup_target: 'providers'
+					})
+				: empty.generation_access
 		};
 	}
 
@@ -97,6 +145,7 @@ export function normalizeSiteContextResponse(
 		typeof response.is_empty === 'boolean' ? response.is_empty : !hasContext;
 	const isStale = Boolean(response.is_stale);
 	const consentDeclined = settings.consent_status === 'declined';
+	const generationAccessFallback = fallbackGenerationAccessForLegacyResponse(settings, empty);
 
 	return {
 		context: wrappedContext ?? null,
@@ -108,8 +157,91 @@ export function normalizeSiteContextResponse(
 			typeof response.stale_after_days === 'number' && response.stale_after_days > 0
 				? response.stale_after_days
 				: empty.stale_after_days,
-		status: response.status ?? (consentDeclined ? 'declined' : isEmpty ? 'empty' : isStale ? 'stale' : 'ready')
+		status:
+			response.status ??
+			(consentDeclined ? 'declined' : isEmpty ? 'empty' : isStale ? 'stale' : 'ready'),
+		generation_access: normalizeGenerationAccess(
+			response.generation_access ?? generationAccessFallback,
+			empty
+		)
 	};
+}
+
+function normalizeGenerationAccess(
+	value: Partial<SiteContextGenerationAccess> | null | undefined,
+	empty: SiteContextStatusResponse
+): SiteContextGenerationAccess {
+	if (!value || typeof value !== 'object') return empty.generation_access;
+
+	return {
+		...empty.generation_access,
+		...value,
+		can_generate: value.can_generate === true,
+		reason_code:
+			typeof value.reason_code === 'string' && value.reason_code.trim().length > 0
+				? value.reason_code
+				: empty.generation_access.reason_code,
+		message:
+			typeof value.message === 'string' && value.message.trim().length > 0
+				? value.message
+				: empty.generation_access.message,
+		setup_target:
+			typeof value.setup_target === 'string' && value.setup_target.trim().length > 0
+				? value.setup_target
+				: value.setup_target === null
+					? null
+					: empty.generation_access.setup_target
+	};
+}
+
+export function siteContextGenerateDisabledMessage(
+	status: SiteContextStatusResponse | null,
+	generationConsent: boolean,
+	hasUnsavedChanges = false
+): string | null {
+	if (!generationConsent) {
+		return 'Allow AI-generated Site Context before running generation.';
+	}
+
+	if (hasUnsavedChanges) {
+		return 'Save Site Context setup before generating so Sentient Forms can verify the selected provider, paid model, and consent state.';
+	}
+
+	if (!status?.generation_access?.can_generate) {
+		return (
+			status?.generation_access?.message ??
+			'Set up Sentient Forms Managed Service billing or a paid OpenRouter key before generating Site Context.'
+		);
+	}
+
+	return null;
+}
+
+export function siteContextModelSelectionChanged(
+	current: ModelSelection,
+	saved: ModelSelection | null | undefined
+): boolean {
+	return stableSerialize(current) !== stableSerialize(saved ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION);
+}
+
+function stableSerialize(value: unknown): string {
+	return JSON.stringify(sortObjectKeys(value));
+}
+
+function sortObjectKeys(value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value.map((item) => sortObjectKeys(item));
+	}
+
+	if (!value || typeof value !== 'object') {
+		return value;
+	}
+
+	const sorted: Record<string, unknown> = {};
+	for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+		sorted[key] = sortObjectKeys((value as Record<string, unknown>)[key]);
+	}
+	return sorted;
 }
 
 export function siteContextStatusLabel(status: SiteContextStatusResponse): string {

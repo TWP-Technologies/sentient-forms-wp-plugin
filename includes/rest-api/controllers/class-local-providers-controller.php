@@ -263,6 +263,7 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
             if ( in_array( $local_status, [ 'valid', 'limited' ], true ) )
             {
                 $this->model_selection_service->repair_all_custom_actions();
+                Sentient_Forms_Site_Context_Controller::maybe_rearm_first_generation_after_provider_setup();
             }
         }
 
@@ -377,6 +378,7 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         if ( in_array( $local_status, [ 'valid', 'limited' ], true ) )
         {
             $this->model_selection_service->repair_all_custom_actions();
+            Sentient_Forms_Site_Context_Controller::maybe_rearm_first_generation_after_provider_setup();
         }
 
         return $this->prepare_item_for_response(
@@ -578,6 +580,7 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         }
 
         $credential = $this->credentials->get( (int) $credential_id );
+        Sentient_Forms_Site_Context_Controller::maybe_rearm_first_generation_after_provider_setup();
 
         return $this->prepare_item_for_response(
             [

@@ -192,6 +192,38 @@ const siteContext = {
 	updated_at: '2026-02-24T00:00:00Z'
 };
 
+const siteContextStatus = {
+	context: siteContext,
+	settings: {
+		consent_status: 'granted',
+		consented_at: '2026-02-24T00:00:00Z',
+		declined_at: null,
+		auto_refresh_enabled: false,
+		auto_refresh_days: 30,
+		next_refresh_at: null,
+		last_generated_at: null,
+		last_error: null,
+		generation_model_selection: {
+			primary: 'sf_research',
+			is_preset: true,
+			provider: 'sentient_managed'
+		}
+	},
+	has_context: true,
+	is_empty: false,
+	is_stale: false,
+	stale_after_days: 90,
+	status: 'ready',
+	generation_access: {
+		can_generate: true,
+		reason_code: 'ready',
+		message: 'Site Context generation is ready through Sentient Forms Managed Service.',
+		setup_target: null,
+		provider: 'sentient_managed',
+		model: 'openai/gpt-5.5'
+	}
+};
+
 const initialTelemetryState = {
 	telemetry_opt_in: false,
 	updated_at: '2026-02-24T00:00:00Z',
@@ -622,11 +654,11 @@ export async function mockResponsiveApi(
 		}
 
 		if (endpoint === 'site-context' && method === 'GET') {
-			return respondJson(route, siteContext);
+			return respondJson(route, siteContextStatus);
 		}
 
 		if (endpoint === 'site-context' && method === 'POST') {
-			return respondJson(route, siteContext);
+			return respondJson(route, siteContextStatus);
 		}
 
 		if (endpoint === 'site-context' && method === 'PUT') {

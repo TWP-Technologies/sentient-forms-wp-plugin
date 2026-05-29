@@ -291,6 +291,22 @@ export interface SiteContextRefreshSettings {
 	last_generated_at: string | null;
 	last_error: string | null;
 	generation_model_selection?: ModelSelection | null;
+	first_generation_started_at?: string | null;
+	first_generation_next_attempt_at?: string | null;
+	first_generation_last_attempt_at?: string | null;
+	first_generation_attempt_count?: number;
+	first_generation_last_error?: string | null;
+	first_generation_exhausted_at?: string | null;
+}
+
+export interface SiteContextGenerationAccess {
+	can_generate: boolean;
+	reason_code: string;
+	message: string;
+	setup_target: 'site_context_consent' | 'providers' | 'licensing' | string | null;
+	provider?: string | null;
+	model?: string | null;
+	credential_id?: number | null;
 }
 
 export interface SiteContext {
@@ -315,6 +331,7 @@ export interface SiteContextStatusResponse {
 	is_stale: boolean;
 	stale_after_days: number;
 	status: 'empty' | 'ready' | 'stale' | 'declined';
+	generation_access: SiteContextGenerationAccess;
 }
 
 export interface SiteContextUpdateRequest {

@@ -262,11 +262,14 @@ async function coverSiteContextWarningFlow(page: Page): Promise<void> {
 	await expect(generationConsent).toBeVisible();
 	if ((await generationConsent.getAttribute('aria-checked')) !== 'true') {
 		await generationConsent.click();
+		await page.getByTestId('site-context-save').click();
+		await expect(page.getByTestId('site-context-save')).toBeDisabled();
 	}
 
 	const generateButton = page.getByTestId('site-context-generate-now');
 	await expect(generateButton).toBeVisible();
-	await expect(generateButton).toBeEnabled();
+	await expect(generateButton).toBeDisabled();
+	await expect(page.getByTestId('site-context-generate-disabled-help')).toBeVisible();
 
 	const withdrawButton = page.getByRole('button', { name: 'Withdraw consent' });
 	await expect(withdrawButton).toBeVisible();

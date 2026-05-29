@@ -139,6 +139,11 @@ async function installFixedWpAdminBar(page: Page, height = 64) {
 	await page.addInitScript((adminBarHeight: number) => {
 		const install = () => {
 			document.body.classList.add('wp-admin');
+			document.body.style.paddingTop = `${adminBarHeight}px`;
+			document.documentElement.style.setProperty(
+				'--sentient-forms-wp-admin-offset',
+				`${adminBarHeight}px`
+			);
 			const existing = document.getElementById('wpadminbar');
 			if (existing) {
 				existing.remove();

@@ -183,7 +183,16 @@ test.describe('Privacy setup assistant', () => {
 					is_empty: true,
 					is_stale: false,
 					stale_after_days: 90,
-					status: 'empty'
+					status: 'empty',
+					generation_access: {
+						can_generate: false,
+						reason_code: 'site_context_generation_managed_setup_required',
+						message:
+							'Connect Sentient Forms Managed Service billing before generating Site Context with managed models.',
+						setup_target: 'licensing',
+						provider: 'sentient_managed',
+						model: 'openai/gpt-5.5'
+					}
 				})
 			});
 		});
@@ -213,5 +222,162 @@ test.describe('Privacy setup assistant', () => {
 		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText(
 			'Stored locally'
 		);
+	});
+
+	test('keeps the first-run modal open with a visible error when Site Context setup cannot be saved', async ({
+		page
+	}) => {
+		const previewHost = getPreviewOrigin();
+		await seedRuntimeConfig(page, {
+			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
+			siteUrl: previewHost
+		});
+
+		let settingsPutCount = 0;
+
+		await page.route('**/wp-json/sentient-forms/v1/settings', async (route) => {
+			if (route.request().method() === 'PUT') {
+				settingsPutCount += 1;
+			}
+
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					enable_logging: false,
+					execution_global_disabled: false,
+					execution_provider_disabled: { gravity_forms: false },
+					execution_event_retention_days: 90,
+					delete_data_on_uninstall: true,
+					store_full_ai_outputs: false,
+					privacy_setup_profile: 'balanced',
+					privacy_setup_completed_at: null
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/telemetry', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					telemetry_opt_in: false,
+					updated_at: null,
+					synced_at: null,
+					remote_updated_at: null,
+					last_error: null
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/async-settings', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					max_attempts: 3,
+					base_delay_seconds: 60,
+					max_delay_seconds: 3600,
+					updated_at: null,
+					updated_by: null
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/async-health', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					queue_depth: 0,
+					oldest_run_at: null,
+					recent_failures: {},
+					warnings: []
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ success: true, data: [] })
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/models**', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						models: [],
+						presets: []
+					}
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/site-context**', async (route) => {
+			if (route.request().method() === 'PUT') {
+				await route.fulfill({
+					status: 500,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						code: 'site_context_save_failed',
+						message: 'Site Context could not be saved for this site.'
+					})
+				});
+				return;
+			}
+
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					context: null,
+					settings: {
+						consent_status: 'unset',
+						consented_at: null,
+						declined_at: null,
+						auto_refresh_enabled: false,
+						auto_refresh_days: 30,
+						next_refresh_at: null,
+						last_generated_at: null,
+						last_error: null,
+						generation_model_selection: {
+							primary: 'sf_research',
+							is_preset: true,
+							provider: 'sentient_managed'
+						}
+					},
+					has_context: false,
+					is_empty: true,
+					is_stale: false,
+					stale_after_days: 90,
+					status: 'empty',
+					generation_access: {
+						can_generate: false,
+						reason_code: 'site_context_generation_consent_required',
+						message: 'Allow AI-generated Site Context before running generation.',
+						setup_target: 'site_context_consent',
+						provider: 'sentient_managed',
+						model: 'openai/gpt-5.5'
+					}
+				})
+			});
+		});
+
+		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
+		await page.getByTestId('site-context-generation-consent').click();
+		await page.getByRole('button', { name: 'Apply Balanced' }).click();
+
+		await expect(page.getByTestId('privacy-site-context-error')).toContainText(
+			'Site Context could not be saved'
+		);
+		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
+		expect(settingsPutCount).toBe(0);
 	});
 });

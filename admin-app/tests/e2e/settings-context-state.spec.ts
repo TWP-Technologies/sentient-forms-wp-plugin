@@ -125,7 +125,16 @@ test.describe('Settings context state templates', () => {
 					is_empty: true,
 					is_stale: false,
 					stale_after_days: 90,
-					status: 'empty'
+					status: 'empty',
+					generation_access: {
+						can_generate: false,
+						reason_code: 'site_context_generation_managed_setup_required',
+						message:
+							'Connect Sentient Forms Managed Service billing before generating Site Context with managed models.',
+						setup_target: 'licensing',
+						provider: 'sentient_managed',
+						model: 'openai/gpt-5.5'
+					}
 				})
 			})
 		);
@@ -137,7 +146,121 @@ test.describe('Settings context state templates', () => {
 			'aria-checked',
 			'true'
 		);
+		await expect(page.getByTestId('site-context-generate-now')).toBeDisabled();
+		await expect(page.getByTestId('site-context-generate-disabled-help')).toContainText(
+			'Connect Sentient Forms Managed Service billing'
+		);
+		await expect(page.getByTestId('site-context-generate-setup-link')).toContainText(
+			'Open billing'
+		);
 		await expect(page.getByTestId('site-context-notices')).toBeVisible();
+	});
+
+	test('enables Generate Now only when backend generation access is ready', async ({ page }) => {
+		let generateRequests = 0;
+
+		await page.route('**/wp-json/sentient-forms/v1/site-context**', (route) => {
+			const request = route.request();
+			if (request.method() === 'POST' && request.url().endsWith('/site-context/generate')) {
+				generateRequests += 1;
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						context: {
+							id: 'ctx-generated',
+							license_id: 'local',
+							summary_text: 'Generated paid-route context.',
+							source: 'ai_generated',
+							auto_include: true,
+							pii_ack: true,
+							free_refresh_available: true,
+							next_free_refresh_at: null,
+							created_at: '2026-05-28T00:00:00Z',
+							updated_at: '2026-05-28T00:00:00Z'
+						},
+						settings: {
+							consent_status: 'granted',
+							consented_at: '2026-05-28T00:00:00Z',
+							declined_at: null,
+							auto_refresh_enabled: false,
+							auto_refresh_days: 30,
+							next_refresh_at: null,
+							last_generated_at: '2026-05-28T00:00:00Z',
+							last_error: null,
+							generation_model_selection: {
+								primary: 'openai/gpt-5.5',
+								is_preset: false,
+								provider: 'openrouter',
+								credential_id: 12
+							}
+						},
+						has_context: true,
+						is_empty: false,
+						is_stale: false,
+						stale_after_days: 90,
+						status: 'ready',
+						generation_access: {
+							can_generate: true,
+							reason_code: 'ready',
+							message: 'Site Context generation is ready through your OpenRouter key.',
+							setup_target: null,
+							provider: 'openrouter',
+							model: 'openai/gpt-5.5',
+							credential_id: 12
+						}
+					})
+				});
+			}
+
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					context: null,
+					settings: {
+						consent_status: 'granted',
+						consented_at: '2026-05-28T00:00:00Z',
+						declined_at: null,
+						auto_refresh_enabled: false,
+						auto_refresh_days: 30,
+						next_refresh_at: null,
+						last_generated_at: null,
+						last_error: null,
+						generation_model_selection: {
+							primary: 'openai/gpt-5.5',
+							is_preset: false,
+							provider: 'openrouter',
+							credential_id: 12
+						}
+					},
+					has_context: false,
+					is_empty: true,
+					is_stale: false,
+					stale_after_days: 90,
+					status: 'empty',
+					generation_access: {
+						can_generate: true,
+						reason_code: 'ready',
+						message: 'Site Context generation is ready through your OpenRouter key.',
+						setup_target: null,
+						provider: 'openrouter',
+						model: 'openai/gpt-5.5',
+						credential_id: 12
+					}
+				})
+			});
+		});
+
+		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
+		await expect(page.getByTestId('site-context-generate-disabled-help')).toHaveCount(0);
+		await expect(page.getByTestId('site-context-generate-now')).toBeEnabled();
+		await page.getByTestId('site-context-generate-now').click();
+
+		await expect.poll(() => generateRequests).toBe(1);
+		await expect(page.getByTestId('site-context-textarea')).toHaveValue(
+			'Generated paid-route context.'
+		);
 	});
 
 	test('shows error template and recovers on retry', async ({ page }) => {

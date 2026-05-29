@@ -6,13 +6,16 @@
 	} from '$lib/api/types';
 	import SiteContextNotices from '$lib/components/site-context-notices.svelte';
 	import SiteContextSetupPanel from '$lib/components/site-context-setup-panel.svelte';
-	import { Badge, Button } from '$lib/components/ui';
+	import { Alert, Badge, Button } from '$lib/components/ui';
+	import { appHref } from '$lib/navigation';
 	import { notifications } from '$lib/stores/notifications';
 	import {
 		DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
 		DEFAULT_SITE_CONTEXT_REFRESH_DAYS,
 		SITE_CONTEXT_REFRESH_DAY_OPTIONS,
 		normalizeSiteContextResponse,
+		siteContextGenerateDisabledMessage,
+		siteContextModelSelectionChanged,
 		siteContextStatusLabel
 	} from '$lib/utils/site-context';
 	import { wpFetch } from '$lib/wp';
@@ -104,6 +107,7 @@
 	let siteContextLoading = $state(false);
 	let siteContextSaving = $state(false);
 	let siteContextGenerating = $state(false);
+	let siteContextError = $state<string | null>(null);
 	let siteContextStatus = $state<SiteContextStatusResponse | null>(null);
 	let siteContextText = $state('');
 	let siteContextConsent = $state(false);
@@ -121,17 +125,35 @@
 			siteContextConsent !== (siteContextStatus.settings.consent_status === 'granted') ||
 			siteContextAutoRefresh !== siteContextStatus.settings.auto_refresh_enabled ||
 			siteContextRefreshDays !== siteContextStatus.settings.auto_refresh_days ||
-			JSON.stringify(siteContextModelSelection) !==
-				JSON.stringify(
-					siteContextStatus.settings.generation_model_selection ??
-						DEFAULT_SITE_CONTEXT_MODEL_SELECTION
-				)
+			siteContextModelSelectionChanged(
+				siteContextModelSelection,
+				siteContextStatus.settings.generation_model_selection
+			)
 		);
 	});
 	let siteContextSetupLabel = $derived(
 		siteContextStatus ? siteContextStatusLabel(siteContextStatus) : 'Loading'
 	);
 	let siteContextSetupVariant = $derived(siteContextBadgeVariant(siteContextStatus));
+	let generateDisabledMessage = $derived(
+		siteContextGenerateDisabledMessage(siteContextStatus, siteContextConsent, siteContextHasChanges)
+	);
+	let canGenerateSiteContext = $derived(
+		siteContextConsent &&
+			!siteContextGenerating &&
+			!generateDisabledMessage &&
+			siteContextStatus?.generation_access.can_generate === true
+	);
+	let generateSetupHref = $derived(
+		generateDisabledMessage && !siteContextHasChanges
+			? siteContextGenerationSetupHref(siteContextStatus?.generation_access.setup_target)
+			: null
+	);
+	let generateSetupLabel = $derived(
+		siteContextStatus?.generation_access.setup_target === 'licensing'
+			? 'Open billing'
+			: 'Set up provider'
+	);
 
 	$effect(() => {
 		if (!open) return;
@@ -168,6 +190,7 @@
 	}
 
 	function syncSiteContext(next: SiteContextStatusResponse): void {
+		siteContextError = null;
 		siteContextStatus = next;
 		siteContextText = next.context?.summary_text ?? '';
 		siteContextConsent = next.settings.consent_status === 'granted';
@@ -187,12 +210,14 @@
 
 	async function loadSiteContext(): Promise<void> {
 		siteContextLoading = true;
+		siteContextError = null;
 		try {
 			syncSiteContext(
 				normalizeSiteContextResponse(await wpFetch<SiteContextStatusResponse>('site-context'))
 			);
 		} catch (error) {
 			console.error('Failed to load Site Context setup state', error);
+			siteContextError = readableError(error, 'Unable to load Site Context setup state.');
 		} finally {
 			siteContextLoading = false;
 		}
@@ -212,6 +237,7 @@
 
 	async function saveSiteContext(): Promise<boolean> {
 		siteContextSaving = true;
+		siteContextError = null;
 		try {
 			const response = await wpFetch<SiteContextStatusResponse>('site-context', {
 				method: 'PUT',
@@ -222,6 +248,10 @@
 			return true;
 		} catch (error) {
 			console.error('Failed to save Site Context setup', error);
+			siteContextError = readableError(
+				error,
+				'Unable to save Site Context setup. Apply is paused until this is saved.'
+			);
 			notifications.error('Unable to save Site Context setup');
 			return false;
 		} finally {
@@ -230,11 +260,15 @@
 	}
 
 	async function generateSiteContext(): Promise<void> {
-		if (!siteContextConsent) {
-			notifications.warning('Allow AI-generated Site Context before generating.');
+		if (!canGenerateSiteContext) {
+			notifications.warning(
+				generateDisabledMessage ??
+					'Site Context generation is not ready. Save setup and configure a paid provider before generating.'
+			);
 			return;
 		}
 		siteContextGenerating = true;
+		siteContextError = null;
 		try {
 			const response = await wpFetch<SiteContextStatusResponse>('site-context/generate', {
 				method: 'POST',
@@ -244,10 +278,35 @@
 			notifications.success('Site Context generated');
 		} catch (error) {
 			console.error('Failed to generate Site Context', error);
+			siteContextError = readableError(error, 'Unable to generate Site Context.');
 			notifications.error('Unable to generate Site Context');
 		} finally {
 			siteContextGenerating = false;
 		}
+	}
+
+	function siteContextGenerationSetupHref(target: string | null | undefined): string | null {
+		if (target === 'providers') return appHref('/providers');
+		if (target === 'licensing') return appHref('/licensing');
+		return null;
+	}
+
+	function readableError(error: unknown, fallback: string): string {
+		const payload =
+			error && typeof error === 'object' && 'payload' in error
+				? (error as { payload?: unknown }).payload
+				: null;
+
+		if (payload && typeof payload === 'object') {
+			const message = (payload as { message?: unknown }).message;
+			if (typeof message === 'string' && message.trim().length > 0) return message;
+
+			const nested = (payload as { error?: { message?: unknown } }).error?.message;
+			if (typeof nested === 'string' && nested.trim().length > 0) return nested;
+		}
+
+		if (error instanceof Error && error.message !== 'Request failed') return error.message;
+		return fallback;
 	}
 </script>
 
@@ -401,6 +460,11 @@
 					</div>
 
 					<div class="sf:space-y-6">
+						{#if siteContextError}
+							<Alert variant="danger" data-testid="privacy-site-context-error">
+								{siteContextError}
+							</Alert>
+						{/if}
 						<SiteContextSetupPanel
 							stepNumber={3}
 							statusLabel={siteContextSetupLabel}
@@ -408,7 +472,10 @@
 							loading={siteContextLoading}
 							saving={siteContextSaving}
 							generating={siteContextGenerating}
-							generateDisabled={!siteContextConsent || siteContextGenerating}
+							generateDisabled={!canGenerateSiteContext}
+							generateDisabledMessage={siteContextGenerating ? null : generateDisabledMessage}
+							generateSetupHref={generateSetupHref}
+							generateSetupLabel={generateSetupLabel}
 							bind:contextText={siteContextText}
 							bind:generationConsent={siteContextConsent}
 							bind:autoRefreshEnabled={siteContextAutoRefresh}

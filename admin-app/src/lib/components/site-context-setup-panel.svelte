@@ -1,6 +1,6 @@
 <script lang="ts">
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
-	import { Badge, Button, ModelSelector, Toggle } from '$lib/components/ui';
+	import { Badge, Button, ButtonLink, InfoTooltip, ModelSelector, Toggle } from '$lib/components/ui';
 	import type { ModelSelection } from '$lib/api/types';
 
 	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
@@ -14,6 +14,9 @@
 		generating?: boolean;
 		saveDisabled?: boolean;
 		generateDisabled?: boolean;
+		generateDisabledMessage?: string | null;
+		generateSetupHref?: string | null;
+		generateSetupLabel?: string;
 		saveLabel?: string;
 		generatingLabel?: string;
 		manualLabel?: string;
@@ -37,6 +40,9 @@
 		generating = false,
 		saveDisabled = false,
 		generateDisabled = false,
+		generateDisabledMessage = null,
+		generateSetupHref = null,
+		generateSetupLabel = 'Set up provider',
 		saveLabel = 'Save context',
 		generatingLabel = 'Generating...',
 		manualLabel = 'Manual context',
@@ -52,6 +58,7 @@
 	}: Props = $props();
 
 	const canUseGeneratedContext = $derived(generationConsent === true);
+	const generateHelpId = 'site-context-generate-disabled-help';
 </script>
 
 <section
@@ -167,11 +174,40 @@
 			<Button
 				disabled={generateDisabled}
 				loading={generating}
+				aria-describedby={generateDisabledMessage ? generateHelpId : undefined}
 				onclick={onGenerate}
 				data-testid="site-context-generate-now"
 			>
 				{generating ? generatingLabel : 'Generate now'}
 			</Button>
 		</div>
+		{#if generateDisabledMessage}
+			<div
+				id={generateHelpId}
+				class="sf:mt-3 sf:flex sf:flex-col sf:gap-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-4 sf:py-3 sf:text-sm sf:leading-6 sf:text-slate-700 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between"
+				data-testid="site-context-generate-disabled-help"
+			>
+				<div class="sf:flex sf:min-w-0 sf:items-start sf:gap-2">
+					<InfoTooltip
+						label="Site Context generation uses paid web-capable models so it can research the public site before writing context."
+						triggerLabel="Why is Site Context generation unavailable?"
+						side="top"
+						class="sf:mt-0.5 sf:bg-white"
+					/>
+					<p class="sf:min-w-0">{generateDisabledMessage}</p>
+				</div>
+				{#if generateSetupHref}
+					<ButtonLink
+						variant="secondary"
+						size="sm"
+						href={generateSetupHref}
+						class="sf:shrink-0"
+						data-testid="site-context-generate-setup-link"
+					>
+						{generateSetupLabel}
+					</ButtonLink>
+				{/if}
+			</div>
+		{/if}
 	{/if}
 </section>

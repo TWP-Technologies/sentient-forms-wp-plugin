@@ -8,12 +8,15 @@
 		SiteContextStatusResponse,
 		SiteContextUpdateRequest
 	} from '$lib/api/types';
+	import { appHref } from '$lib/navigation';
 	import { notifications } from '$lib/stores/notifications';
 	import {
 		DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
 		DEFAULT_SITE_CONTEXT_REFRESH_DAYS,
 		SITE_CONTEXT_REFRESH_DAY_OPTIONS,
 		normalizeSiteContextResponse,
+		siteContextGenerateDisabledMessage,
+		siteContextModelSelectionChanged,
 		siteContextStatusLabel
 	} from '$lib/utils/site-context';
 	import { wpFetch } from '$lib/wp';
@@ -40,7 +43,6 @@
 	const hasContext = $derived(Boolean(status?.has_context));
 	const statusLabel = $derived(status ? siteContextStatusLabel(status) : 'Loading');
 	const statusVariant = $derived(siteContextBadgeVariant(status));
-	const canGenerate = $derived(generationConsent && !generating);
 	const canWithdraw = $derived(status?.settings.consent_status === 'granted' || hasContext);
 	const hasChanges = $derived.by(() => {
 		if (!status) return false;
@@ -51,12 +53,28 @@
 			generationConsent !== (status.settings.consent_status === 'granted') ||
 			autoRefreshEnabled !== status.settings.auto_refresh_enabled ||
 			autoRefreshDays !== status.settings.auto_refresh_days ||
-			JSON.stringify(generationModelSelection) !==
-				JSON.stringify(
-					status.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION
-				)
+			siteContextModelSelectionChanged(
+				generationModelSelection,
+				status.settings.generation_model_selection
+			)
 		);
 	});
+	const generateDisabledMessage = $derived(
+		siteContextGenerateDisabledMessage(status, generationConsent, hasChanges)
+	);
+	const canGenerate = $derived(
+		generationConsent && !generating && !generateDisabledMessage && status?.generation_access.can_generate === true
+	);
+	const generateSetupHref = $derived(
+		generateDisabledMessage && !hasChanges
+			? siteContextGenerationSetupHref(status?.generation_access.setup_target)
+			: null
+	);
+	const generateSetupLabel = $derived(
+		status?.generation_access.setup_target === 'licensing'
+			? 'Open billing'
+			: 'Set up provider'
+	);
 
 	function syncFromStatus(next: SiteContextStatusResponse): void {
 		status = next;
@@ -86,7 +104,7 @@
 			);
 		} catch (e) {
 			console.error('Failed to load Site Context', e);
-			error = e instanceof Error ? e.message : 'Failed to load Site Context';
+			error = readableError(e, 'Failed to load Site Context');
 		} finally {
 			loading = false;
 		}
@@ -116,15 +134,18 @@
 			notifications.success('Site Context saved');
 		} catch (e) {
 			console.error('Failed to save Site Context', e);
-			error = e instanceof Error ? e.message : 'Failed to save Site Context';
+			error = readableError(e, 'Failed to save Site Context');
 		} finally {
 			saving = false;
 		}
 	}
 
 	async function generateContext(): Promise<void> {
-		if (!generationConsent) {
-			notifications.warning('Allow AI-generated Site Context before generating.');
+		if (!canGenerate) {
+			notifications.warning(
+				generateDisabledMessage ??
+					'Site Context generation is not ready. Save setup and configure a paid provider before generating.'
+			);
 			return;
 		}
 		generating = true;
@@ -138,7 +159,7 @@
 			notifications.success('Site Context generated');
 		} catch (e) {
 			console.error('Failed to generate Site Context', e);
-			error = e instanceof Error ? e.message : 'Failed to generate Site Context';
+			error = readableError(e, 'Failed to generate Site Context');
 		} finally {
 			generating = false;
 		}
@@ -156,7 +177,7 @@
 			notifications.success('Site Context consent withdrawn');
 		} catch (e) {
 			console.error('Failed to withdraw Site Context consent', e);
-			error = e instanceof Error ? e.message : 'Failed to withdraw Site Context consent';
+			error = readableError(e, 'Failed to withdraw Site Context consent');
 		} finally {
 			withdrawing = false;
 		}
@@ -167,6 +188,33 @@
 		const date = new Date(value.replace(' ', 'T'));
 		if (Number.isNaN(date.getTime())) return 'Unknown';
 		return date.toLocaleDateString();
+	}
+
+	function siteContextGenerationSetupHref(target: string | null | undefined): string | null {
+		if (target === 'providers') return appHref('/providers');
+		if (target === 'licensing') return appHref('/licensing');
+		return null;
+	}
+
+	function readableError(errorValue: unknown, fallback: string): string {
+		const payload =
+			errorValue && typeof errorValue === 'object' && 'payload' in errorValue
+				? (errorValue as { payload?: unknown }).payload
+				: null;
+
+		if (payload && typeof payload === 'object') {
+			const message = (payload as { message?: unknown }).message;
+			if (typeof message === 'string' && message.trim().length > 0) return message;
+
+			const nested = (payload as { error?: { message?: unknown } }).error?.message;
+			if (typeof nested === 'string' && nested.trim().length > 0) return nested;
+		}
+
+		if (errorValue instanceof Error && errorValue.message !== 'Request failed') {
+			return errorValue.message;
+		}
+
+		return fallback;
 	}
 
 	onMount(() => {
@@ -244,6 +292,9 @@
 				saveLabel="Save context"
 				saveDisabled={!hasChanges || isOverLimit}
 				generateDisabled={!canGenerate}
+				generateDisabledMessage={generating ? null : generateDisabledMessage}
+				generateSetupHref={generateSetupHref}
+				generateSetupLabel={generateSetupLabel}
 				bind:contextText={editedText}
 				bind:generationConsent={generationConsent}
 				bind:autoRefreshEnabled={autoRefreshEnabled}

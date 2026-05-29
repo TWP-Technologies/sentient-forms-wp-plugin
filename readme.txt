@@ -16,7 +16,7 @@ Sentient Forms adds AI-assisted actions to WordPress forms. Gravity Forms is req
 
 The plugin is moving to a local-first architecture. Site-owned configuration, action definitions, form mappings, execution logs, provider settings, and saved results are stored in your WordPress database.
 
-You can use the plugin without a paid Sentient Forms account by connecting your own OpenRouter API key and choosing models available to your OpenRouter account, including OpenRouter free models when available. Optional Sentient Forms Managed Execution is intended for users who want Sentient Forms to handle paid proxy execution, billing, and metering.
+You can use the plugin without a paid Sentient Forms account by connecting your own OpenRouter API key and choosing models available to your OpenRouter account, including OpenRouter free models for supported form-action workflows when available. AI-generated Site Context is stricter because it researches public site pages before writing the context: it requires either Sentient Forms Managed Execution or a configured paid, web-capable OpenRouter model. You can always write Site Context manually without using a paid model.
 
 = External services =
 
@@ -26,9 +26,9 @@ OpenRouter direct execution:
 
 * Service: OpenRouter
 * Endpoint: https://openrouter.ai/
-* When used: when an administrator connects OpenRouter and runs a direct provider validation, form action, or AI-generated Site Context refresh through the direct provider path.
+* When used: when an administrator connects OpenRouter and runs a direct provider validation, form action, or AI-generated Site Context generation/refresh through the direct provider path. AI-generated Site Context only runs through this path after the administrator has configured a paid, web-capable OpenRouter model.
 * Data sent: for form actions, the selected form fields, prompt/action instructions, model identifier, and request metadata needed to complete the AI request. For AI-generated Site Context, the site URL, public-site research prompt, selected model identifier, and request metadata are sent, and enabled web-capable models may use web search or fetch against public site pages.
-* Account required: an OpenRouter account and API key are required for direct execution.
+* Account required: an OpenRouter account and API key are required for direct execution. AI-generated Site Context requires access to a paid, non-free, web-capable model.
 * Terms: https://openrouter.ai/terms
 * Privacy policy: https://openrouter.ai/privacy
 
@@ -92,6 +92,10 @@ No. The plugin is intended to provide a functional direct path through your own 
 = Does Sentient Forms receive my form data when I use direct OpenRouter execution? =
 
 No. Direct OpenRouter execution is performed from your WordPress site to OpenRouter. Sentient Forms does not receive direct OpenRouter BYOK/free execution payloads.
+
+= Can AI generate Site Context with OpenRouter free models? =
+
+No. AI-generated Site Context requires either Sentient Forms Managed Execution or a configured paid, web-capable OpenRouter model because the generation step uses public-site research. Free OpenRouter routes can still be used for supported form-action workflows where the selected model and provider allow them. You can also write Site Context manually without any paid model.
 
 = What data is stored locally? =
 

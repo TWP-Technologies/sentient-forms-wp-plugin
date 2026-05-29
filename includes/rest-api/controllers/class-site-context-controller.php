@@ -19,18 +19,28 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
 {
     use Trait_Sentient_Forms_Permission_Utils;
 
-    private const OPTION_NAME          = 'sentient_forms_site_context';
-    private const SETTINGS_OPTION_NAME = 'sentient_forms_site_context_settings';
-    private const CRON_HOOK            = 'sentient_forms_site_context_refresh';
-    private const MAX_CONTEXT_LENGTH   = 5000;
-    private const DEFAULT_REFRESH_DAYS = 30;
-    private const MANUAL_STALE_DAYS    = 90;
+    private const OPTION_NAME                 = 'sentient_forms_site_context';
+    private const SETTINGS_OPTION_NAME        = 'sentient_forms_site_context_settings';
+    private const CRON_HOOK                   = 'sentient_forms_site_context_refresh';
+    private const FIRST_GENERATION_CRON_HOOK = 'sentient_forms_site_context_first_generation';
+    private const FIRST_GENERATION_OFFSETS   = [
+        600,
+        HOUR_IN_SECONDS,
+        6 * HOUR_IN_SECONDS,
+        DAY_IN_SECONDS,
+        3 * DAY_IN_SECONDS,
+    ];
+    private const MAX_CONTEXT_LENGTH          = 5000;
+    private const DEFAULT_REFRESH_DAYS        = 30;
+    private const MANUAL_STALE_DAYS           = 90;
+    private const READY_CREDENTIAL_STATUSES   = [ 'valid', 'limited' ];
 
     protected string $rest_base = 'site-context';
 
     public static function register_hooks(): void
     {
         add_action( self::CRON_HOOK, [ self::class, 'run_scheduled_refresh' ] );
+        add_action( self::FIRST_GENERATION_CRON_HOOK, [ self::class, 'run_scheduled_first_generation' ] );
     }
 
     public static function run_scheduled_refresh(): void
@@ -53,6 +63,104 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         $controller->schedule_next_refresh( (int) $settings['auto_refresh_days'] );
+    }
+
+    /**
+     * Handles the one-time Site Context generation cron after consent/setup.
+     *
+     * The cron only fills an empty Site Context, records retry state while
+     * prerequisites are missing, and clears retry state after success or when a
+     * context already exists.
+     *
+     * @since 0.2.1
+     *
+     * @see self::build_generation_access()
+     * @see self::perform_generation()
+     * @see self::persist_first_generation_attempt_state()
+     * @see self::clear_first_generation_attempt_state()
+     *
+     * @return void
+     */
+    public static function run_scheduled_first_generation(): void
+    {
+        $controller = new self();
+        $settings   = $controller->get_settings_record();
+        $context    = $controller->get_stored_context();
+
+        if ( 'granted' !== $settings['consent_status'] || is_array( $context ) )
+        {
+            $controller->clear_first_generation_attempt_state( $settings );
+            $controller->clear_first_generation_schedule();
+            return;
+        }
+
+        $attempts = min(
+            count( self::FIRST_GENERATION_OFFSETS ),
+            max( 0, absint( $settings['first_generation_attempt_count'] ?? 0 ) ) + 1
+        );
+        $settings['first_generation_attempt_count']   = $attempts;
+        $settings['first_generation_last_attempt_at'] = gmdate( 'Y-m-d H:i:s' );
+        $settings['first_generation_next_attempt_at'] = null;
+
+        $access = $controller->build_generation_access( $settings );
+        if ( empty( $access['can_generate'] ) )
+        {
+            $settings['first_generation_last_error'] = $access['message'];
+            $controller->persist_first_generation_attempt_state( $settings );
+            return;
+        }
+
+        $result = $controller->perform_generation( $settings, false, true );
+        if ( is_wp_error( $result ) )
+        {
+            if ( 'site_context_generation_existing_context' === $result->get_error_code() )
+            {
+                $controller->clear_first_generation_attempt_state( $settings );
+                $controller->clear_first_generation_schedule();
+                return;
+            }
+
+            $settings['first_generation_last_error'] = $result->get_error_message();
+            $controller->persist_first_generation_attempt_state( $settings );
+            return;
+        }
+
+        $controller->clear_first_generation_attempt_state( $controller->get_settings_record() );
+        $controller->clear_first_generation_schedule();
+    }
+
+    /**
+     * Restarts pending first-generation retries after provider setup succeeds.
+     *
+     * Provider setup can happen after the webmaster grants AI Site Context
+     * consent. This method clears prior retry errors and schedules the first
+     * generation path again when no Site Context exists yet.
+     *
+     * @since 0.2.1
+     *
+     * @see self::sync_first_generation_schedule()
+     * @see self::get_stored_context()
+     *
+     * @return void
+     */
+    public static function maybe_rearm_first_generation_after_provider_setup(): void
+    {
+        $controller = new self();
+        $settings   = $controller->get_settings_record();
+        if ( 'granted' !== $settings['consent_status'] || null !== $controller->get_stored_context() )
+        {
+            return;
+        }
+
+        $settings['first_generation_started_at']      = null;
+        $settings['first_generation_next_attempt_at'] = null;
+        $settings['first_generation_last_attempt_at'] = null;
+        $settings['first_generation_attempt_count']   = 0;
+        $settings['first_generation_last_error']      = null;
+        $settings['first_generation_exhausted_at']    = null;
+        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+
+        $controller->sync_first_generation_schedule( $settings );
     }
 
     public function register_routes(): void
@@ -125,6 +233,8 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         update_option( self::OPTION_NAME, $context, false );
         update_option( self::SETTINGS_OPTION_NAME, $settings, false );
         $this->sync_refresh_schedule( $settings );
+        $this->clear_first_generation_attempt_state( $settings );
+        $this->clear_first_generation_schedule();
 
         return $this->prepare_item_for_response( $this->build_status_response() );
     }
@@ -170,6 +280,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
 
         update_option( self::SETTINGS_OPTION_NAME, $settings, false );
         $this->sync_refresh_schedule( $settings );
+        $this->sync_first_generation_schedule( $settings );
 
         return $this->prepare_item_for_response( $this->build_status_response() );
     }
@@ -177,12 +288,6 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
     public function generate_context( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
         $settings = $this->settings_from_request( $request, $this->get_settings_record() );
-        if ( 'granted' !== $settings['consent_status'] )
-        {
-            $settings['consent_status'] = 'granted';
-            $settings['consented_at']   = current_time( 'mysql' );
-            $settings['declined_at']    = null;
-        }
 
         update_option( self::SETTINGS_OPTION_NAME, $settings, false );
 
@@ -195,6 +300,8 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         $this->sync_refresh_schedule( $this->get_settings_record() );
+        $this->clear_first_generation_attempt_state( $this->get_settings_record() );
+        $this->clear_first_generation_schedule();
         return $this->prepare_item_for_response( $this->build_status_response() );
     }
 
@@ -207,6 +314,8 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         $settings['declined_at']    = current_time( 'mysql' );
         update_option( self::SETTINGS_OPTION_NAME, $settings, false );
         $this->clear_refresh_schedule();
+        $this->clear_first_generation_attempt_state( $settings );
+        $this->clear_first_generation_schedule();
 
         return $this->prepare_item_for_response( $this->build_status_response() );
     }
@@ -240,6 +349,9 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
                 ],
                 'status' => [
                     'type' => 'string',
+                ],
+                'generation_access' => [
+                    'type' => 'object',
                 ],
             ],
         ];
@@ -312,6 +424,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             'is_stale'         => $is_stale,
             'stale_after_days' => $stale_days,
             'status'           => $status,
+            'generation_access' => $this->build_generation_access( $settings ),
         ];
     }
 
@@ -351,6 +464,12 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             'last_generated_at'          => null,
             'last_error'                 => null,
             'generation_model_selection' => $this->default_generation_model_selection(),
+            'first_generation_started_at'      => null,
+            'first_generation_next_attempt_at' => null,
+            'first_generation_last_attempt_at' => null,
+            'first_generation_attempt_count'   => 0,
+            'first_generation_last_error'      => null,
+            'first_generation_exhausted_at'    => null,
         ];
     }
 
@@ -382,6 +501,15 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             'generation_model_selection' => $this->sanitize_model_selection(
                 $settings['generation_model_selection'] ?? null
             ),
+            'first_generation_started_at'      => $this->sanitize_nullable_text( $settings['first_generation_started_at'] ?? null ),
+            'first_generation_next_attempt_at' => $this->sanitize_nullable_text( $settings['first_generation_next_attempt_at'] ?? null ),
+            'first_generation_last_attempt_at' => $this->sanitize_nullable_text( $settings['first_generation_last_attempt_at'] ?? null ),
+            'first_generation_attempt_count'   => min(
+                count( self::FIRST_GENERATION_OFFSETS ),
+                max( 0, absint( $settings['first_generation_attempt_count'] ?? 0 ) )
+            ),
+            'first_generation_last_error'      => $this->sanitize_nullable_text( $settings['first_generation_last_error'] ?? null ),
+            'first_generation_exhausted_at'    => $this->sanitize_nullable_text( $settings['first_generation_exhausted_at'] ?? null ),
         ];
     }
 
@@ -393,11 +521,21 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             $consent = sanitize_key( (string) $request->get_param( 'consent_status' ) );
             if ( in_array( $consent, [ 'unset', 'granted', 'declined' ], true ) )
             {
+                $was_granted = 'granted' === $settings['consent_status'];
                 $settings['consent_status'] = $consent;
                 if ( 'granted' === $consent )
                 {
                     $settings['consented_at'] = current_time( 'mysql' );
                     $settings['declined_at']  = null;
+                    if ( ! $was_granted )
+                    {
+                        $settings['first_generation_started_at']       = null;
+                        $settings['first_generation_next_attempt_at']  = null;
+                        $settings['first_generation_last_attempt_at']  = null;
+                        $settings['first_generation_attempt_count']    = 0;
+                        $settings['first_generation_last_error']       = null;
+                        $settings['first_generation_exhausted_at']     = null;
+                    }
                 }
                 elseif ( 'declined' === $consent )
                 {
@@ -436,13 +574,317 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
         return $this->normalize_settings_record( $settings );
     }
 
-    private function perform_generation( array $settings, bool $manual ): array | WP_Error
+    private function build_generation_access( array $settings ): array
     {
+        $settings  = $this->normalize_settings_record( $settings );
+        $selection = $this->sanitize_model_selection( $settings['generation_model_selection'] ?? null );
+        $provider  = sanitize_key( (string) ( $selection['provider'] ?? 'openrouter' ) );
+        $model     = $this->resolve_generation_model( $selection );
+
+        $base = [
+            'can_generate' => false,
+            'reason_code'  => 'site_context_generation_unavailable',
+            'message'      => __( 'Site Context generation is not available yet.', 'sentient-forms' ),
+            'setup_target' => null,
+            'provider'     => $provider,
+            'model'        => $model,
+        ];
+
         if ( 'granted' !== $settings['consent_status'] )
         {
+            return array_merge(
+                $base,
+                [
+                    'reason_code'  => 'site_context_generation_consent_required',
+                    'message'      => __( 'Allow AI-generated Site Context before running generation.', 'sentient-forms' ),
+                    'setup_target' => 'site_context_consent',
+                ]
+            );
+        }
+
+        if ( $this->is_free_or_auto_generation_model( $model, $selection ) )
+        {
+            return array_merge(
+                $base,
+                [
+                    'reason_code'  => 'site_context_generation_paid_model_required',
+                    'message'      => __( 'Site Context generation requires a paid web-capable model. Free OpenRouter routes and OpenRouter Auto are not available for this setup step.', 'sentient-forms' ),
+                    'setup_target' => 'providers',
+                ]
+            );
+        }
+
+        $model_readiness = $this->validate_generation_model_metadata( $model, $provider );
+        if ( is_wp_error( $model_readiness ) )
+        {
+            return array_merge(
+                $base,
+                [
+                    'reason_code'  => $model_readiness->get_error_code(),
+                    'message'      => $model_readiness->get_error_message(),
+                    'setup_target' => 'providers',
+                ]
+            );
+        }
+
+        if ( 'sentient_managed' === $provider )
+        {
+            $managed_context = $this->resolve_managed_proxy_context();
+            if ( is_wp_error( $managed_context ) )
+            {
+                return array_merge(
+                    $base,
+                    [
+                        'reason_code'  => 'site_context_generation_managed_setup_required',
+                        'message'      => __( 'Connect Sentient Forms Managed Service billing before generating Site Context with managed models.', 'sentient-forms' ),
+                        'setup_target' => 'licensing',
+                    ]
+                );
+            }
+
+            $managed_credential = $this->resolve_ready_managed_credential();
+            if ( is_wp_error( $managed_credential ) )
+            {
+                return array_merge(
+                    $base,
+                    [
+                        'reason_code'  => 'site_context_generation_managed_setup_required',
+                        'message'      => __( 'Finish Sentient Forms Managed Service setup before generating Site Context with managed models.', 'sentient-forms' ),
+                        'setup_target' => 'licensing',
+                    ]
+                );
+            }
+
+            return array_merge(
+                $base,
+                [
+                    'can_generate' => true,
+                    'reason_code'  => 'ready',
+                    'message'      => __( 'Site Context generation is ready through Sentient Forms Managed Service.', 'sentient-forms' ),
+                    'setup_target' => null,
+                ]
+            );
+        }
+
+        $credential = $this->resolve_ready_openrouter_credential( $selection );
+        if ( is_wp_error( $credential ) )
+        {
+            $error_code = $credential->get_error_code();
+            $message    = $credential->get_error_message();
+            if ( 'site_context_generation_openrouter_paid_key_required' !== $error_code )
+            {
+                $error_code = 'site_context_generation_openrouter_setup_required';
+                $message    = __( 'Add a ready paid OpenRouter key before generating Site Context.', 'sentient-forms' );
+            }
+
+            return array_merge(
+                $base,
+                [
+                    'reason_code'  => $error_code,
+                    'message'      => $message,
+                    'setup_target' => 'providers',
+                ]
+            );
+        }
+
+        return array_merge(
+            $base,
+            [
+                'can_generate'  => true,
+                'reason_code'   => 'ready',
+                'message'       => __( 'Site Context generation is ready through your OpenRouter key.', 'sentient-forms' ),
+                'setup_target'  => null,
+                'credential_id' => absint( $credential['id'] ?? 0 ),
+            ]
+        );
+    }
+
+    private function validate_generation_model_metadata( string $model, string $provider ): true | WP_Error
+    {
+        if ( 'sentient_managed' === $provider )
+        {
+            return true;
+        }
+
+        $metadata = $this->find_openrouter_generation_model_metadata( $model );
+        if ( null === $metadata )
+        {
             return new WP_Error(
-                'site_context_generation_consent_required',
-                __( 'Allow AI-generated Site Context before running generation.', 'sentient-forms' )
+                'site_context_generation_known_paid_model_required',
+                __( 'Choose a known paid web-capable OpenRouter model before generating Site Context.', 'sentient-forms' )
+            );
+        }
+
+        $pricing = is_array( $metadata['pricing'] ?? null ) ? $metadata['pricing'] : [];
+        $raw_supported_parameters = is_array( $metadata['supported_parameters'] ?? null ) ? $metadata['supported_parameters'] : [];
+        $is_free = ! empty( $metadata['free'] )
+            || $this->pricing_value_is_zero( $pricing['prompt'] ?? null )
+            || $this->pricing_value_is_zero( $pricing['completion'] ?? null );
+        $web_capable = array_key_exists( 'web_search', $pricing )
+            || in_array( 'web_search_options', $raw_supported_parameters, true );
+
+        if ( $is_free )
+        {
+            return new WP_Error(
+                'site_context_generation_paid_model_required',
+                __( 'Site Context generation requires a paid web-capable model. Free OpenRouter routes are not available for this setup step.', 'sentient-forms' )
+            );
+        }
+
+        if ( ! $web_capable )
+        {
+            return new WP_Error(
+                'site_context_generation_web_capable_model_required',
+                __( 'Site Context generation requires a paid OpenRouter model with web search or fetch capability.', 'sentient-forms' )
+            );
+        }
+
+        return true;
+    }
+
+    private function find_openrouter_generation_model_metadata( string $model ): ?array
+    {
+        global $wpdb;
+
+        $repository = new Sentient_Forms_Model_Cache_Repository( $wpdb );
+        $row        = $repository->get( 'openrouter', $model, false );
+        if ( is_array( $row ) && is_array( $row['metadata_json'] ?? null ) )
+        {
+            return $row['metadata_json'];
+        }
+
+        $recommendations = Sentient_Forms_OpenRouter_Model_Recommendations::all();
+        return is_array( $recommendations[ $model ] ?? null ) ? $recommendations[ $model ] : null;
+    }
+
+    private function pricing_value_is_zero( mixed $value ): bool
+    {
+        if ( null === $value || '' === $value )
+        {
+            return false;
+        }
+
+        if ( ! is_numeric( $value ) )
+        {
+            return false;
+        }
+
+        return (float) $value <= 0.0;
+    }
+
+    private function is_free_or_auto_generation_model( string $model, array $selection ): bool
+    {
+        $primary = isset( $selection['primary'] ) && is_scalar( $selection['primary'] )
+            ? sanitize_key( (string) $selection['primary'] )
+            : '';
+        $model = strtolower( trim( $model ) );
+
+        return 'sf_free' === $primary
+            || 'openrouter/auto' === $model
+            || 'openrouter/free' === $model
+            || str_contains( $model, ':free' );
+    }
+
+    private function resolve_ready_openrouter_credential( array $selection ): array | WP_Error
+    {
+        $credential_id = absint( $selection['credential_id'] ?? 0 );
+        $resolver      = new Sentient_Forms_Local_Action_Model_Selection_Service();
+        $credential    = $resolver->resolve_execution_credential( 'openrouter', $credential_id );
+        if ( is_wp_error( $credential ) )
+        {
+            return $credential;
+        }
+
+        if ( ! in_array( sanitize_key( (string) ( $credential['status'] ?? '' ) ), self::READY_CREDENTIAL_STATUSES, true ) )
+        {
+            return new WP_Error(
+                'site_context_generation_openrouter_setup_required',
+                __( 'OpenRouter credential must be valid or limited before Site Context generation can run.', 'sentient-forms' )
+            );
+        }
+
+        if ( $this->openrouter_credential_is_free_tier( $credential ) )
+        {
+            return new WP_Error(
+                'site_context_generation_openrouter_paid_key_required',
+                __( 'Site Context generation requires paid OpenRouter access. Add billing or choose a paid OpenRouter key before generating Site Context.', 'sentient-forms' )
+            );
+        }
+
+        return $credential;
+    }
+
+    private function openrouter_credential_is_free_tier( array $credential ): bool
+    {
+        $status_json = is_array( $credential['status_json'] ?? null ) ? $credential['status_json'] : [];
+        if ( ! array_key_exists( 'is_free_tier', $status_json ) )
+        {
+            return false;
+        }
+
+        $value = $status_json['is_free_tier'];
+        if ( is_bool( $value ) )
+        {
+            return $value;
+        }
+
+        if ( is_int( $value ) || is_float( $value ) )
+        {
+            return 1 === (int) $value;
+        }
+
+        if ( is_string( $value ) )
+        {
+            return in_array( strtolower( trim( $value ) ), [ '1', 'true', 'yes', 'on' ], true );
+        }
+
+        return false;
+    }
+
+    private function resolve_ready_managed_credential(): array | WP_Error
+    {
+        global $wpdb;
+
+        $repository = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $credential = $repository->find_by_provider_auth_mode( 'sentient_managed', 'sentient_proxy' );
+        if ( ! is_array( $credential ) )
+        {
+            return new WP_Error(
+                'site_context_generation_managed_setup_required',
+                __( 'Sentient Forms Managed Service setup is not complete for this WordPress site.', 'sentient-forms' )
+            );
+        }
+
+        if ( ! in_array( sanitize_key( (string) ( $credential['status'] ?? '' ) ), self::READY_CREDENTIAL_STATUSES, true ) )
+        {
+            return new WP_Error(
+                'site_context_generation_managed_setup_required',
+                __( 'Sentient Forms Managed Service is not ready for local execution.', 'sentient-forms' )
+            );
+        }
+
+        $status_json = is_array( $credential['status_json'] ?? null ) ? $credential['status_json'] : [];
+        $consent     = is_array( $status_json['managed_consent'] ?? null ) ? $status_json['managed_consent'] : [];
+        if ( 'revoked' === sanitize_key( (string) ( $consent['state'] ?? '' ) ) )
+        {
+            return new WP_Error(
+                'site_context_generation_managed_setup_required',
+                __( 'Sentient Forms Managed Service consent has been revoked on this site.', 'sentient-forms' )
+            );
+        }
+
+        return $credential;
+    }
+
+    private function perform_generation( array $settings, bool $manual, bool $empty_only = false ): array | WP_Error
+    {
+        $access = $this->build_generation_access( $settings );
+        if ( empty( $access['can_generate'] ) )
+        {
+            return new WP_Error(
+                (string) $access['reason_code'],
+                (string) $access['message'],
+                [ 'status' => 400 ]
             );
         }
 
@@ -489,6 +931,14 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             return $generated;
         }
 
+        if ( $empty_only && null !== $this->get_stored_context() )
+        {
+            return new WP_Error(
+                'site_context_generation_existing_context',
+                __( 'Site Context already exists, so automatic first generation will not overwrite it.', 'sentient-forms' )
+            );
+        }
+
         $context = $this->build_context_record(
             $generated['summary_text'],
             'ai_generated',
@@ -520,9 +970,7 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
 
     private function run_openrouter_generation( string $model, string $prompt, array $selection ): array | WP_Error
     {
-        $credential_id = absint( $selection['credential_id'] ?? 0 );
-        $resolver      = new Sentient_Forms_Local_Action_Model_Selection_Service();
-        $credential    = $resolver->resolve_execution_credential( 'openrouter', $credential_id );
+        $credential = $this->resolve_ready_openrouter_credential( $selection );
         if ( is_wp_error( $credential ) )
         {
             return $credential;
@@ -994,6 +1442,123 @@ class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Bas
             'proxy_api_key' => $proxy_api_key,
             'site_id'       => $site_id,
         ];
+    }
+
+    private function sync_first_generation_schedule( array $settings ): void
+    {
+        $settings = $this->normalize_settings_record( $settings );
+        if ( 'granted' !== $settings['consent_status'] || null !== $this->get_stored_context() )
+        {
+            $this->clear_first_generation_attempt_state( $settings );
+            $this->clear_first_generation_schedule();
+            return;
+        }
+
+        if ( ! empty( $settings['first_generation_exhausted_at'] ) )
+        {
+            $this->clear_first_generation_schedule();
+            return;
+        }
+
+        if ( empty( $settings['first_generation_started_at'] ) )
+        {
+            $settings['first_generation_started_at']      = gmdate( 'Y-m-d H:i:s' );
+            $settings['first_generation_attempt_count']   = 0;
+            $settings['first_generation_last_error']      = null;
+            $settings['first_generation_exhausted_at']    = null;
+            $settings['first_generation_last_attempt_at'] = null;
+        }
+
+        $this->schedule_next_first_generation_attempt( $settings );
+    }
+
+    private function clear_first_generation_attempt_state( ?array $settings = null ): void
+    {
+        if ( null === $settings )
+        {
+            $stored = get_option( self::SETTINGS_OPTION_NAME, [] );
+            if ( ! is_array( $stored ) )
+            {
+                return;
+            }
+
+            $settings = $stored;
+        }
+
+        $settings['first_generation_started_at']      = null;
+        $settings['first_generation_next_attempt_at'] = null;
+        $settings['first_generation_last_attempt_at'] = null;
+        $settings['first_generation_attempt_count']   = 0;
+        $settings['first_generation_last_error']      = null;
+        $settings['first_generation_exhausted_at']    = null;
+        update_option( self::SETTINGS_OPTION_NAME, $this->normalize_settings_record( $settings ), false );
+    }
+
+    private function persist_first_generation_attempt_state( array $settings ): void
+    {
+        $settings = $this->normalize_settings_record( $settings );
+        if ( (int) $settings['first_generation_attempt_count'] >= count( self::FIRST_GENERATION_OFFSETS ) )
+        {
+            $settings['first_generation_next_attempt_at'] = null;
+            $settings['first_generation_exhausted_at']    = gmdate( 'Y-m-d H:i:s' );
+            update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+            $this->clear_first_generation_schedule();
+            return;
+        }
+
+        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+        $this->schedule_next_first_generation_attempt( $settings );
+    }
+
+    private function schedule_next_first_generation_attempt( array $settings ): void
+    {
+        $settings = $this->normalize_settings_record( $settings );
+        $attempt_index = (int) $settings['first_generation_attempt_count'];
+        if ( $attempt_index >= count( self::FIRST_GENERATION_OFFSETS ) )
+        {
+            $settings['first_generation_next_attempt_at'] = null;
+            $settings['first_generation_exhausted_at']    = gmdate( 'Y-m-d H:i:s' );
+            update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+            $this->clear_first_generation_schedule();
+            return;
+        }
+
+        $started_at = strtotime( (string) ( $settings['first_generation_started_at'] ?: gmdate( 'Y-m-d H:i:s' ) ) . ' UTC' );
+        if ( false === $started_at )
+        {
+            $started_at = time();
+        }
+
+        $timestamp = max(
+            time() + MINUTE_IN_SECONDS,
+            $started_at + self::FIRST_GENERATION_OFFSETS[ $attempt_index ]
+        );
+
+        $this->clear_first_generation_schedule( false );
+        wp_schedule_single_event( $timestamp, self::FIRST_GENERATION_CRON_HOOK );
+
+        $settings['first_generation_next_attempt_at'] = gmdate( 'Y-m-d H:i:s', $timestamp );
+        update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+    }
+
+    private function clear_first_generation_schedule( bool $clear_next_attempt = true ): void
+    {
+        while ( $timestamp = wp_next_scheduled( self::FIRST_GENERATION_CRON_HOOK ) )
+        {
+            wp_unschedule_event( $timestamp, self::FIRST_GENERATION_CRON_HOOK );
+        }
+
+        if ( ! $clear_next_attempt )
+        {
+            return;
+        }
+
+        $settings = get_option( self::SETTINGS_OPTION_NAME, [] );
+        if ( is_array( $settings ) && ! empty( $settings['first_generation_next_attempt_at'] ) )
+        {
+            $settings['first_generation_next_attempt_at'] = null;
+            update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+        }
     }
 
     private function sync_refresh_schedule( array $settings ): void

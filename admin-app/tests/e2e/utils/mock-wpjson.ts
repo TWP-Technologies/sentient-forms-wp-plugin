@@ -206,7 +206,15 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			is_empty: false,
 			is_stale: false,
 			stale_after_days: 90,
-			status: 'ready'
+			status: 'ready',
+			generation_access: {
+				can_generate: false,
+				reason_code: 'site_context_generation_consent_required',
+				message: 'Allow AI-generated Site Context before running generation.',
+				setup_target: 'site_context_consent',
+				provider: 'sentient_managed',
+				model: 'openai/gpt-5.5'
+			}
 		};
 
 	await page.context().route('**/wp-json/sentient-forms/v1/**', (route) => {
@@ -338,6 +346,10 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 					? { ...(current.settings as Record<string, unknown>) }
 					: {};
 			const summaryText = typeof body.summary_text === 'string' ? body.summary_text : '';
+			const resolvedConsent =
+				typeof body.consent_status === 'string'
+					? body.consent_status
+					: settings.consent_status;
 			siteContextState = {
 				...current,
 				context:
@@ -359,8 +371,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 						: null,
 				settings: {
 					...settings,
-					consent_status:
-						typeof body.consent_status === 'string' ? body.consent_status : 'unset',
+					consent_status: resolvedConsent,
 					auto_refresh_enabled: Boolean(body.auto_refresh_enabled),
 					auto_refresh_days:
 						typeof body.auto_refresh_days === 'number' ? body.auto_refresh_days : 30,
@@ -371,7 +382,26 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				is_empty: summaryText.trim().length === 0,
 				is_stale: false,
 				stale_after_days: 90,
-				status: summaryText.trim().length > 0 ? 'ready' : 'empty'
+				status: summaryText.trim().length > 0 ? 'ready' : 'empty',
+				generation_access:
+					resolvedConsent === 'granted'
+						? {
+								can_generate: false,
+								reason_code: 'site_context_generation_managed_setup_required',
+								message:
+									'Connect Sentient Forms Managed Service billing before generating Site Context with managed models.',
+								setup_target: 'licensing',
+								provider: 'sentient_managed',
+								model: 'openai/gpt-5.5'
+							}
+						: {
+								can_generate: false,
+								reason_code: 'site_context_generation_consent_required',
+								message: 'Allow AI-generated Site Context before running generation.',
+								setup_target: 'site_context_consent',
+								provider: 'sentient_managed',
+								model: 'openai/gpt-5.5'
+							}
 			};
 			return route.fulfill({
 				status: 200,
@@ -402,7 +432,15 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				is_empty: true,
 				is_stale: false,
 				stale_after_days: 90,
-				status: 'declined'
+				status: 'declined',
+				generation_access: {
+					can_generate: false,
+					reason_code: 'site_context_generation_consent_required',
+					message: 'Allow AI-generated Site Context before running generation.',
+					setup_target: 'site_context_consent',
+					provider: 'sentient_managed',
+					model: 'openai/gpt-5.5'
+				}
 			};
 			return route.fulfill({
 				status: 200,
@@ -442,7 +480,15 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				is_empty: false,
 				is_stale: false,
 				stale_after_days: 90,
-				status: 'ready'
+				status: 'ready',
+				generation_access: {
+					can_generate: true,
+					reason_code: 'ready',
+					message: 'Site Context generation is ready through Sentient Forms Managed Service.',
+					setup_target: null,
+					provider: 'sentient_managed',
+					model: 'openai/gpt-5.5'
+				}
 			};
 			return route.fulfill({
 				status: 200,
