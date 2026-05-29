@@ -123,7 +123,9 @@ async function coverProvidersDisclosures(page: Page): Promise<void> {
 		(await managedConsentState.getByText(/Consent accepted/i).count()) > 0
 	) {
 		await expect(managedConsentState.getByText(/Consent accepted/i)).toBeVisible();
-		await expect(managedCard.getByRole('button', { name: /Revoke managed-service consent/i })).toBeVisible();
+		await expect(
+			managedCard.getByRole('button', { name: /Revoke managed-service consent/i })
+		).toBeVisible();
 		await attachLocatorScreenshot(page, managedCard, 'providers-managed-disclosure-accepted');
 		return;
 	}
@@ -233,7 +235,9 @@ async function coverMappingConfigAndGraph(page: Page): Promise<void> {
 }
 
 async function coverFormDefaultsFromMappingModal(page: Page, mappingModal: Locator): Promise<void> {
-	const editDefaultsButton = mappingModal.getByRole('button', { name: 'Edit Form Defaults' }).first();
+	const editDefaultsButton = mappingModal
+		.getByRole('button', { name: 'Edit Form Defaults' })
+		.first();
 	await expect(editDefaultsButton).toBeVisible();
 	await editDefaultsButton.click();
 
@@ -256,6 +260,7 @@ async function coverSettingsRetentionControls(page: Page): Promise<void> {
 }
 
 async function coverSiteContextWarningFlow(page: Page): Promise<void> {
+	ensureSiteContextGenerateDisabledFixture();
 	await ensureSentientFormsSpa(page, '/settings/context');
 
 	const generationConsent = page.getByTestId('site-context-generation-consent');
@@ -269,7 +274,11 @@ async function coverSiteContextWarningFlow(page: Page): Promise<void> {
 	const generateButton = page.getByTestId('site-context-generate-now');
 	await expect(generateButton).toBeVisible();
 	await expect(generateButton).toBeDisabled();
-	await expect(page.getByTestId('site-context-generate-disabled-help')).toBeVisible();
+	await expect(page.getByTestId('site-context-generate-disabled-help')).toHaveCount(0);
+	const unavailableTrigger = page.getByTestId('site-context-generate-unavailable-trigger');
+	await expect(unavailableTrigger).toBeVisible();
+	await unavailableTrigger.click();
+	await expect(page.getByTestId('site-context-generate-unavailable-popover')).toBeVisible();
 
 	const withdrawButton = page.getByRole('button', { name: 'Withdraw consent' });
 	await expect(withdrawButton).toBeVisible();
@@ -277,6 +286,35 @@ async function coverSiteContextWarningFlow(page: Page): Promise<void> {
 	await expect(page.getByRole('heading', { name: 'Withdraw Site Context consent?' })).toBeVisible();
 	await attachViewportScreenshot(page, 'site-context-warnings');
 	await page.getByRole('button', { name: 'Cancel' }).click();
+}
+
+function ensureSiteContextGenerateDisabledFixture(): void {
+	runWpEval(`
+$settings = get_option( 'sentient_forms_site_context_settings', [] );
+$settings = is_array( $settings ) ? $settings : [];
+$settings['consent_status']        = 'granted';
+$settings['consented_at']          = current_time( 'mysql' );
+$settings['declined_at']           = null;
+$settings['auto_refresh_enabled']  = false;
+$settings['auto_refresh_days']     = 30;
+$settings['generation_model_selection'] = [
+	'primary'   => 'openrouter/auto',
+	'is_preset' => true,
+	'provider'  => 'openrouter',
+	'tools'     => [
+		'tool_choice' => 'auto',
+		'web_search'  => [
+			'mode'        => 'required',
+			'max_results' => 5,
+		],
+		'web_fetch'   => [
+			'mode' => 'auto',
+		],
+	],
+];
+update_option( 'sentient_forms_site_context_settings', $settings, false );
+echo wp_json_encode([ 'status' => 'site_context_generate_disabled' ]);
+`);
 }
 
 async function coverMigrationGuards(page: Page): Promise<void> {

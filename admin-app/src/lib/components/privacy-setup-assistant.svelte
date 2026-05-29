@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import type {
 		ModelSelection,
 		PluginSettingsResponse,
@@ -36,6 +37,7 @@
 	interface Props {
 		open?: boolean;
 		saving?: boolean;
+		applyError?: string | null;
 		settings?: PluginSettingsResponse | null;
 		dismissible?: boolean;
 		onapply?: (preset: PrivacyPresetId) => void;
@@ -88,6 +90,7 @@
 	let {
 		open = false,
 		saving = false,
+		applyError = null,
 		settings = null,
 		dismissible = false,
 		onapply,
@@ -108,12 +111,15 @@
 	let siteContextSaving = $state(false);
 	let siteContextGenerating = $state(false);
 	let siteContextError = $state<string | null>(null);
+	let siteContextApplyError = $state<string | null>(null);
 	let siteContextStatus = $state<SiteContextStatusResponse | null>(null);
+	let siteContextTouched = $state(false);
 	let siteContextText = $state('');
 	let siteContextConsent = $state(false);
 	let siteContextAutoRefresh = $state(false);
 	let siteContextRefreshDays = $state(DEFAULT_SITE_CONTEXT_REFRESH_DAYS);
 	let siteContextModelSelection = $state<ModelSelection>(DEFAULT_SITE_CONTEXT_MODEL_SELECTION);
+	let applyErrorRegion = $state<HTMLDivElement | null>(null);
 	let selectedDefinition = $derived(
 		presetDefinitions.find((preset) => preset.id === selectedPreset) ?? presetDefinitions[0]
 	);
@@ -138,6 +144,8 @@
 	let generateDisabledMessage = $derived(
 		siteContextGenerateDisabledMessage(siteContextStatus, siteContextConsent, siteContextHasChanges)
 	);
+	let siteContextShouldSaveBeforeApply = $derived(siteContextTouched && siteContextHasChanges);
+	let footerApplyError = $derived(applyError ?? siteContextApplyError);
 	let canGenerateSiteContext = $derived(
 		siteContextConsent &&
 			!siteContextGenerating &&
@@ -145,7 +153,7 @@
 			siteContextStatus?.generation_access.can_generate === true
 	);
 	let generateSetupHref = $derived(
-		generateDisabledMessage && !siteContextHasChanges
+		generateDisabledMessage && !siteContextShouldSaveBeforeApply
 			? siteContextGenerationSetupHref(siteContextStatus?.generation_access.setup_target)
 			: null
 	);
@@ -158,7 +166,14 @@
 	$effect(() => {
 		if (!open) return;
 		selectedPreset = initialPreset(settings);
+		siteContextTouched = false;
+		siteContextApplyError = null;
 		void loadSiteContext();
+	});
+
+	$effect(() => {
+		if (!open || !footerApplyError) return;
+		void focusApplyError();
 	});
 
 	function handleBackdropClick(event: MouseEvent): void {
@@ -176,14 +191,14 @@
 	}
 
 	async function applySelectedPreset(): Promise<void> {
-		if (siteContextHasChanges && !(await saveSiteContext())) {
+		if (siteContextShouldSaveBeforeApply && !(await saveSiteContext('apply'))) {
 			return;
 		}
 		onapply?.(selectedPreset);
 	}
 
 	async function useBalancedDefaults(): Promise<void> {
-		if (siteContextHasChanges && !(await saveSiteContext())) {
+		if (siteContextShouldSaveBeforeApply && !(await saveSiteContext('apply'))) {
 			return;
 		}
 		onapply?.('balanced');
@@ -198,6 +213,8 @@
 		siteContextRefreshDays = next.settings.auto_refresh_days || DEFAULT_SITE_CONTEXT_REFRESH_DAYS;
 		siteContextModelSelection =
 			next.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION;
+		siteContextTouched = false;
+		siteContextApplyError = null;
 	}
 
 	function siteContextBadgeVariant(
@@ -235,9 +252,21 @@
 		};
 	}
 
-	async function saveSiteContext(): Promise<boolean> {
+	function markSiteContextTouched(): void {
+		siteContextTouched = true;
+		siteContextApplyError = null;
+	}
+
+	async function focusApplyError(): Promise<void> {
+		await tick();
+		applyErrorRegion?.scrollIntoView({ block: 'nearest' });
+		applyErrorRegion?.focus();
+	}
+
+	async function saveSiteContext(source: 'manual' | 'apply' = 'manual'): Promise<boolean> {
 		siteContextSaving = true;
 		siteContextError = null;
+		siteContextApplyError = null;
 		try {
 			const response = await wpFetch<SiteContextStatusResponse>('site-context', {
 				method: 'PUT',
@@ -248,10 +277,15 @@
 			return true;
 		} catch (error) {
 			console.error('Failed to save Site Context setup', error);
-			siteContextError = readableError(
+			const message = readableError(
 				error,
 				'Unable to save Site Context setup. Apply is paused until this is saved.'
 			);
+			siteContextError = message;
+			if (source === 'apply') {
+				siteContextApplyError = message;
+				await focusApplyError();
+			}
 			notifications.error('Unable to save Site Context setup');
 			return false;
 		} finally {
@@ -474,8 +508,8 @@
 							generating={siteContextGenerating}
 							generateDisabled={!canGenerateSiteContext}
 							generateDisabledMessage={siteContextGenerating ? null : generateDisabledMessage}
-							generateSetupHref={generateSetupHref}
-							generateSetupLabel={generateSetupLabel}
+							{generateSetupHref}
+							{generateSetupLabel}
 							bind:contextText={siteContextText}
 							bind:generationConsent={siteContextConsent}
 							bind:autoRefreshEnabled={siteContextAutoRefresh}
@@ -484,6 +518,7 @@
 							refreshDayOptions={SITE_CONTEXT_REFRESH_DAY_OPTIONS}
 							onSave={saveSiteContext}
 							onGenerate={generateSiteContext}
+							onChange={markSiteContextTouched}
 						/>
 						<SiteContextNotices />
 					</div>
@@ -492,16 +527,30 @@
 				<div
 					class="sf:flex sf:flex-col sf:gap-3 sf:border-t sf:border-slate-200 sf:pt-5 sf:md:flex-row sf:md:items-center sf:md:justify-between"
 				>
-					<div class="sf:flex sf:min-w-0 sf:items-start sf:gap-3">
-						<span
-							class="sf:inline-flex sf:h-7 sf:w-7 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-full sf:bg-slate-900 sf:text-sm sf:font-semibold sf:text-white"
-						>
-							4
-						</span>
-						<p class="sf:min-w-0 sf:text-sm sf:text-slate-500">
-								Skip Setup applies the recommended Balanced defaults and keeps the plugin ready to use
-							immediately.
-						</p>
+					<div class="sf:flex sf:min-w-0 sf:flex-col sf:gap-3">
+						<div class="sf:flex sf:min-w-0 sf:items-start sf:gap-3">
+							<span
+								class="sf:inline-flex sf:h-7 sf:w-7 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-full sf:bg-slate-900 sf:text-sm sf:font-semibold sf:text-white"
+							>
+								4
+							</span>
+							<p class="sf:min-w-0 sf:text-sm sf:text-slate-500">
+								Skip Setup applies the recommended Balanced defaults and keeps the plugin ready to
+								use immediately.
+							</p>
+						</div>
+						{#if footerApplyError}
+							<div
+								bind:this={applyErrorRegion}
+								tabindex="-1"
+								class="sf:focus-visible:outline-none"
+								data-testid="privacy-setup-apply-error"
+							>
+								<Alert variant="danger">
+									{footerApplyError}
+								</Alert>
+							</div>
+						{/if}
 					</div>
 					<div class="sf:flex sf:shrink-0 sf:flex-nowrap sf:gap-2">
 						<Button
@@ -509,7 +558,7 @@
 							disabled={saving || siteContextSaving}
 							onclick={useBalancedDefaults}
 						>
-								Skip Setup
+							Skip Setup
 						</Button>
 						<Button
 							class="sf:min-w-[9rem]"

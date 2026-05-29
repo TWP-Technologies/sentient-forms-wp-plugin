@@ -142,6 +142,10 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         $this->assertTrue( $data['settings']['delete_data_on_uninstall'] );
         $this->assertTrue( $data['settings']['store_full_ai_outputs'] );
         $this->assertNotNull( $data['settings']['privacy_setup_completed_at'] );
+        $this->assertSame(
+            $data['settings']['privacy_setup_completed_at'],
+            get_option( 'sentient_forms_privacy_setup_completed_at' )
+        );
 
         $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
         $this->assertTrue( $plugin_settings['enable_logging'] );
@@ -171,5 +175,9 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         $this->assertTrue( $data['settings']['delete_data_on_uninstall'] );
         $this->assertFalse( $data['settings']['store_full_ai_outputs'] );
         $this->assertNotNull( $data['settings']['privacy_setup_completed_at'] );
+        $this->assertSame(
+            $data['settings']['privacy_setup_completed_at'],
+            get_option( 'sentient_forms_privacy_setup_completed_at' )
+        );
     }
 }

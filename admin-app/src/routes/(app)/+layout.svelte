@@ -46,6 +46,7 @@
 	let privacySettings = $state<PluginSettingsResponse | null>(null);
 	let privacyAssistantOpen = $state(false);
 	let privacyAssistantSaving = $state(false);
+	let privacyApplyError = $state<string | null>(null);
 	let sessionExpired = $state(false);
 	let sessionExpiredMessage = $state(
 		'WordPress session expired. Reload this admin page before retrying.'
@@ -124,6 +125,7 @@
 		try {
 			const settings = await client.getSettings({ showNotifications: false });
 			privacySettings = settings;
+			privacyApplyError = null;
 			if (openAssistantWhenIncomplete && !settings.privacy_setup_completed_at) {
 				privacyAssistantOpen = true;
 			}
@@ -136,13 +138,21 @@
 		profile: NonNullable<PluginSettingsResponse['privacy_setup_profile']>
 	) {
 		privacyAssistantSaving = true;
+		privacyApplyError = null;
 		try {
 			const settings = await client.updateSettings(
 				{ privacy_setup_profile: profile },
 				{ showNotifications: false }
 			);
+			if (!settings.privacy_setup_completed_at) {
+				privacyApplyError =
+					'Privacy setup did not return a completion timestamp. Reload this admin page and try again.';
+				notifications.error('Unable to confirm privacy setup was saved');
+				return;
+			}
 			privacySettings = settings;
 			privacyAssistantOpen = false;
+			privacyApplyError = null;
 			window.dispatchEvent(
 				new CustomEvent('sentient-forms:settings-updated', {
 					detail: settings
@@ -159,10 +169,51 @@
 			notifications.success(`${profileLabel} defaults saved`);
 		} catch (error) {
 			console.error('Failed to save privacy setup preset', error);
-			notifications.error('Unable to save privacy setup');
+			privacyApplyError = readableSettingsError(
+				error,
+				'Unable to save privacy setup. Reload this admin page and try again.'
+			);
+			notifications.error(privacyApplyError);
 		} finally {
 			privacyAssistantSaving = false;
 		}
+	}
+
+	function readableSettingsError(error: unknown, fallback: string): string {
+		const payload =
+			error && typeof error === 'object' && 'payload' in error
+				? (error as { payload?: unknown }).payload
+				: null;
+
+		const message = payloadMessage(payload);
+		if (message) return message;
+
+		const status =
+			error && typeof error === 'object' && 'status' in error
+				? (error as { status?: unknown }).status
+				: null;
+		if (status === 401 || status === 403) {
+			return 'WordPress rejected the settings save. Reload this admin page and try again.';
+		}
+
+		if (error instanceof Error && error.message !== 'Request failed') return error.message;
+		return fallback;
+	}
+
+	function payloadMessage(payload: unknown): string | null {
+		if (typeof payload === 'string') {
+			const trimmed = payload.trim();
+			return trimmed.length > 0 ? trimmed : null;
+		}
+		if (!payload || typeof payload !== 'object') return null;
+
+		const direct = (payload as { message?: unknown }).message;
+		if (typeof direct === 'string' && direct.trim().length > 0) return direct.trim();
+
+		const nested = (payload as { error?: { message?: unknown } }).error?.message;
+		if (typeof nested === 'string' && nested.trim().length > 0) return nested.trim();
+
+		return null;
 	}
 
 	onMount(() => {
@@ -174,6 +225,7 @@
 		updateWpAdminOffset();
 
 		const openAssistant = () => {
+			privacyApplyError = null;
 			privacyAssistantOpen = true;
 			if (!privacySettings) {
 				void loadPrivacySettings({ openAssistantWhenIncomplete: false });
@@ -283,11 +335,13 @@
 	open={privacyAssistantOpen}
 	settings={privacySettings}
 	saving={privacyAssistantSaving}
+	applyError={privacyApplyError}
 	dismissible={Boolean(privacySettings?.privacy_setup_completed_at)}
 	onapply={applyPrivacyPreset}
 	onclose={() => {
 		if (privacySettings?.privacy_setup_completed_at) {
 			privacyAssistantOpen = false;
+			privacyApplyError = null;
 		}
 	}}
 />

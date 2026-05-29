@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
-	import { Badge, Button, ButtonLink, InfoTooltip, ModelSelector, Toggle } from '$lib/components/ui';
+	import CircleHelpIcon from '@lucide/svelte/icons/circle-help';
+	import { Badge, Button, ButtonLink, ModelSelector, Toggle } from '$lib/components/ui';
 	import type { ModelSelection } from '$lib/api/types';
 
 	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
@@ -29,6 +31,7 @@
 		modelSelection?: ModelSelection;
 		onSave?: () => void;
 		onGenerate?: () => void;
+		onChange?: () => void;
 	}
 
 	let {
@@ -54,12 +57,79 @@
 		modelSelection = $bindable(),
 		refreshDayOptions = [],
 		onSave,
-		onGenerate
+		onGenerate,
+		onChange
 	}: Props = $props();
 
 	const canUseGeneratedContext = $derived(generationConsent === true);
-	const generateHelpId = 'site-context-generate-disabled-help';
+	const generateHelpId = 'site-context-generate-disabled-message';
+	const generatePopoverId = 'site-context-generate-unavailable-popover';
+	const generatePopoverTitleId = 'site-context-generate-unavailable-title';
+	type GenerateUnavailableTriggerEvent = MouseEvent & {
+		currentTarget: EventTarget & HTMLButtonElement;
+	};
+	let generateUnavailableOpen = $state(false);
+	let generateUnavailableTrigger = $state<HTMLButtonElement | null>(null);
+	let generateUnavailablePopover = $state<HTMLElement | null>(null);
+
+	$effect(() => {
+		if (!generateDisabledMessage && generateUnavailableOpen) {
+			generateUnavailableOpen = false;
+		}
+	});
+
+	function markChanged(): void {
+		onChange?.();
+	}
+
+	function updateModelSelection(selection: ModelSelection): void {
+		if (JSON.stringify(selection) !== JSON.stringify(modelSelection)) {
+			markChanged();
+		}
+		modelSelection = selection;
+	}
+
+	function openGenerateUnavailable(): void {
+		if (!generateDisabledMessage) return;
+		generateUnavailableOpen = true;
+	}
+
+	async function closeGenerateUnavailable(options: { restoreFocus?: boolean } = {}): Promise<void> {
+		if (!generateUnavailableOpen) return;
+		generateUnavailableOpen = false;
+		if (options.restoreFocus) {
+			await tick();
+			generateUnavailableTrigger?.focus();
+		}
+	}
+
+	function toggleGenerateUnavailable(event: GenerateUnavailableTriggerEvent): void {
+		generateUnavailableTrigger = event.currentTarget;
+		if (generateUnavailableOpen) {
+			void closeGenerateUnavailable({ restoreFocus: true });
+			return;
+		}
+		openGenerateUnavailable();
+	}
+
+	function handleDocumentPointerDown(event: PointerEvent): void {
+		if (!generateUnavailableOpen) return;
+		const target = event.target;
+		if (!(target instanceof Node)) return;
+		if (generateUnavailableTrigger?.contains(target)) return;
+		if (generateUnavailablePopover?.contains(target)) return;
+		void closeGenerateUnavailable();
+	}
+
+	function handleWindowKeydown(event: KeyboardEvent): void {
+		if (!generateUnavailableOpen || event.key !== 'Escape') return;
+		event.preventDefault();
+		void closeGenerateUnavailable({ restoreFocus: true });
+	}
 </script>
+
+<svelte:document onpointerdown={handleDocumentPointerDown} />
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <section
 	class="sf:rounded-xl sf:border sf:border-primary-100 sf:bg-primary-50 sf:p-5 sf:shadow-sm sf:sm:p-8"
@@ -74,7 +144,9 @@
 					{stepNumber}
 				</span>
 			{/if}
-			<div class="sf:flex sf:min-w-0 sf:flex-col sf:gap-1 sf:md:flex-row sf:md:items-center sf:md:gap-5">
+			<div
+				class="sf:flex sf:min-w-0 sf:flex-col sf:gap-1 sf:md:flex-row sf:md:items-center sf:md:gap-5"
+			>
 				<p class="sf:text-2xl sf:font-semibold sf:tracking-normal sf:text-slate-950">
 					Site Context
 				</p>
@@ -97,6 +169,7 @@
 				description="Sends this site URL and public-site research prompt to the selected provider, which may use web search or fetch."
 				descriptionClass="sf:text-slate-600"
 				bind:checked={generationConsent}
+				onchange={markChanged}
 				data-testid="site-context-generation-consent"
 			/>
 
@@ -107,6 +180,7 @@
 					descriptionClass="sf:text-slate-600"
 					bind:checked={autoRefreshEnabled}
 					disabled={!canUseGeneratedContext}
+					onchange={markChanged}
 				/>
 
 				<label class="sf:block">
@@ -115,6 +189,7 @@
 						class="sf:mt-2 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-4 sf:py-3 sf:text-base sf:text-slate-700 sf:shadow-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white disabled:sf:bg-slate-50 disabled:sf:text-slate-400"
 						bind:value={autoRefreshDays}
 						disabled={!canUseGeneratedContext || !autoRefreshEnabled}
+						onchange={markChanged}
 					>
 						{#each refreshDayOptions as days}
 							<option value={days}>{days} days</option>
@@ -134,6 +209,7 @@
 				class="sf:mt-3 sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-4 sf:py-3 sf:text-base sf:leading-7 sf:text-slate-900 sf:shadow-sm sf:placeholder-slate-400 sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 				placeholder="Describe the site, normal inquiries, service area, and suspicious patterns..."
 				data-testid="site-context-textarea"
+				oninput={markChanged}
 			></textarea>
 		</label>
 
@@ -155,14 +231,12 @@
 					readonly={!canUseGeneratedContext}
 					requiredCapabilities={['web_search']}
 					lockRequiredCapabilities={true}
-					onchange={(selection) => {
-						modelSelection = selection;
-					}}
+					onchange={updateModelSelection}
 				/>
 			</div>
 		</details>
 
-		<div class="sf:mt-8 sf:flex sf:flex-wrap sf:gap-4">
+		<div class="sf:mt-8 sf:flex sf:flex-wrap sf:items-start sf:gap-4">
 			<Button
 				variant="secondary"
 				disabled={saving || saveDisabled}
@@ -171,43 +245,76 @@
 			>
 				{saving ? 'Saving...' : saveLabel}
 			</Button>
-			<Button
-				disabled={generateDisabled}
-				loading={generating}
-				aria-describedby={generateDisabledMessage ? generateHelpId : undefined}
-				onclick={onGenerate}
-				data-testid="site-context-generate-now"
-			>
-				{generating ? generatingLabel : 'Generate now'}
-			</Button>
-		</div>
-		{#if generateDisabledMessage}
 			<div
-				id={generateHelpId}
-				class="sf:mt-3 sf:flex sf:flex-col sf:gap-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-4 sf:py-3 sf:text-sm sf:leading-6 sf:text-slate-700 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between"
-				data-testid="site-context-generate-disabled-help"
+				class="sf:relative sf:inline-flex sf:flex-wrap sf:items-center sf:gap-2"
+				data-testid="site-context-generate-action"
 			>
-				<div class="sf:flex sf:min-w-0 sf:items-start sf:gap-2">
-					<InfoTooltip
-						label="Site Context generation uses paid web-capable models so it can research the public site before writing context."
-						triggerLabel="Why is Site Context generation unavailable?"
-						side="top"
-						class="sf:mt-0.5 sf:bg-white"
-					/>
-					<p class="sf:min-w-0">{generateDisabledMessage}</p>
-				</div>
-				{#if generateSetupHref}
-					<ButtonLink
+				<Button
+					variant={generateDisabled && !generating ? 'secondary' : 'primary'}
+					disabled={generateDisabled}
+					loading={generating}
+					class={generateDisabled && !generating
+						? 'sf:border-slate-300 sf:bg-slate-100 sf:!text-slate-500'
+						: ''}
+					aria-describedby={generateDisabledMessage ? generateHelpId : undefined}
+					onclick={onGenerate}
+					data-testid="site-context-generate-now"
+				>
+					{generating ? generatingLabel : 'Generate now'}
+				</Button>
+				{#if generateDisabledMessage}
+					<span id={generateHelpId} class="sf:sr-only">{generateDisabledMessage}</span>
+				{/if}
+				{#if generateDisabledMessage}
+					<Button
 						variant="secondary"
 						size="sm"
-						href={generateSetupHref}
-						class="sf:shrink-0"
-						data-testid="site-context-generate-setup-link"
+						class="sf:min-h-10"
+						aria-haspopup="dialog"
+						aria-expanded={generateUnavailableOpen}
+						aria-controls={generatePopoverId}
+						onclick={toggleGenerateUnavailable}
+						data-testid="site-context-generate-unavailable-trigger"
 					>
-						{generateSetupLabel}
-					</ButtonLink>
+						<CircleHelpIcon class="sf:h-4 sf:w-4 sf:text-primary-700" aria-hidden="true" />
+						<span>Why unavailable?</span>
+					</Button>
+
+					{#if generateUnavailableOpen}
+						<div
+							id={generatePopoverId}
+							role="dialog"
+							aria-labelledby={generatePopoverTitleId}
+							bind:this={generateUnavailablePopover}
+							class="sf:absolute sf:left-0 sf:top-full sf:z-[1300] sf:mt-2 sf:w-[min(23rem,calc(100vw-3rem))] sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:p-4 sf:text-sm sf:leading-6 sf:text-slate-700 sf:shadow-xl"
+							data-testid="site-context-generate-unavailable-popover"
+						>
+							<p id={generatePopoverTitleId} class="sf:text-sm sf:font-semibold sf:text-slate-950">
+								Generate now is unavailable
+							</p>
+							<p class="sf:mt-2" data-testid="site-context-generate-unavailable-message">
+								{generateDisabledMessage}
+							</p>
+							<p class="sf:mt-2">
+								Site Context generation requires paid web-capable models so Sentient Forms can
+								research the public site before writing context.
+							</p>
+							{#if generateSetupHref}
+								<ButtonLink
+									variant="secondary"
+									size="sm"
+									href={generateSetupHref}
+									class="sf:mt-3 sf:w-full sf:justify-center sf:sm:w-auto"
+									onclick={() => void closeGenerateUnavailable()}
+									data-testid="site-context-generate-setup-link"
+								>
+									{generateSetupLabel}
+								</ButtonLink>
+							{/if}
+						</div>
+					{/if}
 				{/if}
 			</div>
-		{/if}
+		</div>
 	{/if}
 </section>

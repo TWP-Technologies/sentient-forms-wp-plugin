@@ -147,12 +147,25 @@ test.describe('Settings context state templates', () => {
 			'true'
 		);
 		await expect(page.getByTestId('site-context-generate-now')).toBeDisabled();
-		await expect(page.getByTestId('site-context-generate-disabled-help')).toContainText(
+		await expect(page.getByTestId('site-context-generate-disabled-help')).toHaveCount(0);
+		const unavailableTrigger = page.getByTestId('site-context-generate-unavailable-trigger');
+		await expect(unavailableTrigger).toBeVisible();
+		await expect(unavailableTrigger).toBeEnabled();
+		await expect(unavailableTrigger).toHaveAttribute('aria-haspopup', 'dialog');
+		await expect(unavailableTrigger).toHaveAttribute('aria-expanded', 'false');
+		await unavailableTrigger.click();
+		await expect(unavailableTrigger).toHaveAttribute('aria-expanded', 'true');
+		await expect(page.getByTestId('site-context-generate-unavailable-popover')).toBeVisible();
+		await expect(page.getByText('Generate now is unavailable')).toBeVisible();
+		await expect(page.getByTestId('site-context-generate-unavailable-message')).toContainText(
 			'Connect Sentient Forms Managed Service billing'
 		);
 		await expect(page.getByTestId('site-context-generate-setup-link')).toContainText(
 			'Open billing'
 		);
+		await page.keyboard.press('Escape');
+		await expect(page.getByTestId('site-context-generate-unavailable-popover')).toHaveCount(0);
+		await expect(unavailableTrigger).toBeFocused();
 		await expect(page.getByTestId('site-context-notices')).toBeVisible();
 	});
 
@@ -254,6 +267,7 @@ test.describe('Settings context state templates', () => {
 
 		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
 		await expect(page.getByTestId('site-context-generate-disabled-help')).toHaveCount(0);
+		await expect(page.getByTestId('site-context-generate-unavailable-trigger')).toHaveCount(0);
 		await expect(page.getByTestId('site-context-generate-now')).toBeEnabled();
 		await page.getByTestId('site-context-generate-now').click();
 
@@ -296,7 +310,10 @@ test.describe('Settings context state templates', () => {
 
 		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
 		await expect(page.getByTestId('site-context-error-state')).toBeVisible();
-		await page.getByTestId('site-context-error-state').getByRole('button', { name: 'Retry' }).click();
+		await page
+			.getByTestId('site-context-error-state')
+			.getByRole('button', { name: 'Retry' })
+			.click();
 
 		await expect(page.getByTestId('site-context-error-state')).toHaveCount(0);
 		await expect(page.getByTestId('site-context-textarea')).toHaveValue('Context text');
