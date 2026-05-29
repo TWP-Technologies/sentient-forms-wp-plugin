@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.2.0...v0.2.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* **ci:** align release please tag format ([a96fc5b](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a96fc5bf3d84a7ab5e08ee1390b5f2fdc1655445))
+* **site-context:** require paid setup for AI generation ([eec653f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/eec653f77fdd7feb9f87a350973333fb76a7fb03))
+
 ## [0.2.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/sentient-forms-v0.1.1...sentient-forms-v0.2.0) (2026-05-28)
 
 
