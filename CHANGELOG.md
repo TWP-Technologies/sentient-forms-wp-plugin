@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.2.1...v0.2.2) (2026-05-29)
+
+
+### Bug Fixes
+
+* **admin:** stabilize privacy apply and generate gating ([47ec91a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/47ec91ae189185d6b74bac975d1a2a9be7eddcad))
+
 ## [0.2.1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.2.0...v0.2.1) (2026-05-29)
 
 
