@@ -367,7 +367,8 @@ class Sentient_Forms_Installer
                 KEY status_idx (status),
                 KEY expires_idx (expires_at),
                 KEY created_idx (created_at),
-                KEY created_id_idx (created_at, id)
+                KEY created_id_idx (created_at, id),
+                KEY form_created_id_idx (form_source, form_id, created_at, id)
             ) {$charset_collate};",
             "CREATE TABLE {$wpdb->prefix}sentient_lead_profiles (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,

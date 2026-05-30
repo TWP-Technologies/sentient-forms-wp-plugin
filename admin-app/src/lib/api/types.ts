@@ -186,6 +186,9 @@ export interface BillingStateResponse {
 	site_id?: string | null;
 	license_id?: string | null;
 	status?: string | null;
+	stale?: boolean;
+	cached_at?: string | null;
+	last_error_code?: string | null;
 	plan?: TierSummary | null;
 	account?: BillingAccountState | null;
 	billing?: BillingProviderState | null;
@@ -606,6 +609,29 @@ export interface LocalSupportBundle {
 	};
 	retention?: Record<string, unknown>;
 	[key: string]: unknown;
+}
+
+export interface DashboardSummaryResponse {
+	generated_at: string;
+	providers: LocalProviderCredential[];
+	templates: LocalActionTemplate[];
+	custom_actions: LocalCustomActionRecord[];
+	recent_events: LocalExecutionEvent[];
+	section_errors?: Array<{
+		section: string;
+		code: string;
+		message: string;
+	}>;
+	license?: {
+		status?: string;
+		proxy_key_present?: boolean;
+		tier?: string | TierSummary | null;
+		expires_at?: string | null;
+		last_synced?: string | null;
+		license_id?: string | null;
+		site_id?: string | null;
+	};
+	async_health?: AsyncHealthResponse;
 }
 
 export interface LocalMigrationWarning {
@@ -1396,6 +1422,11 @@ export interface FormActionConfigResponse {
 	config: FormActionConfig;
 }
 
+export interface ActionDefaultsBatchResponse {
+	defaults: Record<string, FormActionConfig>;
+	generated_at?: string;
+}
+
 /**
  * Response from GET /forms/{source}/{id}/action-config (all configs)
  */
@@ -1888,6 +1919,40 @@ export interface FormSummary {
 	provider_is_active?: boolean;
 	provider_edit_url?: string | null;
 	settings?: Record<string, unknown> | null;
+}
+
+export interface FormOverviewItem extends FormSummary {
+	actions: FormActionLinkage[];
+	action_count: number;
+	enabled_action_count: number;
+	execution_status: FormExecutionStatus;
+}
+
+export interface FormsOverviewResponse {
+	form_source: string;
+	forms: FormOverviewItem[];
+	generated_at: string;
+}
+
+export interface FormActionsBootstrapResponse {
+	form_source: string;
+	form_id: number;
+	form?: FormSummary | null;
+	actions: FormActionLinkage[];
+	execution_status: FormExecutionStatus;
+	disabled_state: FormDisableStateResponse;
+	capabilities?: CapabilitiesResponse;
+	definitions?: ActionDefinition[];
+	custom_actions?: {
+		actions: CustomAction[];
+		quota: CustomActionQuota | null;
+	};
+	provider_credentials?: LocalProviderCredential[];
+	form_action_configs?: Record<string, FormActionConfig>;
+	form_fields?: FormFieldInfo[];
+	action_defaults?: Record<string, FormActionConfig>;
+	workflow_plan?: WorkflowPlanResponse | null;
+	generated_at: string;
 }
 
 export interface FormSourceSummary {

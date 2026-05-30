@@ -49,6 +49,15 @@ const defaultCreditBalance = {
 	}
 };
 
+const defaultExecutionStatus = {
+	status: 'unknown',
+	message: null,
+	entry_id: null,
+	last_error_code: null,
+	last_result: null,
+	updated_at: null
+};
+
 const defaultModelCatalog = {
 	models: [
 		{
@@ -219,6 +228,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 
 	await page.context().route('**/wp-json/sentient-forms/v1/**', (route) => {
 		const url = route.request().url();
+		const parsedUrl = new URL(url);
 		const urlWithoutQuery = url.split('?')[0] ?? url;
 		const method = route.request().method();
 
@@ -235,6 +245,27 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				status: 200,
 				headers: { 'content-type': 'application/json' },
 				body: envelope(defaultLicense)
+			});
+		}
+
+		if (urlWithoutQuery.endsWith('/admin/dashboard-summary') && method === 'GET') {
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope({
+					generated_at: '2026-04-22T00:00:00Z',
+					providers: routes.localProviders?.credentials ?? [],
+					templates: [],
+					custom_actions: Array.isArray(routes.customActions?.list) ? routes.customActions.list : [],
+					recent_events: [],
+					license: defaultLicense,
+					async_health: {
+						queue_depth: 0,
+						oldest_run_at: null,
+						recent_failures: {},
+						warnings: []
+					}
+				})
 			});
 		}
 
@@ -298,6 +329,44 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				status: 200,
 				headers: { 'content-type': 'application/json' },
 				body: envelope(forms)
+			});
+		}
+
+		const formsOverviewMatch = urlWithoutQuery.match(/\/([^/]+)\/forms\/overview$/);
+		if (routes.actions?.forms && formsOverviewMatch && method === 'GET') {
+			const slug = formsOverviewMatch[1];
+			const forms = routes.actions.forms[slug] ?? [];
+			const executionStatusByForm = routes.actions.executionStatus ?? {};
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope({
+					form_source: slug,
+					forms: forms.map((form) => {
+						const formRecord =
+							form && typeof form === 'object' && !Array.isArray(form)
+								? (form as Record<string, unknown>)
+								: {};
+						const id = Number(formRecord.id ?? 0);
+						const actions = routes.actions?.formsActions ?? [];
+						return {
+							...formRecord,
+							actions,
+							action_count: actions.length,
+							enabled_action_count: actions.filter(
+								(action) =>
+									Boolean(
+										action &&
+											typeof action === 'object' &&
+											!Array.isArray(action) &&
+											(action as Record<string, unknown>).is_action_enabled_for_form
+									)
+							).length,
+							execution_status: executionStatusByForm[id] ?? defaultExecutionStatus
+						};
+					}),
+					generated_at: '2026-04-22T00:00:00Z'
+				})
 			});
 		}
 
@@ -497,6 +566,24 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
+		if (urlWithoutQuery.endsWith('/actions/defaults') && method === 'GET') {
+			const ids = (parsedUrl.searchParams.get('ids') ?? '')
+				.split(',')
+				.map((id) => id.trim())
+				.filter(Boolean);
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					success: true,
+					data: {
+						defaults: Object.fromEntries(ids.map((id) => [id, actionDefaultsState[id] ?? {}])),
+						generated_at: '2030-01-05T10:00:00Z'
+					}
+				})
+			});
+		}
+
 		const actionDefaultsMatch = urlWithoutQuery.match(/\/actions\/([^/]+)\/defaults$/);
 		if (actionDefaultsMatch && method === 'GET') {
 			const actionId = decodeURIComponent(actionDefaultsMatch[1]);
@@ -684,14 +771,84 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
-				body: envelope(
-					routes.actions?.status ?? {
-						status: 'unknown',
-						last_run_at: null,
-						last_error_code: null,
-						message: ''
-					}
-				)
+				body: envelope(routes.actions?.status ?? defaultExecutionStatus)
+			});
+		}
+
+		const formActionsBootstrapMatch = urlWithoutQuery.match(/\/([^/]+)\/forms\/(\d+)\/actions\/bootstrap$/);
+		if (formActionsBootstrapMatch && method === 'GET') {
+			const sourceSlug = formActionsBootstrapMatch[1];
+			const currentFormId = Number(formActionsBootstrapMatch[2] ?? formId);
+			const definitions = Array.isArray(routes.actions?.definitions)
+				? routes.actions.definitions
+				: [];
+			const customActionsPayload = routes.customActions?.list ?? { actions: [], quota: null };
+			const customActionItems =
+				customActionsPayload &&
+				typeof customActionsPayload === 'object' &&
+				!Array.isArray(customActionsPayload) &&
+				Array.isArray((customActionsPayload as { actions?: unknown }).actions)
+					? ((customActionsPayload as { actions: unknown[] }).actions)
+					: [];
+			const defaultIds = [
+				...definitions
+					.map((definition) =>
+						definition && typeof definition === 'object' && !Array.isArray(definition)
+							? (definition as { id?: unknown }).id
+							: null
+					)
+					.filter((id): id is string => typeof id === 'string' && id.length > 0),
+				...customActionItems
+					.map((action) =>
+						action && typeof action === 'object' && !Array.isArray(action)
+							? (action as { code?: unknown }).code
+							: null
+					)
+					.filter((id): id is string => typeof id === 'string' && id.length > 0)
+			];
+			const sourceForms = routes.actions?.forms?.[sourceSlug] ?? [];
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: envelope({
+					form_source: sourceSlug,
+					form_id: currentFormId,
+					form:
+						sourceForms.find((form) => {
+							if (!form || typeof form !== 'object' || Array.isArray(form)) return false;
+							return Number((form as { id?: unknown }).id ?? 0) === currentFormId;
+						}) ?? null,
+					actions: routes.actions?.formsActions ?? [],
+					execution_status: routes.actions?.status ?? defaultExecutionStatus,
+					disabled_state: disableState,
+					capabilities: {
+						supports_custom_actions: true,
+						supports_status: true,
+						supports_credits: false,
+						cps_version: null
+					},
+					definitions,
+					custom_actions: customActionsPayload,
+					provider_credentials: routes.localProviders?.credentials ?? [],
+					form_action_configs: formActionConfigState,
+					form_fields: routes.actions?.formFields ?? [],
+					action_defaults: Object.fromEntries(
+						defaultIds.map((id) => [id, actionDefaultsState[id] ?? {}])
+					),
+					workflow_plan: {
+						authority: 'local',
+						authority_reason: 'mock',
+						cps_unreachable: true,
+						policy_version: '2026-02-mixed-sync-async-v1',
+						hook_scope: 'all',
+						available_hooks: [],
+						nodes: [],
+						edges: [],
+						hooks: [],
+						policy_violations: []
+					},
+					generated_at: '2026-04-22T00:00:00Z'
+				})
 			});
 		}
 

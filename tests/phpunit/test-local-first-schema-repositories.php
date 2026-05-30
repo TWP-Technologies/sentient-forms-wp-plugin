@@ -50,6 +50,18 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
         $this->assertSame( [ 'created_at', 'id' ], array_column( $index, 'Column_name' ) );
     }
 
+    public function test_execution_events_table_has_form_recent_read_index(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $index = $this->wpdb->get_results(
+            'SHOW INDEX FROM ' . esc_sql( $table ) . " WHERE Key_name = 'form_created_id_idx'",
+            ARRAY_A
+        );
+
+        $this->assertCount( 4, $index );
+        $this->assertSame( [ 'form_source', 'form_id', 'created_at', 'id' ], array_column( $index, 'Column_name' ) );
+    }
+
     public function test_provider_credentials_repository_records_local_openrouter_credentials(): void
     {
         $repository = new Sentient_Forms_Provider_Credentials_Repository( $this->wpdb );
@@ -345,6 +357,90 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
 
         $this->assertSame( $event_id, $same_event_id );
         $this->assertSame( 'failed', $events->get_by_request_id( 'req-local-first-1' )['status'] );
+    }
+
+    public function test_execution_events_repository_loads_only_latest_event_per_form(): void
+    {
+        $events = new Sentient_Forms_Execution_Events_Repository( $this->wpdb );
+        $table  = $this->wpdb->prefix . 'sentient_execution_events';
+
+        $old_form_one_id = $events->record(
+            [
+                'execution_request_id' => 'req-latest-form-101-old',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '101',
+                'provider'             => 'openrouter',
+                'status'               => 'queued',
+            ]
+        );
+        $new_form_one_id = $events->record(
+            [
+                'execution_request_id' => 'req-latest-form-101-new',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '101',
+                'provider'             => 'openrouter',
+                'status'               => 'succeeded',
+            ]
+        );
+        $backfilled_form_one_id = $events->record(
+            [
+                'execution_request_id' => 'req-latest-form-101-backfilled',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '101',
+                'provider'             => 'openrouter',
+                'status'               => 'skipped',
+            ]
+        );
+        $old_form_two_id = $events->record(
+            [
+                'execution_request_id' => 'req-latest-form-102-old',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '102',
+                'provider'             => 'openrouter',
+                'status'               => 'running',
+            ]
+        );
+        $new_form_two_id = $events->record(
+            [
+                'execution_request_id' => 'req-latest-form-102-new',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '102',
+                'provider'             => 'openrouter',
+                'status'               => 'failed',
+            ]
+        );
+
+        foreach (
+            [
+                $old_form_one_id => '2026-05-30 10:00:00',
+                $new_form_one_id => '2026-05-30 10:05:00',
+                $backfilled_form_one_id => '2026-05-30 09:55:00',
+                $old_form_two_id => '2026-05-30 10:00:00',
+                $new_form_two_id => '2026-05-30 10:00:00',
+            ] as $event_id => $created_at
+        )
+        {
+            $this->assertNotFalse(
+                $this->wpdb->update(
+                    $table,
+                    [
+                        'created_at' => $created_at,
+                        'updated_at' => $created_at,
+                    ],
+                    [ 'id' => $event_id ],
+                    [ '%s', '%s' ],
+                    [ '%d' ]
+                )
+            );
+        }
+
+        $latest = $events->get_latest_for_forms( 'gravity_forms', [ 101, 102, 102 ] );
+
+        $this->assertCount( 2, $latest );
+        $this->assertSame( 'succeeded', $latest['101']['status'] );
+        $this->assertSame( (string) $new_form_one_id, (string) $latest['101']['id'] );
+        $this->assertSame( 'failed', $latest['102']['status'] );
+        $this->assertSame( (string) $new_form_two_id, (string) $latest['102']['id'] );
     }
 
     public function test_action_template_upsert_recovers_from_duplicate_insert_race(): void

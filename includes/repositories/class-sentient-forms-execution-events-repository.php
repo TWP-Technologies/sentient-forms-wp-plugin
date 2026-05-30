@@ -253,6 +253,78 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         return $row ? $this->decode_row( $row ) : null;
     }
 
+    /**
+     * @param array<int, int|string> $form_ids Form IDs to load.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function get_latest_for_forms( string $form_source, array $form_ids ): array
+    {
+        $normalized_ids = [];
+        foreach ( $form_ids as $form_id )
+        {
+            $normalized_id = sanitize_text_field( (string) $form_id );
+            if ( '' !== $normalized_id )
+            {
+                $normalized_ids[] = $normalized_id;
+            }
+        }
+
+        $normalized_ids = array_values( array_unique( $normalized_ids ) );
+        if ( empty( $normalized_ids ) )
+        {
+            return [];
+        }
+
+        $wpdb = $this->wpdb;
+        $placeholders = implode( ', ', array_fill( 0, count( $normalized_ids ), '%s' ) );
+        // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Dynamic IN placeholder list contains only %s placeholders; table name and values are prepared below via wpdb::prepare()'s supported array argument.
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT e.* FROM %i AS e
+                INNER JOIN (
+                    SELECT candidate.form_id, MAX(candidate.id) AS id
+                    FROM %i AS candidate
+                    INNER JOIN (
+                        SELECT form_id, MAX(created_at) AS created_at
+                        FROM %i
+                        WHERE form_source = %s
+                            AND form_id IN (' . $placeholders . ')
+                        GROUP BY form_id
+                    ) AS latest_created
+                        ON candidate.form_id = latest_created.form_id
+                        AND candidate.created_at = latest_created.created_at
+                    WHERE candidate.form_source = %s
+                    GROUP BY candidate.form_id
+                ) AS latest
+                    ON e.id = latest.id
+                WHERE e.form_source = %s
+                ORDER BY e.form_id ASC',
+                array_merge(
+                    [ $this->table_name(), $this->table_name(), $this->table_name(), sanitize_key( $form_source ) ],
+                    $normalized_ids,
+                    [ sanitize_key( $form_source ), sanitize_key( $form_source ) ]
+                )
+            ),
+            ARRAY_A
+        ) ?: [];
+        // phpcs:enable WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber
+
+        $latest = [];
+        foreach ( $rows as $row )
+        {
+            $form_id = sanitize_text_field( (string) ( $row['form_id'] ?? '' ) );
+            if ( '' === $form_id || isset( $latest[ $form_id ] ) )
+            {
+                continue;
+            }
+
+            $latest[ $form_id ] = $this->decode_row( $row );
+        }
+
+        return $latest;
+    }
+
     public function cleanup_expired( ?string $before = null ): int
     {
         $before = $before ?: $this->now();

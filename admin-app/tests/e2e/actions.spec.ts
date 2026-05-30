@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
 import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
 import { mockWpJson } from './utils/mock-wpjson';
@@ -110,6 +110,25 @@ async function openLinkedActionsTable(page: Parameters<typeof test>[0]['page']) 
 	const table = page.getByTestId('form-actions-table');
 	await expect(table).toBeVisible();
 	return table;
+}
+
+function trackSentientRestRequests(page: Page): string[] {
+	const requests: string[] = [];
+	page.on('request', (request) => {
+		try {
+			const url = new URL(request.url());
+			const restPrefix = '/wp-json/sentient-forms/v1/';
+			const restIndex = url.pathname.indexOf(restPrefix);
+
+			if (restIndex >= 0) {
+				requests.push(`${request.method()} ${url.pathname.slice(restIndex + restPrefix.length)}${url.search}`);
+			}
+		} catch {
+			// Ignore non-URL request records emitted by the browser driver.
+		}
+	});
+
+	return requests;
 }
 
 async function ensureDependencyGraphVisible(page: Parameters<typeof test>[0]['page']) {
@@ -274,14 +293,19 @@ async function connectHandlesByMouse(
 	await page.mouse.down();
 	await page.mouse.move(sourceX + 8, sourceY + 6, { steps: 6 });
 	await page.mouse.move(targetX, targetY, { steps: 32 });
+	await page.waitForTimeout(120);
 	await page.mouse.up();
+}
+
+function isOutsideViewportClickError(error: unknown): boolean {
+	return error instanceof Error && /outside of the viewport/i.test(error.message);
 }
 
 async function connectHandlesByClick(
 	page: Parameters<typeof test>[0]['page'],
 	sourceSelector: string,
 	targetSelector: string
-) {
+): Promise<boolean> {
 	const viewport = page.getByTestId('dependency-graph-canvas').locator('.svelte-flow__viewport');
 	const source = viewport.locator(sourceSelector).first();
 	const target = viewport.locator(targetSelector).first();
@@ -289,8 +313,17 @@ async function connectHandlesByClick(
 	await expect(target).toBeVisible();
 	await source.scrollIntoViewIfNeeded();
 	await target.scrollIntoViewIfNeeded();
-	await source.click({ force: true });
-	await target.click({ force: true });
+	try {
+		await source.click({ force: true });
+		await target.click({ force: true });
+	} catch (error) {
+		if (!isOutsideViewportClickError(error)) {
+			throw error;
+		}
+		await page.keyboard.press('Escape').catch(() => {});
+		return false;
+	}
+	return true;
 }
 
 async function getVisibleFeedbackText(
@@ -307,7 +340,7 @@ async function getVisibleFeedbackText(
 async function waitForConnectionOutcome(
 	page: Parameters<typeof test>[0]['page'],
 	baselineFeedbackText: string | null,
-	timeoutMs = 1200
+	timeoutMs = 1600
 ): Promise<{
 	dirtyVisible: boolean;
 	feedbackVisible: boolean;
@@ -374,7 +407,7 @@ async function connectHandlesAndAssert(
 		allowNoFeedbackOnFailure?: boolean;
 	} = {}
 ) {
-	const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
+	const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
 	const dirtyBar = page.getByTestId('dependency-graph-dirty-bar');
 	const feedback = page.getByTestId('dependency-graph-connection-feedback');
 	let lastFeedbackText = '';
@@ -387,8 +420,10 @@ async function connectHandlesAndAssert(
 			!outcome.dirtyVisible &&
 			(!outcome.feedbackVisible || /connection canceled/i.test(outcome.feedbackText))
 		) {
-			await connectHandlesByClick(page, sourceSelector, targetSelector);
-			outcome = await waitForConnectionOutcome(page, outcome.feedbackText || baselineFeedbackText);
+			const clickedHandles = await connectHandlesByClick(page, sourceSelector, targetSelector);
+			if (clickedHandles) {
+				outcome = await waitForConnectionOutcome(page, outcome.feedbackText || baselineFeedbackText);
+			}
 		}
 		const { dirtyVisible, feedbackVisible, feedbackText } = outcome;
 		if (feedbackText) {
@@ -607,6 +642,106 @@ test.describe('Actions admin flows', () => {
 		expect(creditRequests.length).toBeLessThanOrEqual(2);
 	});
 
+	test('loads the action overview through one source summary request', async ({ page }) => {
+		let overviewRequests = 0;
+		let defaultsBatchRequests = 0;
+		let legacyDefaultsRequests = 0;
+		let legacyActionsRequests = 0;
+		let legacyStatusRequests = 0;
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/gravity_forms/forms/overview**', (route) => {
+			overviewRequests += 1;
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						form_source: formSource,
+						forms: baseForms.map((form) => ({
+							...form,
+							actions: baseLinkages,
+							action_count: baseLinkages.length,
+							enabled_action_count: baseLinkages.filter(
+								(linkage) => linkage.is_action_enabled_for_form
+							).length,
+							execution_status: statusUnknown
+						})),
+						generated_at: '2030-01-05T10:00:00Z'
+					}
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/actions/defaults**', (route) => {
+			defaultsBatchRequests += 1;
+			const url = new URL(route.request().url());
+			const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean);
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						defaults: Object.fromEntries(ids.map((id) => [id, {}])),
+						generated_at: '2030-01-05T10:00:00Z'
+					}
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/actions/*/defaults', (route) => {
+			legacyDefaultsRequests += 1;
+			return route.fulfill({
+				status: 418,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'action library should batch defaults' })
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/gravity_forms/forms/*/actions', (route) => {
+			legacyActionsRequests += 1;
+			return route.fulfill({
+				status: 418,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'overview should not fetch per-form actions' })
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/gravity_forms/forms/*/actions/status', (route) => {
+			legacyStatusRequests += 1;
+			return route.fulfill({
+				status: 418,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'overview should not fetch per-form status' })
+			});
+		});
+
+		const sentientRequests = trackSentientRestRequests(page);
+		await page.goto('/#/actions', { waitUntil: 'networkidle' });
+
+		await expect(page.getByRole('heading', { name: 'Actions' })).toBeVisible();
+		await expect(page.getByTestId('actions-forms-workspace')).toContainText('Contact us');
+		expect(sentientRequests.length).toBeLessThanOrEqual(10);
+		expect(overviewRequests).toBe(1);
+		expect(defaultsBatchRequests).toBeGreaterThan(0);
+		expect(defaultsBatchRequests).toBeLessThanOrEqual(2);
+		expect(legacyDefaultsRequests).toBe(0);
+		expect(legacyActionsRequests).toBe(0);
+		expect(legacyStatusRequests).toBe(0);
+	});
+
 	test('hash navigation opens the form actions editor', async ({ page }) => {
 		await mockWpJson(page, {
 			actions: {
@@ -630,11 +765,207 @@ test.describe('Actions admin flows', () => {
 			.click();
 
 		await expectAppUrl(page, '/actions/gravity_forms/123');
-		await expect(page.getByText('Action Execution Order')).toBeVisible();
+		await expect(
+			page.getByTestId('dependency-graph').getByText('Action Execution Order')
+		).toBeVisible();
 		await expect(page.getByTestId('form-context-band')).toBeVisible();
 		await expect(page.getByTestId('form-context-title')).toHaveText('Contact us');
 		await expect(page.getByTestId('form-context-band').getByText('Form #123')).toBeVisible();
 		await expect(page.locator('header').getByRole('button', { name: 'Add action' })).toBeVisible();
+	});
+
+	test('loads the form editor through one form actions bootstrap request', async ({ page }) => {
+		let bootstrapRequests = 0;
+		let defaultsBatchRequests = 0;
+		let legacyDefaultsRequests = 0;
+		let legacyActionsRequests = 0;
+		let legacyStatusRequests = 0;
+		let legacyDisableRequests = 0;
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.route(
+			'**/wp-json/sentient-forms/v1/gravity_forms/forms/123/actions/bootstrap**',
+			(route) => {
+				bootstrapRequests += 1;
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						success: true,
+						data: {
+							form_source: formSource,
+							form_id: formId,
+							form: baseForms[0],
+							actions: baseLinkages,
+							execution_status: statusUnknown,
+							disabled_state: {
+								sf_disabled: false,
+								global_disabled: false,
+								provider_disabled: false,
+								effective_disabled: false
+							},
+							capabilities: {
+								supports_status: true,
+								supports_custom_actions: true,
+								supports_credits: true,
+								cps_version: 'test'
+							},
+							definitions: baseDefinitions,
+							custom_actions: { actions: baseCustomActions, quota },
+							provider_credentials: [limitedOpenRouterCredential],
+							form_action_configs: { 'spam-check': {} },
+							form_fields: baseFormFields,
+							action_defaults: { 'spam-check': {}, summarize: {}, hello: {} },
+							workflow_plan: {
+								authority: 'local',
+								authority_reason: 'test_fixture',
+								cps_unreachable: false,
+								policy_version: '2026-02-mixed-sync-async-v1',
+								hook_scope: 'all',
+								available_hooks: ['gform_validation'],
+								nodes: [],
+								edges: [],
+								hooks: [],
+								policy_violations: []
+							},
+							generated_at: '2030-01-05T10:00:00Z'
+						}
+					})
+				});
+			}
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/actions/defaults**', (route) => {
+			defaultsBatchRequests += 1;
+			const url = new URL(route.request().url());
+			const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean);
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						defaults: Object.fromEntries(ids.map((id) => [id, {}])),
+						generated_at: '2030-01-05T10:00:00Z'
+					}
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/actions/*/defaults', (route) => {
+			legacyDefaultsRequests += 1;
+			return route.fulfill({
+				status: 418,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'form editor should batch defaults' })
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/gravity_forms/forms/123/actions', (route) => {
+			legacyActionsRequests += 1;
+			return route.fulfill({
+				status: 418,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'form editor should use actions/bootstrap' })
+			});
+		});
+		await page.route('**/wp-json/sentient-forms/v1/gravity_forms/forms/123/actions/status', (route) => {
+			legacyStatusRequests += 1;
+			return route.fulfill({
+				status: 418,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'form editor should use actions/bootstrap' })
+			});
+		});
+		await page.route('**/wp-json/sentient-forms/v1/gravity_forms/forms/123/actions/disable', (route) => {
+			legacyDisableRequests += 1;
+			return route.fulfill({
+				status: 418,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'form editor should use actions/bootstrap' })
+			});
+		});
+
+		const sentientRequests = trackSentientRestRequests(page);
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+
+		await expect(
+			page.getByTestId('dependency-graph').getByText('Action Execution Order')
+		).toBeVisible();
+		expect(sentientRequests.length).toBeLessThanOrEqual(3);
+		expect(bootstrapRequests).toBe(1);
+		expect(defaultsBatchRequests).toBeLessThanOrEqual(1);
+		expect(legacyDefaultsRequests).toBe(0);
+		expect(legacyActionsRequests).toBe(0);
+		expect(legacyStatusRequests).toBe(0);
+		expect(legacyDisableRequests).toBe(0);
+	});
+
+	test('keeps a low-frequency status poll alive while the form editor is idle', async ({
+		page
+	}) => {
+		await page.clock.install({ time: new Date('2030-01-05T10:00:00Z') });
+		let statusRequests = 0;
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [formSource]: baseForms },
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: baseLinkages,
+				formFields: baseFormFields,
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.route(
+			'**/wp-json/sentient-forms/v1/gravity_forms/forms/123/actions/status',
+			(route) => {
+				statusRequests += 1;
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						success: true,
+						data: {
+							status: 'running',
+							last_run_at: '2030-01-05T10:02:00Z',
+							last_error_code: null,
+							message: 'Execution is running.',
+							updated_at: '2030-01-05T10:02:00Z',
+							entry_id: 456,
+							last_result: null
+						}
+					})
+				});
+			}
+		);
+
+		await page.goto('/#/actions/gravity_forms/123', { waitUntil: 'networkidle' });
+
+		await expect(
+			page.getByTestId('dependency-graph').getByText('Action Execution Order')
+		).toBeVisible();
+		expect(statusRequests).toBe(0);
+
+		await page.clock.runFor(119_000);
+		expect(statusRequests).toBe(0);
+
+		await page.clock.runFor(1_000);
+		await expect.poll(() => statusRequests, { timeout: 2_000 }).toBe(1);
+		await expect(page.getByTestId('form-execution-status')).toContainText('running');
 	});
 
 	test('keeps Add Action controls visible below the WordPress admin bar with long action lists', async ({

@@ -199,10 +199,26 @@ function setFilters(filters: CustomActionFilters): void {
 	setState({ filters });
 }
 
+function hydrate(
+	response: { actions: CustomAction[]; quota: CustomActionQuota | null },
+	filters: CustomActionFilters = { status: 'active' }
+): void {
+	setState({
+		actions: sortCustomActionsByRecency(response.actions),
+		quota: response.quota,
+		loading: false,
+		error: null,
+		supportsCustomActions: true,
+		filters,
+		lastLoadedAt: Date.now()
+	});
+}
+
 export const customActionsStore = {
 	subscribe: readable.subscribe,
 	load,
 	reload: () => load(customActionsState.filters),
+	hydrate,
 	create,
 	update,
 	archive,

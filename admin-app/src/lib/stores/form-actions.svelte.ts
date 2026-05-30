@@ -7,6 +7,7 @@ import type {
 	ActionDefinition,
 	ExecutionStatus,
 	FormExecutionStatus,
+	FormActionsBootstrapResponse,
 	ApiErrorPayload
 } from '$lib/api/types';
 
@@ -27,6 +28,7 @@ export interface FormActionsState {
 	providerDisabled: boolean;
 	/** CB-FORMS-002: Effective disable state (form OR global OR provider) */
 	effectiveDisabled: boolean;
+	bootstrap: FormActionsBootstrapResponse | null;
 }
 
 const client = createClientFromConfig();
@@ -44,7 +46,8 @@ function initialState(): FormActionsState {
 		sfDisabled: false,
 		globalDisabled: false,
 		providerDisabled: false,
-		effectiveDisabled: false
+		effectiveDisabled: false,
+		bootstrap: null
 	};
 }
 
@@ -133,14 +136,33 @@ function friendlyMessageFromError(error: unknown, fallback: string): string {
 
 export const formActionsState = $state(initialState());
 const readable = toStore(() => formActionsState);
-let refreshInFlight = false;
+let activeFormKey: string | null = null;
+let refreshInFlightKey: string | null = null;
+let loadRequestSequence = 0;
+let statusRefreshSequence = 0;
+
+function getFormKey(formSourceSlug: string, formId: number): string {
+	return `${formSourceSlug}:${formId}`;
+}
 
 function resetState() {
 	Object.assign(formActionsState, initialState());
 }
 
+function resetStore() {
+	activeFormKey = null;
+	refreshInFlightKey = null;
+	loadRequestSequence += 1;
+	statusRefreshSequence += 1;
+	resetState();
+}
+
 function setState(partial: Partial<FormActionsState>) {
 	Object.assign(formActionsState, partial);
+}
+
+function isCurrentLoadRequest(formKey: string, requestSequence: number): boolean {
+	return activeFormKey === formKey && loadRequestSequence === requestSequence;
 }
 
 async function load(formSourceSlug: string, formId: number) {
@@ -150,45 +172,69 @@ async function load(formSourceSlug: string, formId: number) {
 		return;
 	}
 
+	const formKey = getFormKey(formSourceSlug, formId);
+	activeFormKey = formKey;
+	refreshInFlightKey = null;
+	statusRefreshSequence += 1;
+	const loadSequence = ++loadRequestSequence;
 	resetState();
 	formActionsState.loading = true;
 
 	try {
-		try {
-			const caps = await client.getCapabilities({ showNotifications: false });
+		const bootstrap = await client.getFormActionsBootstrap(formSourceSlug, formId, {
+			showNotifications: false
+		});
+		if (!isCurrentLoadRequest(formKey, loadSequence)) {
+			return;
+		}
+
+		let caps = bootstrap.capabilities ?? null;
+		if (!caps) {
+			try {
+				caps = await client.getCapabilities({ showNotifications: false });
+			} catch {
+				// Capability fetch is best-effort; ignore failures and fall back.
+			}
+			if (!isCurrentLoadRequest(formKey, loadSequence)) {
+				return;
+			}
+		}
+
+		if (caps) {
 			setState({
 				supportsStatus: caps.supports_status ?? true,
 				cpsVersion: caps.cps_version ?? null
 			});
-		} catch {
-			// Capability fetch is best-effort; ignore failures and fall back.
 		}
 
-		const [items, definitions, status] = await Promise.all([
-			client.getFormActions(formSourceSlug, formId, { showNotifications: false }),
-			client.getActionDefinitions({ showNotifications: false }),
-			client.getFormExecutionStatus(formSourceSlug, formId, { showNotifications: false })
-		]);
-
-		setState({ loading: false, error: null, items, definitions, status });
-
-		// CB-FORMS-001: Load per-form disabled state (best-effort)
-		try {
-			const disableResult = await client.getFormDisabled(formSourceSlug, formId, { showNotifications: false });
-			setState({
-				sfDisabled: disableResult.sf_disabled,
-				globalDisabled: disableResult.global_disabled ?? false,
-				providerDisabled: disableResult.provider_disabled ?? false,
-				effectiveDisabled:
-					disableResult.effective_disabled ??
-					(disableResult.sf_disabled ||
-						disableResult.global_disabled === true ||
-						disableResult.provider_disabled === true)
-			});
-		} catch {
-			// Endpoint may not exist on older plugin versions; default false.
+		const definitions =
+			bootstrap.definitions ??
+			(await client.getActionDefinitions({ showNotifications: false }));
+		if (!isCurrentLoadRequest(formKey, loadSequence)) {
+			return;
 		}
+
+		const disableResult = bootstrap.disabled_state;
+		setState({
+			loading: false,
+			error: null,
+			items: bootstrap.actions,
+			definitions,
+			status: bootstrap.execution_status,
+			sfDisabled: disableResult.sf_disabled,
+			globalDisabled: disableResult.global_disabled ?? false,
+			providerDisabled: disableResult.provider_disabled ?? false,
+			effectiveDisabled:
+				disableResult.effective_disabled ??
+				(disableResult.sf_disabled ||
+					disableResult.global_disabled === true ||
+					disableResult.provider_disabled === true),
+			bootstrap
+		});
 	} catch (error) {
+		if (!isCurrentLoadRequest(formKey, loadSequence)) {
+			return;
+		}
 		const message = friendlyMessageFromError(error, 'Failed to load actions');
 		resetState();
 		setState({ loading: false, error: message });
@@ -334,34 +380,50 @@ async function remove(formSourceSlug: string, formId: number, linkage: FormActio
 	}
 }
 
-async function refresh(formSourceSlug: string, formId: number) {
+async function refresh(
+	formSourceSlug: string,
+	formId: number,
+	options: { forceRefresh?: boolean } = {}
+) {
 	// Guard against undefined or invalid parameters during hydration race conditions
 	if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
 		console.warn('[formActionsStore] refresh called with invalid params:', { formSourceSlug, formId });
 		return;
 	}
 
-	if (refreshInFlight) {
+	const formKey = getFormKey(formSourceSlug, formId);
+	const forceRefresh = options.forceRefresh === true;
+	if (refreshInFlightKey === formKey && !forceRefresh) {
 		return;
 	}
-	refreshInFlight = true;
+	refreshInFlightKey = formKey;
+	const requestSequence = ++statusRefreshSequence;
 	try {
 		const status = await client.getFormExecutionStatus(formSourceSlug, formId, {
-			showNotifications: false
+			showNotifications: false,
+			...(forceRefresh ? { forceRefresh: true } : {})
 		});
 
+		if (activeFormKey !== formKey || requestSequence !== statusRefreshSequence) {
+			return;
+		}
 		setState({ status, error: null, supportsStatus: true });
 	} catch (error) {
+		if (activeFormKey !== formKey || requestSequence !== statusRefreshSequence) {
+			return;
+		}
 		if (error instanceof ApiClientError && error.status === 404) {
 			setState({ supportsStatus: false, error: null });
-			refreshInFlight = false;
 			return;
 		}
 		const message = friendlyMessageFromError(error, 'Failed to refresh Sentient Forms status');
 		notifications.error(message);
 		setState({ error: message });
+	} finally {
+		if (refreshInFlightKey === formKey && requestSequence === statusRefreshSequence) {
+			refreshInFlightKey = null;
+		}
 	}
-	refreshInFlight = false;
 }
 
 async function fetchExecutionStatus(
@@ -434,5 +496,5 @@ export const formActionsStore = {
 	refresh,
 	fetchExecutionStatus,
 	toggleFormDisabled,
-	reset: resetState
+	reset: resetStore
 };

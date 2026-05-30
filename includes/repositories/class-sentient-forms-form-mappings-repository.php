@@ -86,6 +86,61 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
         return array_map( [ $this, 'decode_row' ], $rows );
     }
 
+    /**
+     * @param array<int, int|string> $form_ids Form IDs to load.
+     *
+     * @return array<string, array<int, array<string, mixed>>>
+     */
+    public function list_for_forms( string $form_source, array $form_ids ): array
+    {
+        $normalized_ids = [];
+        foreach ( $form_ids as $form_id )
+        {
+            $normalized_id = sanitize_text_field( (string) $form_id );
+            if ( '' !== $normalized_id )
+            {
+                $normalized_ids[] = $normalized_id;
+            }
+        }
+
+        $normalized_ids = array_values( array_unique( $normalized_ids ) );
+        if ( empty( $normalized_ids ) )
+        {
+            return [];
+        }
+
+        $wpdb = $this->wpdb;
+        $placeholders = implode( ', ', array_fill( 0, count( $normalized_ids ), '%s' ) );
+        // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Dynamic IN placeholder list contains only %s placeholders; table name and values are prepared below via wpdb::prepare()'s supported array argument.
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT * FROM %i WHERE form_source = %s AND form_id IN (' . $placeholders . ') ORDER BY form_id ASC, id ASC',
+                array_merge( [ $this->table_name(), sanitize_key( $form_source ) ], $normalized_ids )
+            ),
+            ARRAY_A
+        ) ?: [];
+        // phpcs:enable WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber
+
+        $grouped = [];
+        foreach ( $rows as $row )
+        {
+            $decoded = $this->decode_row( $row );
+            $form_id = sanitize_text_field( (string) ( $decoded['form_id'] ?? '' ) );
+            if ( '' === $form_id )
+            {
+                continue;
+            }
+
+            if ( ! isset( $grouped[ $form_id ] ) )
+            {
+                $grouped[ $form_id ] = [];
+            }
+            $grouped[ $form_id ][] = $decoded;
+        }
+
+        return $grouped;
+    }
+
     public function get( int $id ): ?array
     {
         $row = $this->get_by_id( $id );

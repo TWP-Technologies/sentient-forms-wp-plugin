@@ -107,18 +107,18 @@ async function assertContentFrameWidth(page: Page, contextLabel: string): Promis
 
 	const metrics = await frame.evaluate((element) => {
 		const rect = element.getBoundingClientRect();
-		const style = window.getComputedStyle(element);
+		const parentRect = element.parentElement?.getBoundingClientRect();
 		return {
 			width: rect.width,
-			marginLeft: parseFloat(style.marginLeft || '0'),
-			marginRight: parseFloat(style.marginRight || '0'),
+			leftGutter: parentRect ? rect.left - parentRect.left : rect.left,
+			rightGutter: parentRect ? parentRect.right - rect.right : window.innerWidth - rect.right,
 			viewportWidth: window.innerWidth
 		};
 	});
 
 	expect(metrics.width, `${contextLabel} content width`).toBeLessThanOrEqual(1792);
-	expect(metrics.marginLeft, `${contextLabel} left gutter`).toBeGreaterThanOrEqual(40);
-	expect(metrics.marginRight, `${contextLabel} right gutter`).toBeGreaterThanOrEqual(40);
+	expect(metrics.leftGutter, `${contextLabel} left gutter`).toBeGreaterThanOrEqual(40);
+	expect(metrics.rightGutter, `${contextLabel} right gutter`).toBeGreaterThanOrEqual(40);
 	expect(metrics.viewportWidth, `${contextLabel} viewport width`).toBeGreaterThanOrEqual(1920);
 }
 

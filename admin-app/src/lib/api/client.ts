@@ -7,6 +7,7 @@ import {
 import { notifications } from '$lib/stores/notifications';
 import type {
 	ActionDefinition,
+	ActionDefaultsBatchResponse,
 	ApiErrorPayload,
 	AsyncSettingsResponse,
 	BillingCheckoutSessionRequest,
@@ -22,17 +23,20 @@ import type {
 	CustomActionFilters,
 	CustomActionQuota,
 	CustomActionUpdatePayload,
+	DashboardSummaryResponse,
 	DuplicateFormActionRequest,
 	DuplicateFormActionResponse,
 	ExecutionStatus,
 	FormActionConfig,
 	FormActionConfigResponse,
+	FormActionsBootstrapResponse,
 	FormDisableStateResponse,
 	FormActionLinkage,
 	FormActionMutationPayload,
 	FormAllActionConfigsResponse,
 	FormExecutionStatus,
 	FormFieldInfo,
+	FormsOverviewResponse,
 	RequestTraceRequest,
 	RequestTraceResponse,
 	WorkflowPlanResponse,
@@ -92,16 +96,416 @@ export interface ClientConfig {
 	getNonce?: () => string | undefined;
 	fetchImpl?: typeof fetch;
 	notifyErrors?: boolean;
+	cacheContext?: () => string | undefined;
 }
 
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
 	body?: unknown;
 	showNotifications?: boolean;
+	cacheTtlMs?: number;
+	cacheTags?: string[];
+	cacheStorage?: 'memory' | 'session';
+	forceRefresh?: boolean;
+	dedupe?: boolean;
+	invalidateCacheTags?: string[] | false;
 }
 
 interface RestEnvelope<T> {
 	success: boolean;
 	data: T;
+}
+
+interface AdminApiCacheEntry {
+	expiresAt: number;
+	tags: string[];
+	value: unknown;
+}
+
+interface AdminApiInFlightEntry {
+	promise: Promise<unknown>;
+	showNotifications?: boolean;
+	tags: string[];
+}
+
+const adminApiMemoryCache = new Map<string, AdminApiCacheEntry>();
+const adminApiInFlight = new Map<string, AdminApiInFlightEntry>();
+const adminApiCacheTagVersions = new Map<string, number>();
+let adminApiGlobalCacheVersion = 0;
+const sessionCachePrefix = 'sentientForms:adminApi:';
+const ACTION_DEFAULTS_BATCH_LIMIT = 100;
+
+function withCacheDefaults(
+	options: RequestOptions,
+	defaults: {
+		ttlMs: number;
+		tags: string[];
+		storage?: 'memory' | 'session';
+	}
+): RequestOptions {
+	return {
+		cacheTtlMs: defaults.ttlMs,
+		cacheStorage: defaults.storage ?? 'memory',
+		...options,
+		cacheTags: uniqueCacheTags([...defaults.tags, ...(options.cacheTags ?? [])])
+	};
+}
+
+function mergeShowNotifications(
+	current: boolean | undefined,
+	next: boolean | undefined
+): boolean | undefined {
+	if (current === true || next === true) {
+		return true;
+	}
+
+	if (current === undefined || next === undefined) {
+		return undefined;
+	}
+
+	return false;
+}
+
+function uniqueCacheTags(tags: string[]): string[] {
+	return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))];
+}
+
+function getFormMutationCacheTags(path: string): string[] | null {
+	let match = /^([^/]+)\/forms\/([^/]+)\/actions(?:\/|$)/.exec(path);
+	if (match) {
+		const [, formSourceSlug, formId] = match;
+		return [
+			'actions',
+			'form-actions',
+			'execution-status',
+			'dashboard',
+			`forms:${formSourceSlug}`,
+			`form:${formSourceSlug}:${formId}`
+		];
+	}
+
+	match = /^forms\/([^/]+)\/([^/]+)\/action-config(?:\/|$)/.exec(path);
+	if (match) {
+		const [, formSourceSlug, formId] = match;
+		return [
+			'form-actions',
+			'action-defaults',
+			'dashboard',
+			`forms:${formSourceSlug}`,
+			`form:${formSourceSlug}:${formId}`
+		];
+	}
+
+	return null;
+}
+
+function inferMutationInvalidationTags(path: string): string[] {
+	const normalizedPath = path.split('?')[0]?.replace(/^\/+/, '') ?? '';
+	const formTags = getFormMutationCacheTags(normalizedPath);
+	if (formTags) {
+		return uniqueCacheTags(formTags);
+	}
+
+	if (normalizedPath.startsWith('license/managed-checkout')) {
+		return ['license', 'billing', 'providers', 'capabilities', 'dashboard'];
+	}
+
+	if (normalizedPath.startsWith('license/billing')) {
+		return ['license', 'billing', 'dashboard'];
+	}
+
+	if (normalizedPath.startsWith('license/')) {
+		return ['license', 'billing', 'providers', 'capabilities', 'dashboard'];
+	}
+
+	if (normalizedPath === 'settings') {
+		return ['settings', 'dashboard'];
+	}
+
+	if (normalizedPath === 'telemetry') {
+		return ['settings', 'dashboard'];
+	}
+
+	if (normalizedPath.startsWith('async-')) {
+		return ['async-health', 'dashboard'];
+	}
+
+	if (normalizedPath.startsWith('local/providers/')) {
+		return ['providers', 'actions', 'custom-actions', 'form-actions', 'action-defaults', 'dashboard'];
+	}
+
+	if (
+		normalizedPath.startsWith('local/custom-actions') ||
+		normalizedPath.startsWith('custom-actions')
+	) {
+		return ['actions', 'custom-actions', 'action-defaults', 'dashboard'];
+	}
+
+	if (normalizedPath.startsWith('local/form-mappings') || normalizedPath.startsWith('mappings')) {
+		return ['actions', 'form-actions', 'forms', 'dashboard'];
+	}
+
+	if (normalizedPath.startsWith('actions/') && normalizedPath.endsWith('/defaults')) {
+		return ['actions', 'action-defaults', 'form-actions', 'dashboard'];
+	}
+
+	if (normalizedPath.startsWith('local/migration/')) {
+		return [
+			'actions',
+			'action-defaults',
+			'async-health',
+			'billing',
+			'capabilities',
+			'custom-actions',
+			'dashboard',
+			'definitions',
+			'execution-events',
+			'form-actions',
+			'forms',
+			'license',
+			'meta',
+			'providers',
+			'settings',
+			'templates'
+		];
+	}
+
+	return ['dashboard'];
+}
+
+function getMutationInvalidationTags(
+	path: string,
+	explicitTags: RequestOptions['invalidateCacheTags']
+): string[] | null {
+	if (explicitTags === false) {
+		return null;
+	}
+
+	if (Array.isArray(explicitTags)) {
+		return uniqueCacheTags(explicitTags);
+	}
+
+	return inferMutationInvalidationTags(path);
+}
+
+function hasAnyCacheTag(candidateTags: string[], targetTags: string[]): boolean {
+	return candidateTags.some((tag) => targetTags.includes(tag));
+}
+
+function bumpCacheTagVersions(tags: string[]): void {
+	for (const tag of tags) {
+		adminApiCacheTagVersions.set(tag, (adminApiCacheTagVersions.get(tag) ?? 0) + 1);
+	}
+}
+
+function getCacheVersionSnapshot(tags: string[]): { global: number; tags: Map<string, number> } {
+	return {
+		global: adminApiGlobalCacheVersion,
+		tags: new Map(tags.map((tag) => [tag, adminApiCacheTagVersions.get(tag) ?? 0]))
+	};
+}
+
+function isCacheVersionSnapshotCurrent(snapshot: {
+	global: number;
+	tags: Map<string, number>;
+}): boolean {
+	if (snapshot.global !== adminApiGlobalCacheVersion) {
+		return false;
+	}
+
+	for (const [tag, version] of snapshot.tags.entries()) {
+		if ((adminApiCacheTagVersions.get(tag) ?? 0) !== version) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+export function clearSentientFormsApiCache(tags?: string[]): void {
+	const normalizedTags = tags?.map((tag) => tag.trim()).filter(Boolean) ?? [];
+
+	if (normalizedTags.length === 0) {
+		adminApiMemoryCache.clear();
+		adminApiInFlight.clear();
+		adminApiCacheTagVersions.clear();
+		adminApiGlobalCacheVersion += 1;
+		clearSessionCache();
+		return;
+	}
+
+	bumpCacheTagVersions(normalizedTags);
+
+	for (const [key, entry] of adminApiMemoryCache.entries()) {
+		if (hasAnyCacheTag(entry.tags, normalizedTags)) {
+			adminApiMemoryCache.delete(key);
+			deleteSessionCacheEntry(key);
+		}
+	}
+
+	for (const [key, entry] of adminApiInFlight.entries()) {
+		if (hasAnyCacheTag(entry.tags, normalizedTags)) {
+			adminApiInFlight.delete(key);
+		}
+	}
+
+	for (const key of listSessionCacheKeys()) {
+		const entry = readSessionCacheEntry(key);
+		if (entry && hasAnyCacheTag(entry.tags, normalizedTags)) {
+			deleteSessionCacheEntry(key);
+		}
+	}
+}
+
+function readAdminApiCache(key: string, storage: 'memory' | 'session'): AdminApiCacheEntry | null {
+	const now = Date.now();
+	const memoryEntry = adminApiMemoryCache.get(key);
+	if (memoryEntry) {
+		if (memoryEntry.expiresAt > now) {
+			return memoryEntry;
+		}
+		adminApiMemoryCache.delete(key);
+		deleteSessionCacheEntry(key);
+		return null;
+	}
+
+	if (storage !== 'session') {
+		return null;
+	}
+
+	const sessionEntry = readSessionCacheEntry(key);
+	if (!sessionEntry) {
+		return null;
+	}
+
+	if (sessionEntry.expiresAt <= now) {
+		deleteSessionCacheEntry(key);
+		return null;
+	}
+
+	adminApiMemoryCache.set(key, sessionEntry);
+	return sessionEntry;
+}
+
+function writeAdminApiCache(
+	key: string,
+	value: unknown,
+	options: { ttlMs: number; tags: string[]; storage: 'memory' | 'session' }
+): void {
+	const entry: AdminApiCacheEntry = {
+		expiresAt: Date.now() + options.ttlMs,
+		tags: options.tags,
+		value
+	};
+
+	adminApiMemoryCache.set(key, entry);
+
+	if (options.storage === 'session') {
+		writeSessionCacheEntry(key, entry);
+	}
+}
+
+function retireAdminApiCacheKeyForForcedRefresh(key: string, tags: string[]): void {
+	adminApiMemoryCache.delete(key);
+	deleteSessionCacheEntry(key);
+	adminApiInFlight.delete(key);
+
+	if (tags.length > 0) {
+		bumpCacheTagVersions(tags);
+		return;
+	}
+
+	adminApiGlobalCacheVersion += 1;
+}
+
+function clearSessionCache(): void {
+	for (const key of listSessionCacheKeys()) {
+		deleteSessionCacheEntry(key);
+	}
+}
+
+function listSessionCacheKeys(): string[] {
+	const storage = getSessionStorage();
+	if (!storage) {
+		return [];
+	}
+
+	const keys: string[] = [];
+	for (let index = 0; index < storage.length; index += 1) {
+		const key = storage.key(index);
+		if (key?.startsWith(sessionCachePrefix)) {
+			keys.push(key.slice(sessionCachePrefix.length));
+		}
+	}
+	return keys;
+}
+
+function readSessionCacheEntry(key: string): AdminApiCacheEntry | null {
+	const storage = getSessionStorage();
+	if (!storage) {
+		return null;
+	}
+
+	const raw = storage.getItem(`${sessionCachePrefix}${key}`);
+	if (!raw) {
+		return null;
+	}
+
+	try {
+		const parsed = JSON.parse(raw) as Partial<AdminApiCacheEntry>;
+		if (
+			typeof parsed.expiresAt === 'number' &&
+			Array.isArray(parsed.tags) &&
+			'value' in parsed
+		) {
+			return {
+				expiresAt: parsed.expiresAt,
+				tags: parsed.tags.filter((tag): tag is string => typeof tag === 'string'),
+				value: parsed.value
+			};
+		}
+	} catch {
+		deleteSessionCacheEntry(key);
+	}
+
+	return null;
+}
+
+function writeSessionCacheEntry(key: string, entry: AdminApiCacheEntry): void {
+	const storage = getSessionStorage();
+	if (!storage) {
+		return;
+	}
+
+	try {
+		storage.setItem(`${sessionCachePrefix}${key}`, JSON.stringify(entry));
+	} catch {
+		// Browsers may reject storage writes in private mode or when quota is full.
+	}
+}
+
+function deleteSessionCacheEntry(key: string): void {
+	const storage = getSessionStorage();
+	if (!storage) {
+		return;
+	}
+
+	try {
+		storage.removeItem(`${sessionCachePrefix}${key}`);
+	} catch {
+		// Best-effort cleanup only.
+	}
+}
+
+function getSessionStorage(): Storage | null {
+	if (typeof window === 'undefined') {
+		return null;
+	}
+
+	try {
+		return window.sessionStorage ?? null;
+	} catch {
+		return null;
+	}
 }
 
 export interface AsyncSettingsPayload {
@@ -136,12 +540,14 @@ export class SentientFormsApiClient {
 	private getNonce?: () => string | undefined;
 	private fetchImpl: typeof fetch;
 	private notifyErrors: boolean;
+	private cacheContext?: () => string | undefined;
 
 	constructor(config: ClientConfig) {
 		this.baseUrl = new URL(config.baseUrl, 'http://localhost');
 		this.getNonce = config.getNonce;
 		this.fetchImpl = config.fetchImpl ?? fetch;
 		this.notifyErrors = config.notifyErrors ?? true;
+		this.cacheContext = config.cacheContext;
 	}
 
 	async activateLicense(
@@ -178,7 +584,14 @@ export class SentientFormsApiClient {
 	}
 
 	async getLicenseInfo(options: RequestOptions = {}): Promise<LicenseInfoResponse> {
-		const response = await this.request<RestEnvelope<LicenseInfoResponse>>('license', options);
+		const response = await this.request<RestEnvelope<LicenseInfoResponse>>(
+			'license',
+			withCacheDefaults(options, {
+				ttlMs: 60_000,
+				tags: ['license'],
+				storage: 'session'
+			})
+		);
 		return this.unwrap(response);
 	}
 
@@ -194,10 +607,23 @@ export class SentientFormsApiClient {
 		return this.unwrap(response);
 	}
 
-	async getBillingState(options: RequestOptions = {}): Promise<BillingStateResponse> {
+	async getBillingState(
+		options: RequestOptions & { forceServerRefresh?: boolean } = {}
+	): Promise<BillingStateResponse> {
+		const { forceServerRefresh = false, ...requestOptions } = options;
+		if (forceServerRefresh) {
+			clearSentientFormsApiCache(['billing']);
+		}
 		const response = await this.request<RestEnvelope<BillingStateResponse>>(
-			'license/billing-state',
-			options
+			forceServerRefresh ? 'license/billing-state?force_refresh=1' : 'license/billing-state',
+			withCacheDefaults(
+				{ ...requestOptions, ...(forceServerRefresh ? { forceRefresh: true } : {}) },
+				{
+					ttlMs: 60_000,
+					tags: ['license', 'billing'],
+					storage: 'session'
+				}
+			)
 		);
 		return this.unwrap(response);
 	}
@@ -306,7 +732,14 @@ export class SentientFormsApiClient {
 	}
 
 	async getSettings(options: RequestOptions = {}): Promise<PluginSettingsResponse> {
-		const response = await this.request<RestEnvelope<PluginSettingsResponse>>('settings', options);
+		const response = await this.request<RestEnvelope<PluginSettingsResponse>>(
+			'settings',
+			withCacheDefaults(options, {
+				ttlMs: 60_000,
+				tags: ['settings'],
+				storage: 'session'
+			})
+		);
 		return this.unwrap(response);
 	}
 
@@ -362,7 +795,13 @@ export class SentientFormsApiClient {
 	}
 
 	async getAsyncHealth(options: RequestOptions = {}): Promise<AsyncHealthResponse> {
-		const response = await this.request<RestEnvelope<AsyncHealthResponse>>('async-health', options);
+		const response = await this.request<RestEnvelope<AsyncHealthResponse>>(
+			'async-health',
+			withCacheDefaults(options, {
+				ttlMs: 30_000,
+				tags: ['async-health']
+			})
+		);
 		return this.unwrap(response);
 	}
 
@@ -404,6 +843,9 @@ export class SentientFormsApiClient {
 		options: RequestOptions = {}
 	): Promise<LocalProviderCredential[]> {
 		return this.request<LocalProviderCredential[]>('local/providers/credentials', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['providers'],
+			cacheStorage: 'session',
 			showNotifications: false,
 			...options
 		});
@@ -502,6 +944,9 @@ export class SentientFormsApiClient {
 
 	async getLocalActionTemplates(options: RequestOptions = {}): Promise<LocalActionTemplate[]> {
 		return this.request<LocalActionTemplate[]>('local/action-templates', {
+			cacheTtlMs: 300_000,
+			cacheTags: ['templates'],
+			cacheStorage: 'session',
 			showNotifications: false,
 			...options
 		});
@@ -514,6 +959,9 @@ export class SentientFormsApiClient {
 		const params = new URLSearchParams({ status });
 
 		return this.request<LocalCustomActionRecord[]>(`local/custom-actions?${params}`, {
+			cacheTtlMs: 60_000,
+			cacheTags: ['actions', 'custom-actions'],
+			cacheStorage: 'session',
 			showNotifications: false,
 			...options
 		});
@@ -564,6 +1012,8 @@ export class SentientFormsApiClient {
 		const params = new URLSearchParams({ limit: String(limit) });
 
 		return this.request<LocalExecutionEvent[]>(`local/execution-events?${params}`, {
+			cacheTtlMs: 30_000,
+			cacheTags: ['execution-events', 'dashboard'],
 			showNotifications: false,
 			...options
 		});
@@ -784,6 +1234,17 @@ export class SentientFormsApiClient {
 		});
 	}
 
+	async getDashboardSummary(options: RequestOptions = {}): Promise<DashboardSummaryResponse> {
+		const response = await this.request<RestEnvelope<DashboardSummaryResponse>>(
+			'admin/dashboard-summary',
+			withCacheDefaults(options, {
+				ttlMs: 30_000,
+				tags: ['dashboard', 'providers', 'actions', 'execution-events', 'license']
+			})
+		);
+		return this.unwrap(response);
+	}
+
 	async getLocalMigrationReadiness(
 		options: RequestOptions = {}
 	): Promise<LocalMigrationReadinessReport> {
@@ -838,14 +1299,97 @@ export class SentientFormsApiClient {
 	async getActionDefinitions(options: RequestOptions = {}): Promise<ActionDefinition[]> {
 		const response = await this.request<RestEnvelope<ActionDefinition[]>>(
 			'actions/definitions',
-			options
+			withCacheDefaults(options, {
+				ttlMs: 300_000,
+				tags: ['actions', 'definitions'],
+				storage: 'session'
+			})
 		);
 		return this.unwrap(response);
 	}
 
 	async getForms(formSourceSlug: string, options: RequestOptions = {}): Promise<FormSummary[]> {
 		const slug = encodeURIComponent(formSourceSlug);
-		const response = await this.request<RestEnvelope<FormSummary[]>>(`${slug}/forms`, options);
+		const response = await this.request<RestEnvelope<FormSummary[]>>(
+			`${slug}/forms`,
+			withCacheDefaults(options, {
+				ttlMs: 60_000,
+				tags: ['forms', `forms:${formSourceSlug}`],
+				storage: 'session'
+			})
+		);
+		return this.unwrap(response);
+	}
+
+	async getFormsOverview(
+		formSourceSlug: string,
+		options: RequestOptions = {}
+	): Promise<FormsOverviewResponse> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<FormsOverviewResponse>>(
+			`${slug}/forms/overview`,
+			withCacheDefaults(options, {
+				ttlMs: 30_000,
+				tags: [
+					'forms',
+					'actions',
+					'form-actions',
+					'custom-actions',
+					'execution-status',
+					`forms:${formSourceSlug}`
+				]
+			})
+		);
+		return this.unwrap(response);
+	}
+
+	async getFormActionsBootstrap(
+		formSourceSlug: string,
+		formId: number,
+		options: RequestOptions = {}
+	): Promise<FormActionsBootstrapResponse> {
+		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+			console.warn('[ApiClient] getFormActionsBootstrap called with invalid params:', {
+				formSourceSlug,
+				formId
+			});
+			return {
+				form_source: formSourceSlug,
+				form_id: formId,
+				actions: [],
+				execution_status: {
+					status: 'unknown',
+					message: 'Page loading...',
+					updated_at: null,
+					entry_id: null,
+					last_error_code: null,
+					last_result: null
+				},
+				disabled_state: {
+					sf_disabled: false,
+					global_disabled: false,
+					provider_disabled: false,
+					effective_disabled: false
+				},
+				generated_at: new Date().toISOString()
+			};
+		}
+		const slug = encodeURIComponent(formSourceSlug);
+		const response = await this.request<RestEnvelope<FormActionsBootstrapResponse>>(
+			`${slug}/forms/${formId}/actions/bootstrap`,
+			withCacheDefaults(options, {
+				ttlMs: 15_000,
+				tags: [
+					'form-actions',
+					'execution-status',
+					'settings',
+					'providers',
+					'custom-actions',
+					'action-defaults',
+					`form:${formSourceSlug}:${formId}`
+				]
+			})
+		);
 		return this.unwrap(response);
 	}
 
@@ -865,7 +1409,10 @@ export class SentientFormsApiClient {
 		const slug = encodeURIComponent(formSourceSlug);
 		const response = await this.request<RestEnvelope<FormActionLinkage[]>>(
 			`${slug}/forms/${formId}/actions`,
-			options
+			withCacheDefaults(options, {
+				ttlMs: 30_000,
+				tags: ['actions', 'form-actions', `form:${formSourceSlug}:${formId}`]
+			})
 		);
 		return this.unwrap(response);
 	}
@@ -969,7 +1516,10 @@ export class SentientFormsApiClient {
 		const slug = encodeURIComponent(formSourceSlug);
 		const response = await this.request<RestEnvelope<FormDisableStateResponse>>(
 			`${slug}/forms/${formId}/actions/disable`,
-			options
+			withCacheDefaults(options, {
+				ttlMs: 30_000,
+				tags: ['settings', 'form-actions', `form:${formSourceSlug}:${formId}`]
+			})
 		);
 		return this.unwrap(response);
 	}
@@ -1014,7 +1564,11 @@ export class SentientFormsApiClient {
 		const slug = encodeURIComponent(formSourceSlug);
 		const response = await this.request<RestEnvelope<FormFieldInfo[]>>(
 			`${slug}/forms/${formId}/actions/fields`,
-			options
+			withCacheDefaults(options, {
+				ttlMs: 300_000,
+				tags: ['forms', `form:${formSourceSlug}:${formId}`],
+				storage: 'session'
+			})
 		);
 		return this.unwrap(response);
 	}
@@ -1042,13 +1596,19 @@ export class SentientFormsApiClient {
 		const slug = encodeURIComponent(formSourceSlug);
 		const response = await this.request<RestEnvelope<FormExecutionStatus>>(
 			`${slug}/forms/${formId}/actions/status`,
-			options
+			withCacheDefaults(options, {
+				ttlMs: 15_000,
+				tags: ['execution-status', `form:${formSourceSlug}:${formId}`]
+			})
 		);
 		return this.unwrap(response);
 	}
 
 	async getCapabilities(options: RequestOptions = {}): Promise<CapabilitiesResponse> {
 		const response = await this.request<RestEnvelope<CapabilitiesResponse>>('meta/capabilities', {
+			cacheTtlMs: 300_000,
+			cacheTags: ['meta', 'capabilities'],
+			cacheStorage: 'session',
 			...options,
 			showNotifications: false
 		});
@@ -1218,9 +1778,47 @@ export class SentientFormsApiClient {
 		}
 		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
 			`actions/${encodeURIComponent(actionId)}/defaults`,
-			{ showNotifications: false, ...options }
+			withCacheDefaults(
+				{ showNotifications: false, ...options },
+				{
+					ttlMs: 300_000,
+					tags: ['action-defaults'],
+					storage: 'session'
+				}
+			)
 		);
 		return this.unwrap<FormActionConfigResponse>(response).config;
+	}
+
+	/**
+	 * Get global defaults for multiple actions in one request.
+	 */
+	async getActionDefaultsBatch(
+		actionIds: string[],
+		options: RequestOptions = {}
+	): Promise<Record<string, FormActionConfig>> {
+		const ids = [...new Set(actionIds.map((id) => id.trim()).filter(Boolean))].sort();
+		if (ids.length === 0) {
+			return {};
+		}
+
+		const defaults: Record<string, FormActionConfig> = {};
+		for (let index = 0; index < ids.length; index += ACTION_DEFAULTS_BATCH_LIMIT) {
+			const batchIds = ids.slice(index, index + ACTION_DEFAULTS_BATCH_LIMIT);
+			const response = await this.request<RestEnvelope<ActionDefaultsBatchResponse>>(
+				`actions/defaults?ids=${encodeURIComponent(batchIds.join(','))}`,
+				withCacheDefaults(
+					{ showNotifications: false, ...options },
+					{
+						ttlMs: 300_000,
+						tags: ['action-defaults'],
+						storage: 'session'
+					}
+				)
+			);
+			Object.assign(defaults, this.unwrap<ActionDefaultsBatchResponse>(response).defaults ?? {});
+		}
+		return defaults;
 	}
 
 	/**
@@ -1452,12 +2050,54 @@ export class SentientFormsApiClient {
 		} else {
 			url = new URL(path, base);
 		}
-		const { body, headers, showNotifications, ...rest } = options;
+
+		const {
+			body,
+			headers,
+			showNotifications,
+			cacheTtlMs = 0,
+			cacheTags = [],
+			cacheStorage = 'memory',
+			forceRefresh = false,
+			dedupe = true,
+			invalidateCacheTags,
+			...rest
+		} = options;
 		const nonce = this.getNonce?.();
+		const method = String(rest.method ?? 'GET').toUpperCase();
+		const canUseCache = method === 'GET' && body === undefined && cacheTtlMs > 0;
+		const cacheKey = canUseCache ? this.buildCacheKey(url) : null;
+		const normalizedCacheTags = canUseCache ? uniqueCacheTags(cacheTags) : [];
+		if (cacheKey && forceRefresh) {
+			retireAdminApiCacheKeyForForcedRefresh(cacheKey, normalizedCacheTags);
+		}
+		const cacheVersionSnapshot = cacheKey
+			? getCacheVersionSnapshot(normalizedCacheTags)
+			: null;
+
+		if (cacheKey && !forceRefresh) {
+			const cached = readAdminApiCache(cacheKey, cacheStorage);
+			if (cached) {
+				return cached.value as T;
+			}
+
+			const inFlight = adminApiInFlight.get(cacheKey);
+			if (dedupe && inFlight) {
+				inFlight.showNotifications = mergeShowNotifications(
+					inFlight.showNotifications,
+					showNotifications
+				);
+				try {
+					return (await inFlight.promise) as T;
+				} catch (error) {
+					throw coerceToApiClientError(error);
+				}
+			}
+		}
 
 		let parsed: unknown;
 
-		try {
+		const requestPromise = (async () => {
 			const response = await this.fetchImpl(url.toString(), {
 				credentials: 'same-origin',
 				headers: {
@@ -1472,10 +2112,24 @@ export class SentientFormsApiClient {
 			parsed = await this.parseResponseBody(response);
 
 			if (!response.ok) {
-				if (isWordPressSessionExpired(response.status, parsed)) {
-					announceWordPressSessionExpired(parsed);
-				}
 				throw new ApiClientError('Request failed', response.status, parsed);
+			}
+
+			if (
+				cacheKey &&
+				cacheVersionSnapshot &&
+				isCacheVersionSnapshotCurrent(cacheVersionSnapshot)
+			) {
+				writeAdminApiCache(cacheKey, parsed, {
+					ttlMs: cacheTtlMs,
+					tags: normalizedCacheTags,
+					storage: cacheStorage
+				});
+			} else if (method !== 'GET') {
+				const tagsToInvalidate = getMutationInvalidationTags(path, invalidateCacheTags);
+				if (tagsToInvalidate && tagsToInvalidate.length > 0) {
+					clearSentientFormsApiCache(tagsToInvalidate);
+				}
 			}
 
 			if (response.status === 204) {
@@ -1483,24 +2137,56 @@ export class SentientFormsApiClient {
 			}
 
 			return parsed as T;
-		} catch (error) {
-			const clientError =
-				error instanceof ApiClientError ? error : coerceToApiClientError(error, parsed);
-			const sessionExpired = isWordPressSessionExpired(clientError.status, clientError.payload);
-			if (sessionExpired) {
-				announceWordPressSessionExpired(clientError.payload);
-			}
-			if (
-				!sessionExpired &&
-				(showNotifications ?? this.notifyErrors) &&
-				isApiErrorPayload(clientError.payload)
-			) {
-				const message =
-					clientError.payload.message ?? clientError.payload.error?.message ?? clientError.message;
-				notifications.error(message ?? 'Request failed');
-			}
-			throw clientError;
+		})();
+
+		if (cacheKey && dedupe) {
+			adminApiInFlight.set(cacheKey, {
+				promise: requestPromise as Promise<unknown>,
+				showNotifications,
+				tags: normalizedCacheTags
+			});
 		}
+
+		try {
+			return await requestPromise;
+		} catch (error) {
+			const currentInFlightEntry = cacheKey && dedupe ? adminApiInFlight.get(cacheKey) : null;
+			const effectiveShowNotifications =
+				currentInFlightEntry?.promise === requestPromise
+					? currentInFlightEntry.showNotifications
+					: showNotifications;
+			this.handleRequestError(error, parsed, effectiveShowNotifications);
+		} finally {
+			if (cacheKey && adminApiInFlight.get(cacheKey)?.promise === requestPromise) {
+				adminApiInFlight.delete(cacheKey);
+			}
+		}
+	}
+
+	private handleRequestError(error: unknown, parsed: unknown, showNotifications?: boolean): never {
+		const clientError =
+			error instanceof ApiClientError ? error : coerceToApiClientError(error, parsed);
+		const sessionExpired = isWordPressSessionExpired(clientError.status, clientError.payload);
+		if (sessionExpired) {
+			announceWordPressSessionExpired(clientError.payload);
+		}
+		if (
+			!sessionExpired &&
+			(showNotifications ?? this.notifyErrors) &&
+			isApiErrorPayload(clientError.payload)
+		) {
+			const message =
+				clientError.payload.message ?? clientError.payload.error?.message ?? clientError.message;
+			notifications.error(message ?? 'Request failed');
+		}
+		throw clientError;
+	}
+
+	private buildCacheKey(url: URL): string {
+		const context = this.cacheContext?.() ?? 'default';
+		const canonical = new URL(url.toString());
+		canonical.searchParams.delete('force_refresh');
+		return `${context}|${canonical.toString()}`;
 	}
 
 	private async parseResponseBody(response: Response): Promise<unknown> {
@@ -1560,8 +2246,18 @@ export function createClientFromConfig(
 	return new SentientFormsApiClient({
 		baseUrl: config.apiBaseUrl,
 		getNonce: () => config.restNonce,
+		cacheContext: () => buildRuntimeCacheContext(config),
 		...overrides
 	});
+}
+
+function buildRuntimeCacheContext(config: SentientFormsConfig): string {
+	const userId = config.currentUser?.id ?? 'anon';
+	return [
+		config.localSiteIdentifier ?? config.siteUrl,
+		userId,
+		config.pluginVersion ?? 'unknown'
+	].join(':');
 }
 
 function defaultRuntimeConfig(): SentientFormsConfig {
@@ -1571,6 +2267,7 @@ function defaultRuntimeConfig(): SentientFormsConfig {
 		ajaxNonce: 'dev-ajax',
 		siteUrl: 'http://127.0.0.1:8080',
 		localSiteIdentifier: 'dev-site',
+		pluginVersion: 'dev',
 		devMode: true,
 		license: {
 			status: 'inactive',

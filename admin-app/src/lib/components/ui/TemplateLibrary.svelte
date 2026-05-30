@@ -7,7 +7,6 @@
 	 */
 	import { formMappingsStore } from '$lib/stores/form-mappings.svelte';
 	import type { FormMapping, FormFieldInfo, CloneTemplateMappingRequest } from '$lib/api/types';
-	import { onMount } from 'svelte';
 	import Button from './button.svelte';
 
 	// Props
@@ -34,11 +33,7 @@
 	let fieldMappings = $state<Record<string, string>>({});
 	let importing = $state(false);
 	let step = $state<'select' | 'remap'>('select');
-
-	// Load templates on mount
-	onMount(() => {
-		formMappingsStore.fetchTemplates();
-	});
+	let templatesRequested = $state(false);
 
 	// Reset state when modal opens
 	$effect(() => {
@@ -46,6 +41,10 @@
 			selectedTemplate = null;
 			fieldMappings = {};
 			step = 'select';
+			if (!templatesRequested) {
+				templatesRequested = true;
+				formMappingsStore.fetchTemplates();
+			}
 		}
 	});
 

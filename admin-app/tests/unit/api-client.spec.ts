@@ -1,5 +1,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { SentientFormsApiClient, ApiClientError } from '$lib/api/client';
+import {
+	clearSentientFormsApiCache,
+	SentientFormsApiClient,
+	ApiClientError
+} from '$lib/api/client';
 import {
 	SESSION_EXPIRED_EVENT,
 	resetSessionExpiryAnnouncementForTests
@@ -16,11 +20,929 @@ const client = new SentientFormsApiClient({
 	getNonce: () => 'nonce'
 });
 
+function jsonResponse(body: unknown, status = 200) {
+	return {
+		ok: status >= 200 && status < 300,
+		status,
+		headers: new Headers({ 'content-type': 'application/json' }),
+		json: () => Promise.resolve(body)
+	};
+}
+
 describe('SentientFormsApiClient', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		mockFetch.mockReset();
+		clearSentientFormsApiCache();
 		resetSessionExpiryAnnouncementForTests();
+	});
+
+	it('deduplicates concurrent cached GET requests', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () => Promise.resolve({ success: true, data: { ready: true } })
+		});
+
+		const first = client.request('meta/capabilities', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['meta'],
+			showNotifications: false
+		});
+		const second = client.request('meta/capabilities', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['meta'],
+			showNotifications: false
+		});
+
+		await expect(Promise.all([first, second])).resolves.toEqual([
+			{ success: true, data: { ready: true } },
+			{ success: true, data: { ready: true } }
+		]);
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('invalidates tagged in-flight GETs before they can rewrite stale cache entries', async () => {
+		let resolveStaleDashboard!: (response: unknown) => void;
+		let dashboardRequests = 0;
+		const staleDashboard = { success: true, data: { version: 'stale' } };
+		const freshDashboard = { success: true, data: { version: 'fresh' } };
+
+		mockFetch.mockImplementation((requestUrl, init) => {
+			const url = String(requestUrl);
+			const method = String(init?.method ?? 'GET').toUpperCase();
+
+			if (url.endsWith('/admin/dashboard-summary') && method === 'GET') {
+				dashboardRequests += 1;
+				if (dashboardRequests === 1) {
+					return new Promise((resolve) => {
+						resolveStaleDashboard = resolve;
+					});
+				}
+
+				return Promise.resolve(jsonResponse(freshDashboard));
+			}
+
+			if (url.endsWith('/settings') && method === 'PUT') {
+				return Promise.resolve(jsonResponse({ success: true, data: { saved: true } }));
+			}
+
+			throw new Error(`Unexpected request: ${method} ${url}`);
+		});
+
+		const firstDashboard = client.request('admin/dashboard-summary', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['dashboard']
+		});
+		expect(dashboardRequests).toBe(1);
+
+		await client.request('settings', {
+			method: 'PUT',
+			body: { enable_logging: true }
+		});
+
+		const secondDashboard = await client.request('admin/dashboard-summary', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['dashboard']
+		});
+		resolveStaleDashboard(jsonResponse(staleDashboard));
+		await expect(firstDashboard).resolves.toEqual(staleDashboard);
+
+		const thirdDashboard = await client.request('admin/dashboard-summary', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['dashboard']
+		});
+
+		expect(secondDashboard).toEqual(freshDashboard);
+		expect(thirdDashboard).toEqual(freshDashboard);
+		expect(dashboardRequests).toBe(2);
+		expect(mockFetch).toHaveBeenCalledTimes(3);
+	});
+
+	it('prevents stale in-flight GETs from overriding forced refresh cache entries', async () => {
+		let resolveStaleDashboard!: (response: unknown) => void;
+		let dashboardRequests = 0;
+		const staleDashboard = { success: true, data: { version: 'stale' } };
+		const freshDashboard = { success: true, data: { version: 'fresh' } };
+
+		mockFetch.mockImplementation((requestUrl, init) => {
+			const url = String(requestUrl);
+			const method = String(init?.method ?? 'GET').toUpperCase();
+
+			if (url.endsWith('/admin/dashboard-summary') && method === 'GET') {
+				dashboardRequests += 1;
+				if (dashboardRequests === 1) {
+					return new Promise((resolve) => {
+						resolveStaleDashboard = resolve;
+					});
+				}
+
+				return Promise.resolve(jsonResponse(freshDashboard));
+			}
+
+			throw new Error(`Unexpected request: ${method} ${url}`);
+		});
+
+		const firstDashboard = client.request('admin/dashboard-summary', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['dashboard']
+		});
+		expect(dashboardRequests).toBe(1);
+
+		const forcedDashboard = await client.request('admin/dashboard-summary', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['dashboard'],
+			forceRefresh: true
+		});
+
+		resolveStaleDashboard(jsonResponse(staleDashboard));
+		await expect(firstDashboard).resolves.toEqual(staleDashboard);
+
+		const cachedDashboard = await client.request('admin/dashboard-summary', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['dashboard']
+		});
+
+		expect(forcedDashboard).toEqual(freshDashboard);
+		expect(cachedDashboard).toEqual(freshDashboard);
+		expect(dashboardRequests).toBe(2);
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('keeps endpoint cache tags when callers add custom tags', async () => {
+		let dashboardRequests = 0;
+		mockFetch.mockImplementation((requestUrl, init) => {
+			const url = String(requestUrl);
+			const method = String(init?.method ?? 'GET').toUpperCase();
+			if (url.endsWith('/admin/dashboard-summary') && method === 'GET') {
+				dashboardRequests += 1;
+				return Promise.resolve(
+					jsonResponse({
+						success: true,
+						data: {
+							generated_at: '2030-01-01T00:00:00Z',
+							providers: [],
+							templates: [],
+							custom_actions: [],
+							recent_events: [],
+							version: dashboardRequests
+						}
+					})
+				);
+			}
+
+			throw new Error(`Unexpected request: ${method} ${url}`);
+		});
+
+		const firstDashboard = await client.getDashboardSummary({ cacheTags: ['custom'] });
+		clearSentientFormsApiCache(['dashboard']);
+		const secondDashboard = await client.getDashboardSummary({ cacheTags: ['custom'] });
+
+		expect(firstDashboard).toMatchObject({ version: 1 });
+		expect(secondDashboard).toMatchObject({ version: 2 });
+		expect(dashboardRequests).toBe(2);
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('normalizes concurrent cached GET failures for deduped callers', async () => {
+		let rejectFetch!: (reason: unknown) => void;
+		mockFetch.mockReturnValue(
+			new Promise((_resolve, reject) => {
+				rejectFetch = reject;
+			})
+		);
+
+		const first = client.request('meta/capabilities', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['meta'],
+			showNotifications: false
+		});
+		const second = client.request('meta/capabilities', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['meta'],
+			showNotifications: false
+		});
+
+		rejectFetch(new Error('Network down'));
+
+		const [firstResult, secondResult] = await Promise.allSettled([first, second]);
+
+		expect(firstResult.status).toBe('rejected');
+		expect(secondResult.status).toBe('rejected');
+		if (firstResult.status === 'rejected') {
+			expect(firstResult.reason).toBeInstanceOf(ApiClientError);
+		}
+		if (secondResult.status === 'rejected') {
+			expect(secondResult.reason).toBeInstanceOf(ApiClientError);
+		}
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('applies deduped caller notification settings to shared GET failures', async () => {
+		const notifySpy = vi.spyOn(notifications, 'error');
+		let resolveFetch!: (response: unknown) => void;
+		mockFetch.mockReturnValue(
+			new Promise((resolve) => {
+				resolveFetch = resolve;
+			})
+		);
+
+		const first = client.request('settings', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['settings'],
+			showNotifications: false
+		});
+		const second = client.request('settings', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['settings'],
+			showNotifications: true
+		});
+
+		resolveFetch({
+			ok: false,
+			status: 400,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () => Promise.resolve({ message: 'Shared failure' })
+		});
+
+		const [firstResult, secondResult] = await Promise.allSettled([first, second]);
+
+		expect(firstResult.status).toBe('rejected');
+		expect(secondResult.status).toBe('rejected');
+		if (firstResult.status === 'rejected') {
+			expect(firstResult.reason).toBeInstanceOf(ApiClientError);
+		}
+		if (secondResult.status === 'rejected') {
+			expect(secondResult.reason).toBeInstanceOf(ApiClientError);
+		}
+		expect(notifySpy).toHaveBeenCalledTimes(1);
+		expect(notifySpy).toHaveBeenCalledWith('Shared failure');
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('emits one notification for shared GET failures when multiple callers request one', async () => {
+		const notifySpy = vi.spyOn(notifications, 'error');
+		let resolveFetch!: (response: unknown) => void;
+		mockFetch.mockReturnValue(
+			new Promise((resolve) => {
+				resolveFetch = resolve;
+			})
+		);
+
+		const first = client.request('settings', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['settings'],
+			showNotifications: true
+		});
+		const second = client.request('settings', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['settings'],
+			showNotifications: true
+		});
+
+		resolveFetch({
+			ok: false,
+			status: 400,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () => Promise.resolve({ message: 'Shared failure' })
+		});
+
+		await Promise.allSettled([first, second]);
+
+		expect(notifySpy).toHaveBeenCalledTimes(1);
+		expect(notifySpy).toHaveBeenCalledWith('Shared failure');
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('preserves default notifications for shared GET failures without caller overrides', async () => {
+		const notifySpy = vi.spyOn(notifications, 'error');
+		let resolveFetch!: (response: unknown) => void;
+		mockFetch.mockReturnValue(
+			new Promise((resolve) => {
+				resolveFetch = resolve;
+			})
+		);
+
+		const first = client.request('settings', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['settings']
+		});
+		const second = client.request('settings', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['settings']
+		});
+
+		resolveFetch({
+			ok: false,
+			status: 400,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () => Promise.resolve({ message: 'Shared failure' })
+		});
+
+		await Promise.allSettled([first, second]);
+
+		expect(notifySpy).toHaveBeenCalledTimes(1);
+		expect(notifySpy).toHaveBeenCalledWith('Shared failure');
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('suppresses notifications for shared GET failures when all callers opt out', async () => {
+		const notifySpy = vi.spyOn(notifications, 'error');
+		let resolveFetch!: (response: unknown) => void;
+		mockFetch.mockReturnValue(
+			new Promise((resolve) => {
+				resolveFetch = resolve;
+			})
+		);
+
+		const first = client.request('settings', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['settings'],
+			showNotifications: false
+		});
+		const second = client.request('settings', {
+			cacheTtlMs: 60_000,
+			cacheTags: ['settings'],
+			showNotifications: false
+		});
+
+		resolveFetch({
+			ok: false,
+			status: 400,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () => Promise.resolve({ message: 'Shared failure' })
+		});
+
+		await Promise.allSettled([first, second]);
+
+		expect(notifySpy).not.toHaveBeenCalled();
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('serves cached GET responses within the TTL', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () => Promise.resolve({ success: true, data: { value: 'cached' } })
+		});
+
+		await expect(
+			client.request('settings', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['settings'],
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { value: 'cached' } });
+		await expect(
+			client.request('settings', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['settings'],
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { value: 'cached' } });
+
+		expect(mockFetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('separates cached GET responses by query string', async () => {
+		mockFetch
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { page: 1 } })
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { page: 2 } })
+			});
+
+		await expect(
+			client.request('local/execution-events?limit=5', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['events'],
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { page: 1 } });
+		await expect(
+			client.request('local/execution-events?limit=10', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['events'],
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { page: 2 } });
+
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not cache failed GET responses', async () => {
+		mockFetch
+			.mockResolvedValueOnce({
+				ok: false,
+				status: 500,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ message: 'Failed' })
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { recovered: true } })
+			});
+
+		await expect(
+			client.request('settings', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['settings'],
+				showNotifications: false
+			})
+		).rejects.toBeInstanceOf(ApiClientError);
+		await expect(
+			client.request('settings', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['settings'],
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { recovered: true } });
+
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('invalidates cached GET responses after successful mutations', async () => {
+		mockFetch
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { version: 'before' } })
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { saved: true } })
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { version: 'after' } })
+			});
+
+		await expect(
+			client.request('settings', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['settings'],
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { version: 'before' } });
+		await expect(
+			client.request('settings', {
+				method: 'PUT',
+				body: { enable_logging: true },
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { saved: true } });
+		await expect(
+			client.request('settings', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['settings'],
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { version: 'after' } });
+
+		expect(mockFetch).toHaveBeenCalledTimes(3);
+	});
+
+	it('invalidates cached GET responses after successful 204 mutations', async () => {
+		mockFetch
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { status: 'active' } })
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 204,
+				headers: new Headers()
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { status: 'inactive' } })
+			});
+
+		await expect(client.getLicenseInfo({ showNotifications: false })).resolves.toMatchObject({
+			status: 'active'
+		});
+		await expect(client.deactivateLicense({ showNotifications: false })).resolves.toBeUndefined();
+		await expect(client.getLicenseInfo({ showNotifications: false })).resolves.toMatchObject({
+			status: 'inactive'
+		});
+
+		expect(mockFetch).toHaveBeenCalledTimes(3);
+	});
+
+	it('keeps unrelated cached GET responses warm after targeted mutations', async () => {
+		mockFetch
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { version: 'before' } })
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { feature: 'cached' } })
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { saved: true } })
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { version: 'after' } })
+			});
+
+		await expect(
+			client.request('settings', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['settings'],
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { version: 'before' } });
+		await expect(
+			client.request('meta/capabilities', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['capabilities'],
+				cacheStorage: 'session',
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { feature: 'cached' } });
+		await expect(
+			client.request('settings', {
+				method: 'PUT',
+				body: { enable_logging: true },
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { saved: true } });
+		await expect(
+			client.request('settings', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['settings'],
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { version: 'after' } });
+		await expect(
+			client.request('meta/capabilities', {
+				cacheTtlMs: 60_000,
+				cacheTags: ['capabilities'],
+				cacheStorage: 'session',
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { feature: 'cached' } });
+
+		expect(mockFetch).toHaveBeenCalledTimes(4);
+	});
+
+	it('invalidates cached capabilities after license mutations', async () => {
+		const capabilitiesBefore = {
+			providers: [],
+			supports_credits: true,
+			supports_custom_actions: true
+		};
+		const capabilitiesAfter = {
+			providers: [],
+			supports_credits: false,
+			supports_custom_actions: false
+		};
+
+		mockFetch
+			.mockResolvedValueOnce(jsonResponse({ success: true, data: capabilitiesBefore }))
+			.mockResolvedValueOnce(jsonResponse({ success: true, data: { deactivated: true } }))
+			.mockResolvedValueOnce(jsonResponse({ success: true, data: capabilitiesAfter }));
+
+		await expect(client.getCapabilities()).resolves.toEqual(capabilitiesBefore);
+		await expect(
+			client.request('license/deactivate', {
+				method: 'POST',
+				body: { confirm: true },
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { deactivated: true } });
+		await expect(client.getCapabilities()).resolves.toEqual(capabilitiesAfter);
+
+		expect(mockFetch).toHaveBeenCalledTimes(3);
+	});
+
+	it('keeps local action templates warm after custom action mutations', async () => {
+		const templates = [{ action_id: 'spam_detection_v1', name: 'Spam detection' }];
+		mockFetch
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve(templates)
+			})
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { id: 'custom-action-1' } })
+			});
+
+		await expect(client.getLocalActionTemplates({ showNotifications: false })).resolves.toEqual(
+			templates
+		);
+		await expect(
+			client.request('local/custom-actions', {
+				method: 'POST',
+				body: { name: 'Custom action' },
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { id: 'custom-action-1' } });
+		await expect(client.getLocalActionTemplates({ showNotifications: false })).resolves.toEqual(
+			templates
+		);
+
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+	});
+
+	it('loads form actions bootstrap through the consolidated form endpoint', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						form_source: 'gravity_forms',
+						form_id: 42,
+						actions: [{ local_mapping_id: 'map-1', central_action_id: 'spam_detection_v1' }],
+						execution_status: {
+							status: 'success',
+							message: null,
+							entry_id: 99,
+							last_error_code: null,
+							last_result: null
+						},
+						disabled_state: {
+							sf_disabled: false,
+							global_disabled: false,
+							provider_disabled: false,
+							effective_disabled: false
+						},
+						generated_at: '2030-01-05T10:00:00Z'
+					}
+				})
+		});
+
+		const result = await client.getFormActionsBootstrap('gravity_forms', 42, {
+			showNotifications: false
+		});
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}gravity_forms/forms/42/actions/bootstrap`,
+			expect.objectContaining({ credentials: 'same-origin' })
+		);
+		expect(result.actions).toHaveLength(1);
+		expect(result.execution_status.status).toBe('success');
+		expect(result.disabled_state.effective_disabled).toBe(false);
+	});
+
+	it('invalidates cached form bootstrap when embedded custom actions change', async () => {
+		const bootstrapResponse = (generatedAt: string) => ({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						form_source: 'gravity_forms',
+						form_id: 42,
+						actions: [],
+						custom_actions: [],
+						execution_status: {
+							status: 'success',
+							message: null,
+							entry_id: null,
+							last_error_code: null,
+							last_result: null
+						},
+						disabled_state: {
+							sf_disabled: false,
+							global_disabled: false,
+							provider_disabled: false,
+							effective_disabled: false
+						},
+						generated_at: generatedAt
+					}
+				})
+		});
+
+		mockFetch
+			.mockResolvedValueOnce(bootstrapResponse('before'))
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { id: 'custom-action-1' } })
+			})
+			.mockResolvedValueOnce(bootstrapResponse('after'));
+
+		await expect(
+			client.getFormActionsBootstrap('gravity_forms', 42, { showNotifications: false })
+		).resolves.toMatchObject({ generated_at: 'before' });
+		await expect(
+			client.request('local/custom-actions', {
+				method: 'POST',
+				body: { name: 'Custom action' },
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { id: 'custom-action-1' } });
+		await expect(
+			client.getFormActionsBootstrap('gravity_forms', 42, { showNotifications: false })
+		).resolves.toMatchObject({ generated_at: 'after' });
+
+		expect(mockFetch).toHaveBeenCalledTimes(3);
+	});
+
+	it('invalidates cached forms overview when embedded custom actions change', async () => {
+		const overviewResponse = (generatedAt: string) => ({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						form_source: 'gravity_forms',
+						forms: [],
+						generated_at: generatedAt
+					}
+				})
+		});
+
+		mockFetch
+			.mockResolvedValueOnce(overviewResponse('before'))
+			.mockResolvedValueOnce({
+				ok: true,
+				status: 200,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ success: true, data: { id: 'custom-action-1' } })
+			})
+			.mockResolvedValueOnce(overviewResponse('after'));
+
+		await expect(client.getFormsOverview('gravity_forms', { showNotifications: false })).resolves.toMatchObject(
+			{ generated_at: 'before' }
+		);
+		await expect(
+			client.request('local/custom-actions', {
+				method: 'POST',
+				body: { name: 'Custom action' },
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, data: { id: 'custom-action-1' } });
+		await expect(client.getFormsOverview('gravity_forms', { showNotifications: false })).resolves.toMatchObject(
+			{ generated_at: 'after' }
+		);
+
+		expect(mockFetch).toHaveBeenCalledTimes(3);
+	});
+
+	it('invalidates cached action payloads after provider mutations repair actions', async () => {
+		const customActionsBefore = [{ id: 'custom-action-1', model: 'openrouter/old' }];
+		const customActionsAfter = [{ id: 'custom-action-1', model: 'sf_fast' }];
+		const bootstrapResponse = (generatedAt: string) => ({
+			success: true,
+			data: {
+				form_source: 'gravity_forms',
+				form_id: 42,
+				actions: [],
+				custom_actions: [],
+				execution_status: {
+					status: 'unknown',
+					message: null,
+					entry_id: null,
+					last_error_code: null,
+					last_result: null
+				},
+				disabled_state: {
+					sf_disabled: false,
+					global_disabled: false,
+					provider_disabled: false,
+					effective_disabled: false
+				},
+				generated_at: generatedAt
+			}
+		});
+
+		mockFetch
+			.mockResolvedValueOnce(jsonResponse(customActionsBefore))
+			.mockResolvedValueOnce(jsonResponse(bootstrapResponse('before')))
+			.mockResolvedValueOnce(jsonResponse({ success: true, provider: 'openrouter' }))
+			.mockResolvedValueOnce(jsonResponse(customActionsAfter))
+			.mockResolvedValueOnce(jsonResponse(bootstrapResponse('after')));
+
+		await expect(client.getLocalCustomActions('active')).resolves.toEqual(customActionsBefore);
+		await expect(
+			client.getFormActionsBootstrap('gravity_forms', 42, { showNotifications: false })
+		).resolves.toMatchObject({ generated_at: 'before' });
+		await expect(
+			client.request('local/providers/openrouter/constant', {
+				method: 'POST',
+				body: { constant_name: 'SENTIENT_OPENROUTER_KEY' },
+				showNotifications: false
+			})
+		).resolves.toEqual({ success: true, provider: 'openrouter' });
+		await expect(client.getLocalCustomActions('active')).resolves.toEqual(customActionsAfter);
+		await expect(
+			client.getFormActionsBootstrap('gravity_forms', 42, { showNotifications: false })
+		).resolves.toMatchObject({ generated_at: 'after' });
+
+		expect(mockFetch).toHaveBeenCalledTimes(5);
+	});
+
+	it('loads action defaults through the consolidated batch endpoint', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						defaults: {
+							spam_detection_v1: {
+								model_selection: { primary: 'sf_fast', is_preset: true }
+							},
+							entry_summary_v1: {}
+						},
+						generated_at: '2030-01-05T10:00:00Z'
+					}
+				})
+		});
+
+		const result = await client.getActionDefaultsBatch([
+			'spam_detection_v1',
+			' entry_summary_v1 ',
+			'spam_detection_v1'
+		]);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}actions/defaults?ids=entry_summary_v1%2Cspam_detection_v1`,
+			expect.objectContaining({ credentials: 'same-origin' })
+		);
+		expect(result.spam_detection_v1?.model_selection?.primary).toBe('sf_fast');
+		expect(result.entry_summary_v1).toEqual({});
+	});
+
+	it('chunks action defaults batch requests to match the server limit', async () => {
+		const requestedBatches: string[][] = [];
+		mockFetch.mockImplementation((requestUrl) => {
+			const url = new URL(String(requestUrl));
+			const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean);
+			requestedBatches.push(ids);
+
+			return Promise.resolve(
+				jsonResponse({
+					success: true,
+					data: {
+						defaults: Object.fromEntries(ids.map((id) => [id, { action_id: id }])),
+						generated_at: '2030-01-05T10:00:00Z'
+					}
+				})
+			);
+		});
+
+		const actionIds = Array.from({ length: 105 }, (_, index) => {
+			return `custom_action_${String(index).padStart(3, '0')}`;
+		});
+		const result = await client.getActionDefaultsBatch([
+			...actionIds,
+			` ${actionIds[0]} `
+		]);
+
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+		expect(requestedBatches.map((batch) => batch.length)).toEqual([100, 5]);
+		expect(requestedBatches[0]).toContain('custom_action_000');
+		expect(requestedBatches[1]).toContain('custom_action_104');
+		expect(Object.keys(result)).toHaveLength(105);
+		expect(result.custom_action_104).toEqual({ action_id: 'custom_action_104' });
 	});
 
 	it('activates license and normalizes response', async () => {
@@ -104,6 +1026,105 @@ describe('SentientFormsApiClient', () => {
 			site_id: 'site-1',
 			site_url: 'https://site.test'
 		});
+	});
+
+	it('invalidates and warms the canonical billing cache for forced server refreshes', async () => {
+		const billingStateResponse = (status: string) => ({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						status,
+						license_id: 'lic-1',
+						site_id: 'site-1'
+					}
+				})
+		});
+
+		mockFetch
+			.mockResolvedValueOnce(billingStateResponse('before'))
+			.mockResolvedValueOnce(billingStateResponse('forced'));
+
+		await expect(client.getBillingState({ showNotifications: false })).resolves.toMatchObject({
+			status: 'before'
+		});
+		await expect(
+			client.getBillingState({ forceServerRefresh: true, showNotifications: false })
+		).resolves.toMatchObject({ status: 'forced' });
+		await expect(client.getBillingState({ showNotifications: false })).resolves.toMatchObject({
+			status: 'forced'
+		});
+
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+		expect(mockFetch).toHaveBeenNthCalledWith(
+			1,
+			`${baseUrl}license/billing-state`,
+			expect.objectContaining({ credentials: 'same-origin' })
+		);
+		expect(mockFetch).toHaveBeenNthCalledWith(
+			2,
+			`${baseUrl}license/billing-state?force_refresh=1`,
+			expect.objectContaining({ credentials: 'same-origin' })
+		);
+	});
+
+	it('does not join an in-flight normal billing request when forcing a server refresh', async () => {
+		const billingStateResponse = (status: string) => ({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						status,
+						license_id: 'lic-1',
+						site_id: 'site-1'
+					}
+				})
+		});
+		let resolveNormal!: (response: ReturnType<typeof billingStateResponse>) => void;
+		let resolveForced!: (response: ReturnType<typeof billingStateResponse>) => void;
+
+		mockFetch
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveNormal = resolve;
+				})
+			)
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveForced = resolve;
+				})
+			);
+
+		const normalRequest = client.getBillingState({ showNotifications: false });
+		const forcedRequest = client.getBillingState({
+			forceServerRefresh: true,
+			showNotifications: false
+		});
+
+		expect(mockFetch).toHaveBeenCalledTimes(2);
+		expect(mockFetch).toHaveBeenNthCalledWith(
+			1,
+			`${baseUrl}license/billing-state`,
+			expect.objectContaining({ credentials: 'same-origin' })
+		);
+		expect(mockFetch).toHaveBeenNthCalledWith(
+			2,
+			`${baseUrl}license/billing-state?force_refresh=1`,
+			expect.objectContaining({ credentials: 'same-origin' })
+		);
+
+		resolveNormal(billingStateResponse('normal'));
+		resolveForced(billingStateResponse('forced'));
+
+		const [normal, forced] = await Promise.all([normalRequest, forcedRequest]);
+		expect(normal.status).toBe('normal');
+		expect(forced.status).toBe('forced');
 	});
 
 	it('sends a proper form disable payload when toggling per-form active state', async () => {

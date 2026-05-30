@@ -124,6 +124,15 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_billing_state' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'force_refresh' => [
+                            'description'       => __( 'Bypass the short-lived cached billing-state snapshot.', 'sentient-forms' ),
+                            'type'              => 'boolean',
+                            'required'          => false,
+                            'default'           => false,
+                            'sanitize_callback' => 'rest_sanitize_boolean',
+                        ],
+                    ],
                 ],
             ],
         );
@@ -589,17 +598,45 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
             return $proxy_key;
         }
 
-        $client   = $this->get_managed_service_client();
+        $cache_key     = $this->billing_state_cache_key( $proxy_key );
+        $force_refresh = rest_sanitize_boolean( $request->get_param( 'force_refresh' ) );
+        if ( ! $force_refresh )
+        {
+            $cached = get_transient( $cache_key );
+            if ( is_array( $cached ) )
+            {
+                return $this->prepare_item_for_response( $cached, 200 );
+            }
+        }
+
+        $client   = $this->get_managed_service_client( 5 );
         $response = $client->get_billing_state( $proxy_key );
 
         if ( is_wp_error( $response ) )
         {
+            if ( $this->is_billing_state_connectivity_error( $response ) )
+            {
+                $stale = get_transient( $this->billing_state_stale_cache_key( $proxy_key ) );
+                if ( is_array( $stale ) )
+                {
+                    $stale['stale']           = true;
+                    $stale['last_error_code'] = $response->get_error_code();
+                    return $this->prepare_item_for_response( $stale, 200 );
+                }
+            }
+
             return $this->prepare_cps_error( $response );
         }
 
         $payload = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_billing_state(
             $this->normalize_activation_payload( $response )
         );
+        $payload['cached_at'] = gmdate( 'c' );
+        $payload['stale']     = false;
+
+        set_transient( $cache_key, $payload, MINUTE_IN_SECONDS );
+        set_transient( $this->billing_state_stale_cache_key( $proxy_key ), $payload, DAY_IN_SECONDS );
+
         $this->sync_cached_license_from_billing_state( $payload );
 
         return $this->prepare_item_for_response(
@@ -847,9 +884,19 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         return $this->schema;
     }
 
-    private function get_managed_service_client(): Sentient_Forms_Managed_Service_Client
+    private function get_managed_service_client( int $timeout = 30 ): Sentient_Forms_Managed_Service_Client
     {
-        return new Sentient_Forms_Managed_Service_Client();
+        return new Sentient_Forms_Managed_Service_Client( null, $timeout );
+    }
+
+    private function billing_state_cache_key( string $proxy_key ): string
+    {
+        return 'sentient_forms_billing_state_' . md5( $proxy_key );
+    }
+
+    private function billing_state_stale_cache_key( string $proxy_key ): string
+    {
+        return 'sentient_forms_billing_state_stale_' . md5( $proxy_key );
     }
 
     private function format_license_response( array $license_data ): array
@@ -1120,6 +1167,20 @@ class Sentient_Forms_License_Controller extends Abstract_Sentient_Forms_Base_Con
         }
 
         return '';
+    }
+
+    private function is_billing_state_connectivity_error( WP_Error $error ): bool
+    {
+        return in_array(
+            $error->get_error_code(),
+            [
+                'http_request_failed',
+                'http_request_timeout',
+                'request_timeout',
+                'timeout',
+            ],
+            true
+        );
     }
 
     private function prepare_cps_error( WP_Error $error ): WP_Error

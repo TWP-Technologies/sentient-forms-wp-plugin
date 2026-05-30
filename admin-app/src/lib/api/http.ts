@@ -20,6 +20,7 @@ export interface SentientFormsConfig {
     ajaxNonce: string;
     siteUrl: string;
     localSiteIdentifier?: string;
+    pluginVersion?: string;
     initialRoute?: string;
     formSources?: FormSourceSummary[];
     license?: {

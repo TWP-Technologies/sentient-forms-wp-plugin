@@ -369,21 +369,30 @@
 			actionDefaultsSummaryRequests.add(id);
 		}
 
-		const results = await Promise.allSettled(
-			ids.map(async (id) => [id, await client.getActionDefaults(id)] as const)
-		);
-
-		let nextDefaults = new Map(actionDefaultsById);
-		results.forEach((result, index) => {
-			const id = ids[index];
-			if (!id) return;
-			if (result.status === 'fulfilled') {
-				nextDefaults.set(id, normalizeFormActionConfig(result.value[1]));
-				return;
+		try {
+			const defaults = await client.getActionDefaultsBatch(ids);
+			const nextDefaults = new Map(actionDefaultsById);
+			for (const id of ids) {
+				nextDefaults.set(id, normalizeFormActionConfig(defaults[id] ?? {}));
 			}
-			actionDefaultsSummaryRequests.delete(id);
-		});
-		actionDefaultsById = nextDefaults;
+			actionDefaultsById = nextDefaults;
+		} catch {
+			const settledDefaults = await Promise.allSettled(
+				ids.map(async (id) => [id, await client.getActionDefaults(id)] as const)
+			);
+			const nextDefaults = new Map(actionDefaultsById);
+			for (const result of settledDefaults) {
+				if (result.status !== 'fulfilled') continue;
+
+				const [id, defaults] = result.value;
+				nextDefaults.set(id, normalizeFormActionConfig(defaults));
+			}
+			actionDefaultsById = nextDefaults;
+		} finally {
+			for (const id of ids) {
+				actionDefaultsSummaryRequests.delete(id);
+			}
+		}
 	}
 
 	function clearActionModelSelection() {
@@ -546,9 +555,13 @@
 		}
 	}
 
-	async function loadForms() {
+	async function loadForms(options: { forceRefresh?: boolean } = {}) {
 		if (activeSources.length === 0) {
 			formsBySource = {};
+			healthByForm = new Map();
+			formActionsByForm = new Map();
+			healthLoading = new Set();
+			formActionsLoading = new Set();
 			return;
 		}
 
@@ -558,22 +571,39 @@
 		try {
 			const results = await Promise.all(
 				activeSources.map(async (source) => {
-					const forms = await client.getForms(source.slug, { showNotifications: false });
-					return [source.slug, forms] as const;
+					const overview = await client.getFormsOverview(source.slug, {
+						showNotifications: false,
+						forceRefresh: options.forceRefresh === true
+					});
+					return [source.slug, overview.forms] as const;
 				})
 			);
 
 			formsBySource = Object.fromEntries(results);
+			const nextHealthByForm = new Map<string, FormExecutionStatus>();
+			const nextFormActionsByForm = new Map<string, FormActionLinkage[]>();
+			for (const [sourceSlug, forms] of results) {
+				for (const form of forms) {
+					const key = formStateKey(sourceSlug, form.id);
+					nextHealthByForm.set(key, form.execution_status);
+					nextFormActionsByForm.set(key, form.actions);
+				}
+			}
+			healthByForm = nextHealthByForm;
+			formActionsByForm = nextFormActionsByForm;
+			healthLoading = new Set();
+			formActionsLoading = new Set();
+
 			if (!selectedSource || !selectedSource.isActive) {
 				selectedSource = activeSources[0] ?? null;
 			}
-
-			// CB-FORMS-003: Load health statuses after forms are available
-			loadFormHealthStatuses();
-			loadFormActionCounts();
 		} catch (err) {
 			error = friendlyMessageFromError(err, 'Failed to load forms');
 			formsBySource = {};
+			healthByForm = new Map();
+			formActionsByForm = new Map();
+			healthLoading = new Set();
+			formActionsLoading = new Set();
 		} finally {
 			formsLoading = false;
 		}
@@ -705,7 +735,7 @@
 
 	function refreshAll() {
 		loadDefinitions();
-		loadForms(); // CB-FORMS-003: also triggers loadFormHealthStatuses()
+		loadForms({ forceRefresh: true }); // CB-FORMS-003: also triggers loadFormHealthStatuses()
 		void loadCustomActions();
 		loadExecutionSettings();
 		loadProviderCredentials();
@@ -1164,7 +1194,7 @@
 						<Button
 							size="sm"
 							variant="secondary"
-							onclick={loadForms}
+							onclick={() => void loadForms({ forceRefresh: true })}
 							disabled={formsLoading}
 							class="sf:gap-2"
 						>
@@ -1211,7 +1241,7 @@
 							message={`No forms were detected for ${selectedSource?.label ?? 'this provider'}. Create a form first, then refresh this page.`}
 							actionLabel="Refresh forms"
 							onAction={() => {
-								void loadForms();
+								void loadForms({ forceRefresh: true });
 							}}
 							inline
 							testId="actions-forms-empty-state"

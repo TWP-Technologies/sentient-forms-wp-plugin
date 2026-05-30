@@ -23,6 +23,7 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 	protected function tearDown(): void {
 		delete_option( $this->option_key );
 		delete_option( $this->action_defaults_option_key );
+		delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
 		parent::tearDown();
 	}
 
@@ -388,6 +389,44 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 
 		$this->assertSame( 'none', $data['config']['spam_result_display_mode'] ?? null );
 		$this->assertSame( 'detailed', $data['config']['spam_indicators_display'] ?? null );
+	}
+
+	public function test_get_action_defaults_batch_returns_requested_defaults(): void {
+		update_option(
+			$this->action_defaults_option_key,
+			[
+				'model_selection' => [
+					'primary'   => 'sf_fast',
+					'is_preset' => true,
+				],
+			]
+		);
+		update_option(
+			'sentient_forms_action_defaults_entry_summary_v1',
+			[
+				'action_customization' => 'Summarize support intent.',
+			]
+		);
+
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/defaults' );
+		$request->set_param( 'ids', 'spam_detection_v1,entry_summary_v1,spam_detection_v1' );
+
+		$response = $this->controller->get_action_defaults_batch( $request );
+		$data     = $response->get_data();
+
+		$this->assertArrayHasKey( 'defaults', $data );
+		$this->assertSame(
+			'sf_fast',
+			$data['defaults']['spam_detection_v1']['model_selection']['primary'] ?? null
+		);
+		$this->assertSame(
+			'Summarize support intent.',
+			$data['defaults']['entry_summary_v1']['action_customization'] ?? null
+		);
+		$this->assertMatchesRegularExpression( '/^\d{4}-\d{2}-\d{2}T.*\+00:00$/', $data['generated_at'] );
+		$this->assertCount( 2, $data['defaults'] );
+
+		delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
 	}
 
 	public function test_delete_action_config_removes_only_target_action(): void {

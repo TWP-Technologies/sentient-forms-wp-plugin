@@ -6,14 +6,13 @@
 		LocalCustomActionRecord,
 		LocalExecutionEvent,
 		LocalProviderCredential,
-		LocalSupportBundle
+		DashboardSummaryResponse
 	} from '$lib/api/types';
 	import { Badge, Button, Card, Section, StateTemplate } from '$lib/components/ui';
 	import { navigateToAppPath } from '$lib/navigation';
 	import { formatTimestamp } from '$lib/utils/date-time';
 
 	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
-	type SettledResult<T> = PromiseSettledResult<T>;
 	type StructuredResult = Record<string, unknown>;
 
 	interface ImpactSummary {
@@ -36,7 +35,6 @@
 	let templates = $state<LocalActionTemplate[]>([]);
 	let customActions = $state<LocalCustomActionRecord[]>([]);
 	let recentEvents = $state<LocalExecutionEvent[]>([]);
-	let supportBundle = $state<LocalSupportBundle | null>(null);
 
 	let openRouterCredential = $derived(
 		providers.find((credential) => credential.provider === 'openrouter' && credential.secret_configured)
@@ -62,47 +60,34 @@
 	);
 	let latestEvent = $derived(recentLocalEvents[0] ?? null);
 
-	function rejectionMessage(result: SettledResult<unknown>, fallback: string): string | null {
-		if (result.status === 'fulfilled') {
-			return null;
-		}
-
-		return result.reason instanceof Error ? result.reason.message : fallback;
-	}
-
-	async function loadDashboardData(): Promise<void> {
+	async function loadDashboardData(options: { forceRefresh?: boolean } = {}): Promise<void> {
 		loading = true;
 		errors = [];
 
-		const [
-			providerResult,
-			templateResult,
-			customActionResult,
-			eventResult,
-			supportBundleResult
-		] = await Promise.allSettled([
-			client.getLocalProviderCredentials({ showNotifications: false }),
-			client.getLocalActionTemplates({ showNotifications: false }),
-			client.getLocalCustomActions('active', { showNotifications: false }),
-			client.getLocalExecutionEvents(100, { showNotifications: false }),
-			client.getLocalSupportBundle({ showNotifications: false })
-		]);
-
-		if (providerResult.status === 'fulfilled') providers = providerResult.value;
-		if (templateResult.status === 'fulfilled') templates = templateResult.value;
-		if (customActionResult.status === 'fulfilled') customActions = customActionResult.value;
-		if (eventResult.status === 'fulfilled') recentEvents = eventResult.value;
-		if (supportBundleResult.status === 'fulfilled') supportBundle = supportBundleResult.value;
-
-		errors = [
-			rejectionMessage(providerResult, 'Provider health is unavailable.'),
-			rejectionMessage(templateResult, 'Template catalog is unavailable.'),
-			rejectionMessage(customActionResult, 'Custom actions are unavailable.'),
-			rejectionMessage(eventResult, 'Recent execution history is unavailable.'),
-			rejectionMessage(supportBundleResult, 'Local diagnostics are unavailable.')
-		].filter((message): message is string => Boolean(message));
+		try {
+			const summary = await client.getDashboardSummary({
+				showNotifications: false,
+				forceRefresh: options.forceRefresh === true
+			});
+			providers = summary.providers;
+			templates = summary.templates;
+			customActions = summary.custom_actions;
+			recentEvents = summary.recent_events;
+			errors = dashboardSectionErrors(summary);
+		} catch (error) {
+			errors = [
+				error instanceof Error ? error.message : 'Dashboard summary is unavailable.'
+			];
+		}
 
 		loading = false;
+	}
+
+	function dashboardSectionErrors(summary: DashboardSummaryResponse): string[] {
+		const sectionErrors = Array.isArray(summary.section_errors) ? summary.section_errors : [];
+		return sectionErrors
+			.map((sectionError) => sectionError.message)
+			.filter((message): message is string => typeof message === 'string' && message.trim() !== '');
 	}
 
 	function openRouterStatusLabel(status: string): string {
@@ -270,7 +255,7 @@
 		void loadDashboardData();
 
 		function handleSettingsUpdated(): void {
-			void loadDashboardData();
+			void loadDashboardData({ forceRefresh: true });
 		}
 
 		window.addEventListener(
@@ -292,7 +277,11 @@
 	description="Start with the managed Sentient Forms service when you want setup, model access, spend controls, and support handled for this WordPress site. Direct OpenRouter remains available for free testing and self-managed BYOK use."
 >
 	{#snippet actions()}
-		<Button variant="secondary" onclick={loadDashboardData} disabled={loading}>
+		<Button
+			variant="secondary"
+			onclick={() => void loadDashboardData({ forceRefresh: true })}
+			disabled={loading}
+		>
 			{loading ? 'Refreshing...' : 'Refresh'}
 		</Button>
 			<Button onclick={() => navigateToAppPath('/licensing')}>
@@ -306,7 +295,7 @@
 			title="Local workspace data is partially unavailable"
 			message={errors[0]}
 			actionLabel="Retry"
-			onAction={loadDashboardData}
+			onAction={() => void loadDashboardData({ forceRefresh: true })}
 			testId="dashboard-error-state"
 		>
 			{#if errors.length > 1}

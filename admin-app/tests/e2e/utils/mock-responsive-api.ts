@@ -444,6 +444,21 @@ export async function mockResponsiveApi(
 			return respondJson(route, { success: true });
 		}
 
+		if (method === 'GET' && endpoint === 'admin/dashboard-summary') {
+			return respondJson(route, {
+				success: true,
+				data: {
+					generated_at: '2030-01-05T10:00:00Z',
+					providers: localProviderCredentials,
+					templates: localActionTemplates,
+					custom_actions: customActions,
+					recent_events: localExecutionEvents,
+					license: defaultLicense,
+					async_health: asyncHealthState
+				}
+			});
+		}
+
 		if (method === 'GET' && endpoint === 'license/billing-state') {
 			return respondJson(route, defaultBillingState);
 		}
@@ -544,8 +559,66 @@ export async function mockResponsiveApi(
 			return respondJson(route, forms);
 		}
 
+		if (method === 'GET' && endpoint === `${formSourceSlug}/forms/overview`) {
+			return respondJson(route, {
+				success: true,
+				data: {
+					form_source: formSourceSlug,
+					forms: forms.map((form) => ({
+						...form,
+						actions: formActions,
+						action_count: formActions.length,
+						enabled_action_count: formActions.filter(
+							(action) => action.is_action_enabled_for_form
+						).length,
+						execution_status: executionStatusUnknown
+					})),
+					generated_at: '2030-01-05T10:00:00Z'
+				}
+			});
+		}
+
 		if (method === 'GET' && endpoint === `${formSourceSlug}/forms/${formId}/actions`) {
 			return respondJson(route, formActions);
+		}
+
+		if (method === 'GET' && endpoint === `${formSourceSlug}/forms/${formId}/actions/bootstrap`) {
+			return respondJson(route, {
+				success: true,
+				data: {
+					form_source: formSourceSlug,
+					form_id: formId,
+					form: forms.find((form) => Number(form.id) === formId) ?? null,
+					actions: formActions,
+					execution_status: executionStatusUnknown,
+					disabled_state: {
+						sf_disabled: false,
+						global_disabled: false,
+						provider_disabled: false,
+						effective_disabled: false
+					},
+					capabilities,
+					definitions: actionDefinitions,
+					custom_actions: {
+						actions: customActions,
+						quota: {
+							quota_max: 5,
+							quota_used: 1,
+							quota_remaining: 4
+						}
+					},
+					provider_credentials: localProviderCredentials,
+					form_action_configs: {},
+					form_fields: formFields,
+					action_defaults: Object.fromEntries(
+						[...actionDefinitions.map((definition) => definition.id), ...customActions.map((action) => action.code)]
+							.filter(Boolean)
+							.map((id) => [id, {}])
+					),
+					workflow_plan: workflowPlan,
+					generated_at: '2030-01-05T10:00:00Z'
+				}
+			});
 		}
 
 		if (method === 'GET' && endpoint === `${formSourceSlug}/forms/${formId}/actions/status`) {
@@ -578,6 +651,17 @@ export async function mockResponsiveApi(
 
 		if (method === 'GET' && endpoint === 'actions/definitions') {
 			return respondJson(route, actionDefinitions);
+		}
+
+		if (method === 'GET' && endpoint === 'actions/defaults') {
+			const ids = (url.searchParams.get('ids') ?? '')
+				.split(',')
+				.map((id) => id.trim())
+				.filter(Boolean);
+			return respondJson(route, {
+				defaults: Object.fromEntries(ids.map((id) => [id, {}])),
+				generated_at: '2030-01-05T10:00:00Z'
+			});
 		}
 
 		if (method === 'GET' && endpoint === 'actions/status') {

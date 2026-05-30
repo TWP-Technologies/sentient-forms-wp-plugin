@@ -33,6 +33,9 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     /** @var Sentient_Forms_Mappings_Sync|null Phase 7 CSM: CPS sync service */
     private ?Sentient_Forms_Mappings_Sync $mappings_sync = null;
 
+    /** @var array<int, array<string, mixed>>|null Full CPS mapping list fetched once per controller request. */
+    private ?array $cps_mappings_cache = null;
+
     private ?Sentient_Forms_Form_Mappings_Repository $local_form_mappings = null;
 
     private ?Sentient_Forms_Local_Custom_Actions_Repository $local_custom_actions = null;
@@ -251,7 +254,18 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             return [];
         }
 
-        $rows = $this->local_form_mappings->list_for_form( $form_source_slug, (string) $form_id );
+        return $this->local_first_action_linkages_from_rows(
+            $this->local_form_mappings->list_for_form( $form_source_slug, (string) $form_id )
+        );
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows Local form mapping rows.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function local_first_action_linkages_from_rows( array $rows ): array
+    {
         $actions = [];
         foreach ( $rows as $row )
         {
@@ -270,9 +284,13 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
      *
      * @return array<int, array<string, mixed>>
      */
-    private function merge_local_first_actions( array $actions, string $form_source_slug, int $form_id ): array
+    private function merge_local_first_actions( array $actions, string $form_source_slug, int $form_id, ?array $local_mapping_rows = null ): array
     {
-        foreach ( $this->list_local_first_actions_for_form( $form_source_slug, $form_id ) as $local_first_action )
+        $local_first_actions = null === $local_mapping_rows
+            ? $this->list_local_first_actions_for_form( $form_source_slug, $form_id )
+            : $this->local_first_action_linkages_from_rows( $local_mapping_rows );
+
+        foreach ( $local_first_actions as $local_first_action )
         {
             $mapping_id = isset( $local_first_action['local_mapping_id'] ) && is_scalar( $local_first_action['local_mapping_id'] )
                 ? sanitize_text_field( (string) $local_first_action['local_mapping_id'] )
@@ -668,6 +686,19 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     {
         register_rest_route(
             $this->namespace,
+            '/(?P<form_source_slug>[a-z0-9_]+)/forms/overview',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_forms_overview' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source' ],
+                    'args'                => $this->get_source_args(),
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
             '/' . $this->rest_base,
             [
                 [
@@ -693,6 +724,19 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 [
                     'methods'             => WP_REST_Server::READABLE,
                     'callback'            => [ $this, 'get_form_execution_status' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
+                    'args'                => $this->get_collection_args(),
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/' . $this->rest_base . '/bootstrap',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_form_actions_bootstrap' ],
                     'permission_callback' => [ $this, 'permissions_check_for_form_source_and_id' ],
                     'args'                => $this->get_collection_args(),
                 ],
@@ -889,6 +933,22 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     /** Collection args */
     protected function get_collection_args(): array
     {
+        return array_merge(
+            $this->get_source_args(),
+            [
+            'form_id'          => [
+                'validate_callback' => [ $this, 'validate_form_id_param' ],
+                'required'          => true,
+                'type'              => 'integer',
+                'description'       => __( 'The ID of the form.', 'sentient-forms' ),
+            ],
+            ],
+        );
+    }
+
+    /** Source-only args for source-level optimized overview endpoints. */
+    protected function get_source_args(): array
+    {
         return [
             'form_source_slug' => [
                 'validate_callback' => [ 'Sentient_Forms_Form_Sources', 'rest_validate_form_source_slug' ],
@@ -896,12 +956,6 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 'required'          => true,
                 'type'              => 'string',
                 'description'       => __( 'The slug identifying the form plugin source.', 'sentient-forms' ),
-            ],
-            'form_id'          => [
-                'validate_callback' => [ $this, 'validate_form_id_param' ],
-                'required'          => true,
-                'type'              => 'integer',
-                'description'       => __( 'The ID of the form.', 'sentient-forms' ),
             ],
         ];
     }
@@ -975,6 +1029,18 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                     404,
                 );
             }
+        }
+
+        return $this->permission_callback_with_nonce( $request );
+    }
+
+    /** Permission check for form source-only optimized endpoints. */
+    public function permissions_check_for_form_source( WP_REST_Request $request ): WP_Error | bool
+    {
+        $source = $request->get_param( 'form_source_slug' );
+        if ( ! Sentient_Forms_Form_Sources::is_supported_source( $source ) )
+        {
+            return $this->prepare_error_response( 'rest_invalid_form_source', __( 'Invalid form source provided.', 'sentient-forms' ), 400 );
         }
 
         return $this->permission_callback_with_nonce( $request );
@@ -1088,21 +1154,662 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $form_source_slug = $request->get_param( 'form_source_slug' );
         $form_id = (int) $request->get_param( 'form_id' );
 
+        return $this->prepare_item_for_response(
+            $this->build_form_actions_payload( $form_source_slug, $form_id )
+        );
+    }
+
+    /**
+     * Retrieve forms plus action/status summary data in a single REST request.
+     */
+    public function get_forms_overview( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $form_source_slug = Sentient_Forms_Form_Sources::rest_sanitize_form_source_slug(
+            $request->get_param( 'form_source_slug' ),
+            $request,
+            'form_source_slug'
+        );
+
+        $forms = $this->list_forms_for_source( $form_source_slug );
+        if ( is_wp_error( $forms ) )
+        {
+            return $forms;
+        }
+
+        $valid_forms = [];
+        $form_ids    = [];
+        foreach ( $forms as $form )
+        {
+            if ( ! is_array( $form ) )
+            {
+                continue;
+            }
+
+            $form_id = absint( $form['id'] ?? 0 );
+            if ( $form_id <= 0 )
+            {
+                continue;
+            }
+
+            $valid_forms[] = [
+                'form'    => $form,
+                'form_id' => $form_id,
+            ];
+            $form_ids[]    = $form_id;
+        }
+
+        $this->prime_form_action_option_caches( $form_source_slug, $form_ids );
+        $local_mapping_rows_by_form = $this->list_local_mapping_rows_for_forms( $form_source_slug, $form_ids );
+        $latest_events_by_form      = $this->list_latest_execution_events_for_forms( $form_source_slug, $form_ids );
+        $action_log_entries_by_form = $this->list_action_log_entries_for_forms( $form_source_slug, $form_ids );
+        $cps_actions_by_form        = $this->list_cps_actions_for_forms( $form_source_slug, $form_ids );
+
+        $overview_forms = [];
+        foreach ( $valid_forms as $valid_form )
+        {
+            $form    = $valid_form['form'];
+            $form_id = $valid_form['form_id'];
+            $form_key = (string) $form_id;
+            $local_mapping_rows = $local_mapping_rows_by_form[ $form_key ] ?? [];
+            $cps_actions        = $cps_actions_by_form[ $form_key ] ?? [];
+
+            $actions         = $this->build_form_actions_payload(
+                $form_source_slug,
+                $form_id,
+                null,
+                $local_mapping_rows,
+                $cps_actions
+            );
+            $enabled_actions = array_values(
+                array_filter(
+                    $actions,
+                    static function ( array $action ): bool {
+                        return ! empty( $action['is_action_enabled_for_form'] );
+                    }
+                )
+            );
+
+            $overview_forms[] = array_merge(
+                $form,
+                [
+                    'actions'              => $actions,
+                    'action_count'         => count( $actions ),
+                    'enabled_action_count' => count( $enabled_actions ),
+                    'execution_status'     => $this->build_form_execution_status(
+                        $form_source_slug,
+                        $form_id,
+                        $local_mapping_rows,
+                        $latest_events_by_form,
+                        $action_log_entries_by_form
+                    ),
+                ]
+            );
+        }
+
+        return $this->prepare_item_for_response(
+            [
+                'form_source' => $form_source_slug,
+                'forms'       => $overview_forms,
+                'generated_at' => gmdate( 'c' ),
+            ]
+        );
+    }
+
+    /**
+     * Retrieve per-form action bootstrap data in one request for the form editor.
+     */
+    public function get_form_actions_bootstrap( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $form_source_slug = Sentient_Forms_Form_Sources::rest_sanitize_form_source_slug(
+            $request->get_param( 'form_source_slug' ),
+            $request,
+            'form_source_slug'
+        );
+        $form_id = (int) $request->get_param( 'form_id' );
+        $actions = $this->build_form_actions_payload( $form_source_slug, $form_id );
+        $definitions = $this->get_bootstrap_action_definitions();
+        $custom_actions = $this->get_bootstrap_custom_actions();
+
+        return $this->prepare_item_for_response(
+            [
+                'form_source'      => $form_source_slug,
+                'form_id'          => $form_id,
+                'form'             => $this->get_bootstrap_form_summary( $form_source_slug, $form_id ),
+                'actions'          => $actions,
+                'execution_status' => $this->build_form_execution_status( $form_source_slug, $form_id ),
+                'disabled_state'   => $this->build_form_disabled_state( $form_source_slug, $form_id ),
+                'capabilities'     => $this->get_bootstrap_capabilities(),
+                'definitions'      => $definitions,
+                'custom_actions'   => $custom_actions,
+                'provider_credentials' => $this->get_bootstrap_provider_credentials(),
+                'form_action_configs'  => $this->get_bootstrap_form_action_configs( $form_source_slug, $form_id ),
+                'form_fields'          => $this->get_bootstrap_form_fields( $form_source_slug, $form_id ),
+                'action_defaults'      => $this->get_bootstrap_action_defaults( $definitions, $custom_actions ),
+                'workflow_plan'        => $this->get_bootstrap_workflow_plan( $form_source_slug, $form_id, $actions ),
+                'generated_at'     => gmdate( 'c' ),
+            ]
+        );
+    }
+
+    /**
+     * Create a lightweight internal request for composing bootstrap payloads.
+     *
+     * @param array<string, mixed> $params Request params.
+     */
+    private function create_bootstrap_request( array $params = [] ): WP_REST_Request
+    {
+        $request = new WP_REST_Request( WP_REST_Server::READABLE, '/' . $this->namespace . '/bootstrap-internal' );
+        foreach ( $params as $key => $value )
+        {
+            $request->set_param( $key, $value );
+        }
+
+        return $request;
+    }
+
+    /**
+     * Extract response data from an internal controller call.
+     */
+    private function bootstrap_response_data( mixed $response, mixed $fallback ): mixed
+    {
+        if ( is_wp_error( $response ) )
+        {
+            return $fallback;
+        }
+
+        if ( $response instanceof WP_REST_Response )
+        {
+            return $response->get_data();
+        }
+
+        return $fallback;
+    }
+
+    /**
+     * @param array<int, int> $form_ids Form IDs whose action options are needed.
+     */
+    private function prime_form_action_option_caches( string $form_source_slug, array $form_ids ): void
+    {
+        if ( ! function_exists( 'wp_prime_option_caches' ) )
+        {
+            return;
+        }
+
+        $option_keys = [];
+        foreach ( $form_ids as $form_id )
+        {
+            $form_id = absint( $form_id );
+            if ( $form_id > 0 )
+            {
+                $option_keys[] = $this->get_actions_option_key( $form_source_slug, $form_id );
+            }
+        }
+
+        $option_keys = array_values( array_unique( $option_keys ) );
+        if ( ! empty( $option_keys ) )
+        {
+            wp_prime_option_caches( $option_keys );
+        }
+    }
+
+    /**
+     * @param array<int, int> $form_ids Form IDs to load from local mapping storage.
+     *
+     * @return array<string, array<int, array<string, mixed>>>
+     */
+    private function list_local_mapping_rows_for_forms( string $form_source_slug, array $form_ids ): array
+    {
+        if ( ! $this->local_form_mappings )
+        {
+            return [];
+        }
+
+        return $this->local_form_mappings->list_for_forms( $form_source_slug, $form_ids );
+    }
+
+    /**
+     * @param array<int, int> $form_ids Form IDs to load from local execution storage.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function list_latest_execution_events_for_forms( string $form_source_slug, array $form_ids ): array
+    {
+        if ( ! $this->local_execution_events )
+        {
+            return [];
+        }
+
+        return $this->local_execution_events->get_latest_for_forms( $form_source_slug, $form_ids );
+    }
+
+    /**
+     * @param array<int, int> $form_ids Form IDs to load from the legacy action log.
+     *
+     * @return array<string, array<int, array<string, mixed>>>
+     */
+    private function list_action_log_entries_for_forms( string $form_source_slug, array $form_ids ): array
+    {
+        $entries = get_option( self::ACTION_LOG_OPTION_KEY, [] );
+        if ( ! is_array( $entries ) )
+        {
+            return [];
+        }
+
+        $form_id_lookup = [];
+        foreach ( $form_ids as $form_id )
+        {
+            $form_id = absint( $form_id );
+            if ( $form_id > 0 )
+            {
+                $form_id_lookup[ (string) $form_id ] = true;
+            }
+        }
+
+        if ( empty( $form_id_lookup ) )
+        {
+            return [];
+        }
+
+        $grouped = [];
+        foreach ( $entries as $entry )
+        {
+            if ( ! is_array( $entry ) || (string) ( $entry['form_source'] ?? '' ) !== $form_source_slug )
+            {
+                continue;
+            }
+
+            $form_key = (string) absint( $entry['form_id'] ?? 0 );
+            if ( ! isset( $form_id_lookup[ $form_key ] ) )
+            {
+                continue;
+            }
+
+            if ( ! isset( $grouped[ $form_key ] ) )
+            {
+                $grouped[ $form_key ] = [];
+            }
+            $grouped[ $form_key ][] = $entry;
+        }
+
+        return $grouped;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $actions Current merged action payload.
+     *
+     * @return array<string, mixed>
+     */
+    private function get_bootstrap_workflow_plan( string $form_source_slug, int $form_id, array $actions ): array
+    {
+        $data = $this->bootstrap_response_data(
+            $this->get_workflow_plan(
+                $this->create_bootstrap_request(
+                    [
+                        'form_source_slug' => $form_source_slug,
+                        'form_id'          => $form_id,
+                        'hook_scope'       => 'all',
+                    ]
+                )
+            ),
+            []
+        );
+
+        return is_array( $data )
+            ? $data
+            : $this->build_local_workflow_plan_payload( $actions, 'all', 'form_bootstrap_fallback' );
+    }
+
+    private function get_bootstrap_form_summary( string $form_source_slug, int $form_id ): ?array
+    {
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        $adapter  = $registry ? $registry->get_adapter_by_id( $form_source_slug ) : null;
+        if ( $adapter && method_exists( $adapter, 'get_form_object' ) )
+        {
+            $form = $adapter->get_form_object( $form_id );
+            if ( null !== $form )
+            {
+                $summary = $this->normalize_bootstrap_form_summary( $form_source_slug, $form_id, $form, $adapter );
+                if ( null !== $summary )
+                {
+                    return $summary;
+                }
+            }
+        }
+
+        $forms = $this->list_forms_for_source( $form_source_slug );
+        if ( is_wp_error( $forms ) )
+        {
+            return null;
+        }
+
+        foreach ( $forms as $form )
+        {
+            if ( ! is_array( $form ) )
+            {
+                continue;
+            }
+
+            if ( (int) ( $form['id'] ?? 0 ) === $form_id )
+            {
+                return $form;
+            }
+        }
+
+        return null;
+    }
+
+    private function normalize_bootstrap_form_summary(
+        string $form_source_slug,
+        int $form_id,
+        object | array $form,
+        object $adapter
+    ): ?array
+    {
+        $form_data   = is_array( $form ) ? $form : get_object_vars( $form );
+        $resolved_id = absint( $form_data['id'] ?? $form_id );
+        if ( $resolved_id !== $form_id )
+        {
+            return null;
+        }
+
+        $title = $form_data['title'] ?? $form_data['name'] ?? '';
+        $title = is_scalar( $title ) && '' !== (string) $title
+            ? (string) $title
+            : sprintf(
+                /* translators: %d: Form ID. */
+                __( 'Form %d', 'sentient-forms' ),
+                $form_id
+            );
+
+        $summary = [
+            'id'                 => $form_id,
+            'title'              => $title,
+            'adapter'            => method_exists( $adapter, 'get_id' ) ? $adapter->get_id() : $form_source_slug,
+            'adapter_name'       => method_exists( $adapter, 'get_name' ) ? $adapter->get_name() : $form_source_slug,
+            'provider_is_active' => ! isset( $form_data['is_active'] ) || ! empty( $form_data['is_active'] ),
+        ];
+
+        if ( 'gravity_forms' === $form_source_slug )
+        {
+            $summary['provider_edit_url'] = admin_url(
+                sprintf(
+                    'admin.php?page=gf_edit_forms&id=%d',
+                    $form_id
+                )
+            );
+        }
+
+        if ( method_exists( $adapter, 'get_form_settings' ) )
+        {
+            $summary['settings'] = $adapter->get_form_settings( $form_id );
+        }
+
+        return $summary;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_bootstrap_capabilities(): array
+    {
+        if ( ! class_exists( 'Sentient_Forms_Meta_Controller' ) )
+        {
+            return [
+                'supports_custom_actions' => true,
+                'supports_status'         => true,
+                'supports_credits'        => false,
+                'cps_version'             => null,
+            ];
+        }
+
+        $controller = new Sentient_Forms_Meta_Controller();
+        $data = $this->bootstrap_response_data(
+            $controller->get_capabilities( $this->create_bootstrap_request() ),
+            []
+        );
+
+        return is_array( $data ) ? $data : [];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function get_bootstrap_action_definitions(): array
+    {
+        if ( ! class_exists( 'Sentient_Forms_Action_Definitions_Controller' ) )
+        {
+            return [];
+        }
+
+        $controller = new Sentient_Forms_Action_Definitions_Controller();
+        $data = $this->bootstrap_response_data(
+            $controller->get_action_definitions( $this->create_bootstrap_request() ),
+            []
+        );
+
+        return is_array( $data ) ? array_values( array_filter( $data, 'is_array' ) ) : [];
+    }
+
+    /**
+     * @return array{actions: array<int, array<string, mixed>>, quota: array<string, int>|null}
+     */
+    private function get_bootstrap_custom_actions(): array
+    {
+        if ( ! class_exists( 'Sentient_Forms_Custom_Actions_Controller' ) )
+        {
+            return [
+                'actions' => [],
+                'quota'   => null,
+            ];
+        }
+
+        $controller = new Sentient_Forms_Custom_Actions_Controller();
+        $data = $this->bootstrap_response_data(
+            $controller->list_custom_actions(
+                $this->create_bootstrap_request(
+                    [
+                        'status' => 'active',
+                    ]
+                )
+            ),
+            []
+        );
+
+        return [
+            'actions' => isset( $data['actions'] ) && is_array( $data['actions'] ) ? array_values( $data['actions'] ) : [],
+            'quota'   => isset( $data['quota'] ) && is_array( $data['quota'] ) ? $data['quota'] : null,
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function get_bootstrap_provider_credentials(): array
+    {
+        if ( ! class_exists( 'Sentient_Forms_Local_Providers_Controller' ) )
+        {
+            return [];
+        }
+
+        $controller = new Sentient_Forms_Local_Providers_Controller();
+        $data = $this->bootstrap_response_data(
+            $controller->list_credentials( $this->create_bootstrap_request() ),
+            []
+        );
+
+        return is_array( $data ) ? array_values( array_filter( $data, 'is_array' ) ) : [];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_bootstrap_form_action_configs( string $form_source_slug, int $form_id ): array
+    {
+        if ( ! class_exists( 'Sentient_Forms_Form_Action_Config_Controller' ) )
+        {
+            return [];
+        }
+
+        $controller = new Sentient_Forms_Form_Action_Config_Controller();
+        $data = $this->bootstrap_response_data(
+            $controller->get_form_configs(
+                $this->create_bootstrap_request(
+                    [
+                        'form_source' => $form_source_slug,
+                        'form_id'     => $form_id,
+                    ]
+                )
+            ),
+            []
+        );
+
+        return isset( $data['configs'] ) && is_array( $data['configs'] ) ? $data['configs'] : [];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function get_bootstrap_form_fields( string $form_source_slug, int $form_id ): array
+    {
+        $data = $this->bootstrap_response_data(
+            $this->get_form_fields(
+                $this->create_bootstrap_request(
+                    [
+                        'form_source_slug' => $form_source_slug,
+                        'form_id'          => $form_id,
+                    ]
+                )
+            ),
+            []
+        );
+
+        if ( isset( $data['success'], $data['data'] ) && true === $data['success'] && is_array( $data['data'] ) )
+        {
+            return array_values( array_filter( $data['data'], 'is_array' ) );
+        }
+
+        return [];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $definitions
+     * @param array{actions?: array<int, array<string, mixed>>} $custom_actions
+     * @return array<string, mixed>
+     */
+    private function get_bootstrap_action_defaults( array $definitions, array $custom_actions ): array
+    {
+        if ( ! class_exists( 'Sentient_Forms_Form_Action_Config_Controller' ) )
+        {
+            return [];
+        }
+
+        $action_ids = [];
+        foreach ( $definitions as $definition )
+        {
+            $action_id = isset( $definition['id'] ) && is_scalar( $definition['id'] )
+                ? sanitize_key( (string) $definition['id'] )
+                : '';
+            if ( '' !== $action_id )
+            {
+                $action_ids[] = $action_id;
+            }
+        }
+
+        foreach ( (array) ( $custom_actions['actions'] ?? [] ) as $action )
+        {
+            if ( ! is_array( $action ) )
+            {
+                continue;
+            }
+            $action_code = isset( $action['code'] ) && is_scalar( $action['code'] )
+                ? sanitize_key( (string) $action['code'] )
+                : '';
+            if ( '' !== $action_code )
+            {
+                $action_ids[] = $action_code;
+            }
+        }
+
+        $action_ids = array_values( array_unique( $action_ids ) );
+        if ( empty( $action_ids ) )
+        {
+            return [];
+        }
+
+        $controller = new Sentient_Forms_Form_Action_Config_Controller();
+        $defaults = [];
+        $batch_limit = Sentient_Forms_Form_Action_Config_Controller::ACTION_DEFAULTS_BATCH_LIMIT;
+        foreach ( array_chunk( $action_ids, $batch_limit ) as $action_id_batch )
+        {
+            $data = $this->bootstrap_response_data(
+                $controller->get_action_defaults_batch(
+                    $this->create_bootstrap_request(
+                        [
+                            'ids' => implode( ',', $action_id_batch ),
+                        ]
+                    )
+                ),
+                []
+            );
+
+            if ( isset( $data['defaults'] ) && is_array( $data['defaults'] ) )
+            {
+                $defaults = array_merge( $defaults, $data['defaults'] );
+            }
+        }
+
+        return $defaults;
+    }
+
+    /**
+     * Build normalized action linkages for a form without creating nested REST requests.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function build_form_actions_payload(
+        string $form_source_slug,
+        int $form_id,
+        ?array $stored_actions = null,
+        ?array $local_mapping_rows = null,
+        ?array $cps_actions = null
+    ): array
+    {
         // Get local WP linkages
-        $option_key = $this->get_actions_option_key( $form_source_slug, $form_id );
-        $local_actions = get_option( $option_key, [] );
+        $local_actions = null === $stored_actions
+            ? get_option( $this->get_actions_option_key( $form_source_slug, $form_id ), [] )
+            : $stored_actions;
         if ( ! is_array( $local_actions ) ) {
             $local_actions = [];
         }
 
         $local_actions = $this->extract_action_linkages_from_option( $local_actions );
-        $local_actions = $this->merge_local_first_actions( $local_actions, $form_source_slug, $form_id );
+        $local_actions = $this->merge_local_first_actions( $local_actions, $form_source_slug, $form_id, $local_mapping_rows );
 
         // Phase 7 CSM: Optionally merge CPS mappings
-        $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
+        $cps_actions = null === $cps_actions
+            ? $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id )
+            : $cps_actions;
         $merged = $this->merge_local_and_cps_actions( $local_actions, $cps_actions );
 
-        return $this->prepare_item_for_response( $merged );
+        return $merged;
+    }
+
+    private function list_forms_for_source( string $form_source_slug ): WP_Error | array
+    {
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        $adapter  = $registry ? $registry->get_adapter_by_id( $form_source_slug ) : null;
+        if ( ! $adapter )
+        {
+            return $this->prepare_error_response( 'rest_invalid_form_source', __( 'Invalid form source.', 'sentient-forms' ), 404 );
+        }
+
+        if ( ! method_exists( $adapter, 'get_forms' ) )
+        {
+            return $this->prepare_error_response( 'rest_not_implemented', __( 'Adapter does not support listing forms.', 'sentient-forms' ), 501 );
+        }
+
+        $forms = $adapter->get_forms();
+        return is_array( $forms ) ? $forms : [];
     }
 
     /**
@@ -1856,6 +2563,18 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $form_source_slug = $request->get_param( 'form_source_slug' );
         $form_id          = (int) $request->get_param( 'form_id' );
 
+        return $this->prepare_item_for_response(
+            $this->build_form_disabled_state( $form_source_slug, $form_id )
+        );
+    }
+
+    /**
+     * Build the per-form disabled state without nested REST dispatch.
+     *
+     * @return array<string, bool>
+     */
+    private function build_form_disabled_state( string $form_source_slug, int $form_id ): array
+    {
         $option_key = $this->get_actions_option_key( $form_source_slug, $form_id );
         $options    = get_option( $option_key, [] );
 
@@ -1863,12 +2582,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         $execution_disable = $this->get_execution_disable_flags( $form_source_slug );
         $effective_disabled = $sf_disabled || $execution_disable['global_disabled'] || $execution_disable['provider_disabled'];
 
-        return $this->prepare_item_for_response( [
+        return [
             'sf_disabled'       => $sf_disabled,
             'global_disabled'   => $execution_disable['global_disabled'],
             'provider_disabled' => $execution_disable['provider_disabled'],
             'effective_disabled'=> $effective_disabled,
-        ] );
+        ];
     }
 
     /**
@@ -1959,20 +2678,125 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         }
 
         try {
-            $all_mappings = $this->mappings_sync->fetch_mappings();
-            $form_mappings = array_filter( $all_mappings, function( $m ) use ( $site_id, $form_source_slug, $form_id ) {
-                return
-                    ( $m['site_id'] ?? '' ) === $site_id &&
-                    ( $m['form_source'] ?? '' ) === $form_source_slug &&
-                    ( (int) ( $m['form_id'] ?? 0 ) ) === $form_id &&
-                    empty( $m['is_template'] ); // Exclude templates
-            } );
+            $all_mappings  = $this->fetch_cps_mappings_once();
+            $form_mappings = array_filter(
+                $all_mappings,
+                function ( array $m ) use ( $site_id, $form_source_slug, $form_id ) {
+                    return
+                        ( $m['site_id'] ?? '' ) === $site_id &&
+                        ( $m['form_source'] ?? '' ) === $form_source_slug &&
+                        ( (int) ( $m['form_id'] ?? 0 ) ) === $form_id &&
+                        empty( $m['is_template'] ); // Exclude templates
+                }
+            );
 
             return array_map( [ $this, 'transform_cps_mapping_to_linkage' ], array_values( $form_mappings ) );
         } catch ( \Throwable $e ) {
             // Silently fail - CPS unreachable, use local only
             return [];
         }
+    }
+
+    /**
+     * Build transformed CPS actions once for a forms overview response.
+     *
+     * @param array<int, int|string> $form_ids Form IDs to include.
+     *
+     * @return array<string, array<int, array<string, mixed>>>
+     */
+    private function list_cps_actions_for_forms( string $form_source_slug, array $form_ids ): array
+    {
+        if ( ! $this->mappings_sync )
+        {
+            return [];
+        }
+
+        $requested_form_ids = [];
+        foreach ( $form_ids as $form_id )
+        {
+            $normalized_id = absint( $form_id );
+            if ( $normalized_id > 0 )
+            {
+                $requested_form_ids[ (string) $normalized_id ] = true;
+            }
+        }
+
+        if ( empty( $requested_form_ids ) )
+        {
+            return [];
+        }
+
+        $site_id = $this->resolve_cps_site_id_for_mappings();
+        if ( '' === $site_id )
+        {
+            return [];
+        }
+
+        $actions_by_form = [];
+        foreach ( $this->fetch_cps_mappings_once() as $mapping )
+        {
+            $mapping_form_id = absint( $mapping['form_id'] ?? 0 );
+            $form_key        = (string) $mapping_form_id;
+            if (
+                $mapping_form_id <= 0
+                || ! isset( $requested_form_ids[ $form_key ] )
+                || ( $mapping['site_id'] ?? '' ) !== $site_id
+                || ( $mapping['form_source'] ?? '' ) !== $form_source_slug
+                || ! empty( $mapping['is_template'] )
+            )
+            {
+                continue;
+            }
+
+            if ( ! isset( $actions_by_form[ $form_key ] ) )
+            {
+                $actions_by_form[ $form_key ] = [];
+            }
+
+            $actions_by_form[ $form_key ][] = $this->transform_cps_mapping_to_linkage( $mapping );
+        }
+
+        return $actions_by_form;
+    }
+
+    /**
+     * Fetch the full CPS mapping list once for this controller request.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function fetch_cps_mappings_once(): array
+    {
+        if ( null !== $this->cps_mappings_cache )
+        {
+            return $this->cps_mappings_cache;
+        }
+
+        if ( ! $this->mappings_sync )
+        {
+            $this->cps_mappings_cache = [];
+            return $this->cps_mappings_cache;
+        }
+
+        try
+        {
+            $mappings = $this->mappings_sync->fetch_mappings();
+        }
+        catch ( \Throwable $e )
+        {
+            $this->cps_mappings_cache = [];
+            return $this->cps_mappings_cache;
+        }
+
+        $this->cps_mappings_cache = array_values(
+            array_filter(
+                is_array( $mappings ) ? $mappings : [],
+                static function ( $mapping ): bool {
+                    return is_array( $mapping );
+                }
+            )
+        );
+
+        return $this->cps_mappings_cache;
     }
 
     /**
@@ -2006,6 +2830,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             $this->extract_action_linkages_from_option( $actions ),
             true
         );
+        $this->cps_mappings_cache = null;
     }
 
     /**
@@ -3925,10 +4750,36 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         );
 
         $form_id = (int) $request->get_param( 'form_id' );
-        $integrity_status = $this->get_local_mapping_integrity_status( $form_source_slug, $form_id );
-        $status  = $integrity_status
-            ?? $this->get_form_execution_status_from_local_execution_event( $form_source_slug, $form_id, true )
-            ?? $this->get_form_execution_status_from_action_log( $form_source_slug, $form_id, true )
+        return $this->prepare_item_for_response(
+            $this->build_form_execution_status( $form_source_slug, $form_id )
+        );
+    }
+
+    /**
+     * Build the aggregated execution status for a form without nested REST dispatch.
+     *
+     * @return array<string, mixed>
+     */
+    private function build_form_execution_status(
+        string $form_source_slug,
+        int $form_id,
+        ?array $local_mapping_rows = null,
+        ?array $latest_events_by_form = null,
+        ?array $action_log_entries_by_form = null
+    ): array
+    {
+        $form_key = (string) $form_id;
+        $integrity_status = $this->get_local_mapping_integrity_status( $form_source_slug, $form_id, $local_mapping_rows );
+        return $integrity_status
+            ?? ( null === $latest_events_by_form
+                ? $this->get_form_execution_status_from_local_execution_event( $form_source_slug, $form_id, true )
+                : $this->format_form_execution_status_from_local_execution_event( $latest_events_by_form[ $form_key ] ?? null, true ) )
+            ?? $this->get_form_execution_status_from_action_log(
+                $form_source_slug,
+                $form_id,
+                true,
+                null === $action_log_entries_by_form ? null : ( $action_log_entries_by_form[ $form_key ] ?? [] )
+            )
             ?? [
                 'status'          => 'unknown',
                 'message'         => null,
@@ -3937,8 +4788,6 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
                 'last_result'     => null,
                 'updated_at'      => null,
             ];
-
-        return $this->prepare_item_for_response( $status );
     }
 
     private function get_form_execution_status_from_local_execution_event( string $form_source_slug, int $form_id, bool $ignore_stale_inactive_errors = false ): ?array
@@ -3948,7 +4797,14 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             return null;
         }
 
-        $event = $this->local_execution_events->get_latest_for_form( $form_source_slug, $form_id );
+        return $this->format_form_execution_status_from_local_execution_event(
+            $this->local_execution_events->get_latest_for_form( $form_source_slug, $form_id ),
+            $ignore_stale_inactive_errors
+        );
+    }
+
+    private function format_form_execution_status_from_local_execution_event( ?array $event, bool $ignore_stale_inactive_errors = false ): ?array
+    {
         if ( ! is_array( $event ) )
         {
             return null;
@@ -4006,9 +4862,9 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         };
     }
 
-    private function get_form_execution_status_from_action_log( string $form_source_slug, int $form_id, bool $ignore_stale_inactive_errors = false ): ?array
+    private function get_form_execution_status_from_action_log( string $form_source_slug, int $form_id, bool $ignore_stale_inactive_errors = false, ?array $entries = null ): ?array
     {
-        $entries = get_option( self::ACTION_LOG_OPTION_KEY, [] );
+        $entries = $entries ?? get_option( self::ACTION_LOG_OPTION_KEY, [] );
         if ( ! is_array( $entries ) )
         {
             return null;
@@ -4084,14 +4940,18 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         return null;
     }
 
-    private function get_local_mapping_integrity_status( string $form_source_slug, int $form_id ): ?array
+    private function get_local_mapping_integrity_status( string $form_source_slug, int $form_id, ?array $local_mapping_rows = null ): ?array
     {
-        if ( ! $this->local_form_mappings )
+        if ( null === $local_mapping_rows && ! $this->local_form_mappings )
         {
             return null;
         }
 
-        foreach ( $this->local_form_mappings->list_for_form( $form_source_slug, (string) $form_id ) as $mapping )
+        $mappings = null === $local_mapping_rows
+            ? $this->local_form_mappings->list_for_form( $form_source_slug, (string) $form_id )
+            : $local_mapping_rows;
+
+        foreach ( $mappings as $mapping )
         {
             if ( empty( $mapping['enabled'] ) || 'custom_action' !== sanitize_key( (string) ( $mapping['action_kind'] ?? '' ) ) )
             {

@@ -20,6 +20,7 @@ return [
 	'Sentient_Forms_Adapter_Interface' => __DIR__ . '/interfaces/interface-sentient-forms-adapter.php',
 	'Sentient_Forms_Admin' => __DIR__ . '/admin/class-sentient-forms-admin.php',
 	'Sentient_Forms_Admin_Assets' => __DIR__ . '/admin/class-sentient-forms-admin-assets.php',
+	'Sentient_Forms_Admin_Dashboard_Controller' => __DIR__ . '/rest-api/controllers/class-admin-dashboard-controller.php',
 	'Sentient_Forms_Admin_Permission' => __DIR__ . '/rest-api/permissions/class-admin-permission.php',
 	'Sentient_Forms_Api_Client' => __DIR__ . '/api/class-sentient-forms-api-client.php',
 	'Sentient_Forms_Async_CLI_Command' => __DIR__ . '/cli/class-sentient-forms-async-cli-command.php',

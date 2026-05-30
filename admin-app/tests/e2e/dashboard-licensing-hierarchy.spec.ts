@@ -1,6 +1,63 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
+
+function dashboardSummary(overrides: Record<string, unknown> = {}) {
+	return {
+		generated_at: '2030-01-05T10:00:00Z',
+		providers: [],
+		templates: [],
+		custom_actions: [],
+		recent_events: [],
+		license: {
+			status: 'inactive',
+			proxy_key_present: false,
+			tier: null,
+			expires_at: null,
+			last_synced: null,
+			license_id: null,
+			site_id: null
+		},
+		async_health: { status: 'healthy', blockers: [], warnings: [] },
+		...overrides
+	};
+}
+
+async function routeDashboardSummary(
+	page: Page,
+	summary: Record<string, unknown>,
+	status = 200
+): Promise<void> {
+	await page.route('**/wp-json/sentient-forms/v1/admin/dashboard-summary**', (route) =>
+		route.fulfill({
+			status,
+			contentType: 'application/json',
+			body: JSON.stringify({ success: status < 400, data: summary })
+		})
+	);
+}
+
+async function guardLegacyDashboardFanout(
+	page: Page,
+	counter: { value: number }
+): Promise<void> {
+	for (const endpoint of [
+		'local/providers/credentials',
+		'local/action-templates',
+		'local/custom-actions',
+		'local/execution-events',
+		'local/support-bundle'
+	]) {
+		await page.route(`**/wp-json/sentient-forms/v1/${endpoint}**`, (route) => {
+			counter.value += 1;
+			return route.fulfill({
+				status: 418,
+				contentType: 'application/json',
+				body: JSON.stringify({ message: 'dashboard should use admin/dashboard-summary' })
+			});
+		});
+	}
+}
 
 test.describe('Dashboard and Licensing hierarchy uplift', () => {
 	test.beforeEach(async ({ page }) => {
@@ -53,6 +110,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 	}) => {
 		let licenseRequests = 0;
 		let creditRequests = 0;
+		const legacyFanoutRequests = { value: 0 };
 
 		await page.route('**/wp-json/sentient-forms/v1/license**', (route) => {
 			licenseRequests += 1;
@@ -72,11 +130,11 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			});
 		});
 
-		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify([
+		await guardLegacyDashboardFanout(page, legacyFanoutRequests);
+		await routeDashboardSummary(
+			page,
+			dashboardSummary({
+				providers: [
 					{
 						id: 1,
 						provider: 'openrouter',
@@ -90,36 +148,15 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 						updated_at: '2030-01-05T10:00:00Z',
 						secret_configured: true
 					}
-				])
-			})
-		);
-
-		await page.route('**/wp-json/sentient-forms/v1/local/action-templates**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify([
+				],
+				templates: [
 					{ id: 1, code: 'spam_detection', display_name: 'Spam detection', is_active: true },
 					{ id: 2, code: 'entry_summary', display_name: 'Entry summary', is_active: true }
-				])
-			})
-		);
-
-		await page.route('**/wp-json/sentient-forms/v1/local/custom-actions**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify([
+				],
+				custom_actions: [
 					{ id: 3, code: 'route_quote', display_name: 'Route quote', status: 'active' }
-				])
-			})
-		);
-
-		await page.route('**/wp-json/sentient-forms/v1/local/execution-events**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify([
+				],
+				recent_events: [
 					{
 						id: 4,
 						execution_request_id: 'run_1',
@@ -137,21 +174,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 						},
 						created_at: '2030-01-05T10:00:00Z'
 					}
-				])
-			})
-		);
-
-		await page.route('**/wp-json/sentient-forms/v1/local/support-bundle**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					retention: { event_retention_days: 90 },
-					local_tables: {
-						sentient_execution_events: 1,
-						sentient_provider_credentials: 1
-					}
-				})
+				]
 			})
 		);
 
@@ -183,32 +206,16 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		await expect(page.getByText(/credits remaining/i)).toHaveCount(0);
 		expect(licenseRequests).toBe(0);
 		expect(creditRequests).toBe(0);
+		expect(legacyFanoutRequests.value).toBe(0);
 	});
 
 	test('dashboard excludes imported CPS history from local run summaries', async ({ page }) => {
-		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify([])
-			})
-		);
-
-		for (const endpoint of ['action-templates', 'custom-actions']) {
-			await page.route(`**/wp-json/sentient-forms/v1/local/${endpoint}**`, (route) =>
-				route.fulfill({
-					status: 200,
-					contentType: 'application/json',
-					body: JSON.stringify([])
-				})
-			);
-		}
-
-		await page.route('**/wp-json/sentient-forms/v1/local/execution-events**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify([
+		const legacyFanoutRequests = { value: 0 };
+		await guardLegacyDashboardFanout(page, legacyFanoutRequests);
+		await routeDashboardSummary(
+			page,
+			dashboardSummary({
+				recent_events: [
 					{
 						id: 4,
 						execution_request_id: 'legacy_run_1',
@@ -217,21 +224,7 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 						status: 'succeeded',
 						created_at: '2030-01-05T10:00:00Z'
 					}
-				])
-			})
-		);
-
-		await page.route('**/wp-json/sentient-forms/v1/local/support-bundle**', (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					retention: { event_retention_days: 90 },
-					local_tables: {
-						sentient_execution_events: 1,
-						sentient_provider_credentials: 0
-					}
-				})
+				]
 			})
 		);
 
@@ -252,34 +245,13 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 				name: 'Open action log'
 			})
 		).toBeVisible();
+		expect(legacyFanoutRequests.value).toBe(0);
 	});
 
 	test('dashboard surfaces local endpoint failures without reverting to license copy', async ({
 		page
 	}) => {
-		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
-			route.fulfill({
-				status: 500,
-				contentType: 'application/json',
-				body: JSON.stringify({ message: 'provider storage unavailable' })
-			})
-		);
-
-		for (const endpoint of [
-			'action-templates',
-			'custom-actions',
-			'execution-events',
-			'support-bundle'
-		]) {
-			await page.route(`**/wp-json/sentient-forms/v1/local/${endpoint}**`, (route) =>
-				route.fulfill({
-					status: 200,
-					contentType: 'application/json',
-					body: endpoint === 'support-bundle' ? JSON.stringify({}) : JSON.stringify([])
-				})
-			);
-		}
-
+		await routeDashboardSummary(page, { message: 'provider storage unavailable' }, 500);
 		await page.route('**/wp-json/sentient-forms/v1/license**', (route) =>
 			route.fulfill({
 				status: 418,
@@ -295,6 +267,35 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 			'Local workspace data is partially unavailable'
 		);
 		await expect(page.getByText('License health')).toHaveCount(0);
+	});
+
+	test('dashboard surfaces partial summary section failures while keeping available data', async ({
+		page
+	}) => {
+		await routeDashboardSummary(
+			page,
+			dashboardSummary({
+				templates: [
+					{ id: 1, code: 'spam_detection', display_name: 'Spam detection', is_active: true }
+				],
+				section_errors: [
+					{
+						section: 'providers',
+						code: 'dashboard_providers_unavailable',
+						message: 'Provider data is temporarily unavailable.'
+					}
+				]
+			})
+		);
+
+		await page.goto('/#/dashboard', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('dashboard-error-state')).toBeVisible();
+		await expect(page.getByTestId('dashboard-error-state')).toContainText(
+			'Provider data is temporarily unavailable.'
+		);
+		await expect(page.getByTestId('dashboard-local-first-summary')).toBeVisible();
+		await expect(page.getByTestId('dashboard-template-count')).toContainText('1');
 	});
 
 	test('providers validates OpenRouter with disclosure acceptance', async ({ page }) => {

@@ -14,18 +14,25 @@ import type {
 	CustomActionFilters,
 	CustomActionQuota,
 	CustomActionUpdatePayload,
+	DashboardSummaryResponse,
 	DuplicateFormActionRequest,
 	DuplicateFormActionResponse,
 	ExecutionStatus,
+	FormActionConfig,
+	FormActionsBootstrapResponse,
 	FormDisableStateResponse,
 	FormActionLinkage,
 	FormActionMutationPayload,
 	FormExecutionStatus,
+	FormFieldInfo,
+	FormsOverviewResponse,
 	WorkflowPlanResponse,
 	FormSummary,
 	LicenseActivationRequest,
 	LicenseActivationResult,
 	LicenseInfoResponse,
+	LocalCustomActionRecord,
+	LocalProviderCredential,
 	PluginSettingsResponse,
 	TelemetrySettingsResponse,
 	TopUpCheckoutSessionRequest,
@@ -93,6 +100,12 @@ export class MockSentientFormsApiClient {
 	];
 
 	private formActions: FormActionLinkage[] = [];
+	private formFields: FormFieldInfo[] = [
+		{ id: '1', label: 'Name', type: 'text' },
+		{ id: '2', label: 'Email', type: 'email' },
+		{ id: '3', label: 'Message', type: 'textarea' }
+	];
+	private providerCredentials: LocalProviderCredential[] = [];
 	private formDisabled: Record<string, boolean> = {};
 	private pluginSettings: PluginSettingsResponse = {
 		enable_logging: true,
@@ -306,13 +319,98 @@ export class MockSentientFormsApiClient {
 		return this.definitions;
 	}
 
+	async getDashboardSummary(): Promise<DashboardSummaryResponse> {
+		return {
+			generated_at: new Date().toISOString(),
+			providers: this.providerCredentials,
+			templates: [],
+			custom_actions: this.customActions.map((action, index) =>
+				this.toLocalCustomActionRecord(action, index)
+			),
+			recent_events: [],
+			license: await this.getLicenseInfo(),
+			async_health: await this.getAsyncHealth()
+		};
+	}
+
+	private toLocalCustomActionRecord(
+		action: CustomAction,
+		index: number
+	): LocalCustomActionRecord {
+		const parsedId = Number.parseInt(String(action.id), 10);
+		const parsedTemplateId =
+			action.template_id === null ? Number.NaN : Number.parseInt(String(action.template_id), 10);
+
+		return {
+			id: Number.isFinite(parsedId) ? parsedId : index + 1,
+			external_id: String(action.id),
+			template_id: Number.isFinite(parsedTemplateId) ? parsedTemplateId : null,
+			code: action.code,
+			display_name: action.display_name,
+			definition_json: action.definition ?? action.prompt_overrides ?? null,
+			model_selection_json: action.model_hint ? { model: action.model_hint } : null,
+			status: action.status,
+			created_at: action.created_at,
+			updated_at: action.updated_at
+		};
+	}
+
 	async getForms(formSourceSlug: string): Promise<FormSummary[]> {
 		if (formSourceSlug === 'gravity_forms') return this.forms;
 		return [];
 	}
 
+	async getFormsOverview(formSourceSlug: string): Promise<FormsOverviewResponse> {
+		const forms = await this.getForms(formSourceSlug);
+		const executionStatus = await this.getFormExecutionStatus();
+		return {
+			form_source: formSourceSlug,
+			forms: forms.map((form) => ({
+				...form,
+				actions: this.formActions,
+				action_count: this.formActions.length,
+				enabled_action_count: this.formActions.filter(
+					(action) => action.is_action_enabled_for_form !== false
+				).length,
+				execution_status: executionStatus
+			})),
+			generated_at: new Date().toISOString()
+		};
+	}
+
 	async getFormActions(_formSourceSlug: string, _formId: number): Promise<FormActionLinkage[]> {
 		return this.formActions;
+	}
+
+	async getFormActionsBootstrap(
+		formSourceSlug: string,
+		formId: number
+	): Promise<FormActionsBootstrapResponse> {
+		const actions = await this.getFormActions(formSourceSlug, formId);
+		const definitions = await this.getActionDefinitions();
+		const customActions = await this.getCustomActions({ status: 'active' });
+		const actionDefaults = await this.getActionDefaultsBatch([
+			...definitions.map((definition) => definition.id),
+			...customActions.actions.map((action) => action.code)
+		]);
+
+		return {
+			form_source: formSourceSlug,
+			form_id: formId,
+			form: this.forms.find((form) => Number(form.id) === formId) ?? null,
+			actions,
+			execution_status: await this.getFormExecutionStatus(),
+			disabled_state: await this.getFormDisabled(formSourceSlug, formId),
+			capabilities: await this.getCapabilities(),
+			definitions,
+			custom_actions: customActions,
+			provider_credentials: this.providerCredentials,
+			form_action_configs: {},
+			form_fields: this.formFields,
+			action_defaults: actionDefaults,
+			workflow_plan: await this.getWorkflowPlan(formSourceSlug, formId, 'all'),
+			generated_at: new Date().toISOString()
+		};
 	}
 
 	async getWorkflowPlan(
@@ -396,6 +494,14 @@ export class MockSentientFormsApiClient {
 			last_result: null,
 			updated_at: new Date().toISOString()
 		};
+	}
+
+	async getActionDefaults(_actionId: string): Promise<FormActionConfig> {
+		return {};
+	}
+
+	async getActionDefaultsBatch(actionIds: string[]): Promise<Record<string, FormActionConfig>> {
+		return Object.fromEntries(actionIds.map((actionId) => [actionId, {}]));
 	}
 
 	async createFormAction(

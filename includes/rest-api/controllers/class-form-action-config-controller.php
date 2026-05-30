@@ -33,6 +33,13 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
     private const OPTION_PREFIX = 'sentient_forms_form_config_';
 
     /**
+     * Maximum number of action defaults accepted by the batch route.
+     *
+     * @var int
+     */
+    public const ACTION_DEFAULTS_BATCH_LIMIT = 100;
+
+    /**
      * The base of this controller's routes.
      *
      * @var string
@@ -99,6 +106,25 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
                     'callback'            => [ $this, 'delete_action_config' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => $this->get_action_config_args(),
+                ],
+            ],
+        );
+
+        // GET /actions/defaults?ids=a,b - Batched global action defaults for admin first paint.
+        register_rest_route(
+            $this->namespace,
+            '/actions/defaults',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_action_defaults_batch' ],
+                    'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
+                    'args'                => [
+                        'ids' => [
+                            'description' => __( 'Comma-separated action IDs to load.', 'sentient-forms' ),
+                            'required'    => false,
+                        ],
+                    ],
                 ],
             ],
         );
@@ -962,6 +988,77 @@ class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_For
             'action_id' => $action_id,
             'config'    => is_array( $config ) ? $config : (object) [],
         ] );
+    }
+
+    /**
+     * Gets global defaults for multiple actions in one request.
+     *
+     * @param WP_REST_Request $request Request object.
+     *
+     * @return WP_REST_Response|WP_Error
+     */
+    public function get_action_defaults_batch( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        $action_ids = $this->normalize_action_defaults_ids( $request->get_param( 'ids' ) );
+        $defaults   = [];
+
+        if ( function_exists( 'wp_prime_option_caches' ) )
+        {
+            wp_prime_option_caches( array_map( [ $this, 'get_action_defaults_key' ], $action_ids ) );
+        }
+
+        foreach ( $action_ids as $action_id )
+        {
+            $config = $this->normalize_action_config(
+                get_option( $this->get_action_defaults_key( $action_id ), [] )
+            );
+            $defaults[ $action_id ] = is_array( $config ) ? $config : (object) [];
+        }
+
+        return $this->prepare_item_for_response( [
+            'defaults'     => $defaults,
+            'generated_at' => gmdate( 'c' ),
+        ] );
+    }
+
+    /**
+     * Normalizes a comma-delimited or array action ID list.
+     *
+     * @param mixed $raw_ids Raw request parameter.
+     *
+     * @return array<int, string>
+     */
+    private function normalize_action_defaults_ids( mixed $raw_ids ): array
+    {
+        if ( is_array( $raw_ids ) )
+        {
+            $candidates = $raw_ids;
+        }
+        elseif ( is_scalar( $raw_ids ) )
+        {
+            $candidates = explode( ',', (string) $raw_ids );
+        }
+        else
+        {
+            $candidates = [];
+        }
+
+        $ids = [];
+        foreach ( $candidates as $candidate )
+        {
+            if ( !is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $id = sanitize_key( wp_unslash( (string) $candidate ) );
+            if ( $id !== '' )
+            {
+                $ids[ $id ] = true;
+            }
+        }
+
+        return array_slice( array_keys( $ids ), 0, self::ACTION_DEFAULTS_BATCH_LIMIT );
     }
 
     /**

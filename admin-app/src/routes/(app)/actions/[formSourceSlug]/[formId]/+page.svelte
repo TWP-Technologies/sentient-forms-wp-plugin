@@ -392,7 +392,15 @@
 	let entryLookupId = $state('');
 	let checkedEntryStatus = $state<ExecutionStatus | null>(null);
 	let refreshInterval: number | null = null;
+	let refreshIntervalDelay: number | null = null;
 	let visibilityHandler: (() => void) | null = null;
+	const STATUS_REFRESH_INTERVAL_MS = 30_000;
+	const STATUS_IDLE_REFRESH_INTERVAL_MS = 120_000;
+	const STATUS_RECENT_WINDOW_MS = 120_000;
+	const ACTIVE_STATUS_TERMS = ['queued', 'running', 'pending', 'processing', 'in progress'];
+	const ACTIVE_STATUS_PATTERNS = ACTIVE_STATUS_TERMS.map(
+		(term) => new RegExp(`\\b${term.replace(/\s+/g, '\\s+')}\\b`)
+	);
 	let providerCredentials = $state<LocalProviderCredential[]>([]);
 	let providerCredentialsLoading = $state(false);
 	let providerCredentialsError = $state<string | null>(null);
@@ -670,7 +678,12 @@
 	let formLevelConfigSaving = $state(false);
 	let formLevelConfigByActionId = $state<Record<string, FormActionConfig>>({});
 	let actionDefaultsByActionId = $state<Record<string, FormActionConfig>>({});
-	let actionDefaultPreloadIds = $state<Set<string>>(new Set());
+	let appliedBootstrapKey = $state<string | null>(null);
+	const actionDefaultPreloadIds = new Set<string>();
+
+	function formDetailBootstrapKey(bootstrap: { form_source: string; form_id: number; generated_at: string; actions: unknown[] }): string {
+		return `${bootstrap.form_source}:${bootstrap.form_id}:${bootstrap.generated_at}:${bootstrap.actions.length}`;
+	}
 
 	async function loadFormActionConfigIndex() {
 		try {
@@ -693,6 +706,16 @@
 		}
 	}
 
+	function normalizeActionDefaultsForAction(actionId: string, config: FormActionConfig): FormActionConfig {
+		const normalizedConfig = normalizeFormActionConfig(config);
+		return isRealtimeEligibleActionId(actionId)
+			? {
+					...normalizedConfig,
+					realtime_settings: normalizeRealtimeSettings(normalizedConfig.realtime_settings)
+				}
+			: normalizedConfig;
+	}
+
 	async function loadActionDefaultsForAction(
 		actionId: string,
 		options: { force?: boolean } = {}
@@ -702,18 +725,36 @@
 		}
 
 		const client = createClientFromConfig();
-		const normalizedConfig = normalizeFormActionConfig(await client.getActionDefaults(actionId));
-		const config = isRealtimeEligibleActionId(actionId)
-			? {
-					...normalizedConfig,
-					realtime_settings: normalizeRealtimeSettings(normalizedConfig.realtime_settings)
-				}
-			: normalizedConfig;
+		const config = normalizeActionDefaultsForAction(actionId, await client.getActionDefaults(actionId));
 		actionDefaultsByActionId = {
 			...actionDefaultsByActionId,
 			[actionId]: config
 		};
 		return config;
+	}
+
+	async function loadActionDefaultsBatch(actionIds: string[]): Promise<void> {
+		const ids = [...new Set(actionIds.map((actionId) => actionId.trim()).filter(Boolean))];
+		if (ids.length === 0) return;
+
+		const client = createClientFromConfig();
+		const defaults = await client.getActionDefaultsBatch(ids);
+		const returnedIds = new Set(Object.keys(defaults));
+		actionDefaultsByActionId = {
+			...actionDefaultsByActionId,
+			...Object.fromEntries(
+				Object.entries(defaults).map(([actionId, config]) => [
+					actionId,
+					normalizeActionDefaultsForAction(actionId, config ?? {})
+				])
+			)
+		};
+
+		for (const actionId of ids) {
+			if (!returnedIds.has(actionId)) {
+				actionDefaultPreloadIds.delete(actionId);
+			}
+		}
 	}
 
 	async function loadFormLevelConfig(
@@ -808,12 +849,15 @@
 		const missing = ids.filter((actionId) => !actionDefaultPreloadIds.has(actionId));
 		if (missing.length === 0) return;
 
-		actionDefaultPreloadIds = new Set([...actionDefaultPreloadIds, ...missing]);
 		for (const actionId of missing) {
-			void loadActionDefaultsForAction(actionId, { force: false }).catch((error) => {
-				console.warn('[ActionDefaults] Failed to preload visible action defaults:', error);
-			});
+			actionDefaultPreloadIds.add(actionId);
 		}
+		void loadActionDefaultsBatch(missing).catch((error) => {
+			console.warn('[ActionDefaults] Failed to preload visible action defaults:', error);
+			for (const actionId of missing) {
+				actionDefaultPreloadIds.delete(actionId);
+			}
+		});
 	}
 
 	async function saveFormLevelConfig() {
@@ -952,6 +996,81 @@
 				error instanceof Error ? error.message : 'Failed to load local OpenRouter status.';
 		} finally {
 			providerCredentialsLoading = false;
+		}
+	}
+
+	function hydrateFormDetailBootstrap() {
+		const bootstrap = actionsState.bootstrap;
+		if (!bootstrap) return;
+
+		const bootstrapKey = formDetailBootstrapKey(bootstrap);
+		if (appliedBootstrapKey === bootstrapKey) return;
+		appliedBootstrapKey = bootstrapKey;
+
+		if (bootstrap.form) {
+			currentFormSummary = bootstrap.form;
+			currentFormSummaryError = null;
+			currentFormSummaryLoading = false;
+		} else {
+			void loadCurrentFormSummary();
+		}
+
+		if (bootstrap.form_fields) {
+			formFields = bootstrap.form_fields;
+			fieldsLoading = false;
+		} else {
+			void loadFormFields();
+		}
+
+		if (bootstrap.provider_credentials) {
+			providerCredentials = bootstrap.provider_credentials;
+			providerCredentialsError = null;
+			providerCredentialsLoading = false;
+		} else {
+			void loadProviderCredentials();
+		}
+
+		if (bootstrap.form_action_configs) {
+			formLevelConfigByActionId = {
+				...formLevelConfigByActionId,
+				...Object.fromEntries(
+					Object.entries(bootstrap.form_action_configs).map(([actionId, config]) => [
+						actionId,
+						normalizeFormActionConfig(config)
+					])
+				)
+			};
+		} else {
+			void loadFormActionConfigIndex();
+		}
+
+		if (bootstrap.action_defaults) {
+			actionDefaultsByActionId = {
+				...actionDefaultsByActionId,
+				...Object.fromEntries(
+					Object.entries(bootstrap.action_defaults).map(([actionId, config]) => [
+						actionId,
+						normalizeActionDefaultsForAction(actionId, config)
+					])
+				)
+			};
+			for (const actionId of Object.keys(bootstrap.action_defaults)) {
+				actionDefaultPreloadIds.add(actionId);
+			}
+		}
+
+		if (bootstrap.custom_actions) {
+			customActionsStore.hydrate(bootstrap.custom_actions, { status: 'active' });
+		} else {
+			void customActionsStore.load({ status: 'active' });
+		}
+
+		if (bootstrap.workflow_plan) {
+			workflowPlan = bootstrap.workflow_plan;
+			workflowPlanError = null;
+			lastWorkflowPlanSignature = createWorkflowPlanSignature(actionsState.items ?? [], workflowPlanScope);
+		} else {
+			lastWorkflowPlanSignature = '';
 		}
 	}
 
@@ -1644,11 +1763,44 @@
 		}
 	}
 
+	function isExecutionStatusActive(status: FormExecutionStatus | null | undefined): boolean {
+		const state = String(status?.status ?? '').toLowerCase().trim();
+		if (ACTIVE_STATUS_TERMS.includes(state)) return true;
+
+		const message = String(status?.message ?? '').toLowerCase();
+		return ACTIVE_STATUS_PATTERNS.some((pattern) => pattern.test(message));
+	}
+
+	function isExecutionStatusRecent(status: FormExecutionStatus | null | undefined): boolean {
+		if (!status?.updated_at) return false;
+
+		const updatedAt = Date.parse(status.updated_at);
+		if (Number.isNaN(updatedAt)) return false;
+
+		return Date.now() - updatedAt <= STATUS_RECENT_WINDOW_MS;
+	}
+
+	function shouldPollExecutionStatus(): boolean {
+		if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false;
+		return actionsState.supportsStatus;
+	}
+
+	function getExecutionStatusRefreshIntervalMs(): number {
+		const status = actionsState.status;
+		return isExecutionStatusActive(status) || isExecutionStatusRecent(status)
+			? STATUS_REFRESH_INTERVAL_MS
+			: STATUS_IDLE_REFRESH_INTERVAL_MS;
+	}
+
 	function startRefreshInterval() {
-		if (refreshInterval !== null) return;
+		if (!shouldPollExecutionStatus()) return;
+		const nextDelay = getExecutionStatusRefreshIntervalMs();
+		if (refreshInterval !== null && refreshIntervalDelay === nextDelay) return;
+		stopRefreshInterval();
+		refreshIntervalDelay = nextDelay;
 		refreshInterval = window.setInterval(
 			() => formActionsStore.refresh(data.formSourceSlug, data.formId),
-			30_000
+			nextDelay
 		);
 	}
 
@@ -1657,22 +1809,25 @@
 			window.clearInterval(refreshInterval);
 			refreshInterval = null;
 		}
+		refreshIntervalDelay = null;
+	}
+
+	function syncRefreshInterval() {
+		if (shouldPollExecutionStatus()) {
+			startRefreshInterval();
+		} else {
+			stopRefreshInterval();
+		}
 	}
 
 	onMount(() => {
 		formActionsStore.load(data.formSourceSlug, data.formId);
-		customActionsStore.load({ status: 'active' });
-		loadCurrentFormSummary();
-		loadFormFields(); // CA-MAP-001: Load form fields for FieldSelector
-		loadProviderCredentials();
-		loadFormActionConfigIndex();
 		restoreLastHooks();
-		startRefreshInterval();
 
 		visibilityHandler = () => {
 			if (document.visibilityState === 'hidden') {
 				stopRefreshInterval();
-			} else {
+			} else if (shouldPollExecutionStatus()) {
 				void formActionsStore.refresh(data.formSourceSlug, data.formId);
 				startRefreshInterval();
 			}
@@ -1687,6 +1842,17 @@
 			clearRootAttachUndoState();
 			formActionsStore.reset();
 		};
+	});
+
+	$effect(() => {
+		actionsState.bootstrap;
+		hydrateFormDetailBootstrap();
+	});
+
+	$effect(() => {
+		actionsState.status;
+		actionsState.supportsStatus;
+		syncRefreshInterval();
 	});
 
 	$effect(() => {
@@ -1705,6 +1871,9 @@
 	$effect(() => {
 		definitions;
 		customActions;
+		if (actionsState.loading) return;
+		const bootstrap = actionsState.bootstrap;
+		if (!bootstrap || appliedBootstrapKey !== formDetailBootstrapKey(bootstrap)) return;
 		preloadActionDefaultsForVisibleActions();
 	});
 
@@ -3382,7 +3551,7 @@
 	}
 
 	function refresh() {
-		formActionsStore.refresh(data.formSourceSlug, data.formId);
+		formActionsStore.refresh(data.formSourceSlug, data.formId, { forceRefresh: true });
 		loadCurrentFormSummary();
 		loadProviderCredentials();
 		loadFormActionConfigIndex();

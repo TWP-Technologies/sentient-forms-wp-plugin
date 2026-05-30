@@ -502,7 +502,7 @@
 		}
 	}
 
-	async function fetchBillingState() {
+	async function fetchBillingState(forceServerRefresh = false) {
 		if (!hasConnectedLicense) {
 			billing = null;
 			billingError = null;
@@ -514,27 +514,34 @@
 		billingError = null;
 
 		try {
-			billing = await client.getBillingState({ showNotifications: false });
+			billing = await client.getBillingState({
+				showNotifications: false,
+				forceRefresh: forceServerRefresh,
+				forceServerRefresh
+			});
 		} catch (error) {
 			console.error('Failed to fetch billing state', error);
 			billing = null;
-			setBillingError(error, 'billing_state', fetchBillingState, false);
+			setBillingError(error, 'billing_state', async () => fetchBillingState(true), false);
 		} finally {
 			billingLoading = false;
 		}
 	}
 
-	async function refreshLicenseAndBilling() {
+	async function refreshLicenseAndBilling(
+		options: { forceServerRefresh?: boolean; refreshLicense?: boolean } = {}
+	) {
+		if (options.refreshLicense === true) {
+			await licenseStore.load();
+		}
+
 		if (!hasConnectedLicense) {
 			billing = null;
 			billingError = null;
 			return;
 		}
 
-		await fetchBillingState();
-		if ($licenseStore.proxyKeyPresent) {
-			await licenseStore.load();
-		}
+		await fetchBillingState(Boolean(options.forceServerRefresh));
 	}
 
 	function currentRouteUrl(): string {
@@ -627,8 +634,7 @@
 				notifications.success(managedCheckoutCompletionMessage);
 				managedCheckoutReference = null;
 				clearManagedCheckoutReturnParams();
-				await licenseStore.load();
-				await refreshLicenseAndBilling();
+				await refreshLicenseAndBilling({ forceServerRefresh: true, refreshLicense: true });
 				return;
 			}
 
@@ -656,7 +662,7 @@
 
 		await licenseStore.activate(licenseKey.trim());
 		licenseKey = '';
-		await refreshLicenseAndBilling();
+		await refreshLicenseAndBilling({ forceServerRefresh: true, refreshLicense: true });
 	}
 
 	async function handleOpenBillingPortal(
@@ -763,7 +769,7 @@
 
 	async function handleDeactivateLicense() {
 		await licenseStore.deactivate();
-		await refreshLicenseAndBilling();
+		await refreshLicenseAndBilling({ forceServerRefresh: true, refreshLicense: true });
 	}
 
 	function handleQuotaCtaAction(action: QuotaCtaAction) {

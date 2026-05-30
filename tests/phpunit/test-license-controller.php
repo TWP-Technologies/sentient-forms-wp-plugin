@@ -656,6 +656,178 @@ class LicenseControllerTest extends WP_UnitTestCase
         $this->assertSame( 'starter', $updated_license['tier']['code'] ?? null );
     }
 
+    public function test_get_billing_state_uses_short_lived_cache_until_forced_refresh(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-cache',
+            'license_id'     => 'lic-cache-123',
+            'site_id'        => 'site-cache-456',
+        ] );
+
+        delete_transient( 'sentient_forms_billing_state_' . md5( 'proxy-key-cache' ) );
+        delete_transient( 'sentient_forms_billing_state_stale_' . md5( 'proxy-key-cache' ) );
+
+        $calls = 0;
+        $this->mock_http_response(
+            '/v2/billing/state',
+            [
+                'success' => true,
+                'data'    => [
+                    'service' => 'sentient-managed',
+                    'status'  => 'active',
+                    'plan'    => [
+                        'code'         => 'starter',
+                        'display_name' => 'Starter',
+                    ],
+                    'billing' => [
+                        'provider'        => 'stripe',
+                        'managed_enabled' => true,
+                    ],
+                ],
+            ],
+            function () use ( &$calls ): void {
+                $calls++;
+            }
+        );
+
+        $first_request = new WP_REST_Request( 'GET', '/sentient-forms/v1/license/billing-state' );
+        $first_request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $first_response = rest_get_server()->dispatch( $first_request );
+
+        $second_request = new WP_REST_Request( 'GET', '/sentient-forms/v1/license/billing-state' );
+        $second_request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $second_response = rest_get_server()->dispatch( $second_request );
+
+        $force_request = new WP_REST_Request( 'GET', '/sentient-forms/v1/license/billing-state' );
+        $force_request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $force_request->set_param( 'force_refresh', true );
+        $force_response = rest_get_server()->dispatch( $force_request );
+
+        $this->assertSame( 200, $first_response->get_status() );
+        $this->assertSame( 200, $second_response->get_status() );
+        $this->assertSame( 200, $force_response->get_status() );
+        $this->assertSame( 2, $calls, 'Second read should use transient cache; force_refresh should bypass it.' );
+        $this->assertFalse( $second_response->get_data()['stale'] ?? true );
+        $this->assertSame( $first_response->get_data()['cached_at'] ?? null, $second_response->get_data()['cached_at'] ?? null );
+    }
+
+    public function test_get_billing_state_returns_stale_snapshot_when_remote_state_fails(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-stale',
+            'license_id'     => 'lic-stale-123',
+            'site_id'        => 'site-stale-456',
+        ] );
+
+        delete_transient( 'sentient_forms_billing_state_' . md5( 'proxy-key-stale' ) );
+        set_transient(
+            'sentient_forms_billing_state_stale_' . md5( 'proxy-key-stale' ),
+            [
+                'service'   => 'sentient-managed',
+                'status'    => 'active',
+                'plan'      => [
+                    'code' => 'starter',
+                ],
+                'cached_at' => '2026-05-29T12:00:00+00:00',
+                'stale'     => false,
+            ],
+            DAY_IN_SECONDS
+        );
+
+        $failure_filter = static function ( $preempt, $_args, $url ) {
+            if ( str_ends_with( $url, '/v2/billing/state' ) ) {
+                return new WP_Error( 'http_request_failed', 'CPS is temporarily unavailable.' );
+            }
+
+            return $preempt;
+        };
+        add_filter( 'pre_http_request', $failure_filter, 1, 3 );
+
+        try {
+            $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/license/billing-state' );
+            $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+            $response = rest_get_server()->dispatch( $request );
+        } finally {
+            remove_filter( 'pre_http_request', $failure_filter, 1 );
+        }
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'starter', $data['plan']['code'] ?? null );
+        $this->assertTrue( $data['stale'] ?? false );
+        $this->assertSame( 'http_request_failed', $data['last_error_code'] ?? null );
+    }
+
+    public function test_get_billing_state_does_not_return_stale_snapshot_for_cps_auth_error(): void
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        $plugin->set_license_data( [
+            'license_status' => 'active',
+            'proxy_api_key'  => 'proxy-key-revoked',
+            'license_id'     => 'lic-revoked-123',
+            'site_id'        => 'site-revoked-456',
+        ] );
+
+        delete_transient( 'sentient_forms_billing_state_' . md5( 'proxy-key-revoked' ) );
+        set_transient(
+            'sentient_forms_billing_state_stale_' . md5( 'proxy-key-revoked' ),
+            [
+                'service'   => 'sentient-managed',
+                'status'    => 'active',
+                'plan'      => [
+                    'code' => 'starter',
+                ],
+                'cached_at' => '2026-05-29T12:00:00+00:00',
+                'stale'     => false,
+            ],
+            DAY_IN_SECONDS
+        );
+
+        $failure_filter = static function ( $preempt, $_args, $url ) {
+            if ( str_ends_with( $url, '/v2/billing/state' ) ) {
+                return [
+                    'headers'  => [],
+                    'body'     => wp_json_encode(
+                        [
+                            'success' => false,
+                            'error'   => [
+                                'code'    => 'sentient_managed_license_revoked',
+                                'message' => 'Managed-service license has been revoked.',
+                            ],
+                        ]
+                    ),
+                    'response' => [
+                        'code'    => 401,
+                        'message' => 'Unauthorized',
+                    ],
+                ];
+            }
+
+            return $preempt;
+        };
+        add_filter( 'pre_http_request', $failure_filter, 999, 3 );
+
+        try {
+            $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/license/billing-state' );
+            $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+            $response = rest_get_server()->dispatch( $request );
+        } finally {
+            remove_filter( 'pre_http_request', $failure_filter, 999 );
+            delete_transient( 'sentient_forms_billing_state_' . md5( 'proxy-key-revoked' ) );
+            delete_transient( 'sentient_forms_billing_state_stale_' . md5( 'proxy-key-revoked' ) );
+        }
+
+        $this->assertSame( 401, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'sentient_managed_license_revoked', $data['code'] ?? null );
+        $this->assertArrayNotHasKey( 'stale', $data );
+        $this->assertArrayNotHasKey( 'last_error_code', $data );
+    }
+
     public function test_create_checkout_session_with_plan_code(): void
     {
         $plugin = Sentient_Forms_Plugin::instance();

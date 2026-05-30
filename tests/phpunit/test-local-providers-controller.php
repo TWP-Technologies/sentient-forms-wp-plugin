@@ -271,6 +271,9 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
                 'status'      => 'invalid',
                 'status_json' => [
                     'diagnostic_hint' => 'provider echoed sk-or-status-leak-123456',
+                    'request_note'    => 'provider echoed Authorization: Bearer provider-bearer-token-123456',
+                    'authorization'   => 'Bearer provider-authorization-token-123456',
+                    'encrypted_blob'  => 'encrypted provider diagnostic payload',
                 ],
             ]
         );
@@ -284,7 +287,11 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
 
         $json = (string) wp_json_encode( $response->get_data() );
         $this->assertStringNotContainsString( 'sk-or-status-leak-123456', $json );
+        $this->assertStringNotContainsString( 'provider-bearer-token-123456', $json );
+        $this->assertStringNotContainsString( 'provider-authorization-token-123456', $json );
+        $this->assertStringNotContainsString( 'encrypted provider diagnostic payload', $json );
         $this->assertStringContainsString( 'sk-or-[redacted]', $json );
+        $this->assertStringContainsString( 'Bearer [redacted]', $json );
     }
 
     public function test_validate_openrouter_key_requires_consent_before_external_call(): void

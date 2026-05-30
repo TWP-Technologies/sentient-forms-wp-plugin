@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { seedRuntimeConfig } from './utils/runtime-config';
 
+const billingStateRoutePattern = /\/wp-json\/sentient-forms\/v1\/license\/billing-state(?:\?.*)?$/;
+
 test('licensing screen handles activation flow', async ({ page }) => {
 	let status = {
 		status: 'inactive',
@@ -81,7 +83,7 @@ test('licensing screen handles activation flow', async ({ page }) => {
 		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
 	});
 
-	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+	await page.route(billingStateRoutePattern, (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
@@ -347,6 +349,162 @@ test('managed checkout return with completed status resumes activation on the li
 	).toBeVisible();
 });
 
+test('managed checkout activation reloads the license before the forced billing refresh', async ({
+	page
+}) => {
+	const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
+	await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+
+	const inactiveStatus = {
+		status: 'inactive',
+		license_key_masked: '',
+		proxy_key_present: false,
+		tier: null,
+		expires_at: null,
+		last_synced: null,
+		license_id: null,
+		site_id: null,
+		site_url: 'https://example.test'
+	};
+	const activeStatus = {
+		status: 'active',
+		license_key_masked: 'LIC-****-****-****',
+		proxy_key_present: true,
+		tier: 'starter',
+		expires_at: '2030-01-01T00:00:00Z',
+		last_synced: '2030-01-01T00:00:00Z',
+		license_id: 'lic-managed-checkout-ready',
+		site_id: 'site-managed-checkout-ready',
+		site_url: 'https://example.test'
+	};
+	const requestSequence: string[] = [];
+	let checkoutCompleted = false;
+	let completeRequests = 0;
+	let forcedBillingRequests = 0;
+
+	await page.route('**/wp-json/sentient-forms/v1/license', (route) => {
+		requestSequence.push(checkoutCompleted ? 'license:active' : 'license:inactive');
+		return route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: checkoutCompleted ? activeStatus : inactiveStatus
+			}),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+	await page.route('**/wp-json/sentient-forms/v1/license/bootstrap', (route) => {
+		requestSequence.push(checkoutCompleted ? 'bootstrap:active' : 'bootstrap:inactive');
+		return route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: checkoutCompleted ? activeStatus : inactiveStatus
+			}),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+	await page.route('**/wp-json/sentient-forms/v1/license/managed-checkout/complete', (route) => {
+		completeRequests += 1;
+		checkoutCompleted = true;
+		requestSequence.push('checkout:complete');
+		const body = route.request().postDataJSON() as
+			| {
+					checkout_intent_id?: string;
+					checkout_session_id?: string;
+					activation_token?: string;
+			  }
+			| undefined;
+		expect(body?.checkout_intent_id).toBe('mci_test_ready');
+		expect(body?.checkout_session_id).toBe('cs_test_ready');
+		expect(body?.activation_token).toBe('activation-token-ready');
+
+		return route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					activation_ready: true,
+					status: 'active',
+					checkout_intent_id: 'mci_test_ready',
+					checkout_session_id: 'cs_test_ready'
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+	await page.route(billingStateRoutePattern, (route) => {
+		const isForcedRefresh =
+			new URL(route.request().url()).searchParams.get('force_refresh') === '1';
+		if (isForcedRefresh) {
+			forcedBillingRequests += 1;
+		}
+		requestSequence.push(isForcedRefresh ? 'billing:forced' : 'billing:cached');
+
+		return route.fulfill({
+			status: 200,
+			body: JSON.stringify({
+				success: true,
+				data: {
+					provider: 'stripe',
+					license_status: 'active',
+					tier: {
+						code: 'starter',
+						display_name: 'Starter',
+						site_limit: 1,
+						monthly_credit_quota: 1000
+					},
+					subscription: {
+						provider_subscription_id: 'sub_checkout_ready',
+						status: 'active',
+						quantity: 1,
+						cancel_at_period_end: false,
+						current_period_start: '2030-01-01T00:00:00Z',
+						current_period_end: '2030-02-01T00:00:00Z',
+						trial_end: null,
+						provider_price_id: 'price_starter'
+					},
+					credits: {
+						current_balance: 1000,
+						tier_quota: 1000,
+						ledger_delta: 0,
+						top_up_available: 0
+					},
+					allocation: {
+						seat_quantity: 1,
+						tier_site_limit: 1,
+						allowed_sites: 1,
+						active_sites: 1,
+						over_limit: false,
+						blocked_new_activations: false,
+						grace_expires_at: null,
+						capacity_policy: 'tier_allowance_v2'
+					},
+					policy: {
+						paid_trial_days: 14,
+						free_plan_monthly_credits: 50,
+						free_plan_indefinite: true,
+						private_beta_trial_enabled: true
+					}
+				}
+			}),
+			headers: { 'content-type': 'application/json' }
+		});
+	});
+
+	await page.goto(
+		'/licensing?sentient_managed_checkout=success&checkout_intent_id=mci_test_ready&stripe_session_id=cs_test_ready&activation_token=activation-token-ready'
+	);
+
+	await expect.poll(() => completeRequests).toBe(1);
+	await expect.poll(() => forcedBillingRequests).toBe(1);
+	await expect(page.getByText('Tier: Starter')).toBeVisible();
+
+	const forcedBillingIndex = requestSequence.indexOf('billing:forced');
+	expect(forcedBillingIndex).toBeGreaterThan(-1);
+	expect(requestSequence.slice(0, forcedBillingIndex)).toContain('license:active');
+});
+
 test('licensing screen uses billing-state credits without legacy credit refresh', async ({
 	page
 }) => {
@@ -378,7 +536,7 @@ test('licensing screen uses billing-state credits without legacy credit refresh'
 		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
 	});
 
-	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+	await page.route(billingStateRoutePattern, (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
@@ -472,7 +630,7 @@ test('licensing screen explains the v2 managed billing boundary', async ({ page 
 		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
 	});
 
-	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+	await page.route(billingStateRoutePattern, (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
@@ -601,7 +759,7 @@ test('starter and pro subscriptions do not expose purchasable top-ups', async ({
 	await page.route('**/wp-json/sentient-forms/v1/license/billing/top-up-session', (route) => {
 		throw new Error(`Starter/Pro top-up checkout was called: ${route.request().url()}`);
 	});
-	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+	await page.route(billingStateRoutePattern, (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
@@ -689,7 +847,7 @@ test('business subscriptions expose canonical top-up packs and send pack code', 
 	await page.route('**/wp-json/sentient-forms/v1/credits/balance**', (route) => {
 		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
 	});
-	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+	await page.route(billingStateRoutePattern, (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
@@ -806,7 +964,7 @@ test('existing subscriptions use subscription update portal for plan changes', a
 		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
 	});
 
-	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+	await page.route(billingStateRoutePattern, (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
@@ -937,7 +1095,7 @@ test('larger subscriptions use the same subscription update portal for downgrade
 		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
 	});
 
-	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+	await page.route(billingStateRoutePattern, (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({
@@ -1055,7 +1213,7 @@ test('licensing billing error state maps portal failures to actionable copy', as
 		throw new Error(`Legacy credit-balance route was called: ${route.request().url()}`);
 	});
 
-	await page.route('**/wp-json/sentient-forms/v1/license/billing-state', (route) =>
+	await page.route(billingStateRoutePattern, (route) =>
 		route.fulfill({
 			status: 200,
 			body: JSON.stringify({

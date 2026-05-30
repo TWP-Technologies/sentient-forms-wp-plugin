@@ -143,14 +143,18 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $table = $this->wpdb->prefix . 'sentient_execution_events';
 
         $this->assertSame( [ 'created_at', 'id' ], $this->execution_event_index_columns( $table, 'created_id_idx' ) );
+        $this->assertSame( [ 'form_source', 'form_id', 'created_at', 'id' ], $this->execution_event_index_columns( $table, 'form_created_id_idx' ) );
         $this->assertNotFalse( $this->wpdb->query( 'ALTER TABLE ' . esc_sql( $table ) . ' DROP INDEX created_id_idx' ) );
+        $this->assertNotFalse( $this->wpdb->query( 'ALTER TABLE ' . esc_sql( $table ) . ' DROP INDEX form_created_id_idx' ) );
         $this->assertSame( [], $this->execution_event_index_columns( $table, 'created_id_idx' ) );
+        $this->assertSame( [], $this->execution_event_index_columns( $table, 'form_created_id_idx' ) );
 
-        update_option( 'sentient_forms_db_version', '2026.04.16.local_first' );
+        update_option( 'sentient_forms_db_version', '2026.05.26.managed_credits_boundary' );
         Sentient_Forms_Installer::maybe_upgrade();
 
         $this->assertSame( SENTIENT_FORMS_DB_VERSION, get_option( 'sentient_forms_db_version' ) );
         $this->assertSame( [ 'created_at', 'id' ], $this->execution_event_index_columns( $table, 'created_id_idx' ) );
+        $this->assertSame( [ 'form_source', 'form_id', 'created_at', 'id' ], $this->execution_event_index_columns( $table, 'form_created_id_idx' ) );
     }
 
     public function test_maybe_upgrade_scrubs_existing_managed_currency_fields(): void

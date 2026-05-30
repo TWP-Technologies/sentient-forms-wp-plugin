@@ -22,7 +22,7 @@ if ( !defined( 'ABSPATH' ) )
 
 // Define plugin constants.
 const SENTIENT_FORMS_VERSION     = '0.2.2';
-const SENTIENT_FORMS_DB_VERSION  = '2026.05.26.managed_credits_boundary';
+const SENTIENT_FORMS_DB_VERSION  = '2026.05.30.admin_performance_indexes';
 const SENTIENT_FORMS_PLUGIN_FILE = __FILE__;
 const SENTIENT_FORMS_DEFAULT_CPS_BASE_URL = 'https://api.sentientforms.com/v1';
 const SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE = 'admin-app';

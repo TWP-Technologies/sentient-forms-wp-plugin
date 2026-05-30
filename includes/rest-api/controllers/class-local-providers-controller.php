@@ -1201,7 +1201,12 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         foreach ( $value as $key => $item )
         {
             $key_string = is_string( $key ) ? strtolower( $key ) : (string) $key;
-            if ( preg_match( '/(api[_-]?key|secret|token|credential|password)/', $key_string ) )
+            if (
+                preg_match(
+                    '/(api[_-]?key|secret|token|credential|password|authorization|auth[_-]?header|bearer|encrypted(?:[_-]|$))/',
+                    $key_string
+                )
+            )
             {
                 $redacted[ $key ] = '[redacted]';
                 continue;
@@ -1216,6 +1221,9 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
     private function redact_secret_patterns( string $value ): string
     {
         $redacted = preg_replace( '/sk-or-[A-Za-z0-9._:-]{4,}/', 'sk-or-[redacted]', $value );
+        $redacted = is_string( $redacted )
+            ? preg_replace( '/Bearer\s+[A-Za-z0-9._~+\/=-]{4,}/i', 'Bearer [redacted]', $redacted )
+            : $redacted;
 
         return is_string( $redacted ) ? $redacted : $value;
     }
