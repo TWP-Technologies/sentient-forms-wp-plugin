@@ -3,7 +3,7 @@
  * Plugin Name: Sentient Forms
  * Plugin URI: https://sentientforms.com
  * Description: Integrate Large Language Models (LLMs) with form builders to automate intelligent actions on form submissions.
- * Version: 0.2.2
+ * Version: 0.3.0
  * Author: TWP Technologies, LLC.
  * Author URI: https://sentientforms.com
  * Text Domain: sentient-forms
@@ -21,7 +21,7 @@ if ( !defined( 'ABSPATH' ) )
 }
 
 // Define plugin constants.
-const SENTIENT_FORMS_VERSION     = '0.2.2';
+const SENTIENT_FORMS_VERSION     = '0.3.0';
 const SENTIENT_FORMS_DB_VERSION  = '2026.05.30.admin_performance_indexes';
 const SENTIENT_FORMS_PLUGIN_FILE = __FILE__;
 const SENTIENT_FORMS_DEFAULT_CPS_BASE_URL = 'https://api.sentientforms.com/v1';

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.2.2...v0.3.0) (2026-06-01)
+
+
+### Bug Fixes
+
+* **admin:** detect security roadblocks without overblaming ([#19](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/issues/19)) ([2499f6a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2499f6a1f479079c64981cb6fc47b412f71d3fc0))
+
+
+### Performance Improvements
+
+* **admin:** collapse WordPress admin bootstrap requests ([#18](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/issues/18)) ([ac249fa](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ac249fa1216fef1969dd69c530a34c0db325e995))
+
+
+### Miscellaneous Chores
+
+* **release:** request 0.3.0 ([949ee63](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/949ee63139da833c8a4cea804a9ef5fccf8bd38e))
+
 ## [0.2.2](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.2.1...v0.2.2) (2026-05-29)
 
 
