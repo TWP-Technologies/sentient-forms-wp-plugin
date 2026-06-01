@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { z } from 'zod';
 import { loginToWpAdmin, wpBaseUrl } from './wp-admin';
 
 const defaultCpsHostUrl = existsSync('/.dockerenv')
@@ -45,6 +46,10 @@ export type BatchSettings = {
 
 export type RealtimeSettings = {
 	checkpointFieldIds?: string[];
+	refreshMode?: 'auto' | 'checkpoint' | 'manual';
+	pageCheckpointsEnabled?: boolean;
+	pageCheckpointMode?: 'all_pages' | 'include_pages' | 'exclude_pages';
+	pageCheckpointPages?: number[];
 	debounceMs?: number;
 	cooldownMs?: number;
 	manualRefreshEnabled?: boolean;
@@ -52,6 +57,29 @@ export type RealtimeSettings = {
 	blockingMode?: 'advisory' | 'require_answers';
 	initialPanelState?: 'open' | 'minimized' | 'hidden_until_interaction';
 };
+
+const realtimeSettingsSchema = z.object({
+	checkpointFieldIds: z.array(z.string()).optional(),
+	refreshMode: z.enum(['auto', 'checkpoint', 'manual']).optional(),
+	pageCheckpointsEnabled: z.boolean().optional(),
+	pageCheckpointMode: z.enum(['all_pages', 'include_pages', 'exclude_pages']).optional(),
+	pageCheckpointPages: z.array(z.number().int()).optional(),
+	debounceMs: z.number().optional(),
+	cooldownMs: z.number().optional(),
+	manualRefreshEnabled: z.boolean().optional(),
+	storageTargetFieldId: z.string().optional(),
+	blockingMode: z.enum(['advisory', 'require_answers']).optional(),
+	initialPanelState: z.enum(['open', 'minimized', 'hidden_until_interaction']).optional()
+});
+
+function parseRealtimeSettings(settings: RealtimeSettings | undefined): RealtimeSettings | undefined {
+	if (!settings) return undefined;
+	const result = realtimeSettingsSchema.safeParse(settings);
+	if (!result.success) {
+		throw new Error(`Invalid realtime settings: ${result.error.issues[0]?.message ?? 'unknown error'}`);
+	}
+	return result.data;
+}
 
 export type ExecutionMode = 'validation' | 'after_submission' | 'real_time';
 
@@ -1175,15 +1203,20 @@ export function configureGravityActionMapping(args: ActionMappingArgs): void {
 				max_wait_seconds: args.batchSettings.maxWaitSeconds ?? 43200
 			}
 		: undefined;
-	const realtimeSettings = args.realtimeSettings
+	const parsedRealtimeSettings = parseRealtimeSettings(args.realtimeSettings);
+	const realtimeSettings = parsedRealtimeSettings
 		? {
-				checkpoint_field_ids: args.realtimeSettings.checkpointFieldIds ?? [],
-				debounce_ms: args.realtimeSettings.debounceMs ?? 600,
-				cooldown_ms: args.realtimeSettings.cooldownMs ?? 8000,
-				manual_refresh_enabled: args.realtimeSettings.manualRefreshEnabled ?? true,
-				storage_target_field_id: args.realtimeSettings.storageTargetFieldId ?? '',
-				blocking_mode: args.realtimeSettings.blockingMode ?? 'advisory',
-				initial_panel_state: args.realtimeSettings.initialPanelState ?? 'minimized'
+				checkpoint_field_ids: parsedRealtimeSettings.checkpointFieldIds ?? [],
+				refresh_mode: parsedRealtimeSettings.refreshMode,
+				page_checkpoints_enabled: parsedRealtimeSettings.pageCheckpointsEnabled,
+				page_checkpoint_mode: parsedRealtimeSettings.pageCheckpointMode,
+				page_checkpoint_pages: parsedRealtimeSettings.pageCheckpointPages,
+				debounce_ms: parsedRealtimeSettings.debounceMs ?? 600,
+				cooldown_ms: parsedRealtimeSettings.cooldownMs ?? 8000,
+				manual_refresh_enabled: parsedRealtimeSettings.manualRefreshEnabled ?? true,
+				storage_target_field_id: parsedRealtimeSettings.storageTargetFieldId ?? '',
+				blocking_mode: parsedRealtimeSettings.blockingMode ?? 'advisory',
+				initial_panel_state: parsedRealtimeSettings.initialPanelState ?? 'minimized'
 			}
 		: undefined;
 	const mappingSettings: Record<string, unknown> = {

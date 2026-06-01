@@ -1,1 +1,0 @@
-import{B as e,F as t,Lt as n,M as r,pt as i,rt as a,ut as o,z as s}from"../chunks/B5HeLmm_.js";import"../chunks/3bfzTCuz.js";var c={};function l(c,l){var u=e();r(`12qhfyh`,e=>{a(()=>{o.title=`Sentient Forms Admin`})}),t(i(u),()=>l.children??n),s(c,u)}export{l as component,c as universal};

@@ -11,6 +11,7 @@ import {
 	waitForPreviewInputs
 } from './utils/wp-e2e-helpers';
 import { installSentientCorsProxy } from './utils/cors-proxy';
+import { saveGreenlightScreenshot } from './utils/greenlight-artifacts';
 import { loginToWpAdmin, wpBaseUrl } from './utils/wp-admin';
 
 const runWpE2E = process.env.SENTIENT_RUN_WP_E2E === '1';
@@ -82,6 +83,7 @@ async function openRealtimePreviewForForm(
 		executionMode: 'real_time',
 		realtimeSettings: {
 			checkpointFieldIds: ['1'],
+			refreshMode: 'checkpoint',
 			debounceMs: 300,
 			cooldownMs: 1000,
 			manualRefreshEnabled,
@@ -180,7 +182,11 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 			});
 		});
 
-		await openRealtimePreview(page, true);
+		await openRealtimePreview(page, true, {
+			pageCheckpointsEnabled: true,
+			pageCheckpointMode: 'include_pages',
+			pageCheckpointPages: [2]
+		});
 
 		await page.fill('input[name="input_2"]', 'non-checkpoint text');
 		await page.locator('input[name="input_1"]').click();
@@ -198,7 +204,8 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await expect(widget).not.toContainText('This hidden field should not render on page 1.');
 		await expect(widget).not.toContainText('Suppressed future-mitigated guidance.');
 		await expect(widget).toContainText('Credits: 3');
-		await expect(widget).toContainText('Run: rt-page-1');
+		await expect(widget).not.toContainText('Run:');
+		await expect(widget).not.toContainText('rt-page-1');
 
 		const nextButton = page.locator('.gform_next_button').first();
 		await expect(nextButton).toBeVisible();
@@ -238,7 +245,7 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await expect.poll(() => requests.length, { timeout: 4000 }).toBe(1);
 
 		const widget = await openRealtimeWidget(page);
-		await widget.locator('.sentient-forms-realtime-widget__refresh').click();
+		await expect(widget.locator('.sentient-forms-realtime-widget__refresh')).toBeHidden();
 		await page.waitForTimeout(700);
 		expect(requests.length).toBe(1);
 	});
@@ -274,6 +281,7 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 			executionMode: 'real_time',
 			realtimeSettings: {
 				checkpointFieldIds: ['1'],
+				refreshMode: 'checkpoint',
 				debounceMs: 300,
 				cooldownMs: 1000,
 				manualRefreshEnabled: true,
@@ -458,6 +466,90 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await expect(widget.locator('.sentient-forms-realtime-widget__error')).toContainText(
 			'Suggestion rate limit exceeded. Please wait and retry.'
 		);
+
+		const nextButton = page.locator('.gform_next_button').first();
+		await expect(nextButton).toBeEnabled();
+		await nextButton.click();
+		await expect(page.locator('textarea[name="input_4"]')).toBeVisible();
+	});
+
+	test('Cloudflare challenge suggest response is non-blocking and visitor-safe', async ({
+		page
+	}) => {
+		await routeSuggestRequests(page, async (route) => {
+			await route.fulfill({
+				status: 403,
+				headers: {
+					'content-type': 'text/html; charset=UTF-8',
+					'cf-mitigated': 'challenge',
+					'cf-ray': '89abc12345def678-ORD',
+					server: 'cloudflare'
+				},
+				body: '<!doctype html><html><title>Just a moment...</title><body>Checking if the site connection is secure.</body></html>'
+			});
+		});
+
+		await openRealtimePreview(page, true);
+
+		await page.fill('input[name="input_1"]', 'checkpoint trigger');
+		await page.locator('input[name="input_2"]').click();
+		const widget = await openRealtimeWidget(page);
+		const error = widget.locator('.sentient-forms-realtime-widget__error');
+		await expect(error).toContainText(
+			'this request reached the site security layer before WordPress could process it'
+		);
+		await expect(error).toContainText('You can keep filling out the form');
+		await expect(error).not.toContainText('Cloudflare');
+		await expect(error).not.toContainText('Ray');
+		await expect(error).not.toContainText('89abc12345def678-ORD');
+
+		await saveGreenlightScreenshot(widget, 'realtime-cloudflare-challenge-visitor-safe');
+
+		const nextButton = page.locator('.gform_next_button').first();
+		await expect(nextButton).toBeEnabled();
+		await nextButton.click();
+		await expect(page.locator('textarea[name="input_4"]')).toBeVisible();
+	});
+
+	test('expired realtime config fails open before sending a stale nonce request', async ({
+		page
+	}) => {
+		let suggestRequests = 0;
+		await routeSuggestRequests(page, async (route) => {
+			suggestRequests += 1;
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ status: 'success', suggestions: [] })
+			});
+		});
+
+		await openRealtimePreview(page, true);
+		await page.evaluate((targetFormId) => {
+			const runtime = (
+				window as typeof window & {
+					__sentientRealtimeSuggestionsRuntime?: {
+						forms?: Record<string, { config?: { config_expires_at?: number } }>;
+					};
+				}
+			).__sentientRealtimeSuggestionsRuntime;
+			const formState = runtime?.forms?.[String(targetFormId)];
+			if (!formState?.config) {
+				throw new Error(`Realtime runtime state missing for form ${targetFormId}`);
+			}
+			formState.config.config_expires_at = Math.floor(Date.now() / 1000) - 60;
+		}, formId);
+
+		await page.fill('input[name="input_1"]', 'checkpoint trigger');
+		await page.locator('input[name="input_2"]').click();
+		const widget = await openRealtimeWidget(page);
+		const error = widget.locator('.sentient-forms-realtime-widget__error');
+		await expect(error).toContainText('cached page is using an expired security token');
+		await expect(error).toContainText('Reload this page before trying again.');
+		await page.waitForTimeout(400);
+		expect(suggestRequests).toBe(0);
+
+		await saveGreenlightScreenshot(widget, 'realtime-expired-config-fails-open');
 
 		const nextButton = page.locator('.gform_next_button').first();
 		await expect(nextButton).toBeEnabled();

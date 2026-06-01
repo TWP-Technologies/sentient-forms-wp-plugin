@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+	SITE_CONTEXT_DEFAULT_TOOLS,
+	compactSiteContextModelSelection,
+	normalizeSiteContextModelSelection,
 	normalizeSiteContextResponse,
 	siteContextModelSelectionChanged
 } from '$lib/utils/site-context';
@@ -86,5 +89,67 @@ describe('siteContextModelSelectionChanged', () => {
 				}
 			)
 		).toBe(false);
+	});
+
+	it('treats omitted default tool settings as unchanged', () => {
+		expect(
+			siteContextModelSelectionChanged(
+				{
+					primary: 'sf_research',
+					is_preset: true,
+					provider: 'openrouter'
+				},
+				{
+					primary: 'sf_research',
+					is_preset: true,
+					provider: 'openrouter',
+					tools: {
+						tool_choice: 'auto',
+						web_search: {
+							mode: 'required',
+							max_results: 5
+						},
+						web_fetch: {
+							mode: 'auto'
+						}
+					}
+				}
+			)
+		).toBe(false);
+	});
+
+	it('omits default tool settings from outgoing Site Context payloads', () => {
+		expect(
+			compactSiteContextModelSelection({
+				primary: 'sf_research',
+				is_preset: true,
+				provider: 'openrouter',
+				tools: {
+					tool_choice: 'auto',
+					web_search: {
+						mode: 'required',
+						max_results: 5
+					},
+					web_fetch: {
+						mode: 'auto'
+					}
+				}
+			})
+		).toEqual({
+			primary: 'sf_research',
+			is_preset: true,
+			provider: 'openrouter'
+		});
+	});
+
+	it('falls back to default tool settings for malformed tool payloads', () => {
+		expect(
+			normalizeSiteContextModelSelection({
+				primary: 'sf_research',
+				is_preset: true,
+				provider: 'openrouter',
+				tools: ['not-a-record']
+			} as unknown as Parameters<typeof normalizeSiteContextModelSelection>[0]).tools
+		).toEqual(SITE_CONTEXT_DEFAULT_TOOLS);
 	});
 });

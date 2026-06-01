@@ -3,6 +3,11 @@ import {
 	announceWordPressSessionExpired,
 	isWordPressSessionExpired
 } from '$lib/api/session-expiry';
+import {
+	announceSecurityRoadblock,
+	classifySecurityRoadblock,
+	notifySecurityRoadblock
+} from '$lib/api/security-roadblock';
 import { notifications } from '$lib/stores/notifications';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -78,8 +83,18 @@ export class ApiError extends Error {
         super(message);
         this.status = status;
         this.payload = payload;
-        if (isApiErrorPayload(payload) && payload.error_code) {
-            this.code = payload.error_code;
+        if (isApiErrorPayload(payload)) {
+            const directCode =
+                stringValue(payload.code) || stringValue(payload.error_code);
+            const nestedCode =
+                payload.error && typeof payload.error === 'object'
+                    ? stringValue((payload.error as { code?: unknown }).code)
+                    : '';
+            if (directCode) {
+                this.code = directCode;
+            } else if (nestedCode) {
+                this.code = nestedCode;
+            }
         }
     }
 }
@@ -127,6 +142,15 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 	const payload = hasNoBody ? null : isJson ? await response.json() : await response.text();
 
 	if (!response.ok) {
+        const securityRoadblock = classifySecurityRoadblock(response, payload);
+        if (securityRoadblock) {
+            announceSecurityRoadblock(securityRoadblock);
+            if (showNotifications) {
+                notifySecurityRoadblock(securityRoadblock);
+            }
+            throw new ApiError(securityRoadblock.message, response.status, securityRoadblock);
+        }
+
         const error = new ApiError('Request failed', response.status, payload);
         const sessionExpired = isWordPressSessionExpired(response.status, payload);
         if (sessionExpired) {
@@ -141,6 +165,15 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
     return payload as T;
 }
 
-function isApiErrorPayload(payload: unknown): payload is { message?: string; error_code?: string } {
+function stringValue(value: unknown): string {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : '';
+}
+
+function isApiErrorPayload(payload: unknown): payload is {
+	code?: string;
+	message?: string;
+	error_code?: string;
+	error?: { code?: string; message?: string };
+} {
     return Boolean(payload && typeof payload === 'object');
 }

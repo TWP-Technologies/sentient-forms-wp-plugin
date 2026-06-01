@@ -2,11 +2,18 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { SESSION_EXPIRED_EVENT } from '$lib/api/session-expiry';
+	import {
+		SECURITY_ROADBLOCK_EVENT,
+		type SecurityRoadblockDetail
+	} from '$lib/api/security-roadblock';
 	import sentientFormsLogo from '$lib/assets/sentient-forms-logo-horizontal.svg';
 	import PrivacySetupAssistant from '$lib/components/privacy-setup-assistant.svelte';
 	import WpAdminNoticeTray from '$lib/components/wp-admin-notice-tray.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
 	import type { PluginSettingsResponse } from '$lib/api/types';
+	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
+	import RotateCwIcon from '@lucide/svelte/icons/rotate-cw';
+	import ShieldAlertIcon from '@lucide/svelte/icons/shield-alert';
 	import {
 		appHref,
 		deriveActivePath,
@@ -16,7 +23,7 @@
 		routerType,
 		type NavigationLinkPath
 	} from '$lib/navigation';
-	import { Alert, Button } from '$lib/components/ui';
+	import { Alert, Badge, Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
 
 	interface Props {
@@ -51,6 +58,12 @@
 	let sessionExpiredMessage = $state(
 		'WordPress session expired. Reload this admin page before retrying.'
 	);
+	let securityRoadblock = $state<SecurityRoadblockDetail | null>(null);
+	let securityRoadblockDetailsOpen = $state(false);
+	const hasSecurityRoadblockDetails = $derived(
+		Boolean(securityRoadblock?.rayId || securityRoadblock?.providerDetails?.length)
+	);
+	const canRetrySecurityRoadblock = $derived(Boolean(securityRoadblock?.retryEventName));
 
 	function handleNavClick(event: MouseEvent, path: NavigationLinkPath): void {
 		if (event.defaultPrevented || event.button !== 0) return;
@@ -62,6 +75,14 @@
 	function reloadAdminPage(): void {
 		if (typeof window === 'undefined') return;
 		window.location.reload();
+	}
+
+	function retrySecurityRoadblock(): void {
+		if (typeof window === 'undefined' || !securityRoadblock?.retryEventName) return;
+		const detail = securityRoadblock;
+		securityRoadblock = null;
+		securityRoadblockDetailsOpen = false;
+		window.dispatchEvent(new CustomEvent(detail.retryEventName, { detail }));
 	}
 
 	function updateWpAdminOffset(): void {
@@ -243,7 +264,15 @@
 			sessionExpired = true;
 		};
 
+		const handleSecurityRoadblock = (event: Event) => {
+			const detail = (event as CustomEvent<SecurityRoadblockDetail>).detail;
+			if (!detail) return;
+			securityRoadblock = detail;
+			securityRoadblockDetailsOpen = false;
+		};
+
 		window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+		window.addEventListener(SECURITY_ROADBLOCK_EVENT, handleSecurityRoadblock);
 		window.addEventListener('resize', updateWpAdminOffset);
 		const adminOffsetObserver = new MutationObserver(updateWpAdminOffset);
 		adminOffsetObserver.observe(document.body, {
@@ -255,6 +284,7 @@
 		return () => {
 			window.removeEventListener('sentient-forms:open-privacy-setup', openAssistant);
 			window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+			window.removeEventListener(SECURITY_ROADBLOCK_EVENT, handleSecurityRoadblock);
 			window.removeEventListener('resize', updateWpAdminOffset);
 			adminOffsetObserver.disconnect();
 		};
@@ -309,6 +339,83 @@
 							<Button size="sm" onclick={reloadAdminPage} data-testid="session-expired-reload">
 								Reload admin
 							</Button>
+						</div>
+					</Alert>
+				{/if}
+				{#if securityRoadblock}
+					<Alert
+						variant="warning"
+						class="sf:mb-4 sf:border-warning-200 sf:bg-white sf:text-slate-900"
+						data-testid="security-roadblock-banner"
+					>
+						<div
+							class="sf:flex sf:flex-col sf:gap-3 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between"
+						>
+							<div class="sf:flex sf:min-w-0 sf:gap-3">
+								<span
+									class="sf:mt-0.5 sf:flex sf:h-8 sf:w-8 sf:flex-none sf:items-center sf:justify-center sf:rounded sf:border sf:border-warning-200 sf:bg-warning-50 sf:text-warning-700"
+									aria-hidden="true"
+								>
+									<ShieldAlertIcon class="sf:h-4 sf:w-4" />
+								</span>
+								<div class="sf:min-w-0">
+									<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+										<Badge variant="warning">{securityRoadblock.label}</Badge>
+										<p class="sf:text-sm sf:font-semibold sf:text-slate-950">Request interrupted</p>
+									</div>
+									<p class="sf:mt-1 sf:text-sm sf:text-slate-700">
+										{securityRoadblock.message}
+									</p>
+									{#if hasSecurityRoadblockDetails}
+										<details
+											class="sf:mt-2 sf:text-xs sf:text-slate-600"
+											bind:open={securityRoadblockDetailsOpen}
+										>
+											<summary class="sf:cursor-pointer sf:font-medium sf:text-slate-700">
+												Technical details
+											</summary>
+											<dl class="sf:mt-2 sf:grid sf:gap-1 sf:sm:grid-cols-[8rem_minmax(0,1fr)]">
+												{#if securityRoadblock.rayId}
+													<dt class="sf:font-medium">Cloudflare Ray ID</dt>
+													<dd class="sf:min-w-0 sf:break-all sf:font-mono">
+														{securityRoadblock.rayId}
+													</dd>
+												{/if}
+												{#each securityRoadblock.providerDetails ?? [] as detail}
+													<dt class="sf:font-medium">Signal</dt>
+													<dd class="sf:min-w-0 sf:break-all sf:font-mono">{detail}</dd>
+												{/each}
+											</dl>
+										</details>
+									{/if}
+								</div>
+							</div>
+							<div class="sf:flex sf:flex-none sf:gap-2 sf:self-start">
+								{#if canRetrySecurityRoadblock}
+									<Button
+										size="sm"
+										variant="secondary"
+										iconOnly
+										title="Retry request"
+										aria-label="Retry request"
+										onclick={retrySecurityRoadblock}
+										data-testid="security-roadblock-retry"
+									>
+										<RefreshCwIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+									</Button>
+								{/if}
+								<Button
+									size="sm"
+									variant="secondary"
+									iconOnly
+									title="Reload admin"
+									aria-label="Reload admin"
+									onclick={reloadAdminPage}
+									data-testid="security-roadblock-reload"
+								>
+									<RotateCwIcon class="sf:h-4 sf:w-4" aria-hidden="true" />
+								</Button>
+							</div>
 						</div>
 					</Alert>
 				{/if}

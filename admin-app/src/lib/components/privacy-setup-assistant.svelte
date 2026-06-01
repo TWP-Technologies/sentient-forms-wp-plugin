@@ -14,6 +14,7 @@
 		DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
 		DEFAULT_SITE_CONTEXT_REFRESH_DAYS,
 		SITE_CONTEXT_REFRESH_DAY_OPTIONS,
+		compactSiteContextModelSelection,
 		normalizeSiteContextResponse,
 		siteContextGenerateDisabledMessage,
 		siteContextModelSelectionChanged,
@@ -248,7 +249,7 @@
 			consent_status: siteContextConsent ? 'granted' : 'unset',
 			auto_refresh_enabled: siteContextConsent && siteContextAutoRefresh,
 			auto_refresh_days: siteContextRefreshDays,
-			generation_model_selection: siteContextModelSelection
+			generation_model_selection: compactSiteContextModelSelection(siteContextModelSelection)
 		};
 	}
 
@@ -270,7 +271,8 @@
 		try {
 			const response = await wpFetch<SiteContextStatusResponse>('site-context', {
 				method: 'PUT',
-				body: JSON.stringify(siteContextPayload())
+				body: JSON.stringify(siteContextPayload()),
+				showNotifications: false
 			});
 			syncSiteContext(normalizeSiteContextResponse(response));
 			notifications.success('Site Context setup saved');
@@ -286,7 +288,7 @@
 				siteContextApplyError = message;
 				await focusApplyError();
 			}
-			notifications.error('Unable to save Site Context setup');
+			notifications.error(message);
 			return false;
 		} finally {
 			siteContextSaving = false;
@@ -306,14 +308,15 @@
 		try {
 			const response = await wpFetch<SiteContextStatusResponse>('site-context/generate', {
 				method: 'POST',
-				body: JSON.stringify(siteContextPayload())
+				body: JSON.stringify(siteContextPayload()),
+				showNotifications: false
 			});
 			syncSiteContext(normalizeSiteContextResponse(response));
 			notifications.success('Site Context generated');
 		} catch (error) {
 			console.error('Failed to generate Site Context', error);
 			siteContextError = readableError(error, 'Unable to generate Site Context.');
-			notifications.error('Unable to generate Site Context');
+			notifications.error(siteContextError);
 		} finally {
 			siteContextGenerating = false;
 		}

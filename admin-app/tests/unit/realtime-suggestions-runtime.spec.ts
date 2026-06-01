@@ -304,7 +304,7 @@ describe('realtime suggestions runtime', () => {
 		expect(toggle?.textContent).toBe('Hide');
 	});
 
-	it('renders metering summary with credits and correlation id', async () => {
+	it('renders metering summary without exposing internal run identifiers', async () => {
 		const fetchMock = vi.fn().mockResolvedValue({
 			ok: true,
 			json: async () => ({
@@ -343,7 +343,8 @@ describe('realtime suggestions runtime', () => {
 		expect(metering).not.toBeNull();
 		expect(metering?.hidden).toBe(false);
 		expect(metering?.textContent).toContain('Credits: 4');
-		expect(metering?.textContent).toContain('Run: rt-corr-123');
+		expect(metering?.textContent).not.toContain('Run: rt-corr-123');
+		expect(metering?.textContent).not.toContain('rt-corr-123');
 	});
 
 	it('shows HTTP status when suggestion endpoint returns non-JSON error markup', async () => {
@@ -364,6 +365,188 @@ describe('realtime suggestions runtime', () => {
 		expect(error?.hidden).toBe(false);
 		expect(error?.textContent).toContain('Suggestion request failed with HTTP 502.');
 		expect(error?.textContent).not.toContain('Unexpected token');
+	});
+
+	it('shows a visitor-safe message when a site security layer challenges suggestions', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 403,
+			headers: new Headers({
+				'content-type': 'text/html',
+				'cf-mitigated': 'challenge',
+				'cf-ray': 'a037249e8cf5ff58-ORD'
+			}),
+			text: async () => '<html><title>Just a moment...</title></html>'
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig();
+		evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		const error = document.querySelector<HTMLElement>('[data-role="error"]');
+		expect(error).not.toBeNull();
+		expect(error?.hidden).toBe(false);
+		expect(error?.textContent).toContain(
+			'Suggestions could not refresh because this request reached the site security layer before WordPress could process it.'
+		);
+		expect(error?.textContent).not.toContain('Cloudflare');
+		expect(error?.textContent).not.toContain('a037249e8cf5ff58');
+	});
+
+	it('shows a visitor-safe message for Cloudflare branded HTML block pages', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 403,
+			headers: new Headers({
+				'content-type': 'text/html',
+				server: 'cloudflare'
+			}),
+			text: async () =>
+				'<html><title>Attention Required! | Cloudflare</title><body>Ray ID: a037249e8cf5ff58-ORD</body></html>'
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig();
+		evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		const error = document.querySelector<HTMLElement>('[data-role="error"]');
+		expect(error).not.toBeNull();
+		expect(error?.hidden).toBe(false);
+		expect(error?.textContent).toContain(
+			'Suggestions could not refresh because this request reached the site security layer before WordPress could process it.'
+		);
+		expect(error?.textContent).not.toContain('Cloudflare');
+		expect(error?.textContent).not.toContain('a037249e8cf5ff58');
+	});
+
+	it('does not label ordinary JSON rate limits as site security roadblocks', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 429,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			text: async () =>
+				JSON.stringify({ message: 'Suggestion rate limit exceeded. Please wait and retry.' })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig();
+		evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		const error = document.querySelector<HTMLElement>('[data-role="error"]');
+		expect(error).not.toBeNull();
+		expect(error?.hidden).toBe(false);
+		expect(error?.textContent).toContain('Suggestion rate limit exceeded. Please wait and retry.');
+		expect(error?.textContent).not.toContain('site security layer');
+	});
+
+	it('does not label Cloudflare-proxied JSON rate limits as site security roadblocks', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 429,
+			headers: new Headers({
+				'content-type': 'application/json',
+				server: 'cloudflare'
+			}),
+			text: async () =>
+				JSON.stringify({
+					message: 'You are rate limited by Sentient Forms. Please wait and retry.'
+				})
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig();
+		evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		const error = document.querySelector<HTMLElement>('[data-role="error"]');
+		expect(error).not.toBeNull();
+		expect(error?.hidden).toBe(false);
+		expect(error?.textContent).toContain(
+			'You are rate limited by Sentient Forms. Please wait and retry.'
+		);
+		expect(error?.textContent).not.toContain('site security layer');
+		expect(error?.textContent).not.toContain('Cloudflare');
+	});
+
+	it('does not label Cloudflare-proxied JSON security errors as site security roadblocks', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 403,
+			headers: new Headers({
+				'content-type': 'application/json',
+				server: 'cloudflare'
+			}),
+			text: async () =>
+				JSON.stringify({ message: 'Your site security settings prevent this action.' })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig();
+		evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		const error = document.querySelector<HTMLElement>('[data-role="error"]');
+		expect(error).not.toBeNull();
+		expect(error?.hidden).toBe(false);
+		expect(error?.textContent).toContain('Your site security settings prevent this action.');
+		expect(error?.textContent).not.toContain('site security layer');
+	});
+
+	it('shows a reload message when a cached page has an expired realtime token', async () => {
+		vi.setSystemTime(new Date('2026-05-30T12:00:00Z'));
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({ suggestions: [] })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig({
+			config_expires_at: Math.floor(Date.now() / 1000) - 60
+		});
+		evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		const error = document.querySelector<HTMLElement>('[data-role="error"]');
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(error).not.toBeNull();
+		expect(error?.hidden).toBe(false);
+		expect(error?.textContent).toContain(
+			'Suggestions could not refresh because this cached page is using an expired security token.'
+		);
+	});
+
+	it('replaces nonce diagnostics with a reload-oriented visitor message', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 403,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			text: async () =>
+				JSON.stringify({
+					code: 'rest_cookie_invalid_nonce',
+					message: 'Cookie check failed'
+				})
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig();
+		evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		const error = document.querySelector<HTMLElement>('[data-role="error"]');
+		expect(error).not.toBeNull();
+		expect(error?.hidden).toBe(false);
+		expect(error?.textContent).toContain('page security token expired');
+		expect(error?.textContent).not.toContain('Cookie check failed');
 	});
 
 	it('hides realtime schema diagnostics behind a visitor-safe error message', async () => {

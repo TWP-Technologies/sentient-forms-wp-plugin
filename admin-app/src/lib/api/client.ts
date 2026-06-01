@@ -4,6 +4,12 @@ import {
 	announceWordPressSessionExpired,
 	isWordPressSessionExpired
 } from '$lib/api/session-expiry';
+import {
+	announceSecurityRoadblock,
+	classifySecurityRoadblock,
+	isSecurityRoadblockPayload,
+	notifySecurityRoadblock
+} from '$lib/api/security-roadblock';
 import { notifications } from '$lib/stores/notifications';
 import type {
 	ActionDefinition,
@@ -2112,6 +2118,10 @@ export class SentientFormsApiClient {
 			parsed = await this.parseResponseBody(response);
 
 			if (!response.ok) {
+				const securityRoadblock = classifySecurityRoadblock(response, parsed);
+				if (securityRoadblock) {
+					throw new ApiClientError(securityRoadblock.message, response.status, securityRoadblock);
+				}
 				throw new ApiClientError('Request failed', response.status, parsed);
 			}
 
@@ -2166,6 +2176,14 @@ export class SentientFormsApiClient {
 	private handleRequestError(error: unknown, parsed: unknown, showNotifications?: boolean): never {
 		const clientError =
 			error instanceof ApiClientError ? error : coerceToApiClientError(error, parsed);
+		if (isSecurityRoadblockPayload(clientError.payload)) {
+			announceSecurityRoadblock(clientError.payload);
+			if (showNotifications ?? this.notifyErrors) {
+				notifySecurityRoadblock(clientError.payload);
+			}
+			throw clientError;
+		}
+
 		const sessionExpired = isWordPressSessionExpired(clientError.status, clientError.payload);
 		if (sessionExpired) {
 			announceWordPressSessionExpired(clientError.payload);

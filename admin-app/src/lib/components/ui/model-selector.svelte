@@ -869,13 +869,38 @@
 		}
 	}
 
-	function buildSelectionPayload(selection: ModelSelection) {
+	function compactSelectionForResolve(selection: ModelSelection | null | undefined) {
+		if (!selection) return undefined;
+		const { tools: _tools, ...compact } = selection;
+		return compact;
+	}
+
+	function payloadSelection(
+		selection: ModelSelection | null | undefined,
+		options: { compactTools?: boolean } = {}
+	) {
+		return options.compactTools ? compactSelectionForResolve(selection) : (selection ?? undefined);
+	}
+
+	function buildSelectionPayload(
+		selection: ModelSelection,
+		options: { compactTools?: boolean } = {}
+	) {
 		return {
 			template_model_hint: templateModelHint ?? undefined,
-			global_selection: level === 'global' ? selection : (globalSelection ?? undefined),
-			action_selection: level === 'action' ? selection : (actionSelection ?? undefined),
-			form_selection: level === 'form' ? selection : (formSelection ?? undefined),
-			mapping_selection: level === 'mapping' ? selection : (mappingSelection ?? undefined)
+			global_selection: payloadSelection(
+				level === 'global' ? selection : globalSelection,
+				options
+			),
+			action_selection: payloadSelection(
+				level === 'action' ? selection : actionSelection,
+				options
+			),
+			form_selection: payloadSelection(level === 'form' ? selection : formSelection, options),
+			mapping_selection: payloadSelection(
+				level === 'mapping' ? selection : mappingSelection,
+				options
+			)
 		};
 	}
 
@@ -892,13 +917,14 @@
 		resolving = true;
 		resolutionError = null;
 		const selectionPayload = buildSelectionPayload(selection);
+		const resolutionPayload = buildSelectionPayload(selection, { compactTools: true });
 
 		try {
 			const resolvedResponse = await wpFetch<
 				ResolvedModelSelection | RestEnvelope<ResolvedModelSelection>
 			>('models/resolve', {
 				method: 'POST',
-				body: selectionPayload,
+				body: resolutionPayload,
 				showNotifications: false
 			});
 

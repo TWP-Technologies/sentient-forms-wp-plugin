@@ -8,6 +8,10 @@ import {
 	SESSION_EXPIRED_EVENT,
 	resetSessionExpiryAnnouncementForTests
 } from '$lib/api/session-expiry';
+import {
+	SECURITY_ROADBLOCK_EVENT,
+	resetSecurityRoadblockAnnouncementForTests
+} from '$lib/api/security-roadblock';
 import type { LicenseActivationRequest } from '$lib/api/types';
 import { notifications } from '$lib/stores/notifications';
 
@@ -35,6 +39,7 @@ describe('SentientFormsApiClient', () => {
 		mockFetch.mockReset();
 		clearSentientFormsApiCache();
 		resetSessionExpiryAnnouncementForTests();
+		resetSecurityRoadblockAnnouncementForTests();
 	});
 
 	it('deduplicates concurrent cached GET requests', async () => {
@@ -1624,6 +1629,82 @@ describe('SentientFormsApiClient', () => {
 		);
 
 		window.removeEventListener(SESSION_EXPIRED_EVENT, sessionHandler);
+	});
+
+	it('surfaces probable Cloudflare rate limits without treating them as WordPress sessions', async () => {
+		const errors = vi.spyOn(notifications, 'error');
+		const sessionHandler = vi.fn();
+		const securityHandler = vi.fn();
+		window.addEventListener(SESSION_EXPIRED_EVENT, sessionHandler);
+		window.addEventListener(SECURITY_ROADBLOCK_EVENT, securityHandler);
+
+		mockFetch.mockResolvedValue({
+			ok: false,
+			status: 429,
+			headers: new Headers({
+				'content-type': 'text/html',
+				server: 'cloudflare',
+				'cf-ray': 'rate-limit-ray'
+			}),
+			text: () => Promise.resolve('<html><h1>Error 1015</h1><p>You are being rate limited</p></html>')
+		});
+
+		await expect(client.getSettings({ showNotifications: true })).rejects.toMatchObject({
+			code: 'security_roadblock_interrupted_request',
+			status: 429,
+			message: 'This request reached a site security layer before WordPress could process it.'
+		});
+
+		expect(securityHandler).toHaveBeenCalledTimes(1);
+		expect(securityHandler.mock.calls[0]?.[0].detail).toMatchObject({
+			label: 'Cloudflare rate limit suspected',
+			kind: 'cloudflare_rate_limit',
+			confidence: 'suspected',
+			rayId: 'rate-limit-ray'
+		});
+		expect(sessionHandler).not.toHaveBeenCalled();
+		expect(errors).toHaveBeenCalledWith(
+			'Cloudflare rate limit suspected: This request reached a site security layer before WordPress could process it.'
+		);
+
+		window.removeEventListener(SESSION_EXPIRED_EVENT, sessionHandler);
+		window.removeEventListener(SECURITY_ROADBLOCK_EVENT, securityHandler);
+	});
+
+	it('keeps Cloudflare-proxied origin rate limits on the normal API error path', async () => {
+		const errors = vi.spyOn(notifications, 'error');
+		const securityHandler = vi.fn();
+		window.addEventListener(SECURITY_ROADBLOCK_EVENT, securityHandler);
+
+		mockFetch.mockResolvedValue({
+			ok: false,
+			status: 429,
+			headers: new Headers({
+				'content-type': 'application/json',
+				server: 'cloudflare'
+			}),
+			json: () =>
+				Promise.resolve({
+					code: 'rate_limited',
+					message: 'You are rate limited by Sentient Forms. Please wait and retry.'
+				})
+		});
+
+		await expect(client.getSettings({ showNotifications: true })).rejects.toMatchObject({
+			message: 'Request failed',
+			status: 429,
+			payload: {
+				code: 'rate_limited',
+				message: 'You are rate limited by Sentient Forms. Please wait and retry.'
+			}
+		});
+
+		expect(securityHandler).not.toHaveBeenCalled();
+		expect(errors).toHaveBeenCalledWith(
+			'You are rate limited by Sentient Forms. Please wait and retry.'
+		);
+
+		window.removeEventListener(SECURITY_ROADBLOCK_EVENT, securityHandler);
 	});
 
 	it('creates a local custom action in WordPress-local tables', async () => {

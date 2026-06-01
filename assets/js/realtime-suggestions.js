@@ -39,6 +39,25 @@
 		}
 
 		if (
+			/rest_cookie_invalid_nonce/i.test(raw) ||
+			/cookie check failed/i.test(raw) ||
+			/invalid nonce/i.test(raw)
+		) {
+			return 'Suggestions could not refresh because this page security token expired. Reload this page before trying again.';
+		}
+
+		if (
+			/cloudflare/i.test(raw) ||
+			/\berror\s*1015\b/i.test(raw) ||
+			/\berror\s*1020\b/i.test(raw) ||
+			/access denied/i.test(raw) ||
+			/just a moment/i.test(raw) ||
+			/site security layer/i.test(raw)
+		) {
+			return 'Suggestions could not refresh because this request reached the site security layer before WordPress could process it. You can keep filling out the form and try again shortly.';
+		}
+
+		if (
 			/structured_output/i.test(raw) ||
 			/local action schema/i.test(raw) ||
 			/provider response did not match/i.test(raw) ||
@@ -50,6 +69,103 @@
 		}
 
 		return raw || 'Suggestion request failed.';
+	}
+
+	function responseHeader(response, name) {
+		if (!response || !response.headers || typeof response.headers.get !== 'function') {
+			return '';
+		}
+		return normalizeFieldId(response.headers.get(name));
+	}
+
+	function hasCloudflareBlockSignal(text, isHtml) {
+		var cloudflareHtmlSignal =
+			isHtml &&
+			/cloudflare|cf-error|cf-chl|cf-error-details|ray id|attention required|you are unable to access|sorry, you have been blocked/i.test(
+				text
+			);
+
+		return (
+			/\berror\s*1020\b/i.test(text) ||
+			/(cloudflare.{0,80}(access denied|request blocked|blocked by|firewall|waf|blocked)|(?:access denied|request blocked|blocked by|firewall|waf|blocked).{0,80}cloudflare)/i.test(
+				text
+			) ||
+			cloudflareHtmlSignal
+		);
+	}
+
+	function hasCloudflareRateLimitSignal(response, text, isHtml) {
+		var lower = normalizeFieldId(text).toLowerCase();
+		var cfMitigated = responseHeader(response, 'cf-mitigated').toLowerCase();
+		var cloudflareHtmlSignal =
+			isHtml && /cloudflare|cf-error|cf-error-details|ray id/i.test(text);
+
+		return (
+			/\berror\s*1015\b/i.test(text) ||
+			(cfMitigated === 'challenge' && lower.indexOf('rate limit') >= 0) ||
+			(cloudflareHtmlSignal &&
+				(lower.indexOf('you are being rate limited') >= 0 ||
+					lower.indexOf('rate limit') >= 0))
+		);
+	}
+
+	function publicRoadblockMessage(response, bodyText) {
+		var text = normalizeFieldId(bodyText);
+		var lower = text.toLowerCase();
+		var contentType = responseHeader(response, 'content-type').toLowerCase();
+		var isHtml =
+			contentType.indexOf('text/html') >= 0 ||
+			/<!doctype html|<html|<title/i.test(text);
+		var cfMitigated = responseHeader(response, 'cf-mitigated').toLowerCase();
+		var hasCloudflareSignal =
+			!!responseHeader(response, 'cf-ray') ||
+			responseHeader(response, 'server').toLowerCase().indexOf('cloudflare') >= 0 ||
+			/cloudflare|cf-error|cf-chl|cf-browser-verification/i.test(text);
+
+		if (cfMitigated === 'challenge') {
+			return publicSuggestionErrorMessage('Cloudflare challenge interrupted the request.', response.status);
+		}
+
+		if (
+			hasCloudflareSignal &&
+			hasCloudflareRateLimitSignal(response, text, isHtml)
+		) {
+			return publicSuggestionErrorMessage('Cloudflare rate limited this request.', response.status);
+		}
+
+		if (
+			hasCloudflareSignal &&
+			(response.status === 403 || response.status === 429) &&
+			hasCloudflareBlockSignal(text, isHtml)
+		) {
+			return publicSuggestionErrorMessage('Cloudflare block interrupted the request.', response.status);
+		}
+
+		if (
+			isHtml &&
+			(response.status === 401 ||
+				response.status === 403 ||
+				response.status === 406 ||
+				response.status === 429 ||
+				response.status === 503) &&
+			/(access denied|blocked|challenge|captcha|verify you are human|just a moment|rate limit|security)/i.test(text)
+		) {
+			return publicSuggestionErrorMessage('Site security layer interrupted the request.', response.status);
+		}
+
+		return '';
+	}
+
+	function runtimeConfigExpiredMessage() {
+		return 'Suggestions could not refresh because this cached page is using an expired security token. Reload this page before trying again.';
+	}
+
+	function isRuntimeConfigExpired(formState) {
+		var expiresAt = parseInt(formState.config && formState.config.config_expires_at, 10);
+		if (!Number.isFinite(expiresAt) || expiresAt <= 0) {
+			return false;
+		}
+		return Math.floor(Date.now() / 1000) > expiresAt;
 	}
 
 	function resolveInitialPanelState(config) {
@@ -627,7 +743,7 @@
 		return mappingId + '-s-' + index + '-' + hashString(source);
 	}
 
-	function normalizeSuggestions(value, mappingId, completedItems, executionRequestId) {
+	function normalizeSuggestions(value, mappingId, completedItems) {
 		return asArray(value).map(function (item, index) {
 			if (!item || typeof item !== 'object') {
 				return null;
@@ -645,8 +761,7 @@
 				jump_target_field_id: normalizeFieldId(item.jump_target_field_id || fieldId),
 				severity: normalizeFieldId(item.severity || 'info').toLowerCase(),
 				message: message,
-				completed: completedItems[suggestionId] === true,
-				last_execution_request_id: executionRequestId || ''
+				completed: completedItems[suggestionId] === true
 			};
 		}).filter(Boolean);
 	}
@@ -890,6 +1005,20 @@
 		var timeoutMs = Math.max(0, parseInt(triggerOptions && triggerOptions.timeoutMs, 10) || 0);
 		var isPreSubmit = reason === 'pre_submit';
 
+		if (isRuntimeConfigExpired(formState)) {
+			var expiredMessage = runtimeConfigExpiredMessage();
+			if (!isPreSubmit) {
+				state.error = expiredMessage;
+				formState.lastGlobalError = expiredMessage;
+				renderWidget(formState);
+			}
+			return Promise.resolve({
+				status: 'error',
+				reason: 'runtime_config_expired',
+				error: expiredMessage
+			});
+		}
+
 		if (!bypassCooldown && state.lastRunAt > 0 && now - state.lastRunAt < cooldownMs) {
 			renderWidget(formState);
 			return Promise.resolve({ status: 'skipped', reason: 'cooldown' });
@@ -965,8 +1094,13 @@
 							payload = null;
 						}
 
-						var message = payload && payload.message
-							? payload.message
+						var roadblockMessage = publicRoadblockMessage(response, bodyText);
+						if (roadblockMessage) {
+							throw new Error(roadblockMessage);
+						}
+
+						var message = payload && (payload.message || (payload.error && payload.error.message))
+							? payload.message || payload.error.message
 							: 'Suggestion request failed with HTTP ' + response.status + '.';
 						throw new Error(publicSuggestionErrorMessage(message, response.status));
 					});
@@ -980,8 +1114,7 @@
 					var normalizedSuggestions = normalizeSuggestions(
 						suggestions,
 						mappingId,
-						state.completedItems,
-						executionRequestId
+						state.completedItems
 					);
 					rememberSuggestions(state, normalizedSuggestions);
 					state.suggestions = suggestionsFromHistory(state);
@@ -1312,13 +1445,9 @@
 			credits = meta.pricing.credits_debited_final;
 		}
 
-		var correlationId = normalizeFieldId(meta.correlation_id || meta.execution_request_id);
 		var parts = [];
 		if (credits !== null) {
 			parts.push('Credits: ' + credits);
-		}
-		if (correlationId) {
-			parts.push('Run: ' + correlationId);
 		}
 
 		return parts.join(' \u00B7 ');
@@ -1342,7 +1471,9 @@
 
 			widget.hidden =
 				formState.initialPanelState === 'hidden_until_interaction' && !formState.hasUserInteracted;
-			subtitle.textContent = anyInFlight ? 'Checking...' : formatTimestamp(formState.lastUpdatedAt);
+			subtitle.textContent = anyInFlight
+				? 'Checking...'
+				: (formState.lastGlobalError ? 'Needs attention' : formatTimestamp(formState.lastUpdatedAt));
 			toggleButton.textContent = formState.isOpen ? 'Hide' : 'Show';
 		toggleButton.setAttribute('aria-expanded', formState.isOpen ? 'true' : 'false');
 		body.hidden = !formState.isOpen;

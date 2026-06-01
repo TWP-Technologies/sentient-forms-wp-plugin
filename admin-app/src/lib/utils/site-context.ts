@@ -9,20 +9,22 @@ import type {
 export const DEFAULT_SITE_CONTEXT_REFRESH_DAYS = 30;
 export const SITE_CONTEXT_REFRESH_DAY_OPTIONS = [7, 14, 30, 60, 90] as const;
 
+export const SITE_CONTEXT_DEFAULT_TOOLS: Record<string, unknown> = {
+	tool_choice: 'auto',
+	web_search: {
+		mode: 'required',
+		max_results: 5
+	},
+	web_fetch: {
+		mode: 'auto'
+	}
+};
+
 export const DEFAULT_SITE_CONTEXT_MODEL_SELECTION: ModelSelection = {
 	primary: 'sf_research',
 	is_preset: true,
 	provider: 'openrouter',
-	tools: {
-		tool_choice: 'auto',
-		web_search: {
-			mode: 'required',
-			max_results: 5
-		},
-		web_fetch: {
-			mode: 'auto'
-		}
-	}
+	tools: SITE_CONTEXT_DEFAULT_TOOLS
 };
 
 export function defaultSiteContextGenerationAccess(
@@ -135,7 +137,9 @@ export function normalizeSiteContextResponse(
 		...empty.settings,
 		...(response.settings ?? {})
 	};
-	settings.generation_model_selection ??= DEFAULT_SITE_CONTEXT_MODEL_SELECTION;
+	settings.generation_model_selection = normalizeSiteContextModelSelection(
+		settings.generation_model_selection
+	);
 
 	const hasContext =
 		typeof response.has_context === 'boolean'
@@ -221,7 +225,30 @@ export function siteContextModelSelectionChanged(
 	current: ModelSelection,
 	saved: ModelSelection | null | undefined
 ): boolean {
-	return stableSerialize(current) !== stableSerialize(saved ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION);
+	return (
+		stableSerialize(normalizeSiteContextModelSelection(current)) !==
+		stableSerialize(normalizeSiteContextModelSelection(saved))
+	);
+}
+
+export function normalizeSiteContextModelSelection(
+	selection: ModelSelection | null | undefined
+): ModelSelection {
+	return {
+		...DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
+		...(selection ?? {}),
+		tools: isPlainRecord(selection?.tools) ? selection.tools : SITE_CONTEXT_DEFAULT_TOOLS
+	};
+}
+
+export function compactSiteContextModelSelection(selection: ModelSelection): ModelSelection {
+	const normalized = normalizeSiteContextModelSelection(selection);
+	if (stableSerialize(normalized.tools) !== stableSerialize(SITE_CONTEXT_DEFAULT_TOOLS)) {
+		return normalized;
+	}
+
+	const { tools: _tools, ...compact } = normalized;
+	return compact;
 }
 
 function stableSerialize(value: unknown): string {
@@ -242,6 +269,12 @@ function sortObjectKeys(value: unknown): unknown {
 		sorted[key] = sortObjectKeys((value as Record<string, unknown>)[key]);
 	}
 	return sorted;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+	const prototype = Object.getPrototypeOf(value);
+	return prototype === Object.prototype || prototype === null;
 }
 
 export function siteContextStatusLabel(status: SiteContextStatusResponse): string {
