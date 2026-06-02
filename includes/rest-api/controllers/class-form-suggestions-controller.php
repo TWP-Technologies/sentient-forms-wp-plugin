@@ -197,6 +197,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 
 		$known_values = $this->sanitize_known_field_values( $request->get_param( 'all_known_field_values' ) );
 		$suggestion_context = $this->build_suggestion_context( $request, $form_source_slug, $form_id, $mapping, $known_values, $form );
+		$execution_known_values = $this->known_values_for_realtime_execution( $suggestion_context );
 		$execution_request_id = isset( $request['execution_request_id'] ) && is_scalar( $request['execution_request_id'] )
 			? sanitize_text_field( (string) $request['execution_request_id'] )
 			: '';
@@ -218,7 +219,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 			$context['execution_request_id'] = $execution_request_id;
 		}
 
-		$local_response = $this->execute_local_first_suggestion_mapping( $mapping, $form, $known_values, $context, $suggestion_context );
+		$local_response = $this->execute_local_first_suggestion_mapping( $mapping, $form, $execution_known_values, $context, $suggestion_context );
 		if ( is_wp_error( $local_response ) ) {
 			return $local_response;
 		}
@@ -229,7 +230,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 		$response = $this->plugin->get_action_executor()->suggest(
 			$central_action_id,
 			$form,
-			$known_values,
+			$execution_known_values,
 			$context,
 			$suggestion_context
 		);
@@ -335,6 +336,33 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 		}
 
 		return 0;
+	}
+
+	/**
+	 * @param array<string,mixed> $suggestion_context
+	 *
+	 * @return array<string,string>
+	 */
+	private function known_values_for_realtime_execution( array $suggestion_context ): array {
+		$known_values = is_array( $suggestion_context['all_known_field_values'] ?? null )
+			? $suggestion_context['all_known_field_values']
+			: [];
+		$filtered = [];
+
+		foreach ( $known_values as $field_id => $value ) {
+			if ( ! is_scalar( $field_id ) || ! is_scalar( $value ) ) {
+				continue;
+			}
+
+			$key = sanitize_text_field( (string) $field_id );
+			if ( '' === $key ) {
+				continue;
+			}
+
+			$filtered[ $key ] = mb_substr( sanitize_textarea_field( (string) $value ), 0, 500 );
+		}
+
+		return $filtered;
 	}
 
 	private function status_for_local_execution_error( WP_Error $error ): int {

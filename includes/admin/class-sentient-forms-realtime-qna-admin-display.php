@@ -53,7 +53,6 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         add_filter( 'gform_entry_field_value', [ $this, 'format_entry_detail_field_value' ], 10, 4 );
         add_action( 'gform_entry_detail', [ $this, 'render_entry_detail_fallback' ], 10, 2 );
         add_action( 'gform_print_entry_footer', [ $this, 'render_print_entry_footer' ], 10, 2 );
-        add_action( 'admin_init', [ $this, 'maybe_prune_storage_columns_for_column_picker' ] );
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_admin_assets' ] );
         add_action( 'wp_enqueue_scripts', [ $this, 'enqueue_print_assets' ] );
     }
@@ -87,8 +86,6 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             return $this->remove_storage_columns_by_label( $table_columns );
         }
 
-        $this->prune_storage_columns_from_grid_meta( $form_id, $form );
-
         foreach ( $table_columns as $column_id => $label )
         {
             if ( $this->is_storage_column_id( (string) $column_id, $storage_field_ids ) )
@@ -98,38 +95,6 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         }
 
         return $this->remove_storage_columns_by_label( $table_columns );
-    }
-
-    public function maybe_prune_storage_columns_for_column_picker(): void
-    {
-        // phpcs:disable WordPress.Security.NonceVerification.Recommended -- Read-only page detection; pruning hides an internal storage column from Gravity Forms' picker.
-        $gf_page = isset( $_GET['gf_page'] ) && is_scalar( $_GET['gf_page'] )
-            ? sanitize_key( wp_unslash( $_GET['gf_page'] ) )
-            : '';
-        if ( 'select_columns' !== $gf_page )
-        {
-            return;
-        }
-
-        $form_id = isset( $_GET['id'] ) && is_scalar( $_GET['id'] ) ? absint( wp_unslash( $_GET['id'] ) ) : 0;
-        // phpcs:enable WordPress.Security.NonceVerification.Recommended
-        $form    = $this->get_form( $form_id );
-        if ( null === $form )
-        {
-            return;
-        }
-
-        $fallback_columns = [];
-        if ( class_exists( 'RGFormsModel' ) && method_exists( 'RGFormsModel', 'get_grid_columns' ) )
-        {
-            $grid_columns = RGFormsModel::get_grid_columns( $form_id, true );
-            if ( is_array( $grid_columns ) )
-            {
-                $fallback_columns = array_keys( $grid_columns );
-            }
-        }
-
-        $this->prune_storage_columns_from_grid_meta( $form_id, $form, $fallback_columns );
     }
 
     /**
@@ -301,109 +266,6 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         return $table_columns;
     }
 
-    /**
-     * @param array<string,mixed>    $form
-     * @param array<int,int|string> $fallback_columns
-     */
-    private function prune_storage_columns_from_grid_meta( int $form_id, array $form, array $fallback_columns = [] ): void
-    {
-        if (
-            $form_id <= 0
-            || ! class_exists( 'RGFormsModel' )
-            || ! method_exists( 'RGFormsModel', 'get_grid_column_meta' )
-            || ! method_exists( 'RGFormsModel', 'update_grid_column_meta' )
-        )
-        {
-            return;
-        }
-
-        $storage_field_ids = $this->get_storage_field_ids( $form );
-        if ( empty( $storage_field_ids ) )
-        {
-            return;
-        }
-
-        $grid_columns       = RGFormsModel::get_grid_column_meta( $form_id );
-        $raw_source_columns = is_array( $grid_columns ) ? $grid_columns : $fallback_columns;
-        $source_columns     = $this->normalize_grid_column_ids( $raw_source_columns );
-        if ( empty( $source_columns ) )
-        {
-            return;
-        }
-
-        $filtered_columns = array_values(
-            array_filter(
-                $source_columns,
-                fn ( mixed $column_id ): bool => ! $this->is_storage_column_id( (string) $column_id, $storage_field_ids )
-            )
-        );
-
-        if (
-            $filtered_columns === array_values( $source_columns )
-            && $filtered_columns === $this->stringify_scalar_column_ids( $raw_source_columns )
-        )
-        {
-            return;
-        }
-
-        RGFormsModel::update_grid_column_meta( $form_id, $filtered_columns );
-    }
-
-    /**
-     * @param array<int,mixed> $column_ids
-     *
-     * @return array<int,string>
-     */
-    private function stringify_scalar_column_ids( array $column_ids ): array
-    {
-        $string_ids = [];
-        foreach ( $column_ids as $column_id )
-        {
-            if ( is_scalar( $column_id ) )
-            {
-                $string_ids[] = (string) $column_id;
-            }
-        }
-
-        return $string_ids;
-    }
-
-    /**
-     * @param array<int,mixed> $column_ids
-     *
-     * @return array<int,string>
-     */
-    private function normalize_grid_column_ids( array $column_ids ): array
-    {
-        $normalized = [];
-        foreach ( $column_ids as $column_id )
-        {
-            if ( ! is_scalar( $column_id ) )
-            {
-                continue;
-            }
-
-            $column_id_string = (string) $column_id;
-            if ( in_array( $column_id_string, [ 'cb', 'column_selector', 'is_starred' ], true ) )
-            {
-                continue;
-            }
-
-            if ( str_starts_with( $column_id_string, 'field_id-' ) )
-            {
-                $column_id_string = substr( $column_id_string, 9 );
-            }
-
-            if ( '' === $column_id_string || in_array( $column_id_string, $normalized, true ) )
-            {
-                continue;
-            }
-
-            $normalized[] = $column_id_string;
-        }
-
-        return $normalized;
-    }
 
     /**
      * @param array<int,string> $storage_field_ids

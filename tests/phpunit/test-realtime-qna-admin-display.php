@@ -103,40 +103,7 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
 
         $this->assertArrayHasKey( 'field_id-1', $columns );
         $this->assertArrayNotHasKey( 'field_id-5', $columns );
-        $this->assertSame( [ '1', 'date_created' ], RGFormsModel::$grid_column_meta[4] );
-    }
-
-    public function test_column_picker_prunes_storage_field_from_default_active_columns(): void
-    {
-        $form = $this->form_fixture();
-        GFAPI::$forms[4] = $form;
-        RGFormsModel::$grid_columns[4] = [
-            '1'            => [ 'label' => 'Name' ],
-            '2'            => [ 'label' => 'Email' ],
-            '5'            => [ 'label' => 'Sentient Forms Realtime Q&A' ],
-            'date_created' => [ 'label' => 'Entry Date' ],
-        ];
-
-        $_GET['gf_page'] = 'select_columns';
-        $_GET['id']      = '4';
-
-        $this->display->maybe_prune_storage_columns_for_column_picker();
-
-        $this->assertSame( [ '1', '2', 'date_created' ], RGFormsModel::$grid_column_meta[4] );
-    }
-
-    public function test_column_picker_recovers_from_wp_list_table_column_ids(): void
-    {
-        $form = $this->form_fixture();
-        GFAPI::$forms[4] = $form;
-        RGFormsModel::$grid_column_meta[4] = [ 'cb', 'is_starred', 'field_id-1', 'field_id-5', 'column_selector' ];
-
-        $_GET['gf_page'] = 'select_columns';
-        $_GET['id']      = '4';
-
-        $this->display->maybe_prune_storage_columns_for_column_picker();
-
-        $this->assertSame( [ '1' ], RGFormsModel::$grid_column_meta[4] );
+        $this->assertSame( [ '1', '5', 'date_created' ], RGFormsModel::$grid_column_meta[4] );
     }
 
     public function test_entry_list_storage_column_gets_compact_summary_instead_of_json(): void

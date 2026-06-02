@@ -234,6 +234,27 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( 'sentient_forms_actions_gravity_forms_2' );
     }
 
+    public function test_form_source_and_id_permission_checks_auth_before_source_or_form_existence(): void
+    {
+        wp_set_current_user( 0 );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/not_supported/forms/999/actions' );
+        $request->set_param( 'form_source_slug', 'not_supported' );
+        $request->set_param( 'form_id', 999 );
+
+        $this->assertFalse( $this->controller->permissions_check_for_form_source_and_id( $request ) );
+    }
+
+    public function test_form_source_permission_checks_auth_before_source_validation(): void
+    {
+        wp_set_current_user( 0 );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/not_supported/forms/actions/overview' );
+        $request->set_param( 'form_source_slug', 'not_supported' );
+
+        $this->assertFalse( $this->controller->permissions_check_for_form_source( $request ) );
+    }
+
     public function test_get_form_execution_status_falls_back_to_latest_action_log_entry(): void
     {
         update_option(

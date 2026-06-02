@@ -997,6 +997,12 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     /** Permission check for form source and ID. */
     public function permissions_check_for_form_source_and_id( WP_REST_Request $request ): WP_Error | bool
     {
+        $permission = $this->permission_callback_with_nonce( $request );
+        if ( true !== $permission )
+        {
+            return $permission;
+        }
+
         $source = $request->get_param( 'form_source_slug' );
         if ( !Sentient_Forms_Form_Sources::is_supported_source( $source ) )
         {
@@ -1031,19 +1037,25 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             }
         }
 
-        return $this->permission_callback_with_nonce( $request );
+        return true;
     }
 
     /** Permission check for form source-only optimized endpoints. */
     public function permissions_check_for_form_source( WP_REST_Request $request ): WP_Error | bool
     {
+        $permission = $this->permission_callback_with_nonce( $request );
+        if ( true !== $permission )
+        {
+            return $permission;
+        }
+
         $source = $request->get_param( 'form_source_slug' );
         if ( ! Sentient_Forms_Form_Sources::is_supported_source( $source ) )
         {
             return $this->prepare_error_response( 'rest_invalid_form_source', __( 'Invalid form source provided.', 'sentient-forms' ), 400 );
         }
 
-        return $this->permission_callback_with_nonce( $request );
+        return true;
     }
 
     /** Validate form_id param. */

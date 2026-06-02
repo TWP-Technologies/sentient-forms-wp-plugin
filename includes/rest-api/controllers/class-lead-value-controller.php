@@ -34,6 +34,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
     private Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results;
     private Sentient_Forms_Local_Action_Execution_Service $local_execution;
     private Sentient_Forms_Managed_Proxy_Client $managed_proxy;
+    private Sentient_Forms_External_Service_Consent_Repository $consents;
 
     public function __construct(
         ?Sentient_Forms_Lead_Profiles_Repository $profiles = null,
@@ -43,7 +44,8 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         ?Sentient_Forms_Execution_Events_Repository $events = null,
         ?Sentient_Forms_Local_Action_Execution_Service $local_execution = null,
         ?Sentient_Forms_Managed_Proxy_Client $managed_proxy = null,
-        ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null
+        ?Sentient_Forms_Lead_Scoring_Results_Repository $lead_scoring_results = null,
+        ?Sentient_Forms_External_Service_Consent_Repository $consents = null
     )
     {
         parent::__construct();
@@ -56,6 +58,7 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
         $this->custom_actions  = $custom_actions ?? new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
         $this->events          = $events ?? new Sentient_Forms_Execution_Events_Repository( $wpdb );
         $this->lead_scoring_results = $lead_scoring_results ?? new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
+        $this->consents        = $consents ?? new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
         $profile_generation_timeout = $this->managed_profile_generation_timeout_seconds();
         $this->managed_proxy   = $managed_proxy ?? new Sentient_Forms_Managed_Proxy_Client( null, $profile_generation_timeout );
         $this->local_execution = $local_execution ?? new Sentient_Forms_Local_Action_Execution_Service(
@@ -2322,6 +2325,12 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
             return new WP_Error( 'sentient_forms_managed_plugin_unavailable', __( 'Sentient Forms managed Lead Scoring generation could not read the site account state.', 'sentient-forms' ) );
         }
 
+        $consent = $this->assert_managed_profile_generation_consent();
+        if ( is_wp_error( $consent ) )
+        {
+            return $consent;
+        }
+
         $plugin         = Sentient_Forms_Plugin::instance();
         $license        = $plugin->get_license_data();
         $license_status = sanitize_key( (string) ( $license['license_status'] ?? '' ) );
@@ -2341,6 +2350,30 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
             'proxy_api_key' => $proxy_api_key,
             'site_id'       => $site_id,
         ];
+    }
+
+    private function assert_managed_profile_generation_consent(): true | WP_Error
+    {
+        $latest = $this->consents->latest_for_provider( 'sentient_managed' );
+        if ( is_array( $latest ) )
+        {
+            $metadata = is_array( $latest['metadata_json'] ?? null ) ? $latest['metadata_json'] : [];
+            $action   = sanitize_key( (string) ( $metadata['action'] ?? '' ) );
+            if ( 'revoke_managed_proxy' === $action )
+            {
+                return new WP_Error(
+                    'sentient_forms_external_service_consent_revoked',
+                    __( 'Sentient Forms managed-service consent has been revoked for this site.', 'sentient-forms' )
+                );
+            }
+
+            return true;
+        }
+
+        return new WP_Error(
+            'sentient_forms_external_service_consent_required',
+            __( 'External-service disclosure acceptance is required before managed Lead Scoring generation.', 'sentient-forms' )
+        );
     }
 
     private function build_managed_profile_generation_prompt( array $profile, array $site_context, array $spam_guidance, array $rubric, string $local_prompt ): string

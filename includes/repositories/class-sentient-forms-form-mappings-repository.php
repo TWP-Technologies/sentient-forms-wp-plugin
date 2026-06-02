@@ -110,16 +110,21 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
         }
 
         $wpdb = $this->wpdb;
-        $placeholders = implode( ', ', array_fill( 0, count( $normalized_ids ), '%s' ) );
-        // phpcs:disable WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Dynamic IN placeholder list contains only %s placeholders; table name and values are prepared below via wpdb::prepare()'s supported array argument.
-        $rows = $wpdb->get_results(
-            $wpdb->prepare(
-                'SELECT * FROM %i WHERE form_source = %s AND form_id IN (' . $placeholders . ') ORDER BY form_id ASC, id ASC',
-                array_merge( [ $this->table_name(), sanitize_key( $form_source ) ], $normalized_ids )
-            ),
-            ARRAY_A
-        ) ?: [];
-        // phpcs:enable WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber
+        $rows = [];
+        foreach ( $normalized_ids as $normalized_id )
+        {
+            $form_rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    'SELECT * FROM %i WHERE form_source = %s AND form_id = %s ORDER BY id ASC',
+                    $this->table_name(),
+                    sanitize_key( $form_source ),
+                    $normalized_id
+                ),
+                ARRAY_A
+            ) ?: [];
+
+            $rows = array_merge( $rows, $form_rows );
+        }
 
         $grouped = [];
         foreach ( $rows as $row )

@@ -396,6 +396,7 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$this->assertCount( 1, $stub_executor->calls );
 		$context = $stub_executor->calls[0]['suggestion_context'];
 		$this->assertSame( [ '1' => 'hello' ], $context['all_known_field_values'] ?? [] );
+		$this->assertSame( [ '1' => 'hello' ], $stub_executor->calls[0]['entry'] );
 		$this->assertSame( 'label_hidden', $context['hidden_field_exposure_mode'] ?? null );
 		$this->assertSame( '9', $context['supplemental_field_context'][0]['field_id'] ?? null );
 		$this->assertSame( 'Internal routing', $context['supplemental_field_context'][0]['label'] ?? null );
@@ -434,6 +435,7 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$this->assertInstanceOf( WP_REST_Response::class, $response );
 		$context = $stub_executor->calls[0]['suggestion_context'];
 		$this->assertSame( [ '1' => 'hello', '9' => 'route-secret' ], $context['all_known_field_values'] ?? [] );
+		$this->assertSame( [ '1' => 'hello', '9' => 'route-secret' ], $stub_executor->calls[0]['entry'] );
 		$this->assertSame( 'route-secret', $context['supplemental_field_context'][0]['value'] ?? null );
 	}
 
@@ -482,7 +484,7 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$request->set_param( 'form_id', 42 );
 		$request->set_param( 'mapping_id', 'local_first_99' );
 		$request->set_param( 'execution_request_id', 'rt-local-first-42' );
-		$request->set_param( 'all_known_field_values', [ '1' => 'Quote product 183671 at 500pcs' ] );
+		$request->set_param( 'all_known_field_values', [ '1' => 'Quote product 183671 at 500pcs', '9' => 'route-secret' ] );
 		$request->set_param( 'visible_field_ids', [ '1' ] );
 		$request->set_param( 'current_page_index', 1 );
 		$request->set_param( 'total_pages', 2 );
