@@ -372,6 +372,62 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertCount( 0, $managed_proxy->execute_calls );
     }
 
+    public function test_profile_generation_does_not_treat_checkout_consent_after_revocation_as_proxy_acceptance(): void
+    {
+        $this->seed_ready_site_context();
+        $this->seed_spam_guidance();
+
+        $created = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/lead-value/forms/gravity_forms/7/profile',
+            [
+                'lead_profile_consent' => true,
+                'good_lead_criteria'   => [
+                    'summary_text' => 'A good lead has a real business need, a reachable email address, service-area fit, and clear intent to discuss a project.',
+                ],
+                'bad_lead_criteria'    => [
+                    'summary_text' => 'A bad lead is irrelevant, spam-like, abusive, outside the service area, impossible to contact, or only asking for unrelated backlinks.',
+                ],
+            ],
+            201
+        );
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'site_id'        => '11111111-1111-4111-8111-111111111111',
+                'proxy_api_key'  => 'proxy-profile-generation-test',
+            ]
+        );
+        $this->record_managed_proxy_consent( 'revoke_managed_proxy' );
+        $this->record_managed_proxy_consent( 'managed_checkout_start' );
+
+        $managed_proxy = new Sentient_Forms_Lead_Value_Test_Managed_Proxy_Client();
+        $controller    = new Sentient_Forms_Lead_Value_Controller(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            $managed_proxy
+        );
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/profiles/' . $created['profile']['id'] . '/generate' );
+        $request->set_param( 'id', (int) $created['profile']['id'] );
+        $request->set_param( 'lead_profile_consent', true );
+        $response = $controller->generate_profile( $request );
+
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $data = $response->get_data();
+        $this->assertIsArray( $data );
+        $this->assertSame( 'local_readiness_grounded_profile_v1', $data['profile']['generation_metadata']['generation_mode'] );
+        $this->assertSame( 'skipped', $data['profile']['generation_metadata']['llm_augmentation']['status'] ?? null );
+        $this->assertSame(
+            'sentient_forms_external_service_consent_required',
+            $data['profile']['generation_metadata']['llm_augmentation']['reason'] ?? null
+        );
+        $this->assertCount( 0, $managed_proxy->execute_calls );
+    }
+
     public function test_profile_generation_can_queue_async_job_without_blocking_managed_request(): void
     {
         $this->seed_ready_site_context();
@@ -829,16 +885,26 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         delete_option( 'sentient_forms_form_config_gravity_forms_7' );
     }
 
-    private function record_managed_proxy_consent( string $action = 'accept_managed_proxy' ): void
+    private function record_managed_proxy_consent( string $action = 'setup_managed_proxy' ): void
     {
         global $wpdb;
 
         $consents = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $metadata = [ 'action' => $action ];
+        if ( 'setup_managed_proxy' === $action )
+        {
+            $metadata['managed_proxy_selected'] = true;
+        }
+        elseif ( 'revoke_managed_proxy' === $action )
+        {
+            $metadata['managed_proxy_selected'] = false;
+        }
+
         $recorded = $consents->record(
             'sentient_managed',
             '2026-04-managed-proxy-v1',
             self::$admin_id,
-            [ 'action' => $action ]
+            $metadata
         );
 
         $this->assertIsInt( $recorded );

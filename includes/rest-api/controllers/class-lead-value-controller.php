@@ -2367,7 +2367,11 @@ class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_
                 );
             }
 
-            return true;
+            $managed_proxy_selected = rest_sanitize_boolean( $metadata['managed_proxy_selected'] ?? false );
+            if ( 'setup_managed_proxy' === $action && $managed_proxy_selected )
+            {
+                return true;
+            }
         }
 
         return new WP_Error(

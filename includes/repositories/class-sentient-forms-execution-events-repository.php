@@ -278,6 +278,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
 
         $wpdb = $this->wpdb;
         $rows = [];
+        // Keep per-form prepared queries here: WordPress.org Plugin Check flags dynamic IN placeholder assembly.
         foreach ( $normalized_ids as $normalized_id )
         {
             $row = $wpdb->get_row(
