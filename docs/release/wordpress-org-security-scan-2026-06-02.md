@@ -6,7 +6,7 @@
 - Baseline scan commit: `b9c21e8 chore(production): release 0.3.0`
 - Target release: `0.3.1`
 - Scan mode: Codex Security scoped-path scan with threat modeling, finding discovery, validation, and attack-path review.
-- Source scan artifacts: `C:\tmp\codex-security-scans\wp-plugin`
+- Local supporting scan artifacts: `<local-scan-artifacts>\wp-plugin`
 
 This file is the tracked release evidence for the WordPress.org security hardening pass. Reports under `temp/` are supporting artifacts only and are not the release source of truth.
 
@@ -43,7 +43,7 @@ Severity calibration used by the scan:
 | --- | --- | --- | --- | --- | --- |
 | SF-WPORG-2026-06-02-01 | Medium | Managed Lead Scoring profile generation could call the Sentient managed proxy after latest `sentient_managed` consent was revoked. | `includes/rest-api/controllers/class-lead-value-controller.php` | Gate managed profile-generation augmentation on latest managed-service consent, treat `revoke_managed_proxy` as a hard skip before the managed proxy client can execute, and require the latest consent row to be an explicit `setup_managed_proxy` acceptance with `managed_proxy_selected=true`. Checkout-start records after revocation do not re-enable managed proxy calls. | `tests/phpunit/test-lead-value-controller.php` |
 | SF-WPORG-2026-06-02-02 | Medium | Realtime suggestions filtered hidden-field values for `suggestion_context` but still passed raw request values into local-first/CPS execution. | `includes/rest-api/controllers/class-form-suggestions-controller.php` | Derive execution known values from the server-filtered suggestion context and pass those values into both local-first and CPS suggestion execution. | `tests/phpunit/test-form-suggestions-controller.php` |
-| SF-WPORG-2026-06-02-03 | Low | Form-actions permission callbacks validated source/form existence before the shared admin permission and nonce check. | `includes/rest-api/controllers/class-form-actions-controller.php` | Run `permission_callback_with_nonce()` before source/form validation so unauthorized callers do not receive source/form existence signals. | `tests/phpunit/test-form-actions-controller.php` |
+| SF-WPORG-2026-06-02-03 | Low | Form-actions permission callbacks and REST argument validators could validate source/form existence before the shared admin permission and nonce check. WordPress core validates and sanitizes route arguments before `permission_callback`, so object-existence checks in validators were also in scope. | `includes/rest-api/controllers/class-form-actions-controller.php` | Run `permission_callback_with_nonce()` before source/form validation and keep REST argument validators syntactic until the caller is authorized, so unauthorized callers do not receive source, form, entry, or local mapping existence signals. | `tests/phpunit/test-form-actions-controller.php` |
 | SF-WPORG-2026-06-02-04 | Low | Realtime Q&A admin display persisted Gravity Forms grid-column metadata changes on GET/admin render paths without a nonce. | `includes/admin/class-sentient-forms-realtime-qna-admin-display.php` | Remove the metadata-pruning admin hook and render-path mutation. Keep in-memory hiding of storage columns in displayed output. | `tests/phpunit/test-realtime-qna-admin-display.php` |
 
 ## Validation
@@ -63,7 +63,7 @@ Results:
 
 - `Tests_Lead_Value_Controller`: 11 tests, 119 assertions.
 - `Tests_Form_Suggestions_Controller`: 12 tests, 66 assertions.
-- `Tests_Form_Actions_Controller`: 87 tests, 527 assertions.
+- `Tests_Form_Actions_Controller`: 89 tests, 531 assertions.
 - `RealtimeQnaAdminDisplayTest`: 13 tests, 102 assertions.
 
 Full and package gates:
@@ -81,7 +81,7 @@ composer wporg-build-package
 
 Results:
 
-- `vendor\bin\phpunit`: passed, 620 tests, 4767 assertions, 4 skipped.
+- `vendor\bin\phpunit`: passed, 622 tests, 4771 assertions, 4 skipped.
 - `composer phpcs`: passed.
 - `composer wporg-release-version-check`: passed with source surfaces still aligned to `0.3.0` before the Release Please `0.3.1` release PR.
 - `composer wporg-source-check`: passed.
@@ -93,37 +93,37 @@ Results:
 Exact package checks:
 
 ```powershell
-php scripts\scan-wporg-package.php "C:\Users\gavin\Work\Local Files\Sentient Forms\temp\2026\06\02\174627-wporg-package\sentient-forms"
-php scripts\audit-wporg-licenses.php --package "C:\Users\gavin\Work\Local Files\Sentient Forms\temp\2026\06\02\174627-wporg-package\sentient-forms"
-php scripts\validate-wporg-readme.php "C:\Users\gavin\Work\Local Files\Sentient Forms\temp\2026\06\02\174627-wporg-package\sentient-forms\readme.txt"
-php scripts\verify-wporg-source.php "C:\Users\gavin\Work\Local Files\Sentient Forms\temp\2026\06\02\174627-wporg-package\sentient-forms"
+php scripts\scan-wporg-package.php "<workspace>\temp\2026\06\02\180953-wporg-package\sentient-forms"
+php scripts\audit-wporg-licenses.php --package "<workspace>\temp\2026\06\02\180953-wporg-package\sentient-forms"
+php scripts\validate-wporg-readme.php "<workspace>\temp\2026\06\02\180953-wporg-package\sentient-forms\readme.txt"
+php scripts\verify-wporg-source.php "<workspace>\temp\2026\06\02\180953-wporg-package\sentient-forms"
 ```
 
 Exact package results:
 
-- Package directory: `C:\Users\gavin\Work\Local Files\Sentient Forms\temp\2026\06\02\174627-wporg-package\sentient-forms`
-- ZIP candidate: `C:\Users\gavin\Work\Local Files\Sentient Forms\temp\2026\06\02\174627-wporg-package\sentient-forms-0.3.0-wporg-security-candidate.zip`
-- SHA256: `C4AE30684DC65F9D74B425B8781E570DDCC781C618D8649897CAB9E2D1E95A87`
+- Package directory: `<workspace>\temp\2026\06\02\180953-wporg-package\sentient-forms`
+- ZIP candidate: `<workspace>\temp\2026\06\02\180953-wporg-package\sentient-forms-0.3.0-wporg-security-candidate.zip`
+- SHA256: `CB1ACC16EDEA1B2DD61844C31CF51F97272EB348679F9109EB0F30B8E4FDA373`
 - Package scan: passed.
 - License audit: passed.
 - Readme validation: passed by local and official readme validators.
 - Source verification: passed.
 - Archive blocker scan: passed; no `.git`, tests, `vendor/bin`, development lockfiles, or `node_modules` found.
-- Local Plugin Check against the exact package: passed with 0 errors and 0 warnings. Supporting summary: `C:\Users\gavin\Work\Local Files\Sentient Forms\temp\2026\06\02\174627-wporg-package\plugin-check-summary.json`
+- Local Plugin Check against the exact package: passed with 0 errors and 0 warnings. Supporting summary: `<workspace>\temp\2026\06\02\180953-wporg-package\plugin-check-summary.json`
 
 Exact-package dogfood:
 
 - Environment: Docker WordPress/Gravity Forms with the package installed at `/var/www/html/wp-content/plugins/sentient-forms-wporg-check`; active package version verified as `0.3.0`.
 - Local health: `./scripts/check-local-health.sh` passed; `/v2/health` reachable, managed service key present, `/v2/billing/state` authenticated.
 - Realtime suggestions package browser path: `SENTIENT_RUN_WP_E2E=1`, `SENTIENT_WP_PLUGIN_MODE=package`, `bun run --bun e2e tests/e2e/wp-realtime-suggestions.spec.ts --grep 'checkpoint gating|virtual questions are submitted' --reporter=list`; 2 passed against the amended package install.
-- Lead Scoring after managed consent revoke: passed; `generation.mode=local_readiness_grounded_profile_v1`, `llm_augmentation_status=skipped`, `llm_augmentation_reason=sentient_forms_external_service_consent_revoked`. Supporting artifact: `C:\Users\gavin\Work\Local Files\Sentient Forms\temp\2026\06\02\170716-browser-mcp-package-prep\lead-scoring-consent-revoke-smoke-amended-package.json`. PHPUnit also covers the checkout-after-revocation path so a later `managed_checkout_start` row cannot re-enable managed proxy calls.
-- Realtime Q&A admin entry display: passed in Browser MCP against form `738`, entry `1532`; cards view rendered, table/json views were hidden by default, stored Q&A question and answer were visible, and the raw storage field label was not visible. Screenshot: `C:\Users\gavin\Work\Local Files\Sentient Forms\temp\2026\06\02\170716-browser-mcp-package-prep\qna-entry-display-admin-amended-package.png`. Supporting assertion artifact: `C:\Users\gavin\Work\Local Files\Sentient Forms\temp\2026\06\02\170716-browser-mcp-package-prep\qna-entry-display-admin-amended-package.json`
-- Gravity Forms grid metadata non-mutation: passed against form `738`; metadata was seeded with the realtime storage field, the GF entries list was loaded through Browser MCP, and persisted metadata still included the storage field. Supporting artifact: `C:\Users\gavin\Work\Local Files\Sentient Forms\temp\2026\06\02\170716-browser-mcp-package-prep\qna-grid-meta-after-admin-render-amended-package.json`
+- Lead Scoring after managed consent revoke: passed; `generation.mode=local_readiness_grounded_profile_v1`, `llm_augmentation_status=skipped`, `llm_augmentation_reason=sentient_forms_external_service_consent_revoked`. Supporting artifact: `<workspace>\temp\2026\06\02\170716-browser-mcp-package-prep\lead-scoring-consent-revoke-smoke-180953-package.json`. PHPUnit also covers the checkout-after-revocation path so a later `managed_checkout_start` row cannot re-enable managed proxy calls.
+- Realtime Q&A admin entry display: passed in Browser MCP against form `740`, entry `1533`; cards view rendered, table/json views were hidden by default, stored Q&A question and answer were visible, and the raw storage field label was not visible. Screenshot: `<workspace>\temp\2026\06\02\170716-browser-mcp-package-prep\qna-entry-display-admin-180953-package.png`. Supporting assertion artifact: `<workspace>\temp\2026\06\02\170716-browser-mcp-package-prep\qna-entry-display-admin-180953-package.json`
+- Gravity Forms grid metadata non-mutation: passed against form `740`; metadata was seeded with the realtime storage field, the GF entries list was loaded through Browser MCP, and persisted metadata still included the storage field. Supporting artifact: `<workspace>\temp\2026\06\02\170716-browser-mcp-package-prep\qna-grid-meta-after-admin-render-180953-package.json`
 
 ## Reviewer Loop Status
 
 - Codex PR review: first targeted review produced one material lead-consent finding. The branch now requires explicit `setup_managed_proxy` consent after revocation and includes a checkout-after-revocation regression.
-- CodeRabbit PR review: automatic walkthrough was inspected and was in progress, not paused. No resume comment was required.
+- CodeRabbit PR review: automatic walkthrough was inspected and was in progress, not paused. No resume comment was required. Material feedback accepted: public release evidence now redacts operator-specific absolute paths, and form-actions REST argument validators now avoid pre-permission object-existence checks.
 - Greptile PR review: targeted review confirmed the four requested hardening areas and flagged the scanner-driven per-form query trade-off. Inline comments document why these reads intentionally avoid dynamic `IN (...)` placeholder assembly for WordPress.org Plugin Check compatibility.
 - Worthwhile feedback policy: accept correctness, security, WordPress.org compliance, maintainability, or test-gap feedback; reject noisy/nit feedback with a concise in-thread rationale.
 

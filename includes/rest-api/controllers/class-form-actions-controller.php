@@ -951,7 +951,7 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
     {
         return [
             'form_source_slug' => [
-                'validate_callback' => [ 'Sentient_Forms_Form_Sources', 'rest_validate_form_source_slug' ],
+                'validate_callback' => [ $this, 'validate_form_source_slug_param' ],
                 'sanitize_callback' => [ 'Sentient_Forms_Form_Sources', 'rest_sanitize_form_source_slug' ],
                 'required'          => true,
                 'type'              => 'string',
@@ -1058,12 +1058,38 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         return true;
     }
 
+    /** Validate form_source_slug syntax without disclosing supported adapters before auth. */
+    public function validate_form_source_slug_param( string $value, WP_REST_Request $request, string $param ): true | WP_Error
+    {
+        if ( '' === $value || ! preg_match( '/^[a-z0-9_]+$/', $value ) )
+        {
+            return new WP_Error(
+                'rest_invalid_form_source',
+                __( 'Invalid form source format.', 'sentient-forms' ),
+                [ 'status' => 400, 'param' => $param ]
+            );
+        }
+
+        return true;
+    }
+
+    /** Whether REST arg validation can safely run object-existence checks. */
+    private function can_validate_form_action_objects( WP_REST_Request $request ): bool
+    {
+        return true === $this->permission_callback_with_nonce( $request );
+    }
+
     /** Validate form_id param. */
     public function validate_form_id_param( int $value, WP_REST_Request $request, string $param ): true | WP_Error
     {
         if ( $value <= 0 )
         {
             return new WP_Error( 'rest_invalid_param', __( 'Form ID must be a positive integer.', 'sentient-forms' ), [ 'status' => 400 ] );
+        }
+
+        if ( ! $this->can_validate_form_action_objects( $request ) )
+        {
+            return true;
         }
 
         if ( class_exists( 'Sentient_Forms_Plugin' ) )
@@ -1101,6 +1127,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
             return new WP_Error( 'rest_invalid_param', __( 'Invalid mapping ID.', 'sentient-forms' ), [ 'status' => 400 ] );
         }
 
+        if ( ! $this->can_validate_form_action_objects( $request ) )
+        {
+            return true;
+        }
+
         $option_key = $this->get_actions_option_key( $request->get_param( 'form_source_slug' ), (int)$request->get_param( 'form_id' ) );
         $actions    = get_option( $option_key, [] );
         if ( !is_array( $actions ) )
@@ -1133,6 +1164,11 @@ class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Bas
         if ( $value <= 0 )
         {
             return new WP_Error( 'rest_invalid_entry', __( 'Entry ID must be a positive integer.', 'sentient-forms' ), [ 'status' => 400 ] );
+        }
+
+        if ( ! $this->can_validate_form_action_objects( $request ) )
+        {
+            return true;
         }
 
         if ( ! class_exists( 'GFAPI' ) )

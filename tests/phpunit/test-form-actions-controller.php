@@ -234,12 +234,29 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( 'sentient_forms_actions_gravity_forms_2' );
     }
 
+    private function dispatch_form_actions_request( WP_REST_Request $request ): WP_REST_Response
+    {
+        add_action( 'rest_api_init', [ $this->controller, 'register_routes' ] );
+        do_action( 'rest_api_init' );
+        remove_action( 'rest_api_init', [ $this->controller, 'register_routes' ] );
+
+        return rest_get_server()->dispatch( $request );
+    }
+
+    private function authenticate_rest_request( WP_REST_Request $request ): WP_REST_Request
+    {
+        wp_set_current_user( self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+
+        return $request;
+    }
+
     public function test_form_source_and_id_permission_checks_auth_before_source_or_form_existence(): void
     {
         wp_set_current_user( 0 );
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/not_supported/forms/999/actions' );
-        $request->set_param( 'form_source_slug', 'not_supported' );
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/999/actions' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
         $request->set_param( 'form_id', 999 );
 
         $this->assertFalse( $this->controller->permissions_check_for_form_source_and_id( $request ) );
@@ -253,6 +270,30 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $request->set_param( 'form_source_slug', 'not_supported' );
 
         $this->assertFalse( $this->controller->permissions_check_for_form_source( $request ) );
+    }
+
+    public function test_routed_form_actions_request_requires_auth_before_form_existence_validation(): void
+    {
+        wp_set_current_user( 0 );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/999/actions' );
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( rest_authorization_required_code(), $response->get_status() );
+        $this->assertSame( 'rest_forbidden', $data['code'] ?? null );
+    }
+
+    public function test_routed_form_actions_request_requires_auth_before_source_validation(): void
+    {
+        wp_set_current_user( 0 );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/not_supported/forms/overview' );
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( rest_authorization_required_code(), $response->get_status() );
+        $this->assertSame( 'rest_forbidden', $data['code'] ?? null );
     }
 
     public function test_get_form_execution_status_falls_back_to_latest_action_log_entry(): void
@@ -2909,7 +2950,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $record     = $this->create_local_first_mapping_fixture( '1' );
         $mapping_id = 'local_first_' . $record['mapping_id'];
 
-        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/' . $mapping_id );
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/actions/' . $mapping_id ) );
         $request->set_param( 'form_source_slug', 'gravity_forms' );
         $request->set_param( 'form_id', 1 );
         $request->set_param( 'local_mapping_id', $mapping_id );
@@ -2924,7 +2965,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $record     = $this->create_local_first_mapping_fixture( '1' );
         $mapping_id = 'local_first_' . $record['mapping_id'];
 
-        $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/2/actions/' . $mapping_id );
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/2/actions/' . $mapping_id ) );
         $request->set_param( 'form_source_slug', 'gravity_forms' );
         $request->set_param( 'form_id', 2 );
         $request->set_param( 'local_mapping_id', $mapping_id );
