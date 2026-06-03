@@ -13,13 +13,16 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 	protected string $rest_base = '(?P<form_source_slug>[a-z0-9_]+)/forms/(?P<form_id>\\d+)/actions';
 
 	private const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;
+	private const DEFAULT_RUNTIME_CONFIG_RATE_LIMIT_PER_MINUTE = 300;
 	private const DEFAULT_MAX_PAYLOAD_BYTES = 32768;
+	private const RUNTIME_CONFIG_TOKEN_HEADER = 'X-Sentient-Forms-Runtime-Config-Token';
 	private const HIDDEN_FIELD_EXPOSURE_MODES = [
 		'omit_hidden',
 		'label_hidden',
 		'label_hidden_value',
 		'label_value',
 	];
+	private static bool $runtime_config_no_store_filter_registered = false;
 
 	private Sentient_Forms_Plugin $plugin;
 	private Sentient_Forms_Form_Adapter_Registry $adapter_registry;
@@ -42,9 +45,39 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 			null,
 			null
 		);
+
+		if ( ! self::$runtime_config_no_store_filter_registered ) {
+			add_filter( 'rest_post_dispatch', [ $this, 'maybe_add_runtime_config_no_store_headers' ], 10, 3 );
+			self::$runtime_config_no_store_filter_registered = true;
+		}
 	}
 
 	public function register_routes(): void {
+		register_rest_route(
+			$this->namespace,
+			'/' . $this->rest_base . '/runtime-config',
+			[
+				[
+					'methods'             => WP_REST_Server::READABLE,
+					'callback'            => [ $this, 'get_runtime_config' ],
+					'permission_callback' => '__return_true',
+					'args'                => [
+						'form_source_slug' => [
+							'required'          => true,
+							'type'              => 'string',
+							'sanitize_callback' => 'sanitize_key',
+						],
+						'form_id' => [
+							'required'          => true,
+							'type'              => 'integer',
+							'sanitize_callback' => 'absint',
+							'validate_callback' => static fn( mixed $value ): bool => is_numeric( $value ) && (int) $value > 0,
+						],
+					],
+				],
+			]
+		);
+
 		register_rest_route(
 			$this->namespace,
 			'/' . $this->rest_base . '/suggest',
@@ -108,6 +141,104 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 						],
 					],
 				]
+		);
+	}
+
+	public function get_runtime_config( WP_REST_Request $request ): WP_REST_Response | WP_Error {
+		$form_source_slug = sanitize_key( (string) $request->get_param( 'form_source_slug' ) );
+		$form_id = absint( $request->get_param( 'form_id' ) );
+
+		if ( 'gravity_forms' !== $form_source_slug ) {
+			return $this->prepare_error_response(
+				'rest_invalid_form_source',
+				__( 'Real-time suggestions are currently available only for Gravity Forms.', 'sentient-forms' ),
+				400
+			);
+		}
+
+		if ( $form_id <= 0 ) {
+			return $this->prepare_error_response(
+				'rest_invalid_form_id',
+				__( 'Invalid form ID provided.', 'sentient-forms' ),
+				400
+			);
+		}
+
+		if ( ! $this->has_valid_runtime_config_token( $request, $form_source_slug, $form_id ) ) {
+			return $this->prepare_error_response(
+				'rest_invalid_runtime_config_token',
+				__( 'Runtime config token is invalid or missing. Reload this page before trying again.', 'sentient-forms' ),
+				403
+			);
+		}
+
+		$rate_limit_result = $this->enforce_rate_limit( $form_id, 'runtime_config' );
+		if ( is_wp_error( $rate_limit_result ) ) {
+			return $rate_limit_result;
+		}
+
+		$adapter = $this->adapter_registry->get_adapter_by_id( $form_source_slug );
+		if ( ! ( $adapter instanceof Sentient_Forms_Gravity_Forms_Adapter ) || ! $adapter->is_active() ) {
+			return $this->prepare_error_response(
+				'rest_form_source_unavailable',
+				__( 'Requested form source is unavailable.', 'sentient-forms' ),
+				503
+			);
+		}
+
+		$runtime_config = $adapter->get_realtime_runtime_config( $form_id );
+		if ( null === $runtime_config ) {
+			return $this->prepare_error_response(
+				'rest_realtime_runtime_config_not_found',
+				__( 'Real-time runtime config was not found for this form.', 'sentient-forms' ),
+				404
+			);
+		}
+
+		$response = $this->prepare_item_for_response( $runtime_config );
+		$this->add_runtime_config_no_store_headers( $response );
+
+		return $response;
+	}
+
+	public function maybe_add_runtime_config_no_store_headers(
+		WP_HTTP_Response $response,
+		WP_REST_Server $server,
+		WP_REST_Request $request
+	): WP_HTTP_Response {
+		unset( $server );
+
+		if ( $this->is_runtime_config_request( $request ) ) {
+			$this->add_runtime_config_no_store_headers( $response );
+		}
+
+		return $response;
+	}
+
+	private function is_runtime_config_request( WP_REST_Request $request ): bool {
+		$route = $request->get_route();
+		return 1 === preg_match(
+			'#^/' . preg_quote( $this->namespace, '#' ) . '/[a-z0-9_]+/forms/[0-9]+/actions/runtime-config$#',
+			$route
+		);
+	}
+
+	private function add_runtime_config_no_store_headers( WP_HTTP_Response $response ): void {
+		$response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0' );
+		$response->header( 'Pragma', 'no-cache' );
+		$response->header( 'Expires', 'Wed, 11 Jan 1984 05:00:00 GMT' );
+	}
+
+	private function has_valid_runtime_config_token( WP_REST_Request $request, string $form_source_slug, int $form_id ): bool {
+		$token = $request->get_header( self::RUNTIME_CONFIG_TOKEN_HEADER );
+		if ( ! is_scalar( $token ) || '' === trim( (string) $token ) ) {
+			$token = $request->get_param( 'runtime_config_token' );
+		}
+
+		return Sentient_Forms_Gravity_Forms_Adapter::is_valid_realtime_runtime_config_token(
+			$form_source_slug,
+			$form_id,
+			is_scalar( $token ) ? sanitize_text_field( (string) $token ) : ''
 		);
 	}
 
@@ -642,19 +773,43 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 	/**
 	 * @return true|WP_Error
 	 */
-	private function enforce_rate_limit( int $form_id ) {
-		$limit = (int) apply_filters( 'sentient_forms_realtime_suggest_rate_limit_per_minute', self::DEFAULT_RATE_LIMIT_PER_MINUTE, $form_id );
+	private function enforce_rate_limit( int $form_id, string $bucket = 'suggest' ) {
+		$is_runtime_config = 'runtime_config' === $bucket;
+		$default_limit = $is_runtime_config
+			? self::DEFAULT_RUNTIME_CONFIG_RATE_LIMIT_PER_MINUTE
+			: self::DEFAULT_RATE_LIMIT_PER_MINUTE;
+		$key_prefix = $is_runtime_config
+			? 'sentient_forms_rt_config_rl_'
+			: 'sentient_forms_rt_suggest_rl_';
+		$error_message = $is_runtime_config
+			? __( 'Runtime config rate limit exceeded. Please wait and retry.', 'sentient-forms' )
+			: __( 'Suggestion rate limit exceeded. Please wait and retry.', 'sentient-forms' );
+
+		if ( $is_runtime_config ) {
+			$limit = (int) apply_filters(
+				'sentient_forms_realtime_runtime_config_rate_limit_per_minute',
+				$default_limit,
+				$form_id
+			);
+		} else {
+			$limit = (int) apply_filters(
+				'sentient_forms_realtime_suggest_rate_limit_per_minute',
+				$default_limit,
+				$form_id
+			);
+		}
+
 		if ( $limit < 1 ) {
-			$limit = self::DEFAULT_RATE_LIMIT_PER_MINUTE;
+			$limit = $default_limit;
 		}
 
 		$ip = $this->get_rate_limit_client_identifier( $form_id );
-		$key = 'sentient_forms_rt_suggest_rl_' . md5( $form_id . '|' . $ip );
+		$key = $key_prefix . md5( $form_id . '|' . $ip );
 		$current = (int) get_transient( $key );
 		if ( $current >= $limit ) {
 			return $this->prepare_error_response(
 				'rest_too_many_requests',
-				__( 'Suggestion rate limit exceeded. Please wait and retry.', 'sentient-forms' ),
+				$error_message,
 				429
 			);
 		}

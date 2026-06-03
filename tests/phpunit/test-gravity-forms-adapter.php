@@ -527,6 +527,80 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         delete_option( 'sentient_forms_actions_gravity_forms_31' );
     }
 
+    public function test_runtime_config_endpoint_applies_rendered_gravity_forms_filters(): void
+    {
+        $form_id = 32;
+        $form    = [
+            'id'     => $form_id,
+            'title'  => 'Realtime Rendered Filters',
+            'fields' => [
+                (object) [ 'id' => 1, 'label' => 'Message', 'type' => 'textarea', 'pageNumber' => 1 ],
+                (object) [ 'id' => 4, 'label' => 'Storage', 'type' => 'hidden', 'pageNumber' => 1 ],
+            ],
+        ];
+        GFAPI::$forms[ $form_id ] = $form;
+
+        update_option(
+            'sentient_forms_actions_gravity_forms_' . $form_id,
+            [
+                'actions' => [
+                    'map_rt_rendered_filter' => [
+                        'local_mapping_id'           => 'map_rt_rendered_filter',
+                        'central_action_id'          => 'clarification_assistant_v1',
+                        'action_name_label'          => 'Realtime Action',
+                        'is_action_enabled_for_form' => true,
+                        'settings'                   => [
+                            'execution_mode'    => 'real_time',
+                            'realtime_settings' => [
+                                'checkpoint_field_ids'   => [ '1', '3' ],
+                                'storage_target_field_id' => '4',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $render_filter = static function ( array $rendered_form ): array {
+            $rendered_form['fields'][] = (object) [
+                'id'         => 3,
+                'label'      => 'Runtime Dynamic Field',
+                'type'       => 'text',
+                'pageNumber' => 1,
+            ];
+
+            return $rendered_form;
+        };
+
+        add_filter( 'gform_pre_render_' . $form_id, $render_filter, 10, 1 );
+
+        try
+        {
+            $runtime = $this->adapter->get_realtime_runtime_config( $form_id );
+        }
+        finally
+        {
+            remove_filter( 'gform_pre_render_' . $form_id, $render_filter, 10 );
+            delete_option( 'sentient_forms_actions_gravity_forms_' . $form_id );
+        }
+
+        $this->assertIsArray( $runtime );
+        $field_ids = array_column( $runtime['field_manifest'] ?? [], 'field_id' );
+        $dynamic_field = null;
+        foreach ( $runtime['field_manifest'] ?? [] as $field_meta )
+        {
+            if ( '3' === ( $field_meta['field_id'] ?? null ) )
+            {
+                $dynamic_field = $field_meta;
+                break;
+            }
+        }
+
+        $this->assertContains( '3', $field_ids );
+        $this->assertSame( 'Runtime Dynamic Field', $dynamic_field['label'] ?? null );
+    }
+
     public function test_build_realtime_runtime_config_auto_provisions_native_storage_field_without_mapping_setting(): void
     {
         $method = new ReflectionMethod( $this->adapter, 'build_realtime_runtime_config' );
@@ -695,6 +769,47 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
 
         $this->assertStringStartsWith( SENTIENT_FORMS_VERSION . '-', $version );
         $this->assertNotSame( SENTIENT_FORMS_VERSION, $version );
+    }
+
+    public function test_enqueue_realtime_runtime_uses_cache_safe_bootstrap(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'build_realtime_runtime_bootstrap' );
+        $method->setAccessible( true );
+
+        $bootstrap = $method->invoke( $this->adapter, 45 );
+
+        $this->assertSame( 45, $bootstrap['form_id'] ?? null );
+        $this->assertSame( 'gravity_forms', $bootstrap['source'] ?? null );
+        $this->assertStringContainsString(
+            '/sentient-forms/v1/gravity_forms/forms/45/actions/runtime-config',
+            (string) ( $bootstrap['runtime_config_endpoint_url'] ?? '' )
+        );
+        $this->assertSame(
+            Sentient_Forms_Gravity_Forms_Adapter::build_realtime_runtime_config_token( 'gravity_forms', 45 ),
+            $bootstrap['runtime_config_token'] ?? null
+        );
+        $this->assertArrayNotHasKey( 'initial_panel_state', $bootstrap );
+        $this->assertArrayNotHasKey( 'mappings', $bootstrap );
+        $this->assertArrayNotHasKey( 'nonce', $bootstrap );
+        $this->assertArrayNotHasKey( 'rest_nonce', $bootstrap );
+    }
+
+    public function test_realtime_runtime_config_token_is_site_scoped(): void
+    {
+        $original_home = get_option( 'home' );
+        $token         = Sentient_Forms_Gravity_Forms_Adapter::build_realtime_runtime_config_token( 'gravity_forms', 45 );
+
+        update_option( 'home', 'https://other-site.example' );
+        try
+        {
+            $other_site_token = Sentient_Forms_Gravity_Forms_Adapter::build_realtime_runtime_config_token( 'gravity_forms', 45 );
+        }
+        finally
+        {
+            update_option( 'home', $original_home );
+        }
+
+        $this->assertNotSame( $token, $other_site_token );
     }
 
     public function test_maps_insufficient_credits_error_to_friendly_message(): void

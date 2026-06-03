@@ -2775,7 +2775,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         wp_enqueue_script( $script_handle );
         wp_enqueue_style( $style_handle );
 
-        $json_config = wp_json_encode( $runtime_config );
+        $json_config = wp_json_encode( $this->build_realtime_runtime_bootstrap( $form_id ) );
         if ( false === $json_config )
         {
             return;
@@ -2787,6 +2787,66 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $json_config
         );
         wp_add_inline_script( $script_handle, $inline, 'before' );
+    }
+
+    /**
+     * Build a fresh visitor runtime config for REST delivery.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function get_realtime_runtime_config( int $form_id ): ?array
+    {
+        if ( $form_id <= 0 )
+        {
+            return null;
+        }
+
+        $form = $this->get_form_data( $form_id );
+        if ( ! is_array( $form ) )
+        {
+            return null;
+        }
+
+        $form = $this->apply_realtime_runtime_display_filters( $form );
+
+        return $this->build_realtime_runtime_config( $form, $this->get_form_settings( $form_id ) );
+    }
+
+    /**
+     * Rebuild the no-store runtime config against the same form-display filter
+     * surface Gravity Forms uses before rendering visitor fields.
+     *
+     * @param array<string,mixed> $form Gravity Forms form object as an array.
+     *
+     * @return array<string,mixed>
+     */
+    private function apply_realtime_runtime_display_filters( array $form ): array
+    {
+        $form_id = isset( $form['id'] ) ? absint( $form['id'] ) : 0;
+        if ( $form_id <= 0 )
+        {
+            return $form;
+        }
+
+        if ( function_exists( 'gf_apply_filters' ) )
+        {
+            $filtered = gf_apply_filters(
+                [ 'gform_pre_render', $form_id ],
+                $form,
+                false,
+                [],
+                'form_display'
+            );
+        }
+        else
+        {
+            // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Gravity Forms display hook.
+            $filtered = apply_filters( 'gform_pre_render', $form, false, [], 'form_display' );
+            // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Gravity Forms form-specific display hook.
+            $filtered = apply_filters( 'gform_pre_render_' . $form_id, $filtered, false, [], 'form_display' );
+        }
+
+        return is_array( $filtered ) ? $filtered : $form;
     }
 
     private function get_frontend_asset_version( string $relative_path ): string
@@ -2805,6 +2865,61 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         return $fallback . '-' . base_convert( (string) $mtime, 10, 36 );
+    }
+
+    /**
+     * Build cache-safe page bootstrap. Dynamic runtime settings are fetched separately.
+     *
+     * @return array<string,mixed>
+     */
+    private function build_realtime_runtime_bootstrap( int $form_id ): array
+    {
+        return [
+            'form_id'                     => $form_id,
+            'source'                      => $this->get_id(),
+            'runtime_config_endpoint_url' => rest_url(
+                sprintf( 'sentient-forms/v1/%s/forms/%d/actions/runtime-config', $this->get_id(), $form_id )
+            ),
+            'runtime_config_token'        => self::build_realtime_runtime_config_token( $this->get_id(), $form_id ),
+        ];
+    }
+
+    /**
+     * Build a stable, cache-safe token proving a page rendered this form bootstrap.
+     *
+     * @internal
+     */
+    public static function build_realtime_runtime_config_token( string $form_source_slug, int $form_id ): string
+    {
+        $form_source_slug = sanitize_key( $form_source_slug );
+        if ( '' === $form_source_slug || $form_id <= 0 )
+        {
+            return '';
+        }
+
+        return hash_hmac(
+            'sha256',
+            sprintf(
+                'sentient_forms_realtime_runtime_config|%d|%s|%s|%d',
+                function_exists( 'get_current_blog_id' ) ? (int) get_current_blog_id() : 0,
+                untrailingslashit( home_url( '/' ) ),
+                $form_source_slug,
+                $form_id
+            ),
+            wp_salt( 'nonce' )
+        );
+    }
+
+    /**
+     * Verify a runtime config bootstrap token without exposing form config by ID alone.
+     *
+     * @internal
+     */
+    public static function is_valid_realtime_runtime_config_token( string $form_source_slug, int $form_id, string $token ): bool
+    {
+        $expected = self::build_realtime_runtime_config_token( $form_source_slug, $form_id );
+
+        return '' !== $expected && '' !== $token && hash_equals( $expected, $token );
     }
 
     /**
@@ -2861,17 +2976,20 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $config_ttl_seconds  = max( MINUTE_IN_SECONDS, min( DAY_IN_SECONDS, $config_ttl_seconds ) );
 
         return [
-            'form_id'              => $form_id,
-            'source'               => $this->get_id(),
-            'total_pages'          => $total_pages,
-            'suggest_endpoint_url' => rest_url( sprintf( 'sentient-forms/v1/gravity_forms/forms/%d/actions/suggest', $form_id ) ),
-            'nonce'                => wp_create_nonce( 'sentient_forms_realtime_suggest_' . $form_id ),
-            'rest_nonce'           => wp_create_nonce( 'wp_rest' ),
-            'config_generated_at'  => $config_generated_at,
-            'config_expires_at'    => $config_generated_at + $config_ttl_seconds,
-            'initial_panel_state'  => $this->resolve_realtime_initial_panel_state( $mappings ),
-            'mappings'             => $mappings,
-            'field_manifest'       => $field_manifest,
+            'form_id'                     => $form_id,
+            'source'                      => $this->get_id(),
+            'total_pages'                 => $total_pages,
+            'runtime_config_endpoint_url' => rest_url(
+                sprintf( 'sentient-forms/v1/%s/forms/%d/actions/runtime-config', $this->get_id(), $form_id )
+            ),
+            'suggest_endpoint_url'        => rest_url( sprintf( 'sentient-forms/v1/gravity_forms/forms/%d/actions/suggest', $form_id ) ),
+            'nonce'                       => wp_create_nonce( 'sentient_forms_realtime_suggest_' . $form_id ),
+            'rest_nonce'                  => wp_create_nonce( 'wp_rest' ),
+            'config_generated_at'         => $config_generated_at,
+            'config_expires_at'           => $config_generated_at + $config_ttl_seconds,
+            'initial_panel_state'         => $this->resolve_realtime_initial_panel_state( $mappings ),
+            'mappings'                    => $mappings,
+            'field_manifest'              => $field_manifest,
         ];
     }
 

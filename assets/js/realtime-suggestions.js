@@ -10,8 +10,16 @@
 
 	if (!window[RUNTIME_KEY]) {
 		window[RUNTIME_KEY] = {
-			forms: {}
+			forms: {},
+			pendingConfigs: {},
+			configErrors: {}
 		};
+	}
+	if (!window[RUNTIME_KEY].pendingConfigs) {
+		window[RUNTIME_KEY].pendingConfigs = {};
+	}
+	if (!window[RUNTIME_KEY].configErrors) {
+		window[RUNTIME_KEY].configErrors = {};
 	}
 
 	function asArray(value) {
@@ -30,6 +38,82 @@
 		return ['open', 'minimized', 'hidden_until_interaction'].indexOf(normalized) >= 0
 			? normalized
 			: 'minimized';
+	}
+
+	function formIdFromConfig(config) {
+		var formId = parseInt(config && config.form_id, 10);
+		return Number.isFinite(formId) && formId > 0 ? formId : 0;
+	}
+
+	function hasFullRuntimeConfig(config) {
+		return !!(
+			config &&
+			typeof config === 'object' &&
+			Array.isArray(config.mappings) &&
+			normalizeFieldId(config.runtime_config_endpoint_url) &&
+			normalizeFieldId(config.suggest_endpoint_url) &&
+			normalizeFieldId(config.nonce)
+		);
+	}
+
+	function fetchRuntimeConfig(config) {
+		var formId = formIdFromConfig(config);
+		var endpointUrl = normalizeFieldId(config && config.runtime_config_endpoint_url);
+		var runtimeConfigToken = normalizeFieldId(config && config.runtime_config_token);
+		var headers = {
+			Accept: 'application/json'
+		};
+		if (!formId || !endpointUrl || typeof window.fetch !== 'function') {
+			return Promise.resolve(null);
+		}
+
+		if (runtimeConfigToken) {
+			headers['X-Sentient-Forms-Runtime-Config-Token'] = runtimeConfigToken;
+		}
+
+		if (window[RUNTIME_KEY].pendingConfigs[formId]) {
+			return window[RUNTIME_KEY].pendingConfigs[formId];
+		}
+
+		window[RUNTIME_KEY].pendingConfigs[formId] = window.fetch(endpointUrl, {
+			method: 'GET',
+			credentials: 'same-origin',
+			cache: 'no-store',
+			headers: headers
+		}).then(function (response) {
+			return response.text().then(function (bodyText) {
+				if (!response.ok) {
+					throw new Error(publicRoadblockMessage(response, bodyText));
+				}
+
+				try {
+					return JSON.parse(bodyText);
+				} catch (error) {
+					throw new Error('Runtime configuration could not be read.');
+				}
+			});
+		}).then(function (runtimeConfig) {
+			if (!hasFullRuntimeConfig(runtimeConfig)) {
+				throw new Error('Runtime configuration is incomplete.');
+			}
+			if (formIdFromConfig(runtimeConfig) !== formId) {
+				throw new Error('Runtime configuration does not match this form.');
+			}
+
+			if (!runtimeConfig.runtime_config_endpoint_url) {
+				runtimeConfig.runtime_config_endpoint_url = endpointUrl;
+			}
+			window.sentientFormsRealtimeSuggestions.forms[formId] = runtimeConfig;
+			return runtimeConfig;
+		}).catch(function (error) {
+			window[RUNTIME_KEY].configErrors[formId] =
+				error && error.message ? error.message : 'Runtime configuration could not be loaded.';
+			return null;
+		}).finally(function () {
+			delete window[RUNTIME_KEY].pendingConfigs[formId];
+		});
+
+		return window[RUNTIME_KEY].pendingConfigs[formId];
 	}
 
 	function publicSuggestionErrorMessage(message, status) {
@@ -1976,10 +2060,37 @@
 		}
 	}
 
+	function loadAndInitializeForm(config) {
+		var formId = formIdFromConfig(config);
+		if (
+			!formId ||
+			window[RUNTIME_KEY].forms[formId] ||
+			window[RUNTIME_KEY].pendingConfigs[formId] ||
+			window[RUNTIME_KEY].configErrors[formId]
+		) {
+			return;
+		}
+
+		if (hasFullRuntimeConfig(config)) {
+			initializeForm(config);
+			return;
+		}
+
+		fetchRuntimeConfig(config).then(function (runtimeConfig) {
+			if (runtimeConfig) {
+				initializeForm(runtimeConfig);
+				return;
+			}
+			if (!window[RUNTIME_KEY].configErrors[formId]) {
+				window[RUNTIME_KEY].configErrors[formId] = 'Runtime configuration could not be loaded.';
+			}
+		});
+	}
+
 	function boot() {
 		var formsConfig = window.sentientFormsRealtimeSuggestions.forms;
 		Object.keys(formsConfig).forEach(function (formIdKey) {
-			initializeForm(formsConfig[formIdKey]);
+			loadAndInitializeForm(formsConfig[formIdKey]);
 		});
 	}
 
@@ -1993,7 +2104,7 @@
 		window.jQuery(document).on('gform_post_render.sentientFormsRealtime', function (_event, formId) {
 			var config = window.sentientFormsRealtimeSuggestions.forms[String(formId)] || window.sentientFormsRealtimeSuggestions.forms[formId];
 			if (config) {
-				initializeForm(config);
+				loadAndInitializeForm(config);
 			}
 		});
 	}
