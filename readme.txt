@@ -111,7 +111,7 @@ Gravity Forms is required for the current form-action workflows. Other form buil
 
 = Where is the source for the compressed admin JavaScript? =
 
-The JavaScript and CSS files in `assets/dist` are generated from the SvelteKit admin app source. The exact source and build tooling for the packaged admin app are included in the plugin package under `admin-app`; source files are stored with WordPress.org-safe filenames plus `admin-app/source/source-map.json`. Build from the `admin-app/` directory with `bun install --frozen-lockfile`, `bun run restore:source`, and `bun run build:wp`.
+The JavaScript and CSS files in `assets/dist` are generated from the SvelteKit admin app source. The exact source and build tooling for the packaged admin app are included in the plugin package under `admin-app`; source files are stored with WordPress.org-safe filenames plus `admin-app/source/source-map.json`. Build from the `admin-app/` directory with `bun install --frozen-lockfile`, `bun run restore:source`, and `bun run build:wp`. The public development repository is available at https://github.com/TWP-Technologies/sentient-forms-wp-plugin.
 
 == Changelog ==
 
