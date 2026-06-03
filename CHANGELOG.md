@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.1...v0.3.2) (2026-06-03)
+
+
+### Bug Fixes
+
+* **wporg:** distinguish plugin and author uris ([4558983](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/4558983ce227b4541db886046f457f637f1c1865))
+* **wporg:** distinguish plugin and author uris ([#25](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/issues/25)) ([93c435d](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/93c435d2dd699e2a30daa65b0d480c624ca5bd6e))
+
 ## [0.3.1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.0...v0.3.1) (2026-06-03)
 
 
