@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.0...v0.3.1) (2026-06-03)
+
+
+### Bug Fixes
+
+* **security:** harden wporg submission paths ([2881501](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/28815014fdf1d0c24fc98dc1afb039fd232f0c0b))
+* **security:** harden wporg submission paths ([7a6f272](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/7a6f2722d9a3dfc9598e50a8ea192291550ab137))
+* **security:** harden wporg submission paths ([8cef6c1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/8cef6c18d5cc1085b98ee98b81544a70c1ecca55))
+* **security:** harden wporg submission paths ([bcd9af0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/bcd9af0ff5ee2814791c4b2e3ecf3ed03020a9a0))
+* **security:** harden wporg submission paths ([0eeaabe](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0eeaabe3853e0cce463c6a2936d385b5330eead9))
+
 ## [0.3.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.2.2...v0.3.0) (2026-06-01)
 
 
