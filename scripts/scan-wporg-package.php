@@ -115,6 +115,7 @@ $allowed_url_hosts = [
     'svelte.dev',
     'svelteflow.dev',
     'tailwindcss.com',
+    'twp.tech',
     'www.gnu.org',
     'www.w3.org',
     'wordpress.org',
@@ -238,6 +239,10 @@ if ( ! file_exists( $root . '/sentient-forms.php' ) )
 {
     $issues[] = 'Missing sentient-forms.php plugin entry point.';
 }
+else
+{
+    $issues = array_merge( $issues, validate_plugin_headers( $root . '/sentient-forms.php' ) );
+}
 
 if ( ! file_exists( $root . '/readme.txt' ) )
 {
@@ -274,6 +279,78 @@ if ( [] !== $issues )
 
 $mode = $source_tree ? 'source tree' : 'package';
 echo "Sentient Forms WordPress.org {$mode} scan passed for {$root}.\n";
+
+/**
+ * Validate the main plugin headers that WordPress.org upload checks enforce.
+ *
+ * @return array<int,string>
+ */
+function validate_plugin_headers( string $plugin_file ): array
+{
+    $contents = file_get_contents( $plugin_file );
+    if ( false === $contents )
+    {
+        return [ 'Could not read sentient-forms.php plugin entry point.' ];
+    }
+
+    $plugin_uri = normalize_plugin_header_uri( parse_plugin_header_value( $contents, 'Plugin URI' ) );
+    $author_uri = normalize_plugin_header_uri( parse_plugin_header_value( $contents, 'Author URI' ) );
+    $issues     = [];
+
+    if ( null === $plugin_uri )
+    {
+        $issues[] = 'Plugin URI header is required for this package.';
+    }
+
+    if ( null === $author_uri )
+    {
+        $issues[] = 'Author URI header is required for this package.';
+    }
+
+    if ( null !== $plugin_uri && null !== $author_uri && $plugin_uri === $author_uri )
+    {
+        $issues[] = 'Plugin URI and Author URI must not be the same URL.';
+    }
+
+    return $issues;
+}
+
+/**
+ * Parse a main plugin file header value.
+ */
+function parse_plugin_header_value( string $contents, string $field ): ?string
+{
+    if ( ! preg_match( '/^\s*\*\s*' . preg_quote( $field, '/' ) . ':\s*(.+)$/mi', $contents, $matches ) )
+    {
+        return null;
+    }
+
+    $value = trim( $matches[1] );
+    return '' === $value ? null : $value;
+}
+
+/**
+ * Normalize plugin header URIs for equality checks.
+ */
+function normalize_plugin_header_uri( ?string $uri ): ?string
+{
+    if ( null === $uri )
+    {
+        return null;
+    }
+
+    $parts = parse_url( $uri );
+    if ( ! is_array( $parts ) || empty( $parts['host'] ) )
+    {
+        return strtolower( rtrim( $uri, '/' ) );
+    }
+
+    $scheme = strtolower( $parts['scheme'] ?? 'https' );
+    $host   = strtolower( $parts['host'] );
+    $path   = isset( $parts['path'] ) ? rtrim( $parts['path'], '/' ) : '';
+
+    return "{$scheme}://{$host}{$path}";
+}
 
 /**
  * Return whether a discovered URL token is only part of a bundled dynamic
