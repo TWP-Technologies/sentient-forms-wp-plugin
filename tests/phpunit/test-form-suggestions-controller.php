@@ -404,6 +404,31 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$this->assertArrayNotHasKey( 'value', $context['supplemental_field_context'][0] ?? [] );
 	}
 
+	public function test_suggest_endpoint_does_not_trust_client_visible_field_ids_for_hidden_fields(): void {
+		$stub_executor = new Sentient_Forms_Test_Suggest_Executor();
+		$this->executor_property->setValue( $this->plugin, $stub_executor );
+
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/42/actions/suggest' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_param( 'mapping_id', 'map_rt_1' );
+		$request->set_param( 'all_known_field_values', [ '1' => 'hello', '9' => 'route-secret' ] );
+		$request->set_param( 'visible_field_ids', [ '1', '9' ] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 2 );
+
+		$response = $this->controller->suggest( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$this->assertCount( 1, $stub_executor->calls );
+		$context = $stub_executor->calls[0]['suggestion_context'];
+		$this->assertSame( [ '1' ], $context['visible_field_ids'] ?? [] );
+		$this->assertSame( [ '1' => 'hello' ], $context['all_known_field_values'] ?? [] );
+		$this->assertSame( [ '1' => 'hello' ], $stub_executor->calls[0]['entry'] );
+		$this->assertSame( '9', $context['supplemental_field_context'][0]['field_id'] ?? null );
+		$this->assertArrayNotHasKey( 'value', $context['supplemental_field_context'][0] ?? [] );
+	}
+
 	public function test_suggest_endpoint_allows_hidden_values_when_mapping_policy_allows_them(): void {
 		$settings = get_option( 'sentient_forms_actions_gravity_forms_42' );
 		$settings['actions'][0]['settings']['realtime_settings']['hidden_field_exposure_mode'] = 'label_hidden_value';

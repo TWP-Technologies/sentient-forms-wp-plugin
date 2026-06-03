@@ -830,6 +830,15 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 		return $field_id === $target_field_id || $this->root_field_id( $field_id ) === $target_field_id;
 	}
 
+	private function is_client_visible_form_value_field( string $field_id, array $form, array $realtime_settings ): bool {
+		if ( '' === $field_id || $this->is_realtime_storage_field( $field_id, $realtime_settings ) ) {
+			return false;
+		}
+
+		$field_meta = $this->form_field_meta_for_value_id( $form, $field_id );
+		return 'hidden' !== ( $field_meta['type'] ?? '' );
+	}
+
 	/**
 	 * @return array{field_id:string,label:string,type:string,page_index:int}|null
 	 */
@@ -1005,7 +1014,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 					continue;
 				}
 				$normalized = sanitize_text_field( (string) $field_id );
-				if ( '' !== $normalized ) {
+				if ( $this->is_client_visible_form_value_field( $normalized, $form, $realtime_settings ) ) {
 					$visible_field_ids[] = $normalized;
 				}
 			}
