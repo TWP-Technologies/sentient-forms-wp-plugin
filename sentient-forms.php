@@ -5,7 +5,7 @@
  * Description: Integrate Large Language Models (LLMs) with form builders to automate intelligent actions on form submissions.
  * Version: 0.3.1
  * Author: TWP Technologies, LLC.
- * Author URI: https://sentientforms.com
+ * Author URI: https://twp.tech
  * Text Domain: sentient-forms
  * Domain Path: /languages
  * Requires at least: 6.8.0
