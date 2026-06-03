@@ -5,75 +5,75 @@
 
 ### Bug Fixes
 
-* **wporg:** distinguish plugin and author uris ([4558983](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/4558983ce227b4541db886046f457f637f1c1865))
-* **wporg:** distinguish plugin and author uris ([#25](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/issues/25)) ([93c435d](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/93c435d2dd699e2a30daa65b0d480c624ca5bd6e))
+* **wporg:** distinguish plugin and author uris ([6eebde7](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/6eebde74dab834a6d62dcee3da54f6d13262d3aa))
+* **wporg:** distinguish plugin and author uris ([20355b1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/20355b1c84460e6f806a18c1dd40afb61cd9e235))
 
 ## [0.3.1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.0...v0.3.1) (2026-06-03)
 
 
 ### Bug Fixes
 
-* **security:** harden wporg submission paths ([2881501](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/28815014fdf1d0c24fc98dc1afb039fd232f0c0b))
-* **security:** harden wporg submission paths ([7a6f272](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/7a6f2722d9a3dfc9598e50a8ea192291550ab137))
-* **security:** harden wporg submission paths ([8cef6c1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/8cef6c18d5cc1085b98ee98b81544a70c1ecca55))
-* **security:** harden wporg submission paths ([bcd9af0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/bcd9af0ff5ee2814791c4b2e3ecf3ed03020a9a0))
-* **security:** harden wporg submission paths ([0eeaabe](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0eeaabe3853e0cce463c6a2936d385b5330eead9))
+* **security:** harden wporg submission paths ([fa07b6b](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/fa07b6b3d66d4ae836bacec3ef6b77b69afa5428))
+* **security:** harden wporg submission paths ([1c528a6](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/1c528a619c51891b643d1e763e82bfc34d11b6f1))
+* **security:** harden wporg submission paths ([d59b330](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/d59b3303b45384ad15ed7f4b40af5419a86e8a6a))
+* **security:** harden wporg submission paths ([f32b694](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/f32b6947312bb38a9b1f81b84820e788a0dcd072))
+* **security:** harden wporg submission paths ([58f038c](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/58f038cd8802b620a2b1731db78e4474a83faaaa))
 
 ## [0.3.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.2.2...v0.3.0) (2026-06-01)
 
 
 ### Bug Fixes
 
-* **admin:** detect security roadblocks without overblaming ([#19](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/issues/19)) ([2499f6a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2499f6a1f479079c64981cb6fc47b412f71d3fc0))
+* **admin:** detect security roadblocks without overblaming ([4c4ebd3](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/4c4ebd3a64c54d476fe4d095bf78adeac9b48591))
 
 
 ### Performance Improvements
 
-* **admin:** collapse WordPress admin bootstrap requests ([#18](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/issues/18)) ([ac249fa](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ac249fa1216fef1969dd69c530a34c0db325e995))
+* **admin:** collapse WordPress admin bootstrap requests ([074ad03](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/074ad035b7ef0dd8cea70d238fd704c3dcf64344))
 
 
 ### Miscellaneous Chores
 
-* **release:** request 0.3.0 ([949ee63](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/949ee63139da833c8a4cea804a9ef5fccf8bd38e))
+* **release:** request 0.3.0 ([72f609d](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/72f609d4c7ac99f86524f9cd8bc175261c711b78))
 
 ## [0.2.2](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.2.1...v0.2.2) (2026-05-29)
 
 
 ### Bug Fixes
 
-* **admin:** stabilize privacy apply and generate gating ([47ec91a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/47ec91ae189185d6b74bac975d1a2a9be7eddcad))
+* **admin:** stabilize privacy apply and generate gating ([51c28e2](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/51c28e27b30d64c8cfd47faba6a87da71a4ddb25))
 
 ## [0.2.1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.2.0...v0.2.1) (2026-05-29)
 
 
 ### Bug Fixes
 
-* **ci:** align release please tag format ([a96fc5b](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a96fc5bf3d84a7ab5e08ee1390b5f2fdc1655445))
-* **site-context:** require paid setup for AI generation ([eec653f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/eec653f77fdd7feb9f87a350973333fb76a7fb03))
+* **ci:** align release please tag format ([41e5951](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/41e59513676d717a11939d5032d1aedba81a46e5))
+* **site-context:** require paid setup for AI generation ([94e7f05](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/94e7f050d9a35823c92c07833b3c53e4364f9b64))
 
 ## [0.2.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/sentient-forms-v0.1.1...sentient-forms-v0.2.0) (2026-05-28)
 
 
 ### Features
 
-* **admin:** add action log context and billing plan updates ([85c2e83](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/85c2e83c6a50ea379819fc9946669f2d1beddb9a))
+* **admin:** add action log context and billing plan updates ([c2db9e7](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c2db9e7b8e27c1163d84a907f2865ac9ef203928))
 
 
 ### Bug Fixes
 
-* **admin:** harden realtime mapping greenlight ([a92da97](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a92da97f956c6248f8ae3679f5582e7152fc2135))
-* **admin:** keep action log actions visible ([d49a93d](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/d49a93d4c15c4d01db7f17260cbd7126ecc472e2))
-* **admin:** make release asset build deterministic ([ec4ad79](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ec4ad79a964d2312ced74c227eb0d71094dfba70))
-* **ci:** authenticate release sync push ([b85a0ca](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b85a0ca62d69326d23ccc9dc197d05df4a1cbb35))
-* **ci:** force add release assets during sync ([c1da89e](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c1da89efbc1fc64ab5b774a019c5b02b3cde760e))
-* **ci:** pin plugin check runtime ([7114f5a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/7114f5a9866c3dad59826be733e73432271cc057))
-* **ci:** push release sync with app token remote ([eb7adb7](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/eb7adb7dc5abf06891c007f6195a516341e098a2))
-* **managed:** harden launch licensing UI ([ebad7bc](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ebad7bcb47d9e25752e0a47fad79ca9c11fd9db7))
-* **managed:** hide service costs behind credits ([08210a5](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/08210a50b4c0da210225da90263f0f3fe5f8d6ec))
-* **managed:** simplify launch licensing ([ad585b3](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ad585b3841da3308d94ec9f8c368fa1405f9f0ee))
-* **wporg:** align package scan disclosure term ([da1addb](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/da1addb473e3e80770f4ee11719d8079ab6a5397))
-* **wporg:** harden production release package ([6fda8a4](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/6fda8a4aa2d5d310e0ea86969b0d9ad2fa169294))
-* **wporg:** harden telemetry and custom actions ([0fa2a6c](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0fa2a6c465e2a3779f49f2586d6d7230b67acac8))
+* **admin:** harden realtime mapping greenlight ([e595741](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/e5957410c665e4669f35b1d41b2a858762c210c3))
+* **admin:** keep action log actions visible ([619d02d](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/619d02d22e4d111c7ab68ca48ad6d15acc40ddd0))
+* **admin:** make release asset build deterministic ([3548047](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/3548047df6ed66d55b91d50c9b120dec5360c0c9))
+* **ci:** authenticate release sync push ([a67ffc8](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a67ffc8c7cdc50814c515ff06ee72de068fb2f58))
+* **ci:** force add release assets during sync ([07b989f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/07b989fb3973451cc691e34dade9ca4373ef4c1d))
+* **ci:** pin plugin check runtime ([24be9bc](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/24be9bc619cb56e9c7e60540062cbf2ab24a1603))
+* **ci:** push release sync with app token remote ([20de3fe](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/20de3fe73d4d9965bf6a56adf76b0d45fed58f60))
+* **managed:** harden launch licensing UI ([10e6cab](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/10e6cab03123df2105c75c499f166ff4b6c6239a))
+* **managed:** hide service costs behind credits ([c70ef3c](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c70ef3c6772cf2cd59b1d043f1a6552f7a40456a))
+* **managed:** simplify launch licensing ([f9c8fd1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/f9c8fd1d07431e9c76e70bb68d1a195ae9e63b06))
+* **wporg:** align package scan disclosure term ([e8d0619](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/e8d0619e9e2f3809e90784e577ddf1044735907e))
+* **wporg:** harden production release package ([2494a5d](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2494a5d021e33988435e478ca44004552b1ddcbf))
+* **wporg:** harden telemetry and custom actions ([e4f5485](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/e4f548551e21d11d6210b999ae73a0acc4fda1b2))
 
 ## Changelog
 
