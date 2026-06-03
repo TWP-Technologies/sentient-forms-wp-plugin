@@ -42,7 +42,7 @@ Severity calibration used by the scan:
 | ID | Severity | Finding | Affected paths | Remediation | Regression coverage |
 | --- | --- | --- | --- | --- | --- |
 | SF-WPORG-2026-06-02-01 | Medium | Managed Lead Scoring profile generation could call the Sentient managed proxy after latest `sentient_managed` consent was revoked. | `includes/rest-api/controllers/class-lead-value-controller.php` | Gate managed profile-generation augmentation on latest managed-service consent, treat `revoke_managed_proxy` as a hard skip before the managed proxy client can execute, and require the latest consent row to be an explicit `setup_managed_proxy` acceptance with `managed_proxy_selected=true`. Checkout-start records after revocation do not re-enable managed proxy calls. | `tests/phpunit/test-lead-value-controller.php` |
-| SF-WPORG-2026-06-02-02 | Medium | Realtime suggestions filtered hidden-field values for `suggestion_context` but still passed raw request values into local-first/CPS execution, and initially trusted client-supplied `visible_field_ids` before checking Gravity Forms field metadata. | `includes/rest-api/controllers/class-form-suggestions-controller.php` | Derive execution known values from the server-filtered suggestion context, pass those values into both local-first and CPS suggestion execution, and server-filter client-visible field IDs against form field type/storage metadata before treating values as visible. | `tests/phpunit/test-form-suggestions-controller.php` |
+| SF-WPORG-2026-06-02-02 | Medium | Realtime suggestions filtered hidden-field values for `suggestion_context` but still passed raw request values into local-first/CPS execution, and initially trusted client-supplied `visible_field_ids` before checking Gravity Forms field metadata. A follow-up review also identified Gravity Forms text fields marked `visibility=hidden` or `visibility=administrative` as a separate hidden-field bypass case. | `includes/rest-api/controllers/class-form-suggestions-controller.php` | Derive execution known values from the server-filtered suggestion context, pass those values into both local-first and CPS suggestion execution, and server-filter client-visible field IDs against form field type, storage metadata, and Gravity Forms `visibility` before treating values as visible. | `tests/phpunit/test-form-suggestions-controller.php` |
 | SF-WPORG-2026-06-02-03 | Low | Form-actions permission callbacks and REST argument validators could validate source/form existence before the shared admin permission and nonce check. WordPress core validates and sanitizes route arguments before `permission_callback`, so object-existence checks in validators were also in scope. | `includes/rest-api/controllers/class-form-actions-controller.php` | Run `permission_callback_with_nonce()` before source/form validation and keep REST argument validators syntactic until the caller is authorized, so unauthorized callers do not receive source, form, entry, or local mapping existence signals. | `tests/phpunit/test-form-actions-controller.php` |
 | SF-WPORG-2026-06-02-04 | Low | Realtime Q&A admin display persisted Gravity Forms grid-column metadata changes on GET/admin render paths without a nonce. | `includes/admin/class-sentient-forms-realtime-qna-admin-display.php` | Remove the metadata-pruning admin hook and render-path mutation. Keep in-memory hiding of storage columns in displayed output. | `tests/phpunit/test-realtime-qna-admin-display.php` |
 
@@ -61,8 +61,8 @@ vendor\bin\phpunit --filter RealtimeQnaAdminDisplayTest
 
 Results:
 
-- `Tests_Lead_Value_Controller`: 11 tests, 119 assertions.
-- `Tests_Form_Suggestions_Controller`: 13 tests, 73 assertions.
+- `Tests_Lead_Value_Controller`: 12 tests, 127 assertions.
+- `Tests_Form_Suggestions_Controller`: 14 tests, 81 assertions.
 - `Tests_Form_Actions_Controller`: 89 tests, 531 assertions.
 - `RealtimeQnaAdminDisplayTest`: 13 tests, 102 assertions.
 
@@ -81,7 +81,7 @@ composer wporg-build-package
 
 Results:
 
-- `vendor\bin\phpunit`: passed, 623 tests, 4778 assertions, 4 skipped.
+- `vendor\bin\phpunit`: passed, 625 tests, 4794 assertions, 4 skipped.
 - `composer phpcs`: passed.
 - `composer wporg-release-version-check`: passed with source surfaces still aligned to `0.3.0` before the Release Please `0.3.1` release PR.
 - `composer wporg-source-check`: passed.
@@ -93,39 +93,40 @@ Results:
 Exact package checks:
 
 ```powershell
-php scripts\scan-wporg-package.php "<workspace>\temp\2026\06\02\190020-wporg-package\sentient-forms"
-php scripts\audit-wporg-licenses.php --package "<workspace>\temp\2026\06\02\190020-wporg-package\sentient-forms"
-php scripts\validate-wporg-readme.php "<workspace>\temp\2026\06\02\190020-wporg-package\sentient-forms\readme.txt"
-php scripts\verify-wporg-source.php "<workspace>\temp\2026\06\02\190020-wporg-package\sentient-forms"
+php scripts\scan-wporg-package.php "<workspace>\temp\2026\06\02\194430-wporg-package\sentient-forms"
+php scripts\audit-wporg-licenses.php --package "<workspace>\temp\2026\06\02\194430-wporg-package\sentient-forms"
+php scripts\validate-wporg-readme.php "<workspace>\temp\2026\06\02\194430-wporg-package\sentient-forms\readme.txt"
+php scripts\verify-wporg-source.php "<workspace>\temp\2026\06\02\194430-wporg-package\sentient-forms"
 ```
 
 Exact package results:
 
-- Package directory: `<workspace>\temp\2026\06\02\190020-wporg-package\sentient-forms`
-- ZIP candidate: `<workspace>\temp\2026\06\02\190020-wporg-package\sentient-forms-0.3.0-wporg-security-candidate.zip`
-- SHA256: `28866790D03C5F3C29BF57DE3555C6CA02EC7598DE562183BF0655E78333FDAE`
+- Package directory: `<workspace>\temp\2026\06\02\194430-wporg-package\sentient-forms`
+- ZIP candidate: `<workspace>\temp\2026\06\02\194430-wporg-package\sentient-forms-0.3.0-wporg-security-candidate.zip`
+- SHA256: `12A780281EE2D75AD751021E2AA1FC1660A712911A644ADAA9C843A66A458347`
 - Package scan: passed.
 - License audit: passed.
 - Readme validation: passed by local and official readme validators.
 - Source verification: passed.
 - Archive blocker scan: passed; no `.git`, tests, `vendor/bin`, development lockfiles, or `node_modules` found.
-- Local Plugin Check against the exact package: passed with 0 errors and 0 warnings. Supporting summary: `<workspace>\temp\2026\06\02\190020-wporg-package\plugin-check-summary.json`
+- Local Plugin Check against the exact package: passed with 0 errors and 0 warnings. Supporting summary: `<workspace>\temp\2026\06\02\194430-wporg-package\plugin-check-summary.json`
 
 Exact-package dogfood:
 
 - Environment: Docker WordPress/Gravity Forms with the package installed at `/var/www/html/wp-content/plugins/sentient-forms-wporg-check`; active package version verified as `0.3.0`.
 - Local health: `./scripts/check-local-health.sh` passed; `/v2/health` reachable, managed service key present, `/v2/billing/state` authenticated.
-- Realtime suggestions package browser path: `SENTIENT_RUN_WP_E2E=1`, `SENTIENT_WP_PLUGIN_MODE=package`, `bun run --bun e2e tests/e2e/wp-realtime-suggestions.spec.ts --grep 'checkpoint gating|virtual questions are submitted' --reporter=list`; 2 passed against the `190020` package install.
-- Realtime hidden-field bypass smoke: passed against the exact package; a crafted request that supplied hidden storage field `5` in `visible_field_ids` forwarded only visible field `1` into execution. Supporting artifact: `<workspace>\temp\2026\06\02\170716-browser-mcp-package-prep\realtime-hidden-visible-bypass-smoke-190020-package.json`
-- Lead Scoring after managed consent revoke: passed; `generation.mode=local_readiness_grounded_profile_v1`, `llm_augmentation_status=skipped`, `llm_augmentation_reason=sentient_forms_external_service_consent_revoked`. Supporting artifact: `<workspace>\temp\2026\06\02\170716-browser-mcp-package-prep\lead-scoring-consent-revoke-smoke-190020-package.json`. PHPUnit also covers the checkout-after-revocation path so a later `managed_checkout_start` row cannot re-enable managed proxy calls.
-- Realtime Q&A admin entry display: passed in Browser MCP against form `742`, entry `1534`; cards view rendered, table/json views were hidden by default, stored Q&A question and answer were visible, and the raw storage field label was not visible. Screenshot: `<workspace>\temp\2026\06\02\170716-browser-mcp-package-prep\qna-entry-display-admin-190020-package.png`. Supporting assertion artifact: `<workspace>\temp\2026\06\02\170716-browser-mcp-package-prep\qna-entry-display-admin-190020-package.json`
-- Gravity Forms grid metadata non-mutation: passed against form `742`; metadata was seeded with the realtime storage field, the GF entries list was loaded through Browser MCP, and persisted metadata still included the storage field. Supporting artifact: `<workspace>\temp\2026\06\02\170716-browser-mcp-package-prep\qna-grid-meta-after-admin-render-190020-package.json`
+- Realtime suggestions package browser path: `SENTIENT_RUN_WP_E2E=1`, `SENTIENT_WP_PLUGIN_MODE=package`, `bun run --bun e2e tests/e2e/wp-realtime-suggestions.spec.ts --grep 'checkpoint gating|virtual questions are submitted' --reporter=list`; 2 passed against the `194430` package install.
+- Realtime hidden-field bypass smoke: passed against the exact package; crafted requests that supplied hidden storage field `5` and Gravity Forms text fields with `visibility=administrative` / `visibility=hidden` in `visible_field_ids` forwarded only visible field `1` into execution. Supporting artifacts: `<workspace>\temp\2026\06\02\194430-wporg-package\realtime-hidden-visible-bypass-smoke-194430-package.json`, `<workspace>\temp\2026\06\02\194430-wporg-package\realtime-gf-visibility-visible-bypass-smoke-194430-package.json`
+- Lead Scoring after managed consent revoke: passed; `generation.mode=local_readiness_grounded_profile_v1`, `llm_augmentation_status=skipped`, `llm_augmentation_reason=sentient_forms_external_service_consent_revoked`. Supporting artifact: `<workspace>\temp\2026\06\02\194430-wporg-package\lead-scoring-consent-revoke-smoke-194430-package.json`. PHPUnit also covers the checkout-after-revocation path so a later `managed_checkout_start` row cannot re-enable managed proxy calls.
+- Realtime Q&A admin entry display: passed in Browser MCP against form `742`, entry `1534`; cards view rendered, table/json views were hidden by default, stored Q&A question and answer were visible, and the raw storage field label was not visible. Screenshot: `<workspace>\temp\2026\06\02\194430-wporg-package\qna-entry-display-admin-194430-package.png`. Supporting assertion artifact: `<workspace>\temp\2026\06\02\194430-wporg-package\qna-entry-display-admin-194430-package.json`
+- Gravity Forms grid metadata non-mutation: passed against form `742`; metadata was seeded with the realtime storage field, the GF entries list was loaded through Browser MCP, and persisted metadata still included the storage field. Supporting artifact: `<workspace>\temp\2026\06\02\194430-wporg-package\qna-grid-meta-after-admin-render-194430-package.json`
 
 ## Reviewer Loop Status
 
 - Codex PR review: first targeted review produced one material lead-consent finding. The branch now requires explicit `setup_managed_proxy` consent after revocation and includes a checkout-after-revocation regression.
-- CodeRabbit PR review: automatic walkthrough was inspected and was in progress, not paused. No resume comment was required. Material feedback accepted: public release evidence now redacts operator-specific absolute paths, and form-actions REST argument validators now avoid pre-permission object-existence checks.
-- Codex follow-up review: accepted a material realtime hidden-field bypass finding. The branch now server-filters client-visible field IDs against Gravity Forms field metadata before local/CPS realtime execution.
+- CodeRabbit PR review: automatic walkthrough was inspected. It later showed an auto-paused state, so `@coderabbitai resume` was posted as required by the plan; the resumed pass reported no actionable comments for the latest two-file follow-up. Material feedback accepted: public release evidence now redacts operator-specific absolute paths, and form-actions REST argument validators now avoid pre-permission object-existence checks.
+- Codex follow-up review: accepted material realtime hidden-field bypass findings. The branch now server-filters client-visible field IDs against Gravity Forms field type, storage target metadata, and Gravity Forms `visibility=hidden|administrative` before local/CPS realtime execution.
+- Greptile follow-up review: accepted the remaining managed-consent coverage gap. PHPUnit now covers the no-consent-record path so a fresh install cannot call the managed proxy before explicit managed setup consent exists.
 - Greptile PR review: targeted review confirmed the four requested hardening areas and flagged the scanner-driven per-form query trade-off. Inline comments document why these reads intentionally avoid dynamic `IN (...)` placeholder assembly for WordPress.org Plugin Check compatibility.
 - Worthwhile feedback policy: accept correctness, security, WordPress.org compliance, maintainability, or test-gap feedback; reject noisy/nit feedback with a concise in-thread rationale.
 

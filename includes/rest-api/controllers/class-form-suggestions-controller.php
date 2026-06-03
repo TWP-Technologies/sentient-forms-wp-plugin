@@ -836,11 +836,15 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 		}
 
 		$field_meta = $this->form_field_meta_for_value_id( $form, $field_id );
-		return 'hidden' !== ( $field_meta['type'] ?? '' );
+		if ( 'hidden' === ( $field_meta['type'] ?? '' ) ) {
+			return false;
+		}
+
+		return ! in_array( $field_meta['visibility'] ?? '', [ 'hidden', 'administrative' ], true );
 	}
 
 	/**
-	 * @return array{field_id:string,label:string,type:string,page_index:int}|null
+	 * @return array{field_id:string,label:string,type:string,visibility:string,page_index:int}|null
 	 */
 	private function form_field_meta_for_value_id( array $form, string $field_id ): ?array {
 		$root_field_id = $this->root_field_id( $field_id );
@@ -875,6 +879,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 				'field_id'   => $current_field_id,
 				'label'      => isset( $field->label ) ? sanitize_text_field( (string) $field->label ) : '',
 				'type'       => isset( $field->type ) ? sanitize_key( (string) $field->type ) : '',
+				'visibility' => isset( $field->visibility ) ? sanitize_key( (string) $field->visibility ) : '',
 				// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- Gravity Forms field objects expose pageNumber.
 				'page_index' => isset( $field->pageNumber ) ? max( 1, (int) $field->pageNumber ) : 1,
 			];
@@ -1026,11 +1031,10 @@ class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms
 						array_map(
 							function ( $field_id ) use ( $form, $realtime_settings ): string {
 								$normalized = sanitize_text_field( (string) $field_id );
-								$field_meta = $this->form_field_meta_for_value_id( $form, $normalized );
 								if (
 									'' === $normalized
 									|| $this->is_realtime_storage_field( $normalized, $realtime_settings )
-									|| 'hidden' === ( $field_meta['type'] ?? '' )
+									|| ! $this->is_client_visible_form_value_field( $normalized, $form, $realtime_settings )
 								) {
 									return '';
 								}
