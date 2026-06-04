@@ -252,10 +252,23 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 	protected function tearDown(): void {
 		$this->executor_property->setValue( $this->plugin, null );
 		delete_option( 'sentient_forms_actions_gravity_forms_42' );
+		delete_option( 'sentient_forms_form_config_gravity_forms_42' );
+		delete_transient( 'sentient_forms_rt_suggest_rl_' . md5( '42|unknown' ) );
 		delete_transient( 'sentient_forms_rt_suggest_rl_' . md5( '42|203.0.113.10' ) );
+		delete_transient( 'sentient_forms_rt_suggest_rl_' . md5( '999|unknown' ) );
+		delete_transient( 'sentient_forms_rt_config_rl_' . md5( '42|unknown' ) );
+		delete_transient( 'sentient_forms_rt_config_rl_' . md5( '42|203.0.113.10' ) );
+		delete_transient( 'sentient_forms_rt_config_rl_' . md5( '999|unknown' ) );
 		unset( $_SERVER['REMOTE_ADDR'] );
 		GFAPI::$forms = [];
 		parent::tearDown();
+	}
+
+	private function authorize_runtime_config_request( WP_REST_Request $request, int $form_id = 42 ): void {
+		$request->set_header(
+			'X-Sentient-Forms-Runtime-Config-Token',
+			Sentient_Forms_Gravity_Forms_Adapter::build_realtime_runtime_config_token( 'gravity_forms', $form_id )
+		);
 	}
 
 	public function test_permission_callback_public_nonce_validates_form_scoped_nonce(): void {
@@ -319,6 +332,243 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$data = $response->get_data();
 		$this->assertSame( 'success', $data['status'] ?? null );
 		$this->assertCount( 1, $stub_executor->calls );
+	}
+
+	public function test_runtime_config_endpoint_returns_fresh_no_store_mapping_config(): void {
+		update_option(
+			'sentient_forms_form_config_gravity_forms_42',
+			[
+				'clarification_assistant_v1' => [
+					'realtime_settings' => [
+						'initial_panel_state' => 'minimized',
+					],
+				],
+			]
+		);
+		update_option(
+			'sentient_forms_actions_gravity_forms_42',
+			[
+				'actions' => [
+					[
+						'id'                         => 'local_first_42',
+						'central_action_id'          => 'clarification_assistant_v1',
+						'action_name_label'          => 'Realtime Clarification Assistant',
+						'action_type_indicator'      => 'master',
+						'is_action_enabled_for_form' => true,
+						'settings'                   => [
+							'execution_mode'      => 'real_time',
+							'realtime_settings'   => [
+								'checkpoint_field_ids' => [ '1' ],
+								'initial_panel_state'  => 'hidden_until_interaction',
+							],
+						],
+					],
+				],
+			]
+		);
+
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/42/actions/runtime-config' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$this->authorize_runtime_config_request( $request );
+
+		$response = rest_do_request( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertSame(
+			'no-store, no-cache, must-revalidate, max-age=0',
+			$response->get_headers()['Cache-Control'] ?? null
+		);
+		$this->assertSame( 'no-cache', $response->get_headers()['Pragma'] ?? null );
+
+		$data = $response->get_data();
+		$this->assertSame( 42, $data['form_id'] ?? null );
+		$this->assertSame( 'gravity_forms', $data['source'] ?? null );
+		$this->assertSame( 'hidden_until_interaction', $data['initial_panel_state'] ?? null );
+		$this->assertSame( 'local_first_42', $data['mappings'][0]['mapping_id'] ?? null );
+		$this->assertSame( 'hidden_until_interaction', $data['mappings'][0]['initial_panel_state'] ?? null );
+		$this->assertIsString( $data['nonce'] ?? null );
+		$this->assertIsInt( $data['config_generated_at'] ?? null );
+		$this->assertGreaterThan( $data['config_generated_at'], $data['config_expires_at'] ?? 0 );
+		$this->assertStringContainsString(
+			'/sentient-forms/v1/gravity_forms/forms/42/actions/runtime-config',
+			$data['runtime_config_endpoint_url'] ?? ''
+		);
+		$this->assertStringContainsString(
+			'/sentient-forms/v1/gravity_forms/forms/42/actions/suggest',
+			$data['suggest_endpoint_url'] ?? ''
+		);
+	}
+
+	public function test_runtime_config_endpoint_rejects_unsupported_form_source(): void {
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/wpforms/forms/42/actions/runtime-config' );
+		$request->set_param( 'form_source_slug', 'wpforms' );
+		$request->set_param( 'form_id', 42 );
+
+		$response = $this->controller->get_runtime_config( $request );
+
+		$this->assertInstanceOf( WP_Error::class, $response );
+		$this->assertSame( 'rest_invalid_form_source', $response->get_error_code() );
+		$this->assertSame( 400, (int) ( $response->get_error_data()['status'] ?? 0 ) );
+	}
+
+	public function test_runtime_config_endpoint_rejects_invalid_form_id(): void {
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/0/actions/runtime-config' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 0 );
+
+		$response = $this->controller->get_runtime_config( $request );
+
+		$this->assertInstanceOf( WP_Error::class, $response );
+		$this->assertSame( 'rest_invalid_form_id', $response->get_error_code() );
+		$this->assertSame( 400, (int) ( $response->get_error_data()['status'] ?? 0 ) );
+	}
+
+	public function test_runtime_config_endpoint_rejects_missing_bootstrap_token(): void {
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/42/actions/runtime-config' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+
+		$response = $this->controller->get_runtime_config( $request );
+
+		$this->assertInstanceOf( WP_Error::class, $response );
+		$this->assertSame( 'rest_invalid_runtime_config_token', $response->get_error_code() );
+		$this->assertSame( 403, (int) ( $response->get_error_data()['status'] ?? 0 ) );
+	}
+
+	public function test_runtime_config_endpoint_rejects_invalid_bootstrap_token(): void {
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/42/actions/runtime-config' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$request->set_header( 'X-Sentient-Forms-Runtime-Config-Token', 'invalid-token' );
+
+		$response = $this->controller->get_runtime_config( $request );
+
+		$this->assertInstanceOf( WP_Error::class, $response );
+		$this->assertSame( 'rest_invalid_runtime_config_token', $response->get_error_code() );
+		$this->assertSame( 403, (int) ( $response->get_error_data()['status'] ?? 0 ) );
+	}
+
+	public function test_runtime_config_route_rejects_invalid_form_id_during_dispatch(): void {
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/0/actions/runtime-config' );
+
+		$response = rest_do_request( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'rest_invalid_param', $response->get_data()['code'] ?? null );
+	}
+
+	public function test_runtime_config_endpoint_returns_unavailable_when_adapter_is_missing(): void {
+		$registry = $this->plugin->get_form_adapter_registry();
+		$adapters_property = new ReflectionProperty( $registry, 'adapters' );
+		$adapters_property->setAccessible( true );
+		$original_adapters = $adapters_property->getValue( $registry );
+		$adapters_property->setValue( $registry, [] );
+
+		try {
+			$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/42/actions/runtime-config' );
+			$request->set_param( 'form_source_slug', 'gravity_forms' );
+			$request->set_param( 'form_id', 42 );
+			$this->authorize_runtime_config_request( $request );
+
+			$response = $this->controller->get_runtime_config( $request );
+		} finally {
+			$adapters_property->setValue( $registry, $original_adapters );
+		}
+
+		$this->assertInstanceOf( WP_Error::class, $response );
+		$this->assertSame( 'rest_form_source_unavailable', $response->get_error_code() );
+		$this->assertSame( 503, (int) ( $response->get_error_data()['status'] ?? 0 ) );
+	}
+
+	public function test_runtime_config_endpoint_returns_not_found_when_form_has_no_runtime_config(): void {
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/999/actions/runtime-config' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 999 );
+		$this->authorize_runtime_config_request( $request, 999 );
+
+		$response = $this->controller->get_runtime_config( $request );
+
+		$this->assertInstanceOf( WP_Error::class, $response );
+		$this->assertSame( 'rest_realtime_runtime_config_not_found', $response->get_error_code() );
+		$this->assertSame( 404, (int) ( $response->get_error_data()['status'] ?? 0 ) );
+	}
+
+	public function test_runtime_config_endpoint_enforces_rate_limit_per_form_and_ip(): void {
+		$_SERVER['REMOTE_ADDR'] = '203.0.113.10';
+		set_transient( 'sentient_forms_rt_config_rl_' . md5( '42|203.0.113.10' ), 300, MINUTE_IN_SECONDS );
+
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/42/actions/runtime-config' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$this->authorize_runtime_config_request( $request );
+
+		$response = $this->controller->get_runtime_config( $request );
+
+		$this->assertInstanceOf( WP_Error::class, $response );
+		$this->assertSame( 'rest_too_many_requests', $response->get_error_code() );
+		$this->assertSame( 429, (int) ( $response->get_error_data()['status'] ?? 0 ) );
+	}
+
+	public function test_runtime_config_endpoint_does_not_consume_suggestion_rate_limit_bucket(): void {
+		$_SERVER['REMOTE_ADDR'] = '203.0.113.10';
+		$suggest_key = 'sentient_forms_rt_suggest_rl_' . md5( '42|203.0.113.10' );
+		$config_key  = 'sentient_forms_rt_config_rl_' . md5( '42|203.0.113.10' );
+		set_transient( $suggest_key, 60, MINUTE_IN_SECONDS );
+		update_option(
+			'sentient_forms_actions_gravity_forms_42',
+			[
+				'actions' => [
+					[
+						'id'                         => 'local_first_42',
+						'central_action_id'          => 'clarification_assistant_v1',
+						'action_name_label'          => 'Realtime Clarification Assistant',
+						'action_type_indicator'      => 'master',
+						'is_action_enabled_for_form' => true,
+						'settings'                   => [
+							'execution_mode'    => 'real_time',
+							'realtime_settings' => [
+								'checkpoint_field_ids' => [ '1' ],
+							],
+						],
+					],
+				],
+			]
+		);
+
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/42/actions/runtime-config' );
+		$request->set_param( 'form_source_slug', 'gravity_forms' );
+		$request->set_param( 'form_id', 42 );
+		$this->authorize_runtime_config_request( $request );
+
+		$response = $this->controller->get_runtime_config( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertSame( 60, get_transient( $suggest_key ) );
+		$this->assertSame( 1, get_transient( $config_key ) );
+	}
+
+	public function test_runtime_config_no_store_filter_applies_to_error_responses(): void {
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/999/actions/runtime-config' );
+		$response = new WP_REST_Response(
+			[
+				'code'    => 'rest_realtime_runtime_config_not_found',
+				'message' => 'Real-time runtime config was not found for this form.',
+				'data'    => [ 'status' => 404 ],
+			],
+			404
+		);
+
+		$filtered = $this->controller->maybe_add_runtime_config_no_store_headers( $response, rest_get_server(), $request );
+
+		$this->assertSame(
+			'no-store, no-cache, must-revalidate, max-age=0',
+			$filtered->get_headers()['Cache-Control'] ?? null
+		);
+		$this->assertSame( 'no-cache', $filtered->get_headers()['Pragma'] ?? null );
 	}
 
 	public function test_suggest_endpoint_executes_realtime_mapping_via_action_executor(): void {

@@ -7,12 +7,17 @@ const runtimeScript = readFileSync(
 	'utf8'
 );
 
+const runtimeConfigEndpointUrl =
+	'/wp-json/sentient-forms/v1/gravity_forms/forms/42/actions/runtime-config';
+const runtimeConfigToken = 'runtime-config-token-42';
+
 type PreSubmissionData = { form: HTMLFormElement; abort?: boolean };
 type PreSubmissionFilter = (data: PreSubmissionData) => Promise<PreSubmissionData>;
 
-function evaluateRuntimeScript(): void {
+async function evaluateRuntimeScript(): Promise<void> {
 	const execute = new Function(runtimeScript);
 	execute();
+	await flushRuntime(0);
 }
 
 function setupFormDom(): void {
@@ -34,11 +39,12 @@ function setupFormDom(): void {
 	`;
 }
 
-function setupRuntimeConfig(overrides: Record<string, unknown> = {}): void {
+function createRuntimeConfig(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	const baseConfig = {
 		form_id: 42,
 		source: 'gravity_forms',
 		total_pages: 2,
+		runtime_config_endpoint_url: runtimeConfigEndpointUrl,
 		suggest_endpoint_url: '/wp-json/sentient-forms/v1/gravity_forms/forms/42/actions/suggest',
 		nonce: 'nonce-42',
 		rest_nonce: 'rest-nonce-42',
@@ -64,11 +70,60 @@ function setupRuntimeConfig(overrides: Record<string, unknown> = {}): void {
 			]
 		};
 
+	return {
+		...baseConfig,
+		...overrides
+	};
+}
+
+function setupRuntimeConfig(overrides: Record<string, unknown> = {}): void {
+	const runtimeConfig = createRuntimeConfig(overrides);
+
+	const existingFetch = window.fetch;
+	if (typeof existingFetch === 'function') {
+		vi.stubGlobal(
+			'fetch',
+			((input: RequestInfo | URL, init?: RequestInit) => {
+				const requestUrl =
+					typeof input === 'string'
+						? input
+						: input instanceof URL
+							? input.toString()
+							: input.url;
+
+				if (requestUrl === runtimeConfigEndpointUrl) {
+					return Promise.resolve({
+						ok: true,
+						status: 200,
+						text: async () => JSON.stringify(runtimeConfig)
+					});
+				}
+
+				return existingFetch(input, init);
+			}) as typeof fetch
+		);
+	}
+
 	(window as unknown as { sentientFormsRealtimeSuggestions: unknown }).sentientFormsRealtimeSuggestions = {
 		forms: {
 			'42': {
-				...baseConfig,
-				...overrides
+				form_id: 42,
+				source: 'gravity_forms',
+				runtime_config_endpoint_url: runtimeConfigEndpointUrl,
+				runtime_config_token: runtimeConfigToken
+			}
+		}
+	};
+}
+
+function setupRuntimeConfigBootstrap(): void {
+	(window as unknown as { sentientFormsRealtimeSuggestions: unknown }).sentientFormsRealtimeSuggestions = {
+		forms: {
+			'42': {
+				form_id: 42,
+				source: 'gravity_forms',
+				runtime_config_endpoint_url: runtimeConfigEndpointUrl,
+				runtime_config_token: runtimeConfigToken
 			}
 		}
 	};
@@ -117,6 +172,164 @@ describe('realtime suggestions runtime', () => {
 		delete (window as Record<string, unknown>).gform;
 	});
 
+	it('does not boot from stale full inline runtime config without a fresh endpoint', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({ suggestions: [] })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const staleInlineConfig = createRuntimeConfig({
+			initial_panel_state: 'open'
+		});
+		delete staleInlineConfig.runtime_config_endpoint_url;
+		(window as unknown as { sentientFormsRealtimeSuggestions: unknown }).sentientFormsRealtimeSuggestions =
+			{
+				forms: {
+					'42': staleInlineConfig
+				}
+			};
+
+		await evaluateRuntimeScript();
+
+		expect(document.querySelector('.sentient-forms-realtime-widget')).toBeNull();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('rejects runtime-config payloads missing suggestion request credentials', async () => {
+		setupRuntimeConfig({ nonce: '' });
+
+		await evaluateRuntimeScript();
+
+		expect(document.querySelector('.sentient-forms-realtime-widget')).toBeNull();
+		expect(document.querySelector<HTMLFormElement>('#gform_42')).not.toBeNull();
+		const runtimeState = (
+			window as unknown as {
+				__sentientRealtimeSuggestionsRuntime: { configErrors: Record<number, string> };
+			}
+		).__sentientRealtimeSuggestionsRuntime;
+		expect(runtimeState.configErrors[42]).toContain('incomplete');
+	});
+
+	it('sends the signed bootstrap token when fetching runtime config', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			text: async () => JSON.stringify(createRuntimeConfig())
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfigBootstrap();
+
+		await evaluateRuntimeScript();
+
+		expect(fetchMock).toHaveBeenCalledWith(
+			runtimeConfigEndpointUrl,
+			expect.objectContaining({
+				headers: expect.objectContaining({
+					'X-Sentient-Forms-Runtime-Config-Token': runtimeConfigToken
+				})
+			})
+		);
+	});
+
+	it('keeps the assistant hidden and does not retry when runtime-config returns an error', async () => {
+		const postRenderHandlers: Array<(_event: unknown, formId: number) => void> = [];
+		const jQueryMock = vi.fn((_target: unknown) => ({
+			on: vi.fn((_eventName: string, handler: (_event: unknown, formId: number) => void) => {
+				postRenderHandlers.push(handler);
+			})
+		}));
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: false,
+			status: 503,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			text: async () => JSON.stringify({ message: 'Requested form source is unavailable.' })
+		});
+		vi.stubGlobal('jQuery', jQueryMock);
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfigBootstrap();
+
+		await evaluateRuntimeScript();
+
+		expect(document.querySelector('.sentient-forms-realtime-widget')).toBeNull();
+		expect(document.querySelector<HTMLFormElement>('#gform_42')).not.toBeNull();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const runtimeState = (
+			window as unknown as {
+				__sentientRealtimeSuggestionsRuntime: { configErrors: Record<number, string> };
+			}
+		).__sentientRealtimeSuggestionsRuntime;
+		expect(runtimeState.configErrors[42]).toBeTruthy();
+
+		postRenderHandlers[0]?.({}, 42);
+		await flushRuntime();
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it('initializes from an already-fetched fresh runtime config after a delayed form render', async () => {
+		const postRenderHandlers: Array<(_event: unknown, formId: number) => void> = [];
+		const jQueryMock = vi.fn((_target: unknown) => ({
+			on: vi.fn((_eventName: string, handler: (_event: unknown, formId: number) => void) => {
+				postRenderHandlers.push(handler);
+			})
+		}));
+		vi.stubGlobal('jQuery', jQueryMock);
+		const runtimeConfig = createRuntimeConfig();
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			text: async () => JSON.stringify(runtimeConfig)
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfigBootstrap();
+		document.body.innerHTML = '';
+
+		await evaluateRuntimeScript();
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(document.querySelector('.sentient-forms-realtime-widget')).toBeNull();
+
+		setupFormDom();
+		postRenderHandlers[0]?.({}, 42);
+		await flushRuntime();
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(document.querySelector('.sentient-forms-realtime-widget')).not.toBeNull();
+	});
+
+	it('keeps the assistant hidden and form usable when runtime-config fetch rejects', async () => {
+		const fetchMock = vi.fn().mockRejectedValue(new TypeError('Network error'));
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfigBootstrap();
+
+		await evaluateRuntimeScript();
+
+		expect(document.querySelector('.sentient-forms-realtime-widget')).toBeNull();
+		expect(document.querySelector<HTMLFormElement>('#gform_42')).not.toBeNull();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const runtimeState = (
+			window as unknown as {
+				__sentientRealtimeSuggestionsRuntime: { configErrors: Record<number, string> };
+			}
+		).__sentientRealtimeSuggestionsRuntime;
+		expect(runtimeState.configErrors[42]).toBeTruthy();
+	});
+
+	it('rejects runtime-config payloads that belong to another form', async () => {
+		setupRuntimeConfig({ form_id: 99 });
+
+		await evaluateRuntimeScript();
+
+		expect(document.querySelector('.sentient-forms-realtime-widget')).toBeNull();
+		expect(document.querySelector<HTMLFormElement>('#gform_42')).not.toBeNull();
+		const runtimeState = (
+			window as unknown as {
+				__sentientRealtimeSuggestionsRuntime: { configErrors: Record<number, string> };
+			}
+		).__sentientRealtimeSuggestionsRuntime;
+		expect(runtimeState.configErrors[42]).toContain('does not match this form');
+	});
+
 	it('runs mappings only for configured checkpoint fields', async () => {
 		const fetchMock = vi.fn().mockResolvedValue({
 			ok: true,
@@ -141,7 +354,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerChangeOnField('2');
 		await flushRuntime();
@@ -195,7 +408,7 @@ describe('realtime suggestions runtime', () => {
 					}
 				]
 			});
-			evaluateRuntimeScript();
+			await evaluateRuntimeScript();
 
 			triggerBlurOnField('1');
 			await flushRuntime();
@@ -215,7 +428,7 @@ describe('realtime suggestions runtime', () => {
 			]);
 		});
 
-	it('starts minimized by default so embedded forms are not covered on first paint', () => {
+	it('starts minimized by default so embedded forms are not covered on first paint', async () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue({
@@ -224,7 +437,7 @@ describe('realtime suggestions runtime', () => {
 			})
 		);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		const body = document.querySelector<HTMLElement>('[data-role="body"]');
 		const toggle = document.querySelector<HTMLButtonElement>('[data-role="toggle"]');
@@ -232,7 +445,7 @@ describe('realtime suggestions runtime', () => {
 		expect(toggle?.textContent).toBe('Show');
 	});
 
-	it('can hide the assistant from mapping-level config until a visitor starts interacting with the form', () => {
+	it('can hide the assistant from mapping-level config until a visitor starts interacting with the form', async () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue({
@@ -258,7 +471,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		const widget = document.querySelector<HTMLElement>('.sentient-forms-realtime-widget');
 		expect(widget?.hidden).toBe(true);
@@ -268,7 +481,7 @@ describe('realtime suggestions runtime', () => {
 		expect(widget?.hidden).toBe(false);
 	});
 
-	it('honors an open mapping-level initial state when no top-level state is present', () => {
+	it('honors an open mapping-level initial state when no top-level state is present', async () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn().mockResolvedValue({
@@ -294,7 +507,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		const widget = document.querySelector<HTMLElement>('.sentient-forms-realtime-widget');
 		const body = document.querySelector<HTMLElement>('[data-role="body"]');
@@ -334,7 +547,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -355,7 +568,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -380,7 +593,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -408,7 +621,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -433,7 +646,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -460,7 +673,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -488,7 +701,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -510,7 +723,7 @@ describe('realtime suggestions runtime', () => {
 		setupRuntimeConfig({
 			config_expires_at: Math.floor(Date.now() / 1000) - 60
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -537,7 +750,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -562,7 +775,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -594,7 +807,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -626,7 +839,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -671,7 +884,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerNextPageClick();
 		await flushRuntime();
@@ -705,7 +918,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -755,7 +968,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		const form = document.querySelector<HTMLFormElement>('#gform_42');
 		expect(form).not.toBeNull();
@@ -803,7 +1016,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		const form = document.querySelector<HTMLFormElement>('#gform_42');
 		expect(form).not.toBeNull();
@@ -859,7 +1072,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		const form = document.querySelector<HTMLFormElement>('#gform_42');
 		expect(form).not.toBeNull();
@@ -879,7 +1092,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerNextPageClick();
 		await flushRuntime(600);
@@ -921,7 +1134,7 @@ describe('realtime suggestions runtime', () => {
 			],
 			field_manifest: [{ field_id: '4', label: 'Details', type: 'textarea', page_index: 2 }]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('4');
 		await flushRuntime();
@@ -968,7 +1181,7 @@ describe('realtime suggestions runtime', () => {
 			],
 			field_manifest: [{ field_id: '4', label: 'Details', type: 'textarea', page_index: 2 }]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 		await flushRuntime(300);
 
 		expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -1011,7 +1224,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -1044,7 +1257,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -1099,7 +1312,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -1172,7 +1385,7 @@ describe('realtime suggestions runtime', () => {
 			});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -1282,7 +1495,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -1299,7 +1512,7 @@ describe('realtime suggestions runtime', () => {
 		sourceInput!.value = '2';
 		delete (window as Record<string, unknown>).__sentientRealtimeSuggestionsRuntime;
 
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 		await flushRuntime(300);
 
 		const storage = document.querySelector<HTMLTextAreaElement>('[name="input_9"]');
@@ -1337,7 +1550,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -1389,7 +1602,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -1439,7 +1652,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		triggerBlurOnField('1');
 		await flushRuntime();
@@ -1474,7 +1687,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]
 		});
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		const refreshButton = document.querySelector<HTMLButtonElement>(
 			'.sentient-forms-realtime-widget__refresh'
@@ -1504,7 +1717,7 @@ describe('realtime suggestions runtime', () => {
 		});
 		vi.stubGlobal('fetch', fetchMock);
 		setupRuntimeConfig();
-		evaluateRuntimeScript();
+		await evaluateRuntimeScript();
 
 		const input = document.querySelector<HTMLInputElement>('[name="input_1"]');
 		expect(input).not.toBeNull();
