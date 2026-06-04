@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.3](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.2...v0.3.3) (2026-06-04)
+
+
+### Bug Fixes
+
+* **realtime:** fetch visitor config without disabling page cache ([aa546c0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/aa546c0ad6df568b5567a6a7782cee092ad16515))
+* **realtime:** fetch visitor config without disabling page cache ([132d3df](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/132d3df55c7b8cfa74ee99767fc21ecc9d62b2d2))
+
 ## [0.3.2](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.1...v0.3.2) (2026-06-03)
 
 
