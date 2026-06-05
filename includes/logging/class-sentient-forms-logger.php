@@ -29,7 +29,7 @@ class Sentient_Forms_Logger {
 	}
 
 	public function is_enabled(): bool {
-		return $this->enabled;
+		return $this->enabled && '' !== $this->log_path;
 	}
 
 	public function debug( string $message, array $context = [] ): void {
@@ -102,11 +102,15 @@ class Sentient_Forms_Logger {
 	}
 
 	public function get_log_dir(): string {
+		if ( '' === $this->log_path ) {
+			return '';
+		}
+
 		return dirname( $this->log_path );
 	}
 
 	private function write( string $level, string $message, array $context ): void {
-		if ( ! $this->enabled ) {
+		if ( ! $this->is_enabled() ) {
 			return;
 		}
 
@@ -137,7 +141,11 @@ class Sentient_Forms_Logger {
 
 	private function build_log_path(): string {
 		$uploads = wp_get_upload_dir();
-		$base    = trailingslashit( $uploads['basedir'] ?? WP_CONTENT_DIR . '/uploads' );
+		if ( ! empty( $uploads['error'] ) || empty( $uploads['basedir'] ) || ! is_string( $uploads['basedir'] ) ) {
+			return '';
+		}
+
+		$base = trailingslashit( $uploads['basedir'] );
 		return $base . trailingslashit( self::LOG_DIR_RELATIVE ) . self::DEFAULT_BASENAME;
 	}
 

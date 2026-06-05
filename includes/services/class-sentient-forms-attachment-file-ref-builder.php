@@ -318,21 +318,17 @@ class Sentient_Forms_Attachment_File_Ref_Builder {
 		$uploads = wp_get_upload_dir();
 		$baseurl = isset( $uploads['baseurl'] ) ? trailingslashit( (string) $uploads['baseurl'] ) : '';
 		$basedir = isset( $uploads['basedir'] ) ? trailingslashit( (string) $uploads['basedir'] ) : '';
-		if ( '' === $baseurl || '' === $basedir ) {
+		if ( ! empty( $uploads['error'] ) || '' === $baseurl || '' === $basedir ) {
 			return null;
 		}
 
-		$candidate = '';
-		if ( str_starts_with( $url, $baseurl ) ) {
-			$relative  = ltrim( (string) substr( $url, strlen( $baseurl ) ), '/' );
-			$candidate = $basedir . str_replace( '/', DIRECTORY_SEPARATOR, $relative );
-		} else {
-			$path = wp_parse_url( $url, PHP_URL_PATH );
-			if ( ! is_string( $path ) || '' === $path ) {
-				return null;
-			}
-			$candidate = ABSPATH . ltrim( rawurldecode( $path ), '/' );
+		$clean_url = strtok( $url, '?#' );
+		if ( ! is_string( $clean_url ) || ! str_starts_with( $clean_url, $baseurl ) ) {
+			return null;
 		}
+
+		$relative  = ltrim( (string) substr( $clean_url, strlen( $baseurl ) ), '/' );
+		$candidate = $basedir . str_replace( '/', DIRECTORY_SEPARATOR, rawurldecode( $relative ) );
 
 		$real_candidate = realpath( $candidate );
 		$real_base      = realpath( untrailingslashit( $basedir ) );
@@ -340,6 +336,8 @@ class Sentient_Forms_Attachment_File_Ref_Builder {
 			return null;
 		}
 
+		$real_candidate = wp_normalize_path( $real_candidate );
+		$real_base      = trailingslashit( wp_normalize_path( $real_base ) );
 		if ( ! str_starts_with( $real_candidate, $real_base ) ) {
 			return null;
 		}
