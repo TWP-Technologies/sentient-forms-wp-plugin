@@ -131,6 +131,16 @@ $forbidden_runtime_markers = [
     '127.0.0.1:8080',
     'localhost:5173',
 ];
+$sensitive_wp_secret_constants = [
+    'AUTH_KEY',
+    'AUTH_SALT',
+    'SECURE_AUTH_KEY',
+    'SECURE_AUTH_SALT',
+    'LOGGED_IN_KEY',
+    'LOGGED_IN_SALT',
+    'NONCE_KEY',
+    'NONCE_SALT',
+];
 
 $issues = [];
 
@@ -253,6 +263,12 @@ foreach ( $iterator as $item )
 
     if ( 'php' === $extension && ! str_starts_with( $relative, 'vendor/' ) && ! str_starts_with( $relative, 'scripts/' ) )
     {
+        $sensitive_constant = find_sensitive_wp_secret_constant_access( $contents, $sensitive_wp_secret_constants );
+        if ( null !== $sensitive_constant )
+        {
+            $issues[] = "Sensitive WordPress auth constant access found in runtime PHP file {$relative}: {$sensitive_constant}";
+        }
+
         if ( preg_match( '/<\s*script\b/i', $contents ) )
         {
             $issues[] = "Raw script tag found in runtime PHP file: {$relative}";
@@ -299,6 +315,7 @@ if ( ! $source_tree && ! is_dir( $root . '/assets/dist' ) )
 }
 else
 {
+    $issues = array_merge( $issues, validate_admin_runtime_metadata( $root ) );
     $issues = array_merge( $issues, validate_compressed_asset_source_metadata( $root ) );
 }
 
@@ -363,6 +380,72 @@ function validate_plugin_headers( string $plugin_file ): array
     }
 
     return $issues;
+}
+
+/**
+ * Validate the generated admin runtime metadata used instead of the SvelteKit
+ * fallback HTML file, which contains an inline bootstrap script.
+ *
+ * @return array<int,string>
+ */
+function validate_admin_runtime_metadata( string $root ): array
+{
+    $issues       = [];
+    $dist_dir     = $root . '/assets/dist';
+    $runtime_file = $dist_dir . '/runtime.json';
+    $index_file   = $dist_dir . '/index.html';
+
+    if ( file_exists( $index_file ) )
+    {
+        $issues[] = 'Generated admin assets must not include assets/dist/index.html; use runtime.json metadata instead.';
+    }
+
+    if ( ! file_exists( $runtime_file ) )
+    {
+        $issues[] = 'Generated admin assets are missing assets/dist/runtime.json.';
+        return $issues;
+    }
+
+    $decoded = json_decode( (string) file_get_contents( $runtime_file ), true );
+    $key     = is_array( $decoded ) ? ( $decoded['sveltekitRuntimeKey'] ?? null ) : null;
+    if ( ! is_string( $key ) || ! preg_match( '/^__sveltekit_[a-z0-9]+$/', $key ) )
+    {
+        $issues[] = 'Generated admin runtime metadata is missing a valid SvelteKit runtime key.';
+    }
+
+    return $issues;
+}
+
+/**
+ * Detect actual reads of WordPress auth key/salt constants while allowing
+ * quoted denylist strings used to reject unsafe user-provided constant names.
+ *
+ * @param array<int,string> $sensitive_names
+ */
+function find_sensitive_wp_secret_constant_access( string $contents, array $sensitive_names ): ?string
+{
+    $name_pattern = implode( '|', array_map( static fn ( string $name ): string => preg_quote( $name, '/' ), $sensitive_names ) );
+    if ( preg_match( '/\b(?:defined|constant)\s*\(\s*[\'"](' . $name_pattern . ')[\'"]\s*\)/', $contents, $matches ) )
+    {
+        return $matches[1];
+    }
+
+    $sensitive_lookup = array_fill_keys( $sensitive_names, true );
+    foreach ( token_get_all( $contents ) as $token )
+    {
+        if ( ! is_array( $token ) )
+        {
+            continue;
+        }
+
+        [ $type, $text ] = $token;
+        if ( T_STRING === $type && isset( $sensitive_lookup[ $text ] ) )
+        {
+            return $text;
+        }
+    }
+
+    return null;
 }
 
 /**

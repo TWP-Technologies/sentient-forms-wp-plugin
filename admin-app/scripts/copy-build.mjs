@@ -16,6 +16,7 @@ const manifestSrc = path.join(kitOutputDir, '.vite', 'manifest.json');
 const manifestDest = path.join(outputDir, 'manifest.json');
 const pluginFile = path.join(projectRoot, '..', 'sentient-forms.php');
 const sourceMetadataDest = path.join(outputDir, 'SOURCE.md');
+const runtimeMetadataDest = path.join(outputDir, 'runtime.json');
 
 const ensureDir = async (dir) => {
   try {
@@ -112,6 +113,21 @@ bun run build:wp
   );
 };
 
+const writeRuntimeMetadata = async () => {
+  const indexHtmlSrc = path.join(buildDir, 'index.html');
+  let sveltekitRuntimeKey = '__sveltekit_legacy';
+
+  if (existsSync(indexHtmlSrc)) {
+    const indexHtml = await readFile(indexHtmlSrc, 'utf8');
+    sveltekitRuntimeKey = indexHtml.match(/__sveltekit_[a-z0-9]+/)?.[0] ?? sveltekitRuntimeKey;
+  }
+
+  await writeFile(
+    runtimeMetadataDest,
+    `${JSON.stringify({ sveltekitRuntimeKey }, null, 2)}\n`
+  );
+};
+
 const main = async () => {
   if (!existsSync(clientDir)) {
     throw new Error(`Client build directory not found: ${clientDir}`);
@@ -123,13 +139,9 @@ const main = async () => {
   await resetDir(outputDir);
   await copyRecursive(clientDir, path.join(outputDir, '_app'));
 
-  const indexHtmlSrc = path.join(buildDir, 'index.html');
-  if (existsSync(indexHtmlSrc)) {
-    await cp(indexHtmlSrc, path.join(outputDir, 'index.html'));
-  }
-
   const manifest = await readFile(manifestSrc, 'utf8');
   await writeFile(manifestDest, manifest);
+  await writeRuntimeMetadata();
   await writeSourceMetadata();
   await assertManifestAssetsExist(outputDir, JSON.parse(manifest));
   console.log('[copy-build] Assets copied to', outputDir);

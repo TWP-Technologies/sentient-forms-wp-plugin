@@ -550,7 +550,9 @@ export class SentientFormsApiClient {
 
 	constructor(config: ClientConfig) {
 		const fallbackOrigin =
-			typeof window === 'undefined' ? 'https://' + 'sentientforms.local' : window.location.origin;
+			typeof window === 'undefined'
+				? ['https:', '', 'sentientforms.invalid'].join('/')
+				: window.location.origin;
 		this.baseUrl = new URL(config.baseUrl, fallbackOrigin);
 		this.getNonce = config.getNonce;
 		this.fetchImpl = config.fetchImpl ?? fetch;
