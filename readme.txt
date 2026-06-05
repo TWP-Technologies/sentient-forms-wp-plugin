@@ -14,6 +14,8 @@ Run AI-powered form actions from WordPress with local settings, local logs, and 
 
 Sentient Forms adds AI-assisted actions to WordPress forms. Gravity Forms is required for the current form-action workflows; other form builders are not supported in this release.
 
+Sentient Forms is an official TWP Technologies, LLC product. The plugin's product site is https://sentientforms.com, the author site is https://twp.tech, and public development happens at https://github.com/TWP-Technologies/sentient-forms-wp-plugin.
+
 The plugin is moving to a local-first architecture. Site-owned configuration, action definitions, form mappings, execution logs, provider settings, and saved results are stored in your WordPress database.
 
 You can use the plugin without a paid Sentient Forms account by connecting your own OpenRouter API key and choosing models available to your OpenRouter account, including OpenRouter free models for supported form-action workflows when available. AI-generated Site Context is stricter because it researches public site pages before writing the context: it requires either Sentient Forms Managed Execution or a configured paid, web-capable OpenRouter model. You can always write Site Context manually without using a paid model.
