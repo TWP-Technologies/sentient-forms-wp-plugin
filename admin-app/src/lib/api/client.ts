@@ -2279,14 +2279,17 @@ function buildRuntimeCacheContext(config: SentientFormsConfig): string {
 }
 
 function defaultRuntimeConfig(): SentientFormsConfig {
+	const origin = typeof window === 'undefined' ? '' : window.location.origin;
+	const siteUrl = origin || '';
+
 	return {
-		apiBaseUrl: 'http://127.0.0.1:8080/wp-json/sentient-forms/v1/',
-		restNonce: 'dev-nonce',
-		ajaxNonce: 'dev-ajax',
-		siteUrl: 'http://127.0.0.1:8080',
-		localSiteIdentifier: 'dev-site',
-		pluginVersion: 'dev',
-		devMode: true,
+		apiBaseUrl: origin ? `${origin}/wp-json/sentient-forms/v1/` : '/wp-json/sentient-forms/v1/',
+		restNonce: '',
+		ajaxNonce: '',
+		siteUrl,
+		localSiteIdentifier: siteUrl || 'sentient-forms-runtime',
+		pluginVersion: 'unknown',
+		devMode: false,
 		license: {
 			status: 'inactive',
 			licenseKeyMasked: '',
@@ -2314,11 +2317,8 @@ function resolveRuntimeConfig(): SentientFormsConfig {
 	}
 
 	if (!window.sentientFormsConfig) {
-		const origin = window.location.origin;
 		window.sentientFormsConfig = {
-			...defaultRuntimeConfig(),
-			apiBaseUrl: `${origin}/wp-json/sentient-forms/v1/`,
-			siteUrl: origin
+			...defaultRuntimeConfig()
 		};
 	}
 
