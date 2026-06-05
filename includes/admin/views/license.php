@@ -188,28 +188,3 @@ $license_data = $license_data ?? [];
         </div>
     </div>
 </div>
-
-<script type="text/javascript">
-    jQuery(document).ready(function($) {
-        // Deactivate license
-        $('#sentient-forms-deactivate-license').on('click', function() {
-            if (confirm('<?php _e('Deactivate this site license? This disconnects this WordPress site and does not cancel Stripe billing.', 'sentient-forms'); ?>')) {
-                // Clear the license key field and submit the form
-                $('#sentient_forms_license_key').val('');
-                $('#sentient-forms-license-form').submit();
-            }
-        });
-        
-        // Check license status
-        $('#sentient-forms-check-license').on('click', function() {
-            var $button = $(this);
-            var originalText = $button.text();
-            
-            $button.text('<?php _e('Checking...', 'sentient-forms'); ?>');
-            $button.prop('disabled', true);
-            
-            // Reload the page to check the license status
-            window.location.reload();
-        });
-    });
-</script>

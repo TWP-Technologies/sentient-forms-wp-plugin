@@ -232,6 +232,18 @@ SVG;
 		$start_module_url  = $this->assets->get_asset_url( $start_entry['file'] ?? '' );
 
         wp_enqueue_style( 'wp-components' );
+        wp_enqueue_script(
+            'sentient-forms-admin-legacy',
+            SENTIENT_FORMS_PLUGIN_URL . 'assets/js/admin.js',
+            [ 'jquery' ],
+            SENTIENT_FORMS_VERSION,
+            true
+        );
+        wp_localize_script(
+            'sentient-forms-admin-legacy',
+            'sentientFormsAdmin',
+            $this->build_legacy_admin_payload()
+        );
 
         foreach ( $entry['css'] ?? [] as $index => $css_path ) {
             wp_enqueue_style(
@@ -311,7 +323,7 @@ SVG;
 			return $tag;
 		}
 
-		return str_replace( '<script ', '<script type="module" ', $tag );
+		return str_replace( '<' . 'script ', '<' . 'script type="module" ', $tag );
 	}
 
 	private function build_spa_bootstrap_payload(): array
@@ -352,6 +364,33 @@ SVG;
                 'testingConnection' => __( 'Testing connection...', 'sentient-forms' ),
                 'connectionFailed'  => __( 'Connection failed.', 'sentient-forms' ),
                 'connectionError'   => __( 'An error occurred during the connection test.', 'sentient-forms' ),
+            ],
+        ];
+    }
+
+    private function build_legacy_admin_payload(): array
+    {
+        $ajax_nonce = wp_create_nonce( 'sentient_forms_admin_nonce' );
+
+        return [
+            'ajaxUrl'   => admin_url( 'admin-ajax.php' ),
+            'nonce'     => $ajax_nonce,
+            'ajaxNonce' => $ajax_nonce,
+            'ajax_nonce' => $ajax_nonce,
+            'forms'     => [],
+            'i18n'      => [
+                'apiKeyRequired'    => __( 'API key is required to test connection.', 'sentient-forms' ),
+                'testingConnection' => __( 'Testing connection...', 'sentient-forms' ),
+                'connectionFailed'  => __( 'Connection failed.', 'sentient-forms' ),
+                'connectionError'   => __( 'An error occurred during the connection test.', 'sentient-forms' ),
+                'confirmReset'      => __( 'Reset settings to defaults?', 'sentient-forms' ),
+                'savingSettings'    => __( 'Saving settings...', 'sentient-forms' ),
+                'settingsFailed'    => __( 'Failed to save settings.', 'sentient-forms' ),
+                'settingsError'     => __( 'An error occurred while saving settings.', 'sentient-forms' ),
+                'confirmDeactivate' => __( 'Deactivate this site license? This disconnects this WordPress site and does not cancel Stripe billing.', 'sentient-forms' ),
+                'checking'          => __( 'Checking...', 'sentient-forms' ),
+                'adminDataMissing'  => __( 'Sentient Forms admin data could not be loaded.', 'sentient-forms' ),
+                'formDataMissing'   => __( 'Could not find form data for configuration.', 'sentient-forms' ),
             ],
         ];
     }

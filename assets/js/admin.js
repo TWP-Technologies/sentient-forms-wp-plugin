@@ -1,103 +1,123 @@
 /**
- * Sentient Forms Admin JavaScript
+ * Sentient Forms legacy admin JavaScript.
  */
 (function($) {
     'use strict';
 
-    /**
-     * Initialize the admin functionality
-     */
+    function getAdminConfig() {
+        return window.sentientFormsAdmin || {};
+    }
+
+    function getI18n(key, fallback) {
+        var config = getAdminConfig();
+        var i18n = config.i18n || {};
+
+        return i18n[key] || fallback;
+    }
+
+    function getAjaxNonce() {
+        var config = getAdminConfig();
+
+        return config.nonce || config.ajaxNonce || config.ajax_nonce || '';
+    }
+
+    function getFormsForModal() {
+        if (Array.isArray(window.sentientFormsFormsData)) {
+            return window.sentientFormsFormsData;
+        }
+
+        var config = getAdminConfig();
+        if (Array.isArray(config.forms)) {
+            return config.forms;
+        }
+
+        return [];
+    }
+
+    function setResultMessage($result, className, message) {
+        $result.empty();
+        $('<span />').addClass(className).text(message).appendTo($result);
+    }
+
+    function setResultSpinner($result, message) {
+        $result.empty();
+        $('<span />').addClass('spinner is-active').appendTo($result);
+        $result.append(document.createTextNode(' ' + message));
+    }
+
     function init() {
-        // Initialize tabs
         initTabs();
 
-        // Initialize settings page
         if ($('#sentient-forms-settings-form').length) {
             initSettingsPage();
         }
 
-        // Initialize forms page
         if ($('.sentient-forms-forms-table').length) {
             initFormsPage();
         }
 
-        // Initialize license page
         if ($('#sentient-forms-license-form').length) {
             initLicensePage();
         }
-
-        // Initialize dashboard
-        if ($('.sentient-forms-dashboard').length) {
-            initDashboard();
-        }
     }
 
-    /**
-     * Initialize tabs functionality
-     */
     function initTabs() {
         $('.sentient-forms-tab-button').on('click', function(e) {
             e.preventDefault();
+
             var target = $(this).data('target');
-            
-            // Hide all tabs
+
             $('.sentient-forms-tab-content').removeClass('active');
             $('.sentient-forms-tab-button').removeClass('active');
-            
-            // Show the selected tab
             $('#' + target).addClass('active');
             $(this).addClass('active');
         });
     }
 
-    /**
-     * Initialize settings page functionality
-     */
     function initSettingsPage() {
-        function setResultMessage($result, className, message) {
-            $result.empty();
-            $('<span />').addClass(className).text(message).appendTo($result);
-        }
-
-        function setResultSpinner($result, message) {
-            $result.empty();
-            $('<span />').addClass('spinner is-active').appendTo($result);
-            $result.append(document.createTextNode(' ' + message));
-        }
-
-        // Test connection button
         $('#sentient-forms-test-connection').on('click', function() {
+            var config = getAdminConfig();
+            var nonce = getAjaxNonce();
             var $button = $(this);
             var $result = $('#sentient-forms-connection-result');
             var apiKey = $('#sentient_forms_proxy_api_key').val();
-            
+
             if (!apiKey) {
-                setResultMessage($result, 'error', sentientFormsAdmin.i18n.apiKeyRequired);
+                setResultMessage($result, 'error', getI18n('apiKeyRequired', 'API key is required to test connection.'));
                 return;
             }
-            
+
+            if (!config.ajaxUrl || !nonce) {
+                setResultMessage($result, 'error', getI18n('adminDataMissing', 'Sentient Forms admin data could not be loaded.'));
+                return;
+            }
+
             var originalText = $button.text();
-            $button.text(sentientFormsAdmin.i18n.testingConnection);
+            $button.text(getI18n('testingConnection', 'Testing connection...'));
             $button.prop('disabled', true);
             $result.empty();
-            
+
             $.ajax({
-                url: sentientFormsAdmin.ajaxUrl,
+                url: config.ajaxUrl,
                 type: 'POST',
                 data: {
                     action: 'sentient_forms_test_connection',
-                    nonce: sentientFormsAdmin.ajax_nonce,
+                    nonce: nonce,
                     api_key: apiKey
                 },
                 success: function(response) {
                     if (response.success) {
                         setResultMessage($result, 'success', response.data.message);
                     } else {
-                        setResultMessage($result, 'error', sentientFormsAdmin.i18n.connectionFailed + response.data.message);
+                        setResultMessage(
+                            $result,
+                            'error',
+                            getI18n('connectionFailed', 'Connection failed.') + ' ' + (response.data.message || '')
+                        );
                     }
                 },
                 error: function() {
-                    setResultMessage($result, 'error', sentientFormsAdmin.i18n.connectionError);
+                    setResultMessage($result, 'error', getI18n('connectionError', 'An error occurred during the connection test.'));
                 },
                 complete: function() {
                     $button.text(originalText);
@@ -105,30 +125,22 @@
                 }
             });
         });
-        
-        // Reset settings button
+
         $('#sentient-forms-reset-settings').on('click', function() {
-            if (confirm(sentientFormsAdmin.i18n.confirmReset)) {
-                // Reset form fields to defaults
+            if (window.confirm(getI18n('confirmReset', 'Reset settings to defaults?'))) {
                 $('#sentient_forms_default_llm').val('gemini-flash');
                 $('#sentient_forms_auto_apply_actions').prop('checked', false);
                 $('#sentient_forms_async_processing').prop('checked', true);
                 $('#sentient_forms_debug_mode').prop('checked', false);
                 $('#sentient_forms_api_url').val('https://api.sentientforms.com/v1');
-                
-                // Don't reset the API key
             }
         });
     }
 
-    /**
-     * Initialize forms page functionality
-     */
     function initFormsPage() {
-        // Modal functionality
         var $modal = $('#sentient-forms-form-modal');
+        var formsForModal = getFormsForModal();
 
-        // Open modal when Configure is clicked
         $('.sentient-forms-configure-form').on('click', function(e) {
             e.preventDefault();
 
@@ -136,240 +148,228 @@
             var adapter = $(this).data('adapter');
             var form = null;
 
-            // Find the form data
-            for (var i = 0; i < sentientFormsAdmin.forms.length; i++) {
-                if (sentientFormsAdmin.forms[i].id == formId && sentientFormsAdmin.forms[i].adapter == adapter) {
-                    form = sentientFormsAdmin.forms[i];
+            for (var i = 0; i < formsForModal.length; i++) {
+                if (String(formsForModal[i].id) === String(formId) && String(formsForModal[i].adapter) === String(adapter)) {
+                    form = formsForModal[i];
                     break;
                 }
             }
 
             if (!form) {
+                window.alert(getI18n('formDataMissing', 'Could not find form data for configuration.'));
                 return;
             }
 
-            // Set form title and IDs
-            $('#sentient-forms-modal-form-title').text(form.title);
+            $('#sentient-forms-modal-form-title').text(form.title || '');
             $('#sentient-forms-form-id').val(form.id);
             $('#sentient-forms-adapter-id').val(form.adapter);
 
-            // Set form settings
-            var settings = form.settings || {};
-            $('#sentient-forms-form-enabled').prop('checked', settings.enabled || false);
-
-            // Set action settings
-            var actions = settings.actions || {};
-
-            // Reset all action settings first
-            $('.sentient-forms-actions-tab-content').each(function() {
-                var actionId = $(this).data('action-id');
-                $(this).find('input[type="checkbox"]').prop('checked', false);
-                $(this).find('input[type="text"], input[type="number"]').val('');
-                $(this).find('textarea').val('');
-                $(this).find('select').each(function() {
-                    $(this).val($(this).find('option:first').val());
-                });
-            });
-
-            // Set action settings from form data
-            for (var actionId in actions) {
-                if (!actions.hasOwnProperty(actionId)) {
-                    continue;
-                }
-
-                var actionSettings = actions[actionId];
-
-                // Set enabled
-                $('#sentient-forms-action-' + actionId + '-enabled').prop('checked', actionSettings.enabled || false);
-
-                // Set other settings
-                for (var settingId in actionSettings) {
-                    if (!actionSettings.hasOwnProperty(settingId) || settingId === 'enabled') {
-                        continue;
-                    }
-
-                    var $setting = $('#sentient-forms-action-' + actionId + '-' + settingId);
-
-                    if ($setting.is('input[type="checkbox"]')) {
-                        $setting.prop('checked', actionSettings[settingId] || false);
-                    } else if ($setting.is('select')) {
-                        $setting.val(actionSettings[settingId]);
-                    } else if ($setting.is('textarea')) {
-                        $setting.val(actionSettings[settingId]);
-                    } else {
-                        $setting.val(actionSettings[settingId]);
-                    }
-                }
-
-                // Set hooks
-                if (actionSettings.hooks && Array.isArray(actionSettings.hooks)) {
-                    var $hooks = $('input[name="settings[actions][' + actionId + '][hooks][]"]');
-                    $hooks.each(function() {
-                        if (actionSettings.hooks.indexOf($(this).val()) !== -1) {
-                            $(this).prop('checked', true);
-                        }
-                    });
-                }
+            var formSettings = $('#sentient-forms-form-settings-form')[0];
+            if (formSettings) {
+                formSettings.reset();
             }
 
-            // Show the first action tab
-            $('.sentient-forms-actions-tab-button:first').addClass('active');
-            $('.sentient-forms-actions-tab-content:first').addClass('active');
+            $('.sentient-forms-actions-tab-content input[type="checkbox"]').prop('checked', false);
 
-            // Show the modal
+            var settings = form.settings || {};
+            $('#sentient-forms-form-enabled').prop('checked', !!settings.enabled);
+            applyActionSettings(settings.actions || {});
+
+            $('.sentient-forms-actions-tab-button:first').addClass('active').siblings().removeClass('active');
+            $('.sentient-forms-actions-tab-content-wrapper .sentient-forms-actions-tab-content:first')
+                .addClass('active')
+                .siblings()
+                .removeClass('active');
+
             $modal.addClass('sentient-forms-modal-open');
         });
 
-        // Close modal when X is clicked
-        $('.sentient-forms-modal-close').on('click', function() {
+        $(document).on('click', '.sentient-forms-modal-close, .sentient-forms-modal-close-button, .sentient-forms-modal-backdrop', function(e) {
+            if ($(this).hasClass('sentient-forms-modal-backdrop') && !$(e.target).is('.sentient-forms-modal-backdrop')) {
+                return;
+            }
+
             $modal.removeClass('sentient-forms-modal-open');
         });
 
-        // Close modal when clicking on the backdrop
-        $(document).on('click', '.sentient-forms-modal-backdrop', function() {
-            $modal.removeClass('sentient-forms-modal-open');
-        });
-        
-        // Tab functionality
         $('.sentient-forms-actions-tab-button').on('click', function() {
             var actionId = $(this).data('action-id');
-            
-            // Remove active class from all buttons and content
-            $('.sentient-forms-actions-tab-button').removeClass('active');
-            $('.sentient-forms-actions-tab-content').removeClass('active');
-            
-            // Add active class to clicked button and corresponding content
-            $(this).addClass('active');
-            $('.sentient-forms-actions-tab-content[data-action-id="' + actionId + '"]').addClass('active');
+
+            $(this).addClass('active').siblings().removeClass('active');
+            $('.sentient-forms-actions-tab-content-wrapper .sentient-forms-actions-tab-content[data-action-id="' + actionId + '"]')
+                .addClass('active')
+                .siblings()
+                .removeClass('active');
         });
-        
-        // Save form settings
+
         $('#sentient-forms-save-form-settings').on('click', function() {
+            var config = getAdminConfig();
+            var nonce = getAjaxNonce();
             var $button = $(this);
             var $result = $('#sentient-forms-form-settings-result');
-            
+
+            if (!config.ajaxUrl || !nonce) {
+                setResultMessage($result, 'error', getI18n('adminDataMissing', 'Sentient Forms admin data could not be loaded.'));
+                return;
+            }
+
             $button.prop('disabled', true);
-            setResultSpinner($result, sentientFormsAdmin.i18n.savingSettings);
-            
+            setResultSpinner($result, getI18n('savingSettings', 'Saving settings...'));
+
             $.ajax({
-                url: sentientFormsAdmin.ajaxUrl,
+                url: config.ajaxUrl,
                 type: 'POST',
                 data: {
                     action: 'sentient_forms_save_form_settings',
-                    nonce: sentientFormsAdmin.ajax_nonce,
+                    nonce: nonce,
                     form_id: $('#sentient-forms-form-id').val(),
                     adapter_id: $('#sentient-forms-adapter-id').val(),
-                    settings: getFormSettings()
+                    settings: getFormSettingsFromModal()
                 },
                 success: function(response) {
                     if (response.success) {
                         setResultMessage($result, 'success', response.data.message);
+                        updateCachedFormSettings(formsForModal, response.data.settings);
                         setTimeout(function() {
                             window.location.reload();
                         }, 1000);
                     } else {
-                        setResultMessage($result, 'error', sentientFormsAdmin.i18n.settingsFailed + response.data.message);
+                        setResultMessage(
+                            $result,
+                            'error',
+                            getI18n('settingsFailed', 'Failed to save settings.') + ' ' + (response.data.message || '')
+                        );
                         $button.prop('disabled', false);
                     }
                 },
-                error: function() {
-                    setResultMessage($result, 'error', sentientFormsAdmin.i18n.settingsError);
+                error: function(jqXHR, textStatus, errorThrown) {
+                    setResultMessage(
+                        $result,
+                        'error',
+                        getI18n('settingsError', 'An error occurred while saving settings.') + ' ' + (errorThrown || '')
+                    );
                     $button.prop('disabled', false);
                 }
             });
         });
     }
 
-    /**
-     * Get form settings as an object
-     * 
-     * @return {Object} The form settings
-     */
-    function getFormSettings() {
+    function applyActionSettings(actions) {
+        $('.sentient-forms-actions-tab-content').each(function() {
+            var $actionTab = $(this);
+
+            $actionTab.find('input[type="text"], input[type="number"]').each(function() {
+                $(this).val($(this).attr('value') || '');
+            });
+            $actionTab.find('textarea').each(function() {
+                $(this).val($(this).text() || '');
+            });
+            $actionTab.find('select').each(function() {
+                var defaultValue = $(this).find('option[selected]').val();
+                if (typeof defaultValue !== 'undefined') {
+                    $(this).val(defaultValue);
+                } else {
+                    $(this).prop('selectedIndex', 0);
+                }
+            });
+        });
+
+        Object.keys(actions).forEach(function(actionId) {
+            var actionSettings = actions[actionId] || {};
+            var $actionTab = $('.sentient-forms-actions-tab-content[data-action-id="' + actionId + '"]');
+
+            $('#sentient-forms-action-' + actionId + '-enabled').prop('checked', !!actionSettings.enabled);
+
+            Object.keys(actionSettings).forEach(function(settingKey) {
+                if (settingKey === 'enabled' || settingKey === 'hooks') {
+                    return;
+                }
+
+                var $field = $actionTab.find('[name="settings[actions][' + actionId + '][' + settingKey + ']"]');
+
+                if ($field.is('input[type="checkbox"]')) {
+                    $field.prop('checked', !!actionSettings[settingKey]);
+                } else {
+                    $field.val(actionSettings[settingKey]);
+                }
+            });
+
+            var hooks = Array.isArray(actionSettings.hooks) ? actionSettings.hooks : [];
+            $actionTab.find('input[name="settings[actions][' + actionId + '][hooks][]"]').each(function() {
+                $(this).prop('checked', hooks.indexOf($(this).val()) !== -1);
+            });
+        });
+    }
+
+    function updateCachedFormSettings(formsForModal, settings) {
+        var formId = $('#sentient-forms-form-id').val();
+        var adapterId = $('#sentient-forms-adapter-id').val();
+
+        for (var i = 0; i < formsForModal.length; i++) {
+            if (String(formsForModal[i].id) === String(formId) && String(formsForModal[i].adapter) === String(adapterId)) {
+                formsForModal[i].settings = settings;
+                return;
+            }
+        }
+    }
+
+    function getFormSettingsFromModal() {
         var settings = {
             enabled: $('#sentient-forms-form-enabled').is(':checked'),
             actions: {}
         };
-        
-        // Get action settings
+
         $('.sentient-forms-actions-tab-content').each(function() {
             var actionId = $(this).data('action-id');
             var actionEnabled = $('#sentient-forms-action-' + actionId + '-enabled').is(':checked');
-            
-            if (!actionEnabled) {
-                return;
-            }
-            
+
             settings.actions[actionId] = {
-                enabled: true,
+                enabled: actionEnabled,
                 hooks: []
             };
-            
-            // Get hooks
-            $('input[name="settings[actions][' + actionId + '][hooks][]"]:checked').each(function() {
+
+            $(this).find('input[name="settings[actions][' + actionId + '][hooks][]"]:checked').each(function() {
                 settings.actions[actionId].hooks.push($(this).val());
             });
-            
-            // Get other settings
+
             $(this).find('input[type="text"], input[type="number"], select, textarea').each(function() {
                 var name = $(this).attr('name');
-                var matches = name.match(/settings\[actions\]\[([^\]]+)\]\[([^\]]+)\]/);
-                
-                if (matches && matches[1] === actionId) {
-                    var settingId = matches[2];
-                    settings.actions[actionId][settingId] = $(this).val();
+                var matches = name && name.match(/settings\[actions\]\[([^\]]+)\]\[([^\]]+)\]/);
+
+                if (matches && matches[1] === String(actionId) && matches[2] !== 'enabled') {
+                    settings.actions[actionId][matches[2]] = $(this).val();
                 }
             });
-            
-            // Get checkboxes
+
             $(this).find('input[type="checkbox"]').each(function() {
                 var name = $(this).attr('name');
-                var matches = name.match(/settings\[actions\]\[([^\]]+)\]\[([^\]]+)\]/);
-                
-                if (matches && matches[1] === actionId && matches[2] !== 'hooks[]') {
-                    var settingId = matches[2];
-                    settings.actions[actionId][settingId] = $(this).is(':checked');
+                var matches = name && name.match(/settings\[actions\]\[([^\]]+)\]\[([^\]]+)\]/);
+
+                if (matches && matches[1] === String(actionId) && matches[2] !== 'enabled' && matches[2] !== 'hooks[]') {
+                    settings.actions[actionId][matches[2]] = $(this).is(':checked');
                 }
             });
         });
-        
+
         return settings;
     }
 
-    /**
-     * Initialize license page functionality
-     */
     function initLicensePage() {
-        // Deactivate license
         $('#sentient-forms-deactivate-license').on('click', function() {
-            if (confirm(sentientFormsAdmin.i18n.confirmDeactivate)) {
-                // Clear the license key field and submit the form
+            if (window.confirm(getI18n('confirmDeactivate', 'Deactivate this site license?'))) {
                 $('#sentient_forms_license_key').val('');
                 $('#sentient-forms-license-form').submit();
             }
         });
-        
-        // Check license status
+
         $('#sentient-forms-check-license').on('click', function() {
             var $button = $(this);
-            var originalText = $button.text();
-            
-            $button.text(sentientFormsAdmin.i18n.checking);
+
+            $button.text(getI18n('checking', 'Checking...'));
             $button.prop('disabled', true);
-            
-            // Reload the page to check the license status
             window.location.reload();
         });
     }
 
-    /**
-     * Initialize dashboard functionality
-     */
-    function initDashboard() {
-        // Legacy PHP dashboard currently has no interactive local-first controls.
-    }
-
-    // Initialize when the DOM is ready
     $(document).ready(init);
-
 })(jQuery);
