@@ -216,6 +216,104 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertSame( 0, $external_call_count );
     }
 
+    public function test_save_openrouter_constant_rejects_wordpress_auth_secret_without_consent_or_external_call(): void
+    {
+        $external_call_count = 0;
+        $this->mock_openrouter_key_response(
+            function () use ( &$external_call_count ): void {
+                ++$external_call_count;
+            }
+        );
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/constant' ) );
+        $request->set_body_params(
+            [
+                'constant_name'                  => 'AUTH_KEY',
+                'disclosure_version'             => '2026-04-22',
+                'accepted_external_service_terms' => true,
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 400, $response->get_status() );
+        $this->assertSame( 'sentient_forms_disallowed_secret_constant', $response->get_data()['code'] );
+        $this->assertSame( 0, $external_call_count );
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $this->assertSame( [], $credentials->list() );
+
+        $consents = new Sentient_Forms_External_Service_Consent_Repository( $GLOBALS['wpdb'] );
+        $this->assertNull( $consents->latest_for_provider( 'openrouter' ) );
+    }
+
+    public function test_save_openrouter_constant_requires_sentient_forms_openrouter_prefix(): void
+    {
+        $constant_name = 'OPENROUTER_API_KEY';
+        putenv( $constant_name . '=sk-or-prefix-should-not-be-used' );
+
+        $external_call_count = 0;
+        $this->mock_openrouter_key_response(
+            function () use ( &$external_call_count ): void {
+                ++$external_call_count;
+            }
+        );
+
+        try
+        {
+            $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/constant' ) );
+            $request->set_body_params(
+                [
+                    'constant_name'                  => $constant_name,
+                    'disclosure_version'             => '2026-04-22',
+                    'accepted_external_service_terms' => true,
+                ]
+            );
+
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 400, $response->get_status() );
+            $this->assertSame( 'sentient_forms_disallowed_secret_constant', $response->get_data()['code'] );
+            $this->assertSame( 0, $external_call_count );
+
+            $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+            $this->assertSame( [], $credentials->list() );
+
+            $consents = new Sentient_Forms_External_Service_Consent_Repository( $GLOBALS['wpdb'] );
+            $this->assertNull( $consents->latest_for_provider( 'openrouter' ) );
+        }
+        finally
+        {
+            putenv( $constant_name );
+        }
+    }
+
+    public function test_list_credentials_marks_disallowed_constant_unconfigured(): void
+    {
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Legacy unsafe server secret',
+                'auth_mode'         => 'constant',
+                'constant_name'     => 'AUTH_SALT',
+                'status'            => 'valid',
+                'status_json'       => [ 'label' => 'legacy' ],
+                'last_validated_at' => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+
+        $list_request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/local/providers/credentials' );
+        $list_response = rest_get_server()->dispatch( $list_request );
+
+        $this->assertSame( 200, $list_response->get_status() );
+        $list_data = $list_response->get_data();
+        $this->assertCount( 1, $list_data );
+        $this->assertSame( 'AUTH_SALT', $list_data[0]['constant_name'] );
+        $this->assertFalse( $list_data[0]['secret_configured'] );
+    }
+
     public function test_delete_credential_removes_saved_openrouter_key_without_secret_leak(): void
     {
         $secret      = 'sk-or-delete-secret';

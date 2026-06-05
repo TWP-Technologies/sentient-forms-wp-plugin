@@ -294,6 +294,12 @@ class Sentient_Forms_Local_Providers_Controller extends Abstract_Sentient_Forms_
         $constant_name       = sanitize_text_field( (string) $request->get_param( 'constant_name' ) );
         $disclosure_version  = sanitize_text_field( (string) $request->get_param( 'disclosure_version' ) );
 
+        $constant_validation = Sentient_Forms_Provider_Secret_Resolver::validate_constant_name( $constant_name );
+        if ( is_wp_error( $constant_validation ) )
+        {
+            return $this->restify_secret_resolution_error( $constant_validation );
+        }
+
         $consent_id = $this->consents->record(
             'openrouter',
             $disclosure_version,
