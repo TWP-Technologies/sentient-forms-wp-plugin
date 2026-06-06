@@ -377,7 +377,7 @@ SVG;
             'nonce'     => $ajax_nonce,
             'ajaxNonce' => $ajax_nonce,
             'ajax_nonce' => $ajax_nonce,
-            'forms'     => [],
+            'forms'     => $this->collect_legacy_forms(),
             'i18n'      => [
                 'apiKeyRequired'    => __( 'API key is required to test connection.', 'sentient-forms' ),
                 'testingConnection' => __( 'Testing connection...', 'sentient-forms' ),
@@ -393,6 +393,45 @@ SVG;
                 'formDataMissing'   => __( 'Could not find form data for configuration.', 'sentient-forms' ),
             ],
         ];
+    }
+
+    private function collect_legacy_forms(): array
+    {
+        $registry = $this->plugin->get_form_adapter_registry();
+        if ( ! $registry )
+        {
+            return [];
+        }
+
+        $forms = [];
+        foreach ( $registry->get_adapters( true ) as $adapter )
+        {
+            foreach ( $adapter->get_forms() as $form )
+            {
+                if ( ! is_array( $form ) )
+                {
+                    continue;
+                }
+
+                $form_id = $form['id'] ?? '';
+                if ( '' === (string) $form_id )
+                {
+                    continue;
+                }
+
+                $forms[] = [
+                    'id'           => $form_id,
+                    'title'        => (string) ( $form['title'] ?? $form['name'] ?? '' ),
+                    'adapter'      => (string) ( $form['adapter'] ?? $adapter->get_id() ),
+                    'adapter_name' => (string) ( $form['adapter_name'] ?? $adapter->get_name() ),
+                    'settings'     => is_array( $form['settings'] ?? null )
+                        ? $form['settings']
+                        : [ 'enabled' => false, 'actions' => [] ],
+                ];
+            }
+        }
+
+        return $forms;
     }
 
 	private function build_license_bootstrap_payload(): array

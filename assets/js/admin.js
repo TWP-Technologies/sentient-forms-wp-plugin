@@ -160,16 +160,16 @@
                 return;
             }
 
-            $('#sentient-forms-modal-form-title').text(form.title || '');
-            $('#sentient-forms-form-id').val(form.id);
-            $('#sentient-forms-adapter-id').val(form.adapter);
-
             var formSettings = $('#sentient-forms-form-settings-form')[0];
             if (formSettings) {
                 formSettings.reset();
             }
 
             $('.sentient-forms-actions-tab-content input[type="checkbox"]').prop('checked', false);
+
+            $('#sentient-forms-modal-form-title').text(form.title || '');
+            $('#sentient-forms-form-id').val(form.id);
+            $('#sentient-forms-adapter-id').val(form.adapter);
 
             var settings = form.settings || {};
             $('#sentient-forms-form-enabled').prop('checked', !!settings.enabled);
@@ -345,7 +345,7 @@
                 var name = $(this).attr('name');
                 var matches = name && name.match(/settings\[actions\]\[([^\]]+)\]\[([^\]]+)\]/);
 
-                if (matches && matches[1] === String(actionId) && matches[2] !== 'enabled' && matches[2] !== 'hooks[]') {
+                if (matches && matches[1] === String(actionId) && matches[2] !== 'enabled' && matches[2] !== 'hooks') {
                     settings.actions[actionId][matches[2]] = $(this).is(':checked');
                 }
             });
