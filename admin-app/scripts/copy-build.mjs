@@ -115,11 +115,14 @@ bun run build:wp
 
 const writeRuntimeMetadata = async () => {
   const indexHtmlSrc = path.join(buildDir, 'index.html');
-  let sveltekitRuntimeKey = '__sveltekit_legacy';
+  if (!existsSync(indexHtmlSrc)) {
+    throw new Error(`SvelteKit fallback HTML not found: ${indexHtmlSrc}`);
+  }
 
-  if (existsSync(indexHtmlSrc)) {
-    const indexHtml = await readFile(indexHtmlSrc, 'utf8');
-    sveltekitRuntimeKey = indexHtml.match(/__sveltekit_[a-z0-9]+/)?.[0] ?? sveltekitRuntimeKey;
+  const indexHtml = await readFile(indexHtmlSrc, 'utf8');
+  const sveltekitRuntimeKey = indexHtml.match(/__sveltekit_[a-z0-9]+/)?.[0] ?? null;
+  if (sveltekitRuntimeKey === null) {
+    throw new Error('Could not extract SvelteKit runtime key from fallback HTML.');
   }
 
   await writeFile(

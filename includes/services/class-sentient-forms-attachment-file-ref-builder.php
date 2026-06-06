@@ -323,11 +323,31 @@ class Sentient_Forms_Attachment_File_Ref_Builder {
 		}
 
 		$clean_url = strtok( $url, '?#' );
-		if ( ! is_string( $clean_url ) || ! str_starts_with( $clean_url, $baseurl ) ) {
+		if ( ! is_string( $clean_url ) ) {
 			return null;
 		}
 
-		$relative  = ltrim( (string) substr( $clean_url, strlen( $baseurl ) ), '/' );
+		$base_parts = wp_parse_url( $baseurl );
+		$url_parts  = wp_parse_url( $clean_url );
+		if ( ! is_array( $base_parts ) || ! is_array( $url_parts ) ) {
+			return null;
+		}
+
+		$base_host = strtolower( (string) ( $base_parts['host'] ?? '' ) );
+		$url_host  = strtolower( (string) ( $url_parts['host'] ?? '' ) );
+		$base_port = isset( $base_parts['port'] ) ? (int) $base_parts['port'] : null;
+		$url_port  = isset( $url_parts['port'] ) ? (int) $url_parts['port'] : null;
+		if ( '' === $base_host || '' === $url_host || $base_host !== $url_host || $base_port !== $url_port ) {
+			return null;
+		}
+
+		$base_path = trailingslashit( rawurldecode( (string) ( $base_parts['path'] ?? '/' ) ) );
+		$url_path  = rawurldecode( (string) ( $url_parts['path'] ?? '' ) );
+		if ( '' === $url_path || ! str_starts_with( $url_path, $base_path ) ) {
+			return null;
+		}
+
+		$relative  = ltrim( (string) substr( $url_path, strlen( $base_path ) ), '/' );
 		$candidate = $basedir . str_replace( '/', DIRECTORY_SEPARATOR, rawurldecode( $relative ) );
 
 		$real_candidate = realpath( $candidate );

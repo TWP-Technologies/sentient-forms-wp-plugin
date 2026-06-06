@@ -31,13 +31,13 @@ class Tests_Wporg_Path_Hardening extends WP_UnitTestCase {
 		$this->assertNotEmpty( $uploads['baseurl'] );
 
 		$upload_path = trailingslashit( $uploads['basedir'] ) . 'sentient-forms-upload-path-test.txt';
-		wp_mkdir_p( dirname( $upload_path ) );
-		$this->assertNotFalse( file_put_contents( $upload_path, 'upload file' ) );
-
 		$content_path = trailingslashit( WP_CONTENT_DIR ) . 'sentient-forms-non-upload-path-test.txt';
-		$this->assertNotFalse( file_put_contents( $content_path, 'content file' ) );
 
 		try {
+			wp_mkdir_p( dirname( $upload_path ) );
+			$this->assertNotFalse( file_put_contents( $upload_path, 'upload file' ) );
+			$this->assertNotFalse( file_put_contents( $content_path, 'content file' ) );
+
 			$builder = new Sentient_Forms_Attachment_File_Ref_Builder( Sentient_Forms_Plugin::instance() );
 			$method  = new ReflectionMethod( $builder, 'resolve_local_path_from_url' );
 			$method->setAccessible( true );
@@ -48,11 +48,25 @@ class Tests_Wporg_Path_Hardening extends WP_UnitTestCase {
 				wp_normalize_path( (string) $method->invoke( $builder, $upload_url ) )
 			);
 
+			$upload_scheme = wp_parse_url( $upload_url, PHP_URL_SCHEME );
+			$swapped_scheme_upload_url = set_url_scheme(
+				$upload_url,
+				'https' === $upload_scheme ? 'http' : 'https'
+			);
+			$this->assertSame(
+				wp_normalize_path( $upload_path ),
+				wp_normalize_path( (string) $method->invoke( $builder, $swapped_scheme_upload_url ) )
+			);
+
 			$content_url = content_url( 'sentient-forms-non-upload-path-test.txt' );
 			$this->assertNull( $method->invoke( $builder, $content_url ) );
 		} finally {
-			wp_delete_file( $upload_path );
-			wp_delete_file( $content_path );
+			if ( file_exists( $upload_path ) ) {
+				wp_delete_file( $upload_path );
+			}
+			if ( file_exists( $content_path ) ) {
+				wp_delete_file( $content_path );
+			}
 		}
 	}
 }

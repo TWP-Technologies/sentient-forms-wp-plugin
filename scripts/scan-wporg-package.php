@@ -309,14 +309,17 @@ else
     $issues = array_merge( $issues, validate_readme( $root . '/readme.txt', $root . '/sentient-forms.php' ) );
 }
 
-if ( ! $source_tree && ! is_dir( $root . '/assets/dist' ) )
+if ( ! $source_tree )
 {
-    $issues[] = 'Missing built admin assets at assets/dist.';
-}
-else
-{
-    $issues = array_merge( $issues, validate_admin_runtime_metadata( $root ) );
-    $issues = array_merge( $issues, validate_compressed_asset_source_metadata( $root ) );
+    if ( ! is_dir( $root . '/assets/dist' ) )
+    {
+        $issues[] = 'Missing built admin assets at assets/dist.';
+    }
+    else
+    {
+        $issues = array_merge( $issues, validate_admin_runtime_metadata( $root ) );
+        $issues = array_merge( $issues, validate_compressed_asset_source_metadata( $root ) );
+    }
 }
 
 if ( ! $source_tree )
