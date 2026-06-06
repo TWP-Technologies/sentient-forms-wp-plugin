@@ -2279,11 +2279,10 @@ function buildRuntimeCacheContext(config: SentientFormsConfig): string {
 }
 
 function defaultRuntimeConfig(): SentientFormsConfig {
-	const origin = typeof window === 'undefined' ? '' : window.location.origin;
-	const siteUrl = origin || '';
+	const { apiBaseUrl, siteUrl } = fallbackWordPressRuntimeUrls();
 
 	return {
-		apiBaseUrl: origin ? `${origin}/wp-json/sentient-forms/v1/` : '/wp-json/sentient-forms/v1/',
+		apiBaseUrl,
 		restNonce: '',
 		ajaxNonce: '',
 		siteUrl,
@@ -2308,6 +2307,32 @@ function defaultRuntimeConfig(): SentientFormsConfig {
 			lastError: null
 		},
 		i18n: {}
+	};
+}
+
+function fallbackWordPressRuntimeUrls(): Pick<SentientFormsConfig, 'apiBaseUrl' | 'siteUrl'> {
+	if (typeof window === 'undefined') {
+		return {
+			apiBaseUrl: '/wp-json/sentient-forms/v1/',
+			siteUrl: ''
+		};
+	}
+
+	const { origin, pathname } = window.location;
+	const adminSegment = '/wp-admin';
+	const adminPathIndex = pathname.indexOf(`${adminSegment}/`);
+	const sitePath =
+		adminPathIndex >= 0
+			? pathname.slice(0, adminPathIndex)
+			: pathname.endsWith(adminSegment)
+				? pathname.slice(0, -adminSegment.length)
+				: '';
+	const normalizedSitePath = sitePath.replace(/\/+$/, '');
+	const apiBasePath = `${normalizedSitePath}/wp-json/sentient-forms/v1/`;
+
+	return {
+		apiBaseUrl: origin ? `${origin}${apiBasePath}` : apiBasePath,
+		siteUrl: origin ? `${origin}${normalizedSitePath}` : ''
 	};
 }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { apiFetch, ApiError } from '$lib/api/http';
+import { createClientFromConfig } from '$lib/api/client';
 import {
 	SESSION_EXPIRED_EVENT,
 	resetSessionExpiryAnnouncementForTests
@@ -29,6 +30,8 @@ describe('apiFetch', () => {
 		vi.restoreAllMocks();
 		resetSessionExpiryAnnouncementForTests();
 		resetSecurityRoadblockAnnouncementForTests();
+		Reflect.deleteProperty(window, 'sentientFormsConfig');
+		window.history.replaceState({}, '', '/');
 	});
 
 	it('makes a successful request', async () => {
@@ -256,5 +259,35 @@ describe('apiFetch', () => {
 		);
 
 		window.removeEventListener(SECURITY_ROADBLOCK_EVENT, securityHandler);
+	});
+
+	it('preserves a WordPress subdirectory path in the fallback runtime config', async () => {
+		Reflect.deleteProperty(window, 'sentientFormsConfig');
+		window.history.replaceState({}, '', '/wp/wp-admin/admin.php?page=sentient-forms');
+
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ success: true, data: { ok: true } }), {
+				status: 200,
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+
+		const client = createClientFromConfig({
+			fetchImpl: fetchMock,
+			notifyErrors: false
+		});
+
+		await client.request('settings');
+
+		expect(window.sentientFormsConfig?.siteUrl).toBe('http://localhost:3000/wp');
+		expect(window.sentientFormsConfig?.apiBaseUrl).toBe(
+			'http://localhost:3000/wp/wp-json/sentient-forms/v1/'
+		);
+		expect(fetchMock).toHaveBeenCalledWith(
+			'http://localhost:3000/wp/wp-json/sentient-forms/v1/settings',
+			expect.objectContaining({
+				credentials: 'same-origin'
+			})
+		);
 	});
 });
