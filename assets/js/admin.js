@@ -176,7 +176,7 @@
             applyActionSettings(settings.actions || {});
 
             $('.sentient-forms-actions-tab-button:first').addClass('active').siblings().removeClass('active');
-            $('.sentient-forms-actions-tab-content-wrapper .sentient-forms-actions-tab-content:first')
+            $('.sentient-forms-actions-tabs-content-wrapper .sentient-forms-actions-tab-content:first')
                 .addClass('active')
                 .siblings()
                 .removeClass('active');
@@ -196,7 +196,7 @@
             var actionId = $(this).data('action-id');
 
             $(this).addClass('active').siblings().removeClass('active');
-            $('.sentient-forms-actions-tab-content-wrapper .sentient-forms-actions-tab-content[data-action-id="' + actionId + '"]')
+            $('.sentient-forms-actions-tabs-content-wrapper .sentient-forms-actions-tab-content[data-action-id="' + actionId + '"]')
                 .addClass('active')
                 .siblings()
                 .removeClass('active');
