@@ -270,7 +270,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
     /**
      * WordPress auth secrets must not be read, persisted, or sent for validation.
      */
-    public function test_save_openrouter_constant_rejects_wordpress_auth_secret_without_consent_or_external_call(): void
+    public function test_save_openrouter_constant_rejects_wordpress_auth_secret_without_consent_record_or_external_call(): void
     {
         $external_call_count = 0;
         $this->mock_openrouter_key_response(
@@ -292,6 +292,42 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
 
         $this->assertSame( 400, $response->get_status() );
         $this->assertSame( 'sentient_forms_disallowed_secret_constant', $response->get_data()['code'] );
+        $this->assertSame( 0, $external_call_count );
+
+        $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+        $this->assertSame( [], $credentials->list() );
+
+        $consents = new Sentient_Forms_External_Service_Consent_Repository( $GLOBALS['wpdb'] );
+        $this->assertNull( $consents->latest_for_provider( 'openrouter' ) );
+    }
+
+    /**
+     * Database constants should get the explicit WordPress credential rejection path.
+     */
+    public function test_save_openrouter_constant_rejects_database_secret_with_specific_error(): void
+    {
+        $external_call_count = 0;
+        $this->mock_openrouter_key_response(
+            function () use ( &$external_call_count ): void {
+                ++$external_call_count;
+            }
+        );
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/constant' ) );
+        $request->set_body_params(
+            [
+                'constant_name'                  => 'DB_HOST',
+                'disclosure_version'             => '2026-04-22',
+                'accepted_external_service_terms' => true,
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 400, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'sentient_forms_disallowed_secret_constant', $data['code'] );
+        $this->assertStringContainsString( 'database credentials', $data['message'] );
         $this->assertSame( 0, $external_call_count );
 
         $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
