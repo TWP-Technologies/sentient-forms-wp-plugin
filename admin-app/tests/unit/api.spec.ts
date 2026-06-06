@@ -16,6 +16,7 @@ declare global {
 		sentientFormsConfig: {
 			apiBaseUrl: string;
 			restNonce: string;
+			siteUrl?: string;
 		};
 	}
 }
