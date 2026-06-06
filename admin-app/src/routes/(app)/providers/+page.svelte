@@ -878,7 +878,12 @@
 							<code
 								class="sf:rounded sf:bg-slate-200 sf:px-1.5 sf:py-0.5 sf:font-mono sf:text-[13px] sf:text-slate-800"
 								>SENTIENT_FORMS_OPENROUTER_KEY</code
-							>. The name must already be defined on the server before validation can succeed.
+							>. Names must start with
+							<code
+								class="sf:rounded sf:bg-slate-200 sf:px-1.5 sf:py-0.5 sf:font-mono sf:text-[13px] sf:text-slate-800"
+								>SENTIENT_FORMS_OPENROUTER_</code
+							>. Do not use WordPress auth keys, salts, database credentials, or other unrelated
+							server secrets.
 						</p>
 
 						<label class="sf:flex sf:items-start sf:gap-3 sf:text-sm sf:text-slate-700">
