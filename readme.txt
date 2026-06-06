@@ -1,7 +1,7 @@
 === Sentient Forms ===
 Contributors: twptech
 Tags: forms, ai, gravity-forms, openrouter, automation
-Requires at least: 6.8.0
+Requires at least: 6.8
 Tested up to: 7.0
 Requires PHP: 8.2
 Stable tag: 0.3.3
@@ -20,7 +20,7 @@ The plugin is moving to a local-first architecture. Site-owned configuration, ac
 
 You can use the plugin without a paid Sentient Forms account by connecting your own OpenRouter API key and choosing models available to your OpenRouter account, including OpenRouter free models for supported form-action workflows when available. AI-generated Site Context is stricter because it researches public site pages before writing the context: it requires either Sentient Forms Managed Execution or a configured paid, web-capable OpenRouter model. You can always write Site Context manually without using a paid model.
 
-= External services =
+== External services ==
 
 This plugin can connect to external AI services, depending on which provider path you enable.
 
