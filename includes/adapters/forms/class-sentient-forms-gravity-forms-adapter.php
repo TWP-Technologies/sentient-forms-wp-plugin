@@ -2562,8 +2562,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
     public function enqueue_editor_assets( string $hook_suffix ): void
     {
-        $page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
-        if ( 'gf_edit_forms' !== $page )
+        if ( ! $this->is_gravity_forms_editor_screen( $hook_suffix ) )
         {
             return;
         }
@@ -2575,6 +2574,36 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             SENTIENT_FORMS_VERSION,
             true
         );
+    }
+
+    private function is_gravity_forms_editor_screen( string $hook_suffix ): bool
+    {
+        if ( 'gf_edit_forms' === $hook_suffix || str_ends_with( $hook_suffix, '_page_gf_edit_forms' ) )
+        {
+            return true;
+        }
+
+        if ( ! function_exists( 'get_current_screen' ) )
+        {
+            return false;
+        }
+
+        $screen = get_current_screen();
+        if ( ! is_object( $screen ) )
+        {
+            return false;
+        }
+
+        foreach ( [ 'id', 'base' ] as $property )
+        {
+            $value = isset( $screen->{$property} ) ? (string) $screen->{$property} : '';
+            if ( 'gf_edit_forms' === $value || str_ends_with( $value, '_page_gf_edit_forms' ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

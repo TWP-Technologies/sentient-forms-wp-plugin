@@ -300,6 +300,22 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $property->setValue( Sentient_Forms_Plugin::instance(), $executor );
     }
 
+    public function test_gravity_forms_editor_screen_matches_gravity_forms_hook_suffix(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'is_gravity_forms_editor_screen' );
+        $method->setAccessible( true );
+
+        $this->assertTrue( $method->invoke( $this->adapter, 'forms_page_gf_edit_forms' ) );
+    }
+
+    public function test_gravity_forms_editor_screen_skips_non_gravity_forms_hook_suffix(): void
+    {
+        $method = new ReflectionMethod( $this->adapter, 'is_gravity_forms_editor_screen' );
+        $method->setAccessible( true );
+
+        $this->assertFalse( $method->invoke( $this->adapter, 'dashboard_page_sentient_forms' ) );
+    }
+
     public function test_build_realtime_runtime_config_returns_null_without_realtime_mappings(): void
     {
         $method = new ReflectionMethod( $this->adapter, 'build_realtime_runtime_config' );
