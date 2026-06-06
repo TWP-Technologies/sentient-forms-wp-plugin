@@ -163,7 +163,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
 
         // Add settings to the form editor
-        add_action( 'gform_editor_js', [ $this, 'editor_js' ] );
+        add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_editor_assets' ] );
         add_filter( 'gform_tooltips', [ $this, 'add_tooltips' ] );
         add_action( 'gform_field_standard_settings', [ $this, 'field_settings' ], 10, 2 );
         add_filter( 'gform_pre_render', [ $this, 'ensure_realtime_storage_field_for_rendered_form' ], 9, 1 );
@@ -2560,51 +2560,50 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         );
     }
 
-    /**
-     * Add JavaScript to the form editor
-     *
-     * @return void
-     */
-    public function editor_js()
+    public function enqueue_editor_assets( string $hook_suffix ): void
     {
-        ?>
-        <script type="text/javascript">
-            jQuery( document ).ready( function( $ )
-            {
-                // Add custom settings to the form editor
-                $( '.sentient_forms_setting' ).each( function()
-                {
-                    const $this   = $( this );
-                    const fieldId = $this.closest( 'li.field' ).data( 'fieldId' );
+        if ( ! $this->is_gravity_forms_editor_screen( $hook_suffix ) )
+        {
+            return;
+        }
 
-                    // Initialize settings
-                    $this.find( 'input[type="checkbox"]' ).on( 'change', function()
-                    {
-                        SetFieldProperty( 'sentientFormsEnabled', $( this ).prop( 'checked' ) );
-                    } );
-                } );
-            } );
+        wp_enqueue_script(
+            'sentient-forms-gravity-forms-editor',
+            SENTIENT_FORMS_PLUGIN_URL . 'assets/js/gravity-forms-editor.js',
+            [ 'jquery' ],
+            SENTIENT_FORMS_VERSION,
+            true
+        );
+    }
 
-            // Add custom field setting
-            function SetSentientFormsFieldSetting( field )
+    private function is_gravity_forms_editor_screen( string $hook_suffix ): bool
+    {
+        if ( 'gf_edit_forms' === $hook_suffix || str_ends_with( $hook_suffix, '_page_gf_edit_forms' ) )
+        {
+            return true;
+        }
+
+        if ( ! function_exists( 'get_current_screen' ) )
+        {
+            return false;
+        }
+
+        $screen = get_current_screen();
+        if ( ! is_object( $screen ) )
+        {
+            return false;
+        }
+
+        foreach ( [ 'id', 'base' ] as $property )
+        {
+            $value = isset( $screen->{$property} ) ? (string) $screen->{$property} : '';
+            if ( 'gf_edit_forms' === $value || str_ends_with( $value, '_page_gf_edit_forms' ) )
             {
-                const $setting = $( '#sentient_forms_field_setting' );
-                if ( field.sentientFormsEnabled )
-                {
-                    $setting.find( 'input[type="checkbox"]' ).prop( 'checked', true );
-                } else
-                {
-                    $setting.find( 'input[type="checkbox"]' ).prop( 'checked', false );
-                }
+                return true;
             }
+        }
 
-            // Hook into the form editor
-            $( document ).bind( 'gform_load_field_settings', function( event, field, form )
-            {
-                SetSentientFormsFieldSetting( field );
-            } );
-        </script>
-        <?php
+        return false;
     }
 
     /**
@@ -2639,7 +2638,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $enable_sentient_forms = esc_html__( 'Enable Sentient Forms', 'sentient-forms' );
             $gform_tooltip         = gform_tooltip( 'sentient_forms_field_setting' );
             printf(
-                '<li class="sentient_forms_setting field_setting" id="sentient_forms_field_setting"><input type="checkbox" id="sentient_forms_enabled" onclick="SetFieldProperty(\'sentientFormsEnabled\', this.checked);"/><label for="sentient_forms_enabled" class="inline">%s%s</label></li>',
+                '<li class="sentient_forms_setting field_setting" id="sentient_forms_field_setting"><input type="checkbox" id="sentient_forms_enabled"/><label for="sentient_forms_enabled" class="inline">%s%s</label></li>',
                 esc_html( $enable_sentient_forms ),
                 wp_kses_post( $gform_tooltip )
             );
