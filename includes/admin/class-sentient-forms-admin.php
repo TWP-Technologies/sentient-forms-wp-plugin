@@ -521,9 +521,8 @@ SVG;
 	}
 
 	/**
-	 * Some local environments (or misconfigured proxies) can yield admin_url() values like
-	 * http://localhost:8080/admin.php?page=sentient-forms (missing /wp-admin/), which 404s at Apache
-	 * before WordPress executes. Guard against that by forcing the /wp-admin/ prefix when it's absent.
+	 * Some local environments (or misconfigured proxies) can yield admin_url() values missing /wp-admin/,
+	 * which 404 at Apache before WordPress executes. Guard against that by forcing the prefix when absent.
 	 *
 	 * @param string $url  The generated admin URL.
 	 * @param string $path Requested path.

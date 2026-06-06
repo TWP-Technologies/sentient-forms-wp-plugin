@@ -148,6 +148,22 @@ class Tests_Admin_Assets_Cache_Busting extends WP_UnitTestCase
         );
     }
 
+    public function test_sveltekit_runtime_key_reads_generated_metadata(): void
+    {
+        $runtime_path = trailingslashit( SENTIENT_FORMS_PLUGIN_DIR ) . 'assets/dist/runtime.json';
+        if ( ! file_exists( $runtime_path ) )
+        {
+            $this->markTestSkipped( 'Built admin runtime metadata is not available.' );
+        }
+
+        $metadata = json_decode( (string) file_get_contents( $runtime_path ), true );
+        $expected = is_array( $metadata ) ? ( $metadata['sveltekitRuntimeKey'] ?? null ) : null;
+
+        $this->assertIsString( $expected );
+        $this->assertMatchesRegularExpression( '/^__sveltekit_[a-z0-9]+$/', $expected );
+        $this->assertSame( $expected, $this->assets->get_sveltekit_runtime_key() );
+    }
+
     /**
      * Test that asset URL preserves the relative path correctly.
      */

@@ -55,6 +55,7 @@ $forbidden_dirs = [
     'agent-logs',
     'build',
     'docs',
+    'mu-plugins',
     'node_modules',
     'phpcs-rulesets',
     'scripts',
@@ -74,7 +75,9 @@ $source_tree_skip_dirs = [
     'admin-app/build',
     'admin-app/node_modules',
     'agent-logs',
+    'assets/dist',
     'docs',
+    'mu-plugins',
     'node_modules',
     'temp',
     'tests',
@@ -93,7 +96,6 @@ $forbidden_file_patterns = [
 $runtime_extensions     = [ 'php', 'js', 'css', 'mjs', 'html', 'txt' ];
 $remote_scan_extensions = [ 'php', 'js', 'css', 'mjs', 'html' ];
 $allowed_url_hosts = [
-    '127.0.0.1',
     'actionscheduler.org',
     'automattic.com',
     'core.trac.wordpress.org',
@@ -104,7 +106,6 @@ $allowed_url_hosts = [
     'example.test',
     'github.com',
     'json-schema.org',
-    'localhost',
     'openrouter.ai',
     'php.net',
     'reactflow.dev',
@@ -123,6 +124,23 @@ $allowed_url_hosts = [
 
 $remote_url_pattern  = '/https?:\/\/[^\s\'")<>`\}\]]+/i';
 $direct_http_pattern = '/\b(curl_exec|curl_init|file_get_contents\s*\(\s*[\'"]https?:\/\/)/i';
+$forbidden_runtime_markers = [
+    'dev-nonce',
+    'dev-ajax',
+    'dev-site',
+    '127.0.0.1:8080',
+    'localhost:5173',
+];
+$sensitive_wp_secret_constants = [
+    'AUTH_KEY',
+    'AUTH_SALT',
+    'SECURE_AUTH_KEY',
+    'SECURE_AUTH_SALT',
+    'LOGGED_IN_KEY',
+    'LOGGED_IN_SALT',
+    'NONCE_KEY',
+    'NONCE_SALT',
+];
 
 $issues = [];
 
@@ -224,9 +242,47 @@ foreach ( $iterator as $item )
         }
     }
 
+    foreach ( $forbidden_runtime_markers as $marker )
+    {
+        if ( str_starts_with( $relative, 'scripts/' ) )
+        {
+            break;
+        }
+
+        if ( str_contains( $contents, $marker ) )
+        {
+            $issues[] = "Forbidden development marker in runtime file {$relative}: {$marker}";
+            break;
+        }
+    }
+
     if ( ! $source_tree && 'php' === $extension && ! str_starts_with( $relative, 'vendor/' ) && ! has_direct_access_guard( $contents ) )
     {
         $issues[] = "Missing direct access guard in PHP file: {$relative}";
+    }
+
+    if ( 'php' === $extension && ! str_starts_with( $relative, 'vendor/' ) && ! str_starts_with( $relative, 'scripts/' ) )
+    {
+        $sensitive_constant = find_sensitive_wp_secret_constant_access( $contents, $sensitive_wp_secret_constants );
+        if ( null !== $sensitive_constant )
+        {
+            $issues[] = "Sensitive WordPress auth constant access found in runtime PHP file {$relative}: {$sensitive_constant}";
+        }
+
+        if ( preg_match( '/<\s*script\b/i', $contents ) )
+        {
+            $issues[] = "Raw script tag found in runtime PHP file: {$relative}";
+        }
+
+        if ( preg_match( '/<\s*style\b/i', $contents ) )
+        {
+            $issues[] = "Raw style tag found in runtime PHP file: {$relative}";
+        }
+
+        if ( preg_match( '/\son[a-z]+\s*=/i', $contents ) )
+        {
+            $issues[] = "Inline event handler found in runtime PHP file: {$relative}";
+        }
     }
 
     if ( 'php' === $extension && 'scripts/scan-wporg-package.php' !== $relative && preg_match( $direct_http_pattern, $contents, $matches ) )
@@ -253,13 +309,17 @@ else
     $issues = array_merge( $issues, validate_readme( $root . '/readme.txt', $root . '/sentient-forms.php' ) );
 }
 
-if ( ! $source_tree && ! is_dir( $root . '/assets/dist' ) )
+if ( ! $source_tree )
 {
-    $issues[] = 'Missing built admin assets at assets/dist.';
-}
-else
-{
-    $issues = array_merge( $issues, validate_compressed_asset_source_metadata( $root ) );
+    if ( ! is_dir( $root . '/assets/dist' ) )
+    {
+        $issues[] = 'Missing built admin assets at assets/dist.';
+    }
+    else
+    {
+        $issues = array_merge( $issues, validate_admin_runtime_metadata( $root ) );
+        $issues = array_merge( $issues, validate_compressed_asset_source_metadata( $root ) );
+    }
 }
 
 if ( ! $source_tree )
@@ -312,7 +372,83 @@ function validate_plugin_headers( string $plugin_file ): array
         $issues[] = 'Plugin URI and Author URI must not be the same URL.';
     }
 
+    $requires_at_least = parse_plugin_header_value( $contents, 'Requires at least' );
+    if ( null === $requires_at_least )
+    {
+        $issues[] = 'Requires at least header is required for this package.';
+    }
+    elseif ( ! is_wordpress_core_version_without_patch( $requires_at_least ) )
+    {
+        $issues[] = "Requires at least header must use major.minor format without a patch component; found {$requires_at_least}.";
+    }
+
     return $issues;
+}
+
+/**
+ * Validate the generated admin runtime metadata used instead of the SvelteKit
+ * fallback HTML file, which contains an inline bootstrap script.
+ *
+ * @return array<int,string>
+ */
+function validate_admin_runtime_metadata( string $root ): array
+{
+    $issues       = [];
+    $dist_dir     = $root . '/assets/dist';
+    $runtime_file = $dist_dir . '/runtime.json';
+    $index_file   = $dist_dir . '/index.html';
+
+    if ( file_exists( $index_file ) )
+    {
+        $issues[] = 'Generated admin assets must not include assets/dist/index.html; use runtime.json metadata instead.';
+    }
+
+    if ( ! file_exists( $runtime_file ) )
+    {
+        $issues[] = 'Generated admin assets are missing assets/dist/runtime.json.';
+        return $issues;
+    }
+
+    $decoded = json_decode( (string) file_get_contents( $runtime_file ), true );
+    $key     = is_array( $decoded ) ? ( $decoded['sveltekitRuntimeKey'] ?? null ) : null;
+    if ( ! is_string( $key ) || ! preg_match( '/^__sveltekit_[a-z0-9]+$/', $key ) )
+    {
+        $issues[] = 'Generated admin runtime metadata is missing a valid SvelteKit runtime key.';
+    }
+
+    return $issues;
+}
+
+/**
+ * Detect actual reads of WordPress auth key/salt constants while allowing
+ * quoted denylist strings used to reject unsafe user-provided constant names.
+ *
+ * @param array<int,string> $sensitive_names
+ */
+function find_sensitive_wp_secret_constant_access( string $contents, array $sensitive_names ): ?string
+{
+    $name_pattern = implode( '|', array_map( static fn ( string $name ): string => preg_quote( $name, '/' ), $sensitive_names ) );
+    if ( preg_match( '/\b(?:defined|constant)\s*\(\s*[\'"](' . $name_pattern . ')[\'"]\s*\)/', $contents, $matches ) )
+    {
+        return $matches[1];
+    }
+
+    $sensitive_lookup = array_fill_keys( $sensitive_names, true );
+    foreach ( token_get_all( $contents ) as $token )
+    {
+        if ( ! is_array( $token ) )
+        {
+            continue;
+        }
+
+        [ $type, $text ] = $token;
+        if ( T_STRING === $type && isset( $sensitive_lookup[ $text ] ) )
+        {
+            return $text;
+        }
+    }
+
+    return null;
 }
 
 /**
@@ -456,6 +592,22 @@ function validate_readme( string $readme_path, string $plugin_file ): array
         }
     }
 
+    $readme_requires_at_least = parse_readme_header_value( $readme, 'Requires at least' );
+    if ( null !== $readme_requires_at_least && ! is_wordpress_core_version_without_patch( $readme_requires_at_least ) )
+    {
+        $issues[] = "readme.txt Requires at least must use major.minor format without a patch component; found {$readme_requires_at_least}.";
+    }
+
+    $plugin_contents = file_exists( $plugin_file ) ? file_get_contents( $plugin_file ) : false;
+    if ( is_string( $plugin_contents ) )
+    {
+        $plugin_requires_at_least = parse_plugin_header_value( $plugin_contents, 'Requires at least' );
+        if ( null !== $readme_requires_at_least && null !== $plugin_requires_at_least && $readme_requires_at_least !== $plugin_requires_at_least )
+        {
+            $issues[] = "readme.txt Requires at least ({$readme_requires_at_least}) does not match plugin header ({$plugin_requires_at_least}).";
+        }
+    }
+
     foreach ( [ 'OpenRouter', 'Sentient Forms Managed Execution', 'Data sent', 'Terms', 'Privacy policy', 'Realtime Clarification Assistant', 'Gravity Forms' ] as $required_disclosure )
     {
         if ( false === stripos( $readme, $required_disclosure ) )
@@ -473,6 +625,11 @@ function validate_readme( string $readme_path, string $plugin_file ): array
     }
 
     return $issues;
+}
+
+function is_wordpress_core_version_without_patch( string $version ): bool
+{
+    return 1 === preg_match( '/^\d+\.\d+$/', trim( $version ) );
 }
 
 /**

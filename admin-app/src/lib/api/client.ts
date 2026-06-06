@@ -549,7 +549,11 @@ export class SentientFormsApiClient {
 	private cacheContext?: () => string | undefined;
 
 	constructor(config: ClientConfig) {
-		this.baseUrl = new URL(config.baseUrl, 'http://localhost');
+		const fallbackOrigin =
+			typeof window === 'undefined'
+				? ['https:', '', 'sentientforms.invalid'].join('/')
+				: window.location.origin;
+		this.baseUrl = new URL(config.baseUrl, fallbackOrigin);
 		this.getNonce = config.getNonce;
 		this.fetchImpl = config.fetchImpl ?? fetch;
 		this.notifyErrors = config.notifyErrors ?? true;

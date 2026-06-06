@@ -318,21 +318,37 @@ class Sentient_Forms_Attachment_File_Ref_Builder {
 		$uploads = wp_get_upload_dir();
 		$baseurl = isset( $uploads['baseurl'] ) ? trailingslashit( (string) $uploads['baseurl'] ) : '';
 		$basedir = isset( $uploads['basedir'] ) ? trailingslashit( (string) $uploads['basedir'] ) : '';
-		if ( '' === $baseurl || '' === $basedir ) {
+		if ( ! empty( $uploads['error'] ) || '' === $baseurl || '' === $basedir ) {
 			return null;
 		}
 
-		$candidate = '';
-		if ( str_starts_with( $url, $baseurl ) ) {
-			$relative  = ltrim( (string) substr( $url, strlen( $baseurl ) ), '/' );
-			$candidate = $basedir . str_replace( '/', DIRECTORY_SEPARATOR, $relative );
-		} else {
-			$path = wp_parse_url( $url, PHP_URL_PATH );
-			if ( ! is_string( $path ) || '' === $path ) {
-				return null;
-			}
-			$candidate = ABSPATH . ltrim( rawurldecode( $path ), '/' );
+		$clean_url = preg_replace( '/[?#].*$/', '', $url );
+		if ( ! is_string( $clean_url ) || '' === $clean_url ) {
+			return null;
 		}
+
+		$base_parts = wp_parse_url( $baseurl );
+		$url_parts  = wp_parse_url( $clean_url );
+		if ( ! is_array( $base_parts ) || ! is_array( $url_parts ) ) {
+			return null;
+		}
+
+		$base_host = strtolower( (string) ( $base_parts['host'] ?? '' ) );
+		$url_host  = strtolower( (string) ( $url_parts['host'] ?? '' ) );
+		$base_port = $this->normalize_url_port( $base_parts );
+		$url_port  = $this->normalize_url_port( $url_parts );
+		if ( '' !== $base_host && $base_host === $url_host && $base_port !== $url_port ) {
+			return null;
+		}
+
+		$base_path = trailingslashit( rawurldecode( (string) ( $base_parts['path'] ?? '/' ) ) );
+		$url_path  = rawurldecode( (string) ( $url_parts['path'] ?? '' ) );
+		if ( '' === $url_path || ! str_starts_with( $url_path, $base_path ) ) {
+			return null;
+		}
+
+		$relative  = ltrim( (string) substr( $url_path, strlen( $base_path ) ), '/' );
+		$candidate = $basedir . str_replace( '/', DIRECTORY_SEPARATOR, $relative );
 
 		$real_candidate = realpath( $candidate );
 		$real_base      = realpath( untrailingslashit( $basedir ) );
@@ -340,11 +356,33 @@ class Sentient_Forms_Attachment_File_Ref_Builder {
 			return null;
 		}
 
+		$real_candidate = wp_normalize_path( $real_candidate );
+		$real_base      = trailingslashit( wp_normalize_path( $real_base ) );
 		if ( ! str_starts_with( $real_candidate, $real_base ) ) {
 			return null;
 		}
 
 		return $real_candidate;
+	}
+
+	/**
+	 * Treat explicit default ports the same as omitted ports so equivalent
+	 * uploads URLs survive http/https storage differences.
+	 *
+	 * @param array<string,mixed> $url_parts Parsed URL parts.
+	 */
+	private function normalize_url_port( array $url_parts ): ?int {
+		if ( ! isset( $url_parts['port'] ) ) {
+			return null;
+		}
+
+		$port   = (int) $url_parts['port'];
+		$scheme = strtolower( (string) ( $url_parts['scheme'] ?? '' ) );
+		if ( ( 'http' === $scheme && 80 === $port ) || ( 'https' === $scheme && 443 === $port ) ) {
+			return null;
+		}
+
+		return $port;
 	}
 
 	/**

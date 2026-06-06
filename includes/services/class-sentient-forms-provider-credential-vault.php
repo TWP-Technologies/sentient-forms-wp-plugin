@@ -167,11 +167,6 @@ class Sentient_Forms_Provider_Credential_Vault
             $salt = wp_salt( 'auth' );
         }
 
-        if ( '' === $salt && defined( 'AUTH_KEY' ) )
-        {
-            $salt = (string) AUTH_KEY;
-        }
-
         if ( '' === trim( $salt ) )
         {
             return new WP_Error( 'sentient_forms_crypto_key_unavailable', __( 'Provider secret encryption key material is not available on this site.', 'sentient-forms' ) );

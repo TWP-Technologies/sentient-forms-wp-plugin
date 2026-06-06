@@ -153,6 +153,17 @@ class Sentient_Forms_Admin_Assets {
             return $this->sveltekit_runtime_key;
         }
 
+        $runtime_metadata_path = $this->get_assets_path( 'runtime.json' );
+        if ( file_exists( $runtime_metadata_path ) ) {
+            $contents = file_get_contents( $runtime_metadata_path );
+            $decoded  = is_string( $contents ) ? json_decode( $contents, true ) : null;
+            $key      = is_array( $decoded ) ? ( $decoded['sveltekitRuntimeKey'] ?? null ) : null;
+            if ( is_string( $key ) && preg_match( '/^__sveltekit_[a-z0-9]+$/', $key ) ) {
+                $this->sveltekit_runtime_key = $key;
+                return $this->sveltekit_runtime_key;
+            }
+        }
+
         $index_path = $this->get_assets_path( 'index.html' );
         if ( file_exists( $index_path ) ) {
             $contents = file_get_contents( $index_path );
