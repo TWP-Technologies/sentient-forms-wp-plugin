@@ -335,8 +335,8 @@ class Sentient_Forms_Attachment_File_Ref_Builder {
 
 		$base_host = strtolower( (string) ( $base_parts['host'] ?? '' ) );
 		$url_host  = strtolower( (string) ( $url_parts['host'] ?? '' ) );
-		$base_port = isset( $base_parts['port'] ) ? (int) $base_parts['port'] : null;
-		$url_port  = isset( $url_parts['port'] ) ? (int) $url_parts['port'] : null;
+		$base_port = $this->normalize_url_port( $base_parts );
+		$url_port  = $this->normalize_url_port( $url_parts );
 		if ( '' === $base_host || '' === $url_host || $base_host !== $url_host || $base_port !== $url_port ) {
 			return null;
 		}
@@ -363,6 +363,26 @@ class Sentient_Forms_Attachment_File_Ref_Builder {
 		}
 
 		return $real_candidate;
+	}
+
+	/**
+	 * Treat explicit default ports the same as omitted ports so equivalent
+	 * uploads URLs survive http/https storage differences.
+	 *
+	 * @param array<string,mixed> $url_parts Parsed URL parts.
+	 */
+	private function normalize_url_port( array $url_parts ): ?int {
+		if ( ! isset( $url_parts['port'] ) ) {
+			return null;
+		}
+
+		$port   = (int) $url_parts['port'];
+		$scheme = strtolower( (string) ( $url_parts['scheme'] ?? '' ) );
+		if ( ( 'http' === $scheme && 80 === $port ) || ( 'https' === $scheme && 443 === $port ) ) {
+			return null;
+		}
+
+		return $port;
 	}
 
 	/**

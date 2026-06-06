@@ -58,6 +58,24 @@ class Tests_Wporg_Path_Hardening extends WP_UnitTestCase {
 				wp_normalize_path( (string) $method->invoke( $builder, $swapped_scheme_upload_url ) )
 			);
 
+			$swapped_parts = wp_parse_url( $swapped_scheme_upload_url );
+			$this->assertIsArray( $swapped_parts );
+			if ( empty( $swapped_parts['port'] ) ) {
+				$swapped_scheme = strtolower( (string) ( $swapped_parts['scheme'] ?? 'https' ) );
+				$default_port   = 'http' === $swapped_scheme ? 80 : 443;
+				$explicit_default_port_upload_url = sprintf(
+					'%s://%s:%d%s',
+					$swapped_scheme,
+					(string) ( $swapped_parts['host'] ?? '' ),
+					$default_port,
+					(string) ( $swapped_parts['path'] ?? '' )
+				);
+				$this->assertSame(
+					wp_normalize_path( $upload_path ),
+					wp_normalize_path( (string) $method->invoke( $builder, $explicit_default_port_upload_url ) )
+				);
+			}
+
 			$content_url = content_url( 'sentient-forms-non-upload-path-test.txt' );
 			$this->assertNull( $method->invoke( $builder, $content_url ) );
 		} finally {
