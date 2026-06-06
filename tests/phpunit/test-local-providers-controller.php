@@ -188,6 +188,57 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         }
     }
 
+    /**
+     * Lowercase submissions should be stored and displayed as PHP constant names.
+     */
+    public function test_save_openrouter_constant_normalizes_constant_name_before_storage(): void
+    {
+        $constant_name = 'SENTIENT_FORMS_OPENROUTER_TEST_MIXED_CASE_SECRET';
+        $submitted     = 'sentient_forms_openrouter_test_mixed_case_secret';
+        $secret        = 'sk-or-local-mixed-case-secret';
+        putenv( $constant_name . '=' . $secret );
+
+        try
+        {
+            $this->mock_openrouter_key_response(
+                function ( array $args ) use ( $secret ): void {
+                    $this->assertSame( 'Bearer ' . $secret, $args['headers']['Authorization'] );
+                }
+            );
+
+            $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/constant' ) );
+            $request->set_body_params(
+                [
+                    'constant_name'                  => $submitted,
+                    'label'                          => 'OpenRouter server secret',
+                    'disclosure_version'             => '2026-04-22',
+                    'accepted_external_service_terms' => true,
+                ]
+            );
+
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 200, $response->get_status() );
+            $data = $response->get_data();
+            $this->assertSame( $constant_name, $data['constant_name'] );
+
+            $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );
+            $row         = $credentials->get( $data['credential_id'] );
+            $this->assertIsArray( $row );
+            $this->assertSame( $constant_name, $row['constant_name'] );
+
+            $list_request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/local/providers/credentials' );
+            $list_response = rest_get_server()->dispatch( $list_request );
+            $this->assertSame( 200, $list_response->get_status() );
+            $list_data = $list_response->get_data();
+            $this->assertSame( $constant_name, $list_data[0]['constant_name'] );
+        }
+        finally
+        {
+            putenv( $constant_name );
+        }
+    }
+
     public function test_save_openrouter_constant_requires_resolvable_secret(): void
     {
         $constant_name = 'SENTIENT_FORMS_OPENROUTER_TEST_MISSING_SECRET';
