@@ -86,7 +86,7 @@ class Sentient_Forms_Provider_Secret_Resolver
     public static function validate_constant_name( string $constant_name ): true | WP_Error
     {
         $constant_name = self::normalize_constant_name( $constant_name );
-        if ( '' === $constant_name || ! preg_match( '/^[A-Z][A-Z0-9_]+$/', $constant_name ) )
+        if ( ! self::has_valid_constant_name_format( $constant_name ) )
         {
             return new WP_Error(
                 'sentient_forms_invalid_secret_constant',
@@ -112,8 +112,22 @@ class Sentient_Forms_Provider_Secret_Resolver
 
         return new WP_Error(
             'sentient_forms_disallowed_secret_constant',
-            __( 'Provider credential constant names must start with SENTIENT_FORMS_OPENROUTER_.', 'sentient-forms' )
+            sprintf(
+                /* translators: %s: comma-separated list of required constant name prefixes. */
+                __( 'Provider credential constant names must start with one of the following prefixes: %s.', 'sentient-forms' ),
+                implode( ', ', self::ALLOWED_SECRET_PREFIXES )
+            )
         );
+    }
+
+    /**
+     * Check the generic constant-name syntax before provider ownership policy.
+     */
+    public static function has_valid_constant_name_format( string $constant_name ): bool
+    {
+        $constant_name = self::normalize_constant_name( $constant_name );
+
+        return '' !== $constant_name && 1 === preg_match( '/^[A-Z][A-Z0-9_]+$/', $constant_name );
     }
 
     /**
