@@ -216,6 +216,9 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertSame( 0, $external_call_count );
     }
 
+    /**
+     * WordPress auth secrets must not be read, persisted, or sent for validation.
+     */
     public function test_save_openrouter_constant_rejects_wordpress_auth_secret_without_consent_or_external_call(): void
     {
         $external_call_count = 0;
@@ -247,6 +250,9 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertNull( $consents->latest_for_provider( 'openrouter' ) );
     }
 
+    /**
+     * Arbitrary OpenRouter-looking names must still use the plugin-owned prefix.
+     */
     public function test_save_openrouter_constant_requires_sentient_forms_openrouter_prefix(): void
     {
         $constant_name = 'OPENROUTER_API_KEY';
@@ -288,6 +294,9 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         }
     }
 
+    /**
+     * Legacy rows that reference disallowed constants stay visible but unconfigured.
+     */
     public function test_list_credentials_marks_disallowed_constant_unconfigured(): void
     {
         $credentials = new Sentient_Forms_Provider_Credentials_Repository( $GLOBALS['wpdb'] );

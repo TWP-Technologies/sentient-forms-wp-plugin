@@ -20,6 +20,9 @@ class Sentient_Forms_Provider_Secret_Resolver
         'SENTIENT_FORMS_OPENROUTER_',
     ];
 
+    /**
+     * WordPress-owned constants that must never be used as provider secrets.
+     */
     private const DISALLOWED_SECRET_NAMES = [
         'AUTH_KEY',
         'AUTH_SALT',
@@ -42,6 +45,9 @@ class Sentient_Forms_Provider_Secret_Resolver
         'WP_SITEURL',
     ];
 
+    /**
+     * Resolve a provider-owned secret from a constant or matching environment variable.
+     */
     public static function resolve_constant_secret( string $constant_name ): string | WP_Error
     {
         $constant_name = self::normalize_constant_name( $constant_name );
@@ -74,6 +80,9 @@ class Sentient_Forms_Provider_Secret_Resolver
         );
     }
 
+    /**
+     * Validate that a server secret name belongs to Sentient Forms provider configuration.
+     */
     public static function validate_constant_name( string $constant_name ): true | WP_Error
     {
         $constant_name = self::normalize_constant_name( $constant_name );
@@ -107,11 +116,17 @@ class Sentient_Forms_Provider_Secret_Resolver
         );
     }
 
+    /**
+     * Check whether a provider-owned server secret can currently be resolved.
+     */
     public static function is_constant_secret_configured( string $constant_name ): bool
     {
         return ! is_wp_error( self::resolve_constant_secret( $constant_name ) );
     }
 
+    /**
+     * Normalize server secret names before validation and lookup.
+     */
     private static function normalize_constant_name( string $constant_name ): string
     {
         return strtoupper( trim( $constant_name ) );
