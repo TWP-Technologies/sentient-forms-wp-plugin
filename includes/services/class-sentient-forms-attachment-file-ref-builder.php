@@ -322,8 +322,8 @@ class Sentient_Forms_Attachment_File_Ref_Builder {
 			return null;
 		}
 
-		$clean_url = strtok( $url, '?#' );
-		if ( ! is_string( $clean_url ) ) {
+		$clean_url = preg_replace( '/[?#].*$/', '', $url );
+		if ( ! is_string( $clean_url ) || '' === $clean_url ) {
 			return null;
 		}
 
@@ -337,7 +337,7 @@ class Sentient_Forms_Attachment_File_Ref_Builder {
 		$url_host  = strtolower( (string) ( $url_parts['host'] ?? '' ) );
 		$base_port = $this->normalize_url_port( $base_parts );
 		$url_port  = $this->normalize_url_port( $url_parts );
-		if ( '' === $base_host || '' === $url_host || $base_host !== $url_host || $base_port !== $url_port ) {
+		if ( '' !== $base_host && $base_host === $url_host && $base_port !== $url_port ) {
 			return null;
 		}
 
@@ -348,7 +348,7 @@ class Sentient_Forms_Attachment_File_Ref_Builder {
 		}
 
 		$relative  = ltrim( (string) substr( $url_path, strlen( $base_path ) ), '/' );
-		$candidate = $basedir . str_replace( '/', DIRECTORY_SEPARATOR, rawurldecode( $relative ) );
+		$candidate = $basedir . str_replace( '/', DIRECTORY_SEPARATOR, $relative );
 
 		$real_candidate = realpath( $candidate );
 		$real_base      = realpath( untrailingslashit( $basedir ) );

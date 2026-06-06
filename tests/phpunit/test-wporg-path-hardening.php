@@ -58,6 +58,19 @@ class Tests_Wporg_Path_Hardening extends WP_UnitTestCase {
 				wp_normalize_path( (string) $method->invoke( $builder, $swapped_scheme_upload_url ) )
 			);
 
+			$upload_parts = wp_parse_url( $upload_url );
+			$this->assertIsArray( $upload_parts );
+			$migrated_host_upload_url = sprintf(
+				'%s://%s%s',
+				(string) ( $upload_parts['scheme'] ?? 'https' ),
+				'old.example.test',
+				(string) ( $upload_parts['path'] ?? '' )
+			);
+			$this->assertSame(
+				wp_normalize_path( $upload_path ),
+				wp_normalize_path( (string) $method->invoke( $builder, $migrated_host_upload_url ) )
+			);
+
 			$swapped_parts = wp_parse_url( $swapped_scheme_upload_url );
 			$this->assertIsArray( $swapped_parts );
 			if ( empty( $swapped_parts['port'] ) ) {
