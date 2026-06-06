@@ -1,8 +1,12 @@
 # WordPress.org Review Response Draft
 
-Use a concise reply after uploading the corrected package:
+Use this reply after uploading the corrected package:
 
-> Thanks for the review. We have uploaded a corrected package addressing the technical findings. We would like to keep the display name and slug `Sentient Forms` / `sentient-forms`: Sentient Forms is the official TWP Technologies, LLC product name, the submitting account uses an official `@twp.tech` email, the plugin header lists TWP Technologies, LLC as author, `https://sentientforms.com` identifies TWP Technologies, LLC and links to the public plugin repository, and the public repository links back to the Sentient Forms product. We have also clarified this ownership in the readme. Please keep the existing slug reservation if possible.
+> Thanks for the review. We have uploaded a corrected package addressing the technical findings.
+>
+> We would like to keep the display name and slug `Sentient Forms` / `sentient-forms`. Sentient Forms is the official TWP Technologies, LLC product name. The submitting account uses an official `@twp.tech` email, the plugin header lists TWP Technologies, LLC as author, `https://sentientforms.com` identifies TWP Technologies, LLC and links to the public plugin repository, and the public repository links back to the Sentient Forms product.
+>
+> The readme now clarifies this ownership. Please keep the existing slug reservation if possible.
 
 Evidence checked locally on 2026-06-05:
 
