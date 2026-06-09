@@ -247,7 +247,8 @@ class Sentient_Forms_Mappings_Migration_Service
         $like = $wpdb->esc_like( self::OPTION_PREFIX ) . '%';
         $keys = $wpdb->get_col(
             $wpdb->prepare(
-                'SELECT option_name FROM ' . esc_sql( $wpdb->options ) . ' WHERE option_name LIKE %s',
+                'SELECT option_name FROM %i WHERE option_name LIKE %s',
+                $wpdb->options,
                 $like
             )
         );

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API controller for signed attachment pull URLs.
  *
@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-class Sentient_Forms_Files_Controller extends Abstract_Sentient_Forms_Base_Controller {
+class Sentient_Forms_Files_Controller extends Sentient_Forms_Abstract_Base_Controller {
 	protected string $rest_base = 'files';
 
 	private Sentient_Forms_Pull_Token_Service $pull_token_service;

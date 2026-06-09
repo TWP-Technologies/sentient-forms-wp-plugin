@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * Validation Utilities Trait for the Sentient Forms plugin.
  * Provides reusable helper methods for validating data within REST API controllers or validator classes.
@@ -15,11 +15,10 @@ if ( !defined( 'ABSPATH' ) )
 }
 
 /**
- * Trait Trait_Sentient_Forms_Validation_Utils
+ * Trait Sentient_Forms_Validation_Utils_Trait
  * Contains common validation methods.
  */
-// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedTraitFound -- Legacy REST validation trait name is retained during the local-first cutover because existing validators and tests import it directly.
-trait Trait_Sentient_Forms_Validation_Utils
+trait Sentient_Forms_Validation_Utils_Trait
 {
 
     /**

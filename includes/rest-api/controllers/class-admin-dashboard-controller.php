@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API controller for optimized admin dashboard bootstrap data.
  *
@@ -10,9 +10,9 @@ if ( ! defined( 'ABSPATH' ) )
     exit;
 }
 
-class Sentient_Forms_Admin_Dashboard_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Admin_Dashboard_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
 
     protected string $rest_base = 'admin/dashboard-summary';
 

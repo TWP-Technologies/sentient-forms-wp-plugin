@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API Mappings Controller for the Sentient Forms plugin.
      * Exposes legacy mapping routes without calling CPS by default.
@@ -18,9 +18,9 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Handles REST API endpoints for form mappings (CSM Phase 7).
  * Enables "Import from Library" and "Save as Template" features.
  */
-class Sentient_Forms_Mappings_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Mappings_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
 
     /**
      * Base route for mappings.

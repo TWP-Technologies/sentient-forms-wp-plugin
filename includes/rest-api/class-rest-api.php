@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * Main REST API Loader for the Sentient Forms plugin.
  * This class is responsible for discovering, instantiating, and registering
@@ -29,7 +29,7 @@ final class Sentient_Forms_REST_API
     /**
      * Stores instantiated controller objects.
      *
-     * @var array<Abstract_Sentient_Forms_Base_Controller>
+     * @var array<Sentient_Forms_Abstract_Base_Controller>
      */
     private array $controllers = [];
 
@@ -146,7 +146,7 @@ final class Sentient_Forms_REST_API
             }
 
             // Check if the class is a subclass of the abstract base controller.
-            if ( !is_subclass_of( $controller_class, Abstract_Sentient_Forms_Base_Controller::class ) )
+            if ( !is_subclass_of( $controller_class, Sentient_Forms_Abstract_Base_Controller::class ) )
             {
                 sentient_forms_debug_log(
                     'Sentient Forms REST API controller does not extend the base controller.',
@@ -172,7 +172,7 @@ final class Sentient_Forms_REST_API
         foreach ( $this->controllers as $controller )
         {
             // The check `method_exists($controller, 'register_routes')` is technically redundant
-            // if all controllers must extend Abstract_Sentient_Forms_Base_Controller which declares
+            // if all controllers must extend Sentient_Forms_Abstract_Base_Controller which declares
             // `register_routes` as abstract. However, it's a safe check.
             if ( !method_exists( $controller, 'register_routes' ) )
             {

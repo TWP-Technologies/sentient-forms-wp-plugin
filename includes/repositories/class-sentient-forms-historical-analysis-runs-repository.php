@@ -79,7 +79,8 @@ class Sentient_Forms_Historical_Analysis_Runs_Repository extends Sentient_Forms_
         $wpdb = $this->wpdb;
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE form_source = %s AND form_id = %s ORDER BY updated_at DESC, id DESC LIMIT %d',
+                'SELECT * FROM %i WHERE form_source = %s AND form_id = %s ORDER BY updated_at DESC, id DESC LIMIT %d',
+                $this->table_name(),
                 sanitize_key( $form_source ),
                 sanitize_text_field( $form_id ),
                 max( 1, min( 100, $limit ) )

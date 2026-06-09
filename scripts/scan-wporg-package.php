@@ -45,6 +45,7 @@ $forbidden_dirs = [
     '.git',
     '.github',
     '.githooks',
+    'admin-app',
     'admin-app/.svelte-kit',
     'admin-app/build',
     'admin-app/docs',
@@ -88,9 +89,14 @@ $forbidden_file_patterns = [
     '/\.map$/',
     '/\.env(?:\..*)?$/',
     '/composer\.lock$/',
+    '/bun\.lock$/',
+    '/\.svelte(?:\.[jt]s)?$/',
+    '/\.tsx?$/',
+    '/\.toml$/',
     '/package-lock\.json$/',
     '/pnpm-lock\.yaml$/',
     '/yarn\.lock$/',
+    '/(?:^|\/)(?:playwright\.config\.ts|vitest\.config\.ts|svelte\.config\.js|vite\.config\.[cm]?[jt]s|tsconfig(?:\.[^.]+)?\.json)$/',
 ];
 
 $runtime_extensions     = [ 'php', 'js', 'css', 'mjs', 'html', 'txt' ];
@@ -195,16 +201,13 @@ foreach ( $iterator as $item )
         }
     }
 
-    if ( preg_match( '/bun\.lock$/', $relative ) && 'admin-app/bun.lock' !== $relative )
+    $extension = strtolower( pathinfo( $relative, PATHINFO_EXTENSION ) );
+    if ( ! $source_tree && 'mjs' === $extension && ! str_starts_with( $relative, 'assets/dist/' ) )
     {
-        if ( ! $source_tree )
-        {
-            $issues[] = "Forbidden file in package: {$relative}";
-        }
+        $issues[] = "Forbidden development JavaScript module in package: {$relative}";
         continue;
     }
 
-    $extension = strtolower( pathinfo( $relative, PATHINFO_EXTENSION ) );
     if ( ! in_array( $extension, $runtime_extensions, true ) )
     {
         continue;
@@ -318,7 +321,7 @@ if ( ! $source_tree )
     else
     {
         $issues = array_merge( $issues, validate_admin_runtime_metadata( $root ) );
-        $issues = array_merge( $issues, validate_compressed_asset_source_metadata( $root ) );
+        $issues = array_merge( $issues, validate_compressed_asset_source_metadata( $root, $root . '/sentient-forms.php' ) );
     }
 }
 
@@ -616,7 +619,13 @@ function validate_readme( string $readme_path, string $plugin_file ): array
         }
     }
 
-    foreach ( [ 'admin-app', 'bun install --frozen-lockfile', 'bun run restore:source', 'bun run build:wp' ] as $required_source_reference )
+    $source_reference = read_release_source_reference( $plugin_file );
+    if ( null === $source_reference )
+    {
+        $issues[] = 'sentient-forms.php is missing SENTIENT_FORMS_RELEASE_SOURCE_URL or SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE.';
+    }
+
+    foreach ( required_generated_asset_source_references( $source_reference ) as $required_source_reference )
     {
         if ( false === stripos( $readme, $required_source_reference ) )
         {
@@ -637,7 +646,7 @@ function is_wordpress_core_version_without_patch( string $version ): bool
  *
  * @return array<int,string>
  */
-function validate_compressed_asset_source_metadata( string $root ): array
+function validate_compressed_asset_source_metadata( string $root, string $plugin_file ): array
 {
     $dist_dir = $root . '/assets/dist';
     if ( ! is_dir( $dist_dir ) || ! has_runtime_js_asset( $dist_dir ) )
@@ -659,7 +668,13 @@ function validate_compressed_asset_source_metadata( string $root ): array
         return [ 'Could not read assets/dist/SOURCE.md.' ];
     }
 
-    foreach ( [ 'admin-app', 'bun install --frozen-lockfile', 'bun run restore:source', 'bun run build:wp' ] as $required_source_reference )
+    $source_reference = read_release_source_reference( $plugin_file );
+    if ( null === $source_reference )
+    {
+        $issues[] = 'sentient-forms.php is missing SENTIENT_FORMS_RELEASE_SOURCE_URL or SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE.';
+    }
+
+    foreach ( required_generated_asset_source_references( $source_reference ) as $required_source_reference )
     {
         if ( false === stripos( $source, $required_source_reference ) )
         {
@@ -724,6 +739,46 @@ function has_runtime_js_asset( string $dist_dir ): bool
     }
 
     return false;
+}
+
+/**
+ * Read the source reference used to document generated asset source.
+ */
+function read_release_source_reference( string $plugin_file ): ?string
+{
+    if ( ! file_exists( $plugin_file ) )
+    {
+        return null;
+    }
+
+    $contents = (string) file_get_contents( $plugin_file );
+    foreach ( [ 'SENTIENT_FORMS_RELEASE_SOURCE_URL', 'SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE' ] as $constant )
+    {
+        if ( preg_match( "/const\s+{$constant}\s*=\s*'([^']+)';/", $contents, $matches ) )
+        {
+            $value = trim( (string) $matches[1] );
+            return '' === $value ? null : $value;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Return generated asset source references required in reviewer-facing docs.
+ *
+ * @return array<int,string>
+ */
+function required_generated_asset_source_references( ?string $source_reference ): array
+{
+    $references = [ 'admin-app', 'cd admin-app', 'bun install --frozen-lockfile', 'bun run build:wp' ];
+
+    if ( null !== $source_reference )
+    {
+        array_unshift( $references, $source_reference );
+    }
+
+    return $references;
 }
 
 /**

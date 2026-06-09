@@ -106,7 +106,12 @@ class Sentient_Forms_Local_Support_Bundle_Service
                 continue;
             }
 
-            $counts[ $suffix ] = (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . esc_sql( $table_name ) );
+            $counts[ $suffix ] = (int) $wpdb->get_var(
+                $wpdb->prepare(
+                    'SELECT COUNT(*) FROM %i',
+                    $table_name
+                )
+            );
         }
 
         return $counts;

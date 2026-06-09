@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * Permission Utilities Trait for the Sentient Forms plugin.
  * Provides reusable helper methods for checking user permissions within
@@ -16,11 +16,10 @@ if ( !defined( 'ABSPATH' ) )
 }
 
 /**
- * Trait Trait_Sentient_Forms_Permission_Utils
+ * Trait Sentient_Forms_Permission_Utils_Trait
  * Contains common permission checking methods.
  */
-// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedTraitFound -- Legacy REST permission trait name is retained during the local-first cutover because existing controllers and tests import it directly.
-trait Trait_Sentient_Forms_Permission_Utils
+trait Sentient_Forms_Permission_Utils_Trait
 {
 
     /**

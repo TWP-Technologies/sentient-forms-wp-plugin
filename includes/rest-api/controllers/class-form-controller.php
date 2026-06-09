@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API Forms Controller class for the Sentient Forms plugin.
  * Handles routes for listing forms and managing basic form settings.
@@ -18,9 +18,9 @@ if ( !defined( 'ABSPATH' ) )
  * Provides REST endpoints for retrieving forms from a specific source
  * and updating their basic Sentient Forms configuration.
  */
-class Sentient_Forms_Form_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Form_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
 
     /**
      * The base of this controller's routes.

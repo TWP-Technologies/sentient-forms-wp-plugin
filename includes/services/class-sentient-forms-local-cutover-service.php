@@ -262,7 +262,12 @@ class Sentient_Forms_Local_Cutover_Service
                 continue;
             }
 
-            $counts[ $suffix ] = (int) $this->wpdb->get_var( 'SELECT COUNT(*) FROM ' . esc_sql( $table_name ) );
+            $counts[ $suffix ] = (int) $this->wpdb->get_var(
+                $this->wpdb->prepare(
+                    'SELECT COUNT(*) FROM %i',
+                    $table_name
+                )
+            );
         }
 
         return $counts;
@@ -488,7 +493,12 @@ class Sentient_Forms_Local_Cutover_Service
                 continue;
             }
 
-            $result = $this->wpdb->query( 'DELETE FROM ' . esc_sql( $table_name ) );
+            $result = $this->wpdb->query(
+                $this->wpdb->prepare(
+                    'DELETE FROM %i',
+                    $table_name
+                )
+            );
             if ( false === $result )
             {
                 return new WP_Error(
@@ -594,14 +604,13 @@ class Sentient_Forms_Local_Cutover_Service
     private function option_names_for_prefix( string $prefix, int $limit = 100 ): array
     {
         $limit         = max( 1, min( 5000, $limit ) );
-        $options_table = esc_sql( $this->wpdb->options );
         $query         = $this->wpdb->prepare(
-            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- The only interpolated value is the escaped core options table name; option prefix and limit are prepared placeholders.
-            "SELECT option_name FROM {$options_table} WHERE option_name LIKE %s ORDER BY option_name ASC LIMIT %d",
+            'SELECT option_name FROM %i WHERE option_name LIKE %s ORDER BY option_name ASC LIMIT %d',
+            $this->wpdb->options,
             $this->wpdb->esc_like( $prefix ) . '%',
             $limit
         );
-        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above; the interpolated table name is the escaped core options table.
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above with an identifier placeholder and value placeholders.
         $rows          = $this->wpdb->get_col( $query );
 
         return array_values( array_map( 'strval', is_array( $rows ) ? $rows : [] ) );

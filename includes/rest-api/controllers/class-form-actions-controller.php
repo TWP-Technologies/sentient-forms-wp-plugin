@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API Form Actions Controller class for the Sentient Forms plugin.
  * Handles routes related to managing action linkages for a specific form source and form ID.
@@ -17,9 +17,9 @@ if ( !defined( 'ABSPATH' ) )
  * Class Sentient_Forms_Form_Actions_Controller
  * Manages REST API endpoints for local action linkages of a form.
  */
-class Sentient_Forms_Form_Actions_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
     /**
      * Route base including form source and form ID placeholders.
      *

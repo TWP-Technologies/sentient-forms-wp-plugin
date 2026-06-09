@@ -27,7 +27,7 @@ $plugin_version = read_plugin_version( $plugin_file );
 
 if ( null === $source_ref )
 {
-    $issues[] = 'sentient-forms.php is missing SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE.';
+    $issues[] = 'sentient-forms.php is missing SENTIENT_FORMS_RELEASE_SOURCE_URL or SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE.';
 }
 elseif ( preg_match( '#^https?://#i', $source_ref ) )
 {
@@ -47,7 +47,11 @@ foreach ( [ $readme_file => 'readme.txt', $source_file => 'assets/dist/SOURCE.md
     }
 
     $contents = (string) file_get_contents( $path );
-    foreach ( [ (string) $source_ref, 'bun install --frozen-lockfile', 'bun run restore:source', 'bun run build:wp' ] as $needle )
+    $required_references = preg_match( '#^https?://#i', (string) $source_ref )
+        ? [ (string) $source_ref, 'cd admin-app', 'bun install --frozen-lockfile', 'bun run build:wp' ]
+        : [ (string) $source_ref, 'cd admin-app', 'bun install --frozen-lockfile', 'bun run restore:source', 'bun run build:wp' ];
+
+    foreach ( $required_references as $needle )
     {
         if ( '' !== $needle && ! str_contains( $contents, $needle ) )
         {

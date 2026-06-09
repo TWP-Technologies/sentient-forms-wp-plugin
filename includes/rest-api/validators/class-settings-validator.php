@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * Settings Validator Class for the Sentient Forms plugin.
  * Contains specific validation logic for REST API parameters related to plugin settings.
@@ -23,7 +23,7 @@ if ( !defined( 'ABSPATH' ) )
 class Sentient_Forms_Settings_Validator
 {
 
-    use Trait_Sentient_Forms_Validation_Utils;
+    use Sentient_Forms_Validation_Utils_Trait;
 
     /**
      * Validates the 'api_key' parameter.

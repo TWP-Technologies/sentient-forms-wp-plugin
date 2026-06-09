@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API Form Action Config Controller for the Sentient Forms plugin.
  * Handles routes for form-level action configuration (hierarchical spam examples).
@@ -21,9 +21,9 @@ if ( !defined( 'ABSPATH' ) )
  * even when action mappings are deleted. Settings here act as defaults for all mappings
  * of a given action within a specific form.
  */
-class Sentient_Forms_Form_Action_Config_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
 
     /**
      * The option prefix for form action configs.

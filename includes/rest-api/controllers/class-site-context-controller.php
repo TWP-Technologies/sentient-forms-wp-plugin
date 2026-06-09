@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API Site Context Controller class for the Sentient Forms plugin.
  *
@@ -15,9 +15,9 @@ if ( ! defined( 'ABSPATH' ) )
 /**
  * Manages local Site Context, consent, and optional generated refreshes.
  */
-class Sentient_Forms_Site_Context_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
 
     private const OPTION_NAME                 = 'sentient_forms_site_context';
     private const SETTINGS_OPTION_NAME        = 'sentient_forms_site_context_settings';

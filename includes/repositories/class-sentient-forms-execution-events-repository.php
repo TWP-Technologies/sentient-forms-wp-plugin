@@ -116,7 +116,8 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $wpdb = $this->wpdb;
         $row  = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE execution_request_id = %s',
+                'SELECT * FROM %i WHERE execution_request_id = %s',
+                $this->table_name(),
                 $execution_request_id
             ),
             ARRAY_A
@@ -135,7 +136,8 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $wpdb = $this->wpdb;
         $row  = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE id = %d',
+                'SELECT * FROM %i WHERE id = %d',
+                $this->table_name(),
                 $id
             ),
             ARRAY_A
@@ -148,7 +150,8 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $wpdb = $this->wpdb;
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' ORDER BY created_at DESC, id DESC LIMIT %d',
+                'SELECT * FROM %i ORDER BY created_at DESC, id DESC LIMIT %d',
+                $this->table_name(),
                 max( 1, min( 100, $limit ) )
             ),
             ARRAY_A
@@ -161,7 +164,8 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $wpdb = $this->wpdb;
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' ORDER BY created_at DESC, id DESC LIMIT %d',
+                'SELECT * FROM %i ORDER BY created_at DESC, id DESC LIMIT %d',
+                $this->table_name(),
                 max( 1, min( 500, $limit ) )
             ),
             ARRAY_A
@@ -176,7 +180,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
 
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT * FROM " . esc_sql( $this->table_name() ) . " WHERE (%d = 0 OR form_id = %s)
+                "SELECT * FROM %i WHERE (%d = 0 OR form_id = %s)
                     AND (
                         %s = ''
                         OR (%s = 'success' AND status IN ('succeeded', 'success'))
@@ -187,6 +191,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
                     AND (%s = '' OR created_at >= %s)
                     AND (%s = '' OR created_at <= %s)
                     ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d",
+                $this->table_name(),
                 $filter_values['form_id'],
                 $filter_values['form_id_text'],
                 $filter_values['status'],
@@ -213,7 +218,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
 
         return (int) $wpdb->get_var(
             $wpdb->prepare(
-                "SELECT COUNT(*) FROM " . esc_sql( $this->table_name() ) . " WHERE (%d = 0 OR form_id = %s)
+                "SELECT COUNT(*) FROM %i WHERE (%d = 0 OR form_id = %s)
                     AND (
                         %s = ''
                         OR (%s = 'success' AND status IN ('succeeded', 'success'))
@@ -223,6 +228,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
                     )
                     AND (%s = '' OR created_at >= %s)
                     AND (%s = '' OR created_at <= %s)",
+                $this->table_name(),
                 $filter_values['form_id'],
                 $filter_values['form_id_text'],
                 $filter_values['status'],
@@ -243,7 +249,8 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $wpdb = $this->wpdb;
         $row  = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE form_source = %s AND form_id = %s ORDER BY created_at DESC, id DESC LIMIT 1',
+                'SELECT * FROM %i WHERE form_source = %s AND form_id = %s ORDER BY created_at DESC, id DESC LIMIT 1',
+                $this->table_name(),
                 sanitize_key( $form_source ),
                 (string) $form_id
             ),
@@ -318,7 +325,8 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $wpdb  = $this->wpdb;
         $wpdb->query(
             $wpdb->prepare(
-                'DELETE FROM ' . esc_sql( $this->table_name() ) . ' WHERE expires_at IS NOT NULL AND expires_at < %s',
+                'DELETE FROM %i WHERE expires_at IS NOT NULL AND expires_at < %s',
+                $this->table_name(),
                 $before
             )
         );

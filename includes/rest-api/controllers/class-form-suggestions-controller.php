@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API controller for real-time form suggestions.
  *
@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-class Sentient_Forms_Form_Suggestions_Controller extends Abstract_Sentient_Forms_Base_Controller {
+class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract_Base_Controller {
 	protected string $rest_base = '(?P<form_source_slug>[a-z0-9_]+)/forms/(?P<form_id>\\d+)/actions';
 
 	private const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;

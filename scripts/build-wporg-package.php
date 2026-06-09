@@ -3,8 +3,9 @@
  * Build a clean Sentient Forms WordPress.org package directory.
  *
  * The package intentionally excludes tests, logs, docs, non-runtime lockfiles, and
- * top-level build tooling. Runtime dependencies and generated-asset source are
- * copied explicitly.
+ * top-level build tooling. Runtime dependencies and generated admin assets are
+ * copied explicitly; generated asset source is documented through the public
+ * release source URL in readme.txt and assets/dist/SOURCE.md.
  */
 
 if ( PHP_SAPI !== 'cli' )
@@ -25,14 +26,6 @@ $package_dir    = rtrim( $output_base, DIRECTORY_SEPARATOR ) . '/sentient-forms'
 
 $include_paths = [
     'assets',
-    'admin-app/scripts',
-    'admin-app/bun.lock',
-    'admin-app/bunfig.toml',
-    'admin-app/package.json',
-    'admin-app/svelte.config.js',
-    'admin-app/tsconfig.json',
-    'admin-app/tsconfig.node.json',
-    'admin-app/vite.config.ts',
     'includes',
     'languages',
     'vendor/woocommerce/action-scheduler',
@@ -74,7 +67,6 @@ foreach ( $include_paths as $relative )
     copy_file( $source, $target );
 }
 
-copy_sanitized_admin_app_source( $plugin_root . '/admin-app/src', $package_dir . '/admin-app/source' );
 write_runtime_composer_manifest( $plugin_root . '/composer.json', $package_dir . '/composer.json' );
 
 foreach ( [ 'languages' ] as $required_directory )
@@ -127,116 +119,6 @@ function copy_directory( string $source, string $target ): void
 
         copy_file( $source_path, $target_path );
     }
-}
-
-/**
- * Copy the SvelteKit source under WordPress.org-safe path names.
- */
-function copy_sanitized_admin_app_source( string $source, string $target ): void
-{
-    if ( ! is_dir( $source ) )
-    {
-        return;
-    }
-
-    $files = [];
-    $iterator = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator( $source, FilesystemIterator::SKIP_DOTS )
-    );
-
-    foreach ( $iterator as $item )
-    {
-        if ( ! $item->isFile() )
-        {
-            continue;
-        }
-
-        $original_relative = 'src/' . normalize_relative_path( ltrim( str_replace( $source, '', $item->getPathname() ), DIRECTORY_SEPARATOR ) );
-        $packaged_relative = sanitized_admin_source_path( $original_relative );
-
-        copy_file( $item->getPathname(), $target . '/' . $packaged_relative );
-        $files[] = [
-            'original' => $original_relative,
-            'packaged' => $packaged_relative,
-        ];
-    }
-
-    usort(
-        $files,
-        static fn ( array $left, array $right ): int => strcmp( $left['original'], $right['original'] )
-    );
-
-    $manifest = [
-        'schema' => 'sentient_forms_admin_app_source_map.v1',
-        'description' => 'Maps WordPress.org-safe packaged source paths back to the original SvelteKit admin app source paths.',
-        'files' => $files,
-    ];
-
-    $encoded = json_encode( $manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES );
-    if ( ! is_string( $encoded ) )
-    {
-        throw new RuntimeException( 'Unable to encode admin app source map.' );
-    }
-
-    copy_file_contents( $encoded . PHP_EOL, $target . '/source-map.json' );
-}
-
-/**
- * Return a WordPress.org-safe relative path for a source file.
- */
-function sanitized_admin_source_path( string $relative ): string
-{
-    $parts = explode( '/', normalize_relative_path( $relative ) );
-    $sanitized = array_map( 'sanitize_admin_source_segment', $parts );
-
-    return implode( '/', $sanitized );
-}
-
-/**
- * Return a WordPress.org-safe path segment while preserving source intent.
- */
-function sanitize_admin_source_segment( string $segment ): string
-{
-    if ( preg_match( '/^\(([^)]+)\)$/', $segment, $matches ) )
-    {
-        return 'group-' . kebab_case( $matches[1] );
-    }
-
-    if ( preg_match( '/^\[([^\]]+)\]$/', $segment, $matches ) )
-    {
-        return 'param-' . kebab_case( $matches[1] );
-    }
-
-    $segment = str_replace( '+', 'plus-', $segment );
-    $segment = preg_replace_callback(
-        '/[A-Z]+[a-z0-9]*/',
-        static fn ( array $matches ): string => '-' . strtolower( $matches[0] ),
-        $segment
-    );
-    $segment = strtolower( (string) $segment );
-    $segment = preg_replace( '/[^a-z0-9.]+/', '-', $segment );
-    $segment = preg_replace( '/-+/', '-', (string) $segment );
-
-    return trim( (string) $segment, '-' );
-}
-
-/**
- * Convert a route parameter or group name to lower-kebab case.
- */
-function kebab_case( string $value ): string
-{
-    $value = preg_replace( '/([a-z0-9])([A-Z])/', '$1-$2', $value );
-    $value = strtolower( (string) $value );
-    $value = preg_replace( '/[^a-z0-9]+/', '-', $value );
-    return trim( (string) preg_replace( '/-+/', '-', (string) $value ), '-' );
-}
-
-/**
- * Normalize a relative path to forward slashes.
- */
-function normalize_relative_path( string $relative ): string
-{
-    return str_replace( DIRECTORY_SEPARATOR, '/', $relative );
 }
 
 /**

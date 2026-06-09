@@ -139,8 +139,7 @@ foreach ( $scan_directories as $scan_dir_relative )
                             $class_name = $tokens[ $i ][ 1 ];
                             $full_name  = $namespace ? $namespace . '\\' . $class_name : $class_name;
 
-                            $is_plugin_symbol = str_starts_with( $full_name, 'Sentient_Forms_' )
-                                || str_starts_with( $full_name, 'Trait_Sentient_Forms_' );
+                            $is_plugin_symbol = str_starts_with( $full_name, 'Sentient_Forms_' );
 
                             if ( $is_plugin_symbol )
                             {

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API Action Definitions Controller for the Sentient Forms plugin.
  * Provides metadata about registered actions.
@@ -17,9 +17,9 @@ if ( !defined( 'ABSPATH' ) )
  * Class Sentient_Forms_Action_Definitions_Controller
  * Returns information about available Sentient Forms actions.
  */
-class Sentient_Forms_Action_Definitions_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Action_Definitions_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
     /**
      * Base route for action definitions.
      *

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API Meta Controller class for the Sentient Forms plugin.
  * Handles routes related to plugin metadata and capabilities.
@@ -17,9 +17,9 @@ if ( ! defined( 'ABSPATH' ) )
  * Class Sentient_Forms_Meta_Controller
  * Manages REST API endpoints for plugin metadata and capabilities.
  */
-class Sentient_Forms_Meta_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Meta_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
 
     protected string $rest_base = 'meta';
 

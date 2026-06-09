@@ -9,6 +9,7 @@ if ( ! defined( 'ABSPATH' ) )
 
 return [
 	'Sentient_Forms_Abstract_Action' => __DIR__ . '/actions/abstract-sentient-forms-action.php',
+	'Sentient_Forms_Abstract_Base_Controller' => __DIR__ . '/rest-api/controllers/abstract-class-base-controller.php',
 	'Sentient_Forms_Abstract_Llm' => __DIR__ . '/llms/abstract-class-llm.php',
 	'Sentient_Forms_Abstract_Llm_Google' => __DIR__ . '/llms/google/abstract-class-llm-google.php',
 	'Sentient_Forms_Action_Definitions_Controller' => __DIR__ . '/rest-api/controllers/class-action-definitions-controller.php',
@@ -105,6 +106,7 @@ return [
 	'Sentient_Forms_Models_Controller' => __DIR__ . '/rest-api/controllers/class-models-controller.php',
 	'Sentient_Forms_OpenRouter_Direct_Client' => __DIR__ . '/providers/class-sentient-forms-openrouter-direct-client.php',
 	'Sentient_Forms_OpenRouter_Model_Recommendations' => __DIR__ . '/class-sentient-forms-openrouter-model-recommendations.php',
+	'Sentient_Forms_Permission_Utils_Trait' => __DIR__ . '/rest-api/permissions/trait-permission-utils.php',
 	'Sentient_Forms_Plugin' => __DIR__ . '/class-sentient-forms-plugin.php',
 	'Sentient_Forms_Provider_Client_Interface' => __DIR__ . '/interfaces/interface-sentient-forms-provider-client.php',
 	'Sentient_Forms_Provider_Credential_Vault' => __DIR__ . '/services/class-sentient-forms-provider-credential-vault.php',
@@ -122,6 +124,5 @@ return [
 	'Sentient_Forms_Telemetry_Controller' => __DIR__ . '/rest-api/controllers/class-telemetry-controller.php',
 	'Sentient_Forms_Telemetry_Service' => __DIR__ . '/services/class-sentient-forms-telemetry-service.php',
 	'Sentient_Forms_Url_Policy' => __DIR__ . '/security/class-sentient-forms-url-policy.php',
-	'Trait_Sentient_Forms_Permission_Utils' => __DIR__ . '/rest-api/permissions/trait-permission-utils.php',
-	'Trait_Sentient_Forms_Validation_Utils' => __DIR__ . '/rest-api/validators/trait-validation-utils.php',
+	'Sentient_Forms_Validation_Utils_Trait' => __DIR__ . '/rest-api/validators/trait-validation-utils.php',
 ];

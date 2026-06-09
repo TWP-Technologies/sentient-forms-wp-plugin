@@ -93,7 +93,8 @@ class Sentient_Forms_Provider_Credentials_Repository extends Sentient_Forms_Loca
         $wpdb  = $this->wpdb;
         $rows  = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' ORDER BY updated_at DESC LIMIT %d',
+                'SELECT * FROM %i ORDER BY updated_at DESC LIMIT %d',
+                $this->table_name(),
                 $limit
             ),
             ARRAY_A
@@ -115,7 +116,8 @@ class Sentient_Forms_Provider_Credentials_Repository extends Sentient_Forms_Loca
 
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE provider = %s AND auth_mode = %s ORDER BY updated_at DESC, id DESC LIMIT 1',
+                'SELECT * FROM %i WHERE provider = %s AND auth_mode = %s ORDER BY updated_at DESC, id DESC LIMIT 1',
+                $this->table_name(),
                 $provider,
                 $auth_mode
             ),

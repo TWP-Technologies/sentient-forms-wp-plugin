@@ -110,7 +110,8 @@ class Sentient_Forms_Action_Templates_Repository extends Sentient_Forms_Local_Re
         $wpdb = $this->wpdb;
         $row  = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE code = %s',
+                'SELECT * FROM %i WHERE code = %s',
+                $this->table_name(),
                 sanitize_key( $code )
             ),
             ARRAY_A
@@ -128,7 +129,10 @@ class Sentient_Forms_Action_Templates_Repository extends Sentient_Forms_Local_Re
     {
         $wpdb = $this->wpdb;
         $rows = $wpdb->get_results(
-            'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE is_active = 1 ORDER BY display_name ASC',
+            $wpdb->prepare(
+                'SELECT * FROM %i WHERE is_active = 1 ORDER BY display_name ASC',
+                $this->table_name()
+            ),
             ARRAY_A
         ) ?: [];
         return array_map( [ $this, 'decode_row' ], $rows );

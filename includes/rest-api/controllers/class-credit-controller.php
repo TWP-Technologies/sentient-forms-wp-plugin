@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API Credit Controller class for the Sentient Forms plugin.
  * Handles compatibility for the retired Sentient credit balance route.
@@ -17,9 +17,9 @@ if ( !defined( 'ABSPATH' ) )
  * Class Sentient_Forms_Credit_Controller
  * Manages the retired credit balance endpoint.
  */
-class Sentient_Forms_Credit_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Credit_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
     /**
      * The base of this controller's routes.
      *

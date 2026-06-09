@@ -87,7 +87,8 @@ class Sentient_Forms_Model_Cache_Repository extends Sentient_Forms_Local_Reposit
         {
             $row = $wpdb->get_row(
                 $wpdb->prepare(
-                    'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE provider = %s AND model_id = %s AND expires_at >= %s LIMIT 1',
+                    'SELECT * FROM %i WHERE provider = %s AND model_id = %s AND expires_at >= %s LIMIT 1',
+                    $this->table_name(),
                     sanitize_key( $provider ),
                     sanitize_text_field( $model_id ),
                     $this->now()
@@ -99,7 +100,8 @@ class Sentient_Forms_Model_Cache_Repository extends Sentient_Forms_Local_Reposit
         {
             $row = $wpdb->get_row(
                 $wpdb->prepare(
-                    'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE provider = %s AND model_id = %s LIMIT 1',
+                    'SELECT * FROM %i WHERE provider = %s AND model_id = %s LIMIT 1',
+                    $this->table_name(),
                     sanitize_key( $provider ),
                     sanitize_text_field( $model_id )
                 ),
@@ -124,7 +126,8 @@ class Sentient_Forms_Model_Cache_Repository extends Sentient_Forms_Local_Reposit
         {
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
-                    'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE provider = %s ORDER BY model_id ASC LIMIT %d',
+                    'SELECT * FROM %i WHERE provider = %s ORDER BY model_id ASC LIMIT %d',
+                    $this->table_name(),
                     sanitize_key( $provider ),
                     $limit
                 ),
@@ -135,7 +138,8 @@ class Sentient_Forms_Model_Cache_Repository extends Sentient_Forms_Local_Reposit
         {
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
-                    'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE provider = %s AND expires_at >= %s ORDER BY model_id ASC LIMIT %d',
+                    'SELECT * FROM %i WHERE provider = %s AND expires_at >= %s ORDER BY model_id ASC LIMIT %d',
+                    $this->table_name(),
                     sanitize_key( $provider ),
                     $this->now(),
                     $limit
@@ -158,7 +162,8 @@ class Sentient_Forms_Model_Cache_Repository extends Sentient_Forms_Local_Reposit
         $wpdb = $this->wpdb;
         $wpdb->query(
             $wpdb->prepare(
-                'DELETE FROM ' . esc_sql( $this->table_name() ) . ' WHERE expires_at < %s',
+                'DELETE FROM %i WHERE expires_at < %s',
+                $this->table_name(),
                 $this->now()
             )
         );

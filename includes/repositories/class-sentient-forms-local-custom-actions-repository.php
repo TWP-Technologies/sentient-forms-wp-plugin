@@ -151,7 +151,8 @@ class Sentient_Forms_Local_Custom_Actions_Repository extends Sentient_Forms_Loca
         $wpdb = $this->wpdb;
         $row  = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE code = %s',
+                'SELECT * FROM %i WHERE code = %s',
+                $this->table_name(),
                 sanitize_key( $code )
             ),
             ARRAY_A

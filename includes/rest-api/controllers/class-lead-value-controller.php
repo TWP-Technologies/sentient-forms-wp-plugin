@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API controller for Lead Scoring setup, historical scoring, and dashboard data.
  */
@@ -8,9 +8,9 @@ if ( ! defined( 'ABSPATH' ) )
     exit;
 }
 
-class Sentient_Forms_Lead_Value_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
 
     private const MIN_SITE_CONTEXT_WORDS = 80;
     private const MIN_SPAM_GUIDANCE_EXAMPLES = 3;

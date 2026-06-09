@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API Execution Status Controller class for the Sentient Forms plugin.
  * Handles routes related to retrieving execution status from CPS.
@@ -17,9 +17,9 @@ if ( !defined( 'ABSPATH' ) )
  * Class Sentient_Forms_Execution_Status_Controller
  * Manages REST API endpoints for execution status (CB-STATUS-001).
  */
-class Sentient_Forms_Execution_Status_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Execution_Status_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
 
     /**
      * The base of this controller's routes.

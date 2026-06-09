@@ -1,14 +1,13 @@
 # Sentient Forms Admin App Source
 
-The JavaScript and CSS files in this directory are generated from the SvelteKit admin app source for Sentient Forms 0.3.4.
+The JavaScript and CSS files in this directory are generated from the SvelteKit admin app source for Sentient Forms 0.3.5.
 
-Source included in the WordPress.org package: admin-app
+Public source for this release: https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.3.5
 
 Build commands:
 
 ```sh
 cd admin-app
 bun install --frozen-lockfile
-bun run restore:source
 bun run build:wp
 ```

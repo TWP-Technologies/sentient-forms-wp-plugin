@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API controller for CPS managed async execution callbacks.
  *
@@ -10,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) )
     exit;
 }
 
-class Sentient_Forms_Managed_Execution_Callback_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Managed_Execution_Callback_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
     protected string $rest_base = 'managed';
 

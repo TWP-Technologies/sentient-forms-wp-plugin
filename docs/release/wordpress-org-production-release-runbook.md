@@ -25,20 +25,21 @@ Each production package workflow must publish:
 - `sentient-forms-wporg-manifest.json`
 - the clean package directory used to create the ZIP
 
-The manifest records the package path, ZIP hash, version, stable tag, source reference, Git ref, Git commit, and required gate status.
+The manifest records the package path, ZIP hash, version, stable tag, public source URL, Git ref, Git commit, and required gate status.
 
 ## Generated Asset Source
 
-The package includes the exact SvelteKit admin app source under `admin-app`.
-For WordPress.org-safe package paths, the source files are stored under
-`admin-app/source` with a `source-map.json`; restore the original SvelteKit
-route filenames before rebuilding:
+The package does not include the SvelteKit admin app source or build tooling.
+Generated JavaScript and CSS in `assets/dist` must point to the immutable public
+GitHub source tag for the same release. From that public source tag, rebuild the
+assets with:
 
 ```sh
 cd admin-app
 bun install --frozen-lockfile
-bun run restore:source
 bun run build:wp
 ```
 
-Do not rely on private GitHub source links for WordPress.org review artifacts.
+Do not upload the WordPress.org ZIP until the source tag referenced in
+`sentient-forms.php`, `readme.txt`, and `assets/dist/SOURCE.md` is publicly
+reachable.

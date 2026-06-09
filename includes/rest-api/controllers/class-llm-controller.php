@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * REST API LLM Models Controller class for the Sentient Forms plugin.
  * Handles routes for retrieving information about available LLM models.
@@ -12,9 +12,9 @@ if ( !defined( 'ABSPATH' ) )
     exit;
 }
 
-class Sentient_Forms_Llm_Controller extends Abstract_Sentient_Forms_Base_Controller
+class Sentient_Forms_Llm_Controller extends Sentient_Forms_Abstract_Base_Controller
 {
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
     protected string $rest_base = 'llms/models';
 
     private Sentient_Forms_Admin_Permission $permission_checker;
@@ -22,7 +22,7 @@ class Sentient_Forms_Llm_Controller extends Abstract_Sentient_Forms_Base_Control
     /**
      * Transient key for caching model definitions.
      */
-    const MODELS_TRANSIENT_KEY = 'sf_llm_definitions_cache';
+    const MODELS_TRANSIENT_KEY = 'sentient_forms_llm_definitions_cache';
 
     /**
      * TTL for the cached model list in seconds.
@@ -32,7 +32,7 @@ class Sentient_Forms_Llm_Controller extends Abstract_Sentient_Forms_Base_Control
     /**
      * Transient key for caching API error responses.
      */
-    const API_ERROR_TRANSIENT_KEY = 'sf_llm_api_error_cache';
+    const API_ERROR_TRANSIENT_KEY = 'sentient_forms_llm_api_error_cache';
 
     /**
      * TTL for caching API error responses in seconds (e.g., 5 minutes).

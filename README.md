@@ -8,7 +8,7 @@ The plugin stores site-owned configuration in WordPress: provider settings, exte
 
 For WordPress.org, `readme.txt` is the public plugin-directory readme and must stay aligned with the submitted package. `README.md` is a developer-maintenance overview for the GitHub repository.
 
-The clean package builder intentionally excludes this `README.md` and includes `readme.txt`, runtime files, generated admin assets, bundled runtime dependencies, and the packaged admin app source/build metadata required for generated JavaScript and CSS review.
+The clean package builder intentionally excludes this `README.md` and includes `readme.txt`, runtime files, generated admin assets, and bundled runtime dependencies. Generated JavaScript and CSS source/build tooling is documented through the public release source URL in `readme.txt` and `assets/dist/SOURCE.md`; do not include `admin-app/` in the WordPress.org ZIP.
 
 Before submitting a package to WordPress.org, verify the exact ZIP or extracted package, not just the source tree. A submission-ready package must pass:
 
@@ -57,7 +57,7 @@ No OpenRouter or Sentient AI execution request should be sent until an administr
 3. **PHP tooling**: Run `composer install`, regenerate the class map with `php build/generate-class-map.php` after adding classes, and execute focused PHPUnit suites under `tests/phpunit/`.
 4. **WordPress.org package checks**:
    - `composer wporg-release-version-check` checks version surfaces in the source tree.
-   - `composer wporg-source-check` verifies generated admin assets have packaged source/build metadata.
+   - `composer wporg-source-check` verifies generated admin assets document the public release source URL and build commands.
    - `composer wporg-scan` checks the source tree and built admin assets for early package blockers.
    - `composer wporg-license-audit` checks source-tree GPL compatibility signals.
    - `composer wporg-readme-check` validates `readme.txt` locally.
@@ -72,7 +72,7 @@ No OpenRouter or Sentient AI execution request should be sent until an administr
 - `sentient-forms.php` boots the plugin and registers activation, deactivation, and uninstall hooks.
 - `readme.txt` is the WordPress.org plugin-directory readme and external-service disclosure.
 - `assets/dist/` contains generated admin assets copied from `admin-app/`.
-- `assets/dist/SOURCE.md` documents the generated admin asset source and build process for packaged releases.
+- `assets/dist/SOURCE.md` documents the generated admin asset public source URL and build process for packaged releases.
 - `admin-app/` contains the SvelteKit admin SPA source, tests, and build scripts.
 - `includes/class-sentient-forms-installer.php` owns local table install/upgrade and retention scheduling.
 - `includes/repositories/` contains local-first data access classes.
@@ -91,7 +91,7 @@ No OpenRouter or Sentient AI execution request should be sent until an administr
 
 Release confidence is based on the repository gates and the root Sentient Forms greenlight checklist. A production package should not be promoted until the exact built artifact has passed the WordPress.org package scan, Plugin Check, license audit, readme validation, focused PHPUnit/SPA checks, and browser-path evidence for the supported Gravity Forms workflows.
 
-For WordPress.org submission, prefer the latest validated GitHub release ZIP and manifest over an ad hoc local ZIP. If a local rebuild is necessary, run the same package checks against the rebuilt package and preserve the package path/hash in release evidence.
+For WordPress.org submission, prefer the latest validated GitHub release ZIP and manifest over an ad hoc local ZIP. The public source tag named in `readme.txt` and `assets/dist/SOURCE.md` must exist before upload. If a local rebuild is necessary, run the same package checks against the rebuilt package and preserve the package path/hash in release evidence.
 
 ## License
 

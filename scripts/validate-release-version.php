@@ -62,10 +62,10 @@ if ( 1 !== count( $unique_versions ) )
 }
 
 $version = $unique_versions[0];
-$source_reference = read_regex( $plugin_file, "/const\s+SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE\s*=\s*'([^']+)';/" );
+$source_reference = read_source_reference( $plugin_file );
 if ( '' === $source_reference )
 {
-    fwrite( STDERR, "Release source reference is empty.\n" );
+    fwrite( STDERR, "Release source URL/reference is empty.\n" );
     exit( 1 );
 }
 
@@ -100,4 +100,25 @@ function read_regex( string $path, string $pattern ): string
     }
 
     return trim( (string) $matches[1] );
+}
+
+function read_source_reference( string $plugin_file ): string
+{
+    $contents = file_get_contents( $plugin_file );
+    if ( false === $contents )
+    {
+        fwrite( STDERR, "Unable to read {$plugin_file}\n" );
+        exit( 1 );
+    }
+
+    foreach ( [ 'SENTIENT_FORMS_RELEASE_SOURCE_URL', 'SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE' ] as $constant )
+    {
+        if ( preg_match( "/const\s+{$constant}\s*=\s*'([^']+)';/", $contents, $matches ) )
+        {
+            return trim( (string) $matches[1] );
+        }
+    }
+
+    fwrite( STDERR, "Missing release source URL/reference in {$plugin_file}.\n" );
+    exit( 1 );
 }

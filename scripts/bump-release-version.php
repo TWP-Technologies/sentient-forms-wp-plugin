@@ -30,14 +30,15 @@ $next_version     = is_string( $explicit_version ) && '' !== trim( $explicit_ver
     ? normalize_version( $explicit_version )
     : bump_version( $current_version, $bump );
 $tag              = 'v' . $next_version;
-$source_reference = 'admin-app';
+$source_url        = 'https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/' . $tag;
 
 update_text_file(
     $plugin_root . '/sentient-forms.php',
     [
         '/^(\s*\*\s*Version:\s*).+$/m' => '${1}' . $next_version,
         "/(const\s+SENTIENT_FORMS_VERSION\s*=\s*)'[^']+';/" => '${1}' . "'" . $next_version . "';",
-        "/(const\s+SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE\s*=\s*)'[^']+';/" => '${1}' . "'" . $source_reference . "';",
+        "/const\s+SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE\s*=\s*'[^']+';/" => "const SENTIENT_FORMS_RELEASE_SOURCE_URL = '{$source_url}';",
+        "/(const\s+SENTIENT_FORMS_RELEASE_SOURCE_URL\s*=\s*)'[^']+';/" => '${1}' . "'" . $source_url . "';",
     ]
 );
 

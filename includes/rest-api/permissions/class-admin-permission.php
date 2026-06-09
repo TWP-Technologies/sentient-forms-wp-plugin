@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /**
  * Admin Permission Class for the Sentient Forms plugin.
  * Contains specific permission checking logic for actions typically restricted
@@ -23,7 +23,7 @@ if ( !defined( 'ABSPATH' ) )
 class Sentient_Forms_Admin_Permission
 {
 
-    use Trait_Sentient_Forms_Permission_Utils;
+    use Sentient_Forms_Permission_Utils_Trait;
 
     /**
      * Capability required to manage general plugin settings and core functionalities.

@@ -146,7 +146,13 @@ function validate_readme_locally( string $readme_path, string $plugin_file ): ar
         }
     }
 
-    foreach ( [ 'admin-app', 'bun install --frozen-lockfile', 'bun run restore:source', 'bun run build:wp' ] as $required_source_reference )
+    $source_reference = read_release_source_reference( $plugin_file );
+    if ( null === $source_reference )
+    {
+        $issues[] = 'sentient-forms.php is missing SENTIENT_FORMS_RELEASE_SOURCE_URL or SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE.';
+    }
+
+    foreach ( required_generated_asset_source_references( $source_reference ) as $required_source_reference )
     {
         if ( false === stripos( $readme, $required_source_reference ) )
         {
@@ -306,4 +312,44 @@ function parse_plugin_version( string $plugin_file ): ?string
     }
 
     return trim( $matches[1] );
+}
+
+/**
+ * Read the source reference used to document generated asset source.
+ */
+function read_release_source_reference( string $plugin_file ): ?string
+{
+    if ( ! file_exists( $plugin_file ) )
+    {
+        return null;
+    }
+
+    $contents = (string) file_get_contents( $plugin_file );
+    foreach ( [ 'SENTIENT_FORMS_RELEASE_SOURCE_URL', 'SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE' ] as $constant )
+    {
+        if ( preg_match( "/const\s+{$constant}\s*=\s*'([^']+)';/", $contents, $matches ) )
+        {
+            $value = trim( (string) $matches[1] );
+            return '' === $value ? null : $value;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Return generated asset source references required in reviewer-facing docs.
+ *
+ * @return array<int,string>
+ */
+function required_generated_asset_source_references( ?string $source_reference ): array
+{
+    $references = [ 'admin-app', 'cd admin-app', 'bun install --frozen-lockfile', 'bun run build:wp' ];
+
+    if ( null !== $source_reference )
+    {
+        array_unshift( $references, $source_reference );
+    }
+
+    return $references;
 }

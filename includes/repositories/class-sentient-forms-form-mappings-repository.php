@@ -77,7 +77,8 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
         $wpdb = $this->wpdb;
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE form_source = %s AND form_id = %s ORDER BY id ASC',
+                'SELECT * FROM %i WHERE form_source = %s AND form_id = %s ORDER BY id ASC',
+                $this->table_name(),
                 sanitize_key( $form_source ),
                 sanitize_text_field( $form_id )
             ),
@@ -164,7 +165,8 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
         $wpdb = $this->wpdb;
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE action_kind = %s AND action_id = %d AND enabled = 1 ORDER BY id ASC',
+                'SELECT * FROM %i WHERE action_kind = %s AND action_id = %d AND enabled = 1 ORDER BY id ASC',
+                $this->table_name(),
                 sanitize_key( $action_kind ),
                 $action_id
             ),

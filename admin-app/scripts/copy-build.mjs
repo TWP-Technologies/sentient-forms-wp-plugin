@@ -85,8 +85,8 @@ const writeSourceMetadata = async () => {
   const version =
     parsePluginConstant(pluginContents, 'SENTIENT_FORMS_VERSION') ?? 'unknown';
   const sourceReference =
-    parsePluginConstant(pluginContents, 'SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE') ??
     parsePluginConstant(pluginContents, 'SENTIENT_FORMS_RELEASE_SOURCE_URL') ??
+    parsePluginConstant(pluginContents, 'SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE') ??
     'admin-app';
 
   const sourceLine = /^https?:\/\//i.test(sourceReference)
@@ -106,7 +106,6 @@ Build commands:
 \`\`\`sh
 cd admin-app
 bun install --frozen-lockfile
-bun run restore:source
 bun run build:wp
 \`\`\`
 `

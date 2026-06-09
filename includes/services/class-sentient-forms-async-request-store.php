@@ -33,7 +33,8 @@ class Sentient_Forms_Async_Request_Store
         $wpdb = $this->wpdb;
         $row   = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table() ) . ' WHERE request_hash = %s AND record_type = %s',
+                'SELECT * FROM %i WHERE request_hash = %s AND record_type = %s',
+                $this->table(),
                 $request_hash,
                 $record_type
             ),
@@ -141,7 +142,8 @@ class Sentient_Forms_Async_Request_Store
         $wpdb  = $this->wpdb;
         $wpdb->query(
             $wpdb->prepare(
-                'DELETE FROM ' . esc_sql( $this->table() ) . ' WHERE last_seen_at < %s',
+                'DELETE FROM %i WHERE last_seen_at < %s',
+                $this->table(),
                 $mysql
             )
         );
@@ -160,7 +162,8 @@ class Sentient_Forms_Async_Request_Store
         {
             return $wpdb->get_results(
                 $wpdb->prepare(
-                    'SELECT * FROM ' . esc_sql( $this->table() ) . ' WHERE record_type = %s AND status = %s ORDER BY last_seen_at DESC LIMIT %d',
+                    'SELECT * FROM %i WHERE record_type = %s AND status = %s ORDER BY last_seen_at DESC LIMIT %d',
+                    $this->table(),
                     $record_type,
                     $status,
                     $limit
@@ -171,7 +174,8 @@ class Sentient_Forms_Async_Request_Store
 
         return $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table() ) . ' WHERE record_type = %s ORDER BY last_seen_at DESC LIMIT %d',
+                'SELECT * FROM %i WHERE record_type = %s ORDER BY last_seen_at DESC LIMIT %d',
+                $this->table(),
                 $record_type,
                 $limit
             ),

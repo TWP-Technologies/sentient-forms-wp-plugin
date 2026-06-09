@@ -517,10 +517,11 @@ class Sentient_Forms_Local_Data_Governance
         $like     = '%' . $wpdb->esc_like( $email_address ) . '%';
         $event_rows = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $wpdb->prefix . 'sentient_execution_events' ) . "
+                'SELECT * FROM %i
                 WHERE result_json LIKE %s OR error_message LIKE %s
                 ORDER BY id ASC
-                LIMIT %d OFFSET %d",
+                LIMIT %d OFFSET %d',
+                $wpdb->prefix . 'sentient_execution_events',
                 $like,
                 $like,
                 $per_page,
@@ -530,10 +531,11 @@ class Sentient_Forms_Local_Data_Governance
         ) ?: [];
         $lead_rows = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $wpdb->prefix . 'sentient_lead_scoring_results' ) . "
+                'SELECT * FROM %i
                 WHERE entry_snapshot_json LIKE %s OR source_payload_json LIKE %s OR justification LIKE %s OR suggested_reply_draft LIKE %s OR reply_rationale LIKE %s OR next_best_action LIKE %s
                 ORDER BY id ASC
-                LIMIT %d OFFSET %d",
+                LIMIT %d OFFSET %d',
+                $wpdb->prefix . 'sentient_lead_scoring_results',
                 $like,
                 $like,
                 $like,
@@ -583,10 +585,11 @@ class Sentient_Forms_Local_Data_Governance
         $like     = '%' . $wpdb->esc_like( $email_address ) . '%';
         $event_rows = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT id FROM ' . esc_sql( $wpdb->prefix . 'sentient_execution_events' ) . "
+                'SELECT id FROM %i
                 WHERE result_json LIKE %s OR error_message LIKE %s
                 ORDER BY id ASC
-                LIMIT %d",
+                LIMIT %d',
+                $wpdb->prefix . 'sentient_execution_events',
                 $like,
                 $like,
                 $per_page
@@ -595,10 +598,11 @@ class Sentient_Forms_Local_Data_Governance
         ) ?: [];
         $lead_rows = $wpdb->get_results(
             $wpdb->prepare(
-                'SELECT id FROM ' . esc_sql( $wpdb->prefix . 'sentient_lead_scoring_results' ) . "
+                'SELECT id FROM %i
                 WHERE entry_snapshot_json LIKE %s OR source_payload_json LIKE %s OR justification LIKE %s OR suggested_reply_draft LIKE %s OR reply_rationale LIKE %s OR next_best_action LIKE %s
                 ORDER BY id ASC
-                LIMIT %d",
+                LIMIT %d',
+                $wpdb->prefix . 'sentient_lead_scoring_results',
                 $like,
                 $like,
                 $like,
@@ -688,7 +692,12 @@ class Sentient_Forms_Local_Data_Governance
         foreach ( self::local_table_suffixes() as $suffix )
         {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- This runs only during explicit uninstall cleanup for plugin-owned local-first tables after the admin has opted into data deletion.
-            $wpdb->query( 'DROP TABLE IF EXISTS ' . esc_sql( $wpdb->prefix . $suffix ) );
+            $wpdb->query(
+                $wpdb->prepare(
+                    'DROP TABLE IF EXISTS %i',
+                    $wpdb->prefix . $suffix
+                )
+            );
         }
 
         self::delete_plugin_options();
@@ -744,7 +753,8 @@ class Sentient_Forms_Local_Data_Governance
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Explicit uninstall cleanup for plugin-owned options and transients.
         $wpdb->query(
             $wpdb->prepare(
-                "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s OR option_name LIKE %s",
+                'DELETE FROM %i WHERE option_name LIKE %s OR option_name LIKE %s OR option_name LIKE %s',
+                $wpdb->options,
                 $wpdb->esc_like( 'sentient_forms_' ) . '%',
                 $wpdb->esc_like( '_transient_sentient_forms_' ) . '%',
                 $wpdb->esc_like( '_transient_timeout_sentient_forms_' ) . '%'
@@ -759,7 +769,8 @@ class Sentient_Forms_Local_Data_Governance
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Explicit uninstall cleanup for plugin-owned transients and their object-cache entries.
         $option_names = $wpdb->get_col(
             $wpdb->prepare(
-                "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s",
+                'SELECT option_name FROM %i WHERE option_name LIKE %s',
+                $wpdb->options,
                 $wpdb->esc_like( '_transient_sentient_forms_' ) . '%'
             )
         );

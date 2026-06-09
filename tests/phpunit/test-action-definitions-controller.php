@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 class ActionDefinitionsControllerTest extends WP_UnitTestCase
 {
@@ -21,7 +21,7 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         {
             require_once dirname( __DIR__, 2 ) . '/includes/rest-api/class-rest-api.php';
         }
-        if ( ! trait_exists( 'Trait_Sentient_Forms_Permission_Utils' ) )
+        if ( ! trait_exists( 'Sentient_Forms_Permission_Utils_Trait' ) )
         {
             require_once dirname( __DIR__, 2 ) . '/includes/rest-api/permissions/trait-permission-utils.php';
         }
@@ -29,7 +29,7 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         {
             require_once dirname( __DIR__, 2 ) . '/includes/rest-api/permissions/class-admin-permission.php';
         }
-        if ( ! trait_exists( 'Trait_Sentient_Forms_Validation_Utils' ) )
+        if ( ! trait_exists( 'Sentient_Forms_Validation_Utils_Trait' ) )
         {
             require_once dirname( __DIR__, 2 ) . '/includes/rest-api/validators/trait-validation-utils.php';
         }

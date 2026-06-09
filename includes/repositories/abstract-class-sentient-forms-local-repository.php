@@ -85,7 +85,8 @@ abstract class Sentient_Forms_Local_Repository
         $wpdb = $this->wpdb;
         $row  = $wpdb->get_row(
             $wpdb->prepare(
-                'SELECT * FROM ' . esc_sql( $this->table_name() ) . ' WHERE id = %d',
+                'SELECT * FROM %i WHERE id = %d',
+                $this->table_name(),
                 $id
             ),
             ARRAY_A
