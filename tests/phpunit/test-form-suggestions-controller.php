@@ -389,6 +389,7 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$this->assertSame( 'local_first_42', $data['mappings'][0]['mapping_id'] ?? null );
 		$this->assertSame( 'hidden_until_interaction', $data['mappings'][0]['initial_panel_state'] ?? null );
 		$this->assertIsString( $data['nonce'] ?? null );
+		$this->assertArrayNotHasKey( 'rest_nonce', $data );
 		$this->assertIsInt( $data['config_generated_at'] ?? null );
 		$this->assertGreaterThan( $data['config_generated_at'], $data['config_expires_at'] ?? 0 );
 		$this->assertStringContainsString(

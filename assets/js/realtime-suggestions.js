@@ -1198,9 +1198,6 @@
 			'Content-Type': 'application/json',
 			'X-Sentient-Forms-Suggest-Nonce': formState.config.nonce
 		};
-		if (formState.config.rest_nonce) {
-			headers['X-WP-Nonce'] = formState.config.rest_nonce;
-		}
 
 		var controller = timeoutMs > 0 && typeof window.AbortController === 'function'
 			? new window.AbortController()

@@ -2983,7 +2983,6 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             ),
             'suggest_endpoint_url'        => rest_url( sprintf( 'sentient-forms/v1/gravity_forms/forms/%d/actions/suggest', $form_id ) ),
             'nonce'                       => wp_create_nonce( 'sentient_forms_realtime_suggest_' . $form_id ),
-            'rest_nonce'                  => wp_create_nonce( 'wp_rest' ),
             'config_generated_at'         => $config_generated_at,
             'config_expires_at'           => $config_generated_at + $config_ttl_seconds,
             'initial_panel_state'         => $this->resolve_realtime_initial_panel_state( $mappings ),

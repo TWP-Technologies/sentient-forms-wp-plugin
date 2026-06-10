@@ -404,7 +404,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'gravity_forms', $runtime['source'] ?? null );
         $this->assertSame( 2, $runtime['total_pages'] ?? null );
         $this->assertNotEmpty( $runtime['nonce'] ?? '' );
-        $this->assertNotEmpty( $runtime['rest_nonce'] ?? '' );
+        $this->assertArrayNotHasKey( 'rest_nonce', $runtime );
         $this->assertStringContainsString(
             '/sentient-forms/v1/gravity_forms/forms/14/actions/suggest',
             (string) ( $runtime['suggest_endpoint_url'] ?? '' )

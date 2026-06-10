@@ -381,7 +381,7 @@ describe('realtime suggestions runtime', () => {
 				}
 			]);
 			expect(headers['X-Sentient-Forms-Suggest-Nonce']).toBe('nonce-42');
-			expect(headers['X-WP-Nonce']).toBe('rest-nonce-42');
+			expect(headers).not.toHaveProperty('X-WP-Nonce');
 		});
 
 		it('can include hidden values when the mapping explicitly allows them', async () => {

@@ -117,11 +117,13 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		page
 	}) => {
 		const requests: Array<Record<string, unknown>> = [];
+		const requestHeaders: Array<Record<string, string>> = [];
 
 		await routeSuggestRequests(page, async (route) => {
 			const request = route.request();
 			const payload = JSON.parse(request.postData() ?? '{}') as Record<string, unknown>;
 			requests.push(payload);
+			requestHeaders.push(request.headers());
 			const currentPage = Number(payload.current_page_index ?? 1);
 			const responseBody =
 				currentPage >= 2
@@ -198,6 +200,8 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 
 		await expect.poll(() => requests.length, { timeout: 4000 }).toBe(1);
 		expect(requests[0]?.mapping_id).toBe('map_realtime_suggest');
+		expect(requestHeaders[0]?.['x-sentient-forms-suggest-nonce']).toBeTruthy();
+		expect(requestHeaders[0]).not.toHaveProperty('x-wp-nonce');
 
 		const widget = await openRealtimeWidget(page);
 		await expect(widget).toContainText('Please add specifics to your issue summary.');
