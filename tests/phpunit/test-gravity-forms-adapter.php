@@ -4548,7 +4548,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 ),
                 'model_selection_json' => [
                     'provider'      => 'openrouter',
-                    'model'         => 'openrouter/auto',
+                    'model'         => 'anthropic/claude-sonnet-4.6',
                     'credential_id' => $credential_id,
                 ],
                 'status'               => 'active',
@@ -4583,7 +4583,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                     'body'     => wp_json_encode(
                         [
                             'id'      => 'chatcmpl-gf-local-spam-validation-failure',
-                            'model'   => 'openrouter/auto',
+                            'model'   => 'anthropic/claude-sonnet-4.6',
                             'choices' => [
                                 [
                                     'message'       => [

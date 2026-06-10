@@ -48,6 +48,7 @@
 	import { licenseState } from '$lib/stores/license.svelte';
 	import { formMappingsStore } from '$lib/stores/form-mappings.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
+	import type { ModelSelectorCapabilityKey } from '$lib/utils/model-selector-presentation';
 	import type {
 		ActionDefinition,
 		AttachmentMapping,
@@ -600,12 +601,14 @@
 		actionId: string | null;
 		modelHint: string | null;
 		baseCreditCost: number | null;
+		requiredCapabilities: ModelSelectorCapabilityKey[];
 	} {
 		if (!actionId) {
 			return {
 				actionId: null,
 				modelHint: null,
-				baseCreditCost: null
+				baseCreditCost: null,
+				requiredCapabilities: []
 			};
 		}
 
@@ -614,7 +617,10 @@
 			return {
 				actionId,
 				modelHint: definition.modelHint ?? null,
-				baseCreditCost: definition.baseCreditCost ?? null
+				baseCreditCost: definition.baseCreditCost ?? null,
+				requiredCapabilities: hasStructuredOutputSchema(definition.structuredOutputSchema)
+					? ['structured']
+					: []
 			};
 		}
 
@@ -623,19 +629,35 @@
 			return {
 				actionId,
 				modelHint: customAction.model_hint ?? null,
-				baseCreditCost: customAction.base_credit_cost ?? null
+				baseCreditCost: customAction.base_credit_cost ?? null,
+				requiredCapabilities: customActionRequiresStructuredOutput(customAction)
+					? ['structured']
+					: []
 			};
 		}
 
 		return {
 			actionId,
 			modelHint: null,
-			baseCreditCost: null
+			baseCreditCost: null,
+			requiredCapabilities: []
 		};
 	}
 
 	function isPlainObject(value: unknown): value is Record<string, unknown> {
 		return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+	}
+
+	function hasStructuredOutputSchema(value: unknown): boolean {
+		return isPlainObject(value) && Object.keys(value).length > 0;
+	}
+
+	function customActionRequiresStructuredOutput(action: CustomAction): boolean {
+		return (
+			hasStructuredOutputSchema(action.output_contract?.schema) ||
+			hasStructuredOutputSchema(action.output_contract?.json_schema) ||
+			hasStructuredOutputSchema(action.definition?.structured_output_schema)
+		);
 	}
 
 	function cloneDraftValue<T>(value: T): T {
@@ -2503,7 +2525,6 @@
 				definition_json: {
 					...(systemPrompt ? { system_prompt: systemPrompt } : {}),
 					prompt_template: promptTemplate,
-					response_format: { type: 'json_object' },
 					structured_output_schema: localBuilderStructuredOutputSchema(),
 					builder_template: localBuilderTemplate.key,
 					max_tokens: localBuilderTemplate.maxTokens,
@@ -3744,6 +3765,10 @@
 								actionId={getActionDefinitionContext(configuringActionId).actionId}
 								templateModelHint={getActionDefinitionContext(configuringActionId).modelHint}
 								baseCreditCost={getActionDefinitionContext(configuringActionId).baseCreditCost}
+								requiredCapabilities={getActionDefinitionContext(configuringActionId)
+									.requiredCapabilities}
+								lockRequiredCapabilities={getActionDefinitionContext(configuringActionId)
+									.requiredCapabilities.length > 0}
 								actionSelection={actionDefaultsByActionId[configuringActionId ?? '']
 									?.model_selection ?? null}
 								formSelection={formLevelConfig.model_selection ?? null}
@@ -5427,6 +5452,12 @@
 									baseCreditCost={getActionDefinitionContext(
 										editingLinkage?.central_action_id ?? null
 									).baseCreditCost}
+									requiredCapabilities={getActionDefinitionContext(
+										editingLinkage?.central_action_id ?? null
+									).requiredCapabilities}
+									lockRequiredCapabilities={getActionDefinitionContext(
+										editingLinkage?.central_action_id ?? null
+									).requiredCapabilities.length > 0}
 									actionSelection={currentActionDefaults.model_selection ?? null}
 									formSelection={currentFormActionConfig.model_selection ?? null}
 									mappingSelection={(draftSettings.model_selection as ModelSelection | undefined) ??
@@ -5892,6 +5923,8 @@
 										templateModelHint="openrouter/auto"
 										{providerCredentials}
 										allowedProviders={['openrouter']}
+										requiredCapabilities={['structured']}
+										lockRequiredCapabilities={true}
 										onchange={handleLocalBuilderModelSelectionChange}
 									/>
 								</div>

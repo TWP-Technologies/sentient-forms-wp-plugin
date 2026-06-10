@@ -24,6 +24,7 @@
 		categoryRankingItems,
 		filterAndSortModels,
 		isModelFree as modelIsFree,
+		missingRequiredCapabilities,
 		modelCapabilityCount,
 		modelCostLabel,
 		modelBestRank,
@@ -242,6 +243,17 @@
 		{ value: 'long_context', label: 'Long context', short: 'L' },
 		{ value: 'code', label: 'Coding', short: '</>' }
 	];
+
+	function capabilityLabel(capability: ModelSelectorCapabilityKey): string {
+		return (
+			capabilityFilterOptions.find((option) => option.value === capability)?.label ??
+			capability
+		);
+	}
+
+	function capabilityListLabel(capabilities: ModelSelectorCapabilityKey[]): string {
+		return capabilities.map(capabilityLabel).join(', ');
+	}
 
 	function isRecord(value: unknown): value is Record<string, unknown> {
 		return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -1028,11 +1040,14 @@
 
 	const activeRankLimit = $derived(Number.parseInt(rankLimit, 10) || 0);
 	const activeContextLimit = $derived(Number.parseInt(contextLimit, 10) || 0);
+	const effectiveRequiredCapabilities = $derived([
+		...new Set([...(requiredCapabilitiesProp ?? []), ...requiredCapabilities])
+	]);
+	const selectedModelMissingRequiredCapabilities = $derived.by(() => {
+		return missingRequiredCapabilities(selectedPrimaryModelInfo(), effectiveRequiredCapabilities);
+	});
 
 	const filteredModels = $derived.by(() => {
-		const effectiveRequiredCapabilities = [
-			...new Set([...(requiredCapabilitiesProp ?? []), ...requiredCapabilities])
-		];
 		return filterAndSortModels(models, {
 			searchTerm,
 			costLimit,
@@ -1371,6 +1386,17 @@
 						onchange={() => handleSelectionChange()}
 					/>
 				</div>
+			{/if}
+
+			{#if !loading && selectedModelMissingRequiredCapabilities.length > 0}
+				<Alert
+					variant="warning"
+					class="sf:mt-4"
+					data-testid="model-required-capability-warning"
+				>
+					This action requires {capabilityListLabel(selectedModelMissingRequiredCapabilities)}.
+					Choose a compatible OpenRouter model before saving.
+				</Alert>
 			{/if}
 
 			<div class="sf:mt-4 sf:border-t sf:border-slate-200 sf:pt-4">

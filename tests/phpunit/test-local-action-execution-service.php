@@ -1075,6 +1075,84 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'reasoning', $payload );
     }
 
+    public function test_schema_backed_openrouter_action_sends_strict_json_schema_response_format(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'response_format'           => [ 'type' => 'json_object' ],
+                'structured_output_schema' => $this->structured_output_schema(),
+            ]
+        );
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'classification' => 'ham',
+                    'confidence'     => 0.96,
+                    'summary'        => 'Legitimate inquiry.',
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $payload = $client->chat_calls[0]['payload'];
+        $this->assertSame( 'json_schema', $payload['response_format']['type'] ?? null );
+        $this->assertSame( 'contact_spam_triage', $payload['response_format']['json_schema']['name'] ?? null );
+        $this->assertTrue( $payload['response_format']['json_schema']['strict'] ?? false );
+        $this->assertSame( $this->structured_output_schema(), $payload['response_format']['json_schema']['schema'] ?? null );
+        $this->assertTrue( $payload['provider']['require_parameters'] ?? false );
+    }
+
+    public function test_schema_backed_openrouter_action_rejects_unsupported_model_before_provider_call(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'structured_output_schema' => $this->structured_output_schema(),
+            ],
+            [
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'example/no-structured-output',
+                    'credential_id' => 0,
+                ],
+            ]
+        );
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [ 'hook' => 'gform_after_submission' ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_structured_output_model_unsupported', $result->get_error_code() );
+        $this->assertSame( 0, count( $client->chat_calls ) );
+    }
+
     public function test_runtime_preset_model_selection_resolves_from_local_model_cache(): void
     {
         $this->seed_openrouter_model_cache();
@@ -2277,6 +2355,21 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             ],
             $definition_overrides
         );
+        $schema_required = is_array( $definition['structured_output_schema'] ?? null )
+            || is_array( $definition['output_schema'] ?? null );
+        if ( ! $schema_required && isset( $custom_action_overrides['template_id'] ) )
+        {
+            global $wpdb;
+            $template_schema = $wpdb->get_var(
+                $wpdb->prepare(
+                    'SELECT structured_output_schema FROM %i WHERE id = %d',
+                    $wpdb->prefix . 'sentient_action_templates',
+                    (int) $custom_action_overrides['template_id']
+                )
+            );
+            $schema_required = is_string( $template_schema )
+                && is_array( json_decode( $template_schema, true ) );
+        }
 
         $action_data = array_merge(
             [
@@ -2285,7 +2378,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                 'definition_json'      => $definition,
                 'model_selection_json' => [
                     'provider'      => 'openrouter',
-                    'model'         => 'openrouter/auto',
+                    'model'         => $schema_required ? 'anthropic/claude-sonnet-4.6' : 'openrouter/auto',
                     'credential_id' => $credential_id,
                 ],
             ],

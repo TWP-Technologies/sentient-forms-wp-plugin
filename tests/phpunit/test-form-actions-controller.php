@@ -1363,7 +1363,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             $this->assertIsArray( $template, sprintf( '%s template should exist', $action_code ) );
             $this->assertSame( [ 'gform_after_submission' ], $template['hooks'] ?? null );
             $this->assertSame( [ 'after_submission' ], $template['definition_json']['supported_execution_modes'] ?? null );
-            $this->assertSame( [ 'type' => 'json_object' ], $template['definition_json']['response_format'] ?? null );
+            $this->assertArrayNotHasKey( 'response_format', $template['definition_json'] ?? [] );
             $this->assertSame( 'object', $template['structured_output_schema']['type'] ?? null );
 
             $data = $this->create_bundled_local_first_mapping(

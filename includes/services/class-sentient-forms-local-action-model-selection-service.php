@@ -1088,6 +1088,29 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         return ! empty( $model['capabilities']['reasoning'] );
     }
 
+    public function model_supports_structured_output( string $model_id, string $provider ): bool
+    {
+        if ( 'openrouter' !== sanitize_key( $provider ) )
+        {
+            return false;
+        }
+
+        $model_id = trim( sanitize_text_field( $model_id ) );
+        if ( '' === $model_id || 'openrouter/auto' === $model_id || str_starts_with( $model_id, 'sf_' ) )
+        {
+            return false;
+        }
+
+        $model = $this->list_local_openrouter_models()[ $model_id ] ?? null;
+        if ( ! is_array( $model ) )
+        {
+            return false;
+        }
+
+        return ! empty( $model['capabilities']['structured'] )
+            || in_array( 'structured-output', $model['tags'] ?? [], true );
+    }
+
     private function infer_speed_tier( string $model_id, string $name ): string
     {
         return preg_match( '/flash|mini|lite|fast|turbo|gpt-oss/i', $model_id . ' ' . $name )

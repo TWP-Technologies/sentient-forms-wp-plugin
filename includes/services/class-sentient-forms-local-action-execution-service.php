@@ -159,6 +159,15 @@ class Sentient_Forms_Local_Action_Execution_Service
             );
         }
 
+        if ( 'openrouter' === $provider && is_array( $structured_output_contract ) )
+        {
+            $model_support = $this->assert_openrouter_structured_output_model_supported( $model, $structured_output_contract );
+            if ( is_wp_error( $model_support ) )
+            {
+                return $model_support;
+            }
+        }
+
         $consent = $this->assert_external_service_consent( $provider );
         if ( is_wp_error( $consent ) )
         {
@@ -189,7 +198,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $managed_context = null;
-        $payload         = $this->build_provider_payload( $model, $messages, $definition, $model_selection );
+        $payload         = $this->build_provider_payload( $model, $messages, $definition, $model_selection, $structured_output_contract, $action );
 
         if ( 'sentient_managed' === $provider )
         {
@@ -1401,7 +1410,14 @@ class Sentient_Forms_Local_Action_Execution_Service
         return (string) $template['prompt_template'];
     }
 
-    private function build_provider_payload( string $model, array $messages, array $definition, array $model_selection ): array
+    private function build_provider_payload(
+        string $model,
+        array $messages,
+        array $definition,
+        array $model_selection,
+        array | WP_Error | null $structured_output_contract = null,
+        array $action = []
+    ): array
     {
         $payload = [
             'model'    => $model,
@@ -1431,6 +1447,21 @@ class Sentient_Forms_Local_Action_Execution_Service
             $payload['response_format'] = $definition['response_format'];
         }
 
+        if ( is_array( $structured_output_contract ) )
+        {
+            $payload['response_format'] = [
+                'type'        => 'json_schema',
+                'json_schema' => [
+                    'name'   => $this->openrouter_json_schema_name( $action, $definition, $structured_output_contract ),
+                    'strict' => true,
+                    'schema' => $structured_output_contract['schema'],
+                ],
+            ];
+
+            $payload['provider'] = is_array( $payload['provider'] ?? null ) ? $payload['provider'] : [];
+            $payload['provider']['require_parameters'] = true;
+        }
+
         $reasoning = $this->normalize_reasoning_payload( $model_selection['reasoning'] ?? null );
         if ( null !== $reasoning )
         {
@@ -1450,6 +1481,67 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         return $payload;
+    }
+
+    /**
+     * @param array{schema: array<string, mixed>, source: string} $contract
+     */
+    private function assert_openrouter_structured_output_model_supported( string $model, array $contract ): true | WP_Error
+    {
+        $model = trim( sanitize_text_field( $model ) );
+        if (
+            '' === $model
+            || 'openrouter/auto' === $model
+            || str_starts_with( $model, 'sf_' )
+            || ! $this->model_selection_service->model_supports_structured_output( $model, 'openrouter' )
+        )
+        {
+            return new WP_Error(
+                'sentient_forms_structured_output_model_unsupported',
+                __( 'The selected OpenRouter model does not advertise structured output support required by this local action schema.', 'sentient-forms' ),
+                [
+                    'model'         => $model,
+                    'provider'      => 'openrouter',
+                    'schema_source' => $contract['source'],
+                    'status'        => 422,
+                ]
+            );
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<string, mixed>                         $action
+     * @param array<string, mixed>                         $definition
+     * @param array{schema: array<string, mixed>, source: string} $contract
+     */
+    private function openrouter_json_schema_name( array $action, array $definition, array $contract ): string
+    {
+        $candidates = [
+            $action['code'] ?? null,
+            $definition['template_code'] ?? null,
+            $definition['builder_template'] ?? null,
+            'sentient_forms_' . $contract['source'] . '_output',
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $name = sanitize_key( (string) $candidate );
+            $name = preg_replace( '/[^a-z0-9_-]/', '_', $name ) ?: '';
+            $name = trim( $name, '_-' );
+            if ( '' !== $name )
+            {
+                return substr( $name, 0, 64 );
+            }
+        }
+
+        return 'sentient_forms_output';
     }
 
     /**

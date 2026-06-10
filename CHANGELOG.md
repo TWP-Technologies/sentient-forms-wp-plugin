@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.8](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.7...v0.3.8) (2026-06-10)
+
+
+### Bug Fixes
+
+* **openrouter:** enforce strict schema-backed structured output for local actions
+
 ## [0.3.7](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.6...v0.3.7) (2026-06-10)
 
 

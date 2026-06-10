@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ModelInfo } from '$lib/api/types';
 import {
 	filterAndSortModels,
+	missingRequiredCapabilities,
 	modelCostLabel,
 	providerMonogram,
 	type ModelSelectorFilters
@@ -129,6 +130,47 @@ describe('model selector presentation utilities', () => {
 		});
 
 		expect(filtered.map((candidate) => candidate.id)).toEqual(['moonshotai/kimi-k2.6']);
+	});
+
+	it('filters schema-required actions to structured-output capable models', () => {
+		const filtered = filterAndSortModels(
+			[
+				...models,
+				model({
+					id: 'openrouter/auto',
+					display_name: 'OpenRouter Auto',
+					developer: 'OpenRouter',
+					provider_family: 'OpenRouter',
+					capabilities: {
+						reasoning: false,
+						code: false,
+						vision: false,
+						tools: false,
+						structured: false,
+						web_search: false,
+						long_context: false,
+						files: false
+					}
+				})
+			],
+			{
+				...baseFilters,
+				requiredCapabilities: ['structured']
+			}
+		);
+
+		expect(filtered.map((candidate) => candidate.id)).toEqual([
+			'anthropic/claude-sonnet-4.6',
+			'moonshotai/kimi-k2.6'
+		]);
+	});
+
+	it('reports incompatible saved selections that are missing required structured output', () => {
+		const missing = missingRequiredCapabilities(models[2], ['structured', 'tools']);
+
+		expect(missing).toEqual(['structured']);
+		expect(missingRequiredCapabilities(null, ['structured'])).toEqual(['structured']);
+		expect(missingRequiredCapabilities(models[0], ['structured'])).toEqual([]);
 	});
 
 	it('sorts by category rank with alphabetical fallback', () => {

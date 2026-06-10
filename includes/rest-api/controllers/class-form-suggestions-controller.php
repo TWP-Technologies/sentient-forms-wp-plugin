@@ -504,6 +504,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 
 		return match ( $error->get_error_code() ) {
 			'sentient_forms_structured_output_schema_invalid',
+			'sentient_forms_structured_output_model_unsupported',
 			'sentient_forms_structured_output_missing',
 			'sentient_forms_structured_output_validation_failed',
 			'sentient_forms_local_action_kind_unsupported',
@@ -537,6 +538,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 			$error->get_error_code(),
 			[
 				'sentient_forms_structured_output_schema_invalid',
+				'sentient_forms_structured_output_model_unsupported',
 				'sentient_forms_structured_output_missing',
 				'sentient_forms_structured_output_validation_failed',
 			],

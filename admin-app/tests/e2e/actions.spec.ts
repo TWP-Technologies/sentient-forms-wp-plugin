@@ -2277,11 +2277,11 @@ test.describe('Actions admin flows', () => {
 			}
 		});
 		expect(createdActionPayload?.definition_json).toMatchObject({
-			response_format: { type: 'json_object' },
 			structured_output_schema: {
 				required: ['classification', 'confidence', 'justification']
 			}
 		});
+		expect(createdActionPayload?.definition_json).not.toHaveProperty('response_format');
 		expect(createdMappingPayload).toMatchObject({
 			form_source: 'gravity_forms',
 			form_id: formId,

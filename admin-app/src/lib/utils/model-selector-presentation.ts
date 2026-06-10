@@ -136,6 +136,15 @@ export function modelHasCapability(
 	return Boolean(model.capabilities[capability]);
 }
 
+export function missingRequiredCapabilities(
+	model: ModelInfo | null,
+	requiredCapabilities: ModelSelectorCapabilityKey[]
+): ModelSelectorCapabilityKey[] {
+	if (requiredCapabilities.length === 0) return [];
+	if (!model) return requiredCapabilities;
+	return requiredCapabilities.filter((capability) => !modelHasCapability(model, capability));
+}
+
 export function modelCapabilityCount(model: ModelInfo): number {
 	return CAPABILITY_KEYS.filter((capability) => modelHasCapability(model, capability)).length;
 }
