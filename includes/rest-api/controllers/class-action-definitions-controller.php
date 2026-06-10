@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API Action Definitions Controller for the Sentient Forms plugin.
  * Provides metadata about registered actions.

@@ -10,6 +10,7 @@ name: PHP Quality
       - 'phpcs.xml'
       - 'phpcs-rulesets/**'
       - 'phpunit.xml'
+      - 'scripts/check-text-encoding.php'
       - '.github/workflows/php-quality.yml'
   pull_request:
     paths:
@@ -19,6 +20,7 @@ name: PHP Quality
       - 'phpcs.xml'
       - 'phpcs-rulesets/**'
       - 'phpunit.xml'
+      - 'scripts/check-text-encoding.php'
       - '.github/workflows/php-quality.yml'
 
 env:
@@ -61,7 +63,9 @@ jobs:
         run: composer install --no-interaction --prefer-dist
 
       - name: Run PHPCS
-        run: composer phpcs
+        run: |
+          composer encoding-check
+          composer phpcs
 
   phpunit:
     runs-on: ubuntu-latest

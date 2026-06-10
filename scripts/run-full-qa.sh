@@ -57,6 +57,7 @@ run_wp_php() {
   info "Running WordPress plugin PHP checks"
   pushd "$PLUGIN_ROOT" >/dev/null
   composer install --no-interaction --prefer-dist
+  composer encoding-check
   composer phpcs
   vendor/bin/phpunit
   popd >/dev/null

@@ -8,6 +8,11 @@ import {
 	classifySecurityRoadblock,
 	notifySecurityRoadblock
 } from '$lib/api/security-roadblock';
+import {
+	buildInvalidJsonResponsePayload,
+	hasContaminatedJsonPrefix,
+	readResponseText
+} from '$lib/api/invalid-json';
 import { notifications } from '$lib/stores/notifications';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -139,7 +144,25 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 	const isJson = contentType?.includes('application/json');
 	const hasNoBody =
 		response.status === 204 || response.status === 205 || response.headers.get('content-length') === '0';
-	const payload = hasNoBody ? null : isJson ? await response.json() : await response.text();
+	const bodyText = hasNoBody ? '' : await readResponseText(response);
+	let payload: unknown = null;
+	if (!hasNoBody) {
+		if (isJson) {
+			if (hasContaminatedJsonPrefix(bodyText)) {
+				const invalidJson = buildInvalidJsonResponsePayload(response, bodyText, fullUrl);
+				throw new ApiError(invalidJson.message, response.status, invalidJson);
+			}
+
+			try {
+				payload = bodyText.length ? JSON.parse(bodyText) : null;
+			} catch {
+				const invalidJson = buildInvalidJsonResponsePayload(response, bodyText, fullUrl);
+				throw new ApiError(invalidJson.message, response.status, invalidJson);
+			}
+		} else {
+			payload = bodyText;
+		}
+	}
 
 	if (!response.ok) {
         const securityRoadblock = classifySecurityRoadblock(response, payload);

@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Abstract Base REST Controller for the Sentient Forms plugin.
  * Provides common properties and helper methods for concrete REST API controllers.

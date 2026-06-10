@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API controller for local-first provider onboarding and credentials.
  */

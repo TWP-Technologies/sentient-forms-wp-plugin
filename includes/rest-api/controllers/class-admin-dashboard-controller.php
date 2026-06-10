@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API controller for optimized admin dashboard bootstrap data.
  *

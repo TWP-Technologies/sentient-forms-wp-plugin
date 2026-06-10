@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Sentient Forms Autoloader.
  * Dynamically loads class files using a pre-generated class map.

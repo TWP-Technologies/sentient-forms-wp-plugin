@@ -691,13 +691,14 @@ class Sentient_Forms_Local_Data_Governance
 
         foreach ( self::local_table_suffixes() as $suffix )
         {
-            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- This runs only during explicit uninstall cleanup for plugin-owned local-first tables after the admin has opted into data deletion.
+            // phpcs:disable WordPress.DB.DirectDatabaseQuery.SchemaChange -- This runs only during explicit uninstall cleanup for plugin-owned local-first tables after the admin has opted into data deletion.
             $wpdb->query(
                 $wpdb->prepare(
                     'DROP TABLE IF EXISTS %i',
                     $wpdb->prefix . $suffix
                 )
             );
+            // phpcs:enable WordPress.DB.DirectDatabaseQuery.SchemaChange
         }
 
         self::delete_plugin_options();

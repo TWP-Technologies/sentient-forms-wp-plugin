@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Validation Utilities Trait for the Sentient Forms plugin.
  * Provides reusable helper methods for validating data within REST API controllers or validator classes.

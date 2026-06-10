@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Main REST API Loader for the Sentient Forms plugin.
  * This class is responsible for discovering, instantiating, and registering

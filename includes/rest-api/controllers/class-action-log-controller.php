@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API Action Log Controller class for the Sentient Forms plugin.
  * Handles routes for viewing action execution history.

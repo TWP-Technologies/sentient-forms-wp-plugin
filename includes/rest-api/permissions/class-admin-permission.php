@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Admin Permission Class for the Sentient Forms plugin.
  * Contains specific permission checking logic for actions typically restricted

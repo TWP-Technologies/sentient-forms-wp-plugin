@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 class ActionDefinitionsControllerTest extends WP_UnitTestCase
 {
@@ -177,6 +177,55 @@ class ActionDefinitionsControllerTest extends WP_UnitTestCase
         $this->assertContains( 'entry_summary_v1', $ids );
         $this->assertNotContains( 'spam_analysis', $ids );
         $this->assertNotContains( 'entry_evaluation', $ids );
+    }
+
+    public function test_all_bundled_action_templates_are_available_through_rest_definitions(): void
+    {
+        $expected_codes = [
+            'spam_detection_v1',
+            'content_validation_v1',
+            'entry_summary_v1',
+            'sentiment_urgency_v1',
+            'missing_information_v1',
+            'pain_point_intent_v1',
+            'routing_recommendation_v1',
+            'toxicity_moderation_v1',
+            'lead_grading_v1',
+            'suggested_reply_v1',
+            'clarification_assistant_v1',
+        ];
+
+        $this->assertSame( $expected_codes, Sentient_Forms_Bundled_Action_Templates::codes() );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/definitions' );
+        $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $definitions = $response->get_data();
+        $ids         = array_column( $definitions, 'id' );
+
+        foreach ( $expected_codes as $code )
+        {
+            $this->assertContains( $code, $ids, "Missing bundled REST definition for {$code}." );
+            $definition = $this->find_definition_by_id( $definitions, $code );
+            $this->assertIsArray( $definition );
+            $this->assertSame( 'bundled', $definition['source'] ?? null );
+            $this->assertNotSame( '', (string) ( $definition['label'] ?? '' ) );
+            $this->assertNotSame( '', (string) ( $definition['promptTemplate'] ?? '' ) );
+            $this->assertArrayHasKey( 'structuredOutputSchema', $definition );
+            $template = Sentient_Forms_Bundled_Action_Templates::get( $code );
+            $this->assertIsArray( $template );
+            if ( is_array( $template['structured_output_schema'] ?? null ) )
+            {
+                $this->assertIsArray( $definition['structuredOutputSchema'] );
+            }
+            else
+            {
+                $this->assertNull( $definition['structuredOutputSchema'] );
+            }
+            $this->assertIsArray( $definition['hooks'] ?? null );
+        }
     }
 
     public function test_definitions_fall_back_to_local_registry_when_cps_unavailable(): void

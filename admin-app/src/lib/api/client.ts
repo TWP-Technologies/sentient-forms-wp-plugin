@@ -10,6 +10,11 @@ import {
 	isSecurityRoadblockPayload,
 	notifySecurityRoadblock
 } from '$lib/api/security-roadblock';
+import {
+	buildInvalidJsonResponsePayload,
+	hasContaminatedJsonPrefix,
+	readResponseText
+} from '$lib/api/invalid-json';
 import { notifications } from '$lib/stores/notifications';
 import type {
 	ActionDefinition,
@@ -2119,7 +2124,7 @@ export class SentientFormsApiClient {
 				...rest
 			});
 
-			parsed = await this.parseResponseBody(response);
+			parsed = await this.parseResponseBody(response, url.toString());
 
 			if (!response.ok) {
 				const securityRoadblock = classifySecurityRoadblock(response, parsed);
@@ -2211,17 +2216,32 @@ export class SentientFormsApiClient {
 		return `${context}|${canonical.toString()}`;
 	}
 
-	private async parseResponseBody(response: Response): Promise<unknown> {
+	private async parseResponseBody(response: Response, requestUrl: string): Promise<unknown> {
 		if (response.status === 204) {
 			return undefined;
 		}
 
 		const contentType = response.headers.get('content-type') ?? '';
 		if (contentType.includes('application/json')) {
-			return response.json();
+			const text = await readResponseText(response);
+			if (text.length === 0) {
+				return undefined;
+			}
+
+			if (hasContaminatedJsonPrefix(text)) {
+				const payload = buildInvalidJsonResponsePayload(response, text, requestUrl);
+				throw new ApiClientError(payload.message, response.status, payload);
+			}
+
+			try {
+				return JSON.parse(text);
+			} catch {
+				const payload = buildInvalidJsonResponsePayload(response, text, requestUrl);
+				throw new ApiClientError(payload.message, response.status, payload);
+			}
 		}
 
-		const text = await response.text();
+		const text = await readResponseText(response);
 		try {
 			return text.length ? JSON.parse(text) : undefined;
 		} catch {

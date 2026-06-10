@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST controller proxying CPS custom-action CRUD endpoints.
  *

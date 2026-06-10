@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API Mappings Controller for the Sentient Forms plugin.
      * Exposes legacy mapping routes without calling CPS by default.

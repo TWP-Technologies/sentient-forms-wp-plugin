@@ -108,6 +108,7 @@ jobs:
           version="$(php -r '$m = json_decode(file_get_contents("release-head/.release-please-manifest.json"), true); if (!is_array($m) || empty($m["."])) { fwrite(STDERR, "Missing release-please manifest version\n"); exit(1); } echo $m["."];')"
           SENTIENT_FORMS_PLUGIN_ROOT="${release_root}" php "${trusted_root}/scripts/bump-release-version.php" patch "${version}"
           (cd "${release_root}/admin-app" && bun run build:wp)
+          php "${trusted_root}/scripts/check-text-encoding.php" --source-tree "${release_root}"
           SENTIENT_FORMS_PLUGIN_ROOT="${release_root}" php "${trusted_root}/scripts/validate-release-version.php"
           php "${trusted_root}/scripts/verify-wporg-source.php" "${release_root}"
           php "${trusted_root}/scripts/scan-wporg-package.php" --source-tree "${release_root}"

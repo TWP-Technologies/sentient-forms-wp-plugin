@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API Form Action Config Controller for the Sentient Forms plugin.
  * Handles routes for form-level action configuration (hierarchical spam examples).

@@ -296,9 +296,12 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await waitForPreviewInputs(page, hiddenFormId);
 
 		const widget = page.locator('.sentient-forms-realtime-widget');
+		await expect(widget).toBeAttached();
 		await expect(widget).toBeHidden();
 
-		await page.fill('input[name="input_1"]', 'Need more guidance');
+		const issueSummary = page.locator('input[name="input_1"]');
+		await issueSummary.click();
+		await issueSummary.pressSequentially('Need more guidance');
 		await expect(widget).toBeVisible();
 		await expect(widget.locator('[data-role="toggle"]')).toHaveText('Show');
 	});

@@ -16,6 +16,7 @@ name: WordPress.org Package Preflight
       - 'composer.lock'
       - 'scripts/build-wporg-package.php'
       - 'scripts/bump-release-version.php'
+      - 'scripts/check-text-encoding.php'
       - 'scripts/scan-wporg-package.php'
       - 'scripts/audit-wporg-licenses.php'
       - 'scripts/validate-release-version.php'
@@ -40,6 +41,7 @@ name: WordPress.org Package Preflight
       - 'composer.lock'
       - 'scripts/build-wporg-package.php'
       - 'scripts/bump-release-version.php'
+      - 'scripts/check-text-encoding.php'
       - 'scripts/scan-wporg-package.php'
       - 'scripts/audit-wporg-licenses.php'
       - 'scripts/validate-release-version.php'
@@ -133,6 +135,7 @@ jobs:
 
       - name: Run source-tree WordPress.org preflight
         run: |
+          php scripts/check-text-encoding.php --source-tree
           php scripts/validate-release-version.php
           php scripts/verify-wporg-source.php
           php scripts/scan-wporg-package.php --source-tree
@@ -151,6 +154,7 @@ jobs:
       - name: Run package WordPress.org preflight
         run: |
           package_dir="${{ steps.package.outputs.package-dir }}"
+          php scripts/check-text-encoding.php "$package_dir"
           php scripts/scan-wporg-package.php "$package_dir"
           php scripts/audit-wporg-licenses.php --package "$package_dir"
           php scripts/validate-wporg-readme.php --offline "$package_dir"

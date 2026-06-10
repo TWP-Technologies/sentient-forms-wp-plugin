@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Settings Validator Class for the Sentient Forms plugin.
  * Contains specific validation logic for REST API parameters related to plugin settings.

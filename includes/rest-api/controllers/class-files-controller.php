@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API controller for signed attachment pull URLs.
  *

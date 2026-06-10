@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API Forms Controller class for the Sentient Forms plugin.
  * Handles routes for listing forms and managing basic form settings.

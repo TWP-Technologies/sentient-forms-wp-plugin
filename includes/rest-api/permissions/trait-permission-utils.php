@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Permission Utilities Trait for the Sentient Forms plugin.
  * Provides reusable helper methods for checking user permissions within

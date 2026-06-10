@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.6](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.5...v0.3.6) (2026-06-09)
+
+
+### Bug Fixes
+
+* **release:** block BOM-contaminated packages and diagnose invalid JSON responses
+
 ## [0.3.3](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.2...v0.3.3) (2026-06-04)
 
 

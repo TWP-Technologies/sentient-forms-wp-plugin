@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API Credit Controller class for the Sentient Forms plugin.
  * Handles compatibility for the retired Sentient credit balance route.

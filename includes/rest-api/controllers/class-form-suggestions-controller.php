@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API controller for real-time form suggestions.
  *

@@ -4,7 +4,7 @@ Tags: forms, ai, gravity-forms, openrouter, automation
 Requires at least: 6.8
 Tested up to: 7.0
 Requires PHP: 8.2
-Stable tag: 0.3.5
+Stable tag: 0.3.6
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -113,9 +113,13 @@ Gravity Forms is required for the current form-action workflows. Other form buil
 
 = Where is the source for the compressed admin JavaScript? =
 
-The JavaScript and CSS files in `assets/dist` are generated from the SvelteKit admin app source under `admin-app` in the public release source: https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.3.5. From that source tag, build the generated assets with `cd admin-app`, `bun install --frozen-lockfile`, and `bun run build:wp`.
+The JavaScript and CSS files in `assets/dist` are generated from the SvelteKit admin app source under `admin-app` in the public release source: https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.3.6. From that source tag, build the generated assets with `cd admin-app`, `bun install --frozen-lockfile`, and `bun run build:wp`.
 
 == Changelog ==
+
+= 0.3.6 =
+
+* Remove UTF-8 BOMs that could contaminate WordPress JSON responses, add source/package encoding gates, and improve admin diagnostics for invalid JSON responses.
 
 = 0.3.5 =
 

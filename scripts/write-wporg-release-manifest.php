@@ -42,6 +42,7 @@ $manifest = [
     'git_untracked'    => git_has_output( 'ls-files --others --exclude-standard' ),
     'checks'           => [
         'release_version' => 'passed',
+        'text_encoding'   => 'passed',
         'source_scan'     => 'passed',
         'package_scan'    => 'passed',
         'license_audit'   => 'passed',

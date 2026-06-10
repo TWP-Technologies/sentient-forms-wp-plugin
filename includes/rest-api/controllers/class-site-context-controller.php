@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API Site Context Controller class for the Sentient Forms plugin.
  *

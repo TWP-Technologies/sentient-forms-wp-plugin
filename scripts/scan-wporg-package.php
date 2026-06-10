@@ -218,6 +218,11 @@ foreach ( $iterator as $item )
         continue;
     }
 
+    if ( has_utf8_bom( $path ) )
+    {
+        $issues[] = "UTF-8 BOM found in runtime text file: {$relative}";
+    }
+
     $contents = file_get_contents( $path );
     if ( false === $contents )
     {
@@ -806,4 +811,18 @@ function parse_plugin_version( string $plugin_file ): ?string
     }
 
     return trim( $matches[1] );
+}
+
+function has_utf8_bom( string $path ): bool
+{
+    $handle = fopen( $path, 'rb' );
+    if ( false === $handle )
+    {
+        return false;
+    }
+
+    $bytes = fread( $handle, 3 );
+    fclose( $handle );
+
+    return "\xEF\xBB\xBF" === $bytes;
 }

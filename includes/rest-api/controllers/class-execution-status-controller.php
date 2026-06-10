@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API Execution Status Controller class for the Sentient Forms plugin.
  * Handles routes related to retrieving execution status from CPS.

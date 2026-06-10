@@ -12,6 +12,8 @@
     "scripts": {
         "phpcs": "vendor/bin/phpcs --standard=phpcs-rulesets/SentientForms.xml",
         "phpcbf": "vendor/bin/phpcbf --standard=phpcs-rulesets/SentientForms.xml",
+        "encoding-check": "php scripts/check-text-encoding.php --source-tree",
+        "encoding-check-package": "php scripts/check-text-encoding.php",
         "wporg-build-package": "php scripts/build-wporg-package.php",
         "wporg-license-audit": "php scripts/audit-wporg-licenses.php",
         "wporg-license-audit-package": "php scripts/audit-wporg-licenses.php --package",

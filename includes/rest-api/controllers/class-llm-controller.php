@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API LLM Models Controller class for the Sentient Forms plugin.
  * Handles routes for retrieving information about available LLM models.

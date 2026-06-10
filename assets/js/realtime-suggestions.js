@@ -12,7 +12,8 @@
 		window[RUNTIME_KEY] = {
 			forms: {},
 			pendingConfigs: {},
-			configErrors: {}
+			configErrors: {},
+			pendingInteractions: {}
 		};
 	}
 	if (!window[RUNTIME_KEY].pendingConfigs) {
@@ -20,6 +21,9 @@
 	}
 	if (!window[RUNTIME_KEY].configErrors) {
 		window[RUNTIME_KEY].configErrors = {};
+	}
+	if (!window[RUNTIME_KEY].pendingInteractions) {
+		window[RUNTIME_KEY].pendingInteractions = {};
 	}
 
 	function asArray(value) {
@@ -43,6 +47,55 @@
 	function formIdFromConfig(config) {
 		var formId = parseInt(config && config.form_id, 10);
 		return Number.isFinite(formId) && formId > 0 ? formId : 0;
+	}
+
+	function formIdFromEventTarget(target) {
+		if (!(target instanceof HTMLElement)) {
+			return '';
+		}
+
+		var form = target.closest('form[id^="gform_"]');
+		if (form && form.id) {
+			var formMatch = form.id.match(/^gform_(\d+)$/);
+			if (formMatch) {
+				return formMatch[1];
+			}
+		}
+
+		var fieldWrapper = target.closest('.gfield[id^="field_"]');
+		if (fieldWrapper && fieldWrapper.id) {
+			var fieldMatch = fieldWrapper.id.match(/^field_(\d+)_/);
+			if (fieldMatch) {
+				return fieldMatch[1];
+			}
+		}
+
+		return '';
+	}
+
+	function installInteractionTracker() {
+		if (window[RUNTIME_KEY].interactionTrackerInstalled) {
+			return;
+		}
+
+		window[RUNTIME_KEY].interactionTrackerInstalled = true;
+		['focusin', 'input', 'change', 'blur'].forEach(function (eventName) {
+			document.addEventListener(
+				eventName,
+				function (event) {
+					var formId = formIdFromEventTarget(event.target);
+					if (!formId) {
+						return;
+					}
+
+					window[RUNTIME_KEY].pendingInteractions[formId] = true;
+					if (window[RUNTIME_KEY].forms[formId]) {
+						markFormInteraction(window[RUNTIME_KEY].forms[formId]);
+					}
+				},
+				true
+			);
+		});
 	}
 
 	function hasFullRuntimeConfig(config) {
@@ -297,6 +350,7 @@
 
 	function createFormState(config, formElement) {
 		var initialPanelState = resolveInitialPanelState(config);
+		var formId = String(config && config.form_id);
 		return {
 			config: config,
 			formElement: formElement,
@@ -304,7 +358,7 @@
 			widget: null,
 			isOpen: initialPanelState === 'open',
 			initialPanelState: initialPanelState,
-			hasUserInteracted: false,
+			hasUserInteracted: window[RUNTIME_KEY].pendingInteractions[formId] === true,
 			lastGlobalError: null,
 			lastUpdatedAt: null,
 			lastObservedPage: 1,
@@ -1995,6 +2049,14 @@
 				true
 			);
 
+			formElement.addEventListener(
+				'focusin',
+				function () {
+					markFormInteraction(formState);
+				},
+				true
+			);
+
 		formElement.addEventListener(
 			'click',
 			function (event) {
@@ -2093,6 +2155,8 @@
 			loadAndInitializeForm(formsConfig[formIdKey]);
 		});
 	}
+
+	installInteractionTracker();
 
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', boot);

@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API controller for local-first action, mapping, and execution records.
  */

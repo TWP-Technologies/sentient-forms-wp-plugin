@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API controller for Lead Scoring setup, historical scoring, and dashboard data.
  */

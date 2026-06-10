@@ -253,17 +253,18 @@ class Sentient_Forms_Local_Cutover_Service
     private function table_counts( array $suffixes ): array
     {
         $counts = [];
+        $wpdb   = $this->wpdb;
         foreach ( $suffixes as $suffix )
         {
-            $table_name = $this->wpdb->prefix . $suffix;
+            $table_name = $wpdb->prefix . $suffix;
             if ( ! $this->table_exists( $table_name ) )
             {
                 $counts[ $suffix ] = null;
                 continue;
             }
 
-            $counts[ $suffix ] = (int) $this->wpdb->get_var(
-                $this->wpdb->prepare(
+            $counts[ $suffix ] = (int) $wpdb->get_var(
+                $wpdb->prepare(
                     'SELECT COUNT(*) FROM %i',
                     $table_name
                 )
@@ -484,17 +485,18 @@ class Sentient_Forms_Local_Cutover_Service
     private function delete_table_rows( array $suffixes ): array | WP_Error
     {
         $deleted = [];
+        $wpdb    = $this->wpdb;
         foreach ( $suffixes as $suffix )
         {
-            $table_name = $this->wpdb->prefix . $suffix;
+            $table_name = $wpdb->prefix . $suffix;
             if ( ! $this->table_exists( $table_name ) )
             {
                 $deleted[ $suffix ] = null;
                 continue;
             }
 
-            $result = $this->wpdb->query(
-                $this->wpdb->prepare(
+            $result = $wpdb->query(
+                $wpdb->prepare(
                     'DELETE FROM %i',
                     $table_name
                 )

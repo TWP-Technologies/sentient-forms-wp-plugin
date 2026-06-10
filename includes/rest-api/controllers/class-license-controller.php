@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API License Controller class for the Sentient Forms plugin.
  * Handles routes related to managing the plugin's license.

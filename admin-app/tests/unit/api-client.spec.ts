@@ -812,9 +812,9 @@ describe('SentientFormsApiClient', () => {
 			})
 			.mockResolvedValueOnce(overviewResponse('after'));
 
-		await expect(client.getFormsOverview('gravity_forms', { showNotifications: false })).resolves.toMatchObject(
-			{ generated_at: 'before' }
-		);
+		await expect(
+			client.getFormsOverview('gravity_forms', { showNotifications: false })
+		).resolves.toMatchObject({ generated_at: 'before' });
 		await expect(
 			client.request('local/custom-actions', {
 				method: 'POST',
@@ -822,9 +822,9 @@ describe('SentientFormsApiClient', () => {
 				showNotifications: false
 			})
 		).resolves.toEqual({ success: true, data: { id: 'custom-action-1' } });
-		await expect(client.getFormsOverview('gravity_forms', { showNotifications: false })).resolves.toMatchObject(
-			{ generated_at: 'after' }
-		);
+		await expect(
+			client.getFormsOverview('gravity_forms', { showNotifications: false })
+		).resolves.toMatchObject({ generated_at: 'after' });
 
 		expect(mockFetch).toHaveBeenCalledTimes(3);
 	});
@@ -937,10 +937,7 @@ describe('SentientFormsApiClient', () => {
 		const actionIds = Array.from({ length: 105 }, (_, index) => {
 			return `custom_action_${String(index).padStart(3, '0')}`;
 		});
-		const result = await client.getActionDefaultsBatch([
-			...actionIds,
-			` ${actionIds[0]} `
-		]);
+		const result = await client.getActionDefaultsBatch([...actionIds, ` ${actionIds[0]} `]);
 
 		expect(mockFetch).toHaveBeenCalledTimes(2);
 		expect(requestedBatches.map((batch) => batch.length)).toEqual([100, 5]);
@@ -1646,7 +1643,8 @@ describe('SentientFormsApiClient', () => {
 				server: 'cloudflare',
 				'cf-ray': 'rate-limit-ray'
 			}),
-			text: () => Promise.resolve('<html><h1>Error 1015</h1><p>You are being rate limited</p></html>')
+			text: () =>
+				Promise.resolve('<html><h1>Error 1015</h1><p>You are being rate limited</p></html>')
 		});
 
 		await expect(client.getSettings({ showNotifications: true })).rejects.toMatchObject({
@@ -1959,6 +1957,38 @@ describe('SentientFormsApiClient', () => {
 		).rejects.toMatchObject({ code: 'invalid_key' });
 
 		expect(notifySpy).toHaveBeenCalledWith('Invalid license');
+	});
+
+	it('accepts valid JSON literal responses', async () => {
+		mockFetch.mockResolvedValue(
+			new Response('null', {
+				status: 200,
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+
+		await expect(client.request('site-context', { showNotifications: false })).resolves.toBeNull();
+	});
+
+	it('surfaces contaminated JSON responses with diagnostic payload', async () => {
+		mockFetch.mockResolvedValue(
+			new Response('\uFEFF\uFEFF{"success":true,"data":{"saved":true}}', {
+				status: 200,
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+
+		await expect(client.getSettings({ showNotifications: false })).rejects.toMatchObject({
+			code: 'invalid_json_response',
+			status: 200,
+			payload: {
+				code: 'invalid_json_response',
+				error_code: 'invalid_json_response',
+				content_type: 'application/json',
+				body_prefix: expect.stringContaining('<BOM>'),
+				url: `${baseUrl}settings`
+			}
+		});
 	});
 
 	it('coerces unknown rejection into ApiClientError', async () => {

@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API Form Actions Controller class for the Sentient Forms plugin.
  * Handles routes related to managing action linkages for a specific form source and form ID.

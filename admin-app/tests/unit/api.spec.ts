@@ -39,11 +39,14 @@ describe('apiFetch', () => {
 		window.sentientFormsConfig = config;
 		const payload = { success: true };
 
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-			ok: true,
-			headers: new Headers({ 'content-type': 'application/json' }),
-			json: () => Promise.resolve(payload)
-		}));
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve(payload)
+			})
+		);
 
 		const result = await apiFetch('test');
 		expect(result).toEqual(payload);
@@ -68,17 +71,61 @@ describe('apiFetch', () => {
 		expect(json).not.toHaveBeenCalled();
 	});
 
+	it('accepts valid JSON literal responses', async () => {
+		window.sentientFormsConfig = config;
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response('null', {
+					status: 200,
+					headers: { 'content-type': 'application/json' }
+				})
+			)
+		);
+
+		await expect(apiFetch('site-context')).resolves.toBeNull();
+	});
+
 	it('throws ApiError on failure', async () => {
 		window.sentientFormsConfig = config;
 
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-			ok: false,
-			status: 400,
-			headers: new Headers({ 'content-type': 'application/json' }),
-			json: () => Promise.resolve({ message: 'Bad Request' })
-		}));
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: false,
+				status: 400,
+				headers: new Headers({ 'content-type': 'application/json' }),
+				json: () => Promise.resolve({ message: 'Bad Request' })
+			})
+		);
 
 		await expect(apiFetch('bad')).rejects.toBeInstanceOf(ApiError);
+	});
+
+	it('throws a diagnostic ApiError for contaminated JSON responses', async () => {
+		window.sentientFormsConfig = config;
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				new Response('x{"success":true}', {
+					status: 200,
+					headers: { 'content-type': 'application/json' }
+				})
+			)
+		);
+
+		await expect(apiFetch('test')).rejects.toMatchObject({
+			code: 'invalid_json_response',
+			status: 200,
+			payload: {
+				code: 'invalid_json_response',
+				error_code: 'invalid_json_response',
+				body_prefix: expect.stringContaining('x{"success"'),
+				url: `${config.apiBaseUrl}test`
+			}
+		});
 	});
 
 	it('announces expired WordPress sessions from the legacy wpFetch wrapper', async () => {
@@ -93,7 +140,8 @@ describe('apiFetch', () => {
 				ok: false,
 				status: 403,
 				headers: new Headers({ 'content-type': 'application/json' }),
-				json: () => Promise.resolve({ code: 'rest_cookie_invalid_nonce', message: 'Cookie check failed' })
+				json: () =>
+					Promise.resolve({ code: 'rest_cookie_invalid_nonce', message: 'Cookie check failed' })
 			})
 		);
 

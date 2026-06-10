@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * REST API controller for async retry/backoff settings.
  *

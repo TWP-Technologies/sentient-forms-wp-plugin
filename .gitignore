@@ -6,7 +6,12 @@ tests/wordpress-tests-lib
 tests/wp-temp/
 tests/wp.tar.gz
 .phpunit.result.cache
-assets/dist/
+assets/dist/*
 !assets/dist/.gitkeep
+!assets/dist/SOURCE.md
+!assets/dist/runtime.json
+!assets/dist/manifest.json
+!assets/dist/_app/
+!assets/dist/_app/**
 in-memoria*.db
 agent-logs/
