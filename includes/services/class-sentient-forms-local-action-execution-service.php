@@ -305,7 +305,8 @@ class Sentient_Forms_Local_Action_Execution_Service
             ? $this->normalize_managed_response( $response )
             : $this->normalize_openrouter_response( $response );
         $result = $this->stamp_lead_profile_structured_metadata( $result, $context, $action_code );
-        $result = $this->validate_structured_output( $result, $structured_output_contract );
+        $normalized_result = $result;
+        $result            = $this->validate_structured_output( $result, $structured_output_contract );
         if ( is_wp_error( $result ) )
         {
             $this->events->record(
@@ -326,6 +327,16 @@ class Sentient_Forms_Local_Action_Execution_Service
                         : $this->extract_openrouter_usage_cost( is_array( $response['usage'] ?? null ) ? $response['usage'] : [] ),
                     'error_code'           => $result->get_error_code(),
                     'error_message'        => $result->get_error_message(),
+                    'result_json'          => $this->structured_output_failure_result_json(
+                        $result,
+                        $provider,
+                        $model,
+                        $action_code,
+                        $structured_output_contract,
+                        $payload,
+                        $context,
+                        $normalized_result
+                    ),
                     'payload_digest'       => $payload_digest,
                 ]
             );
@@ -1509,6 +1520,117 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         return true;
+    }
+
+    /**
+     * @param array<string, mixed>|WP_Error|null $contract
+     * @param array<string, mixed>               $payload
+     * @param array<string, mixed>               $context
+     * @param array<string, mixed>               $normalized_result
+     *
+     * @return array<string, mixed>
+     */
+    private function structured_output_failure_result_json(
+        WP_Error $error,
+        string $provider,
+        string $model,
+        string $action_code,
+        array | WP_Error | null $contract,
+        array $payload,
+        array $context,
+        array $normalized_result
+    ): array
+    {
+        return [
+            'diagnostics' => [
+                'structured_output_failure' => $this->structured_output_failure_diagnostics(
+                    $error,
+                    $provider,
+                    $model,
+                    $action_code,
+                    $contract,
+                    $payload,
+                    $context,
+                    $normalized_result
+                ),
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed>|WP_Error|null $contract
+     * @param array<string, mixed>               $payload
+     * @param array<string, mixed>               $context
+     * @param array<string, mixed>               $normalized_result
+     *
+     * @return array<string, mixed>
+     */
+    private function structured_output_failure_diagnostics(
+        WP_Error $error,
+        string $provider,
+        string $model,
+        string $action_code,
+        array | WP_Error | null $contract,
+        array $payload,
+        array $context,
+        array $normalized_result
+    ): array
+    {
+        $suggestion_context = is_array( $context['suggestion_context'] ?? null ) ? $context['suggestion_context'] : [];
+        $known_values       = is_array( $suggestion_context['all_known_field_values'] ?? null ) ? $suggestion_context['all_known_field_values'] : [];
+        $visible_field_ids  = is_array( $suggestion_context['visible_field_ids'] ?? null ) ? $suggestion_context['visible_field_ids'] : [];
+        $response_format    = is_array( $payload['response_format'] ?? null ) ? $payload['response_format'] : [];
+        $json_schema        = is_array( $response_format['json_schema'] ?? null ) ? $response_format['json_schema'] : [];
+        $provider_payload   = is_array( $payload['provider'] ?? null ) ? $payload['provider'] : [];
+        $content            = is_scalar( $normalized_result['content'] ?? null ) ? (string) $normalized_result['content'] : '';
+
+        return [
+            'error_code'                   => $error->get_error_code(),
+            'provider'                     => sanitize_key( $provider ),
+            'model'                        => sanitize_text_field( $model ),
+            'action_code'                  => sanitize_key( $action_code ),
+            'schema_source'                => is_array( $contract ) && is_scalar( $contract['source'] ?? null )
+                ? sanitize_key( (string) $contract['source'] )
+                : null,
+            'response_format_type'         => is_scalar( $response_format['type'] ?? null )
+                ? sanitize_key( (string) $response_format['type'] )
+                : null,
+            'response_format_schema_name'  => is_scalar( $json_schema['name'] ?? null )
+                ? sanitize_key( (string) $json_schema['name'] )
+                : null,
+            'provider_require_parameters'  => rest_sanitize_boolean( $provider_payload['require_parameters'] ?? false ),
+            'known_field_value_count'      => count( $known_values ),
+            'visible_field_count'          => count( $visible_field_ids ),
+            'current_page_index'           => absint( $suggestion_context['current_page_index'] ?? 0 ),
+            'total_pages'                  => absint( $suggestion_context['total_pages'] ?? 0 ),
+            'request_reason'               => is_scalar( $context['request_reason'] ?? null )
+                ? sanitize_key( (string) $context['request_reason'] )
+                : null,
+            'provider_response_id'         => is_scalar( $normalized_result['provider_response_id'] ?? null )
+                ? sanitize_text_field( (string) $normalized_result['provider_response_id'] )
+                : null,
+            'provider_response_model'      => is_scalar( $normalized_result['model'] ?? null )
+                ? sanitize_text_field( (string) $normalized_result['model'] )
+                : null,
+            'finish_reason'                => is_scalar( $normalized_result['finish_reason'] ?? null )
+                ? sanitize_key( (string) $normalized_result['finish_reason'] )
+                : null,
+            'content_length'               => strlen( $content ),
+            'content_sha256'               => '' === $content ? null : hash( 'sha256', $content ),
+            'content_starts_with_json'     => $this->content_starts_with_json( $content ),
+            'structured_output_detected'   => is_array( $normalized_result['structured'] ?? null ),
+        ];
+    }
+
+    private function content_starts_with_json( string $content ): bool
+    {
+        $content = ltrim( $content );
+        if ( '' === $content )
+        {
+            return false;
+        }
+
+        return str_starts_with( $content, '{' ) || str_starts_with( $content, '[' );
     }
 
     /**

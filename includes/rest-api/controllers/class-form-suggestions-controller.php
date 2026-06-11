@@ -1065,7 +1065,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 	 *
 	 * @return array<string,string>
 	 */
-	private function filter_known_values_for_realtime_policy( array $known_values, array $visible_field_ids, array $form, array $realtime_settings, string $hidden_field_exposure_mode ): array {
+	private function filter_known_values_for_realtime_policy( array $known_values, array $visible_field_ids, array $form, array $realtime_settings, string $hidden_field_exposure_mode, int $current_page_index ): array {
 		$include_hidden_values = in_array( $hidden_field_exposure_mode, [ 'label_hidden_value', 'label_value' ], true );
 		$filtered = [];
 
@@ -1075,7 +1075,12 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 				continue;
 			}
 
-			if ( $this->is_visible_value_field( $field_id, $visible_field_ids ) || $include_hidden_values ) {
+			$field_meta = $this->form_field_meta_for_value_id( $form, $field_id );
+			$field_page_index = max( 1, (int) ( $field_meta['page_index'] ?? 1 ) );
+			$is_prior_public_value = $field_page_index < $current_page_index
+				&& $this->is_client_visible_form_value_field( $field_id, $form, $realtime_settings );
+
+			if ( $this->is_visible_value_field( $field_id, $visible_field_ids ) || $is_prior_public_value || $include_hidden_values ) {
 				$filtered[ $field_id ] = sanitize_text_field( (string) $value );
 			}
 		}
@@ -1089,7 +1094,7 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function build_supplemental_field_context( mixed $raw_context, array $known_values, array $visible_field_ids, array $form, array $realtime_settings, string $hidden_field_exposure_mode ): array {
+	private function build_supplemental_field_context( mixed $raw_context, array $known_values, array $visible_field_ids, array $form, array $realtime_settings, string $hidden_field_exposure_mode, int $current_page_index ): array {
 		if ( 'omit_hidden' === $hidden_field_exposure_mode ) {
 			return [];
 		}
@@ -1128,6 +1133,14 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 			}
 
 			$field_meta = $this->form_field_meta_for_value_id( $form, $field_id );
+			$field_page_index = max( 1, (int) ( $field_meta['page_index'] ?? 1 ) );
+			if (
+				$field_page_index < $current_page_index
+				&& $this->is_client_visible_form_value_field( $field_id, $form, $realtime_settings )
+			) {
+				continue;
+			}
+
 			$entry = [
 				'field_id'   => $field_id,
 				'label'      => $field_meta['label'] ?? '',
@@ -1268,7 +1281,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 					$visible_field_ids,
 					$form,
 					$realtime_settings,
-					$hidden_field_exposure_mode
+					$hidden_field_exposure_mode,
+					$current_page_index
 				);
 				$supplemental_field_context = $this->build_supplemental_field_context(
 					$request['supplemental_field_context'] ?? [],
@@ -1276,7 +1290,8 @@ class Sentient_Forms_Form_Suggestions_Controller extends Sentient_Forms_Abstract
 					$visible_field_ids,
 					$form,
 					$realtime_settings,
-					$hidden_field_exposure_mode
+					$hidden_field_exposure_mode,
+					$current_page_index
 				);
 
 				return [

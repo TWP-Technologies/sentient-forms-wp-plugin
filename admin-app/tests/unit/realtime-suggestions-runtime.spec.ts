@@ -166,6 +166,7 @@ describe('realtime suggestions runtime', () => {
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.unstubAllGlobals();
+		window.sessionStorage.clear();
 		document.body.innerHTML = '';
 		delete (window as Record<string, unknown>).sentientFormsRealtimeSuggestions;
 		delete (window as Record<string, unknown>).__sentientRealtimeSuggestionsRuntime;
@@ -1144,6 +1145,123 @@ describe('realtime suggestions runtime', () => {
 		const payload = JSON.parse(String(requestInit.body));
 		expect(payload.current_page_index).toBe(2);
 		expect(payload.visible_field_ids).toEqual(['4']);
+	});
+
+	it('carries prior page values into page 2 suggestion requests after a non-ajax page reload', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({ suggestions: [] })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+					action_name_label: 'Realtime Action',
+					debounce_ms: 100,
+					cooldown_ms: 0,
+					auto_refresh_enabled: false,
+					field_checkpoints_enabled: true,
+					manual_refresh_enabled: true,
+					storage_target_field_id: '9',
+					blocking_mode: 'advisory',
+					checkpoint_field_ids: ['4']
+				}
+			],
+			field_manifest: [
+				{ field_id: '1', label: 'Name', type: 'text', page_index: 1 },
+				{ field_id: '4', label: 'Details', type: 'textarea', page_index: 2 },
+				{ field_id: '9', label: 'Sentient Forms Realtime Q&A', type: 'hidden', page_index: 1 }
+			]
+		});
+		await evaluateRuntimeScript();
+
+		const pageOneInput = document.querySelector<HTMLInputElement>('input[name="input_1"]');
+		expect(pageOneInput).not.toBeNull();
+		if (pageOneInput) {
+			pageOneInput.value = 'Need a quote for machined aluminum brackets';
+			pageOneInput.dispatchEvent(new Event('input', { bubbles: true }));
+			pageOneInput.dispatchEvent(new Event('change', { bubbles: true }));
+		}
+		await flushRuntime(20);
+
+		delete (window as Record<string, unknown>).__sentientRealtimeSuggestionsRuntime;
+		document.body.innerHTML = `
+			<form id="gform_42">
+				<input type="hidden" id="gform_source_page_number_42" value="2" />
+				<div id="gform_page_42_2" class="gform_page">
+					<div id="field_42_4" class="gfield">
+						<textarea name="input_4">Need 500 pieces in two weeks</textarea>
+					</div>
+				</div>
+				<div id="field_42_9" class="gfield" style="display:none">
+					<textarea id="input_42_9" name="input_9"></textarea>
+				</div>
+			</form>
+		`;
+		setupRuntimeConfig({
+			mappings: [
+				{
+					mapping_id: 'map_rt_1',
+					central_action_id: 'central_rt_1',
+					action_name_label: 'Realtime Action',
+					debounce_ms: 100,
+					cooldown_ms: 0,
+					auto_refresh_enabled: false,
+					field_checkpoints_enabled: true,
+					manual_refresh_enabled: true,
+					storage_target_field_id: '9',
+					blocking_mode: 'advisory',
+					checkpoint_field_ids: ['4']
+				}
+			],
+			field_manifest: [
+				{ field_id: '1', label: 'Name', type: 'text', page_index: 1 },
+				{ field_id: '4', label: 'Details', type: 'textarea', page_index: 2 },
+				{ field_id: '9', label: 'Sentient Forms Realtime Q&A', type: 'hidden', page_index: 1 }
+			]
+		});
+		await evaluateRuntimeScript();
+
+		triggerBlurOnField('4');
+		await flushRuntime();
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+		const payload = JSON.parse(String(requestInit.body));
+		expect(payload.current_page_index).toBe(2);
+		expect(payload.visible_field_ids).toEqual(['4']);
+		expect(payload.all_known_field_values).toMatchObject({
+			'1': 'Need a quote for machined aluminum brackets',
+			'4': 'Need 500 pieces in two weeks'
+		});
+		expect(payload.all_known_field_values).not.toHaveProperty('9');
+	});
+
+	it('keeps current visible field values when field manifest metadata is incomplete', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({ suggestions: [] })
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		setupRuntimeConfig({
+			field_manifest: []
+		});
+		await evaluateRuntimeScript();
+
+		triggerBlurOnField('1');
+		await flushRuntime();
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+		const payload = JSON.parse(String(requestInit.body));
+		expect(payload.visible_field_ids).toEqual(['1']);
+		expect(payload.all_known_field_values).toEqual({
+			'1': 'hello'
+		});
+		expect(payload.all_known_field_values).not.toHaveProperty('2');
+		expect(payload.all_known_field_values).not.toHaveProperty('9');
 	});
 
 	it('runs a page-change request on boot when form loads directly on page 2+', async () => {

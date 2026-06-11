@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.9](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.8...v0.3.9) (2026-06-11)
+
+
+### Bug Fixes
+
+* **realtime:** preserve paginated form context for clarification suggestions
+* **openrouter:** record safe structured-output diagnostics for schema-backed failures
+
 ## [0.3.8](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.7...v0.3.8) (2026-06-10)
 
 

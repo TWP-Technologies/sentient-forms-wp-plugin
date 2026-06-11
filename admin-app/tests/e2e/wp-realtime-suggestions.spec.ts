@@ -218,6 +218,11 @@ test.describe('Gravity Forms realtime suggestions @realtime-suggestions', () => 
 		await expect(page.locator('textarea[name="input_4"]')).toBeVisible();
 		await expect.poll(() => requests.length, { timeout: 4000 }).toBe(2);
 		expect(requests[1]?.current_page_index).toBe(2);
+		expect(requests[1]?.visible_field_ids).toEqual(['4']);
+		expect((requests[1]?.all_known_field_values as Record<string, unknown>)?.['1']).toBe(
+			'Need detailed help'
+		);
+		expect((requests[1]?.all_known_field_values as Record<string, unknown>)?.['9']).toBeUndefined();
 		await openRealtimeWidget(page);
 		await expect(widget).toContainText('Provide mitigation details on page 2.');
 

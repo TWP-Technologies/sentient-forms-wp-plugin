@@ -156,6 +156,9 @@
 			if (!runtimeConfig.runtime_config_endpoint_url) {
 				runtimeConfig.runtime_config_endpoint_url = endpointUrl;
 			}
+			if (runtimeConfigToken && !runtimeConfig.runtime_config_token) {
+				runtimeConfig.runtime_config_token = runtimeConfigToken;
+			}
 			window.sentientFormsRealtimeSuggestions.forms[formId] = runtimeConfig;
 			return runtimeConfig;
 		}).catch(function (error) {
@@ -362,12 +365,150 @@
 			lastGlobalError: null,
 			lastUpdatedAt: null,
 			lastObservedPage: 1,
+			valueCacheKey: valueCacheKeyForConfig(config),
 			pageProbeTimerId: null,
 			pageCheckpointBypass: false,
 			pageCheckpointPending: false,
 			preSubmitPending: false,
 			preSubmissionFilterRegistered: false
 		};
+	}
+
+	function safeSessionStorage() {
+		try {
+			if (window.sessionStorage) {
+				return window.sessionStorage;
+			}
+		} catch (error) {
+			return null;
+		}
+		return null;
+	}
+
+	function valueCacheKeyForConfig(config) {
+		var formId = normalizeFieldId(config && config.form_id);
+		var source = normalizeFieldId(config && config.source) || 'gravity_forms';
+		var token = normalizeFieldId(
+			config && (config.runtime_config_token || config.config_fingerprint || config.nonce)
+		);
+		var path = '';
+		try {
+			path = window.location ? window.location.pathname : '';
+		} catch (error) {
+			path = '';
+		}
+
+		return [
+			'sentient_forms_realtime_values_v1',
+			source,
+			formId,
+			hashString([path, token].join('|'))
+		].join(':');
+	}
+
+	function sanitizeCachedKnownValues(value) {
+		var values = {};
+		if (!value || typeof value !== 'object') {
+			return values;
+		}
+
+		Object.keys(value).forEach(function (fieldId) {
+			var normalizedFieldId = normalizeFieldId(fieldId);
+			var fieldValue = value[fieldId];
+			if (!normalizedFieldId) {
+				return;
+			}
+			if (Array.isArray(fieldValue)) {
+				var items = fieldValue.map(normalizeFieldId).filter(Boolean);
+				if (items.length) {
+					values[normalizedFieldId] = items;
+				}
+				return;
+			}
+			if (
+				typeof fieldValue === 'string' ||
+				typeof fieldValue === 'number' ||
+				typeof fieldValue === 'boolean'
+			) {
+				values[normalizedFieldId] = String(fieldValue);
+			}
+		});
+
+		return values;
+	}
+
+	function readKnownValueCache(formState) {
+		var storage = safeSessionStorage();
+		if (!storage || !formState.valueCacheKey) {
+			return {};
+		}
+
+		var parsed;
+		try {
+			parsed = JSON.parse(storage.getItem(formState.valueCacheKey) || '{}');
+		} catch (error) {
+			return {};
+		}
+
+		if (
+			!parsed ||
+			parsed.schema !== 'sentient_forms_realtime_values.v1' ||
+			normalizeFieldId(parsed.form_id) !== normalizeFieldId(formState.config.form_id)
+		) {
+			return {};
+		}
+
+		var updatedAt = parseInt(parsed.updated_at, 10) || 0;
+		if (updatedAt > 0 && Date.now() - updatedAt > 6 * 60 * 60 * 1000) {
+			try {
+				storage.removeItem(formState.valueCacheKey);
+			} catch (error) {
+				// Ignore storage cleanup failures; they should not block the form.
+			}
+			return {};
+		}
+
+		return sanitizeCachedKnownValues(parsed.values);
+	}
+
+	function writeKnownValueCache(formState, values) {
+		var storage = safeSessionStorage();
+		if (!storage || !formState.valueCacheKey) {
+			return;
+		}
+
+		var sanitizedValues = sanitizeCachedKnownValues(values);
+		try {
+			if (!Object.keys(sanitizedValues).length) {
+				storage.removeItem(formState.valueCacheKey);
+				return;
+			}
+
+			storage.setItem(
+				formState.valueCacheKey,
+				JSON.stringify({
+					schema: 'sentient_forms_realtime_values.v1',
+					form_id: normalizeFieldId(formState.config.form_id),
+					source: normalizeFieldId(formState.config.source) || 'gravity_forms',
+					updated_at: Date.now(),
+					values: sanitizedValues
+				})
+			);
+		} catch (error) {
+			// Full or disabled storage should never make a public form unusable.
+		}
+	}
+
+	function clearKnownValueCache(formState) {
+		var storage = safeSessionStorage();
+		if (!storage || !formState.valueCacheKey) {
+			return;
+		}
+		try {
+			storage.removeItem(formState.valueCacheKey);
+		} catch (error) {
+			// Ignore storage cleanup failures.
+		}
 	}
 
 	function ensureWidget(formState) {
@@ -613,6 +754,25 @@
 		return values;
 	}
 
+	function collectInputFieldIds(formElement) {
+		var fieldIds = [];
+		var fields = formElement.querySelectorAll('input[name^="input_"], select[name^="input_"], textarea[name^="input_"]');
+
+		fields.forEach(function (field) {
+			if (!(field instanceof HTMLElement)) {
+				return;
+			}
+
+			var name = field.getAttribute('name') || '';
+			var fieldId = normalizeFieldId(name.replace(/^input_/, '').replace(/_/g, '.'));
+			if (fieldId) {
+				fieldIds.push(fieldId);
+			}
+		});
+
+		return Array.from(new Set(fieldIds));
+	}
+
 	function normalizeHiddenFieldExposureMode(value) {
 		var normalized = normalizeFieldId(value || 'label_hidden').toLowerCase();
 		if (['omit_hidden', 'label_hidden', 'label_hidden_value', 'label_value'].indexOf(normalized) >= 0) {
@@ -652,6 +812,55 @@
 		return null;
 	}
 
+	function isPublicValueFieldMeta(fieldMeta) {
+		if (!fieldMeta || typeof fieldMeta !== 'object') {
+			return false;
+		}
+		var type = normalizeFieldId(fieldMeta.type).toLowerCase();
+		var visibility = normalizeFieldId(fieldMeta.visibility).toLowerCase();
+		return type !== 'hidden' && ['hidden', 'administrative'].indexOf(visibility) < 0;
+	}
+
+	function shouldCacheKnownValue(formState, fieldId) {
+		if (!fieldId) {
+			return false;
+		}
+		if (asArray(formState.config.mappings).some(function (mapping) {
+			return isRealtimeStorageField(mapping, fieldId);
+		})) {
+			return false;
+		}
+
+		return isPublicValueFieldMeta(fieldMetaForValueId(formState.config, fieldId));
+	}
+
+	function updateKnownValueCache(formState) {
+		var cachedValues = readKnownValueCache(formState);
+		var currentFieldIds = collectInputFieldIds(formState.formElement);
+		var currentValues = collectAllKnownValues(formState.formElement);
+
+		currentFieldIds.forEach(function (fieldId) {
+			delete cachedValues[fieldId];
+		});
+		Object.keys(currentValues).forEach(function (fieldId) {
+			if (shouldCacheKnownValue(formState, fieldId)) {
+				cachedValues[fieldId] = currentValues[fieldId];
+			}
+		});
+
+		writeKnownValueCache(formState, cachedValues);
+		return cachedValues;
+	}
+
+	function collectKnownValuesForRequest(formState) {
+		var cachedValues = updateKnownValueCache(formState);
+		var currentValues = collectAllKnownValues(formState.formElement);
+		return {
+			...cachedValues,
+			...currentValues
+		};
+	}
+
 	function isVisibleValueField(fieldId, visibleSet) {
 		var normalized = normalizeFieldId(fieldId);
 		return visibleSet.has(normalized) || visibleSet.has(rootFieldId(normalized));
@@ -666,17 +875,22 @@
 		return normalized === targetFieldId || rootFieldId(normalized) === targetFieldId;
 	}
 
-	function buildRealtimeFieldContext(config, mapping, allValues, visibleFieldIds) {
+	function buildRealtimeFieldContext(config, mapping, allValues, visibleFieldIds, currentPage) {
 		var mode = normalizeHiddenFieldExposureMode(mapping && mapping.hidden_field_exposure_mode);
 		var includeHiddenValues = hiddenFieldModeIncludesValue(mode);
 		var visibleSet = new Set(asArray(visibleFieldIds).map(normalizeFieldId).filter(Boolean));
 		var knownValues = {};
 		var supplementalFieldContext = [];
+		var pageIndex = Math.max(1, parseInt(currentPage, 10) || 1);
 
 		Object.keys(allValues).forEach(function (fieldId) {
 			var visible = isVisibleValueField(fieldId, visibleSet);
 			var storageField = isRealtimeStorageField(mapping, fieldId);
-			if (visible && !storageField) {
+			var fieldMeta = fieldMetaForValueId(config, fieldId);
+			var fieldPageIndex = fieldMeta && fieldMeta.page_index ? parseInt(fieldMeta.page_index, 10) || 1 : 1;
+			var publicValueField = fieldMeta ? isPublicValueFieldMeta(fieldMeta) : visible;
+			var priorPageKnown = !visible && fieldPageIndex < pageIndex && isPublicValueFieldMeta(fieldMeta);
+			if ((visible || priorPageKnown) && !storageField && publicValueField) {
 				knownValues[fieldId] = allValues[fieldId];
 				return;
 			}
@@ -685,7 +899,6 @@
 				return;
 			}
 
-			var fieldMeta = fieldMetaForValueId(config, fieldId);
 			var context = {
 				field_id: fieldId,
 				label: fieldMeta && fieldMeta.label ? String(fieldMeta.label) : '',
@@ -1173,9 +1386,9 @@
 		renderWidget(formState);
 
 		var currentPage = collectCurrentPage(formState.formElement, formState.config.form_id);
-		var allValues = collectAllKnownValues(formState.formElement);
+		var allValues = collectKnownValuesForRequest(formState);
 		var visibleFieldIds = collectVisibleFieldIds(formState.formElement, formState.config.form_id);
-		var fieldContext = buildRealtimeFieldContext(formState.config, mapping, allValues, visibleFieldIds);
+		var fieldContext = buildRealtimeFieldContext(formState.config, mapping, allValues, visibleFieldIds, currentPage);
 		var futureFieldManifest = collectFutureFieldManifest(formState.config, currentPage);
 		var totalPages = parseInt(formState.config.total_pages, 10) || 1;
 		var executionRequestId = 'rt-' + mappingId + '-' + now + '-' + Math.random().toString(16).slice(2, 10);
@@ -2017,6 +2230,7 @@
 				'blur',
 				function (event) {
 					markFormInteraction(formState);
+					updateKnownValueCache(formState);
 					runMappings(formState, {
 						reason: 'field_blur',
 					manual: false,
@@ -2030,6 +2244,7 @@
 				'change',
 				function (event) {
 					markFormInteraction(formState);
+					updateKnownValueCache(formState);
 					runMappings(formState, {
 					reason: 'field_change',
 					manual: false,
@@ -2042,6 +2257,7 @@
 				'input',
 				function () {
 					markFormInteraction(formState);
+					updateKnownValueCache(formState);
 				},
 				true
 			);
@@ -2065,6 +2281,7 @@
 						return;
 					}
 					markFormInteraction(formState);
+					updateKnownValueCache(formState);
 					if (formState.pageCheckpointBypass) {
 						formState.pageCheckpointBypass = false;
 						schedulePageChangeProbe(formState);
@@ -2102,6 +2319,7 @@
 		);
 
 		formElement.addEventListener('submit', function (event) {
+			updateKnownValueCache(formState);
 			if (!guardRequiredVirtualAnswers(formState)) {
 				event.preventDefault();
 				event.stopPropagation();
@@ -2114,7 +2332,14 @@
 					return;
 				}
 
+				updateKnownValueCache(formState);
 				schedulePageChangeProbe(formState);
+			});
+
+			window.jQuery(document).on('gform_confirmation_loaded.sentientFormsRealtime', function (_event, loadedFormId) {
+				if (parseInt(loadedFormId, 10) === formId) {
+					clearKnownValueCache(formState);
+				}
 			});
 		}
 	}

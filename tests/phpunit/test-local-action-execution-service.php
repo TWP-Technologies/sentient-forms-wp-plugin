@@ -2276,11 +2276,105 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 'sentient_forms_structured_output_validation_failed', $events[0]['error_code'] );
         $this->assertStringContainsString( 'summary', $events[0]['error_message'] );
         $this->assertSame( 9, $events[0]['token_usage_json']['prompt_tokens'] );
-        $this->assertNull( $events[0]['result_json'] );
+        $this->assertSame(
+            'sentient_forms_structured_output_validation_failed',
+            $events[0]['result_json']['diagnostics']['structured_output_failure']['error_code'] ?? null
+        );
+        $this->assertTrue( $events[0]['result_json']['diagnostics']['structured_output_failure']['content_starts_with_json'] ?? false );
+        $this->assertTrue( $events[0]['result_json']['diagnostics']['structured_output_failure']['structured_output_detected'] ?? false );
+        $this->assertArrayNotHasKey(
+            'content',
+            $events[0]['result_json']['diagnostics']['structured_output_failure'] ?? []
+        );
 
         $credential = $this->credentials->get( $fixture['credential_id'] );
         $this->assertIsArray( $credential );
         $this->assertSame( 'valid', $credential['status'] );
+    }
+
+    public function test_records_diagnostics_when_schema_backed_realtime_output_is_not_structured_json(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [ 'structured_output_schema' => $this->realtime_suggestion_schema() ]
+        );
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            [
+                'id'      => 'chatcmpl-rca-missing-json',
+                'model'   => 'anthropic/claude-sonnet-4.6',
+                'choices' => [
+                    [
+                        'message'       => [
+                            'role'    => 'assistant',
+                            'content' => 'Here are a few suggestions, but not JSON.',
+                        ],
+                        'finish_reason' => 'stop',
+                    ],
+                ],
+                'usage'   => [
+                    'prompt_tokens'     => 21,
+                    'completion_tokens' => 9,
+                    'total_tokens'      => 30,
+                ],
+            ]
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'ABI Quote Request' ],
+            [
+                'id' => 99,
+                '1'  => 'Need a quote for machined aluminum brackets.',
+                '2'  => 'ada@example.test',
+                '4'  => '500 pieces in two weeks.',
+            ],
+            [
+                'hook'               => 'real_time',
+                'request_reason'     => 'blur',
+                'suggestion_context' => [
+                    'current_page_index'     => 2,
+                    'total_pages'            => 2,
+                    'visible_field_ids'      => [ '4' ],
+                    'all_known_field_values' => [
+                        '1' => 'Need a quote for machined aluminum brackets.',
+                        '4' => '500 pieces in two weeks.',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_structured_output_missing', $result->get_error_code() );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $event = $this->events->list_recent()[0] ?? null;
+        $this->assertIsArray( $event );
+        $this->assertSame( 'failed', $event['status'] );
+        $this->assertSame( 'sentient_forms_structured_output_missing', $event['error_code'] );
+        $this->assertIsArray( $event['result_json'] );
+
+        $diagnostics = $event['result_json']['diagnostics']['structured_output_failure'] ?? null;
+        $this->assertIsArray( $diagnostics );
+        $this->assertSame( 'sentient_forms_structured_output_missing', $diagnostics['error_code'] );
+        $this->assertSame( 'openrouter', $diagnostics['provider'] );
+        $this->assertSame( 'anthropic/claude-sonnet-4.6', $diagnostics['model'] );
+        $this->assertSame( 'contact_spam_triage', $diagnostics['action_code'] );
+        $this->assertSame( 'custom_action', $diagnostics['schema_source'] );
+        $this->assertSame( 'json_schema', $diagnostics['response_format_type'] );
+        $this->assertSame( 'contact_spam_triage', $diagnostics['response_format_schema_name'] );
+        $this->assertTrue( $diagnostics['provider_require_parameters'] );
+        $this->assertSame( 2, $diagnostics['known_field_value_count'] );
+        $this->assertSame( 1, $diagnostics['visible_field_count'] );
+        $this->assertSame( 2, $diagnostics['current_page_index'] );
+        $this->assertSame( 2, $diagnostics['total_pages'] );
+        $this->assertSame( 'blur', $diagnostics['request_reason'] );
+        $this->assertSame( 'chatcmpl-rca-missing-json', $diagnostics['provider_response_id'] );
+        $this->assertSame( 'stop', $diagnostics['finish_reason'] );
+        $this->assertSame( 41, $diagnostics['content_length'] );
+        $this->assertArrayNotHasKey( 'content', $diagnostics );
+        $this->assertStringNotContainsString( 'machined aluminum', wp_json_encode( $diagnostics ) );
     }
 
     public function test_rejects_invalid_structured_output_schema_before_provider_call(): void
