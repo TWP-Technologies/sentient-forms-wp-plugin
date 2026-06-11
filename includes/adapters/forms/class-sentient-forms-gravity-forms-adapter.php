@@ -2839,6 +2839,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         }
         else
         {
+            // Gravity Forms defines these third-party hooks; prefixing them would break adapter compatibility.
             // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Gravity Forms display hook.
             $filtered = apply_filters( 'gform_pre_render', $form, false, [], 'form_display' );
             // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Gravity Forms form-specific display hook.

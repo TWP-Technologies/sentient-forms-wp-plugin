@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.11](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.10...v0.3.11) (2026-06-11)
+
+
+### Bug Fixes
+
+* **wporg:** make generated asset source instructions prominent
+
 ## [0.3.10](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.9...v0.3.10) (2026-06-11)
 
 
