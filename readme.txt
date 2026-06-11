@@ -4,21 +4,21 @@ Tags: forms, ai, gravity-forms, openrouter, automation
 Requires at least: 6.8
 Tested up to: 7.0
 Requires PHP: 8.2
-Stable tag: 0.3.9
+Stable tag: 0.3.10
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Run AI-powered form actions from WordPress with local settings, local logs, and optional managed execution.
+Run AI-powered form actions from WordPress with local settings and logs.
 
 == Description ==
 
 Sentient Forms adds AI-assisted actions to WordPress forms. Gravity Forms is required; other form builders are not supported in this release.
 
-Sentient Forms is an official TWP Technologies, LLC product. The plugin's product site is https://sentientforms.com, the author site is https://twp.tech, and public development happens at https://github.com/TWP-Technologies/sentient-forms-wp-plugin.
+Sentient Forms is a TWP Technologies, LLC product. Product site: https://sentientforms.com. Author site: https://twp.tech. Public development: https://github.com/TWP-Technologies/sentient-forms-wp-plugin.
 
-The plugin is moving to a local-first architecture. Site-owned configuration, action definitions, form mappings, execution logs, provider settings, and saved results are stored in your WordPress database.
+Site-owned configuration, action definitions, form mappings, execution logs, provider settings, and saved results are stored in your WordPress database.
 
-You can use the plugin without a paid Sentient Forms account by connecting your own OpenRouter API key and choosing models available to your OpenRouter account, including OpenRouter free models for supported form-action workflows when available. AI-generated Site Context is stricter because it researches public site pages before writing the context: it requires either Sentient Forms Managed Execution or a configured paid, web-capable OpenRouter model. You can always write Site Context manually without using a paid model.
+You can use the plugin without a paid Sentient Forms account by connecting your own OpenRouter API key and choosing models available to your OpenRouter account. AI-generated Site Context requires either Sentient Forms Managed Execution or a configured paid, web-capable OpenRouter model. You can always write Site Context manually.
 
 == External services ==
 
@@ -113,9 +113,13 @@ Gravity Forms is required for the current form-action workflows. Other form buil
 
 = Where is the source for the compressed admin JavaScript? =
 
-The JavaScript and CSS in `assets/dist` are generated from `admin-app` in the public source tag: https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.3.9. Build with `cd admin-app`, `bun install --frozen-lockfile`, and `bun run build:wp`.
+The JavaScript and CSS in `assets/dist` are generated from `admin-app` in the public source tag: https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.3.10. Build with `cd admin-app`, `bun install --frozen-lockfile`, and `bun run build:wp`.
 
 == Changelog ==
+
+= 0.3.10 =
+
+* Harden realtime structured-output requests so reasoning-capable OpenRouter models do not consume the completion budget before returning JSON.
 
 = 0.3.9 =
 

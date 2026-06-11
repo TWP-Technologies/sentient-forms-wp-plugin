@@ -10,6 +10,8 @@ if ( ! defined( 'ABSPATH' ) )
 
 class Sentient_Forms_Local_Action_Execution_Service
 {
+    private const REALTIME_STRUCTURED_OUTPUT_MIN_MAX_TOKENS = 1800;
+
     public function __construct(
         private ?Sentient_Forms_Form_Mappings_Repository $mappings = null,
         private ?Sentient_Forms_Local_Custom_Actions_Repository $custom_actions = null,
@@ -1430,6 +1432,10 @@ class Sentient_Forms_Local_Action_Execution_Service
         array $action = []
     ): array
     {
+        $is_realtime_structured_output = is_array( $structured_output_contract )
+            && is_array( $structured_output_contract['schema'] ?? null )
+            && $this->is_realtime_suggestion_schema( $structured_output_contract['schema'] );
+
         $payload = [
             'model'    => $model,
             'messages' => $messages,
@@ -1453,6 +1459,14 @@ class Sentient_Forms_Local_Action_Execution_Service
             }
         }
 
+        if ( $is_realtime_structured_output )
+        {
+            $payload['max_tokens'] = max(
+                (int) ( $payload['max_tokens'] ?? 0 ),
+                self::REALTIME_STRUCTURED_OUTPUT_MIN_MAX_TOKENS
+            );
+        }
+
         if ( isset( $definition['response_format'] ) && is_array( $definition['response_format'] ) )
         {
             $payload['response_format'] = $definition['response_format'];
@@ -1474,6 +1488,19 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $reasoning = $this->normalize_reasoning_payload( $model_selection['reasoning'] ?? null );
+        if (
+            null === $reasoning
+            && $is_realtime_structured_output
+            && $this->openrouter_model_supports_reasoning_controls( $model )
+        )
+        {
+            $reasoning = [
+                'effort'  => 'none',
+                // phpcs:ignore WordPressVIPMinimum.Performance.WPQueryParams.PostNotIn_exclude -- OpenRouter reasoning payload key, not a WP_Query parameter.
+                'exclude' => true,
+            ];
+        }
+
         if ( null !== $reasoning )
         {
             $payload['reasoning'] = $reasoning;
@@ -1599,6 +1626,12 @@ class Sentient_Forms_Local_Action_Execution_Service
                 ? sanitize_key( (string) $json_schema['name'] )
                 : null,
             'provider_require_parameters'  => rest_sanitize_boolean( $provider_payload['require_parameters'] ?? false ),
+            'max_tokens'                   => isset( $payload['max_tokens'] ) && is_numeric( $payload['max_tokens'] )
+                ? absint( $payload['max_tokens'] )
+                : null,
+            'reasoning_effort'             => is_array( $payload['reasoning'] ?? null ) && is_scalar( $payload['reasoning']['effort'] ?? null )
+                ? sanitize_key( (string) $payload['reasoning']['effort'] )
+                : null,
             'known_field_value_count'      => count( $known_values ),
             'visible_field_count'          => count( $visible_field_ids ),
             'current_page_index'           => absint( $suggestion_context['current_page_index'] ?? 0 ),
@@ -1664,6 +1697,28 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         return 'sentient_forms_output';
+    }
+
+    private function openrouter_model_supports_reasoning_controls( string $model ): bool
+    {
+        if ( ! class_exists( 'Sentient_Forms_OpenRouter_Model_Recommendations' ) )
+        {
+            return false;
+        }
+
+        $model    = trim( sanitize_text_field( $model ) );
+        $metadata = Sentient_Forms_OpenRouter_Model_Recommendations::all()[ $model ] ?? null;
+        if ( ! is_array( $metadata ) )
+        {
+            return false;
+        }
+
+        $supported_parameters = is_array( $metadata['supported_parameters'] ?? null )
+            ? $metadata['supported_parameters']
+            : [];
+
+        return in_array( 'reasoning', $supported_parameters, true )
+            || in_array( 'reasoning_effort', $supported_parameters, true );
     }
 
     /**

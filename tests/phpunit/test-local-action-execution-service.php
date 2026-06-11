@@ -1118,6 +1118,66 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertTrue( $payload['provider']['require_parameters'] ?? false );
     }
 
+    public function test_realtime_structured_openrouter_payload_disables_default_reasoning_and_uses_completion_headroom(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'max_tokens'               => 900,
+                'structured_output_schema' => $this->realtime_suggestion_schema(),
+            ],
+            [
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => '~google/gemini-flash-latest',
+                ],
+            ]
+        );
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'suggestions'           => [],
+                    'virtual_questions'     => [],
+                    'conditional_decisions' => [],
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'ABI Quote Request' ],
+            [
+                'id' => 99,
+                '1'  => 'Need a quote for machined aluminum brackets.',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'               => 'real_time',
+                'suggestion_context' => [
+                    'current_page_index'     => 2,
+                    'total_pages'            => 2,
+                    'visible_field_ids'      => [ '2' ],
+                    'all_known_field_values' => [
+                        '1' => 'Need a quote for machined aluminum brackets.',
+                        '2' => 'ada@example.test',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $payload = $client->chat_calls[0]['payload'];
+        $this->assertSame( '~google/gemini-flash-latest', $payload['model'] );
+        $this->assertSame( 'json_schema', $payload['response_format']['type'] ?? null );
+        $this->assertTrue( $payload['provider']['require_parameters'] ?? false );
+        $this->assertSame( 1800, $payload['max_tokens'] ?? null );
+        $this->assertSame( [ 'effort' => 'none', 'exclude' => true ], $payload['reasoning'] ?? null );
+    }
+
     public function test_schema_backed_openrouter_action_rejects_unsupported_model_before_provider_call(): void
     {
         $fixture = $this->create_local_openrouter_mapping(

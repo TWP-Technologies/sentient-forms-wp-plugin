@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.10](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.9...v0.3.10) (2026-06-11)
+
+
+### Bug Fixes
+
+* **realtime:** disable default OpenRouter reasoning for strict visitor-facing JSON
+
 ## [0.3.9](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.8...v0.3.9) (2026-06-11)
 
 
