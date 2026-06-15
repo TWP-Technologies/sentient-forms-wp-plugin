@@ -2,6 +2,19 @@
 
 Production releases are cut from the `production` branch. The GitHub release package is a review-ready WordPress.org ZIP, but WordPress.org SVN/upload remains a manual approval step.
 
+## WordPress.org SVN Publish
+
+After WordPress.org approval, publish through the manual-only GitHub Actions workflow `WordPress.org SVN Publish`.
+
+1. Run the workflow with `mode=dry-run` and the target tag, such as `v0.3.11`.
+2. Review the uploaded SVN evidence artifact, especially `svn-status.txt` and `svn-diff.patch`.
+3. Re-run the workflow with `mode=publish` and `confirm=sentient-forms/<version>`.
+4. Approve the protected `wporg-svn-production` environment only after the dry-run diff is correct.
+
+The workflow downloads the existing GitHub release ZIP, SHA256, and manifest. It does not rebuild the package during SVN publication. It commits plugin code only under `trunk/` and `tags/<version>/`.
+
+WordPress.org listing media is intentionally separate from code publication. Do not use this workflow to publish top-level SVN `assets/`. When listing media is added, use the Sentient Forms logomark only for the plugin icon/listing picture.
+
 ## Required Gates
 
 Run these against the exact source and package artifact:
