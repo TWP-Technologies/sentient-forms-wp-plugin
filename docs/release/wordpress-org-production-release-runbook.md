@@ -15,10 +15,26 @@ The workflow downloads the existing GitHub release ZIP, SHA256, and manifest. It
 
 WordPress.org listing media is intentionally separate from code publication. Do not use this workflow to publish top-level SVN `assets/`. When listing media is added, use the Sentient Forms logomark only for the plugin icon/listing picture.
 
+## Readme Byte Budget
+
+Before any package build, release PR merge, SVN dry run, or screenshot caption
+addition:
+
+- Measure `readme.txt` as UTF-8 bytes.
+- Keep the normal target at `9700` bytes or fewer.
+- Treat `10000` bytes as the hard WordPress.org warning threshold, not routine
+  working room.
+- Update `docs/release/readme-byte-budget-ledger.md` for every planned
+  addition/removal.
+- If listing media needs screenshot captions, complete
+  `docs/release/wordpress-org-asset-placement-checklist.md` before changing the
+  readme.
+
 ## Required Gates
 
 Run these against the exact source and package artifact:
 
+- UTF-8 byte count for `readme.txt`, checked against the byte-budget ledger
 - `php scripts/validate-release-version.php`
 - `php scripts/verify-wporg-source.php`
 - `php scripts/scan-wporg-package.php --source-tree`
@@ -28,6 +44,7 @@ Run these against the exact source and package artifact:
 - package equivalents for scan, license audit, readme validation, and source verification
 - Plugin Check in strict mode with `vendor` excluded
 - exact-package browser/user-path dogfood before any submit recommendation
+- WordPress.org asset-placement checklist before any banner or screenshot work
 
 ## Artifact Evidence
 

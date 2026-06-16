@@ -26,15 +26,15 @@ JavaScript and CSS in `assets/dist` are generated from `admin-app` in the public
 
 == External services ==
 
-This plugin can connect to external AI services, depending on which provider path you enable.
+This plugin sends data to external services only for provider paths and features an administrator enables.
 
 OpenRouter direct execution:
 
 * Service: OpenRouter
 * Endpoint: https://openrouter.ai/
-* When used: when an administrator connects OpenRouter and runs a direct provider validation, form action, or AI-generated Site Context generation/refresh through the direct provider path. AI-generated Site Context only runs through this path after the administrator has configured a paid, web-capable OpenRouter model.
-* Data sent: for form actions, the selected form fields, prompt/action instructions, model identifier, and request metadata needed to complete the AI request. For AI-generated Site Context, the site URL, public-site research prompt, selected model identifier, and request metadata are sent, and enabled web-capable models may use web search or fetch against public site pages.
-* Account required: an OpenRouter account and API key are required for direct execution. AI-generated Site Context requires access to a paid, non-free, web-capable model.
+* When used: after an administrator connects OpenRouter and runs direct provider validation, a form action, or AI-generated Site Context. Site Context needs a paid, web-capable OpenRouter model.
+* Data sent: selected form fields, prompt/action instructions, model identifier, and request metadata for form actions. Site Context sends the site URL, public-site research prompt, selected model, and request metadata; web-capable models may search or fetch public pages.
+* Account required: an OpenRouter account/API key. Site Context requires a paid, non-free, web-capable model.
 * Terms: https://openrouter.ai/terms
 * Privacy policy: https://openrouter.ai/privacy
 
@@ -42,9 +42,9 @@ Sentient Forms Managed Execution:
 
 * Service: Sentient Forms
 * Endpoint: https://api.sentientforms.com/
-* When used: only for optional Sentient Forms managed account, billing, metering, managed model execution, support diagnostics, or other administrator-enabled managed features.
-* Data sent: account/site identifiers, billing state, and, for managed AI execution only, the selected form fields and prompt/action instructions needed to complete the request. For managed AI-generated Site Context, the site URL, public-site research prompt, selected model identifier, and request metadata are sent, and enabled web-capable models may use web search or fetch against public site pages.
-* Account required: a Sentient Forms account may be required for managed paid features. The direct OpenRouter path does not require Sentient payment.
+* When used: optional managed account, billing, metering, managed model execution, support diagnostics, or administrator-enabled managed features.
+* Data sent: account/site identifiers, billing state, and, for managed AI execution, selected form fields and prompt/action instructions. Managed Site Context sends the site URL, public-site research prompt, selected model, and request metadata; web-capable models may search or fetch public pages.
+* Account required: a Sentient Forms account may be required for managed paid features. Direct OpenRouter does not require Sentient payment.
 * Terms: https://sentientforms.com/terms
 * Privacy policy: https://sentientforms.com/privacy
 
@@ -52,8 +52,8 @@ Optional Sentient Forms telemetry:
 
 * Service: Sentient Forms
 * Endpoint: https://api.sentientforms.com/v1/sites/telemetry and https://api.sentientforms.com/v1/telemetry/async
-* When used: only after an administrator opts into telemetry and this site has a connected Sentient Forms site identity.
-* Data sent: telemetry consent state and metadata-only operational events such as plugin/runtime versions, provider path, action code, execution request ID, adapter, job status, attempt counts, and sanitized error or warning codes.
+* When used: only after an administrator opts in and the site has a connected Sentient Forms site identity.
+* Data sent: telemetry consent state and metadata-only events: plugin/runtime versions, provider path, action code, execution request ID, adapter, job status, attempt counts, and sanitized error or warning codes.
 * Data not sent: form field contents, prompts, model outputs/results, raw error messages, visitor identifiers, saved provider secrets, billing secrets, or OpenRouter BYOK payloads.
 * Account required: a Sentient Forms site identity is required for telemetry sync and delivery.
 * Terms: https://sentientforms.com/terms
@@ -64,19 +64,19 @@ Administrator-configured webhooks:
 * Service: the webhook URL entered by the site administrator.
 * Endpoint: the administrator-provided webhook URL.
 * When used: only when an administrator explicitly enables a post-execution webhook for an action.
-* Data sent: the form entry identifier, local action context, action result, and configured webhook action metadata needed by the webhook receiver.
+* Data sent: form entry identifier, local action context, action result, and configured webhook metadata needed by the receiver.
 * Account required: depends on the administrator-provided webhook receiver.
 * Terms: provided by the administrator-chosen webhook receiver.
 * Privacy policy: provided by the administrator-chosen webhook receiver.
 
 Realtime Clarification Assistant:
 
-* Service: OpenRouter direct execution or Sentient Forms Managed Execution, depending on the provider path selected by the administrator.
+* Service: OpenRouter direct execution or Sentient Forms Managed Execution, depending on the selected provider path.
 * Endpoint: the same provider endpoint disclosed above for the selected execution path.
-* When used: only when an administrator maps the Realtime Clarification Assistant to a Gravity Forms form and enables realtime suggestions for that form.
-* Data sent: visible form field values collected before submission, realtime action instructions, form metadata needed to map suggestions to fields, selected model identifier, and request metadata needed to return suggestions.
-* Account required: depends on the selected provider path. OpenRouter direct execution requires an OpenRouter account and API key. Managed execution may require a Sentient Forms account.
-* Visitor disclosure: site owners should disclose realtime AI suggestions in their public privacy policy or form copy before enabling this feature, because selected in-progress visitor field values can be sent before final form submission.
+* When used: only when an administrator maps the Realtime Clarification Assistant to a Gravity Forms form and enables realtime suggestions.
+* Data sent: visible field values collected before submission, realtime action instructions, form metadata, selected model identifier, and request metadata needed to return suggestions.
+* Account required: depends on provider path. OpenRouter requires an account/API key. Managed execution may require a Sentient Forms account.
+* Visitor disclosure: site owners should disclose realtime AI suggestions in their public privacy policy or form copy before enabling this feature, because selected in-progress field values can be sent before final submission.
 * Terms and privacy policy: the same provider terms and privacy policy disclosed above for the selected execution path.
 
 No OpenRouter or Sentient AI execution request should be sent until an administrator has configured and accepted the relevant provider disclosure. No telemetry event should be queued or sent until an administrator opts in and a Sentient Forms site identity exists.
