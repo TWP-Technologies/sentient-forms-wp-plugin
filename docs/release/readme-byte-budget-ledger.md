@@ -21,7 +21,8 @@ This ledger covers the marketing/compliance bundle for `MKT-010`, `MKT-009`,
 | Compress external-service copy | MKT-006 | -606 | Plain-language rewrite keeps service names, data categories, account requirements, terms/privacy links, telemetry limits, webhook responsibility, and Realtime Clarification disclosure. |
 | Add this ledger | MKT-010 | 0 | Tracked outside `readme.txt`; no listing byte impact. |
 | Add 10 KB preflight to release checklist | MKT-066 | 0 | Tracked outside `readme.txt`; no listing byte impact. |
-| Final current readme | MKT-010 | 9302 | `398` bytes under target, `698` bytes under hard maximum. |
+| Add six WordPress.org screenshot captions | MKT-013 | +339 | Terse captions preserve the `9700` byte target while matching `screenshot-1.png` through `screenshot-6.png`. |
+| Final current readme | MKT-010/MKT-013 | 9641 | `59` bytes under target, `359` bytes under hard maximum. |
 
 ## Required Checks
 
@@ -31,4 +32,3 @@ This ledger covers the marketing/compliance bundle for `MKT-010`, `MKT-009`,
   caption addition.
 - Keep tags unchanged unless a separate keyword task explicitly approves a tag
   change.
-

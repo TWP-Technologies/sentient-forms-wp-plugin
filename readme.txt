@@ -119,6 +119,15 @@ Gravity Forms is required for the current form-action workflows. Other form buil
 
 See "Source" above and `assets/dist/SOURCE.md` in the package.
 
+== Screenshots ==
+
+1. Review leads with A/B/C/Reject grades and rationale.
+2. See AI results on each Gravity Forms entry.
+3. Tune Lead Scoring with site context and examples.
+4. Track action runs by status, form, entry, model, and result.
+5. Map AI actions to a Gravity Forms form.
+6. View setup state, providers, forms, and recent runs.
+
 == Changelog ==
 
 = 0.3.11 =

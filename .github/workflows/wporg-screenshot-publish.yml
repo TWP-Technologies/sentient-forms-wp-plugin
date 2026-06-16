@@ -1,0 +1,151 @@
+---
+name: WordPress.org Screenshot Publish
+
+'on':
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Dry-run stages screenshot/readme changes; publish commits after environment approval.
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - publish
+      confirm:
+        description: Required for publish. Enter sentient-forms/assets/screenshots.
+        required: false
+        type: string
+      release_tag:
+        description: GitHub release tag containing the temporary screenshot zip.
+        required: true
+        default: v0.3.12
+        type: string
+      asset_name:
+        description: Temporary GitHub release asset name, e.g. sentient-forms-wporg-screenshots-20260616.zip.
+        required: true
+        type: string
+      screenshot_zip_sha256:
+        description: Expected SHA-256 for the temporary screenshot zip.
+        required: true
+        type: string
+      readme_sha256:
+        description: Expected SHA-256 for the repository readme.txt to sync to SVN trunk.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wporg-screenshot-publish
+  cancel-in-progress: false
+
+env:
+  WPORG_SCREENSHOT_ARTIFACT_RETENTION_DAYS: '30'
+  WPORG_SCREENSHOT_CONFIRM: sentient-forms/assets/screenshots
+
+jobs:
+  prepare:
+    name: Prepare WordPress.org Screenshot Changes
+    runs-on: ubuntu-latest
+    outputs:
+      expected-confirm: ${{ steps.validate-inputs.outputs.expected-confirm }}
+    steps:
+      - name: Validate publish inputs
+        id: validate-inputs
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_CONFIRM: ${{ inputs.confirm }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_CONFIRM: ${{ env.WPORG_SCREENSHOT_CONFIRM }}
+        run: |
+          set -euo pipefail
+          if [[ "${INPUT_MODE}" != "dry-run" && "${INPUT_MODE}" != "publish" ]]; then
+            echo "::error::mode must be dry-run or publish, got '${INPUT_MODE}'."
+            exit 1
+          fi
+          if [[ ! "${INPUT_RELEASE_TAG}" =~ ^v[0-9]+(\.[0-9]+){2}$ ]]; then
+            echo "::error::release_tag must match vMAJOR.MINOR.PATCH, got '${INPUT_RELEASE_TAG}'."
+            exit 1
+          fi
+          if [[ "${INPUT_MODE}" == "publish" && "${INPUT_CONFIRM}" != "${EXPECTED_CONFIRM}" ]]; then
+            echo "::error::publish mode requires confirm='${EXPECTED_CONFIRM}'."
+            exit 1
+          fi
+          echo "expected-confirm=${EXPECTED_CONFIRM}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install SVN screenshot tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y subversion unzip
+
+      - name: Stage screenshot and readme changes without committing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WPORG_SVN_URL: https://plugins.svn.wordpress.org/sentient-forms
+        run: |
+          set -euo pipefail
+          bash scripts/sync-wporg-screenshots.sh \
+            --mode dry-run \
+            --confirm "${{ inputs.confirm }}" \
+            --release-tag "${{ inputs.release_tag }}" \
+            --asset-name "${{ inputs.asset_name }}" \
+            --screenshot-zip-sha256 "${{ inputs.screenshot_zip_sha256 }}" \
+            --readme-sha256 "${{ inputs.readme_sha256 }}" \
+            --artifact-dir "${RUNNER_TEMP}/wporg-screenshot-dry-run-artifacts" \
+            --work-dir "${RUNNER_TEMP}/wporg-screenshot-dry-run-work"
+
+      - name: Upload dry-run screenshot evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: wporg-screenshot-dry-run
+          path: ${{ runner.temp }}/wporg-screenshot-dry-run-artifacts
+          if-no-files-found: error
+          retention-days: ${{ env.WPORG_SCREENSHOT_ARTIFACT_RETENTION_DAYS }}
+
+  publish:
+    name: Publish WordPress.org Screenshot Changes
+    if: ${{ inputs.mode == 'publish' }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: wporg-svn-production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install SVN screenshot tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y subversion unzip
+
+      - name: Publish screenshots and readme to SVN
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WPORG_SVN_URL: https://plugins.svn.wordpress.org/sentient-forms
+          WPORG_SVN_USERNAME: ${{ secrets.WPORG_SVN_USERNAME }}
+          WPORG_SVN_PASSWORD: ${{ secrets.WPORG_SVN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          bash scripts/sync-wporg-screenshots.sh \
+            --mode publish \
+            --confirm "${{ inputs.confirm }}" \
+            --release-tag "${{ inputs.release_tag }}" \
+            --asset-name "${{ inputs.asset_name }}" \
+            --screenshot-zip-sha256 "${{ inputs.screenshot_zip_sha256 }}" \
+            --readme-sha256 "${{ inputs.readme_sha256 }}" \
+            --artifact-dir "${RUNNER_TEMP}/wporg-screenshot-publish-artifacts" \
+            --work-dir "${RUNNER_TEMP}/wporg-screenshot-publish-work"
+
+      - name: Upload publish screenshot evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: wporg-screenshot-publish
+          path: ${{ runner.temp }}/wporg-screenshot-publish-artifacts
+          if-no-files-found: error
+          retention-days: ${{ env.WPORG_SCREENSHOT_ARTIFACT_RETENTION_DAYS }}
