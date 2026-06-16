@@ -121,7 +121,7 @@ jobs:
 
           lines = []
           for asset in assets:
-              chunks = [os.environ.get(name, "") for name in asset["chunk_envs"]]
+              chunks = [(os.environ.get(name, "") or "").strip() for name in asset["chunk_envs"]]
               missing = [name for name, value in zip(asset["chunk_envs"], chunks) if not value]
               if missing:
                   raise SystemExit(f"Missing encrypted asset chunk(s): {', '.join(missing)}")
@@ -243,7 +243,7 @@ jobs:
 
           lines = []
           for asset in assets:
-              chunks = [os.environ.get(name, "") for name in asset["chunk_envs"]]
+              chunks = [(os.environ.get(name, "") or "").strip() for name in asset["chunk_envs"]]
               missing = [name for name, value in zip(asset["chunk_envs"], chunks) if not value]
               if missing:
                   raise SystemExit(f"Missing encrypted asset chunk(s): {', '.join(missing)}")
