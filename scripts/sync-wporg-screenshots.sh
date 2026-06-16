@@ -109,6 +109,29 @@ if [[ "${actual_readme_sha}" != "${expected_readme_sha}" ]]; then
   exit 1
 fi
 
+stable_tag="$(
+  awk -F: 'tolower($1) == "stable tag" {
+    value = $2
+    sub(/^[ \t]+/, "", value)
+    sub(/[ \t\r]+$/, "", value)
+    print value
+    exit
+  }' readme.txt
+)"
+if [[ -z "${stable_tag}" ]]; then
+  echo "readme.txt is missing Stable tag." >&2
+  exit 1
+fi
+if [[ "${stable_tag}" != "trunk" && ! "${stable_tag}" =~ ^[0-9]+(\.[0-9]+){2}$ ]]; then
+  echo "Unsupported Stable tag '${stable_tag}'." >&2
+  exit 1
+fi
+
+stable_dir="${svn_dir}/trunk"
+if [[ "${stable_tag}" != "trunk" ]]; then
+  stable_dir="${svn_dir}/stable-tag"
+fi
+
 readme_bytes="$(python3 - <<'PY'
 import pathlib
 print(len(pathlib.Path("readme.txt").read_text(encoding="utf-8").encode("utf-8")))
@@ -173,20 +196,32 @@ PY
 mkdir -p "${svn_dir}"
 svn checkout --depth infinity "${WPORG_SVN_URL}/assets" "${svn_dir}/assets"
 svn checkout --depth infinity "${WPORG_SVN_URL}/trunk" "${svn_dir}/trunk"
+if [[ "${stable_tag}" != "trunk" ]]; then
+  svn checkout --depth infinity "${WPORG_SVN_URL}/tags/${stable_tag}" "${stable_dir}"
+fi
 
 for index in 1 2 3 4 5 6; do
   cp "${source_dir}/screenshot-${index}.png" "${svn_dir}/assets/screenshot-${index}.png"
 done
 cp readme.txt "${svn_dir}/trunk/readme.txt"
+if [[ "${stable_tag}" != "trunk" ]]; then
+  cp readme.txt "${stable_dir}/readme.txt"
+fi
 
-svn add --force "${svn_dir}/assets" "${svn_dir}/trunk" >/dev/null
+svn add --force "${svn_dir}/assets" "${svn_dir}/trunk" "${stable_dir}" >/dev/null
 {
   svn status "${svn_dir}/assets"
   svn status "${svn_dir}/trunk/readme.txt"
+  if [[ "${stable_tag}" != "trunk" ]]; then
+    svn status "${stable_dir}/readme.txt"
+  fi
 } > "${artifact_dir}/svn-status.txt"
 {
   svn diff --summarize "${svn_dir}/assets" || true
   svn diff --summarize "${svn_dir}/trunk/readme.txt" || true
+  if [[ "${stable_tag}" != "trunk" ]]; then
+    svn diff --summarize "${stable_dir}/readme.txt" || true
+  fi
 } > "${artifact_dir}/svn-diff-summary.txt"
 {
   echo "mode=${mode}"
@@ -195,6 +230,7 @@ svn add --force "${svn_dir}/assets" "${svn_dir}/trunk" >/dev/null
   echo "screenshot_zip_sha256=${actual_zip_sha}"
   echo "readme_sha256=${actual_readme_sha}"
   echo "readme_bytes=${readme_bytes}"
+  echo "stable_tag=${stable_tag}"
 } > "${artifact_dir}/publish-inputs.txt"
 
 if [[ "${mode}" == "dry-run" ]]; then
@@ -207,32 +243,40 @@ if [[ -z "${WPORG_SVN_USERNAME:-}" || -z "${WPORG_SVN_PASSWORD:-}" ]]; then
 fi
 
 : > "${artifact_dir}/svn-commit.txt"
-svn commit \
-  "${svn_dir}/assets" \
-  --message "Add WordPress.org screenshots." \
-  --username "${WPORG_SVN_USERNAME}" \
-  --password "${WPORG_SVN_PASSWORD}" \
-  --non-interactive \
-  --no-auth-cache \
-  --trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other \
-  >> "${artifact_dir}/svn-commit.txt"
+commit_if_changed() {
+  local target="$1"
+  local message="$2"
+  if [[ -z "$(svn status "${target}")" ]]; then
+    echo "No SVN changes for ${target}." >> "${artifact_dir}/svn-commit.txt"
+    return 0
+  fi
 
-svn commit \
-  "${svn_dir}/trunk/readme.txt" \
-  --message "Add WordPress.org screenshot captions." \
-  --username "${WPORG_SVN_USERNAME}" \
-  --password "${WPORG_SVN_PASSWORD}" \
-  --non-interactive \
-  --no-auth-cache \
-  --trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other \
-  >> "${artifact_dir}/svn-commit.txt"
+  svn commit \
+    "${target}" \
+    --message "${message}" \
+    --username "${WPORG_SVN_USERNAME}" \
+    --password "${WPORG_SVN_PASSWORD}" \
+    --non-interactive \
+    --no-auth-cache \
+    --trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other \
+    >> "${artifact_dir}/svn-commit.txt"
+}
+
+commit_if_changed "${svn_dir}/assets" "Add WordPress.org screenshots."
+commit_if_changed "${svn_dir}/trunk/readme.txt" "Add WordPress.org screenshot captions to trunk."
+if [[ "${stable_tag}" != "trunk" ]]; then
+  commit_if_changed "${stable_dir}/readme.txt" "Add WordPress.org screenshot captions to ${stable_tag}."
+fi
 
 for index in 1 2 3 4 5 6; do
   svn export --force "${WPORG_SVN_URL}/assets/screenshot-${index}.png" "${remote_dir}/screenshot-${index}.png" >/dev/null
 done
 svn export --force "${WPORG_SVN_URL}/trunk/readme.txt" "${remote_dir}/readme.txt" >/dev/null
+if [[ "${stable_tag}" != "trunk" ]]; then
+  svn export --force "${WPORG_SVN_URL}/tags/${stable_tag}/readme.txt" "${remote_dir}/stable-readme.txt" >/dev/null
+fi
 
-REMOTE_DIR="${remote_dir}" SOURCE_DIR="${source_dir}" ARTIFACT_DIR="${artifact_dir}" EXPECTED_README_SHA="${actual_readme_sha}" python3 - <<'PY'
+REMOTE_DIR="${remote_dir}" SOURCE_DIR="${source_dir}" ARTIFACT_DIR="${artifact_dir}" EXPECTED_README_SHA="${actual_readme_sha}" STABLE_TAG="${stable_tag}" python3 - <<'PY'
 import hashlib
 import os
 import pathlib
@@ -241,6 +285,7 @@ remote_dir = pathlib.Path(os.environ["REMOTE_DIR"])
 source_dir = pathlib.Path(os.environ["SOURCE_DIR"])
 artifact_dir = pathlib.Path(os.environ["ARTIFACT_DIR"])
 expected_readme_sha = os.environ["EXPECTED_README_SHA"]
+stable_tag = os.environ["STABLE_TAG"]
 lines = []
 
 for index in range(1, 7):
@@ -255,6 +300,15 @@ remote_readme_sha = hashlib.sha256((remote_dir / "readme.txt").read_bytes()).hex
 if remote_readme_sha != expected_readme_sha:
     raise SystemExit(f"Remote readme.txt hash mismatch: expected {expected_readme_sha}, got {remote_readme_sha}")
 lines.append(f"readme.txt: {remote_readme_sha}")
+
+if stable_tag != "trunk":
+    stable_readme_sha = hashlib.sha256((remote_dir / "stable-readme.txt").read_bytes()).hexdigest().upper()
+    if stable_readme_sha != expected_readme_sha:
+        raise SystemExit(
+            f"Remote tags/{stable_tag}/readme.txt hash mismatch: "
+            f"expected {expected_readme_sha}, got {stable_readme_sha}"
+        )
+    lines.append(f"tags/{stable_tag}/readme.txt: {stable_readme_sha}")
 
 (artifact_dir / "remote-verification.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
