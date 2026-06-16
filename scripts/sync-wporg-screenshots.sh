@@ -170,17 +170,24 @@ for index in range(1, 7):
 (artifact_dir / "screenshot-validation.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
 
-svn checkout --depth immediates "${WPORG_SVN_URL}" "${svn_dir}"
-svn update --depth infinity "${svn_dir}/assets" "${svn_dir}/trunk"
+mkdir -p "${svn_dir}"
+svn checkout --depth infinity "${WPORG_SVN_URL}/assets" "${svn_dir}/assets"
+svn checkout --depth infinity "${WPORG_SVN_URL}/trunk" "${svn_dir}/trunk"
 
 for index in 1 2 3 4 5 6; do
   cp "${source_dir}/screenshot-${index}.png" "${svn_dir}/assets/screenshot-${index}.png"
 done
 cp readme.txt "${svn_dir}/trunk/readme.txt"
 
-svn add --force "${svn_dir}/assets" >/dev/null
-svn status "${svn_dir}" > "${artifact_dir}/svn-status.txt"
-svn diff --summarize "${svn_dir}" > "${artifact_dir}/svn-diff-summary.txt" || true
+svn add --force "${svn_dir}/assets" "${svn_dir}/trunk" >/dev/null
+{
+  svn status "${svn_dir}/assets"
+  svn status "${svn_dir}/trunk/readme.txt"
+} > "${artifact_dir}/svn-status.txt"
+{
+  svn diff --summarize "${svn_dir}/assets" || true
+  svn diff --summarize "${svn_dir}/trunk/readme.txt" || true
+} > "${artifact_dir}/svn-diff-summary.txt"
 {
   echo "mode=${mode}"
   echo "release_tag=${release_tag}"
@@ -199,16 +206,26 @@ if [[ -z "${WPORG_SVN_USERNAME:-}" || -z "${WPORG_SVN_PASSWORD:-}" ]]; then
   exit 1
 fi
 
+: > "${artifact_dir}/svn-commit.txt"
 svn commit \
   "${svn_dir}/assets" \
-  "${svn_dir}/trunk/readme.txt" \
-  --message "Add WordPress.org screenshots and captions." \
+  --message "Add WordPress.org screenshots." \
   --username "${WPORG_SVN_USERNAME}" \
   --password "${WPORG_SVN_PASSWORD}" \
   --non-interactive \
   --no-auth-cache \
   --trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other \
-  > "${artifact_dir}/svn-commit.txt"
+  >> "${artifact_dir}/svn-commit.txt"
+
+svn commit \
+  "${svn_dir}/trunk/readme.txt" \
+  --message "Add WordPress.org screenshot captions." \
+  --username "${WPORG_SVN_USERNAME}" \
+  --password "${WPORG_SVN_PASSWORD}" \
+  --non-interactive \
+  --no-auth-cache \
+  --trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other \
+  >> "${artifact_dir}/svn-commit.txt"
 
 for index in 1 2 3 4 5 6; do
   svn export --force "${WPORG_SVN_URL}/assets/screenshot-${index}.png" "${remote_dir}/screenshot-${index}.png" >/dev/null
