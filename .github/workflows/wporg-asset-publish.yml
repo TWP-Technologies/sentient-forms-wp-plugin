@@ -1,0 +1,342 @@
+---
+name: WordPress.org Asset Publish
+
+'on':
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Dry-run stages asset changes; publish commits after environment approval.
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - publish
+      confirm:
+        description: Required for publish. Enter sentient-forms/assets/banner.
+        required: false
+        type: string
+      banner_1544_sha256:
+        description: Expected SHA-256 for banner-1544x500.png.
+        required: true
+        type: string
+      banner_772_sha256:
+        description: Expected SHA-256 for banner-772x250.png.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wporg-asset-publish
+  cancel-in-progress: false
+
+env:
+  WPORG_SVN_URL: https://plugins.svn.wordpress.org/sentient-forms
+  WPORG_ASSET_ARTIFACT_RETENTION_DAYS: '30'
+  WPORG_ASSET_CONFIRM: sentient-forms/assets/banner
+
+jobs:
+  prepare:
+    name: Prepare WordPress.org Asset Changes
+    runs-on: ubuntu-latest
+    outputs:
+      expected-confirm: ${{ steps.validate-inputs.outputs.expected-confirm }}
+    steps:
+      - name: Validate publish inputs
+        id: validate-inputs
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_CONFIRM: ${{ inputs.confirm }}
+          EXPECTED_CONFIRM: ${{ env.WPORG_ASSET_CONFIRM }}
+        run: |
+          set -euo pipefail
+          if [[ "${INPUT_MODE}" != "dry-run" && "${INPUT_MODE}" != "publish" ]]; then
+            echo "::error::mode must be dry-run or publish, got '${INPUT_MODE}'."
+            exit 1
+          fi
+          if [[ "${INPUT_MODE}" == "publish" && "${INPUT_CONFIRM}" != "${EXPECTED_CONFIRM}" ]]; then
+            echo "::error::publish mode requires confirm='${EXPECTED_CONFIRM}'."
+            exit 1
+          fi
+          echo "expected-confirm=${EXPECTED_CONFIRM}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install SVN asset tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y subversion
+
+      - name: Stage asset changes without committing
+        env:
+          EXPECTED_BANNER_1544_SHA256: ${{ inputs.banner_1544_sha256 }}
+          EXPECTED_BANNER_772_SHA256: ${{ inputs.banner_772_sha256 }}
+          BANNER_1544_B64_01: ${{ secrets.WPORG_ASSET_BANNER_1544_B64_01 }}
+          BANNER_1544_B64_02: ${{ secrets.WPORG_ASSET_BANNER_1544_B64_02 }}
+          BANNER_1544_B64_03: ${{ secrets.WPORG_ASSET_BANNER_1544_B64_03 }}
+          BANNER_772_B64_01: ${{ secrets.WPORG_ASSET_BANNER_772_B64_01 }}
+          BANNER_772_B64_02: ${{ secrets.WPORG_ASSET_BANNER_772_B64_02 }}
+        run: |
+          set -euo pipefail
+          bash <<'BASH'
+          artifact_dir="${RUNNER_TEMP}/wporg-asset-dry-run-artifacts"
+          source_dir="${RUNNER_TEMP}/wporg-asset-source"
+          svn_dir="${RUNNER_TEMP}/wporg-asset-dry-run-svn-assets"
+          mkdir -p "${artifact_dir}" "${source_dir}"
+
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import os
+          import pathlib
+          import struct
+
+          source_dir = pathlib.Path(os.environ["RUNNER_TEMP"]) / "wporg-asset-source"
+          artifact_dir = pathlib.Path(os.environ["RUNNER_TEMP"]) / "wporg-asset-dry-run-artifacts"
+
+          assets = [
+              {
+                  "filename": "banner-1544x500.png",
+                  "width": 1544,
+                  "height": 500,
+                  "expected_sha_env": "EXPECTED_BANNER_1544_SHA256",
+                  "chunk_envs": [
+                      "BANNER_1544_B64_01",
+                      "BANNER_1544_B64_02",
+                      "BANNER_1544_B64_03",
+                  ],
+              },
+              {
+                  "filename": "banner-772x250.png",
+                  "width": 772,
+                  "height": 250,
+                  "expected_sha_env": "EXPECTED_BANNER_772_SHA256",
+                  "chunk_envs": [
+                      "BANNER_772_B64_01",
+                      "BANNER_772_B64_02",
+                  ],
+              },
+          ]
+
+          lines = []
+          for asset in assets:
+              chunks = [os.environ.get(name, "") for name in asset["chunk_envs"]]
+              missing = [name for name, value in zip(asset["chunk_envs"], chunks) if not value]
+              if missing:
+                  raise SystemExit(f"Missing encrypted asset chunk(s): {', '.join(missing)}")
+
+              data = base64.b64decode("".join(chunks), validate=True)
+              expected_sha = os.environ[asset["expected_sha_env"]].strip().upper()
+              actual_sha = hashlib.sha256(data).hexdigest().upper()
+              if actual_sha != expected_sha:
+                  raise SystemExit(
+                      f"{asset['filename']} SHA-256 mismatch: expected {expected_sha}, got {actual_sha}"
+                  )
+
+              if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                  raise SystemExit(f"{asset['filename']} is not a PNG file.")
+              ihdr_length = struct.unpack(">I", data[8:12])[0]
+              ihdr_type = data[12:16]
+              if ihdr_type != b"IHDR" or ihdr_length != 13:
+                  raise SystemExit(f"{asset['filename']} has an invalid PNG IHDR chunk.")
+              width, height = struct.unpack(">II", data[16:24])
+              bit_depth = data[24]
+              color_type = data[25]
+              if (width, height) != (asset["width"], asset["height"]):
+                  raise SystemExit(
+                      f"{asset['filename']} dimensions mismatch: expected "
+                      f"{asset['width']}x{asset['height']}, got {width}x{height}"
+                  )
+
+              (source_dir / asset["filename"]).write_bytes(data)
+              lines.append(
+                  f"{asset['filename']}: {width}x{height}, bit_depth={bit_depth}, "
+                  f"color_type={color_type}, bytes={len(data)}, sha256={actual_sha}"
+              )
+
+          (artifact_dir / "asset-validation.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+          svn checkout --depth infinity "${WPORG_SVN_URL}/assets" "${svn_dir}"
+          cp "${source_dir}/banner-1544x500.png" "${svn_dir}/banner-1544x500.png"
+          cp "${source_dir}/banner-772x250.png" "${svn_dir}/banner-772x250.png"
+          svn add --force "${svn_dir}" >/dev/null
+          svn status "${svn_dir}" > "${artifact_dir}/svn-status.txt"
+          svn diff --summarize "${svn_dir}" > "${artifact_dir}/svn-diff-summary.txt" || true
+          BASH
+
+      - name: Upload dry-run asset evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: wporg-asset-dry-run-banner
+          path: ${{ runner.temp }}/wporg-asset-dry-run-artifacts
+          if-no-files-found: error
+          retention-days: ${{ env.WPORG_ASSET_ARTIFACT_RETENTION_DAYS }}
+
+  publish:
+    name: Publish WordPress.org Asset Changes
+    if: ${{ inputs.mode == 'publish' }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: wporg-svn-production
+    steps:
+      - name: Install SVN asset tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y subversion
+
+      - name: Publish banner assets to SVN
+        env:
+          EXPECTED_BANNER_1544_SHA256: ${{ inputs.banner_1544_sha256 }}
+          EXPECTED_BANNER_772_SHA256: ${{ inputs.banner_772_sha256 }}
+          BANNER_1544_B64_01: ${{ secrets.WPORG_ASSET_BANNER_1544_B64_01 }}
+          BANNER_1544_B64_02: ${{ secrets.WPORG_ASSET_BANNER_1544_B64_02 }}
+          BANNER_1544_B64_03: ${{ secrets.WPORG_ASSET_BANNER_1544_B64_03 }}
+          BANNER_772_B64_01: ${{ secrets.WPORG_ASSET_BANNER_772_B64_01 }}
+          BANNER_772_B64_02: ${{ secrets.WPORG_ASSET_BANNER_772_B64_02 }}
+          WPORG_SVN_USERNAME: ${{ secrets.WPORG_SVN_USERNAME }}
+          WPORG_SVN_PASSWORD: ${{ secrets.WPORG_SVN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          bash <<'BASH'
+          artifact_dir="${RUNNER_TEMP}/wporg-asset-publish-artifacts"
+          source_dir="${RUNNER_TEMP}/wporg-asset-source"
+          svn_dir="${RUNNER_TEMP}/wporg-asset-publish-svn-assets"
+          remote_dir="${RUNNER_TEMP}/wporg-asset-remote"
+          mkdir -p "${artifact_dir}" "${source_dir}" "${remote_dir}"
+
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import os
+          import pathlib
+          import struct
+
+          source_dir = pathlib.Path(os.environ["RUNNER_TEMP"]) / "wporg-asset-source"
+          artifact_dir = pathlib.Path(os.environ["RUNNER_TEMP"]) / "wporg-asset-publish-artifacts"
+
+          assets = [
+              {
+                  "filename": "banner-1544x500.png",
+                  "width": 1544,
+                  "height": 500,
+                  "expected_sha_env": "EXPECTED_BANNER_1544_SHA256",
+                  "chunk_envs": [
+                      "BANNER_1544_B64_01",
+                      "BANNER_1544_B64_02",
+                      "BANNER_1544_B64_03",
+                  ],
+              },
+              {
+                  "filename": "banner-772x250.png",
+                  "width": 772,
+                  "height": 250,
+                  "expected_sha_env": "EXPECTED_BANNER_772_SHA256",
+                  "chunk_envs": [
+                      "BANNER_772_B64_01",
+                      "BANNER_772_B64_02",
+                  ],
+              },
+          ]
+
+          lines = []
+          for asset in assets:
+              chunks = [os.environ.get(name, "") for name in asset["chunk_envs"]]
+              missing = [name for name, value in zip(asset["chunk_envs"], chunks) if not value]
+              if missing:
+                  raise SystemExit(f"Missing encrypted asset chunk(s): {', '.join(missing)}")
+
+              data = base64.b64decode("".join(chunks), validate=True)
+              expected_sha = os.environ[asset["expected_sha_env"]].strip().upper()
+              actual_sha = hashlib.sha256(data).hexdigest().upper()
+              if actual_sha != expected_sha:
+                  raise SystemExit(
+                      f"{asset['filename']} SHA-256 mismatch: expected {expected_sha}, got {actual_sha}"
+                  )
+
+              if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                  raise SystemExit(f"{asset['filename']} is not a PNG file.")
+              ihdr_length = struct.unpack(">I", data[8:12])[0]
+              ihdr_type = data[12:16]
+              if ihdr_type != b"IHDR" or ihdr_length != 13:
+                  raise SystemExit(f"{asset['filename']} has an invalid PNG IHDR chunk.")
+              width, height = struct.unpack(">II", data[16:24])
+              bit_depth = data[24]
+              color_type = data[25]
+              if (width, height) != (asset["width"], asset["height"]):
+                  raise SystemExit(
+                      f"{asset['filename']} dimensions mismatch: expected "
+                      f"{asset['width']}x{asset['height']}, got {width}x{height}"
+                  )
+
+              (source_dir / asset["filename"]).write_bytes(data)
+              lines.append(
+                  f"{asset['filename']}: {width}x{height}, bit_depth={bit_depth}, "
+                  f"color_type={color_type}, bytes={len(data)}, sha256={actual_sha}"
+              )
+
+          (artifact_dir / "asset-validation.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+          svn checkout --depth infinity \
+            --username "${WPORG_SVN_USERNAME}" \
+            --password "${WPORG_SVN_PASSWORD}" \
+            --non-interactive \
+            "${WPORG_SVN_URL}/assets" "${svn_dir}"
+          cp "${source_dir}/banner-1544x500.png" "${svn_dir}/banner-1544x500.png"
+          cp "${source_dir}/banner-772x250.png" "${svn_dir}/banner-772x250.png"
+          svn add --force "${svn_dir}" >/dev/null
+          svn status "${svn_dir}" > "${artifact_dir}/svn-status.txt"
+          svn diff --summarize "${svn_dir}" > "${artifact_dir}/svn-diff-summary.txt" || true
+
+          if grep -qE '^[ACDMR]' "${artifact_dir}/svn-status.txt"; then
+            svn commit "${svn_dir}" \
+              --username "${WPORG_SVN_USERNAME}" \
+              --password "${WPORG_SVN_PASSWORD}" \
+              --non-interactive \
+              -m "Add Sentient Forms banner assets" \
+              2>&1 | tee "${artifact_dir}/svn-commit.txt"
+          else
+            echo "No SVN asset changes to commit." | tee "${artifact_dir}/svn-commit.txt"
+          fi
+
+          for asset in banner-1544x500.png banner-772x250.png; do
+            svn info "${WPORG_SVN_URL}/assets/${asset}" > "${artifact_dir}/remote-${asset}.info"
+            svn export --force --quiet "${WPORG_SVN_URL}/assets/${asset}" "${remote_dir}/${asset}"
+          done
+
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import pathlib
+          import struct
+
+          remote_dir = pathlib.Path(os.environ["RUNNER_TEMP"]) / "wporg-asset-remote"
+          artifact_dir = pathlib.Path(os.environ["RUNNER_TEMP"]) / "wporg-asset-publish-artifacts"
+          checks = [
+              ("banner-1544x500.png", 1544, 500, os.environ["EXPECTED_BANNER_1544_SHA256"]),
+              ("banner-772x250.png", 772, 250, os.environ["EXPECTED_BANNER_772_SHA256"]),
+          ]
+          lines = []
+          for filename, expected_width, expected_height, expected_sha in checks:
+              data = (remote_dir / filename).read_bytes()
+              actual_sha = hashlib.sha256(data).hexdigest().upper()
+              if actual_sha != expected_sha.strip().upper():
+                  raise SystemExit(f"Remote {filename} SHA-256 mismatch.")
+              width, height = struct.unpack(">II", data[16:24])
+              if (width, height) != (expected_width, expected_height):
+                  raise SystemExit(f"Remote {filename} dimensions mismatch.")
+              lines.append(f"{filename}: remote verified {width}x{height}, sha256={actual_sha}")
+          (artifact_dir / "remote-validation.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+          BASH
+
+      - name: Upload publish asset evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: wporg-asset-publish-banner
+          path: ${{ runner.temp }}/wporg-asset-publish-artifacts
+          if-no-files-found: error
+          retention-days: ${{ env.WPORG_ASSET_ARTIFACT_RETENTION_DAYS }}
