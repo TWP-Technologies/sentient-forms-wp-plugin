@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.12](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.11...v0.3.12) (2026-06-16)
+
+
+### Bug Fixes
+
+* **wporg:** add listing compliance guardrails
+
+
+### Documentation
+
+* **wporg:** improve listing readme copy
+
 ## [0.3.11](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.10...v0.3.11) (2026-06-11)
 
 
