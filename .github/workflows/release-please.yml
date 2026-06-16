@@ -24,10 +24,10 @@ jobs:
       - name: Detect release bot token configuration
         id: release-token-mode
         env:
-          RELEASE_BOT_APP_ID: ${{ vars.RELEASE_BOT_APP_ID }}
+          RELEASE_BOT_CLIENT_ID: ${{ vars.RELEASE_BOT_CLIENT_ID }}
           RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
         run: |
-          if [ -n "${RELEASE_BOT_APP_ID}" ] && [ -n "${RELEASE_BOT_PRIVATE_KEY}" ]; then
+          if [ -n "${RELEASE_BOT_CLIENT_ID}" ] && [ -n "${RELEASE_BOT_PRIVATE_KEY}" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -36,14 +36,14 @@ jobs:
       - name: Require release bot token configuration
         if: ${{ steps.release-token-mode.outputs.enabled != 'true' }}
         run: |
-          echo "::error::Configure repository variable RELEASE_BOT_APP_ID and secret RELEASE_BOT_PRIVATE_KEY before enabling production releases."
+          echo "::error::Configure repository variable RELEASE_BOT_CLIENT_ID and secret RELEASE_BOT_PRIVATE_KEY before enabling production releases."
           exit 1
 
       - name: Create release bot token
         id: release-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
       - name: Run Release Please
@@ -65,10 +65,10 @@ jobs:
       - name: Detect release bot token configuration
         id: release-token-mode
         env:
-          RELEASE_BOT_APP_ID: ${{ vars.RELEASE_BOT_APP_ID }}
+          RELEASE_BOT_CLIENT_ID: ${{ vars.RELEASE_BOT_CLIENT_ID }}
           RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
         run: |
-          if [ -n "${RELEASE_BOT_APP_ID}" ] && [ -n "${RELEASE_BOT_PRIVATE_KEY}" ]; then
+          if [ -n "${RELEASE_BOT_CLIENT_ID}" ] && [ -n "${RELEASE_BOT_PRIVATE_KEY}" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -77,14 +77,14 @@ jobs:
       - name: Require release bot token configuration
         if: ${{ steps.release-token-mode.outputs.enabled != 'true' }}
         run: |
-          echo "::error::Configure repository variable RELEASE_BOT_APP_ID and secret RELEASE_BOT_PRIVATE_KEY before enabling production releases."
+          echo "::error::Configure repository variable RELEASE_BOT_CLIENT_ID and secret RELEASE_BOT_PRIVATE_KEY before enabling production releases."
           exit 1
 
       - name: Create release bot token
         id: release-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          client-id: ${{ vars.RELEASE_BOT_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
       - name: Checkout release source
@@ -100,7 +100,7 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          if [[ -n "${PUSH_BEFORE}" && ! "${PUSH_BEFORE}" =~ ^0+$ ]] && git rev-parse "${PUSH_BEFORE}" >/dev/null 2>&1; then
+          if [[ -n "${PUSH_BEFORE}" && ! "${PUSH_BEFORE}" =~ ^0+$ ]] && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
             changed_files="$(git diff --name-only "${PUSH_BEFORE}" "${GITHUB_SHA}")"
             commit_subjects="$(git log --format=%s "${PUSH_BEFORE}..${GITHUB_SHA}")"
           else
@@ -167,6 +167,26 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Cache Composer
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/composer
+            vendor
+          key: ${{ runner.os }}-release-please-php${{ env.PHP_VERSION }}-${{ hashFiles('composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-please-php${{ env.PHP_VERSION }}-
+
+      - name: Cache Bun install artifacts
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-release-please-bun-${{ env.BUN_VERSION }}-${{ hashFiles('admin-app/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-please-bun-${{ env.BUN_VERSION }}-
 
       - name: Install PHP dependencies
         if: ${{ steps.release-state.outputs.publish == 'true' }}

@@ -10,7 +10,7 @@ Only a human may submit the plugin to WordPress.org. Automation prepares the pac
 
 The `master` branch is the live source branch, but an ordinary push to `master` is not a production release. Release Please owns version calculation and release PR creation. The release workflow creates the GitHub tag/release only after the release version surfaces agree, the admin assets build, the WordPress.org package validates, and the release zip plus SHA256 are ready to attach.
 
-Release automation requires a GitHub App installation token, not the default `GITHUB_TOKEN`, because Release Please-generated PRs must trigger the version-sync and validation workflows. Configure repository variables `RELEASE_BOT_APP_ID` and `RELEASE_BOT_LOGIN` plus repository secret `RELEASE_BOT_PRIVATE_KEY`; the workflows fail closed when any value is missing or the release PR author is not the expected bot.
+Release automation requires a GitHub App installation token, not the default `GITHUB_TOKEN`, because Release Please-generated PRs must trigger the version-sync and validation workflows. Configure repository variables `RELEASE_BOT_CLIENT_ID` and `RELEASE_BOT_LOGIN` plus repository secret `RELEASE_BOT_PRIVATE_KEY`; the workflows fail closed when any value is missing or the release PR author is not the expected bot.
 
 The initial Release Please baseline is anchored to `66de36b17d14a26b97693cbbede72e0982d88b4d` at version `0.1.0`. Do not remove that bootstrap SHA unless a matching `v0.1.0` release/tag exists or Release Please has already created a later release PR.
 
