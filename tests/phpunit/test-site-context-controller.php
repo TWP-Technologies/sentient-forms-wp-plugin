@@ -517,6 +517,39 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 'required', $saved_selection['tools']['datetime']['mode'] ?? null );
     }
 
+    public function test_update_context_defaults_empty_datetime_tool_to_off(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+
+        $response = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'summary_text'               => 'Manual business context',
+                'pii_ack'                    => true,
+                'consent_status'             => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'datetime' => [],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $get_response = $this->dispatch_site_context_request( 'GET', '/sentient-forms/v1/site-context' );
+        $this->assertSame( 200, $get_response->get_status() );
+        $data = $get_response->get_data();
+        $saved_selection = $data['settings']['generation_model_selection'] ?? [];
+
+        $this->assertSame( 'off', $saved_selection['tools']['datetime']['mode'] ?? null );
+    }
+
     public function test_generation_access_blocks_free_tier_openrouter_credential(): void
     {
         $credential_id = $this->create_openrouter_credential(

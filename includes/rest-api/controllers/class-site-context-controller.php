@@ -1464,7 +1464,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             }
             $default_mode = is_array( $settings[ $tool_key ] ?? null ) && is_scalar( $settings[ $tool_key ]['mode'] ?? null )
                 ? (string) $settings[ $tool_key ]['mode']
-                : 'auto';
+                : ( 'datetime' === $tool_key ? 'off' : 'auto' );
             $mode = sanitize_key( (string) ( $value[ $tool_key ]['mode'] ?? $default_mode ) );
             if ( in_array( $mode, [ 'auto', 'required', 'off', 'inherit' ], true ) )
             {
