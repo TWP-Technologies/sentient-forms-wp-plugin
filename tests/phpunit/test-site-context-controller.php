@@ -365,6 +365,42 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 'site_context_generation_structured_output_model_required', $unstructured_data['generation_access']['reason_code'] ?? null );
 
         $this->cache_openrouter_model(
+            'example/web-json-object-only',
+            [
+                'id'                   => 'example/web-json-object-only',
+                'pricing'              => [
+                    'prompt'     => '0.000001',
+                    'completion' => '0.000002',
+                    'web_search' => '0.004',
+                ],
+                'supported_parameters' => [ 'tools', 'web_search_options', 'response_format', 'max_tokens' ],
+                'free'                 => false,
+            ]
+        );
+        delete_option( 'sentient_forms_site_context_settings' );
+
+        $json_object_only_response = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'summary_text' => '',
+                'pii_ack'      => true,
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'example/web-json-object-only',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+        $json_object_only_data = $json_object_only_response->get_data();
+
+        $this->assertSame( 200, $json_object_only_response->get_status() );
+        $this->assertFalse( $json_object_only_data['generation_access']['can_generate'] ?? true );
+        $this->assertSame( 'site_context_generation_structured_output_model_required', $json_object_only_data['generation_access']['reason_code'] ?? null );
+
+        $this->cache_openrouter_model(
             'example/web-capable-after-long-list',
             [
                 'id'                   => 'example/web-capable-after-long-list',
@@ -550,6 +586,40 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 'off', $saved_selection['tools']['datetime']['mode'] ?? null );
     }
 
+    public function test_update_context_drops_reasoning_without_effort_or_token_budget(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+
+        $response = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'summary_text'               => 'Manual business context',
+                'pii_ack'                    => true,
+                'consent_status'             => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'reasoning'     => [
+                        'effort'  => 'superbad',
+                        'exclude' => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $get_response = $this->dispatch_site_context_request( 'GET', '/sentient-forms/v1/site-context' );
+        $this->assertSame( 200, $get_response->get_status() );
+        $data = $get_response->get_data();
+        $saved_selection = $data['settings']['generation_model_selection'] ?? [];
+
+        $this->assertArrayNotHasKey( 'reasoning', $saved_selection );
+    }
+
     public function test_generation_access_blocks_free_tier_openrouter_credential(): void
     {
         $credential_id = $this->create_openrouter_credential(
@@ -676,6 +746,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertContains( 'summary_text', $payload['response_format']['json_schema']['schema']['required'] ?? [] );
         $this->assertTrue( $payload['provider']['require_parameters'] ?? false );
         $this->assertGreaterThanOrEqual( 1800, $payload['max_tokens'] ?? 0 );
+        $this->assertArrayNotHasKey( 'temperature', $payload );
         $this->assertSame( [ 'effort' => 'high', 'exclude' => true ], $payload['reasoning'] ?? null );
         $this->assertSame( 'required', $payload['tool_choice'] ?? null );
         $this->assertContains( 'openrouter:web_search', array_column( $payload['tools'] ?? [], 'type' ) );
@@ -683,6 +754,71 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertContains( 'openrouter:datetime', array_column( $payload['tools'] ?? [], 'type' ) );
         $this->assertSame( 7, $payload['tools'][0]['parameters']['max_results'] ?? null );
         $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+    }
+
+    public function test_generate_context_omits_unsupported_optional_openrouter_parameters(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            'example/schema-no-optionals',
+            [
+                'id'                   => 'example/schema-no-optionals',
+                'pricing'              => [
+                    'prompt'     => '0.000001',
+                    'completion' => '0.000002',
+                    'web_search' => '0.004',
+                ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens', 'web_search_options' ],
+                'free'                 => false,
+            ]
+        );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [
+                'model' => 'example/schema-no-optionals',
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'example/schema-no-optionals',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'reasoning'     => 'high',
+                    'tools'         => [
+                        'tool_choice' => 'off',
+                        'web_search'  => [
+                            'mode' => 'off',
+                        ],
+                        'web_fetch'   => [
+                            'mode' => 'off',
+                        ],
+                        'datetime'    => [
+                            'mode' => 'off',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 1, $calls );
+        $payload = json_decode( (string) $calls[0]['args']['body'], true );
+
+        $this->assertSame( 'example/schema-no-optionals', $payload['model'] ?? null );
+        $this->assertSame( 'json_schema', $payload['response_format']['type'] ?? null );
+        $this->assertTrue( $payload['provider']['require_parameters'] ?? false );
+        $this->assertArrayNotHasKey( 'temperature', $payload );
+        $this->assertArrayNotHasKey( 'reasoning', $payload );
+        $this->assertArrayNotHasKey( 'tools', $payload );
+        $this->assertArrayNotHasKey( 'tool_choice', $payload );
     }
 
     /**
@@ -752,6 +888,49 @@ class SiteContextControllerTest extends WP_UnitTestCase
             'malformed-json' => [ '{not valid json' ],
             'empty-content'  => [ '' ],
         ];
+    }
+
+    public function test_generate_context_preserves_clamped_provider_error_status(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $http_called = false;
+        add_filter(
+            'pre_http_request',
+            static function () use ( &$http_called ) {
+                $http_called = true;
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => '{not-json',
+                    'cookies'  => [],
+                ];
+            },
+            10,
+            3
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+        $data = $response->get_data();
+
+        $this->assertTrue( $http_called );
+        $this->assertSame( 400, $response->get_status() );
+        $this->assertSame( 'openrouter_invalid_json', $data['code'] ?? null );
+        $this->assertSame( 400, $data['data']['status'] ?? null );
     }
 
     public function test_generate_context_rejects_empty_decrypted_openrouter_key_before_http(): void
@@ -993,6 +1172,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
 
     private function encrypt_raw_provider_secret_for_test( string $secret ): string
     {
+        // Intentionally bypass the vault encrypt path, which trims and rejects blank secrets.
         $iv  = random_bytes( 12 );
         $tag = '';
         $key = hash( 'sha256', wp_salt( 'auth' ), true );

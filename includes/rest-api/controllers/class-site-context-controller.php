@@ -302,11 +302,13 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $status     = is_array( $error_data ) && isset( $error_data['status'] )
                 ? max( 400, min( 599, absint( $error_data['status'] ) ) )
                 : 400;
+            $response_data = is_array( $error_data ) ? $error_data : [];
+            $response_data['status'] = $status;
             return $this->prepare_error_response(
                 $result->get_error_code(),
                 $result->get_error_message(),
                 $status,
-                is_array( $error_data ) ? $error_data : []
+                $response_data
             );
         }
 
@@ -727,14 +729,14 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         $pricing = is_array( $metadata['pricing'] ?? null ) ? $metadata['pricing'] : [];
-        $raw_supported_parameters = is_array( $metadata['supported_parameters'] ?? null ) ? $metadata['supported_parameters'] : [];
+        $supported_parameters = $this->normalize_openrouter_supported_parameters( $metadata['supported_parameters'] ?? null );
         $is_free = ! empty( $metadata['free'] )
             || $this->pricing_value_is_zero( $pricing['prompt'] ?? null )
             || $this->pricing_value_is_zero( $pricing['completion'] ?? null );
         $web_capable = array_key_exists( 'web_search', $pricing )
-            || in_array( 'web_search_options', $raw_supported_parameters, true );
-        $structured_output_capable = in_array( 'response_format', $raw_supported_parameters, true )
-            || in_array( 'structured_outputs', $raw_supported_parameters, true );
+            || in_array( 'web_search_options', $supported_parameters, true );
+        $structured_output_capable = in_array( 'response_format', $supported_parameters, true )
+            && in_array( 'structured_outputs', $supported_parameters, true );
 
         if ( $is_free )
         {
@@ -776,6 +778,40 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
 
         $recommendations = Sentient_Forms_OpenRouter_Model_Recommendations::all();
         return is_array( $recommendations[ $model ] ?? null ) ? $recommendations[ $model ] : null;
+    }
+
+    private function openrouter_model_supported_parameters( string $model ): array
+    {
+        $metadata = $this->find_openrouter_generation_model_metadata( $model );
+
+        return is_array( $metadata )
+            ? $this->normalize_openrouter_supported_parameters( $metadata['supported_parameters'] ?? null )
+            : [];
+    }
+
+    private function normalize_openrouter_supported_parameters( mixed $value ): array
+    {
+        if ( ! is_array( $value ) )
+        {
+            return [];
+        }
+
+        $parameters = [];
+        foreach ( $value as $parameter )
+        {
+            if ( ! is_scalar( $parameter ) )
+            {
+                continue;
+            }
+
+            $parameter = sanitize_key( (string) $parameter );
+            if ( '' !== $parameter )
+            {
+                $parameters[] = $parameter;
+            }
+        }
+
+        return array_values( array_unique( $parameters ) );
     }
 
     private function pricing_value_is_zero( mixed $value ): bool
@@ -1062,6 +1098,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     private function build_openrouter_payload( string $model, string $prompt, array $selection ): array
     {
         $tools = $this->build_openrouter_tool_payload( $selection['tools'] ?? null );
+        $supported_parameters = $this->openrouter_model_supported_parameters( $model );
         $payload = [
             'model'           => $model,
             'messages'        => [
@@ -1074,7 +1111,6 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
                     'content' => $prompt,
                 ],
             ],
-            'temperature'     => 0.2,
             'max_tokens'      => self::OPENROUTER_SITE_CONTEXT_MIN_MAX_TOKENS,
             'response_format' => [
                 'type'        => 'json_schema',
@@ -1088,8 +1124,12 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
                 'require_parameters' => true,
             ],
         ];
+        if ( in_array( 'temperature', $supported_parameters, true ) )
+        {
+            $payload['temperature'] = 0.2;
+        }
         $reasoning = $this->normalize_openrouter_reasoning_payload( $selection['reasoning'] ?? null );
-        if ( null !== $reasoning )
+        if ( null !== $reasoning && in_array( 'reasoning', $supported_parameters, true ) )
         {
             $payload['reasoning'] = $reasoning;
         }
@@ -1526,7 +1566,8 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $reasoning['enabled'] = rest_sanitize_boolean( $value['enabled'] );
         }
 
-        return [] === $reasoning ? null : $reasoning;
+        $has_budget = isset( $reasoning['effort'] ) || isset( $reasoning['max_tokens'] );
+        return $has_budget ? $reasoning : null;
     }
 
     private function normalize_tool_choice( mixed $value, bool $has_tools ): ?string
