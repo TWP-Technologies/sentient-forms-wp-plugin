@@ -1,6 +1,6 @@
 # Model Selector Recommendation Evidence
 
-Reviewed: 2026-05-01
+Reviewed: 2026-06-17
 
 This document explains the evidence policy behind the model selector presets. The machine-readable version lives in `includes/data/model-selector-preset-evidence.php` and is the source used by the REST model catalog. When a tested model has a verified OpenRouter `latest` alias for the same frontier family, the selector resolves the preset to that alias so installations automatically follow the latest route in that family between formal refreshes.
 
@@ -25,9 +25,9 @@ This document explains the evidence policy behind the model selector presets. Th
 | Low cost | `deepseek/deepseek-v4-flash` | 87 | medium | Cost-first paid default with useful context and category coverage. |
 | Long context | `~openai/gpt-latest` | 93 | high | Latest alias for the tested GPT family; AA-LCR and context-quality evidence beat larger-context-only heuristics. |
 | Reasoning | `openai/gpt-5.5-pro` | 93 | medium | Premium reasoning route first, with GPT-5.5, Claude Opus, and Gemini Pro as fallbacks. |
-| Code generation | `moonshotai/kimi-k2.6` | 90 | medium | Uses the newer Kimi K2.6 route and OpenRouter programming evidence instead of older Kimi K2.5. |
+| Code generation | `xiaomi/mimo-v2.5` | 91 | medium | Refreshed OpenRouter Programming rank #1; low cost, 1M context, structured output, and tool support beat the stale Kimi K2.6 rank from the prior snapshot. |
 | Legal | `~google/gemini-pro-latest` | 86 | medium | Latest alias for the tested Gemini Pro family; balances legal-category evidence, long context, and document/multimodal handling; still requires human review. |
-| Financial | `~anthropic/claude-sonnet-latest` | 87 | medium | Latest alias for the tested Claude Sonnet family; strong professional-work and finance-category fit without blindly choosing Kimi K2.5's single finance rank. |
+| Financial | `deepseek/deepseek-v4-pro` | 89 | medium | Current OpenRouter Finance rank #1 with low cost, 1M context, reasoning, structured output, and tool support; still requires human review. |
 | Privacy-sensitive | `~openai/gpt-latest` | 78 | medium | Latest alias for the tested GPT family; model choice is not a privacy guarantee because privacy depends on route, retention policy, and BYOK/managed configuration. |
 | Realtime | `~google/gemini-flash-latest` | 89 | medium | Latest alias for the tested Gemini Flash family; optimized for visitor-facing response time while keeping structured output support. |
 | Vision and files | `~google/gemini-pro-latest` | 91 | medium | Latest alias for the tested Gemini Pro family; widest current modality surface for image, file, audio, video, and long-context document workflows. |
@@ -41,6 +41,9 @@ This document explains the evidence policy behind the model selector presets. Th
 - llm-stats long-context leaderboard: https://llm-stats.com/leaderboards/best-ai-for-long-context
 - OpenRouter model catalog and category data: https://openrouter.ai/models
 - OpenRouter Programming ranking: https://openrouter.ai/rankings/programming
+- OpenRouter Finance ranking/category data: https://openrouter.ai/models?category=finance
+- OpenRouter Xiaomi MiMo-V2.5 page: https://openrouter.ai/xiaomi/mimo-v2.5
+- OpenRouter DeepSeek V4 Pro page: https://openrouter.ai/deepseek/deepseek-v4-pro
 - OpenRouter API parameter support docs: https://openrouter.ai/docs/api-reference/parameters
 - OpenRouter API overview and routing behavior docs: https://openrouter.ai/docs/api-reference/overview
 - Berkeley Function Calling Leaderboard: https://gorilla.cs.berkeley.edu/leaderboard

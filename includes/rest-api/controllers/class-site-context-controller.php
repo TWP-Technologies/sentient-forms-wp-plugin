@@ -34,6 +34,8 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     private const DEFAULT_REFRESH_DAYS        = 30;
     private const MANUAL_STALE_DAYS           = 90;
     private const READY_CREDENTIAL_STATUSES   = [ 'valid', 'limited' ];
+    private const OPENROUTER_SITE_CONTEXT_SCHEMA_NAME    = 'sentient_forms_site_context_generation_v1';
+    private const OPENROUTER_SITE_CONTEXT_MIN_MAX_TOKENS = 1800;
 
     protected string $rest_base = 'site-context';
 
@@ -296,7 +298,16 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         {
             $settings['last_error'] = $result->get_error_message();
             update_option( self::SETTINGS_OPTION_NAME, $settings, false );
-            return $this->prepare_error_response( $result->get_error_code(), $result->get_error_message(), 400 );
+            $error_data = $result->get_error_data();
+            $status     = is_array( $error_data ) && isset( $error_data['status'] )
+                ? max( 400, min( 599, absint( $error_data['status'] ) ) )
+                : 400;
+            return $this->prepare_error_response(
+                $result->get_error_code(),
+                $result->get_error_message(),
+                $status,
+                is_array( $error_data ) ? $error_data : []
+            );
         }
 
         $this->sync_refresh_schedule( $this->get_settings_record() );
@@ -722,6 +733,8 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             || $this->pricing_value_is_zero( $pricing['completion'] ?? null );
         $web_capable = array_key_exists( 'web_search', $pricing )
             || in_array( 'web_search_options', $raw_supported_parameters, true );
+        $structured_output_capable = in_array( 'response_format', $raw_supported_parameters, true )
+            || in_array( 'structured_outputs', $raw_supported_parameters, true );
 
         if ( $is_free )
         {
@@ -736,6 +749,14 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return new WP_Error(
                 'site_context_generation_web_capable_model_required',
                 __( 'Site Context generation requires a paid OpenRouter model with web search or fetch capability.', 'sentient-forms' )
+            );
+        }
+
+        if ( ! $structured_output_capable )
+        {
+            return new WP_Error(
+                'site_context_generation_structured_output_model_required',
+                __( 'Site Context generation requires a paid OpenRouter model that supports structured JSON output.', 'sentient-forms' )
             );
         }
 
@@ -893,6 +914,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $model     = $this->resolve_generation_model( $selection );
         $prompt    = $this->build_generation_prompt();
         $content   = null;
+        $provider_diagnostics = [];
         $metadata  = [
             'model'  => $model,
             'route'  => $provider,
@@ -923,9 +945,18 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $message = is_array( $choice['message'] ?? null ) ? $choice['message'] : [];
             $content = is_scalar( $message['content'] ?? null ) ? (string) $message['content'] : '';
             $metadata['usage'] = is_array( $response['usage'] ?? null ) ? $response['usage'] : null;
+            $provider_diagnostics = $this->build_openrouter_generation_diagnostics(
+                $response,
+                $choice,
+                (string) $content,
+                $model
+            );
         }
 
-        $generated = $this->decode_generated_context( (string) $content );
+        $generated = $this->decode_generated_context(
+            (string) $content,
+            $provider_diagnostics
+        );
         if ( is_wp_error( $generated ) )
         {
             return $generated;
@@ -1044,9 +1075,24 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
                 ],
             ],
             'temperature'     => 0.2,
-            'max_tokens'      => 1200,
-            'response_format' => [ 'type' => 'json_object' ],
+            'max_tokens'      => self::OPENROUTER_SITE_CONTEXT_MIN_MAX_TOKENS,
+            'response_format' => [
+                'type'        => 'json_schema',
+                'json_schema' => [
+                    'name'   => self::OPENROUTER_SITE_CONTEXT_SCHEMA_NAME,
+                    'strict' => true,
+                    'schema' => $this->generation_output_schema(),
+                ],
+            ],
+            'provider'        => [
+                'require_parameters' => true,
+            ],
         ];
+        $reasoning = $this->normalize_openrouter_reasoning_payload( $selection['reasoning'] ?? null );
+        if ( null !== $reasoning )
+        {
+            $payload['reasoning'] = $reasoning;
+        }
         if ( [] !== $tools )
         {
             $payload['tools'] = $tools;
@@ -1069,6 +1115,9 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $web_fetch = is_array( $settings['web_fetch'] ?? null )
             ? $settings['web_fetch']
             : [ 'mode' => 'auto' ];
+        $datetime = is_array( $settings['datetime'] ?? null )
+            ? $settings['datetime']
+            : [];
 
         $tools = [];
         $search_mode = sanitize_key( (string) ( $web_search['mode'] ?? 'required' ) );
@@ -1090,7 +1139,58 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $tools[] = [ 'type' => 'openrouter:web_fetch' ];
         }
 
+        $datetime_mode = sanitize_key( (string) ( $datetime['mode'] ?? 'off' ) );
+        if ( in_array( $datetime_mode, [ 'auto', 'required' ], true ) )
+        {
+            $tools[] = [ 'type' => 'openrouter:datetime' ];
+        }
+
         return $tools;
+    }
+
+    private function build_openrouter_generation_diagnostics( array $response, array $choice, string $content, string $model ): array
+    {
+        $usage = is_array( $response['usage'] ?? null ) ? $response['usage'] : [];
+        $diagnostics = [
+            'route'           => 'openrouter',
+            'model'           => $model,
+            'response_format' => 'json_schema',
+            'schema_name'     => self::OPENROUTER_SITE_CONTEXT_SCHEMA_NAME,
+            'content_length'  => strlen( $content ),
+            'content_sha256'  => hash( 'sha256', $content ),
+        ];
+
+        if ( is_scalar( $response['id'] ?? null ) )
+        {
+            $diagnostics['response_id'] = sanitize_text_field( (string) $response['id'] );
+        }
+
+        if ( is_scalar( $choice['finish_reason'] ?? null ) )
+        {
+            $diagnostics['finish_reason'] = sanitize_key( (string) $choice['finish_reason'] );
+        }
+
+        if ( is_numeric( $usage['total_tokens'] ?? null ) )
+        {
+            $diagnostics['usage_total_tokens'] = absint( $usage['total_tokens'] );
+        }
+
+        return $diagnostics;
+    }
+
+    private function normalize_openrouter_reasoning_payload( mixed $value ): ?array
+    {
+        $sanitized = $this->sanitize_reasoning_settings( $value );
+        if ( is_string( $sanitized ) )
+        {
+            return [
+                'effort'  => $sanitized,
+                // phpcs:ignore WordPressVIPMinimum.Performance.WPQueryParams.PostNotIn_exclude -- OpenRouter reasoning payload key, not a WP_Query parameter.
+                'exclude' => true,
+            ];
+        }
+
+        return is_array( $sanitized ) ? $sanitized : null;
     }
 
     private function build_generation_prompt(): string
@@ -1145,7 +1245,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         );
     }
 
-    private function decode_generated_context( string $content ): array | WP_Error
+    private function decode_generated_context( string $content, array $diagnostics = [] ): array | WP_Error
     {
         $json = trim( $content );
         if ( str_starts_with( $json, '```' ) )
@@ -1159,7 +1259,16 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         {
             return new WP_Error(
                 'site_context_generation_invalid_json',
-                __( 'The Site Context model did not return valid JSON.', 'sentient-forms' )
+                __( 'The Site Context model did not return valid JSON.', 'sentient-forms' ),
+                [
+                    'status'      => 502,
+                    'diagnostics' => array_merge(
+                        $diagnostics,
+                        [
+                            'json_error' => sanitize_text_field( json_last_error_msg() ),
+                        ]
+                    ),
+                ]
             );
         }
 
@@ -1172,7 +1281,11 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         {
             return new WP_Error(
                 'site_context_generation_empty_summary',
-                __( 'The Site Context model returned an empty summary.', 'sentient-forms' )
+                __( 'The Site Context model returned an empty summary.', 'sentient-forms' ),
+                [
+                    'status'      => 502,
+                    'diagnostics' => $diagnostics,
+                ]
             );
         }
 
@@ -1292,6 +1405,11 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
         $selection['is_preset'] = rest_sanitize_boolean( $value['is_preset'] ?? $selection['is_preset'] );
         $selection['tools']     = $this->sanitize_tool_settings( $value['tools'] ?? null );
+        $reasoning              = $this->sanitize_reasoning_settings( $value['reasoning'] ?? null );
+        if ( null !== $reasoning )
+        {
+            $selection['reasoning'] = $reasoning;
+        }
 
         return $selection;
     }
@@ -1338,15 +1456,22 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             }
         }
 
-        foreach ( [ 'web_search', 'web_fetch' ] as $tool_key )
+        foreach ( [ 'web_search', 'web_fetch', 'datetime' ] as $tool_key )
         {
             if ( ! is_array( $value[ $tool_key ] ?? null ) )
             {
                 continue;
             }
-            $mode = sanitize_key( (string) ( $value[ $tool_key ]['mode'] ?? $settings[ $tool_key ]['mode'] ) );
+            $default_mode = is_array( $settings[ $tool_key ] ?? null ) && is_scalar( $settings[ $tool_key ]['mode'] ?? null )
+                ? (string) $settings[ $tool_key ]['mode']
+                : 'auto';
+            $mode = sanitize_key( (string) ( $value[ $tool_key ]['mode'] ?? $default_mode ) );
             if ( in_array( $mode, [ 'auto', 'required', 'off', 'inherit' ], true ) )
             {
+                if ( ! isset( $settings[ $tool_key ] ) )
+                {
+                    $settings[ $tool_key ] = [];
+                }
                 $settings[ $tool_key ]['mode'] = $mode;
             }
             if ( 'web_search' === $tool_key )
@@ -1356,6 +1481,52 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         return $settings;
+    }
+
+    private function sanitize_reasoning_settings( mixed $value ): string | array | null
+    {
+        $allowed_efforts = [ 'none', 'minimal', 'low', 'medium', 'high', 'xhigh' ];
+
+        if ( is_scalar( $value ) )
+        {
+            $effort = sanitize_key( (string) $value );
+            return in_array( $effort, $allowed_efforts, true ) ? $effort : null;
+        }
+
+        if ( ! is_array( $value ) || array_is_list( $value ) )
+        {
+            return null;
+        }
+
+        $reasoning = [];
+        if ( isset( $value['effort'] ) && is_scalar( $value['effort'] ) )
+        {
+            $effort = sanitize_key( (string) $value['effort'] );
+            if ( in_array( $effort, $allowed_efforts, true ) )
+            {
+                $reasoning['effort'] = $effort;
+            }
+        }
+        elseif ( isset( $value['max_tokens'] ) && is_numeric( $value['max_tokens'] ) )
+        {
+            $max_tokens = absint( $value['max_tokens'] );
+            if ( $max_tokens > 0 )
+            {
+                $reasoning['max_tokens'] = $max_tokens;
+            }
+        }
+
+        if ( array_key_exists( 'exclude', $value ) )
+        {
+            // phpcs:ignore WordPressVIPMinimum.Performance.WPQueryParams.PostNotIn_exclude -- OpenRouter reasoning payload key, not a WP_Query parameter.
+            $reasoning['exclude'] = rest_sanitize_boolean( $value['exclude'] );
+        }
+        if ( array_key_exists( 'enabled', $value ) )
+        {
+            $reasoning['enabled'] = rest_sanitize_boolean( $value['enabled'] );
+        }
+
+        return [] === $reasoning ? null : $reasoning;
     }
 
     private function normalize_tool_choice( mixed $value, bool $has_tools ): ?string
@@ -1384,7 +1555,9 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $auth_mode = sanitize_key( (string) ( $credential['auth_mode'] ?? '' ) );
         if ( 'constant' === $auth_mode )
         {
-            return Sentient_Forms_Provider_Secret_Resolver::resolve_constant_secret( (string) ( $credential['constant_name'] ?? '' ) );
+            return $this->normalize_resolved_provider_secret(
+                Sentient_Forms_Provider_Secret_Resolver::resolve_constant_secret( (string) ( $credential['constant_name'] ?? '' ) )
+            );
         }
 
         if ( ! in_array( $auth_mode, [ 'manual_key', 'oauth_broker' ], true ) )
@@ -1404,7 +1577,28 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             );
         }
 
-        return ( new Sentient_Forms_Provider_Credential_Vault() )->decrypt( $encrypted );
+        return $this->normalize_resolved_provider_secret(
+            ( new Sentient_Forms_Provider_Credential_Vault() )->decrypt( $encrypted )
+        );
+    }
+
+    private function normalize_resolved_provider_secret( string | WP_Error $secret ): string | WP_Error
+    {
+        if ( is_wp_error( $secret ) )
+        {
+            return $secret;
+        }
+
+        $secret = trim( $secret );
+        if ( '' === $secret )
+        {
+            return new WP_Error(
+                'sentient_forms_provider_secret_missing',
+                __( 'Provider credential does not contain a usable stored secret.', 'sentient-forms' )
+            );
+        }
+
+        return $secret;
     }
 
     private function resolve_managed_proxy_context(): array | WP_Error
