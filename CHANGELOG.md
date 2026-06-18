@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.13](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.12...v0.3.13) (2026-06-18)
+
+
+### Bug Fixes
+
+* **openrouter:** gate local action tools by metadata ([3d5e056](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/3d5e0565b98799b7ed60fa9c79c22110daf27044))
+* **openrouter:** gate tool choice by model support ([17132f4](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/17132f46334e0994f4e7095efa9f3f2b0c991785))
+* **release:** sync generated source references ([0a332ba](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0a332ba7be548d66982bc0039b335dbe566dc10a))
+* **site-context:** gate OpenRouter payload parameters ([12a1728](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/12a17287b9455e974c8c51a59e4ed59973983b3f))
+* **site-context:** gate OpenRouter tools by model support ([cb26633](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/cb266333e263dbfb75ebf15faed10d2920cd80cf))
+* **site-context:** harden OpenRouter generation ([8bd848c](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/8bd848ca92ad495eeec706c254d22a907ff2ccf4))
+* **site-context:** keep empty datetime tool disabled ([213d30f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/213d30f5aec47aafdec80c9c0d62a0f46007883f))
+* **site-context:** preserve native OpenRouter web search ([98bb997](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/98bb99778386b9dea22e9f5658853451da280bec))
+* **wporg:** stage screenshot readme in svn workflow ([02f5bc0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/02f5bc09f304d731b3357d52ea685ec4ee0a8e33))
+* **wporg:** sync screenshot captions to stable tag ([9398a83](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/9398a83920af075a417e5ca6a3a9badf53884a08))
+
 ## [0.3.12](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.11...v0.3.12) (2026-06-16)
 
 
