@@ -8,12 +8,13 @@ import type {
 
 export const DEFAULT_SITE_CONTEXT_REFRESH_DAYS = 30;
 export const SITE_CONTEXT_REFRESH_DAY_OPTIONS = [7, 14, 30, 60, 90] as const;
+export const SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS = 5;
 
 export const SITE_CONTEXT_DEFAULT_TOOLS: Record<string, unknown> = {
 	tool_choice: 'auto',
 	web_search: {
 		mode: 'required',
-		max_results: 5
+		max_results: SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS
 	}
 };
 
@@ -80,6 +81,7 @@ type LegacySiteContextResponse =
 			stale_after_days?: number;
 			status?: SiteContextStatusResponse['status'];
 			generation_access?: Partial<SiteContextGenerationAccess> | null;
+			generation_job?: SiteContextStatusResponse['generation_job'];
 	  };
 
 function fallbackGenerationAccessForLegacyResponse(
@@ -164,7 +166,8 @@ export function normalizeSiteContextResponse(
 		generation_access: normalizeGenerationAccess(
 			response.generation_access ?? generationAccessFallback,
 			empty
-		)
+		),
+		generation_job: response.generation_job ?? null
 	};
 }
 

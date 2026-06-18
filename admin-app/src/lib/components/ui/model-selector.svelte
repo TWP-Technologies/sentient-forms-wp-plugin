@@ -63,6 +63,7 @@
 		allowedProviders?: LocalProvider[] | null;
 		requiredCapabilities?: ModelSelectorCapabilityKey[] | null;
 		lockRequiredCapabilities?: boolean;
+		webSearchMaxResultsLimit?: number;
 		onchange?: (selection: ModelSelection) => void;
 	}
 
@@ -88,6 +89,7 @@
 		allowedProviders = null,
 		requiredCapabilities: requiredCapabilitiesProp = null,
 		lockRequiredCapabilities = false,
+		webSearchMaxResultsLimit = 10,
 		onchange
 	}: Props = $props();
 
@@ -440,13 +442,13 @@
 				!providerWasExplicit && presetIsLocked(requestedPreset)
 					? defaultPresetCode()
 					: requestedPreset;
-			selectedModel = normalizeSelectedModel(resolvedModelForPreset(selectedPreset));
+			selectedModel = resolvedModelForPreset(selectedPreset);
 		} else if (models.some((model) => model.id === nextValue.primary)) {
 			selectionMode = 'models';
-			selectedModel = normalizeSelectedModel(nextValue.primary);
+			selectedModel = nextValue.primary;
 			selectedCustomModel = '';
 		} else {
-			if (customModelAllowed(nextValue.primary)) {
+			if (customModelAllowedFromSavedSelection(nextValue.primary)) {
 				selectionMode = 'custom';
 				selectedCustomModel = nextValue.primary;
 				selectedModel = normalizeSelectedModel('');
@@ -488,6 +490,16 @@
 		return value === 'off' || value === 'auto' || value === 'required' ? value : 'inherit';
 	}
 
+	const effectiveWebSearchMaxResultsLimit = $derived(
+		Math.max(1, Math.min(10, Math.round(webSearchMaxResultsLimit || 10)))
+	);
+
+	function clampWebSearchMaxResults(value: unknown): number {
+		const numeric = Number(value);
+		if (!Number.isFinite(numeric)) return Math.min(5, effectiveWebSearchMaxResultsLimit);
+		return Math.max(1, Math.min(effectiveWebSearchMaxResultsLimit, Math.round(numeric)));
+	}
+
 	function syncToolSettings(value: unknown) {
 		const tools = isRecord(value) ? value : {};
 		toolChoiceMode = normalizeToolMode(tools.tool_choice);
@@ -498,9 +510,7 @@
 		webFetchMode = normalizeToolMode(webFetch.mode);
 		datetimeMode = normalizeToolMode(datetime.mode);
 		const maxResults = Number(webSearch.max_results);
-		webSearchMaxResults = Number.isFinite(maxResults)
-			? Math.max(1, Math.min(10, Math.round(maxResults)))
-			: 5;
+		webSearchMaxResults = clampWebSearchMaxResults(maxResults);
 	}
 
 	function clearUnsupportedToolSelections(model: ModelInfo | null = selectedPrimaryModelInfo()): boolean {
@@ -798,7 +808,7 @@
 		if (webSearchMode !== 'inherit' && selectedModelSupportsWebSearch()) {
 			tools.web_search = {
 				mode: webSearchMode,
-				max_results: Math.max(1, Math.min(10, Math.round(webSearchMaxResults || 5)))
+				max_results: clampWebSearchMaxResults(webSearchMaxResults)
 			};
 		}
 		if (webFetchMode !== 'inherit' && selectedModelSupportsWebFetch()) {
@@ -1290,6 +1300,10 @@
 		);
 	}
 
+	function customModelAllowedFromSavedSelection(modelId: string): boolean {
+		return customModelLooksValid(modelId);
+	}
+
 	onMount(() => {
 		void loadModels();
 		void loadProviderCredentials();
@@ -1539,12 +1553,14 @@
 						<input
 							type="number"
 							min="1"
-							max="10"
+							max={effectiveWebSearchMaxResultsLimit}
 							class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							value={webSearchMaxResults}
 							disabled={readonly}
 							oninput={(event) => {
-								webSearchMaxResults = Number((event.currentTarget as HTMLInputElement).value);
+								webSearchMaxResults = clampWebSearchMaxResults(
+									(event.currentTarget as HTMLInputElement).value
+								);
 								handleSelectionChange();
 							}}
 						/>

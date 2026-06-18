@@ -143,22 +143,38 @@ class Sentient_Forms_OpenRouter_Direct_Client implements Sentient_Forms_Provider
             );
         }
 
+        $error = isset( $decoded['error'] ) && is_array( $decoded['error'] ) ? $decoded['error'] : [];
+        if ( [] !== $error )
+        {
+            return $this->error_response( $error, $decoded, $status_code );
+        }
+
         if ( $status_code >= 200 && $status_code < 300 )
         {
             return is_array( $decoded ) ? $decoded : [];
         }
 
-        $error = isset( $decoded['error'] ) && is_array( $decoded['error'] ) ? $decoded['error'] : [];
-        $code  = isset( $error['code'] ) ? sanitize_key( (string) $error['code'] ) : 'openrouter_request_failed';
+        return $this->error_response( $error, $decoded, $status_code );
+    }
+
+    private function error_response( array $error, mixed $decoded, int $status_code ): WP_Error
+    {
+        $code  = isset( $error['code'] ) ? (string) sanitize_key( (string) $error['code'] ) : 'openrouter_request_failed';
         $message = isset( $error['message'] )
             ? sanitize_text_field( (string) $error['message'] )
             : __( 'OpenRouter request failed.', 'sentient-forms' );
+        $provider_status = is_numeric( $error['code'] ?? null )
+            ? max( 400, min( 599, absint( $error['code'] ) ) )
+            : 0;
+        $status = $status_code >= 400
+            ? $status_code
+            : ( $provider_status > 0 ? $provider_status : 400 );
 
         return new WP_Error(
             $code,
             $message,
             [
-                'status'  => $status_code,
+                'status'  => $status,
                 'payload' => $decoded,
             ]
         );

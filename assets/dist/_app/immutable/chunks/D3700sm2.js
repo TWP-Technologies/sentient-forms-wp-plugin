@@ -1,1 +1,0 @@
-import{$ as e,X as t,Y as n,at as r,d as i,et as a,ot as o}from"./Cw3WQa9N.js";function s(s,c){var l=n,u=t,d=s();let f=i(d,i=>{var c=d!==s(),f,p=t,m=n;a(u),e(l);try{f=r(()=>{o(()=>{let e=s();c&&i(e)})})}finally{a(p),e(m)}return c=!0,f});return c?{set:c,update:e=>c(e(s())),subscribe:f.subscribe}:{subscribe:f.subscribe}}export{s as t};

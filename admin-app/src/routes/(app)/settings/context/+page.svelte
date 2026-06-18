@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import SiteContextNotices from '$lib/components/site-context-notices.svelte';
 	import SiteContextSetupPanel from '$lib/components/site-context-setup-panel.svelte';
 	import { Alert, Button, Section, StateTemplate } from '$lib/components/ui';
@@ -10,6 +10,7 @@
 	} from '$lib/api/types';
 	import { appHref } from '$lib/navigation';
 	import { notifications } from '$lib/stores/notifications';
+	import { toast } from 'sonner-svelte';
 	import {
 		DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
 		DEFAULT_SITE_CONTEXT_REFRESH_DAYS,
@@ -23,7 +24,9 @@
 	import { wpFetch } from '$lib/wp';
 
 	const CONTEXT_HARD_LIMIT = 5000;
+	const GENERATION_POLL_INTERVAL_MS = 3000;
 	type SiteContextBadgeVariant = 'neutral' | 'success' | 'warning';
+	type ToastId = string;
 
 	let loading = $state(true);
 	let saving = $state(false);
@@ -38,6 +41,9 @@
 	let autoRefreshDays = $state(DEFAULT_SITE_CONTEXT_REFRESH_DAYS);
 	let generationModelSelection = $state<ModelSelection>(DEFAULT_SITE_CONTEXT_MODEL_SELECTION);
 	let showWithdrawConfirm = $state(false);
+	let generationPollTimer: ReturnType<typeof setTimeout> | null = null;
+	let generationToastId: ToastId | null = null;
+	let generationToastActive = false;
 
 	const characterCount = $derived(editedText.length);
 	const isOverLimit = $derived(characterCount > CONTEXT_HARD_LIMIT);
@@ -63,8 +69,13 @@
 	const generateDisabledMessage = $derived(
 		siteContextGenerateDisabledMessage(status, generationConsent, hasChanges)
 	);
+	const generationJobActive = $derived(siteContextGenerationJobIsActive(status));
 	const canGenerate = $derived(
-		generationConsent && !generating && !generateDisabledMessage && status?.generation_access.can_generate === true
+		generationConsent &&
+			!generating &&
+			!generationJobActive &&
+			!generateDisabledMessage &&
+			status?.generation_access.can_generate === true
 	);
 	const generateSetupHref = $derived(
 		generateDisabledMessage && !hasChanges
@@ -86,6 +97,97 @@
 		autoRefreshDays = next.settings.auto_refresh_days || DEFAULT_SITE_CONTEXT_REFRESH_DAYS;
 		generationModelSelection =
 			next.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION;
+		updateGenerationJobState(next);
+	}
+
+	function siteContextGenerationJobIsActive(nextStatus: SiteContextStatusResponse | null): boolean {
+		return ['queued', 'running'].includes(nextStatus?.generation_job?.status ?? '');
+	}
+
+	function clearGenerationPoll(): void {
+		if (!generationPollTimer) return;
+		clearTimeout(generationPollTimer);
+		generationPollTimer = null;
+	}
+
+	function scheduleGenerationPoll(): void {
+		if (generationPollTimer) return;
+		generationPollTimer = setTimeout(() => {
+			generationPollTimer = null;
+			void pollGenerationStatus();
+		}, GENERATION_POLL_INTERVAL_MS);
+	}
+
+	function ensureGenerationToast(nextStatus: SiteContextStatusResponse): void {
+		const job = nextStatus.generation_job;
+		const model = job?.model ? `Model: ${job.model}` : undefined;
+		generationToastActive = true;
+		generationToastId = toast.loading('Site Context generation is running in the background.', {
+			id: generationToastId ?? undefined,
+			description: model,
+			duration: Number.POSITIVE_INFINITY
+		});
+	}
+
+	function completeGenerationToast(message: string): void {
+		if (!generationToastActive) return;
+		toast.success(message, {
+			id: generationToastId ?? undefined
+		});
+		generationToastActive = false;
+		generationToastId = null;
+	}
+
+	function failGenerationToast(message: string): void {
+		if (generationToastActive) {
+			toast.error(message, {
+				id: generationToastId ?? undefined
+			});
+			generationToastActive = false;
+			generationToastId = null;
+			return;
+		}
+
+		toast.error(message);
+	}
+
+	function updateGenerationJobState(nextStatus: SiteContextStatusResponse): void {
+		const job = nextStatus.generation_job;
+		if (job?.status === 'queued' || job?.status === 'running') {
+			generating = true;
+			error = null;
+			ensureGenerationToast(nextStatus);
+			scheduleGenerationPoll();
+			return;
+		}
+
+		clearGenerationPoll();
+		generating = false;
+
+		if (job?.status === 'succeeded') {
+			completeGenerationToast('Site Context generated.');
+			return;
+		}
+
+		if (job?.status === 'failed') {
+			const message = job.error ?? 'Failed to generate Site Context';
+			error = message;
+			failGenerationToast(message);
+		}
+	}
+
+	async function pollGenerationStatus(): Promise<void> {
+		try {
+			syncFromStatus(
+				normalizeSiteContextResponse(await wpFetch<SiteContextStatusResponse>('site-context'))
+			);
+		} catch (e) {
+			console.error('Failed to refresh Site Context generation status', e);
+			const message = readableError(e, 'Failed to refresh Site Context generation status');
+			error = message;
+			generating = false;
+			failGenerationToast(message);
+		}
 	}
 
 	function siteContextBadgeVariant(
@@ -160,13 +262,14 @@
 				showNotifications: false
 			});
 			syncFromStatus(normalizeSiteContextResponse(response));
-			notifications.success('Site Context generated');
 		} catch (e) {
 			console.error('Failed to generate Site Context', e);
 			error = readableError(e, 'Failed to generate Site Context');
 			notifications.error(error);
 		} finally {
-			generating = false;
+			if (!siteContextGenerationJobIsActive(status)) {
+				generating = false;
+			}
 		}
 	}
 
@@ -224,6 +327,10 @@
 
 	onMount(() => {
 		void loadContext();
+	});
+
+	onDestroy(() => {
+		clearGenerationPoll();
 	});
 </script>
 
