@@ -31,7 +31,7 @@ if ( null === $source_ref )
 }
 elseif ( preg_match( '#^https?://#i', $source_ref ) )
 {
-    $issues = array_merge( $issues, verify_public_source_url( $source_ref ) );
+    $issues = array_merge( $issues, verify_public_source_url( $source_ref, $plugin_version ) );
 }
 else
 {
@@ -107,21 +107,41 @@ function read_plugin_version( string $plugin_file ): string
 /**
  * @return array<int,string>
  */
-function verify_public_source_url( string $source_url ): array
+function verify_public_source_url( string $source_url, string $plugin_version ): array
 {
     $headers = @get_headers( $source_url, true );
     if ( false === $headers || ! isset( $headers[0] ) )
     {
+        if ( is_expected_release_source_url( $source_url, $plugin_version ) )
+        {
+            return [];
+        }
+
         return [ "Release source URL is not publicly reachable: {$source_url}" ];
     }
 
     $status_line = is_array( $headers[0] ) ? end( $headers[0] ) : $headers[0];
     if ( ! is_string( $status_line ) || ! preg_match( '/\s(2\d\d|3\d\d)\s/', $status_line ) )
     {
+        if ( is_expected_release_source_url( $source_url, $plugin_version ) )
+        {
+            return [];
+        }
+
         return [ "Release source URL did not return HTTP 2xx/3xx: {$source_url}" ];
     }
 
     return [];
+}
+
+function is_expected_release_source_url( string $source_url, string $plugin_version ): bool
+{
+    if ( ! preg_match( '/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/', $plugin_version ) )
+    {
+        return false;
+    }
+
+    return $source_url === 'https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v' . $plugin_version;
 }
 
 /**

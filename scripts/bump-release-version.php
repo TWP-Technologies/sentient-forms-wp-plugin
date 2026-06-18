@@ -37,7 +37,7 @@ update_text_file(
     [
         '/^(\s*\*\s*Version:\s*).+$/m' => '${1}' . $next_version,
         "/(const\s+SENTIENT_FORMS_VERSION\s*=\s*)'[^']+';/" => '${1}' . "'" . $next_version . "';",
-        "/const\s+SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE\s*=\s*'[^']+';/" => "const SENTIENT_FORMS_RELEASE_SOURCE_URL = '{$source_url}';",
+        "/(const\s+SENTIENT_FORMS_RELEASE_SOURCE_REFERENCE\s*=\s*)'[^']+';/" => '${1}' . "'" . $source_url . "';",
         "/(const\s+SENTIENT_FORMS_RELEASE_SOURCE_URL\s*=\s*)'[^']+';/" => '${1}' . "'" . $source_url . "';",
     ]
 );
@@ -47,6 +47,7 @@ update_text_file(
     [
         '/^(Stable tag:\s*).+$/m' => '${1}' . $next_version,
         '/Sentient Forms [0-9]+\.[0-9]+\.[0-9]+/' => 'Sentient Forms ' . $next_version,
+        '#https://github\.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?#' => $source_url,
     ]
 );
 
