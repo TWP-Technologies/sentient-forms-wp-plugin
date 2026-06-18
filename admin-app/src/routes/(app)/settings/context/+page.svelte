@@ -188,6 +188,11 @@
 		generationPollFailures = 0;
 		generating = false;
 
+		if (!job) {
+			dismissGenerationToast();
+			return;
+		}
+
 		if (job?.status === 'succeeded') {
 			completeGenerationToast('Site Context generated.');
 			return;

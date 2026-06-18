@@ -970,7 +970,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $settings = is_array( $job['settings'] ?? null )
                 ? $this->normalize_settings_record( $job['settings'] )
                 : $this->get_settings_record();
-            $result   = $this->perform_generation( $settings, true, false, $job_id );
+            $result   = $this->perform_generation( $settings, true, false, $job_id, $worker_id );
             $job      = $this->get_generation_job_record() ?: $job;
 
             if ( is_wp_error( $result ) && 'site_context_generation_canceled' === $result->get_error_code() )
@@ -1555,7 +1555,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         return $credential;
     }
 
-    private function manual_generation_job_can_commit( ?string $job_id ): bool
+    private function manual_generation_job_can_commit( ?string $job_id, ?string $worker_id = null ): bool
     {
         if ( null === $job_id )
         {
@@ -1568,10 +1568,16 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return false;
         }
 
-        return $this->generation_job_matches( $this->get_generation_job_record(), $job_id, 'running' );
+        $job = $this->get_generation_job_record();
+        if ( ! $this->generation_job_matches( $job, $job_id, 'running' ) )
+        {
+            return false;
+        }
+
+        return null === $worker_id || $worker_id === (string) ( $job['worker_id'] ?? '' );
     }
 
-    private function perform_generation( array $settings, bool $manual, bool $empty_only = false, ?string $manual_job_id = null ): array | WP_Error
+    private function perform_generation( array $settings, bool $manual, bool $empty_only = false, ?string $manual_job_id = null, ?string $manual_worker_id = null ): array | WP_Error
     {
         $access = $this->build_generation_access( $settings );
         if ( empty( $access['can_generate'] ) )
@@ -1656,7 +1662,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             );
         }
 
-        if ( ! $this->manual_generation_job_can_commit( $manual_job_id ) )
+        if ( ! $this->manual_generation_job_can_commit( $manual_job_id, $manual_worker_id ) )
         {
             return new WP_Error(
                 'site_context_generation_canceled',

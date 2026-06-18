@@ -330,6 +330,11 @@
 		siteContextGenerationPollFailures = 0;
 		siteContextGenerating = false;
 
+		if (!job) {
+			dismissSiteContextGenerationToast();
+			return;
+		}
+
 		if (job?.status === 'succeeded') {
 			completeSiteContextGenerationToast('Site Context generated.');
 			return;

@@ -877,6 +877,44 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertNull( $data['context'] ?? null );
     }
 
+    public function test_manual_generation_does_not_commit_after_worker_ownership_changes(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [],
+            static function (): void {
+                $job = get_option( 'sentient_forms_site_context_generation_job' );
+                $job = is_array( $job ) ? $job : [];
+                $job['status']    = 'running';
+                $job['worker_id'] = 'different-worker-owns-this-job';
+                update_option( 'sentient_forms_site_context_generation_job', $job, false );
+            }
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertCount( 1, $calls );
+        $this->assertNull( $data['context'] ?? null );
+        $this->assertSame( 'running', $data['generation_job']['status'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_site_context' ) );
+    }
+
     public function test_manual_generation_does_not_commit_after_consent_withdrawal(): void
     {
         $credential_id = $this->create_openrouter_credential();
