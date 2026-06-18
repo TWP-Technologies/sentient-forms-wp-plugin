@@ -1169,6 +1169,68 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertFalse( $http_called );
     }
 
+    public function test_generate_context_omits_auto_gpt_latest_web_search_options_from_payload(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            '~openai/gpt-latest',
+            [
+                'id'                   => '~openai/gpt-latest',
+                'pricing'              => [
+                    'prompt'     => '0.000005',
+                    'completion' => '0.00003',
+                    'web_search' => '0.01',
+                ],
+                'supported_parameters' => [
+                    'response_format',
+                    'structured_outputs',
+                    'max_tokens',
+                    'tools',
+                    'tool_choice',
+                    'web_search_options',
+                ],
+                'free'                 => false,
+            ]
+        );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [
+                'model' => '~openai/gpt-latest',
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => '~openai/gpt-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode'        => 'auto',
+                            'max_results' => 5,
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 1, $calls );
+        $payload = json_decode( (string) $calls[0]['args']['body'], true );
+
+        $this->assertSame( '~openai/gpt-latest', $payload['model'] ?? null );
+        $this->assertArrayNotHasKey( 'web_search_options', $payload );
+        $this->assertNotContains( 'openrouter:web_search', array_column( $payload['tools'] ?? [], 'type' ) );
+    }
+
     public function test_generate_context_omits_auto_unverified_openrouter_server_tools_from_payload(): void
     {
         $credential_id = $this->create_openrouter_credential();

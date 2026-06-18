@@ -1069,12 +1069,6 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
 
     private function run_openrouter_generation( string $model, string $prompt, array $selection ): array | WP_Error
     {
-        $tool_readiness = $this->validate_openrouter_server_tool_selection( $model, $selection );
-        if ( is_wp_error( $tool_readiness ) )
-        {
-            return $tool_readiness;
-        }
-
         $credential = $this->resolve_ready_openrouter_credential( $selection );
         if ( is_wp_error( $credential ) )
         {
@@ -1189,7 +1183,11 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         $tool_types = array_column( $tools, 'type' );
-        if ( in_array( 'web_search_options', $supported_parameters, true ) && ! in_array( 'openrouter:web_search', $tool_types, true ) )
+        if (
+            ! empty( $server_tools['web_search'] )
+            && in_array( 'web_search_options', $supported_parameters, true )
+            && ! in_array( 'openrouter:web_search', $tool_types, true )
+        )
         {
             $web_search_options = $this->build_openrouter_web_search_options_payload( $selection['tools'] ?? null );
             if ( [] !== $web_search_options )
