@@ -132,6 +132,51 @@ describe('normalizeSiteContextResponse', () => {
 			max_attempts: 2
 		});
 	});
+
+	it('clamps legacy saved Site Context web-search depth during schema parsing', () => {
+		const status = parseSiteContextStatusResponse({
+			context: null,
+			settings: {
+				consent_status: 'granted',
+				consented_at: '2026-06-18T00:00:00Z',
+				declined_at: null,
+				auto_refresh_enabled: false,
+				auto_refresh_days: 30,
+				next_refresh_at: null,
+				last_generated_at: null,
+				last_error: null,
+				generation_model_selection: {
+					primary: '~google/gemini-pro-latest',
+					is_preset: false,
+					provider: 'openrouter',
+					credential_id: 1,
+					tools: {
+						tool_choice: 'auto',
+						web_search: { mode: 'required', max_results: 8 }
+					}
+				}
+			},
+			has_context: false,
+			is_empty: true,
+			is_stale: false,
+			stale_after_days: 90,
+			status: 'empty',
+			generation_access: {
+				can_generate: true,
+				reason_code: 'ready',
+				message: 'Ready.',
+				setup_target: null,
+				provider: 'openrouter',
+				model: '~google/gemini-pro-latest',
+				credential_id: 1
+			},
+			generation_job: null
+		});
+
+		expect(status.settings.generation_model_selection?.tools).toMatchObject({
+			web_search: { mode: 'required', max_results: 5 }
+		});
+	});
 });
 
 describe('siteContextModelSelectionChanged', () => {

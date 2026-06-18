@@ -5,6 +5,13 @@ import { SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS } from '$lib/utils/site-context';
 const nullableStringSchema = z.string().nullable();
 const optionalNullableStringSchema = z.string().nullable().optional();
 const toolModeSchema = z.enum(['inherit', 'off', 'auto', 'required']);
+const legacySiteContextWebSearchMaxResultsLimit = 10;
+const siteContextWebSearchMaxResultsSchema = z
+	.number()
+	.int()
+	.min(1)
+	.max(legacySiteContextWebSearchMaxResultsLimit)
+	.transform((value) => Math.min(value, SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS));
 const modelReasoningSchema = z
 	.union([
 		z.string(),
@@ -25,7 +32,7 @@ const siteContextModelToolsSchema = z
 		web_search: z
 			.object({
 				mode: toolModeSchema,
-				max_results: z.number().int().min(1).max(SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS).optional()
+				max_results: siteContextWebSearchMaxResultsSchema.optional()
 			})
 			.passthrough()
 			.optional(),

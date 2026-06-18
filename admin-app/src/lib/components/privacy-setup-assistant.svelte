@@ -348,9 +348,11 @@
 			const next = parseSiteContextResponse(
 				await wpFetch<SiteContextStatusResponse>('site-context')
 			);
+			if (!open) return;
 			siteContextGenerationPollFailures = 0;
 			syncSiteContext(next, { preserveLocalEdits: true });
 		} catch (error) {
+			if (!open) return;
 			console.error('Failed to refresh Site Context generation status', error);
 			if (siteContextGenerationJobIsActive(siteContextStatus)) {
 				siteContextGenerationPollFailures += 1;
