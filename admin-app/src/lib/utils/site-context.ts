@@ -14,9 +14,6 @@ export const SITE_CONTEXT_DEFAULT_TOOLS: Record<string, unknown> = {
 	web_search: {
 		mode: 'required',
 		max_results: 5
-	},
-	web_fetch: {
-		mode: 'auto'
 	}
 };
 

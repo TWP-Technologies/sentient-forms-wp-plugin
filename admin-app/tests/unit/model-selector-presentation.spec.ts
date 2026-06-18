@@ -4,6 +4,8 @@ import {
 	filterAndSortModels,
 	missingRequiredCapabilities,
 	modelCostLabel,
+	modelSupportsToolChoice,
+	modelSupportsServerTool,
 	providerMonogram,
 	type ModelSelectorFilters
 } from '$lib/utils/model-selector-presentation';
@@ -189,6 +191,59 @@ describe('model selector presentation utilities', () => {
 		expect(missing).toEqual(['structured']);
 		expect(missingRequiredCapabilities(null, ['structured'])).toEqual(['structured']);
 		expect(missingRequiredCapabilities(models[0], ['structured'])).toEqual([]);
+	});
+
+	it('distinguishes OpenRouter server tools from generic tool calling', () => {
+		const latestAlias = model({
+			id: '~openai/gpt-latest',
+			display_name: 'OpenAI GPT Latest',
+			capabilities: {
+				reasoning: true,
+				code: true,
+				vision: true,
+				tools: true,
+				structured: true,
+				web_search: true,
+				server_tools: {
+					web_search: true,
+					web_fetch: false,
+					datetime: false
+				},
+				long_context: true,
+				files: true
+			}
+		});
+
+		expect(modelSupportsServerTool(latestAlias, 'web_search')).toBe(true);
+		expect(modelSupportsServerTool(latestAlias, 'web_fetch')).toBe(false);
+		expect(modelSupportsServerTool(latestAlias, 'datetime')).toBe(false);
+		expect(modelSupportsServerTool(models[0], 'web_fetch')).toBe(false);
+	});
+
+	it('does not treat web-search-only capability as tool-choice support', () => {
+		const webSearchOptionsModel = model({
+			id: 'search/options-only',
+			display_name: 'Search Options Only',
+			capabilities: {
+				reasoning: false,
+				code: false,
+				vision: false,
+				tools: false,
+				structured: true,
+				web_search: true,
+				server_tools: {
+					web_search: true,
+					web_fetch: false,
+					datetime: false
+				},
+				long_context: false,
+				files: false
+			}
+		});
+
+		expect(modelSupportsServerTool(webSearchOptionsModel, 'web_search')).toBe(true);
+		expect(modelSupportsToolChoice(webSearchOptionsModel)).toBe(false);
+		expect(modelSupportsToolChoice(models[0])).toBe(true);
 	});
 
 	it('sorts by category rank with alphabetical fallback', () => {

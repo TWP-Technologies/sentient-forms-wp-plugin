@@ -277,6 +277,113 @@ test.describe('Settings context state templates', () => {
 		);
 	});
 
+	test('clears unsupported saved OpenRouter server-tool settings from the model controls', async ({
+		page
+	}) => {
+		await page.unroute('**/wp-json/sentient-forms/v1/models**');
+		await page.route('**/wp-json/sentient-forms/v1/models**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						models: [
+							{
+								id: 'openai/gpt-5.5',
+								display_name: 'OpenAI: GPT-5.5',
+								provider: 'openrouter',
+								speed_tier: 'balanced',
+								cost_tier: 'medium',
+								capabilities: {
+									reasoning: true,
+									tools: true,
+									structured: true,
+									web_search: true,
+									server_tools: {
+										web_search: true,
+										web_fetch: false,
+										datetime: false
+									},
+									long_context: true
+								},
+								context_window: 400000,
+								tags: ['reasoning', 'structured-output'],
+								supported_parameters: ['reasoning', 'tools']
+							}
+						],
+						presets: [
+							{
+								code: 'sf_research',
+								display_name: 'Research',
+								category: 'local',
+								resolved_model_id: 'openai/gpt-5.5',
+								auto_upgrade: true
+							}
+						]
+					}
+				})
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/site-context**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					context: null,
+					settings: {
+						consent_status: 'granted',
+						consented_at: '2026-05-28T00:00:00Z',
+						declined_at: null,
+						auto_refresh_enabled: false,
+						auto_refresh_days: 30,
+						next_refresh_at: null,
+						last_generated_at: null,
+						last_error: null,
+						generation_model_selection: {
+							primary: 'openai/gpt-5.5',
+							is_preset: false,
+							provider: 'openrouter',
+							credential_id: 12,
+							tools: {
+								tool_choice: 'auto',
+								web_search: { mode: 'required', max_results: 8 },
+								web_fetch: { mode: 'required' },
+								datetime: { mode: 'required' }
+							}
+						}
+					},
+					has_context: false,
+					is_empty: true,
+					is_stale: false,
+					stale_after_days: 90,
+					status: 'empty',
+					generation_access: {
+						can_generate: true,
+						reason_code: 'ready',
+						message: 'Site Context generation is ready through your OpenRouter key.',
+						setup_target: null,
+						provider: 'openrouter',
+						model: 'openai/gpt-5.5',
+						credential_id: 12
+					}
+				})
+			})
+		);
+
+		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
+		await expect(page.getByTestId('model-summary-tool-choice')).toHaveValue('auto');
+		await expect(page.getByTestId('model-summary-tool-choice')).toBeEnabled();
+		await expect(page.getByTestId('model-summary-web-search')).toHaveValue('required');
+		await expect(page.getByTestId('model-summary-web-search')).toBeEnabled();
+		await expect(page.getByTestId('model-summary-web-fetch')).toHaveValue('inherit');
+		await expect(page.getByTestId('model-summary-web-fetch')).toBeDisabled();
+		await expect(page.getByTestId('model-summary-datetime')).toHaveValue('inherit');
+		await expect(page.getByTestId('model-summary-datetime')).toBeDisabled();
+		await expect(page.getByTestId('site-context-save')).toBeEnabled();
+	});
+
 	test('shows error template and recovers on retry', async ({ page }) => {
 		let attempts = 0;
 

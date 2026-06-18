@@ -32,6 +32,11 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
     private const MANAGED_PROVIDER      = 'sentient_managed';
     private const MANAGED_DEFAULT_MODEL = 'gemini-3-flash-preview';
     private const PRICING_POLICY_VERSION = 'local-openrouter-v2';
+    private const OPENROUTER_SERVER_TOOL_COMPATIBILITY_OVERRIDES = [
+        '~openai/gpt-latest' => [
+            'web_search' => false,
+        ],
+    ];
 
     /**
      * Local OpenRouter model metadata cache.
@@ -827,6 +832,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
         $is_preview           = str_contains( strtolower( $model_id . ' ' . $name ), 'preview' );
         $is_stale             = isset( $row['expires_at'] ) && (string) $row['expires_at'] < current_time( 'mysql', true );
         $provider_family      = str_contains( $model_id, '/' ) ? sanitize_key( strtok( $model_id, '/' ) ) : '';
+        $server_tools         = $this->openrouter_server_tool_capabilities( $metadata, $supported_parameters, $pricing, $model_id );
 
         $capabilities = [
             'reasoning'    => $this->model_has_reasoning( $model_id, $name, $supported_parameters ),
@@ -838,6 +844,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
             'tools'        => (bool) array_intersect( $supported_parameters, [ 'tools', 'tool_choice', 'function_call' ] ),
             'structured'   => (bool) array_intersect( $supported_parameters, [ 'response_format', 'structured_outputs' ] ),
             'web_search'   => array_key_exists( 'web_search', $pricing ) || in_array( 'web_search_options', $supported_parameters, true ),
+            'server_tools' => $server_tools,
             'long_context' => $context_window >= 128000,
         ];
 
@@ -887,6 +894,9 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
             'source_urls'     => $this->sanitize_url_list( $metadata['source_urls'] ?? [] ),
             'created'         => isset( $metadata['created'] ) && is_scalar( $metadata['created'] ) ? sanitize_text_field( (string) $metadata['created'] ) : null,
             'knowledge_cutoff' => isset( $metadata['knowledge_cutoff'] ) && is_scalar( $metadata['knowledge_cutoff'] ) ? sanitize_text_field( (string) $metadata['knowledge_cutoff'] ) : null,
+            'canonical_source_model_id' => isset( $metadata['canonical_source_model_id'] ) && is_scalar( $metadata['canonical_source_model_id'] )
+                ? sanitize_text_field( (string) $metadata['canonical_source_model_id'] )
+                : null,
         ];
     }
 
@@ -1468,6 +1478,11 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                 'tools'        => false,
                 'structured'   => false,
                 'web_search'   => false,
+                'server_tools' => [
+                    'web_search' => false,
+                    'web_fetch'  => false,
+                    'datetime'   => false,
+                ],
                 'long_context' => false,
             ],
             'context_window'       => 0,
@@ -1493,6 +1508,55 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
         }
 
         return $sanitized;
+    }
+
+    private function openrouter_server_tool_capabilities( array $metadata, array $supported_parameters, array $pricing, string $model_id ): array
+    {
+        $declared       = is_array( $metadata['openrouter_server_tools'] ?? null ) ? $metadata['openrouter_server_tools'] : [];
+        $supports_tools = in_array( 'tools', $supported_parameters, true );
+
+        $server_tools = [
+            'web_search' => $this->openrouter_server_tool_support_value(
+                $declared,
+                'web_search',
+                array_key_exists( 'web_search', $pricing ) || in_array( 'web_search_options', $supported_parameters, true )
+            ),
+            'web_fetch'  => $supports_tools && $this->openrouter_server_tool_support_value( $declared, 'web_fetch', false ),
+            'datetime'   => $supports_tools && $this->openrouter_server_tool_support_value( $declared, 'datetime', false ),
+        ];
+
+        return $this->apply_openrouter_server_tool_compatibility_overrides( $model_id, $server_tools );
+    }
+
+    /**
+     * @param array<string, bool> $server_tools
+     *
+     * @return array<string, bool>
+     */
+    private function apply_openrouter_server_tool_compatibility_overrides( string $model_id, array $server_tools ): array
+    {
+        $overrides = self::OPENROUTER_SERVER_TOOL_COMPATIBILITY_OVERRIDES[ $model_id ] ?? null;
+        if ( ! is_array( $overrides ) )
+        {
+            return $server_tools;
+        }
+
+        foreach ( $overrides as $tool => $supported )
+        {
+            $server_tools[ $tool ] = (bool) $supported;
+        }
+
+        return $server_tools;
+    }
+
+    private function openrouter_server_tool_support_value( array $declared, string $key, bool $default ): bool
+    {
+        if ( array_key_exists( $key, $declared ) )
+        {
+            return rest_sanitize_boolean( $declared[ $key ] );
+        }
+
+        return $default;
     }
 
     private function sanitize_string_list( mixed $value ): array

@@ -108,6 +108,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertContains( 'anthropic/claude-sonnet-4.6', $model_ids );
         $this->assertContains( 'anthropic/claude-haiku-4.5', $model_ids );
         $this->assertContains( 'anthropic/claude-opus-4.7', $model_ids );
+        $this->assertContains( 'anthropic/claude-opus-4.8', $model_ids );
         $this->assertContains( 'deepseek/deepseek-v4-flash', $model_ids );
         $this->assertContains( 'deepseek/deepseek-v3.2', $model_ids );
         $this->assertContains( 'moonshotai/kimi-k2.6', $model_ids );
@@ -135,6 +136,26 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertNotSame( 'low', $models_by_id['anthropic/claude-haiku-4.5']['cost_symbol'] );
         $this->assertIsArray( $models_by_id['xiaomi/mimo-v2.5']['category_rankings'] ?? null );
         $this->assertArrayHasKey( 'programming', $models_by_id['xiaomi/mimo-v2.5']['category_rankings'] );
+        $this->assertSame(
+            'anthropic/claude-opus-4.8',
+            $models_by_id['~anthropic/claude-opus-latest']['canonical_source_model_id'] ?? null
+        );
+        $this->assertSame(
+            [
+                'web_search' => false,
+                'web_fetch'  => false,
+                'datetime'   => false,
+            ],
+            $models_by_id['~openai/gpt-latest']['capabilities']['server_tools'] ?? null
+        );
+        $this->assertSame(
+            [
+                'web_search' => true,
+                'web_fetch'  => false,
+                'datetime'   => false,
+            ],
+            $models_by_id['~google/gemini-pro-latest']['capabilities']['server_tools'] ?? null
+        );
 
         $presets_by_code = [];
         foreach ( $data['presets'] as $preset )

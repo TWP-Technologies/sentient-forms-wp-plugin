@@ -453,6 +453,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
     public function test_generation_access_allows_ready_openrouter_paid_model(): void
     {
         $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
         $response = $this->dispatch_site_context_request(
             'PUT',
             '/sentient-forms/v1/site-context',
@@ -553,7 +554,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 'required', $saved_selection['tools']['datetime']['mode'] ?? null );
     }
 
-    public function test_update_context_defaults_empty_datetime_tool_to_off(): void
+    public function test_update_context_defaults_empty_server_tools_to_off(): void
     {
         $credential_id = $this->create_openrouter_credential();
 
@@ -570,6 +571,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
                     'credential_id' => $credential_id,
                     'is_preset'     => false,
                     'tools'         => [
+                        'web_fetch' => [],
                         'datetime' => [],
                     ],
                 ],
@@ -583,7 +585,88 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $data = $get_response->get_data();
         $saved_selection = $data['settings']['generation_model_selection'] ?? [];
 
+        $this->assertSame( 'off', $saved_selection['tools']['web_fetch']['mode'] ?? null );
         $this->assertSame( 'off', $saved_selection['tools']['datetime']['mode'] ?? null );
+    }
+
+    public function test_update_context_does_not_enable_web_fetch_by_default(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+
+        $response = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'summary_text'               => 'Manual business context',
+                'pii_ack'                    => true,
+                'consent_status'             => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $get_response = $this->dispatch_site_context_request( 'GET', '/sentient-forms/v1/site-context' );
+        $this->assertSame( 200, $get_response->get_status() );
+        $data = $get_response->get_data();
+        $saved_selection = $data['settings']['generation_model_selection'] ?? [];
+
+        $this->assertSame( 'auto', $saved_selection['tools']['tool_choice'] ?? null );
+        $this->assertSame( 'required', $saved_selection['tools']['web_search']['mode'] ?? null );
+        $this->assertArrayNotHasKey( 'web_fetch', $saved_selection['tools'] ?? [] );
+        $this->assertArrayNotHasKey( 'datetime', $saved_selection['tools'] ?? [] );
+    }
+
+    public function test_update_context_coerces_unsupported_gpt_latest_server_tools_to_off(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            '~openai/gpt-latest',
+            [
+                'id'                   => '~openai/gpt-latest',
+                'pricing'              => [
+                    'prompt'     => '0.000005',
+                    'completion' => '0.00003',
+                    'web_search' => '0.01',
+                ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens', 'tools', 'tool_choice' ],
+                'free'                 => false,
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'summary_text'               => 'Manual business context',
+                'pii_ack'                    => true,
+                'consent_status'             => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => '~openai/gpt-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $saved_selection = $data['settings']['generation_model_selection'] ?? [];
+
+        $this->assertTrue( $data['generation_access']['can_generate'] ?? false );
+        $this->assertSame( 'ready', $data['generation_access']['reason_code'] ?? null );
+        $this->assertSame( 'off', $saved_selection['tools']['web_search']['mode'] ?? null );
+        $this->assertArrayNotHasKey( 'web_fetch', $saved_selection['tools'] ?? [] );
+        $this->assertArrayNotHasKey( 'datetime', $saved_selection['tools'] ?? [] );
     }
 
     public function test_update_context_drops_reasoning_without_effort_or_token_budget(): void
@@ -702,6 +785,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
     public function test_generate_context_uses_ready_openrouter_paid_model(): void
     {
         $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
         $calls = [];
         $this->mock_openrouter_site_context_generation( $calls );
 
@@ -872,6 +956,36 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 'medium', $payload['web_search_options']['search_context_size'] ?? null );
     }
 
+    public function test_generate_context_does_not_enable_server_fetch_or_datetime_by_default(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 1, $calls );
+        $payload = json_decode( (string) $calls[0]['args']['body'], true );
+
+        $this->assertSame( 'openai/gpt-5.5', $payload['model'] ?? null );
+        $this->assertSame( [ 'openrouter:web_search' ], array_column( $payload['tools'] ?? [], 'type' ) );
+        $this->assertArrayNotHasKey( 'tool_choice', $payload );
+    }
+
     public function test_generate_context_omits_tool_choice_when_openrouter_model_lacks_parameter_support(): void
     {
         $credential_id = $this->create_openrouter_credential();
@@ -926,6 +1040,352 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertTrue( $payload['provider']['require_parameters'] ?? false );
         $this->assertContains( 'openrouter:web_search', array_column( $payload['tools'] ?? [], 'type' ) );
         $this->assertArrayNotHasKey( 'tool_choice', $payload );
+    }
+
+    public function test_generate_context_rejects_required_unsupported_openrouter_server_tools_before_http(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            'example/web-search-server-tool-only',
+            [
+                'id'                   => 'example/web-search-server-tool-only',
+                'pricing'              => [
+                    'prompt'     => '0.000001',
+                    'completion' => '0.000002',
+                    'web_search' => '0.004',
+                ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens', 'tools', 'tool_choice' ],
+                'openrouter_server_tools' => [
+                    'web_search' => true,
+                    'web_fetch'  => false,
+                    'datetime'   => false,
+                ],
+                'free'                 => false,
+            ]
+        );
+        $http_called = false;
+        add_filter(
+            'pre_http_request',
+            static function () use ( &$http_called ) {
+                $http_called = true;
+                return new WP_Error( 'unexpected_http_call', 'Unsupported required tools must block before OpenRouter.' );
+            },
+            10,
+            3
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'example/web-search-server-tool-only',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode'        => 'required',
+                            'max_results' => 5,
+                        ],
+                        'web_fetch'   => [
+                            'mode' => 'required',
+                        ],
+                        'datetime'    => [
+                            'mode' => 'required',
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $data = $response->get_data();
+
+        $this->assertSame( 400, $response->get_status() );
+        $this->assertSame( 'site_context_generation_openrouter_tool_unsupported', $data['code'] ?? null );
+        $this->assertSame(
+            [ 'openrouter:web_fetch', 'openrouter:datetime' ],
+            $data['data']['diagnostics']['unsupported_required_tools'] ?? null
+        );
+        $this->assertFalse( $http_called );
+    }
+
+    public function test_generate_context_rejects_required_gpt_latest_web_search_before_http(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            '~openai/gpt-latest',
+            [
+                'id'                   => '~openai/gpt-latest',
+                'pricing'              => [
+                    'prompt'     => '0.000005',
+                    'completion' => '0.00003',
+                    'web_search' => '0.01',
+                ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens', 'tools', 'tool_choice' ],
+                'free'                 => false,
+            ]
+        );
+        $http_called = false;
+        add_filter(
+            'pre_http_request',
+            static function () use ( &$http_called ) {
+                $http_called = true;
+                return new WP_Error( 'unexpected_http_call', 'Known-incompatible web search must block before OpenRouter.' );
+            },
+            10,
+            3
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => '~openai/gpt-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode'        => 'required',
+                            'max_results' => 5,
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $data = $response->get_data();
+
+        $this->assertSame( 400, $response->get_status() );
+        $this->assertSame( 'site_context_generation_openrouter_tool_unsupported', $data['code'] ?? null );
+        $this->assertSame(
+            [ 'openrouter:web_search' ],
+            $data['data']['diagnostics']['unsupported_required_tools'] ?? null
+        );
+        $this->assertFalse( $http_called );
+    }
+
+    public function test_generate_context_omits_auto_gpt_latest_web_search_options_from_payload(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            '~openai/gpt-latest',
+            [
+                'id'                   => '~openai/gpt-latest',
+                'pricing'              => [
+                    'prompt'     => '0.000005',
+                    'completion' => '0.00003',
+                    'web_search' => '0.01',
+                ],
+                'supported_parameters' => [
+                    'response_format',
+                    'structured_outputs',
+                    'max_tokens',
+                    'tools',
+                    'tool_choice',
+                    'web_search_options',
+                ],
+                'free'                 => false,
+            ]
+        );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [
+                'model' => '~openai/gpt-latest',
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => '~openai/gpt-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode'        => 'auto',
+                            'max_results' => 5,
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 1, $calls );
+        $payload = json_decode( (string) $calls[0]['args']['body'], true );
+
+        $this->assertSame( '~openai/gpt-latest', $payload['model'] ?? null );
+        $this->assertArrayNotHasKey( 'web_search_options', $payload );
+        $this->assertNotContains( 'openrouter:web_search', array_column( $payload['tools'] ?? [], 'type' ) );
+    }
+
+    public function test_generate_context_omits_auto_unverified_openrouter_server_tools_from_payload(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            'example/web-search-server-tool-only',
+            [
+                'id'                   => 'example/web-search-server-tool-only',
+                'pricing'              => [
+                    'prompt'     => '0.000001',
+                    'completion' => '0.000002',
+                    'web_search' => '0.004',
+                ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens', 'tools', 'tool_choice' ],
+                'openrouter_server_tools' => [
+                    'web_search' => true,
+                    'web_fetch'  => false,
+                    'datetime'   => false,
+                ],
+                'free'                 => false,
+            ]
+        );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [
+                'model' => 'example/web-search-server-tool-only',
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'example/web-search-server-tool-only',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode'        => 'auto',
+                            'max_results' => 6,
+                        ],
+                        'web_fetch'   => [
+                            'mode' => 'auto',
+                        ],
+                        'datetime'    => [
+                            'mode' => 'auto',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 1, $calls );
+        $payload = json_decode( (string) $calls[0]['args']['body'], true );
+        $this->assertSame( 'example/web-search-server-tool-only', $payload['model'] ?? null );
+        $this->assertSame( [ 'openrouter:web_search' ], array_column( $payload['tools'] ?? [], 'type' ) );
+        $this->assertSame( 6, $payload['tools'][0]['parameters']['max_results'] ?? null );
+        $this->assertArrayNotHasKey( 'tool_choice', $payload );
+    }
+
+    public function test_generate_context_classifies_openrouter_server_tool_failure_safely(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            'example/web-search-server-tool-only',
+            [
+                'id'                   => 'example/web-search-server-tool-only',
+                'pricing'              => [
+                    'prompt'     => '0.000001',
+                    'completion' => '0.000002',
+                    'web_search' => '0.004',
+                ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens', 'tools', 'tool_choice' ],
+                'openrouter_server_tools' => [
+                    'web_search' => true,
+                    'web_fetch'  => false,
+                    'datetime'   => false,
+                ],
+                'free'                 => false,
+            ]
+        );
+        $calls = [];
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, array $args, string $url ) use ( &$calls ) {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 502,
+                        'message' => 'Bad Gateway',
+                    ],
+                    'body'     => wp_json_encode(
+                        [
+                            'error' => [
+                                'code'     => 502,
+                                'message'  => 'Server tool request failed',
+                                'metadata' => [
+                                    'provider_name' => 'OpenAI',
+                                    'raw'           => 'raw provider payload must not be returned',
+                                ],
+                            ],
+                        ]
+                    ),
+                    'cookies'  => [],
+                ];
+            },
+            10,
+            3
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'example/web-search-server-tool-only',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode' => 'required',
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $data = $response->get_data();
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'site_context_generation_openrouter_server_tool_failed', $data['code'] ?? null );
+        $this->assertCount( 1, $calls );
+        $diagnostics = $data['data']['diagnostics'] ?? [];
+        $this->assertSame( 'openrouter', $diagnostics['route'] ?? null );
+        $this->assertSame( 'example/web-search-server-tool-only', $diagnostics['model'] ?? null );
+        $this->assertSame( 'json_schema', $diagnostics['response_format'] ?? null );
+        $this->assertSame( 'sentient_forms_site_context_generation_v1', $diagnostics['schema_name'] ?? null );
+        $this->assertSame( [ 'openrouter:web_search' ], $diagnostics['tool_types'] ?? null );
+        $this->assertSame( '502', $diagnostics['provider_error_code'] ?? null );
+        $this->assertSame( 502, $diagnostics['provider_status'] ?? null );
+        $this->assertArrayNotHasKey( 'payload', $data['data'] ?? [] );
+        $this->assertStringNotContainsString( 'raw provider payload', wp_json_encode( $data ) );
     }
 
     /**
@@ -1344,6 +1804,28 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $result = $repository->upsert( 'openrouter', $model_id, $metadata, gmdate( 'Y-m-d H:i:s', time() + DAY_IN_SECONDS ) );
 
         $this->assertTrue( $result );
+    }
+
+    private function cache_openrouter_all_server_tool_model( string $model_id ): void
+    {
+        $this->cache_openrouter_model(
+            $model_id,
+            [
+                'id'                   => $model_id,
+                'pricing'              => [
+                    'prompt'     => '0.000001',
+                    'completion' => '0.000002',
+                    'web_search' => '0.004',
+                ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens', 'reasoning', 'tools', 'tool_choice' ],
+                'openrouter_server_tools' => [
+                    'web_search' => true,
+                    'web_fetch'  => true,
+                    'datetime'   => true,
+                ],
+                'free'                 => false,
+            ]
+        );
     }
 
     private function count_scheduled_hook( string $hook ): int

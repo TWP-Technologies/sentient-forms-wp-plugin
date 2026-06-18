@@ -36,6 +36,12 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     private const READY_CREDENTIAL_STATUSES   = [ 'valid', 'limited' ];
     private const OPENROUTER_SITE_CONTEXT_SCHEMA_NAME    = 'sentient_forms_site_context_generation_v1';
     private const OPENROUTER_SITE_CONTEXT_MIN_MAX_TOKENS = 1800;
+    private const OPENROUTER_SITE_CONTEXT_SERVER_TOOL_COMPATIBILITY_OVERRIDES = [
+        '~openai/gpt-latest' => [
+            'web_search'      => false,
+            'web_search_tool' => false,
+        ],
+    ];
 
     protected string $rest_base = 'site-context';
 
@@ -640,6 +646,26 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             );
         }
 
+        if ( 'openrouter' === $provider )
+        {
+            $tool_readiness = $this->validate_openrouter_server_tool_selection( $model, $selection );
+            if ( is_wp_error( $tool_readiness ) )
+            {
+                $error_data = $tool_readiness->get_error_data();
+                return array_merge(
+                    $base,
+                    [
+                        'reason_code'  => $tool_readiness->get_error_code(),
+                        'message'      => $tool_readiness->get_error_message(),
+                        'setup_target' => 'settings',
+                        'diagnostics'  => is_array( $error_data ) && is_array( $error_data['diagnostics'] ?? null )
+                            ? $error_data['diagnostics']
+                            : [],
+                    ]
+                );
+            }
+        }
+
         if ( 'sentient_managed' === $provider )
         {
             $managed_context = $this->resolve_managed_proxy_context();
@@ -938,10 +964,16 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $access = $this->build_generation_access( $settings );
         if ( empty( $access['can_generate'] ) )
         {
+            $error_data = [ 'status' => 400 ];
+            if ( is_array( $access['diagnostics'] ?? null ) )
+            {
+                $error_data['diagnostics'] = $access['diagnostics'];
+            }
+
             return new WP_Error(
                 (string) $access['reason_code'],
                 (string) $access['message'],
-                [ 'status' => 400 ]
+                $error_data
             );
         }
 
@@ -1050,11 +1082,17 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         $client = new Sentient_Forms_OpenRouter_Direct_Client( 60 );
-        return $client->chat_completion(
+        $response = $client->chat_completion(
             $api_key,
             $this->build_openrouter_payload( $model, $prompt, $selection ),
             [ 'timeout' => 60 ]
         );
+        if ( is_wp_error( $response ) )
+        {
+            return $this->classify_openrouter_generation_error( $response, $model, $selection );
+        }
+
+        return $response;
     }
 
     private function run_managed_generation( string $model, string $prompt, array $selection ): array | WP_Error
@@ -1097,7 +1135,8 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
 
     private function build_openrouter_payload( string $model, string $prompt, array $selection ): array
     {
-        $tools = $this->build_openrouter_tool_payload( $selection['tools'] ?? null );
+        $server_tools = $this->openrouter_model_server_tool_capabilities( $model );
+        $tools = $this->build_openrouter_tool_payload( $selection['tools'] ?? null, $server_tools );
         $supported_parameters = $this->openrouter_model_supported_parameters( $model );
         $payload = [
             'model'           => $model,
@@ -1137,12 +1176,18 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         {
             $payload['tools'] = $tools;
             $tool_choice = $this->normalize_tool_choice( $selection['tools']['tool_choice'] ?? null, true );
-            if ( null !== $tool_choice && in_array( 'tool_choice', $supported_parameters, true ) )
+            if ( null !== $tool_choice && 'auto' !== $tool_choice && in_array( 'tool_choice', $supported_parameters, true ) )
             {
                 $payload['tool_choice'] = $tool_choice;
             }
         }
-        elseif ( in_array( 'web_search_options', $supported_parameters, true ) )
+
+        $tool_types = array_column( $tools, 'type' );
+        if (
+            ! empty( $server_tools['web_search'] )
+            && in_array( 'web_search_options', $supported_parameters, true )
+            && ! in_array( 'openrouter:web_search', $tool_types, true )
+        )
         {
             $web_search_options = $this->build_openrouter_web_search_options_payload( $selection['tools'] ?? null );
             if ( [] !== $web_search_options )
@@ -1180,22 +1225,27 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         ];
     }
 
-    private function build_openrouter_tool_payload( mixed $settings ): array
+    private function build_openrouter_tool_payload( mixed $settings, ?array $server_tools = null ): array
     {
+        $server_tools = $server_tools ?? [
+            'web_search_tool' => true,
+            'web_fetch'       => true,
+            'datetime'        => true,
+        ];
         $settings = is_array( $settings ) ? $settings : [];
         $web_search = is_array( $settings['web_search'] ?? null )
             ? $settings['web_search']
             : [ 'mode' => 'required', 'max_results' => 5 ];
         $web_fetch = is_array( $settings['web_fetch'] ?? null )
             ? $settings['web_fetch']
-            : [ 'mode' => 'auto' ];
+            : [];
         $datetime = is_array( $settings['datetime'] ?? null )
             ? $settings['datetime']
             : [];
 
         $tools = [];
         $search_mode = sanitize_key( (string) ( $web_search['mode'] ?? 'required' ) );
-        if ( in_array( $search_mode, [ 'auto', 'required' ], true ) )
+        if ( in_array( $search_mode, [ 'auto', 'required' ], true ) && ! empty( $server_tools['web_search_tool'] ) )
         {
             $max_results = min( 10, max( 1, absint( $web_search['max_results'] ?? 5 ) ) );
             $tools[] = [
@@ -1207,19 +1257,177 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             ];
         }
 
-        $fetch_mode = sanitize_key( (string) ( $web_fetch['mode'] ?? 'auto' ) );
-        if ( in_array( $fetch_mode, [ 'auto', 'required' ], true ) )
+        $fetch_mode = sanitize_key( (string) ( $web_fetch['mode'] ?? 'off' ) );
+        if ( in_array( $fetch_mode, [ 'auto', 'required' ], true ) && ! empty( $server_tools['web_fetch'] ) )
         {
             $tools[] = [ 'type' => 'openrouter:web_fetch' ];
         }
 
         $datetime_mode = sanitize_key( (string) ( $datetime['mode'] ?? 'off' ) );
-        if ( in_array( $datetime_mode, [ 'auto', 'required' ], true ) )
+        if ( in_array( $datetime_mode, [ 'auto', 'required' ], true ) && ! empty( $server_tools['datetime'] ) )
         {
             $tools[] = [ 'type' => 'openrouter:datetime' ];
         }
 
         return $tools;
+    }
+
+    private function validate_openrouter_server_tool_selection( string $model, array $selection ): true | WP_Error
+    {
+        $server_tools = $this->openrouter_model_server_tool_capabilities( $model );
+        $settings = is_array( $selection['tools'] ?? null ) ? $selection['tools'] : [];
+        $unsupported_required = [];
+
+        $web_search = is_array( $settings['web_search'] ?? null )
+            ? $settings['web_search']
+            : [ 'mode' => 'required' ];
+        if ( 'required' === sanitize_key( (string) ( $web_search['mode'] ?? 'required' ) ) && empty( $server_tools['web_search'] ) )
+        {
+            $unsupported_required[] = 'openrouter:web_search';
+        }
+
+        $web_fetch = is_array( $settings['web_fetch'] ?? null )
+            ? $settings['web_fetch']
+            : [];
+        if ( 'required' === sanitize_key( (string) ( $web_fetch['mode'] ?? 'off' ) ) && empty( $server_tools['web_fetch'] ) )
+        {
+            $unsupported_required[] = 'openrouter:web_fetch';
+        }
+
+        $datetime = is_array( $settings['datetime'] ?? null )
+            ? $settings['datetime']
+            : [];
+        if ( 'required' === sanitize_key( (string) ( $datetime['mode'] ?? 'off' ) ) && empty( $server_tools['datetime'] ) )
+        {
+            $unsupported_required[] = 'openrouter:datetime';
+        }
+
+        if ( [] === $unsupported_required )
+        {
+            return true;
+        }
+
+        return new WP_Error(
+            'site_context_generation_openrouter_tool_unsupported',
+            __( 'The selected OpenRouter model does not support every required Site Context server tool. Disable unsupported tools or choose a different model.', 'sentient-forms' ),
+            [
+                'status'      => 400,
+                'diagnostics' => [
+                    'route'                      => 'openrouter',
+                    'model'                      => $model,
+                    'unsupported_required_tools' => $unsupported_required,
+                    'server_tools'               => $server_tools,
+                ],
+            ]
+        );
+    }
+
+    private function classify_openrouter_generation_error( WP_Error $error, string $model, array $selection ): WP_Error
+    {
+        $error_data = $error->get_error_data();
+        $status     = is_array( $error_data ) && isset( $error_data['status'] )
+            ? max( 400, min( 599, absint( $error_data['status'] ) ) )
+            : 400;
+        $payload    = is_array( $error_data ) && is_array( $error_data['payload'] ?? null ) ? $error_data['payload'] : [];
+        $provider_error = is_array( $payload['error'] ?? null ) ? $payload['error'] : [];
+        $provider_code  = is_scalar( $provider_error['code'] ?? null )
+            ? sanitize_text_field( (string) $provider_error['code'] )
+            : sanitize_text_field( $error->get_error_code() );
+        $provider_message = is_scalar( $provider_error['message'] ?? null )
+            ? sanitize_text_field( (string) $provider_error['message'] )
+            : $error->get_error_message();
+        $is_server_tool_failure = str_contains( strtolower( $provider_message ), 'server tool' )
+            || str_contains( strtolower( $error->get_error_code() ), 'server_tool' );
+
+        if ( ! $is_server_tool_failure )
+        {
+            return $error;
+        }
+
+        $server_tools = $this->openrouter_model_server_tool_capabilities( $model );
+        $tool_types   = array_column( $this->build_openrouter_tool_payload( $selection['tools'] ?? null, $server_tools ), 'type' );
+
+        return new WP_Error(
+            'site_context_generation_openrouter_server_tool_failed',
+            __( 'OpenRouter reported a server tool failure for the selected Site Context model and tool settings.', 'sentient-forms' ),
+            [
+                'status'      => $status,
+                'diagnostics' => [
+                    'route'               => 'openrouter',
+                    'model'               => $model,
+                    'response_format'     => 'json_schema',
+                    'schema_name'         => self::OPENROUTER_SITE_CONTEXT_SCHEMA_NAME,
+                    'tool_types'          => array_values( $tool_types ),
+                    'provider_error_code' => $provider_code,
+                    'provider_status'     => $status,
+                ],
+            ]
+        );
+    }
+
+    private function openrouter_model_server_tool_capabilities( string $model ): array
+    {
+        $metadata = $this->find_openrouter_generation_model_metadata( $model );
+        if ( ! is_array( $metadata ) )
+        {
+            return [
+                'web_search'      => false,
+                'web_search_tool' => false,
+                'web_fetch'       => false,
+                'datetime'        => false,
+            ];
+        }
+
+        $pricing              = is_array( $metadata['pricing'] ?? null ) ? $metadata['pricing'] : [];
+        $supported_parameters = $this->normalize_openrouter_supported_parameters( $metadata['supported_parameters'] ?? null );
+        $declared             = is_array( $metadata['openrouter_server_tools'] ?? null ) ? $metadata['openrouter_server_tools'] : [];
+        $supports_tools       = in_array( 'tools', $supported_parameters, true );
+        $web_search_tool      = $supports_tools && $this->openrouter_server_tool_support_value(
+            $declared,
+            'web_search',
+            array_key_exists( 'web_search', $pricing )
+        );
+        $web_search_options   = in_array( 'web_search_options', $supported_parameters, true );
+
+        $server_tools = [
+            'web_search'      => $web_search_tool || $web_search_options,
+            'web_search_tool' => $web_search_tool,
+            'web_fetch'       => $supports_tools && $this->openrouter_server_tool_support_value( $declared, 'web_fetch', false ),
+            'datetime'        => $supports_tools && $this->openrouter_server_tool_support_value( $declared, 'datetime', false ),
+        ];
+
+        return $this->apply_openrouter_site_context_server_tool_compatibility_overrides( $model, $server_tools );
+    }
+
+    /**
+     * @param array<string, bool> $server_tools
+     *
+     * @return array<string, bool>
+     */
+    private function apply_openrouter_site_context_server_tool_compatibility_overrides( string $model, array $server_tools ): array
+    {
+        $overrides = self::OPENROUTER_SITE_CONTEXT_SERVER_TOOL_COMPATIBILITY_OVERRIDES[ $model ] ?? null;
+        if ( ! is_array( $overrides ) )
+        {
+            return $server_tools;
+        }
+
+        foreach ( $overrides as $tool => $supported )
+        {
+            $server_tools[ $tool ] = (bool) $supported;
+        }
+
+        return $server_tools;
+    }
+
+    private function openrouter_server_tool_support_value( array $declared, string $key, bool $default ): bool
+    {
+        if ( array_key_exists( $key, $declared ) )
+        {
+            return rest_sanitize_boolean( $declared[ $key ] );
+        }
+
+        return $default;
     }
 
     private function build_openrouter_generation_diagnostics( array $response, array $choice, string $content, string $model ): array
@@ -1479,6 +1687,11 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
         $selection['is_preset'] = rest_sanitize_boolean( $value['is_preset'] ?? $selection['is_preset'] );
         $selection['tools']     = $this->sanitize_tool_settings( $value['tools'] ?? null );
+        $selection['tools']     = $this->coerce_unsupported_openrouter_server_tools_to_off(
+            $selection,
+            $selection['tools'],
+            $value['tools'] ?? null
+        );
         $reasoning              = $this->sanitize_reasoning_settings( $value['reasoning'] ?? null );
         if ( null !== $reasoning )
         {
@@ -1500,9 +1713,6 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
                     'mode'        => 'required',
                     'max_results' => 5,
                 ],
-                'web_fetch'   => [
-                    'mode' => 'auto',
-                ],
             ],
         ];
     }
@@ -1515,9 +1725,6 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             'web_search'  => [
                 'mode'        => 'required',
                 'max_results' => 5,
-            ],
-            'web_fetch'   => [
-                'mode' => 'auto',
             ],
         ];
 
@@ -1538,7 +1745,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             }
             $default_mode = is_array( $settings[ $tool_key ] ?? null ) && is_scalar( $settings[ $tool_key ]['mode'] ?? null )
                 ? (string) $settings[ $tool_key ]['mode']
-                : ( 'datetime' === $tool_key ? 'off' : 'auto' );
+                : ( 'web_search' === $tool_key ? 'auto' : 'off' );
             $mode = sanitize_key( (string) ( $value[ $tool_key ]['mode'] ?? $default_mode ) );
             if ( in_array( $mode, [ 'auto', 'required', 'off', 'inherit' ], true ) )
             {
@@ -1555,6 +1762,64 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         return $settings;
+    }
+
+    private function coerce_unsupported_openrouter_server_tools_to_off( array $selection, array $settings, mixed $raw_tools ): array
+    {
+        if ( 'openrouter' !== ( $selection['provider'] ?? '' ) || ! empty( $selection['is_preset'] ) )
+        {
+            return $settings;
+        }
+
+        $model = isset( $selection['primary'] ) && is_scalar( $selection['primary'] )
+            ? (string) $selection['primary']
+            : '';
+        if ( '' === $model || ! str_contains( $model, '/' ) )
+        {
+            return $settings;
+        }
+
+        $server_tools = $this->openrouter_model_server_tool_capabilities( $model );
+        foreach ( [ 'web_search', 'web_fetch', 'datetime' ] as $tool_key )
+        {
+            if ( ! empty( $server_tools[ $tool_key ] ) )
+            {
+                continue;
+            }
+
+            $explicit_mode = $this->raw_tool_mode( $raw_tools, $tool_key );
+            if ( 'required' === $explicit_mode )
+            {
+                continue;
+            }
+
+            if ( ! isset( $settings[ $tool_key ] ) && null === $explicit_mode )
+            {
+                continue;
+            }
+
+            if ( ! isset( $settings[ $tool_key ] ) )
+            {
+                $settings[ $tool_key ] = [];
+            }
+            $settings[ $tool_key ]['mode'] = 'off';
+        }
+
+        return $settings;
+    }
+
+    private function raw_tool_mode( mixed $raw_tools, string $tool_key ): ?string
+    {
+        if ( ! is_array( $raw_tools ) || ! is_array( $raw_tools[ $tool_key ] ?? null ) )
+        {
+            return null;
+        }
+
+        $mode = is_scalar( $raw_tools[ $tool_key ]['mode'] ?? null )
+            ? sanitize_key( (string) $raw_tools[ $tool_key ]['mode'] )
+            : null;
+
+        return in_array( $mode, [ 'auto', 'required', 'off', 'inherit' ], true ) ? $mode : null;
     }
 
     private function sanitize_reasoning_settings( mixed $value ): string | array | null

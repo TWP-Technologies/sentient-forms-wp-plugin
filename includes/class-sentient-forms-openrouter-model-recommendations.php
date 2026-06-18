@@ -380,18 +380,33 @@ class Sentient_Forms_OpenRouter_Model_Recommendations
     private static function with_latest_aliases( array $models ): array
     {
         $aliases = [
-            '~openai/gpt-latest'              => 'openai/gpt-5.5',
-            '~openai/gpt-mini-latest'         => 'openai/gpt-5.4-mini',
-            '~google/gemini-pro-latest'       => 'google/gemini-3.1-pro-preview',
-            '~google/gemini-flash-latest'     => 'google/gemini-3-flash-preview',
-            '~anthropic/claude-opus-latest'   => 'anthropic/claude-opus-4.7',
-            '~anthropic/claude-sonnet-latest' => 'anthropic/claude-sonnet-4.6',
-            '~anthropic/claude-haiku-latest'  => 'anthropic/claude-haiku-4.5',
+            '~openai/gpt-latest'              => [ 'openai/gpt-5.5' ],
+            '~openai/gpt-mini-latest'         => [ 'openai/gpt-5.4-mini' ],
+            '~google/gemini-pro-latest'       => [ 'google/gemini-3.1-pro-preview' ],
+            '~google/gemini-flash-latest'     => [ 'google/gemini-3-flash-preview' ],
+            '~anthropic/claude-opus-latest'   => [ 'anthropic/claude-opus-4.8', 'anthropic/claude-opus-4.7' ],
+            '~anthropic/claude-sonnet-latest' => [ 'anthropic/claude-sonnet-4.6' ],
+            '~anthropic/claude-haiku-latest'  => [ 'anthropic/claude-haiku-4.5' ],
         ];
 
-        foreach ( $aliases as $alias => $source_id )
+        foreach ( $aliases as $alias => $source_ids )
         {
-            if ( ! isset( $models[ $source_id ] ) || isset( $models[ $alias ] ) )
+            if ( isset( $models[ $alias ] ) )
+            {
+                continue;
+            }
+
+            $source_id = null;
+            foreach ( $source_ids as $candidate_id )
+            {
+                if ( isset( $models[ $candidate_id ] ) )
+                {
+                    $source_id = $candidate_id;
+                    break;
+                }
+            }
+
+            if ( null === $source_id )
             {
                 continue;
             }
