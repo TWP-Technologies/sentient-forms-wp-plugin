@@ -1111,6 +1111,60 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             || in_array( 'structured-output', $model['tags'] ?? [], true );
     }
 
+    /**
+     * Determine whether a local OpenRouter model supports a request parameter.
+     *
+     * @param string $model_id  OpenRouter model ID.
+     * @param string $provider  Provider key for the model.
+     * @param string $parameter OpenRouter request parameter to check.
+     * @return bool True when the model advertises support for the parameter.
+     */
+    public function model_supports_parameter( string $model_id, string $provider, string $parameter ): bool
+    {
+        if ( 'openrouter' !== sanitize_key( $provider ) )
+        {
+            return false;
+        }
+
+        $model_id  = trim( sanitize_text_field( $model_id ) );
+        $parameter = sanitize_key( $parameter );
+        if ( '' === $model_id || '' === $parameter )
+        {
+            return false;
+        }
+
+        $model = $this->list_local_openrouter_models()[ $model_id ] ?? null;
+        if ( ! is_array( $model ) )
+        {
+            return false;
+        }
+
+        return in_array( $parameter, $model['supported_parameters'] ?? [], true );
+    }
+
+    /**
+     * Determine whether local metadata is available for a model's request parameters.
+     *
+     * @param string $model_id OpenRouter model ID.
+     * @param string $provider Provider key for the model.
+     * @return bool True when the local catalog/cache has metadata for the model.
+     */
+    public function has_model_parameter_metadata( string $model_id, string $provider ): bool
+    {
+        if ( 'openrouter' !== sanitize_key( $provider ) )
+        {
+            return false;
+        }
+
+        $model_id = trim( sanitize_text_field( $model_id ) );
+        if ( '' === $model_id )
+        {
+            return false;
+        }
+
+        return is_array( $this->list_local_openrouter_models()[ $model_id ] ?? null );
+    }
+
     private function infer_speed_tier( string $model_id, string $name ): string
     {
         return preg_match( '/flash|mini|lite|fast|turbo|gpt-oss/i', $model_id . ' ' . $name )

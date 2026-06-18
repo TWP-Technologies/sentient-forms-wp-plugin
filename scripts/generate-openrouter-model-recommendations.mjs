@@ -29,6 +29,7 @@ const categories = {
 const curatedIds = [
 	'openrouter/free',
 	'openrouter/auto',
+	'openrouter/owl-alpha',
 	'openai/gpt-5.5-pro',
 	'openai/gpt-5.5',
 	'openai/gpt-5.4-pro',
@@ -41,12 +42,14 @@ const curatedIds = [
 	'openai/gpt-oss-120b',
 	'openai/gpt-oss-20b',
 	'anthropic/claude-opus-4.7',
+	'anthropic/claude-opus-4.8',
 	'anthropic/claude-opus-4.6',
 	'anthropic/claude-sonnet-4.6',
 	'anthropic/claude-haiku-4.5',
 	'anthropic/claude-sonnet-4.5',
 	'google/gemini-3.1-pro-preview',
 	'google/gemini-3-flash-preview',
+	'google/gemini-3.1-flash-lite',
 	'google/gemini-3.1-flash-lite-preview',
 	'google/gemini-2.5-pro',
 	'google/gemini-2.5-flash',
@@ -66,9 +69,12 @@ const curatedIds = [
 	'qwen/qwen3.5-9b',
 	'x-ai/grok-4.1-fast',
 	'x-ai/grok-4-fast',
+	'minimax/minimax-m3',
 	'minimax/minimax-m2.7',
 	'minimax/minimax-m2.5',
+	'stepfun/step-3.7-flash',
 	'stepfun/step-3.5-flash',
+	'tencent/hy3-preview',
 	'tencent/hy3-preview:free',
 	'nvidia/nemotron-3-super-120b-a12b:free',
 	'inclusionai/ling-2.6-1t:free',
@@ -77,6 +83,7 @@ const curatedIds = [
 	'google/gemma-4-26b-a4b-it',
 	'meta-llama/llama-3.1-70b-instruct',
 	'meta-llama/llama-3.1-8b-instruct',
+	'xiaomi/mimo-v2.5',
 	'xiaomi/mimo-v2-flash'
 ];
 
@@ -196,7 +203,7 @@ function recommendationLabels(model, ranks, topTenFrequency) {
 	if (asArray(model.supported_parameters).includes('response_format')) {
 		labels.add('Structured output');
 	}
-	if (asArray(model.supported_parameters).some((parameter) => ['tools', 'tool_choice'].includes(parameter))) {
+	if (asArray(model.supported_parameters).includes('tool_choice')) {
 		labels.add('Tool calling');
 	}
 	if ((model.context_length ?? 0) >= 128000) labels.add('Long context');
@@ -346,7 +353,7 @@ async function main() {
 	await fs.mkdir(path.dirname(outputPath), { recursive: true });
 	await fs.writeFile(
 		outputPath,
-		`<?php\n/**\n * Generated OpenRouter model recommendation snapshot.\n *\n * Source: https://openrouter.ai/api/v1/models and category filters.\n * Generated: ${retrievedAt}\n *\n * @package SentientForms\n */\n\nreturn ${phpExport(models)};\n`,
+		`<?php\n/**\n * Generated OpenRouter model recommendation snapshot.\n *\n * Source: https://openrouter.ai/api/v1/models and category filters.\n * Generated: ${retrievedAt}\n *\n * @package SentientForms\n */\n\nif ( ! defined( 'ABSPATH' ) )\n{\n    exit;\n}\n\nreturn ${phpExport(models)};\n`,
 		'utf8'
 	);
 

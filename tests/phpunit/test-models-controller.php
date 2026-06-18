@@ -133,8 +133,8 @@ class Tests_Models_Controller extends WP_UnitTestCase
         }
         $this->assertArrayHasKey( 'cost_symbol', $models_by_id['anthropic/claude-haiku-4.5'] );
         $this->assertNotSame( 'low', $models_by_id['anthropic/claude-haiku-4.5']['cost_symbol'] );
-        $this->assertIsArray( $models_by_id['moonshotai/kimi-k2.6']['category_rankings'] ?? null );
-        $this->assertArrayHasKey( 'programming', $models_by_id['moonshotai/kimi-k2.6']['category_rankings'] );
+        $this->assertIsArray( $models_by_id['xiaomi/mimo-v2.5']['category_rankings'] ?? null );
+        $this->assertArrayHasKey( 'programming', $models_by_id['xiaomi/mimo-v2.5']['category_rankings'] );
 
         $presets_by_code = [];
         foreach ( $data['presets'] as $preset )
@@ -152,9 +152,9 @@ class Tests_Models_Controller extends WP_UnitTestCase
             'sf_low_cost'     => 'deepseek/deepseek-v4-flash',
             'sf_long_context' => '~openai/gpt-latest',
             'sf_reasoning'    => 'openai/gpt-5.5-pro',
-            'sf_code'         => 'moonshotai/kimi-k2.6',
+            'sf_code'         => 'xiaomi/mimo-v2.5',
             'sf_legal'        => '~google/gemini-pro-latest',
-            'sf_financial'    => '~anthropic/claude-sonnet-latest',
+            'sf_financial'    => 'deepseek/deepseek-v4-pro',
             'sf_privacy'      => '~openai/gpt-latest',
             'sf_realtime'     => '~google/gemini-flash-latest',
             'sf_multimodal'   => '~google/gemini-pro-latest',

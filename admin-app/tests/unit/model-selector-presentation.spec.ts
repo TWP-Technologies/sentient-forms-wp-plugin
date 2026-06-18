@@ -132,6 +132,24 @@ describe('model selector presentation utilities', () => {
 		expect(filtered.map((candidate) => candidate.id)).toEqual(['moonshotai/kimi-k2.6']);
 	});
 
+	it('matches model selector search against display names', () => {
+		const filtered = filterAndSortModels(models, {
+			...baseFilters,
+			searchTerm: 'claude sonnet'
+		});
+
+		expect(filtered.map((candidate) => candidate.id)).toEqual(['anthropic/claude-sonnet-4.6']);
+	});
+
+	it('matches model selector search against API model slugs', () => {
+		const filtered = filterAndSortModels(models, {
+			...baseFilters,
+			searchTerm: 'moonshotai/kimi'
+		});
+
+		expect(filtered.map((candidate) => candidate.id)).toEqual(['moonshotai/kimi-k2.6']);
+	});
+
 	it('filters schema-required actions to structured-output capable models', () => {
 		const filtered = filterAndSortModels(
 			[
