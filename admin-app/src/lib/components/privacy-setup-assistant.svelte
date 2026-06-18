@@ -10,6 +10,7 @@
 	import SiteContextSetupPanel from '$lib/components/site-context-setup-panel.svelte';
 	import { Alert, Badge, Button } from '$lib/components/ui';
 	import { appHref } from '$lib/navigation';
+	import { parseSiteContextStatusResponse } from '$lib/schemas/site-context';
 	import { notifications } from '$lib/stores/notifications';
 	import {
 		DEFAULT_SITE_CONTEXT_MODEL_SELECTION,
@@ -28,6 +29,8 @@
 	type ToastId = string;
 
 	const SITE_CONTEXT_GENERATION_POLL_INTERVAL_MS = 3000;
+	const SITE_CONTEXT_GENERATION_POLL_MAX_BACKOFF_MS = 15000;
+	const SITE_CONTEXT_GENERATION_POLL_RETRY_LIMIT = 3;
 
 	interface PrivacyPresetDefinition {
 		id: PrivacyPresetId;
@@ -126,6 +129,7 @@
 	let siteContextModelSelection = $state<ModelSelection>(DEFAULT_SITE_CONTEXT_MODEL_SELECTION);
 	let applyErrorRegion = $state<HTMLDivElement | null>(null);
 	let siteContextGenerationPollTimer: ReturnType<typeof setTimeout> | null = null;
+	let siteContextGenerationPollFailures = 0;
 	let siteContextGenerationToastId: ToastId | null = null;
 	let siteContextGenerationToastActive = false;
 	let selectedDefinition = $derived(
@@ -154,10 +158,12 @@
 	);
 	let siteContextShouldSaveBeforeApply = $derived(siteContextTouched && siteContextHasChanges);
 	let footerApplyError = $derived(applyError ?? siteContextApplyError);
-	let siteContextGenerationJobActive = $derived(siteContextGenerationJobIsActive(siteContextStatus));
+	let siteContextGenerationJobActive = $derived(
+		siteContextGenerationJobIsActive(siteContextStatus)
+	);
 	let canGenerateSiteContext = $derived(
 		siteContextConsent &&
-		!siteContextGenerating &&
+			!siteContextGenerating &&
 			!siteContextGenerationJobActive &&
 			!generateDisabledMessage &&
 			siteContextStatus?.generation_access.can_generate === true
@@ -184,6 +190,7 @@
 	$effect(() => {
 		if (open) return;
 		clearSiteContextGenerationPoll();
+		dismissSiteContextGenerationToast();
 	});
 
 	$effect(() => {
@@ -219,17 +226,29 @@
 		onapply?.('balanced');
 	}
 
-	function syncSiteContext(next: SiteContextStatusResponse): void {
+	function parseSiteContextResponse(
+		response: SiteContextStatusResponse
+	): SiteContextStatusResponse {
+		return parseSiteContextStatusResponse(normalizeSiteContextResponse(response));
+	}
+
+	function syncSiteContext(
+		next: SiteContextStatusResponse,
+		options: { preserveLocalEdits?: boolean } = {}
+	): void {
+		const shouldPreserveLocalEdits = options.preserveLocalEdits === true && siteContextHasChanges;
 		siteContextError = null;
 		siteContextStatus = next;
-		siteContextText = next.context?.summary_text ?? '';
-		siteContextConsent = next.settings.consent_status === 'granted';
-		siteContextAutoRefresh = next.settings.auto_refresh_enabled;
-		siteContextRefreshDays = next.settings.auto_refresh_days || DEFAULT_SITE_CONTEXT_REFRESH_DAYS;
-		siteContextModelSelection =
-			next.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION;
-		siteContextTouched = false;
-		siteContextApplyError = null;
+		if (!shouldPreserveLocalEdits) {
+			siteContextText = next.context?.summary_text ?? '';
+			siteContextConsent = next.settings.consent_status === 'granted';
+			siteContextAutoRefresh = next.settings.auto_refresh_enabled;
+			siteContextRefreshDays = next.settings.auto_refresh_days || DEFAULT_SITE_CONTEXT_REFRESH_DAYS;
+			siteContextModelSelection =
+				next.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION;
+			siteContextTouched = false;
+			siteContextApplyError = null;
+		}
 		updateSiteContextGenerationJobState(next);
 	}
 
@@ -243,12 +262,14 @@
 		siteContextGenerationPollTimer = null;
 	}
 
-	function scheduleSiteContextGenerationPoll(): void {
+	function scheduleSiteContextGenerationPoll(
+		delay = SITE_CONTEXT_GENERATION_POLL_INTERVAL_MS
+	): void {
 		if (!open || siteContextGenerationPollTimer) return;
 		siteContextGenerationPollTimer = setTimeout(() => {
 			siteContextGenerationPollTimer = null;
 			void pollSiteContextGenerationStatus();
-		}, SITE_CONTEXT_GENERATION_POLL_INTERVAL_MS);
+		}, delay);
 	}
 
 	function ensureSiteContextGenerationToast(nextStatus: SiteContextStatusResponse): void {
@@ -270,6 +291,14 @@
 		toast.success(message, {
 			id: siteContextGenerationToastId ?? undefined
 		});
+		siteContextGenerationToastActive = false;
+		siteContextGenerationToastId = null;
+	}
+
+	function dismissSiteContextGenerationToast(): void {
+		if (siteContextGenerationToastId !== null) {
+			toast.dismiss(siteContextGenerationToastId);
+		}
 		siteContextGenerationToastActive = false;
 		siteContextGenerationToastId = null;
 	}
@@ -298,6 +327,7 @@
 		}
 
 		clearSiteContextGenerationPoll();
+		siteContextGenerationPollFailures = 0;
 		siteContextGenerating = false;
 
 		if (job?.status === 'succeeded') {
@@ -315,11 +345,25 @@
 	async function pollSiteContextGenerationStatus(): Promise<void> {
 		if (!open) return;
 		try {
-			syncSiteContext(
-				normalizeSiteContextResponse(await wpFetch<SiteContextStatusResponse>('site-context'))
+			const next = parseSiteContextResponse(
+				await wpFetch<SiteContextStatusResponse>('site-context')
 			);
+			siteContextGenerationPollFailures = 0;
+			syncSiteContext(next, { preserveLocalEdits: true });
 		} catch (error) {
 			console.error('Failed to refresh Site Context generation status', error);
+			if (siteContextGenerationJobIsActive(siteContextStatus)) {
+				siteContextGenerationPollFailures += 1;
+				if (siteContextGenerationPollFailures <= SITE_CONTEXT_GENERATION_POLL_RETRY_LIMIT) {
+					scheduleSiteContextGenerationPoll(
+						Math.min(
+							SITE_CONTEXT_GENERATION_POLL_INTERVAL_MS * siteContextGenerationPollFailures,
+							SITE_CONTEXT_GENERATION_POLL_MAX_BACKOFF_MS
+						)
+					);
+					return;
+				}
+			}
 			const message = readableError(error, 'Unable to refresh Site Context generation status.');
 			siteContextError = message;
 			siteContextGenerating = false;
@@ -340,7 +384,7 @@
 		siteContextError = null;
 		try {
 			syncSiteContext(
-				normalizeSiteContextResponse(await wpFetch<SiteContextStatusResponse>('site-context'))
+				parseSiteContextResponse(await wpFetch<SiteContextStatusResponse>('site-context'))
 			);
 		} catch (error) {
 			console.error('Failed to load Site Context setup state', error);
@@ -383,7 +427,7 @@
 				body: JSON.stringify(siteContextPayload()),
 				showNotifications: false
 			});
-			syncSiteContext(normalizeSiteContextResponse(response));
+			syncSiteContext(parseSiteContextResponse(response));
 			notifications.success('Site Context setup saved');
 			return true;
 		} catch (error) {
@@ -420,7 +464,7 @@
 				body: JSON.stringify(siteContextPayload()),
 				showNotifications: false
 			});
-			syncSiteContext(normalizeSiteContextResponse(response));
+			syncSiteContext(parseSiteContextResponse(response));
 		} catch (error) {
 			console.error('Failed to generate Site Context', error);
 			siteContextError = readableError(error, 'Unable to generate Site Context.');
@@ -458,6 +502,7 @@
 
 	onDestroy(() => {
 		clearSiteContextGenerationPoll();
+		dismissSiteContextGenerationToast();
 	});
 </script>
 

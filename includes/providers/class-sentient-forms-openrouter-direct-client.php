@@ -143,7 +143,7 @@ class Sentient_Forms_OpenRouter_Direct_Client implements Sentient_Forms_Provider
             );
         }
 
-        $error = isset( $decoded['error'] ) && is_array( $decoded['error'] ) ? $decoded['error'] : [];
+        $error = is_array( $decoded ) && isset( $decoded['error'] ) && is_array( $decoded['error'] ) ? $decoded['error'] : [];
         if ( [] !== $error )
         {
             return $this->error_response( $error, $decoded, $status_code );

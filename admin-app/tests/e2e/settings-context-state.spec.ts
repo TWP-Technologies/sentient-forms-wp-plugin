@@ -305,6 +305,17 @@ test.describe('Settings context state templates', () => {
 					});
 				}
 
+				if (pollRequests === 2) {
+					return route.fulfill({
+						status: 503,
+						contentType: 'application/json',
+						body: JSON.stringify({
+							code: 'temporarily_unavailable',
+							message: 'Transient polling failure'
+						})
+					});
+				}
+
 				return route.fulfill({
 					status: 200,
 					contentType: 'application/json',
@@ -326,11 +337,17 @@ test.describe('Settings context state templates', () => {
 		await page.getByTestId('site-context-generate-now').click();
 
 		await expect.poll(() => generateRequests).toBe(1);
-		await expect(page.getByText('Site Context generation is running in the background.')).toBeVisible();
+		await expect(
+			page.getByText('Site Context generation is running in the background.')
+		).toBeVisible();
 		await expect(page.getByTestId('site-context-generate-now')).toBeDisabled();
-		await expect.poll(() => pollRequests, { timeout: 8_000 }).toBeGreaterThanOrEqual(2);
+		await expect.poll(() => pollRequests, { timeout: 8_000 }).toBeGreaterThanOrEqual(1);
+		await page
+			.getByTestId('site-context-textarea')
+			.fill('Unsaved local edit while generation runs.');
+		await expect.poll(() => pollRequests, { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
 		await expect(page.getByTestId('site-context-textarea')).toHaveValue(
-			'Generated paid-route context.'
+			'Unsaved local edit while generation runs.'
 		);
 		await expect(page.getByText('Site Context generated.')).toBeVisible();
 	});
@@ -453,31 +470,34 @@ test.describe('Settings context state templates', () => {
 		let capturedSavePayload: unknown = null;
 
 		await page.unroute('**/wp-json/sentient-forms/v1/local/providers/credentials**');
-		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', async (route) => {
-			await new Promise((resolve) => setTimeout(resolve, 250));
-			return route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					success: true,
-					data: [
-						{
-							id: 1,
-							provider: 'openrouter',
-							label: 'Production OpenRouter key',
-							auth_mode: 'manual_key',
-							constant_name: null,
-							status: 'valid',
-							status_json: null,
-							last_validated_at: '2026-06-18T00:00:00Z',
-							created_at: '2026-06-18T00:00:00Z',
-							updated_at: '2026-06-18T00:00:00Z',
-							secret_configured: true
-						}
-					]
-				})
-			});
-		});
+		await page.route(
+			'**/wp-json/sentient-forms/v1/local/providers/credentials**',
+			async (route) => {
+				await new Promise((resolve) => setTimeout(resolve, 250));
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						success: true,
+						data: [
+							{
+								id: 1,
+								provider: 'openrouter',
+								label: 'Production OpenRouter key',
+								auth_mode: 'manual_key',
+								constant_name: null,
+								status: 'valid',
+								status_json: null,
+								last_validated_at: '2026-06-18T00:00:00Z',
+								created_at: '2026-06-18T00:00:00Z',
+								updated_at: '2026-06-18T00:00:00Z',
+								secret_configured: true
+							}
+						]
+					})
+				});
+			}
+		);
 
 		await page.unroute('**/wp-json/sentient-forms/v1/models**');
 		await page.route('**/wp-json/sentient-forms/v1/models**', (route) =>
@@ -656,9 +676,7 @@ test.describe('Settings context state templates', () => {
 		await page.getByTestId('site-context-textarea').fill('Manual context after opening tools.');
 		await page.getByTestId('site-context-save').click();
 
-		await expect
-			.poll(() => (capturedSavePayload ? 'saved' : 'pending'))
-			.toBe('saved');
+		await expect.poll(() => (capturedSavePayload ? 'saved' : 'pending')).toBe('saved');
 		expect(
 			(capturedSavePayload as { generation_model_selection?: { primary?: string } })
 				.generation_model_selection?.primary

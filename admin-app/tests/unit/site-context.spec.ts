@@ -100,6 +100,7 @@ describe('normalizeSiteContextResponse', () => {
 				started_at: '2026-06-18T00:00:01Z',
 				finished_at: null,
 				error: null,
+				status_code: 0,
 				attempts: 1,
 				max_attempts: 2
 			}
@@ -120,6 +121,7 @@ describe('normalizeSiteContextResponse', () => {
 		expect(status.generation_job).toMatchObject({
 			id: 'site-context-abc',
 			status: 'running',
+			status_code: 0,
 			attempts: 1,
 			max_attempts: 2
 		});

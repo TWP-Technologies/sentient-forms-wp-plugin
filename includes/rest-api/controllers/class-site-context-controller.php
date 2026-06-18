@@ -924,12 +924,26 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     private function run_manual_generation_job( string $job_id ): void
     {
         $job = $this->get_generation_job_record();
-        if ( ! $this->generation_job_is_active( $job ) )
+        if ( ! $this->generation_job_is_queued( $job ) )
         {
             return;
         }
 
-        if ( '' !== $job_id && (string) ( $job['id'] ?? '' ) !== $job_id )
+        $active_job_id = sanitize_text_field( (string) ( $job['id'] ?? '' ) );
+        if ( '' === $active_job_id || ( '' !== $job_id && $active_job_id !== $job_id ) )
+        {
+            return;
+        }
+        $job_id = $active_job_id;
+
+        $worker_id          = wp_generate_uuid4();
+        $job['status']     = 'running';
+        $job['started_at'] = $job['started_at'] ?: current_time( 'mysql' );
+        $job['worker_id']  = $worker_id;
+        update_option( self::GENERATION_JOB_OPTION_NAME, $job, false );
+
+        $job = $this->get_generation_job_record();
+        if ( ! $this->generation_job_matches( $job, $job_id, 'running' ) || $worker_id !== (string) ( $job['worker_id'] ?? '' ) )
         {
             return;
         }
@@ -943,6 +957,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $attempts++;
             $job['status']       = 'running';
             $job['started_at']   = $job['started_at'] ?: current_time( 'mysql' );
+            $job['worker_id']    = $worker_id;
             $job['error']        = null;
             $job['code']         = null;
             $job['status_code']  = null;
@@ -954,8 +969,17 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $settings = is_array( $job['settings'] ?? null )
                 ? $this->normalize_settings_record( $job['settings'] )
                 : $this->get_settings_record();
-            $result   = $this->perform_generation( $settings, true );
+            $result   = $this->perform_generation( $settings, true, false, $job_id );
             $job      = $this->get_generation_job_record() ?: $job;
+
+            if ( is_wp_error( $result ) && 'site_context_generation_canceled' === $result->get_error_code() )
+            {
+                $current_job = $this->get_generation_job_record();
+                if ( ! $this->generation_job_matches( $current_job, $job_id, 'running' ) || $worker_id !== (string) ( $current_job['worker_id'] ?? '' ) )
+                {
+                    return;
+                }
+            }
 
             if ( ! is_wp_error( $result ) || ! $this->manual_generation_error_is_retryable( $result, $attempts, $max_attempts ) )
             {
@@ -973,6 +997,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $retry_diagnostics['max_attempts']  = $max_attempts;
 
             $job['status']      = 'running';
+            $job['worker_id']   = $worker_id;
             $job['error']       = __( 'Site Context generation hit a temporary OpenRouter error and is retrying.', 'sentient-forms' );
             $job['code']        = 'site_context_generation_retrying';
             $job['status_code'] = $retry_status;
@@ -982,7 +1007,13 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
         while ( $attempts < $max_attempts );
 
-        $job = $this->get_generation_job_record() ?: $job;
+        $current_job = $this->get_generation_job_record();
+        if ( ! $this->generation_job_matches( $current_job, $job_id, 'running' ) || $worker_id !== (string) ( $current_job['worker_id'] ?? '' ) )
+        {
+            return;
+        }
+
+        $job = $current_job;
         $job['finished_at'] = current_time( 'mysql' );
 
         if ( is_wp_error( $result ) )
@@ -999,6 +1030,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             update_option( self::SETTINGS_OPTION_NAME, $settings, false );
 
             $job['status']      = 'failed';
+            unset( $job['worker_id'] );
             $job['error']       = $result->get_error_message();
             $job['code']        = $result->get_error_code();
             $job['status_code'] = $error_status;
@@ -1010,6 +1042,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         $job['status']      = 'succeeded';
+        unset( $job['worker_id'] );
         $job['error']       = null;
         $job['code']        = null;
         $job['status_code'] = null;
@@ -1094,6 +1127,26 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         return in_array( (string) ( $job['status'] ?? '' ), [ 'queued', 'running' ], true );
+    }
+
+    private function generation_job_is_queued( ?array $job ): bool
+    {
+        return is_array( $job ) && 'queued' === (string) ( $job['status'] ?? '' );
+    }
+
+    private function generation_job_matches( ?array $job, string $job_id, ?string $status = null ): bool
+    {
+        if ( ! is_array( $job ) || '' === $job_id )
+        {
+            return false;
+        }
+
+        if ( (string) ( $job['id'] ?? '' ) !== $job_id )
+        {
+            return false;
+        }
+
+        return null === $status || $status === (string) ( $job['status'] ?? '' );
     }
 
     private function maybe_fail_stale_generation_job(): void
@@ -1488,7 +1541,23 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         return $credential;
     }
 
-    private function perform_generation( array $settings, bool $manual, bool $empty_only = false ): array | WP_Error
+    private function manual_generation_job_can_commit( ?string $job_id ): bool
+    {
+        if ( null === $job_id )
+        {
+            return true;
+        }
+
+        $settings = $this->get_settings_record();
+        if ( 'granted' !== (string) ( $settings['consent_status'] ?? 'unset' ) )
+        {
+            return false;
+        }
+
+        return $this->generation_job_matches( $this->get_generation_job_record(), $job_id, 'running' );
+    }
+
+    private function perform_generation( array $settings, bool $manual, bool $empty_only = false, ?string $manual_job_id = null ): array | WP_Error
     {
         $access = $this->build_generation_access( $settings );
         if ( empty( $access['can_generate'] ) )
@@ -1570,6 +1639,15 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return new WP_Error(
                 'site_context_generation_existing_context',
                 __( 'Site Context already exists, so automatic first generation will not overwrite it.', 'sentient-forms' )
+            );
+        }
+
+        if ( ! $this->manual_generation_job_can_commit( $manual_job_id ) )
+        {
+            return new WP_Error(
+                'site_context_generation_canceled',
+                __( 'Site Context generation was canceled before completion.', 'sentient-forms' ),
+                [ 'status' => 409 ]
             );
         }
 

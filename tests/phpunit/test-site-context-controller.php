@@ -845,6 +845,79 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
     }
 
+    public function test_running_manual_generation_job_is_not_claimed_again(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $job );
+        $job['status']     = 'running';
+        $job['started_at'] = current_time( 'mysql' );
+        update_option( 'sentient_forms_site_context_generation_job', $job, false );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'running', $data['generation_job']['status'] ?? null );
+        $this->assertCount( 0, $calls );
+        $this->assertNull( $data['context'] ?? null );
+    }
+
+    public function test_manual_generation_does_not_commit_after_consent_withdrawal(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [],
+            static function (): void {
+                $settings = get_option( 'sentient_forms_site_context_settings' );
+                $settings = is_array( $settings ) ? $settings : [];
+                $settings['consent_status'] = 'declined';
+                $settings['declined_at']    = current_time( 'mysql' );
+                update_option( 'sentient_forms_site_context_settings', $settings, false );
+                delete_option( 'sentient_forms_site_context_generation_job' );
+            }
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+
+        $this->assertCount( 1, $calls );
+        $this->assertNull( $data['context'] ?? null );
+        $this->assertNull( $data['generation_job'] ?? null );
+        $this->assertSame( 'declined', $settings['consent_status'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_site_context' ) );
+    }
+
     public function test_generate_context_caps_site_context_web_search_depth(): void
     {
         $credential_id = $this->create_openrouter_credential();
@@ -2366,11 +2439,11 @@ class SiteContextControllerTest extends WP_UnitTestCase
         return $count;
     }
 
-    private function mock_openrouter_site_context_generation( array &$calls, ?string $content_override = null, array $response_overrides = [] ): void
+    private function mock_openrouter_site_context_generation( array &$calls, ?string $content_override = null, array $response_overrides = [], ?callable $before_response = null ): void
     {
         add_filter(
             'pre_http_request',
-            static function ( $preempt, array $args, string $url ) use ( &$calls, $content_override, $response_overrides ) {
+            static function ( $preempt, array $args, string $url ) use ( &$calls, $content_override, $response_overrides, $before_response ) {
                 $calls[] = [
                     'args' => $args,
                     'url'  => $url,
@@ -2406,6 +2479,11 @@ class SiteContextControllerTest extends WP_UnitTestCase
                         'total_tokens' => (int) ( $response_overrides['total_tokens'] ?? 42 ),
                     ],
                 ];
+
+                if ( null !== $before_response )
+                {
+                    $before_response();
+                }
 
                 return [
                     'headers'  => [],

@@ -92,7 +92,7 @@ export const siteContextGenerationJobSchema = z
 		finished_at: nullableStringSchema,
 		error: nullableStringSchema,
 		code: z.string().nullable().optional(),
-		status_code: z.number().int().positive().nullable().optional(),
+		status_code: z.number().int().nonnegative().nullable().optional(),
 		diagnostics: z.record(z.string(), z.unknown()).optional(),
 		model: z.string().nullable().optional(),
 		provider: z.string().nullable().optional(),

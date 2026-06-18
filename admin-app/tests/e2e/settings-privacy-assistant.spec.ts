@@ -4,21 +4,24 @@ import { seedRuntimeConfig } from './utils/runtime-config';
 
 test.describe('Privacy setup assistant', () => {
 	test.beforeEach(async ({ page }) => {
-		await page.route('**/wp-json/sentient-forms/v1/local/providers/openrouter/models**', async (route) => {
-			await route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					provider: 'openrouter',
-					source: 'local_cache',
-					total_cached: 0,
-					total_returned: 0,
-					free_count: 0,
-					stale_count: 0,
-					models: []
-				})
-			});
-		});
+		await page.route(
+			'**/wp-json/sentient-forms/v1/local/providers/openrouter/models**',
+			async (route) => {
+				await route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						provider: 'openrouter',
+						source: 'local_cache',
+						total_cached: 0,
+						total_returned: 0,
+						free_count: 0,
+						stale_count: 0,
+						models: []
+					})
+				});
+			}
+		);
 	});
 
 	test('opens on first run and applies the selected preset', async ({ page }) => {
@@ -408,21 +411,24 @@ test.describe('Privacy setup assistant', () => {
 			});
 		});
 
-		await page.route('**/wp-json/sentient-forms/v1/local/providers/openrouter/models**', async (route) => {
-			await route.fulfill({
-				status: 200,
-				contentType: 'application/json',
-				body: JSON.stringify({
-					provider: 'openrouter',
-					source: 'local_cache',
-					total_cached: 0,
-					total_returned: 0,
-					free_count: 0,
-					stale_count: 0,
-					models: []
-				})
-			});
-		});
+		await page.route(
+			'**/wp-json/sentient-forms/v1/local/providers/openrouter/models**',
+			async (route) => {
+				await route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						provider: 'openrouter',
+						source: 'local_cache',
+						total_cached: 0,
+						total_returned: 0,
+						free_count: 0,
+						stale_count: 0,
+						models: []
+					})
+				});
+			}
+		);
 
 		await page.route('**/wp-json/sentient-forms/v1/models**', async (route) => {
 			await route.fulfill({
@@ -508,6 +514,17 @@ test.describe('Privacy setup assistant', () => {
 					});
 				}
 
+				if (pollRequests === 2) {
+					return route.fulfill({
+						status: 503,
+						contentType: 'application/json',
+						body: JSON.stringify({
+							code: 'temporarily_unavailable',
+							message: 'Transient polling failure'
+						})
+					});
+				}
+
 				return route.fulfill({
 					status: 200,
 					contentType: 'application/json',
@@ -528,12 +545,18 @@ test.describe('Privacy setup assistant', () => {
 		await page.getByTestId('site-context-generate-now').click();
 
 		await expect.poll(() => generateRequests).toBe(1);
-		await expect(page.getByText('Site Context generation is running in the background.')).toBeVisible();
+		await expect(
+			page.getByText('Site Context generation is running in the background.')
+		).toBeVisible();
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
 		await expect(page.getByTestId('site-context-generate-now')).toBeDisabled();
-		await expect.poll(() => pollRequests, { timeout: 8_000 }).toBeGreaterThanOrEqual(2);
+		await expect.poll(() => pollRequests, { timeout: 8_000 }).toBeGreaterThanOrEqual(1);
+		await page
+			.getByTestId('site-context-textarea')
+			.fill('Unsaved assistant edit while generation runs.');
+		await expect.poll(() => pollRequests, { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
 		await expect(page.getByTestId('site-context-textarea')).toHaveValue(
-			'Generated assistant Site Context.'
+			'Unsaved assistant edit while generation runs.'
 		);
 		await expect(page.getByText('Site Context generated.')).toBeVisible();
 	});
