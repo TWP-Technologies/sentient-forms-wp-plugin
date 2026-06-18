@@ -308,7 +308,7 @@ jobs:
             "${SHA_PATH}"
             "${MANIFEST_PATH}"
             --title "Sentient Forms ${VERSION}"
-            --notes "Production WordPress.org package generated from the validated production branch release workflow. WordPress.org SVN/upload remains a manual approval step."
+            --generate-notes
             --latest
           )
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
