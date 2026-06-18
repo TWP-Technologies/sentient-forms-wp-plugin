@@ -1113,6 +1113,93 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 1, $this->count_scheduled_hook( 'sentient_forms_site_context_manual_generation' ) );
     }
 
+    public function test_generate_context_does_not_save_new_settings_while_job_is_active(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( $job_id, $data['generation_job']['id'] ?? null );
+        $this->assertSame( 'openai/gpt-5.5', $data['settings']['generation_model_selection']['primary'] ?? null );
+
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( 'openai/gpt-5.5', $settings['generation_model_selection']['primary'] ?? null );
+    }
+
+    public function test_generate_context_clears_first_generation_schedule_when_manual_job_is_queued(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status' => 'granted',
+                'consented_at'   => '2026-05-28 00:00:00',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+                'first_generation_started_at'      => gmdate( 'Y-m-d H:i:s', time() - HOUR_IN_SECONDS ),
+                'first_generation_attempt_count'   => 0,
+                'first_generation_next_attempt_at' => gmdate( 'Y-m-d H:i:s', time() + MINUTE_IN_SECONDS ),
+            ],
+            false
+        );
+        wp_schedule_single_event( time() + MINUTE_IN_SECONDS, 'sentient_forms_site_context_first_generation' );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'queued', $data['generation_job']['status'] ?? null );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertEmpty( $settings['first_generation_next_attempt_at'] ?? null );
+    }
+
     public function test_dispatched_generation_validates_token_and_runs_job(): void
     {
         $credential_id = $this->create_openrouter_credential();

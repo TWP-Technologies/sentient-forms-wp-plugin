@@ -104,6 +104,11 @@ const generationAccessSchema = z
 	})
 	.passthrough();
 
+const generationJobDiagnosticsSchema = z.preprocess(
+	(value) => (Array.isArray(value) && value.length === 0 ? {} : value),
+	z.record(z.string(), z.unknown())
+);
+
 export const siteContextGenerationJobSchema = z
 	.object({
 		id: z.string().min(1),
@@ -114,7 +119,7 @@ export const siteContextGenerationJobSchema = z
 		error: nullableStringSchema,
 		code: z.string().nullable().optional(),
 		status_code: z.number().int().nonnegative().nullable().optional(),
-		diagnostics: z.record(z.string(), z.unknown()).optional(),
+		diagnostics: generationJobDiagnosticsSchema.optional(),
 		model: z.string().nullable().optional(),
 		provider: z.string().nullable().optional(),
 		tools: z.array(z.string()).optional(),

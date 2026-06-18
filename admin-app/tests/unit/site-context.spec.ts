@@ -177,6 +177,47 @@ describe('normalizeSiteContextResponse', () => {
 			web_search: { mode: 'required', max_results: 5 }
 		});
 	});
+
+	it('accepts empty generation job diagnostics arrays from PHP responses', () => {
+		const status = parseSiteContextStatusResponse({
+			context: null,
+			settings: {
+				consent_status: 'granted',
+				consented_at: '2026-06-18T00:00:00Z',
+				declined_at: null,
+				auto_refresh_enabled: false,
+				auto_refresh_days: 30,
+				next_refresh_at: null,
+				last_generated_at: null,
+				last_error: null
+			},
+			has_context: false,
+			is_empty: true,
+			is_stale: false,
+			stale_after_days: 90,
+			status: 'empty',
+			generation_access: {
+				can_generate: true,
+				reason_code: 'ready',
+				message: 'Ready.',
+				setup_target: null,
+				provider: 'openrouter',
+				model: 'openai/gpt-5.5',
+				credential_id: 1
+			},
+			generation_job: {
+				id: 'site-context-queued',
+				status: 'queued',
+				requested_at: '2026-06-18T00:00:00Z',
+				started_at: null,
+				finished_at: null,
+				error: null,
+				diagnostics: []
+			}
+		});
+
+		expect(status.generation_job?.diagnostics).toEqual({});
+	});
 });
 
 describe('siteContextModelSelectionChanged', () => {

@@ -375,6 +375,12 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
 
     public function generate_context( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
+        $this->maybe_fail_stale_generation_job();
+        if ( $this->generation_job_is_active( $this->get_generation_job_record() ) )
+        {
+            return $this->prepare_item_for_response( $this->build_status_response() );
+        }
+
         $settings = $this->settings_from_request( $request, $this->get_settings_record() );
 
         update_option( self::SETTINGS_OPTION_NAME, $settings, false );
@@ -885,6 +891,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         ];
 
         update_option( self::GENERATION_JOB_OPTION_NAME, $job, false );
+        $this->clear_first_generation_schedule();
         $this->dispatch_manual_generation_job( $job_id, $dispatch_token );
 
         return $this->public_generation_job( $job );
