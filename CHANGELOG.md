@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.14](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.13...v0.3.14) (2026-06-18)
+
+
+### Bug Fixes
+
+* **release:** use generated GitHub release notes ([1ceec13](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/1ceec13ff3b75ee054cb8126f03eb4e6acf0a2aa))
+* **site-context:** disable gpt latest web search ([a274281](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a274281fafb39a467f4ba49ab79d759322660018))
+* **site-context:** gate latest alias server tools ([79617a3](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/79617a3c14212191a38bcffe80a0acdb2d2172c0))
+* **site-context:** gate latest alias server tools ([0e9cc37](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0e9cc3753f2eff253a4f5db7d3e4dc735b6b5dae))
+* **site-context:** gate legacy web search options ([717c46a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/717c46aab217b50f913390dbd4626a61f804403e))
+* **site-context:** normalize unsupported saved tools ([8b19eb8](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/8b19eb83cdbb64d9ab8217d6bb99b8eebb0adc97))
+
 ## [0.3.13](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.12...v0.3.13) (2026-06-18)
 
 
