@@ -622,6 +622,53 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'datetime', $saved_selection['tools'] ?? [] );
     }
 
+    public function test_update_context_coerces_unsupported_gpt_latest_server_tools_to_off(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            '~openai/gpt-latest',
+            [
+                'id'                   => '~openai/gpt-latest',
+                'pricing'              => [
+                    'prompt'     => '0.000005',
+                    'completion' => '0.00003',
+                    'web_search' => '0.01',
+                ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens', 'tools', 'tool_choice' ],
+                'free'                 => false,
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'summary_text'               => 'Manual business context',
+                'pii_ack'                    => true,
+                'consent_status'             => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => '~openai/gpt-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $saved_selection = $data['settings']['generation_model_selection'] ?? [];
+
+        $this->assertTrue( $data['generation_access']['can_generate'] ?? false );
+        $this->assertSame( 'ready', $data['generation_access']['reason_code'] ?? null );
+        $this->assertSame( 'off', $saved_selection['tools']['web_search']['mode'] ?? null );
+        $this->assertArrayNotHasKey( 'web_fetch', $saved_selection['tools'] ?? [] );
+        $this->assertArrayNotHasKey( 'datetime', $saved_selection['tools'] ?? [] );
+    }
+
     public function test_update_context_drops_reasoning_without_effort_or_token_budget(): void
     {
         $credential_id = $this->create_openrouter_credential();

@@ -1689,6 +1689,11 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
         $selection['is_preset'] = rest_sanitize_boolean( $value['is_preset'] ?? $selection['is_preset'] );
         $selection['tools']     = $this->sanitize_tool_settings( $value['tools'] ?? null );
+        $selection['tools']     = $this->coerce_unsupported_openrouter_server_tools_to_off(
+            $selection,
+            $selection['tools'],
+            $value['tools'] ?? null
+        );
         $reasoning              = $this->sanitize_reasoning_settings( $value['reasoning'] ?? null );
         if ( null !== $reasoning )
         {
@@ -1759,6 +1764,64 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         return $settings;
+    }
+
+    private function coerce_unsupported_openrouter_server_tools_to_off( array $selection, array $settings, mixed $raw_tools ): array
+    {
+        if ( 'openrouter' !== ( $selection['provider'] ?? '' ) || ! empty( $selection['is_preset'] ) )
+        {
+            return $settings;
+        }
+
+        $model = isset( $selection['primary'] ) && is_scalar( $selection['primary'] )
+            ? (string) $selection['primary']
+            : '';
+        if ( '' === $model || ! str_contains( $model, '/' ) )
+        {
+            return $settings;
+        }
+
+        $server_tools = $this->openrouter_model_server_tool_capabilities( $model );
+        foreach ( [ 'web_search', 'web_fetch', 'datetime' ] as $tool_key )
+        {
+            if ( ! empty( $server_tools[ $tool_key ] ) )
+            {
+                continue;
+            }
+
+            $explicit_mode = $this->raw_tool_mode( $raw_tools, $tool_key );
+            if ( 'required' === $explicit_mode )
+            {
+                continue;
+            }
+
+            if ( ! isset( $settings[ $tool_key ] ) && null === $explicit_mode )
+            {
+                continue;
+            }
+
+            if ( ! isset( $settings[ $tool_key ] ) )
+            {
+                $settings[ $tool_key ] = [];
+            }
+            $settings[ $tool_key ]['mode'] = 'off';
+        }
+
+        return $settings;
+    }
+
+    private function raw_tool_mode( mixed $raw_tools, string $tool_key ): ?string
+    {
+        if ( ! is_array( $raw_tools ) || ! is_array( $raw_tools[ $tool_key ] ?? null ) )
+        {
+            return null;
+        }
+
+        $mode = is_scalar( $raw_tools[ $tool_key ]['mode'] ?? null )
+            ? sanitize_key( (string) $raw_tools[ $tool_key ]['mode'] )
+            : null;
+
+        return in_array( $mode, [ 'auto', 'required', 'off', 'inherit' ], true ) ? $mode : null;
     }
 
     private function sanitize_reasoning_settings( mixed $value ): string | array | null
