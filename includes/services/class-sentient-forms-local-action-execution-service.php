@@ -1507,15 +1507,27 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $tools = $this->build_openrouter_tool_payload( $model_selection['tools'] ?? null );
-        if ( [] !== $tools )
+        $has_parameter_metadata = $this->model_selection_service->has_model_parameter_metadata( $model, 'openrouter' );
+        $supports_tools = ! $has_parameter_metadata
+            || $this->model_selection_service->model_supports_parameter( $model, 'openrouter', 'tools' );
+        if ( [] !== $tools && $supports_tools )
         {
             $payload['tools'] = $tools;
         }
+        elseif ( $this->model_selection_service->model_supports_parameter( $model, 'openrouter', 'web_search_options' ) )
+        {
+            $web_search_options = $this->build_openrouter_web_search_options_payload( $model_selection['tools'] ?? null );
+            if ( [] !== $web_search_options )
+            {
+                $payload['web_search_options'] = $web_search_options;
+            }
+        }
 
-        $tool_choice = $this->normalize_tool_choice( $model_selection['tools']['tool_choice'] ?? null, [] !== $tools );
+        $has_tool_payload = isset( $payload['tools'] ) && is_array( $payload['tools'] ) && [] !== $payload['tools'];
+        $tool_choice = $this->normalize_tool_choice( $model_selection['tools']['tool_choice'] ?? null, $has_tool_payload );
         if (
             null !== $tool_choice
-            && $this->model_selection_service->model_supports_parameter( $model, 'openrouter', 'tool_choice' )
+            && ( ! $has_parameter_metadata || $this->model_selection_service->model_supports_parameter( $model, 'openrouter', 'tool_choice' ) )
         )
         {
             $payload['tool_choice'] = $tool_choice;
@@ -1773,6 +1785,37 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         return $tools;
+    }
+
+    /**
+     * @param mixed $settings
+     * @return array<string, mixed>
+     */
+    private function build_openrouter_web_search_options_payload( mixed $settings ): array
+    {
+        if ( ! is_array( $settings ) || ! is_array( $settings['web_search'] ?? null ) )
+        {
+            return [];
+        }
+
+        $web_search = $settings['web_search'];
+        $search_mode = sanitize_key( (string) ( $web_search['mode'] ?? 'inherit' ) );
+        if ( ! in_array( $search_mode, [ 'auto', 'required' ], true ) )
+        {
+            return [];
+        }
+
+        $max_results = min( 10, max( 1, absint( $web_search['max_results'] ?? 5 ) ) );
+        $context_size = match ( true )
+        {
+            $max_results >= 8 => 'high',
+            $max_results <= 3 => 'low',
+            default => 'medium',
+        };
+
+        return [
+            'search_context_size' => $context_size,
+        ];
     }
 
     private function normalize_tool_choice( mixed $value, bool $has_tools ): ?string

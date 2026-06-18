@@ -331,6 +331,109 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'tool_choice', $payload );
     }
 
+    public function test_openrouter_payload_preserves_tool_choice_for_custom_model_without_local_metadata(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'primary'   => 'example/custom-openrouter-id',
+                        'is_preset' => false,
+                        'provider'  => 'openrouter',
+                        'tools'     => [
+                            'tool_choice' => 'required',
+                            'web_fetch'   => [
+                                'mode' => 'required',
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'example/custom-openrouter-id', $result['model'] );
+        $this->assertCount( 1, $client->chat_calls );
+        $payload = $client->chat_calls[0]['payload'];
+
+        $this->assertSame( 'example/custom-openrouter-id', $payload['model'] );
+        $this->assertContains( [ 'type' => 'openrouter:web_fetch' ], $payload['tools'] );
+        $this->assertSame( 'required', $payload['tool_choice'] ?? null );
+    }
+
+    public function test_structured_openrouter_payload_uses_native_web_search_when_model_lacks_tools_support(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping(
+            true,
+            null,
+            [
+                'structured_output_schema' => $this->structured_output_schema(),
+            ]
+        );
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'classification' => 'ham',
+                    'confidence'     => 0.96,
+                    'summary'        => 'Legitimate inquiry.',
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'primary'   => 'example/web-search-options-without-tools',
+                        'is_preset' => false,
+                        'provider'  => 'openrouter',
+                        'tools'     => [
+                            'tool_choice' => 'required',
+                            'web_search'  => [
+                                'mode'        => 'required',
+                                'max_results' => 9,
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'example/web-search-options-without-tools', $result['model'] );
+        $this->assertCount( 1, $client->chat_calls );
+        $payload = $client->chat_calls[0]['payload'];
+
+        $this->assertSame( 'example/web-search-options-without-tools', $payload['model'] );
+        $this->assertTrue( $payload['provider']['require_parameters'] ?? false );
+        $this->assertArrayNotHasKey( 'tools', $payload );
+        $this->assertArrayNotHasKey( 'tool_choice', $payload );
+        $this->assertSame( 'high', $payload['web_search_options']['search_context_size'] ?? null );
+    }
+
     public function test_bundled_prompt_keeps_untrusted_submission_from_breaking_trust_sections(): void
     {
         $template = Sentient_Forms_Bundled_Action_Templates::get( 'spam_detection_v1' );
@@ -2987,6 +3090,28 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                     'pricing'              => [
                         'prompt'     => '0.000003',
                         'completion' => '0.000015',
+                    ],
+                ],
+                $expires_at
+            )
+        );
+
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'example/web-search-options-without-tools',
+                [
+                    'id'                   => 'example/web-search-options-without-tools',
+                    'name'                 => 'Example: Native Web Search Without Tools',
+                    'free'                 => false,
+                    'context_length'       => 128000,
+                    'input_modalities'     => [ 'text' ],
+                    'output_modalities'    => [ 'text' ],
+                    'supported_parameters' => [ 'response_format', 'structured_outputs', 'web_search_options' ],
+                    'pricing'              => [
+                        'prompt'     => '0.000003',
+                        'completion' => '0.000015',
+                        'web_search' => '0.004',
                     ],
                 ],
                 $expires_at
