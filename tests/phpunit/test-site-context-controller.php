@@ -819,6 +819,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'reasoning', $payload );
         $this->assertArrayNotHasKey( 'tools', $payload );
         $this->assertArrayNotHasKey( 'tool_choice', $payload );
+        $this->assertArrayNotHasKey( 'web_search_options', $payload );
     }
 
     public function test_generate_context_omits_default_tools_when_openrouter_model_lacks_tools_parameter_support(): void
@@ -868,6 +869,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertTrue( $payload['provider']['require_parameters'] ?? false );
         $this->assertArrayNotHasKey( 'tools', $payload );
         $this->assertArrayNotHasKey( 'tool_choice', $payload );
+        $this->assertSame( 'medium', $payload['web_search_options']['search_context_size'] ?? null );
     }
 
     public function test_generate_context_omits_tool_choice_when_openrouter_model_lacks_parameter_support(): void

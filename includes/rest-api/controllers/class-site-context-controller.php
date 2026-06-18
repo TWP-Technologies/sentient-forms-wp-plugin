@@ -1142,8 +1142,42 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
                 $payload['tool_choice'] = $tool_choice;
             }
         }
+        elseif ( in_array( 'web_search_options', $supported_parameters, true ) )
+        {
+            $web_search_options = $this->build_openrouter_web_search_options_payload( $selection['tools'] ?? null );
+            if ( [] !== $web_search_options )
+            {
+                $payload['web_search_options'] = $web_search_options;
+            }
+        }
 
         return $payload;
+    }
+
+    private function build_openrouter_web_search_options_payload( mixed $settings ): array
+    {
+        $settings = is_array( $settings ) ? $settings : [];
+        $web_search = is_array( $settings['web_search'] ?? null )
+            ? $settings['web_search']
+            : [ 'mode' => 'required', 'max_results' => 5 ];
+
+        $search_mode = sanitize_key( (string) ( $web_search['mode'] ?? 'required' ) );
+        if ( ! in_array( $search_mode, [ 'auto', 'required' ], true ) )
+        {
+            return [];
+        }
+
+        $max_results = min( 10, max( 1, absint( $web_search['max_results'] ?? 5 ) ) );
+        $context_size = match ( true )
+        {
+            $max_results >= 8 => 'high',
+            $max_results <= 3 => 'low',
+            default => 'medium',
+        };
+
+        return [
+            'search_context_size' => $context_size,
+        ];
     }
 
     private function build_openrouter_tool_payload( mixed $settings ): array
