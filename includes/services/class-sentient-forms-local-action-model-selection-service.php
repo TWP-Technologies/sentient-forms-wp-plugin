@@ -1111,6 +1111,29 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             || in_array( 'structured-output', $model['tags'] ?? [], true );
     }
 
+    public function model_supports_parameter( string $model_id, string $provider, string $parameter ): bool
+    {
+        if ( 'openrouter' !== sanitize_key( $provider ) )
+        {
+            return false;
+        }
+
+        $model_id  = trim( sanitize_text_field( $model_id ) );
+        $parameter = sanitize_key( $parameter );
+        if ( '' === $model_id || '' === $parameter )
+        {
+            return false;
+        }
+
+        $model = $this->list_local_openrouter_models()[ $model_id ] ?? null;
+        if ( ! is_array( $model ) )
+        {
+            return false;
+        }
+
+        return in_array( $parameter, $model['supported_parameters'] ?? [], true );
+    }
+
     private function infer_speed_tier( string $model_id, string $name ): string
     {
         return preg_match( '/flash|mini|lite|fast|turbo|gpt-oss/i', $model_id . ' ' . $name )

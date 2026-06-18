@@ -289,6 +289,48 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( 3, $payload['tools'][0]['parameters']['max_results'] ?? null );
     }
 
+    public function test_openrouter_payload_omits_tool_choice_when_model_lacks_parameter_support(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'primary'   => 'example/tools-without-tool-choice',
+                        'is_preset' => false,
+                        'tools'     => [
+                            'tool_choice' => 'required',
+                            'web_fetch'   => [
+                                'mode' => 'required',
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'example/tools-without-tool-choice', $result['model'] );
+        $this->assertCount( 1, $client->chat_calls );
+        $payload = $client->chat_calls[0]['payload'];
+        $this->assertSame( 'example/tools-without-tool-choice', $payload['model'] );
+        $this->assertContains( [ 'type' => 'openrouter:web_fetch' ], $payload['tools'] );
+        $this->assertArrayNotHasKey( 'tool_choice', $payload );
+    }
+
     public function test_bundled_prompt_keeps_untrusted_submission_from_breaking_trust_sections(): void
     {
         $template = Sentient_Forms_Bundled_Action_Templates::get( 'spam_detection_v1' );
@@ -2921,6 +2963,27 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
                     'input_modalities'     => [ 'text' ],
                     'output_modalities'    => [ 'text' ],
                     'supported_parameters' => [ 'response_format', 'reasoning', 'tools' ],
+                    'pricing'              => [
+                        'prompt'     => '0.000003',
+                        'completion' => '0.000015',
+                    ],
+                ],
+                $expires_at
+            )
+        );
+
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'example/tools-without-tool-choice',
+                [
+                    'id'                   => 'example/tools-without-tool-choice',
+                    'name'                 => 'Example: Tools Without Tool Choice',
+                    'free'                 => false,
+                    'context_length'       => 128000,
+                    'input_modalities'     => [ 'text' ],
+                    'output_modalities'    => [ 'text' ],
+                    'supported_parameters' => [ 'response_format', 'tools' ],
                     'pricing'              => [
                         'prompt'     => '0.000003',
                         'completion' => '0.000015',

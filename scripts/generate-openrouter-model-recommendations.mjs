@@ -203,7 +203,7 @@ function recommendationLabels(model, ranks, topTenFrequency) {
 	if (asArray(model.supported_parameters).includes('response_format')) {
 		labels.add('Structured output');
 	}
-	if (asArray(model.supported_parameters).some((parameter) => ['tools', 'tool_choice'].includes(parameter))) {
+	if (asArray(model.supported_parameters).includes('tool_choice')) {
 		labels.add('Tool calling');
 	}
 	if ((model.context_length ?? 0) >= 128000) labels.add('Long context');
@@ -353,7 +353,7 @@ async function main() {
 	await fs.mkdir(path.dirname(outputPath), { recursive: true });
 	await fs.writeFile(
 		outputPath,
-		`<?php\n/**\n * Generated OpenRouter model recommendation snapshot.\n *\n * Source: https://openrouter.ai/api/v1/models and category filters.\n * Generated: ${retrievedAt}\n *\n * @package SentientForms\n */\n\nif ( ! defined( 'ABSPATH' ) )\n{\n\texit;\n}\n\nreturn ${phpExport(models)};\n`,
+		`<?php\n/**\n * Generated OpenRouter model recommendation snapshot.\n *\n * Source: https://openrouter.ai/api/v1/models and category filters.\n * Generated: ${retrievedAt}\n *\n * @package SentientForms\n */\n\nif ( ! defined( 'ABSPATH' ) )\n{\n    exit;\n}\n\nreturn ${phpExport(models)};\n`,
 		'utf8'
 	);
 

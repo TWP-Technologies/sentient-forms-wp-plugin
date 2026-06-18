@@ -821,6 +821,62 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'tool_choice', $payload );
     }
 
+    public function test_generate_context_omits_tool_choice_when_openrouter_model_lacks_parameter_support(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            'example/tools-without-tool-choice',
+            [
+                'id'                   => 'example/tools-without-tool-choice',
+                'pricing'              => [
+                    'prompt'     => '0.000001',
+                    'completion' => '0.000002',
+                    'web_search' => '0.004',
+                ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens', 'tools', 'web_search_options' ],
+                'free'                 => false,
+            ]
+        );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [
+                'model' => 'example/tools-without-tool-choice',
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'example/tools-without-tool-choice',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'required',
+                        'web_search'  => [
+                            'mode'        => 'required',
+                            'max_results' => 4,
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 1, $calls );
+        $payload = json_decode( (string) $calls[0]['args']['body'], true );
+
+        $this->assertSame( 'example/tools-without-tool-choice', $payload['model'] ?? null );
+        $this->assertTrue( $payload['provider']['require_parameters'] ?? false );
+        $this->assertContains( 'openrouter:web_search', array_column( $payload['tools'] ?? [], 'type' ) );
+        $this->assertArrayNotHasKey( 'tool_choice', $payload );
+    }
+
     /**
      * @dataProvider invalid_openrouter_generation_content_provider
      */

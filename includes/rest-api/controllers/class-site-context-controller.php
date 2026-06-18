@@ -1137,7 +1137,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         {
             $payload['tools'] = $tools;
             $tool_choice = $this->normalize_tool_choice( $selection['tools']['tool_choice'] ?? null, true );
-            if ( null !== $tool_choice )
+            if ( null !== $tool_choice && in_array( 'tool_choice', $supported_parameters, true ) )
             {
                 $payload['tool_choice'] = $tool_choice;
             }

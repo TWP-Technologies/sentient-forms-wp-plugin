@@ -10,7 +10,7 @@
 
 if ( ! defined( 'ABSPATH' ) )
 {
-	exit;
+    exit;
 }
 
 return [
@@ -851,7 +851,6 @@ return [
 			'Frequent OpenRouter category top-10',
 			'Code generation',
 			'Structured output',
-			'Tool calling',
 			'Long context',
 		],
 		'recommendation_categories' => [
@@ -1846,7 +1845,6 @@ return [
 			'Frequent OpenRouter category top-10',
 			'Code generation',
 			'Structured output',
-			'Tool calling',
 			'Long context',
 		],
 		'recommendation_categories' => [
@@ -6781,7 +6779,6 @@ return [
 			'Frequent OpenRouter category top-10',
 			'Code generation',
 			'Structured output',
-			'Tool calling',
 			'Long context',
 		],
 		'recommendation_categories' => [

@@ -1513,7 +1513,10 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $tool_choice = $this->normalize_tool_choice( $model_selection['tools']['tool_choice'] ?? null, [] !== $tools );
-        if ( null !== $tool_choice )
+        if (
+            null !== $tool_choice
+            && $this->model_selection_service->model_supports_parameter( $model, 'openrouter', 'tool_choice' )
+        )
         {
             $payload['tool_choice'] = $tool_choice;
         }
