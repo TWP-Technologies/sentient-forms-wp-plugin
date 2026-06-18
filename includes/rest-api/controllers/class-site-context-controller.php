@@ -195,12 +195,14 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
 
     public static function handle_manual_generation_dispatch(): void
     {
+        // phpcs:disable WordPress.Security.NonceVerification.Missing -- Internal async dispatch is authenticated by the one-time job token.
         $job_id = isset( $_POST['job_id'] ) && is_scalar( $_POST['job_id'] )
             ? sanitize_text_field( wp_unslash( (string) $_POST['job_id'] ) )
             : '';
         $token  = isset( $_POST['token'] ) && is_scalar( $_POST['token'] )
             ? sanitize_text_field( wp_unslash( (string) $_POST['token'] ) )
             : '';
+        // phpcs:enable WordPress.Security.NonceVerification.Missing
 
         $result = self::run_dispatched_manual_generation( $job_id, $token );
         if ( is_wp_error( $result ) )
@@ -208,7 +210,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $status = is_array( $result->get_error_data() ) && isset( $result->get_error_data()['status'] )
                 ? absint( $result->get_error_data()['status'] )
                 : 403;
-            wp_die( esc_html( $result->get_error_message() ), '', [ 'response' => $status ] );
+            wp_die( esc_html( $result->get_error_message() ), '', [ 'response' => absint( $status ) ] );
         }
 
         wp_die( '', '', [ 'response' => 204 ] );
