@@ -1133,7 +1133,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         {
             $payload['reasoning'] = $reasoning;
         }
-        if ( [] !== $tools )
+        if ( [] !== $tools && in_array( 'tools', $supported_parameters, true ) )
         {
             $payload['tools'] = $tools;
             $tool_choice = $this->normalize_tool_choice( $selection['tools']['tool_choice'] ?? null, true );

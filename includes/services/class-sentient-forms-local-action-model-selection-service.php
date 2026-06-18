@@ -1111,6 +1111,14 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             || in_array( 'structured-output', $model['tags'] ?? [], true );
     }
 
+    /**
+     * Determine whether a local OpenRouter model supports a request parameter.
+     *
+     * @param string $model_id  OpenRouter model ID.
+     * @param string $provider  Provider key for the model.
+     * @param string $parameter OpenRouter request parameter to check.
+     * @return bool True when the model advertises support for the parameter.
+     */
     public function model_supports_parameter( string $model_id, string $provider, string $parameter ): bool
     {
         if ( 'openrouter' !== sanitize_key( $provider ) )

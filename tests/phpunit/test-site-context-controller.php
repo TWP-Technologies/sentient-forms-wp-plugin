@@ -821,6 +821,55 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'tool_choice', $payload );
     }
 
+    public function test_generate_context_omits_default_tools_when_openrouter_model_lacks_tools_parameter_support(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            'example/web-search-options-only',
+            [
+                'id'                   => 'example/web-search-options-only',
+                'pricing'              => [
+                    'prompt'     => '0.000001',
+                    'completion' => '0.000002',
+                    'web_search' => '0.004',
+                ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens', 'web_search_options' ],
+                'free'                 => false,
+            ]
+        );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [
+                'model' => 'example/web-search-options-only',
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'example/web-search-options-only',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 1, $calls );
+        $payload = json_decode( (string) $calls[0]['args']['body'], true );
+
+        $this->assertSame( 'example/web-search-options-only', $payload['model'] ?? null );
+        $this->assertTrue( $payload['provider']['require_parameters'] ?? false );
+        $this->assertArrayNotHasKey( 'tools', $payload );
+        $this->assertArrayNotHasKey( 'tool_choice', $payload );
+    }
+
     public function test_generate_context_omits_tool_choice_when_openrouter_model_lacks_parameter_support(): void
     {
         $credential_id = $this->create_openrouter_credential();
