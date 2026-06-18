@@ -1064,6 +1064,64 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertFalse( $http_called );
     }
 
+    public function test_generate_context_rejects_required_gpt_latest_web_search_before_http(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_model(
+            '~openai/gpt-latest',
+            [
+                'id'                   => '~openai/gpt-latest',
+                'pricing'              => [
+                    'prompt'     => '0.000005',
+                    'completion' => '0.00003',
+                    'web_search' => '0.01',
+                ],
+                'supported_parameters' => [ 'response_format', 'structured_outputs', 'max_tokens', 'tools', 'tool_choice' ],
+                'free'                 => false,
+            ]
+        );
+        $http_called = false;
+        add_filter(
+            'pre_http_request',
+            static function () use ( &$http_called ) {
+                $http_called = true;
+                return new WP_Error( 'unexpected_http_call', 'Known-incompatible web search must block before OpenRouter.' );
+            },
+            10,
+            3
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => '~openai/gpt-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode'        => 'required',
+                            'max_results' => 5,
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $data = $response->get_data();
+
+        $this->assertSame( 400, $response->get_status() );
+        $this->assertSame( 'site_context_generation_openrouter_tool_unsupported', $data['code'] ?? null );
+        $this->assertSame(
+            [ 'openrouter:web_search' ],
+            $data['data']['diagnostics']['unsupported_required_tools'] ?? null
+        );
+        $this->assertFalse( $http_called );
+    }
+
     public function test_generate_context_omits_auto_unverified_openrouter_server_tools_from_payload(): void
     {
         $credential_id = $this->create_openrouter_credential();

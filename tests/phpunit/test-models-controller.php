@@ -142,7 +142,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
         );
         $this->assertSame(
             [
-                'web_search' => true,
+                'web_search' => false,
                 'web_fetch'  => false,
                 'datetime'   => false,
             ],

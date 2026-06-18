@@ -36,6 +36,12 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     private const READY_CREDENTIAL_STATUSES   = [ 'valid', 'limited' ];
     private const OPENROUTER_SITE_CONTEXT_SCHEMA_NAME    = 'sentient_forms_site_context_generation_v1';
     private const OPENROUTER_SITE_CONTEXT_MIN_MAX_TOKENS = 1800;
+    private const OPENROUTER_SITE_CONTEXT_SERVER_TOOL_COMPATIBILITY_OVERRIDES = [
+        '~openai/gpt-latest' => [
+            'web_search'      => false,
+            'web_search_tool' => false,
+        ],
+    ];
 
     protected string $rest_base = 'site-context';
 
@@ -1385,12 +1391,35 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         );
         $web_search_options   = in_array( 'web_search_options', $supported_parameters, true );
 
-        return [
+        $server_tools = [
             'web_search'      => $web_search_tool || $web_search_options,
             'web_search_tool' => $web_search_tool,
             'web_fetch'       => $supports_tools && $this->openrouter_server_tool_support_value( $declared, 'web_fetch', false ),
             'datetime'        => $supports_tools && $this->openrouter_server_tool_support_value( $declared, 'datetime', false ),
         ];
+
+        return $this->apply_openrouter_site_context_server_tool_compatibility_overrides( $model, $server_tools );
+    }
+
+    /**
+     * @param array<string, bool> $server_tools
+     *
+     * @return array<string, bool>
+     */
+    private function apply_openrouter_site_context_server_tool_compatibility_overrides( string $model, array $server_tools ): array
+    {
+        $overrides = self::OPENROUTER_SITE_CONTEXT_SERVER_TOOL_COMPATIBILITY_OVERRIDES[ $model ] ?? null;
+        if ( ! is_array( $overrides ) )
+        {
+            return $server_tools;
+        }
+
+        foreach ( $overrides as $tool => $supported )
+        {
+            $server_tools[ $tool ] = (bool) $supported;
+        }
+
+        return $server_tools;
     }
 
     private function openrouter_server_tool_support_value( array $declared, string $key, bool $default ): bool
