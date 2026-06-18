@@ -28,6 +28,8 @@
 		modelCapabilityCount,
 		modelCostLabel,
 		modelBestRank,
+		modelSupportsToolChoice,
+		modelSupportsServerTool,
 		priceSymbolFromTier,
 		providerDisplayName,
 		providerKey,
@@ -471,6 +473,15 @@
 
 		selectedReasoning = normalizeModelReasoningEffort(nextValue.reasoning) ?? 'default';
 		syncToolSettings(nextValue.tools);
+		if (!readonly && clearUnsupportedToolSelections()) {
+			const sanitizedSelection = currentSelection();
+			if (
+				sanitizedSelection.primary.trim() &&
+				selectionSignature(sanitizedSelection) !== lastEmittedSelectionSignature
+			) {
+				emitSelectionChange(sanitizedSelection);
+			}
+		}
 	}
 
 	function normalizeToolMode(value: unknown): ToolMode {
@@ -490,6 +501,28 @@
 		webSearchMaxResults = Number.isFinite(maxResults)
 			? Math.max(1, Math.min(10, Math.round(maxResults)))
 			: 5;
+	}
+
+	function clearUnsupportedToolSelections(model: ModelInfo | null = selectedPrimaryModelInfo()): boolean {
+		if (selectedProvider !== OPENROUTER_PROVIDER || selectionMode === 'custom' || !model) return false;
+		let changed = false;
+		if (!modelSupportsServerTool(model, 'web_search') && webSearchMode !== 'inherit') {
+			webSearchMode = 'inherit';
+			changed = true;
+		}
+		if (!modelSupportsServerTool(model, 'web_fetch') && webFetchMode !== 'inherit') {
+			webFetchMode = 'inherit';
+			changed = true;
+		}
+		if (!modelSupportsServerTool(model, 'datetime') && datetimeMode !== 'inherit') {
+			datetimeMode = 'inherit';
+			changed = true;
+		}
+		if (!modelSupportsToolChoice(model) && toolChoiceMode !== 'inherit') {
+			toolChoiceMode = 'inherit';
+			changed = true;
+		}
+		return changed;
 	}
 
 	async function loadModels() {
@@ -731,38 +764,47 @@
 		return Boolean(model?.capabilities.tools || model?.capabilities.web_search);
 	}
 
-	function selectedModelSupportsWebSearch(): boolean {
+	function selectedModelSupportsToolChoice(): boolean {
+		if (selectedProvider !== OPENROUTER_PROVIDER) return false;
 		if (selectionMode === 'custom') return true;
-		return Boolean(selectedPrimaryModelInfo()?.capabilities.web_search);
+		return modelSupportsToolChoice(selectedPrimaryModelInfo());
+	}
+
+	function selectedModelSupportsWebSearch(): boolean {
+		if (selectedProvider !== OPENROUTER_PROVIDER) return false;
+		if (selectionMode === 'custom') return true;
+		return modelSupportsServerTool(selectedPrimaryModelInfo(), 'web_search');
 	}
 
 	function selectedModelSupportsWebFetch(): boolean {
+		if (selectedProvider !== OPENROUTER_PROVIDER) return false;
 		if (selectionMode === 'custom') return true;
-		const model = selectedPrimaryModelInfo();
-		return Boolean(model?.capabilities.tools);
+		return modelSupportsServerTool(selectedPrimaryModelInfo(), 'web_fetch');
 	}
 
 	function selectedModelSupportsDatetime(): boolean {
+		if (selectedProvider !== OPENROUTER_PROVIDER) return false;
 		if (selectionMode === 'custom') return true;
-		const model = selectedPrimaryModelInfo();
-		return Boolean(model?.capabilities.tools);
+		return modelSupportsServerTool(selectedPrimaryModelInfo(), 'datetime');
 	}
 
 	function currentToolSettings(): Record<string, unknown> | null {
+		if (selectedProvider !== OPENROUTER_PROVIDER) return null;
+
 		const tools: Record<string, unknown> = {};
-		if (toolChoiceMode !== 'inherit') {
+		if (toolChoiceMode !== 'inherit' && selectedModelSupportsToolChoice()) {
 			tools.tool_choice = toolChoiceMode;
 		}
-		if (webSearchMode !== 'inherit') {
+		if (webSearchMode !== 'inherit' && selectedModelSupportsWebSearch()) {
 			tools.web_search = {
 				mode: webSearchMode,
 				max_results: Math.max(1, Math.min(10, Math.round(webSearchMaxResults || 5)))
 			};
 		}
-		if (webFetchMode !== 'inherit') {
+		if (webFetchMode !== 'inherit' && selectedModelSupportsWebFetch()) {
 			tools.web_fetch = { mode: webFetchMode };
 		}
-		if (datetimeMode !== 'inherit') {
+		if (datetimeMode !== 'inherit' && selectedModelSupportsDatetime()) {
 			tools.datetime = { mode: datetimeMode };
 		}
 
@@ -815,6 +857,7 @@
 		highlightedPresetCode = preset.code;
 		selectedModel = normalizeSelectedModel(preset.resolved_model_id);
 		if (!modelIdAllowsReasoning(preset.resolved_model_id)) selectedReasoning = 'default';
+		clearUnsupportedToolSelections();
 		highlightedModelId = preset.resolved_model_id;
 		handleSelectionChange();
 		isPickerOpen = false;
@@ -826,12 +869,7 @@
 		selectedModel = model.id;
 		selectedCustomModel = '';
 		if (!modelSupportsReasoning(model)) selectedReasoning = 'default';
-		if (!model.capabilities.web_search && webSearchMode !== 'inherit') webSearchMode = 'inherit';
-		if (!model.capabilities.tools) {
-			if (webFetchMode !== 'inherit') webFetchMode = 'inherit';
-			if (datetimeMode !== 'inherit') datetimeMode = 'inherit';
-			if (toolChoiceMode !== 'inherit') toolChoiceMode = 'inherit';
-		}
+		clearUnsupportedToolSelections(model);
 		highlightedModelId = model.id;
 		handleSelectionChange();
 		isPickerOpen = false;
@@ -1428,7 +1466,7 @@
 								class="sf-model-tools-select"
 								bind:value={toolChoiceMode}
 								disabled={readonly ||
-									(!selectedModelSupportsTools() && toolChoiceMode === 'inherit')}
+									(!selectedModelSupportsToolChoice() && toolChoiceMode === 'inherit')}
 								onchange={handleSelectionChange}
 								data-testid="model-summary-tool-choice"
 							>

@@ -1274,6 +1274,11 @@ export interface ModelInfo {
 		tools: boolean;
 		structured?: boolean;
 		web_search?: boolean;
+		server_tools?: {
+			web_search?: boolean;
+			web_fetch?: boolean;
+			datetime?: boolean;
+		};
 		long_context: boolean;
 		files?: boolean;
 		audio?: boolean;

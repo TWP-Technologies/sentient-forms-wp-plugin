@@ -21,6 +21,8 @@ export type ModelSelectorCapabilityKey =
 	| 'long_context'
 	| 'code';
 
+export type OpenRouterServerToolKey = 'web_search' | 'web_fetch' | 'datetime';
+
 export interface ModelSelectorFilters {
 	searchTerm: string;
 	costLimit: ModelSelectorCostLimit;
@@ -134,6 +136,22 @@ export function modelHasCapability(
 	capability: ModelSelectorCapabilityKey
 ): boolean {
 	return Boolean(model.capabilities[capability]);
+}
+
+export function modelSupportsServerTool(
+	model: ModelInfo | null | undefined,
+	tool: OpenRouterServerToolKey
+): boolean {
+	if (!model) return false;
+	const explicit = model.capabilities.server_tools?.[tool];
+	if (typeof explicit === 'boolean') return explicit;
+	if (tool === 'web_search') return Boolean(model.capabilities.web_search);
+	return false;
+}
+
+export function modelSupportsToolChoice(model: ModelInfo | null | undefined): boolean {
+	if (!model) return false;
+	return Boolean(model.capabilities.tools);
 }
 
 export function missingRequiredCapabilities(

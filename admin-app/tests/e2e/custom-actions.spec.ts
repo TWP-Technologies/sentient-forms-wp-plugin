@@ -146,7 +146,12 @@ test.describe('Custom actions admin view', () => {
 										vision: true,
 										tools: true,
 										structured: true,
-										web_search: false,
+										web_search: true,
+										server_tools: {
+											web_search: true,
+											web_fetch: false,
+											datetime: true
+										},
 										long_context: true
 									},
 									context_window: 400000,

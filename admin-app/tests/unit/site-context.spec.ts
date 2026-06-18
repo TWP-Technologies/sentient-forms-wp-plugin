@@ -66,18 +66,12 @@ describe('siteContextModelSelectionChanged', () => {
 						web_search: {
 							mode: 'required',
 							max_results: 5
-						},
-						web_fetch: {
-							mode: 'auto'
 						}
 					}
 				},
 				{
 					provider: 'openrouter',
 					tools: {
-						web_fetch: {
-							mode: 'auto'
-						},
 						web_search: {
 							max_results: 5,
 							mode: 'required'
@@ -108,9 +102,6 @@ describe('siteContextModelSelectionChanged', () => {
 						web_search: {
 							mode: 'required',
 							max_results: 5
-						},
-						web_fetch: {
-							mode: 'auto'
 						}
 					}
 				}
@@ -129,9 +120,6 @@ describe('siteContextModelSelectionChanged', () => {
 					web_search: {
 						mode: 'required',
 						max_results: 5
-					},
-					web_fetch: {
-						mode: 'auto'
 					}
 				}
 			})
@@ -139,6 +127,16 @@ describe('siteContextModelSelectionChanged', () => {
 			primary: 'sf_research',
 			is_preset: true,
 			provider: 'openrouter'
+		});
+	});
+
+	it('does not enable OpenRouter server-fetch by default', () => {
+		expect(SITE_CONTEXT_DEFAULT_TOOLS).toEqual({
+			tool_choice: 'auto',
+			web_search: {
+				mode: 'required',
+				max_results: 5
+			}
 		});
 	});
 
