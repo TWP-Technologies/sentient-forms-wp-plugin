@@ -5,6 +5,20 @@ import { SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS } from '$lib/utils/site-context';
 const nullableStringSchema = z.string().nullable();
 const optionalNullableStringSchema = z.string().nullable().optional();
 const toolModeSchema = z.enum(['inherit', 'off', 'auto', 'required']);
+const modelReasoningSchema = z
+	.union([
+		z.string(),
+		z
+			.object({
+				effort: z.string().optional(),
+				max_tokens: z.number().int().positive().optional(),
+				exclude: z.boolean().optional(),
+				enabled: z.boolean().optional()
+			})
+			.passthrough()
+	])
+	.nullable()
+	.optional();
 const siteContextModelToolsSchema = z
 	.object({
 		tool_choice: z.enum(['off', 'auto', 'required']).optional(),
@@ -29,7 +43,7 @@ export const modelSelectionSchema = z
 		is_preset: z.boolean(),
 		provider: z.string().nullable().optional(),
 		credential_id: z.number().int().positive().nullable().optional(),
-		reasoning: z.string().nullable().optional(),
+		reasoning: modelReasoningSchema,
 		tools: siteContextModelToolsSchema
 	})
 	.passthrough()

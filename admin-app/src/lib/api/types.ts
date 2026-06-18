@@ -1273,7 +1273,15 @@ export interface ModelSelection {
 	is_preset: boolean;
 	provider?: LocalProvider | null;
 	credential_id?: number | null;
-	reasoning?: string | null;
+	reasoning?:
+		| string
+		| {
+				effort?: string;
+				max_tokens?: number;
+				exclude?: boolean;
+				enabled?: boolean;
+		  }
+		| null;
 	tools?: Record<string, unknown> | null;
 }
 

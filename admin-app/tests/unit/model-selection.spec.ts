@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelInfo } from '$lib/api/types';
-import { modelSupportsReasoning, reasoningOptionsForModel } from '$lib/utils/model-selection';
+import {
+	modelSupportsReasoning,
+	normalizeModelReasoningEffort,
+	reasoningOptionsForModel
+} from '$lib/utils/model-selection';
 
 const nonReasoningCapabilities = {
 	reasoning: false,
@@ -63,5 +67,9 @@ describe('model selection reasoning metadata', () => {
 				})
 			).map((option) => option.value)
 		).toEqual(['default', 'none', 'minimal', 'low', 'medium', 'high']);
+	});
+
+	it('normalizes saved OpenRouter reasoning objects by effort', () => {
+		expect(normalizeModelReasoningEffort({ effort: 'high', exclude: true })).toBe('high');
 	});
 });

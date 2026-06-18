@@ -70,7 +70,10 @@ describe('normalizeSiteContextResponse', () => {
 					is_preset: false,
 					provider: 'openrouter',
 					credential_id: 1,
-					reasoning: 'xhigh',
+					reasoning: {
+						effort: 'xhigh',
+						exclude: true
+					},
 					tools: {
 						tool_choice: 'auto',
 						web_search: { mode: 'required', max_results: 5 },
@@ -110,7 +113,10 @@ describe('normalizeSiteContextResponse', () => {
 			primary: '~google/gemini-pro-latest',
 			provider: 'openrouter',
 			credential_id: 1,
-			reasoning: 'xhigh',
+			reasoning: {
+				effort: 'xhigh',
+				exclude: true
+			},
 			tools: {
 				tool_choice: 'auto',
 				web_search: { mode: 'required', max_results: 5 },

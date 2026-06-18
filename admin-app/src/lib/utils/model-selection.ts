@@ -30,6 +30,10 @@ const MODEL_REASONING_LABELS: Record<ModelReasoningControlValue, string> = {
 };
 
 export function normalizeModelReasoningEffort(value: unknown): ModelReasoningEffort | undefined {
+	if (value && typeof value === 'object' && 'effort' in value) {
+		return normalizeModelReasoningEffort((value as { effort?: unknown }).effort);
+	}
+
 	if (typeof value !== 'string') {
 		return undefined;
 	}

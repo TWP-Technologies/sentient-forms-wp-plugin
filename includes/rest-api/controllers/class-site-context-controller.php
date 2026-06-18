@@ -330,6 +330,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     {
         $settings = $this->settings_from_request( $request, $this->get_settings_record() );
         $existing = $this->get_stored_context( true );
+        $this->cancel_active_manual_generation_job();
 
         if ( $request->has_param( 'summary_text' ) )
         {
@@ -1063,7 +1064,12 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return false;
         }
 
-        if ( 'site_context_generation_openrouter_request_failed' !== $error->get_error_code() )
+        $retryable_codes = [
+            'site_context_generation_openrouter_request_failed',
+            'openrouter_request_failed',
+            'openrouter_invalid_json',
+        ];
+        if ( ! in_array( $error->get_error_code(), $retryable_codes, true ) )
         {
             return false;
         }
@@ -1091,6 +1097,14 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     {
         $job = get_option( self::GENERATION_JOB_OPTION_NAME, null );
         return is_array( $job ) ? $job : null;
+    }
+
+    private function cancel_active_manual_generation_job(): void
+    {
+        if ( $this->generation_job_is_active( $this->get_generation_job_record() ) )
+        {
+            $this->clear_manual_generation_job();
+        }
     }
 
     private function get_public_generation_job(): ?array
