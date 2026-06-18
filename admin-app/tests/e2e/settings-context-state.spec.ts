@@ -352,6 +352,131 @@ test.describe('Settings context state templates', () => {
 		await expect(page.getByText('Site Context generated.')).toBeVisible();
 	});
 
+	test('stops background generation polling after leaving the Site Context page', async ({
+		page
+	}) => {
+		let generateRequests = 0;
+		let pollRequests = 0;
+		let releaseFirstPoll: (() => void) | null = null;
+		let resolveFirstPollStarted: () => void = () => {};
+		const firstPollStarted = new Promise<void>((resolve) => {
+			resolveFirstPollStarted = resolve;
+		});
+
+		const readyEmptyStatus = {
+			context: null,
+			settings: {
+				consent_status: 'granted',
+				consented_at: '2026-05-28T00:00:00Z',
+				declined_at: null,
+				auto_refresh_enabled: false,
+				auto_refresh_days: 30,
+				next_refresh_at: null,
+				last_generated_at: null,
+				last_error: null,
+				generation_model_selection: {
+					primary: 'openai/gpt-5.5',
+					is_preset: false,
+					provider: 'openrouter',
+					credential_id: 12
+				}
+			},
+			has_context: false,
+			is_empty: true,
+			is_stale: false,
+			stale_after_days: 90,
+			status: 'empty',
+			generation_access: {
+				can_generate: true,
+				reason_code: 'ready',
+				message: 'Site Context generation is ready through your OpenRouter key.',
+				setup_target: null,
+				provider: 'openrouter',
+				model: 'openai/gpt-5.5',
+				credential_id: 12
+			},
+			generation_job: null
+		};
+
+		await page.route('**/wp-json/sentient-forms/v1/site-context**', async (route) => {
+			const request = route.request();
+			if (request.method() === 'POST' && request.url().endsWith('/site-context/generate')) {
+				generateRequests += 1;
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						...readyEmptyStatus,
+						generation_job: {
+							id: 'job-site-context-navigation',
+							status: 'queued',
+							requested_at: '2026-05-28T00:00:00Z',
+							started_at: null,
+							finished_at: null,
+							error: null,
+							model: 'openai/gpt-5.5',
+							provider: 'openrouter',
+							tools: ['web_search']
+						}
+					})
+				});
+			}
+
+			if (request.method() === 'GET' && generateRequests > 0) {
+				pollRequests += 1;
+				if (pollRequests === 1) {
+					resolveFirstPollStarted();
+					await new Promise<void>((resolve) => {
+						releaseFirstPoll = resolve;
+					});
+				}
+
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						...readyEmptyStatus,
+						generation_job: {
+							id: 'job-site-context-navigation',
+							status: 'running',
+							requested_at: '2026-05-28T00:00:00Z',
+							started_at: '2026-05-28T00:00:01Z',
+							finished_at: null,
+							error: null,
+							model: 'openai/gpt-5.5',
+							provider: 'openrouter',
+							tools: ['web_search']
+						}
+					})
+				});
+			}
+
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(readyEmptyStatus)
+			});
+		});
+
+		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
+		await page.getByTestId('site-context-generate-now').click();
+		await expect.poll(() => generateRequests).toBe(1);
+		await expect(
+			page.getByText('Site Context generation is running in the background.')
+		).toBeVisible();
+		await firstPollStarted;
+
+		await page.getByRole('link', { name: 'Providers' }).click();
+		await expect(page).toHaveURL(/\/providers$/);
+		releaseFirstPoll?.();
+
+		await expect(
+			page.getByText('Site Context generation is running in the background.')
+		).toHaveCount(0);
+		await page.waitForTimeout(3_500);
+		expect(pollRequests).toBe(1);
+	});
+
 	test('clears unsupported saved OpenRouter server-tool settings from the model controls', async ({
 		page
 	}) => {

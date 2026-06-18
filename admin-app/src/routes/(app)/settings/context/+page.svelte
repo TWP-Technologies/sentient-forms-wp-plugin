@@ -44,6 +44,7 @@
 	let autoRefreshDays = $state(DEFAULT_SITE_CONTEXT_REFRESH_DAYS);
 	let generationModelSelection = $state<ModelSelection>(DEFAULT_SITE_CONTEXT_MODEL_SELECTION);
 	let showWithdrawConfirm = $state(false);
+	let mounted = false;
 	let generationPollTimer: ReturnType<typeof setTimeout> | null = null;
 	let generationPollFailures = 0;
 	let generationToastId: ToastId | null = null;
@@ -125,7 +126,7 @@
 	}
 
 	function scheduleGenerationPoll(delay = GENERATION_POLL_INTERVAL_MS): void {
-		if (generationPollTimer) return;
+		if (!mounted || generationPollTimer) return;
 		generationPollTimer = setTimeout(() => {
 			generationPollTimer = null;
 			void pollGenerationStatus();
@@ -200,13 +201,16 @@
 	}
 
 	async function pollGenerationStatus(): Promise<void> {
+		if (!mounted) return;
 		try {
 			const next = parseSiteContextResponse(
 				await wpFetch<SiteContextStatusResponse>('site-context')
 			);
+			if (!mounted) return;
 			generationPollFailures = 0;
 			syncFromStatus(next, { preserveLocalEdits: true });
 		} catch (e) {
+			if (!mounted) return;
 			console.error('Failed to refresh Site Context generation status', e);
 			if (siteContextGenerationJobIsActive(status)) {
 				generationPollFailures += 1;
@@ -363,10 +367,12 @@
 	}
 
 	onMount(() => {
+		mounted = true;
 		void loadContext();
 	});
 
 	onDestroy(() => {
+		mounted = false;
 		clearGenerationPoll();
 		dismissGenerationToast();
 	});
