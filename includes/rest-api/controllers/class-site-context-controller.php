@@ -71,6 +71,13 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return;
         }
 
+        $controller->maybe_fail_stale_generation_job();
+        if ( $controller->generation_job_is_active( $controller->get_generation_job_record() ) )
+        {
+            $controller->schedule_next_refresh( 1 );
+            return;
+        }
+
         $result = $controller->perform_generation( $settings, false );
         if ( is_wp_error( $result ) )
         {
@@ -330,16 +337,22 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     {
         $settings = $this->settings_from_request( $request, $this->get_settings_record() );
         $existing = $this->get_stored_context( true );
-        $this->cancel_active_manual_generation_job();
+        $has_summary_text = $request->has_param( 'summary_text' );
+        $summary_text     = null;
 
-        if ( $request->has_param( 'summary_text' ) )
+        if ( $has_summary_text )
         {
             $summary_text = $this->sanitize_context_text( $request->get_param( 'summary_text' ) );
             if ( is_wp_error( $summary_text ) )
             {
                 return $summary_text;
             }
+        }
 
+        $this->cancel_active_manual_generation_job();
+
+        if ( $has_summary_text )
+        {
             if ( '' === trim( $summary_text ) )
             {
                 delete_option( self::OPTION_NAME );
@@ -892,6 +905,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
 
         update_option( self::GENERATION_JOB_OPTION_NAME, $job, false );
         $this->clear_first_generation_schedule();
+        $this->clear_refresh_schedule();
         $this->dispatch_manual_generation_job( $job_id, $dispatch_token );
 
         return $this->public_generation_job( $job );
@@ -993,6 +1007,13 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             {
                 break;
             }
+
+            $current_job = $this->get_generation_job_record();
+            if ( ! $this->generation_job_matches( $current_job, $job_id, 'running' ) || $worker_id !== (string) ( $current_job['worker_id'] ?? '' ) )
+            {
+                return;
+            }
+            $job = $current_job;
 
             $error_data        = $result->get_error_data();
             $retry_status      = is_array( $error_data ) && isset( $error_data['status'] )
