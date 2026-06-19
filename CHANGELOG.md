@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.15](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.14...v0.3.15) (2026-06-19)
+
+
+### Bug Fixes
+
+* **site-context:** address async generation review feedback ([f510832](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/f510832de3a3bf444ef551d066f1631952a9cf5f))
+* **site-context:** close async generation races ([cb4d270](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/cb4d2703d939e20c90b5008ff0fd750cc2ad2928))
+* **site-context:** close async generation review gaps ([8239000](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/82390003f39ec545dbdeb4388aff471fd36b8751))
+* **site-context:** guard canceled async generation ([6a77fbd](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/6a77fbd93a34a1c17d6b38fa026e9796775501e4))
+* **site-context:** harden async generation review issues ([c4b7cd5](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c4b7cd59318f5d9e7aa905a16d8546d941c3c7bb))
+* **site-context:** harden generation review edge cases ([82003b7](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/82003b77c1a51f196b75472005e6fed3168c8d71))
+* **site-context:** recover failed async generation ([b318419](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b3184193a50071b94f2744b04cef9631e72cba74))
+* **site-context:** satisfy plugin check dispatch guards ([164c9b2](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/164c9b2aa6386cc70aa78012ddcd8dcf1f2c7eea))
+* **site-context:** stabilize async OpenRouter generation ([c31416a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/c31416a55d0ac7a3861d7e12aca30e0d7f2abe8a))
+* **site-context:** stabilize async OpenRouter generation ([3f689e0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/3f689e0039c772511ed92a655f6ecede2ecd74e7))
+* **site-context:** stop ghost polling after navigation ([b62fb0f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b62fb0fd776b78d39689372cf2e90e3d24f77b85))
+* **site-context:** suspend refresh during manual generation ([0ef83b5](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0ef83b552682a2d3ad8ff75d5cf4de9bb15368d6))
+
 ## [0.3.14](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.13...v0.3.14) (2026-06-18)
 
 
