@@ -69,6 +69,7 @@
 
 	type SelectionMode = 'presets' | 'models' | 'custom';
 	type ToolMode = 'inherit' | 'off' | 'auto' | 'required';
+	type ModelReasoningSettings = Exclude<NonNullable<ModelSelection['reasoning']>, string>;
 	type CapabilityItem = readonly [key: string, label: string, short: string, active: boolean];
 	type RankLimit = '0' | '3' | '5' | '10' | '25' | '50';
 	type ContextLimit = '0' | '32000' | '128000' | '200000' | '1000000';
@@ -112,6 +113,8 @@
 	let selectedCustomModel = $state('');
 	let selectedCustomBackup = $state('');
 	let selectedReasoning = $state<ModelReasoningControlValue>('default');
+	let savedReasoningSettings = $state<ModelReasoningSettings | null>(null);
+	let savedReasoningSelectionKey = $state('');
 	let toolChoiceMode = $state<ToolMode>('inherit');
 	let webSearchMode = $state<ToolMode>('inherit');
 	let webSearchMaxResults = $state(5);
@@ -261,6 +264,24 @@
 
 	function isRecord(value: unknown): value is Record<string, unknown> {
 		return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+	}
+
+	function normalizeReasoningSettings(value: unknown): ModelReasoningSettings | null {
+		if (!isRecord(value)) return null;
+
+		const settings: ModelReasoningSettings = {};
+		const effort = normalizeModelReasoningEffort(value.effort);
+		if (effort) settings.effort = effort;
+
+		const maxTokens = Number(value.max_tokens);
+		if (Number.isFinite(maxTokens) && maxTokens > 0) {
+			settings.max_tokens = Math.round(maxTokens);
+		}
+
+		if (typeof value.exclude === 'boolean') settings.exclude = value.exclude;
+		if (typeof value.enabled === 'boolean') settings.enabled = value.enabled;
+
+		return Object.keys(settings).length > 0 ? settings : null;
 	}
 
 	function normalizeModelCatalog(
@@ -429,6 +450,8 @@
 			selectedCustomModel = '';
 			selectedCustomBackup = '';
 			selectedReasoning = 'default';
+			savedReasoningSettings = null;
+			savedReasoningSelectionKey = '';
 			syncToolSettings(null);
 			return;
 		}
@@ -474,6 +497,8 @@
 		}
 
 		selectedReasoning = normalizeModelReasoningEffort(nextValue.reasoning) ?? 'default';
+		savedReasoningSettings = normalizeReasoningSettings(nextValue.reasoning);
+		savedReasoningSelectionKey = savedReasoningSettings ? reasoningSelectionKey(nextValue) : '';
 		syncToolSettings(nextValue.tools);
 		if (!readonly && clearUnsupportedToolSelections()) {
 			const sanitizedSelection = currentSelection();
@@ -667,6 +692,22 @@
 		return selectedModel;
 	}
 
+	function reasoningSelectionKeyFromParts(primary: string, isPreset: boolean, provider: string): string {
+		return JSON.stringify({
+			primary,
+			is_preset: isPreset,
+			provider
+		});
+	}
+
+	function reasoningSelectionKey(selection: ModelSelection | null | undefined): string {
+		return reasoningSelectionKeyFromParts(
+			selection?.primary ?? '',
+			selection?.is_preset === true,
+			selection?.provider ?? OPENROUTER_PROVIDER
+		);
+	}
+
 	function selectedPrimaryModelInfo(): ModelInfo | null {
 		const primary =
 			selectionMode === 'presets'
@@ -821,8 +862,34 @@
 		return Object.keys(tools).length > 0 ? tools : null;
 	}
 
+	function currentReasoningSettings(): ModelSelection['reasoning'] | undefined {
+		if (!selectedModelAllowsReasoning()) return undefined;
+
+		const currentKey = reasoningSelectionKeyFromParts(
+			selectedPrimaryValue(),
+			selectionMode === 'presets',
+			selectedProvider
+		);
+		const savedEffort = normalizeModelReasoningEffort(savedReasoningSettings);
+
+		if (savedReasoningSettings && currentKey === savedReasoningSelectionKey) {
+			if (selectedReasoning === 'default') {
+				return savedEffort ? undefined : savedReasoningSettings;
+			}
+
+			if (selectedReasoning === savedEffort) {
+				return {
+					...savedReasoningSettings,
+					effort: selectedReasoning
+				};
+			}
+		}
+
+		return selectedReasoning === 'default' ? undefined : selectedReasoning;
+	}
+
 	function currentSelection(): ModelSelection {
-		const includeReasoning = selectedReasoning !== 'default' && selectedModelAllowsReasoning();
+		const reasoning = currentReasoningSettings();
 		const tools = currentToolSettings();
 		return {
 			primary: selectedPrimaryValue(),
@@ -830,7 +897,7 @@
 			is_preset: selectionMode === 'presets',
 			provider: selectedProvider,
 			credential_id: selectedCredentialId,
-			...(includeReasoning ? { reasoning: selectedReasoning } : {}),
+			...(reasoning ? { reasoning } : {}),
 			...(tools ? { tools } : {})
 		};
 	}

@@ -19,6 +19,8 @@
 		compactSiteContextModelSelection,
 		normalizeSiteContextResponse,
 		siteContextGenerateDisabledMessage,
+		siteContextGenerationFailureIsFresh,
+		siteContextGenerationJobIsActive,
 		siteContextModelSelectionChanged,
 		siteContextStatusLabel
 	} from '$lib/utils/site-context';
@@ -102,6 +104,7 @@
 		options: { preserveLocalEdits?: boolean } = {}
 	): void {
 		const shouldPreserveLocalEdits = options.preserveLocalEdits === true && hasChanges;
+		const previousStatus = status;
 		status = next;
 		if (!shouldPreserveLocalEdits) {
 			editedText = next.context?.summary_text ?? '';
@@ -112,11 +115,7 @@
 			generationModelSelection =
 				next.settings.generation_model_selection ?? DEFAULT_SITE_CONTEXT_MODEL_SELECTION;
 		}
-		updateGenerationJobState(next);
-	}
-
-	function siteContextGenerationJobIsActive(nextStatus: SiteContextStatusResponse | null): boolean {
-		return ['queued', 'running'].includes(nextStatus?.generation_job?.status ?? '');
+		updateGenerationJobState(next, previousStatus);
 	}
 
 	function clearGenerationPoll(): void {
@@ -174,7 +173,10 @@
 		toast.error(message);
 	}
 
-	function updateGenerationJobState(nextStatus: SiteContextStatusResponse): void {
+	function updateGenerationJobState(
+		nextStatus: SiteContextStatusResponse,
+		previousStatus: SiteContextStatusResponse | null
+	): void {
 		const job = nextStatus.generation_job;
 		if (job?.status === 'queued' || job?.status === 'running') {
 			generating = true;
@@ -198,7 +200,7 @@
 			return;
 		}
 
-		if (job?.status === 'failed') {
+		if (job?.status === 'failed' && siteContextGenerationFailureIsFresh(previousStatus, nextStatus)) {
 			const message = job.error ?? 'Failed to generate Site Context';
 			error = message;
 			failGenerationToast(message);

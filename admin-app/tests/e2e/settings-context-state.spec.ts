@@ -957,7 +957,11 @@ test.describe('Settings context state templates', () => {
 							is_preset: false,
 							provider: 'openrouter',
 							credential_id: 1,
-							reasoning: 'xhigh',
+							reasoning: {
+								effort: 'xhigh',
+								max_tokens: 1024,
+								exclude: false
+							},
 							tools: {
 								tool_choice: 'auto',
 								web_search: { mode: 'required', max_results: 5 }
@@ -1006,6 +1010,111 @@ test.describe('Settings context state templates', () => {
 			(capturedSavePayload as { generation_model_selection?: { primary?: string } })
 				.generation_model_selection?.primary
 		).toBe('~google/gemini-pro-latest');
+		expect(
+			(
+				capturedSavePayload as {
+					generation_model_selection?: { reasoning?: unknown };
+				}
+			).generation_model_selection?.reasoning
+		).toEqual({
+			effort: 'xhigh',
+			max_tokens: 1024,
+			exclude: false
+		});
+	});
+
+	test('does not resurface a historical failed generation job after a successful save', async ({
+		page
+	}) => {
+		let capturedSavePayload: unknown = null;
+		const failedJob = {
+			id: 'job-site-context-old-failure',
+			status: 'failed',
+			requested_at: '2026-06-18T00:00:00Z',
+			started_at: '2026-06-18T00:00:01Z',
+			finished_at: '2026-06-18T00:01:00Z',
+			error: 'Previous provider failure',
+			code: 'site_context_generation_openrouter_request_failed',
+			status_code: 502,
+			diagnostics: {},
+			provider: 'openrouter',
+			model: 'openai/gpt-5.5',
+			tools: [],
+			attempts: 2,
+			max_attempts: 2
+		};
+
+		await page.route('**/wp-json/sentient-forms/v1/site-context**', async (route) => {
+			const request = route.request();
+			const summaryText =
+				request.method() === 'PUT'
+					? ((request.postDataJSON() as { summary_text?: string }).summary_text ??
+						'Saved manual context.')
+					: 'Existing manual context.';
+
+			if (request.method() === 'PUT') {
+				capturedSavePayload = request.postDataJSON();
+			}
+
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					context: {
+						id: 'ctx-existing',
+						license_id: 'lic-site',
+						summary_text: summaryText,
+						source: 'manual',
+						auto_include: true,
+						pii_ack: true,
+						free_refresh_available: true,
+						next_free_refresh_at: null,
+						created_at: '2026-06-18T00:00:00Z',
+						updated_at: '2026-06-18T00:00:00Z'
+					},
+					settings: {
+						consent_status: 'granted',
+						consented_at: '2026-06-18T00:00:00Z',
+						declined_at: null,
+						auto_refresh_enabled: false,
+						auto_refresh_days: 30,
+						next_refresh_at: null,
+						last_generated_at: null,
+						last_error: 'Previous provider failure',
+						generation_model_selection: {
+							primary: 'openai/gpt-5.5',
+							is_preset: false,
+							provider: 'openrouter'
+						}
+					},
+					has_context: true,
+					is_empty: false,
+					is_stale: false,
+					stale_after_days: 90,
+					status: 'ready',
+					generation_access: {
+						can_generate: true,
+						reason_code: 'ready',
+						message: 'Site Context generation is ready through your OpenRouter key.',
+						setup_target: null,
+						provider: 'openrouter',
+						model: 'openai/gpt-5.5'
+					},
+					generation_job: failedJob
+				})
+			});
+		});
+
+		await page.goto('/#/settings/context', { waitUntil: 'domcontentloaded' });
+		await expect(page.getByTestId('site-context-error-state')).toBeHidden();
+		await expect(page.getByText('Previous provider failure')).toHaveCount(0);
+
+		await page.getByTestId('site-context-textarea').fill('Updated manual context.');
+		await page.getByTestId('site-context-save').click();
+
+		await expect.poll(() => (capturedSavePayload ? 'saved' : 'pending')).toBe('saved');
+		await expect(page.getByTestId('site-context-error-state')).toBeHidden();
+		await expect(page.getByText('Previous provider failure')).toHaveCount(0);
 	});
 
 	test('shows error template and recovers on retry', async ({ page }) => {

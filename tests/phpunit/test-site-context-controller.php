@@ -2261,6 +2261,141 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertNull( $settings['last_error'] ?? null );
     }
 
+    public function test_manual_generation_retries_openrouter_transport_error_once(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+        $calls = [];
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, array $args, string $url ) use ( &$calls ) {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                if ( 1 === count( $calls ) )
+                {
+                    return new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' );
+                }
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'or-gen-retry-transport-success',
+                            'model'   => 'google/gemini-pro-latest',
+                            'choices' => [
+                                [
+                                    'finish_reason' => 'stop',
+                                    'message'       => [
+                                        'content' => wp_json_encode(
+                                            [
+                                                'summary_text'         => 'Acme Plumbing serves local homeowners with emergency drain and water heater help.',
+                                                'legitimate_inquiries' => [ 'Drain repair', 'Water heater quote' ],
+                                                'spam_relevance'       => [ 'Unrelated crypto offers' ],
+                                                'source_urls'          => [ 'https://example.test/' ],
+                                                'confidence'           => 0.88,
+                                                'confidence_notes'     => 'Fixture generated after transport retry.',
+                                            ]
+                                        ),
+                                    ],
+                                ],
+                            ],
+                            'usage'   => [
+                                'total_tokens' => 84,
+                            ],
+                        ]
+                    ),
+                    'cookies'  => [],
+                ];
+            },
+            10,
+            3
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode' => 'required',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 2, $data['generation_job']['attempts'] ?? null );
+        $this->assertCount( 2, $calls );
+    }
+
+    public function test_failed_manual_generation_rearms_refresh_and_first_generation_schedules(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+        add_filter(
+            'pre_http_request',
+            static function () {
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 400,
+                        'message' => 'Bad Request',
+                    ],
+                    'body'     => wp_json_encode(
+                        [
+                            'error' => [
+                                'message' => 'Selected route cannot satisfy this request.',
+                                'code'    => 'bad_request',
+                            ],
+                        ]
+                    ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertNotEmpty( $settings['next_refresh_at'] ?? null );
+        $this->assertNotEmpty( $settings['first_generation_next_attempt_at'] ?? null );
+    }
+
     public function test_manual_generation_does_not_retry_after_job_is_canceled(): void
     {
         $credential_id = $this->create_openrouter_credential();

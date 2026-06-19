@@ -1067,6 +1067,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $job['attempts']    = $attempts;
             $job['max_attempts'] = $max_attempts;
             update_option( self::GENERATION_JOB_OPTION_NAME, $job, false );
+            $this->sync_schedules_after_failed_manual_generation();
             return;
         }
 
@@ -1095,6 +1096,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $retryable_codes = [
             'site_context_generation_openrouter_request_failed',
             'openrouter_request_failed',
+            'openrouter_http_error',
             'openrouter_invalid_json',
         ];
         if ( ! in_array( $error->get_error_code(), $retryable_codes, true ) )
@@ -1117,6 +1119,11 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $status     = is_array( $error_data ) && isset( $error_data['status'] )
             ? absint( $error_data['status'] )
             : 0;
+
+        if ( 'openrouter_http_error' === $error->get_error_code() && 0 === $status )
+        {
+            return true;
+        }
 
         return in_array( $status, self::MANUAL_GENERATION_RETRYABLE_STATUS_CODES, true );
     }
@@ -1235,6 +1242,14 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $settings = $this->get_settings_record();
         $settings['last_error'] = $message;
         update_option( self::SETTINGS_OPTION_NAME, $settings, false );
+        $this->sync_schedules_after_failed_manual_generation();
+    }
+
+    private function sync_schedules_after_failed_manual_generation(): void
+    {
+        $settings = $this->get_settings_record();
+        $this->sync_first_generation_schedule( $settings );
+        $this->sync_refresh_schedule( $this->get_settings_record() );
     }
 
     private function generation_job_timestamp( mixed $value ): ?int

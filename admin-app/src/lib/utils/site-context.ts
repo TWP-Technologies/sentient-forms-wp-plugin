@@ -251,6 +251,25 @@ export function compactSiteContextModelSelection(selection: ModelSelection): Mod
 	return compact;
 }
 
+export function siteContextGenerationJobIsActive(
+	status: SiteContextStatusResponse | null | undefined
+): boolean {
+	return ['queued', 'running'].includes(status?.generation_job?.status ?? '');
+}
+
+export function siteContextGenerationFailureIsFresh(
+	previous: SiteContextStatusResponse | null | undefined,
+	next: SiteContextStatusResponse | null | undefined
+): boolean {
+	const nextJob = next?.generation_job;
+	if (nextJob?.status !== 'failed') return false;
+
+	const previousJob = previous?.generation_job;
+	if (!['queued', 'running'].includes(previousJob?.status ?? '')) return false;
+
+	return !previousJob?.id || !nextJob.id || previousJob.id === nextJob.id;
+}
+
 function stableSerialize(value: unknown): string {
 	return JSON.stringify(sortObjectKeys(value));
 }
