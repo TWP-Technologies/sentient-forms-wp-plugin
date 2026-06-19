@@ -8,6 +8,7 @@
         "@dagrejs/dagre": "^1.1.8",
         "@lucide/svelte": "^1.14.0",
         "@xyflow/svelte": "^1.5.0",
+        "sonner-svelte": "0.3.3",
         "zod": "^4.3.5",
       },
       "devDependencies": {
@@ -776,6 +777,8 @@
     "sirv": ["sirv@3.0.2", "", { "dependencies": { "@polka/url": "^1.0.0-next.24", "mrmime": "^2.0.0", "totalist": "^3.0.0" } }, "sha512-2wcC/oGxHis/BoHkkPwldgiPSYcpZK3JU28WoMVv55yHJgcZ8rlXvuG9iZggz+sU1d4bRgIGASwyWqjxu3FM0g=="],
 
     "slash": ["slash@5.1.0", "", {}, "sha512-ZA6oR3T/pEyuqwMgAKT0/hAv8oAXckzbkmR0UkUosQ+Mc4RxGoJkRmwHgHufaenlyAgE1Mxgpdcrf75y6XcnDg=="],
+
+    "sonner-svelte": ["sonner-svelte@0.3.3", "", { "peerDependencies": { "svelte": "^4.0.0" } }, "sha512-L3sfTEFdS03LBS412249Wl2jbGFg8aeEqgt2oLrWxCgvnB3tF8/RTwZTUVDbTZjrP/7OSNyAcQ8uRbbwI1O0tA=="],
 
     "source-map-js": ["source-map-js@1.2.1", "", {}, "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA=="],
 

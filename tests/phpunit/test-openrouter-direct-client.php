@@ -167,6 +167,86 @@ class Tests_OpenRouter_Direct_Client extends WP_UnitTestCase
         $this->assertSame( 401, $result->get_error_data()['status'] );
     }
 
+    public function test_openrouter_error_envelope_with_success_status_is_returned_as_error(): void
+    {
+        $this->mock_http(
+            static function (): array {
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => wp_json_encode(
+                        [
+                            'error' => [
+                                'code'    => 429,
+                                'message' => 'Rate limit exceeded for this route.',
+                            ],
+                        ]
+                    ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $client = new Sentient_Forms_OpenRouter_Direct_Client();
+        $result = $client->chat_completion(
+            'sk-or-secret',
+            [
+                'model'    => 'openrouter/auto',
+                'messages' => [
+                    [
+                        'role'    => 'user',
+                        'content' => 'Hello',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 429, $result->get_error_code() );
+        $this->assertSame( 'Rate limit exceeded for this route.', $result->get_error_message() );
+        $this->assertSame( 429, $result->get_error_data()['status'] );
+        $this->assertStringNotContainsString( 'sk-or-secret', wp_json_encode( $result->get_error_data() ) ?: '' );
+    }
+
+    public function test_chat_completion_handles_non_object_json_error_body(): void
+    {
+        $this->mock_http(
+            static function (): array {
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 502,
+                        'message' => 'Bad Gateway',
+                    ],
+                    'body'     => wp_json_encode( 'provider temporarily unavailable' ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $client = new Sentient_Forms_OpenRouter_Direct_Client();
+        $result = $client->chat_completion(
+            'sk-or-secret',
+            [
+                'model'    => 'openrouter/auto',
+                'messages' => [
+                    [
+                        'role'    => 'user',
+                        'content' => 'Hello',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'openrouter_request_failed', $result->get_error_code() );
+        $this->assertSame( 502, $result->get_error_data()['status'] );
+        $this->assertSame( 'provider temporarily unavailable', $result->get_error_data()['payload'] );
+    }
+
     public function test_chat_completion_requires_messages_array(): void
     {
         $client = new Sentient_Forms_OpenRouter_Direct_Client();

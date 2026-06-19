@@ -4,6 +4,7 @@
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help';
 	import { Badge, Button, ButtonLink, ModelSelector, Toggle } from '$lib/components/ui';
 	import type { ModelSelection } from '$lib/api/types';
+	import { SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS } from '$lib/utils/site-context';
 
 	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
 
@@ -231,6 +232,7 @@
 					readonly={!canUseGeneratedContext}
 					requiredCapabilities={['web_search']}
 					lockRequiredCapabilities={true}
+					webSearchMaxResultsLimit={SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS}
 					onchange={updateModelSelection}
 				/>
 			</div>

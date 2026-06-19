@@ -75,6 +75,7 @@
     "@dagrejs/dagre": "^1.1.8",
     "@lucide/svelte": "^1.14.0",
     "@xyflow/svelte": "^1.5.0",
+    "sonner-svelte": "0.3.3",
     "zod": "^4.3.5"
   }
 }

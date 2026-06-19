@@ -312,6 +312,25 @@ export interface SiteContextGenerationAccess {
 	credential_id?: number | null;
 }
 
+export type SiteContextGenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+
+export interface SiteContextGenerationJob {
+	id: string;
+	status: SiteContextGenerationJobStatus;
+	requested_at: string | null;
+	started_at: string | null;
+	finished_at: string | null;
+	error: string | null;
+	code?: string | null;
+	status_code?: number | null;
+	diagnostics?: Record<string, unknown>;
+	model?: string | null;
+	provider?: string | null;
+	tools?: string[];
+	attempts?: number;
+	max_attempts?: number;
+}
+
 export interface SiteContext {
 	id: string;
 	license_id: string;
@@ -335,6 +354,7 @@ export interface SiteContextStatusResponse {
 	stale_after_days: number;
 	status: 'empty' | 'ready' | 'stale' | 'declined';
 	generation_access: SiteContextGenerationAccess;
+	generation_job?: SiteContextGenerationJob | null;
 }
 
 export interface SiteContextUpdateRequest {
@@ -1253,7 +1273,15 @@ export interface ModelSelection {
 	is_preset: boolean;
 	provider?: LocalProvider | null;
 	credential_id?: number | null;
-	reasoning?: string | null;
+	reasoning?:
+		| string
+		| {
+				effort?: string;
+				max_tokens?: number;
+				exclude?: boolean;
+				enabled?: boolean;
+		  }
+		| null;
 	tools?: Record<string, unknown> | null;
 }
 

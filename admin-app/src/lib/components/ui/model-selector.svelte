@@ -63,11 +63,13 @@
 		allowedProviders?: LocalProvider[] | null;
 		requiredCapabilities?: ModelSelectorCapabilityKey[] | null;
 		lockRequiredCapabilities?: boolean;
+		webSearchMaxResultsLimit?: number;
 		onchange?: (selection: ModelSelection) => void;
 	}
 
 	type SelectionMode = 'presets' | 'models' | 'custom';
 	type ToolMode = 'inherit' | 'off' | 'auto' | 'required';
+	type ModelReasoningSettings = Exclude<NonNullable<ModelSelection['reasoning']>, string>;
 	type CapabilityItem = readonly [key: string, label: string, short: string, active: boolean];
 	type RankLimit = '0' | '3' | '5' | '10' | '25' | '50';
 	type ContextLimit = '0' | '32000' | '128000' | '200000' | '1000000';
@@ -88,6 +90,7 @@
 		allowedProviders = null,
 		requiredCapabilities: requiredCapabilitiesProp = null,
 		lockRequiredCapabilities = false,
+		webSearchMaxResultsLimit = 10,
 		onchange
 	}: Props = $props();
 
@@ -110,6 +113,8 @@
 	let selectedCustomModel = $state('');
 	let selectedCustomBackup = $state('');
 	let selectedReasoning = $state<ModelReasoningControlValue>('default');
+	let savedReasoningSettings = $state<ModelReasoningSettings | null>(null);
+	let savedReasoningSelectionKey = $state('');
 	let toolChoiceMode = $state<ToolMode>('inherit');
 	let webSearchMode = $state<ToolMode>('inherit');
 	let webSearchMaxResults = $state(5);
@@ -259,6 +264,24 @@
 
 	function isRecord(value: unknown): value is Record<string, unknown> {
 		return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+	}
+
+	function normalizeReasoningSettings(value: unknown): ModelReasoningSettings | null {
+		if (!isRecord(value)) return null;
+
+		const settings: ModelReasoningSettings = {};
+		const effort = normalizeModelReasoningEffort(value.effort);
+		if (effort) settings.effort = effort;
+
+		const maxTokens = Number(value.max_tokens);
+		if (Number.isFinite(maxTokens) && maxTokens > 0) {
+			settings.max_tokens = Math.round(maxTokens);
+		}
+
+		if (typeof value.exclude === 'boolean') settings.exclude = value.exclude;
+		if (typeof value.enabled === 'boolean') settings.enabled = value.enabled;
+
+		return Object.keys(settings).length > 0 ? settings : null;
 	}
 
 	function normalizeModelCatalog(
@@ -427,6 +450,8 @@
 			selectedCustomModel = '';
 			selectedCustomBackup = '';
 			selectedReasoning = 'default';
+			savedReasoningSettings = null;
+			savedReasoningSelectionKey = '';
 			syncToolSettings(null);
 			return;
 		}
@@ -440,13 +465,13 @@
 				!providerWasExplicit && presetIsLocked(requestedPreset)
 					? defaultPresetCode()
 					: requestedPreset;
-			selectedModel = normalizeSelectedModel(resolvedModelForPreset(selectedPreset));
+			selectedModel = resolvedModelForPreset(selectedPreset);
 		} else if (models.some((model) => model.id === nextValue.primary)) {
 			selectionMode = 'models';
-			selectedModel = normalizeSelectedModel(nextValue.primary);
+			selectedModel = nextValue.primary;
 			selectedCustomModel = '';
 		} else {
-			if (customModelAllowed(nextValue.primary)) {
+			if (customModelAllowedFromSavedSelection(nextValue.primary)) {
 				selectionMode = 'custom';
 				selectedCustomModel = nextValue.primary;
 				selectedModel = normalizeSelectedModel('');
@@ -472,6 +497,8 @@
 		}
 
 		selectedReasoning = normalizeModelReasoningEffort(nextValue.reasoning) ?? 'default';
+		savedReasoningSettings = normalizeReasoningSettings(nextValue.reasoning);
+		savedReasoningSelectionKey = savedReasoningSettings ? reasoningSelectionKey(nextValue) : '';
 		syncToolSettings(nextValue.tools);
 		if (!readonly && clearUnsupportedToolSelections()) {
 			const sanitizedSelection = currentSelection();
@@ -488,6 +515,16 @@
 		return value === 'off' || value === 'auto' || value === 'required' ? value : 'inherit';
 	}
 
+	const effectiveWebSearchMaxResultsLimit = $derived(
+		Math.max(1, Math.min(10, Math.round(webSearchMaxResultsLimit || 10)))
+	);
+
+	function clampWebSearchMaxResults(value: unknown): number {
+		const numeric = Number(value);
+		if (!Number.isFinite(numeric)) return Math.min(5, effectiveWebSearchMaxResultsLimit);
+		return Math.max(1, Math.min(effectiveWebSearchMaxResultsLimit, Math.round(numeric)));
+	}
+
 	function syncToolSettings(value: unknown) {
 		const tools = isRecord(value) ? value : {};
 		toolChoiceMode = normalizeToolMode(tools.tool_choice);
@@ -498,9 +535,7 @@
 		webFetchMode = normalizeToolMode(webFetch.mode);
 		datetimeMode = normalizeToolMode(datetime.mode);
 		const maxResults = Number(webSearch.max_results);
-		webSearchMaxResults = Number.isFinite(maxResults)
-			? Math.max(1, Math.min(10, Math.round(maxResults)))
-			: 5;
+		webSearchMaxResults = clampWebSearchMaxResults(maxResults);
 	}
 
 	function clearUnsupportedToolSelections(model: ModelInfo | null = selectedPrimaryModelInfo()): boolean {
@@ -657,6 +692,22 @@
 		return selectedModel;
 	}
 
+	function reasoningSelectionKeyFromParts(primary: string, isPreset: boolean, provider: string): string {
+		return JSON.stringify({
+			primary,
+			is_preset: isPreset,
+			provider
+		});
+	}
+
+	function reasoningSelectionKey(selection: ModelSelection | null | undefined): string {
+		return reasoningSelectionKeyFromParts(
+			selection?.primary ?? '',
+			selection?.is_preset === true,
+			selection?.provider ?? OPENROUTER_PROVIDER
+		);
+	}
+
 	function selectedPrimaryModelInfo(): ModelInfo | null {
 		const primary =
 			selectionMode === 'presets'
@@ -798,7 +849,7 @@
 		if (webSearchMode !== 'inherit' && selectedModelSupportsWebSearch()) {
 			tools.web_search = {
 				mode: webSearchMode,
-				max_results: Math.max(1, Math.min(10, Math.round(webSearchMaxResults || 5)))
+				max_results: clampWebSearchMaxResults(webSearchMaxResults)
 			};
 		}
 		if (webFetchMode !== 'inherit' && selectedModelSupportsWebFetch()) {
@@ -811,8 +862,34 @@
 		return Object.keys(tools).length > 0 ? tools : null;
 	}
 
+	function currentReasoningSettings(): ModelSelection['reasoning'] | undefined {
+		if (!selectedModelAllowsReasoning()) return undefined;
+
+		const currentKey = reasoningSelectionKeyFromParts(
+			selectedPrimaryValue(),
+			selectionMode === 'presets',
+			selectedProvider
+		);
+		const savedEffort = normalizeModelReasoningEffort(savedReasoningSettings);
+
+		if (savedReasoningSettings && currentKey === savedReasoningSelectionKey) {
+			if (selectedReasoning === 'default') {
+				return savedEffort ? undefined : savedReasoningSettings;
+			}
+
+			if (selectedReasoning === savedEffort) {
+				return {
+					...savedReasoningSettings,
+					effort: selectedReasoning
+				};
+			}
+		}
+
+		return selectedReasoning === 'default' ? undefined : selectedReasoning;
+	}
+
 	function currentSelection(): ModelSelection {
-		const includeReasoning = selectedReasoning !== 'default' && selectedModelAllowsReasoning();
+		const reasoning = currentReasoningSettings();
 		const tools = currentToolSettings();
 		return {
 			primary: selectedPrimaryValue(),
@@ -820,7 +897,7 @@
 			is_preset: selectionMode === 'presets',
 			provider: selectedProvider,
 			credential_id: selectedCredentialId,
-			...(includeReasoning ? { reasoning: selectedReasoning } : {}),
+			...(reasoning ? { reasoning } : {}),
 			...(tools ? { tools } : {})
 		};
 	}
@@ -1290,6 +1367,10 @@
 		);
 	}
 
+	function customModelAllowedFromSavedSelection(modelId: string): boolean {
+		return customModelLooksValid(modelId);
+	}
+
 	onMount(() => {
 		void loadModels();
 		void loadProviderCredentials();
@@ -1539,12 +1620,14 @@
 						<input
 							type="number"
 							min="1"
-							max="10"
+							max={effectiveWebSearchMaxResultsLimit}
 							class="sf:w-full sf:rounded-md sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:text-sm sf:focus-visible:border-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 							value={webSearchMaxResults}
 							disabled={readonly}
 							oninput={(event) => {
-								webSearchMaxResults = Number((event.currentTarget as HTMLInputElement).value);
+								webSearchMaxResults = clampWebSearchMaxResults(
+									(event.currentTarget as HTMLInputElement).value
+								);
 								handleSelectionChange();
 							}}
 						/>

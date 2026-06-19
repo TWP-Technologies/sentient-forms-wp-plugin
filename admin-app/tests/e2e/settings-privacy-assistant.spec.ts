@@ -3,6 +3,27 @@ import { getPreviewOrigin } from './utils/preview-origin';
 import { seedRuntimeConfig } from './utils/runtime-config';
 
 test.describe('Privacy setup assistant', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.route(
+			'**/wp-json/sentient-forms/v1/local/providers/openrouter/models**',
+			async (route) => {
+				await route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						provider: 'openrouter',
+						source: 'local_cache',
+						total_cached: 0,
+						total_returned: 0,
+						free_count: 0,
+						stale_count: 0,
+						models: []
+					})
+				});
+			}
+		);
+	});
+
 	test('opens on first run and applies the selected preset', async ({ page }) => {
 		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
@@ -220,6 +241,324 @@ test.describe('Privacy setup assistant', () => {
 		await expect(page.getByText('Maximum visibility')).toBeVisible();
 		await expect(page.getByTestId('settings-profile-execution-history')).toContainText('180 days');
 		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText('Stored locally');
+	});
+
+	test('keeps the first-run modal open while Site Context generation runs in the background', async ({
+		page
+	}) => {
+		const previewHost = getPreviewOrigin();
+		await seedRuntimeConfig(page, {
+			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
+			siteUrl: previewHost
+		});
+
+		let generateRequests = 0;
+		let pollRequests = 0;
+
+		const readyEmptyStatus = {
+			context: null,
+			settings: {
+				consent_status: 'granted',
+				consented_at: '2026-06-18T00:00:00Z',
+				declined_at: null,
+				auto_refresh_enabled: false,
+				auto_refresh_days: 30,
+				next_refresh_at: null,
+				last_generated_at: null,
+				last_error: null,
+				generation_model_selection: {
+					primary: '~google/gemini-pro-latest',
+					is_preset: false,
+					provider: 'openrouter',
+					credential_id: 12,
+					tools: {
+						tool_choice: 'auto',
+						web_search: { mode: 'required', max_results: 5 }
+					}
+				}
+			},
+			has_context: false,
+			is_empty: true,
+			is_stale: false,
+			stale_after_days: 90,
+			status: 'empty',
+			generation_access: {
+				can_generate: true,
+				reason_code: 'ready',
+				message: 'Site Context generation is ready through your OpenRouter key.',
+				setup_target: null,
+				provider: 'openrouter',
+				model: '~google/gemini-pro-latest',
+				credential_id: 12
+			},
+			generation_job: null
+		};
+
+		const generatedStatus = {
+			...readyEmptyStatus,
+			context: {
+				id: 'ctx-privacy-generated',
+				license_id: 'local',
+				summary_text: 'Generated assistant Site Context.',
+				source: 'ai_generated',
+				auto_include: true,
+				pii_ack: true,
+				free_refresh_available: true,
+				next_free_refresh_at: null,
+				created_at: '2026-06-18T00:00:00Z',
+				updated_at: '2026-06-18T00:00:00Z'
+			},
+			settings: {
+				...readyEmptyStatus.settings,
+				last_generated_at: '2026-06-18T00:00:00Z'
+			},
+			has_context: true,
+			is_empty: false,
+			status: 'ready',
+			generation_job: {
+				id: 'job-privacy-context-1',
+				status: 'succeeded',
+				requested_at: '2026-06-18T00:00:00Z',
+				started_at: '2026-06-18T00:00:01Z',
+				finished_at: '2026-06-18T00:00:04Z',
+				error: null,
+				model: '~google/gemini-pro-latest',
+				provider: 'openrouter',
+				tools: ['web_search']
+			}
+		};
+
+		await page.route('**/wp-json/sentient-forms/v1/settings', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					enable_logging: false,
+					execution_global_disabled: false,
+					execution_provider_disabled: { gravity_forms: false },
+					execution_event_retention_days: 90,
+					delete_data_on_uninstall: true,
+					store_full_ai_outputs: false,
+					privacy_setup_profile: 'balanced',
+					privacy_setup_completed_at: null
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/telemetry', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					telemetry_opt_in: false,
+					updated_at: null,
+					synced_at: null,
+					remote_updated_at: null,
+					last_error: null
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/async-settings', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					max_attempts: 3,
+					base_delay_seconds: 60,
+					max_delay_seconds: 3600,
+					updated_at: null,
+					updated_by: null
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/async-health', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					queue_depth: 0,
+					oldest_run_at: null,
+					recent_failures: {},
+					warnings: []
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: [
+						{
+							id: 12,
+							provider: 'openrouter',
+							label: 'OpenRouter key',
+							auth_mode: 'manual_key',
+							constant_name: null,
+							status: 'valid',
+							status_json: null,
+							last_validated_at: '2026-06-18T00:00:00Z',
+							created_at: '2026-06-18T00:00:00Z',
+							updated_at: '2026-06-18T00:00:00Z',
+							secret_configured: true
+						}
+					]
+				})
+			});
+		});
+
+		await page.route(
+			'**/wp-json/sentient-forms/v1/local/providers/openrouter/models**',
+			async (route) => {
+				await route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						provider: 'openrouter',
+						source: 'local_cache',
+						total_cached: 0,
+						total_returned: 0,
+						free_count: 0,
+						stale_count: 0,
+						models: []
+					})
+				});
+			}
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/models**', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						models: [
+							{
+								id: '~google/gemini-pro-latest',
+								display_name: 'Google: Gemini 3.1 Pro Preview (latest alias)',
+								provider: 'openrouter',
+								speed_tier: 'balanced',
+								cost_tier: 'high',
+								capabilities: {
+									reasoning: true,
+									tools: true,
+									structured: true,
+									web_search: true,
+									server_tools: {
+										web_search: true,
+										web_fetch: false,
+										datetime: false
+									},
+									long_context: true
+								},
+								context_window: 1048576,
+								tags: ['reasoning', 'structured-output', 'web-search'],
+								supported_parameters: ['reasoning', 'tools']
+							}
+						],
+						presets: []
+					}
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/site-context**', async (route) => {
+			const request = route.request();
+			if (request.method() === 'POST' && request.url().endsWith('/site-context/generate')) {
+				generateRequests += 1;
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						...readyEmptyStatus,
+						generation_job: {
+							id: 'job-privacy-context-1',
+							status: 'queued',
+							requested_at: '2026-06-18T00:00:00Z',
+							started_at: null,
+							finished_at: null,
+							error: null,
+							model: '~google/gemini-pro-latest',
+							provider: 'openrouter',
+							tools: ['web_search']
+						}
+					})
+				});
+			}
+
+			if (request.method() === 'GET' && generateRequests > 0) {
+				pollRequests += 1;
+				if (pollRequests === 1) {
+					return route.fulfill({
+						status: 200,
+						contentType: 'application/json',
+						body: JSON.stringify({
+							...readyEmptyStatus,
+							generation_job: {
+								id: 'job-privacy-context-1',
+								status: 'running',
+								requested_at: '2026-06-18T00:00:00Z',
+								started_at: '2026-06-18T00:00:01Z',
+								finished_at: null,
+								error: null,
+								model: '~google/gemini-pro-latest',
+								provider: 'openrouter',
+								tools: ['web_search']
+							}
+						})
+					});
+				}
+
+				if (pollRequests === 2) {
+					return route.fulfill({
+						status: 503,
+						contentType: 'application/json',
+						body: JSON.stringify({
+							code: 'temporarily_unavailable',
+							message: 'Transient polling failure'
+						})
+					});
+				}
+
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify(generatedStatus)
+				});
+			}
+
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(readyEmptyStatus)
+			});
+		});
+
+		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
+		await expect(page.getByTestId('site-context-generate-now')).toBeEnabled();
+		await page.getByTestId('site-context-generate-now').click();
+
+		await expect.poll(() => generateRequests).toBe(1);
+		await expect(
+			page.getByText('Site Context generation is running in the background.')
+		).toBeVisible();
+		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
+		await expect(page.getByTestId('site-context-generate-now')).toBeDisabled();
+		await expect.poll(() => pollRequests, { timeout: 8_000 }).toBeGreaterThanOrEqual(1);
+		await page
+			.getByTestId('site-context-textarea')
+			.fill('Unsaved assistant edit while generation runs.');
+		await expect.poll(() => pollRequests, { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
+		await expect(page.getByTestId('site-context-textarea')).toHaveValue(
+			'Unsaved assistant edit while generation runs.'
+		);
+		await expect(page.getByText('Site Context generated.')).toBeVisible();
 	});
 
 	test('keeps the first-run modal open with a visible error when Site Context setup cannot be saved', async ({

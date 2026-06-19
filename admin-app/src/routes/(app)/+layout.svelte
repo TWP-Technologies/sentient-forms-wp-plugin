@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { onMount } from 'svelte';
+	import { onMount, type ComponentType, type SvelteComponent } from 'svelte';
 	import { SESSION_EXPIRED_EVENT } from '$lib/api/session-expiry';
 	import {
 		SECURITY_ROADBLOCK_EVENT,
@@ -25,6 +25,7 @@
 	} from '$lib/navigation';
 	import { Alert, Badge, Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
+	import { Toaster } from 'sonner-svelte';
 
 	interface Props {
 		children?: import('svelte').Snippet;
@@ -60,6 +61,14 @@
 	);
 	let securityRoadblock = $state<SecurityRoadblockDetail | null>(null);
 	let securityRoadblockDetailsOpen = $state(false);
+	type SonnerToasterProps = {
+		position?: 'bottom-right';
+		richColors?: boolean;
+	};
+
+	// sonner-svelte ships Svelte 4 style declarations that mark defaulted props as required
+	// under Svelte 5. Keep the compatibility cast local to the root toaster mount.
+	const SonnerToaster = Toaster as unknown as ComponentType<SvelteComponent<SonnerToasterProps>>;
 	const hasSecurityRoadblockDetails = $derived(
 		Boolean(securityRoadblock?.rayId || securityRoadblock?.providerDetails?.length)
 	);
@@ -437,6 +446,8 @@
 		</main>
 	</div>
 </div>
+
+<SonnerToaster position="bottom-right" richColors />
 
 <PrivacySetupAssistant
 	open={privacyAssistantOpen}

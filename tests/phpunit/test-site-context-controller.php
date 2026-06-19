@@ -22,6 +22,8 @@ class SiteContextControllerTest extends WP_UnitTestCase
         Sentient_Forms_Plugin::instance();
         Sentient_Forms_Installer::maybe_upgrade();
         $this->truncate_local_provider_tables();
+        add_filter( 'sentient_forms_site_context_generation_action_scheduler_enabled', '__return_false' );
+        add_filter( 'sentient_forms_site_context_generation_http_dispatch_enabled', '__return_false' );
         $rest_api = new Sentient_Forms_REST_API();
         $server   = rest_get_server();
         do_action( 'rest_api_init', $server );
@@ -32,11 +34,15 @@ class SiteContextControllerTest extends WP_UnitTestCase
         Sentient_Forms_Plugin::instance()->clear_license_data();
         delete_option( 'sentient_forms_site_context' );
         delete_option( 'sentient_forms_site_context_settings' );
+        delete_option( 'sentient_forms_site_context_generation_job' );
         wp_clear_scheduled_hook( 'sentient_forms_site_context_refresh' );
         wp_clear_scheduled_hook( 'sentient_forms_site_context_first_generation' );
+        wp_clear_scheduled_hook( 'sentient_forms_site_context_manual_generation' );
         $this->truncate_local_provider_tables();
         add_filter( 'sentient_forms_rest_api_controller_classes', '__return_empty_array' );
         remove_all_filters( 'pre_http_request' );
+        remove_all_filters( 'sentient_forms_site_context_generation_action_scheduler_enabled' );
+        remove_all_filters( 'sentient_forms_site_context_generation_http_dispatch_enabled' );
         parent::tearDown();
     }
 
@@ -52,8 +58,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $request->add_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
         $response = rest_get_server()->dispatch( $request );
 
-        $this->assertSame( 200, $response->get_status() );
-        $data = $response->get_data();
+        $data = $this->dispatch_site_context_request( 'GET', '/sentient-forms/v1/site-context' )->get_data();
         $this->assertNull( $data['context'] ?? null );
         $this->assertSame( 'empty', $data['status'] ?? null );
         $this->assertSame( 'unset', $data['settings']['consent_status'] ?? null );
@@ -89,6 +94,50 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 'granted', $data['settings']['consent_status'] ?? null );
         $this->assertStringContainsString( 'WordPress site', $data['context']['summary_text'] ?? '' );
         $this->assertFalse( $http_called );
+    }
+
+    public function test_create_context_cancels_active_generation_job_before_storing_local_context(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context',
+            [
+                'pii_ack' => true,
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertFalse( get_option( 'sentient_forms_site_context_generation_job' ) );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertCount( 0, $calls );
+        $this->assertSame( 'local_starter', $data['context']['source'] ?? null );
+        $this->assertNull( $data['generation_job'] ?? null );
     }
 
     public function test_update_context_persists_manual_local_context(): void
@@ -507,7 +556,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
                 'tool_choice' => 'required',
                 'web_search'  => [
                     'mode'        => 'auto',
-                    'max_results' => 7,
+                    'max_results' => 5,
                 ],
                 'web_fetch'   => [
                     'mode' => 'required',
@@ -549,7 +598,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         );
         $this->assertSame( 'required', $saved_selection['tools']['tool_choice'] ?? null );
         $this->assertSame( 'auto', $saved_selection['tools']['web_search']['mode'] ?? null );
-        $this->assertSame( 7, $saved_selection['tools']['web_search']['max_results'] ?? null );
+        $this->assertSame( 5, $saved_selection['tools']['web_search']['max_results'] ?? null );
         $this->assertSame( 'required', $saved_selection['tools']['web_fetch']['mode'] ?? null );
         $this->assertSame( 'required', $saved_selection['tools']['datetime']['mode'] ?? null );
     }
@@ -789,9 +838,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $calls = [];
         $this->mock_openrouter_site_context_generation( $calls );
 
-        $response = $this->dispatch_site_context_request(
-            'POST',
-            '/sentient-forms/v1/site-context/generate',
+        $job_id = $this->queue_site_context_generation(
             [
                 'consent_status' => 'granted',
                 'generation_model_selection' => [
@@ -817,10 +864,12 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $this->assertSame( 200, $response->get_status() );
-        $data = $response->get_data();
+        $this->assertCount( 0, $calls );
+
+        $data = $this->run_site_context_generation_job( $job_id );
         $this->assertSame( 'ai_generated', $data['context']['source'] ?? null );
         $this->assertStringContainsString( 'Acme Plumbing', $data['context']['summary_text'] ?? '' );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
         $this->assertCount( 1, $calls );
         $payload = json_decode( (string) $calls[0]['args']['body'], true );
         $this->assertSame( 'openai/gpt-5.5', $payload['model'] ?? null );
@@ -836,8 +885,650 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertContains( 'openrouter:web_search', array_column( $payload['tools'] ?? [], 'type' ) );
         $this->assertContains( 'openrouter:web_fetch', array_column( $payload['tools'] ?? [], 'type' ) );
         $this->assertContains( 'openrouter:datetime', array_column( $payload['tools'] ?? [], 'type' ) );
-        $this->assertSame( 7, $payload['tools'][0]['parameters']['max_results'] ?? null );
+        $this->assertSame( 5, $payload['tools'][0]['parameters']['max_results'] ?? null );
         $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+    }
+
+    public function test_running_manual_generation_job_is_not_claimed_again(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $job );
+        $job['status']     = 'running';
+        $job['started_at'] = current_time( 'mysql' );
+        update_option( 'sentient_forms_site_context_generation_job', $job, false );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'running', $data['generation_job']['status'] ?? null );
+        $this->assertCount( 0, $calls );
+        $this->assertNull( $data['context'] ?? null );
+    }
+
+    public function test_manual_generation_does_not_commit_after_worker_ownership_changes(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [],
+            static function (): void {
+                $job = get_option( 'sentient_forms_site_context_generation_job' );
+                $job = is_array( $job ) ? $job : [];
+                $job['status']    = 'running';
+                $job['worker_id'] = 'different-worker-owns-this-job';
+                update_option( 'sentient_forms_site_context_generation_job', $job, false );
+            }
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertCount( 1, $calls );
+        $this->assertNull( $data['context'] ?? null );
+        $this->assertSame( 'running', $data['generation_job']['status'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_site_context' ) );
+    }
+
+    public function test_invalid_manual_save_does_not_cancel_active_generation_job(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'PUT',
+            '/sentient-forms/v1/site-context',
+            [
+                'summary_text' => str_repeat( 'x', 5001 ),
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 400, $response->get_status() );
+        $job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $job );
+        $this->assertSame( $job_id, $job['id'] ?? null );
+        $this->assertSame( 'queued', $job['status'] ?? null );
+    }
+
+    public function test_manual_generation_does_not_commit_after_consent_withdrawal(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [],
+            static function (): void {
+                $settings = get_option( 'sentient_forms_site_context_settings' );
+                $settings = is_array( $settings ) ? $settings : [];
+                $settings['consent_status'] = 'declined';
+                $settings['declined_at']    = current_time( 'mysql' );
+                update_option( 'sentient_forms_site_context_settings', $settings, false );
+                delete_option( 'sentient_forms_site_context_generation_job' );
+            }
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+
+        $this->assertCount( 1, $calls );
+        $this->assertNull( $data['context'] ?? null );
+        $this->assertNull( $data['generation_job'] ?? null );
+        $this->assertSame( 'declined', $settings['consent_status'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_site_context' ) );
+    }
+
+    public function test_manual_generation_does_not_commit_after_manual_context_save(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [],
+            function (): void {
+                $response = $this->dispatch_site_context_request(
+                    'PUT',
+                    '/sentient-forms/v1/site-context',
+                    [
+                        'consent_status' => 'granted',
+                        'summary_text'   => 'Manual context saved while generation was running.',
+                        'auto_include'   => true,
+                        'pii_ack'        => true,
+                    ]
+                );
+
+                $this->assertSame( 200, $response->get_status() );
+            }
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+
+        $this->assertCount( 1, $calls );
+        $this->assertSame( 'Manual context saved while generation was running.', $data['context']['summary_text'] ?? null );
+        $this->assertSame( 'manual', $data['context']['source'] ?? null );
+        $this->assertNull( $data['generation_job'] ?? null );
+        $this->assertSame( 'granted', $settings['consent_status'] ?? null );
+        $this->assertNull( $settings['last_generated_at'] ?? null );
+    }
+
+    public function test_generate_context_caps_site_context_web_search_depth(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode'        => 'required',
+                            'max_results' => 10,
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
+        $this->assertCount( 1, $calls );
+        $payload = json_decode( (string) $calls[0]['args']['body'], true );
+        $this->assertSame( [ 'openrouter:web_search' ], array_column( $payload['tools'] ?? [], 'type' ) );
+        $this->assertSame( 5, $payload['tools'][0]['parameters']['max_results'] ?? null );
+        $this->assertSame( 10, $payload['tools'][0]['parameters']['max_total_results'] ?? null );
+    }
+
+    public function test_generate_context_queues_background_job_without_calling_openrouter_inline(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        remove_filter( 'sentient_forms_site_context_generation_http_dispatch_enabled', '__return_false' );
+        $dispatch_calls = [];
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, $parsed_args, $url ) use ( &$dispatch_calls ) {
+                if ( str_contains( (string) $url, 'admin-ajax.php' ) )
+                {
+                    $dispatch_calls[] = [
+                        'url'  => $url,
+                        'args' => $parsed_args,
+                    ];
+                    return [
+                        'headers'  => [],
+                        'body'     => '',
+                        'response' => [
+                            'code'    => 204,
+                            'message' => 'No Content',
+                        ],
+                        'cookies'  => [],
+                        'filename' => null,
+                    ];
+                }
+
+                return new WP_Error( 'unexpected_http_call', 'Manual generation must not call OpenRouter inline.' );
+            },
+            10,
+            3
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode'        => 'required',
+                            'max_results' => 5,
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertNull( $data['context'] ?? null );
+        $this->assertSame( 'queued', $data['generation_job']['status'] ?? null );
+        $this->assertNotEmpty( $data['generation_job']['id'] ?? null );
+        $this->assertSame( 'openrouter', $data['generation_job']['provider'] ?? null );
+        $this->assertSame( 'openai/gpt-5.5', $data['generation_job']['model'] ?? null );
+        $this->assertContains( 'web_search', $data['generation_job']['tools'] ?? [] );
+        $this->assertCount( 1, $dispatch_calls );
+        $dispatch_call = $dispatch_calls[0];
+        $this->assertStringContainsString( 'admin-ajax.php', (string) $dispatch_call['url'] );
+        $this->assertFalse( $dispatch_call['args']['blocking'] ?? true );
+        $this->assertLessThanOrEqual( 1, (float) ( $dispatch_call['args']['timeout'] ?? 10 ) );
+        $this->assertSame( 'sentient_forms_site_context_manual_generation', $dispatch_call['args']['body']['action'] ?? null );
+        $this->assertSame( $data['generation_job']['id'], $dispatch_call['args']['body']['job_id'] ?? null );
+        $this->assertNotEmpty( $dispatch_call['args']['body']['token'] ?? null );
+        $this->assertSame( 1, $this->count_scheduled_hook( 'sentient_forms_site_context_manual_generation' ) );
+    }
+
+    public function test_generate_context_does_not_save_new_settings_while_job_is_active(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( $job_id, $data['generation_job']['id'] ?? null );
+        $this->assertSame( 'openai/gpt-5.5', $data['settings']['generation_model_selection']['primary'] ?? null );
+
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( 'openai/gpt-5.5', $settings['generation_model_selection']['primary'] ?? null );
+    }
+
+    public function test_generate_context_clears_first_generation_schedule_when_manual_job_is_queued(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status' => 'granted',
+                'consented_at'   => '2026-05-28 00:00:00',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+                'first_generation_started_at'      => gmdate( 'Y-m-d H:i:s', time() - HOUR_IN_SECONDS ),
+                'first_generation_attempt_count'   => 0,
+                'first_generation_next_attempt_at' => gmdate( 'Y-m-d H:i:s', time() + MINUTE_IN_SECONDS ),
+            ],
+            false
+        );
+        wp_schedule_single_event( time() + MINUTE_IN_SECONDS, 'sentient_forms_site_context_first_generation' );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'queued', $data['generation_job']['status'] ?? null );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertEmpty( $settings['first_generation_next_attempt_at'] ?? null );
+    }
+
+    public function test_generate_context_clears_auto_refresh_schedule_when_manual_job_is_queued(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        update_option(
+            'sentient_forms_site_context_settings',
+            [
+                'consent_status'       => 'granted',
+                'consented_at'         => '2026-05-28 00:00:00',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'next_refresh_at'      => gmdate( 'Y-m-d H:i:s', time() + MINUTE_IN_SECONDS ),
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ],
+            false
+        );
+        wp_schedule_single_event( time() + MINUTE_IN_SECONDS, 'sentient_forms_site_context_refresh' );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'queued', $data['generation_job']['status'] ?? null );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertEmpty( $settings['next_refresh_at'] ?? null );
+    }
+
+    public function test_scheduled_refresh_skips_while_manual_generation_job_is_active(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        Sentient_Forms_Site_Context_Controller::run_scheduled_refresh();
+
+        $this->assertCount( 0, $calls );
+        $this->assertFalse( get_option( 'sentient_forms_site_context' ) );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+
+        $job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $job );
+        $this->assertSame( $job_id, $job['id'] ?? null );
+        $this->assertSame( 'queued', $job['status'] ?? null );
+    }
+
+    public function test_dispatched_generation_validates_token_and_runs_job(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        remove_filter( 'sentient_forms_site_context_generation_http_dispatch_enabled', '__return_false' );
+        $dispatch_token = null;
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, $parsed_args, $url ) use ( &$dispatch_token ) {
+                if ( str_contains( (string) $url, 'admin-ajax.php' ) )
+                {
+                    $dispatch_token = (string) ( $parsed_args['body']['token'] ?? '' );
+                    return [
+                        'headers'  => [],
+                        'body'     => '',
+                        'response' => [
+                            'code'    => 204,
+                            'message' => 'No Content',
+                        ],
+                        'cookies'  => [],
+                        'filename' => null,
+                    ];
+                }
+
+                return false;
+            },
+            10,
+            3
+        );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation(
+            $calls,
+            null,
+            [
+                'model' => 'openai/gpt-5.5',
+            ]
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertNotSame( '', $dispatch_token );
+        $bad_result = Sentient_Forms_Site_Context_Controller::run_dispatched_manual_generation( $job_id, 'wrong-token' );
+        $this->assertWPError( $bad_result );
+        $this->assertSame( 'site_context_generation_dispatch_forbidden', $bad_result->get_error_code() );
+
+        $good_result = Sentient_Forms_Site_Context_Controller::run_dispatched_manual_generation( $job_id, (string) $dispatch_token );
+        $this->assertTrue( $good_result );
+
+        $data = $this->dispatch_site_context_request( 'GET', '/sentient-forms/v1/site-context' )->get_data();
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'openai/gpt-5.5', $data['context']['metadata']['model'] ?? null );
+    }
+
+    public function test_stale_queued_generation_job_fails_with_safe_diagnostic(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $job = get_option( 'sentient_forms_site_context_generation_job' );
+        $this->assertIsArray( $job );
+        $job['requested_at'] = '2000-01-01 00:00:00';
+        update_option( 'sentient_forms_site_context_generation_job', $job, false );
+
+        $data = $this->dispatch_site_context_request( 'GET', '/sentient-forms/v1/site-context' )->get_data();
+
+        $this->assertSame( $job_id, $data['generation_job']['id'] ?? null );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'site_context_generation_worker_not_started', $data['generation_job']['code'] ?? null );
+        $this->assertSame( 'Site Context generation could not start in the background.', $data['generation_job']['error'] ?? null );
+        $this->assertSame( 'queued', $data['generation_job']['diagnostics']['previous_status'] ?? null );
+        $this->assertArrayNotHasKey( 'settings', $data['generation_job'] ?? [] );
+    }
+
+    public function test_fresh_queued_generation_job_is_not_marked_stale_in_site_timezone(): void
+    {
+        update_option( 'timezone_string', 'America/New_York' );
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $data = $this->dispatch_site_context_request( 'GET', '/sentient-forms/v1/site-context' )->get_data();
+
+        $this->assertSame( $job_id, $data['generation_job']['id'] ?? null );
+        $this->assertSame( 'queued', $data['generation_job']['status'] ?? null );
+        $this->assertNull( $data['generation_job']['error'] ?? null );
+        $this->assertNull( $data['generation_job']['code'] ?? null );
+    }
+
+    public function test_stale_generation_job_failure_does_not_overwrite_completed_job(): void
+    {
+        $stale_job = [
+            'id'           => 'stale-job-id',
+            'status'       => 'queued',
+            'requested_at' => '2000-01-01 00:00:00',
+            'started_at'   => null,
+            'finished_at'  => null,
+            'error'        => null,
+            'code'         => null,
+            'status_code'  => null,
+            'diagnostics'  => [],
+        ];
+        $completed_job = [
+            'id'           => 'stale-job-id',
+            'status'       => 'succeeded',
+            'requested_at' => '2000-01-01 00:00:00',
+            'started_at'   => '2000-01-01 00:00:01',
+            'finished_at'  => current_time( 'mysql' ),
+            'error'        => null,
+            'code'         => null,
+            'status_code'  => null,
+            'diagnostics'  => [],
+        ];
+        update_option( 'sentient_forms_site_context_generation_job', $completed_job, false );
+
+        $reads = 0;
+        $filter = static function ( $pre ) use ( &$reads, $stale_job ) {
+            $reads++;
+
+            return 1 === $reads ? $stale_job : $pre;
+        };
+        add_filter(
+            'pre_option_sentient_forms_site_context_generation_job',
+            $filter
+        );
+
+        $data = $this->dispatch_site_context_request( 'GET', '/sentient-forms/v1/site-context' )->get_data();
+        remove_filter( 'pre_option_sentient_forms_site_context_generation_job', $filter );
+
+        $this->assertSame( 'stale-job-id', $data['generation_job']['id'] ?? null );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
+        $this->assertNull( $data['generation_job']['error'] ?? null );
+        $this->assertSame( 'succeeded', get_option( 'sentient_forms_site_context_generation_job' )['status'] ?? null );
     }
 
     public function test_generate_context_omits_unsupported_optional_openrouter_parameters(): void
@@ -865,9 +1556,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $response = $this->dispatch_site_context_request(
-            'POST',
-            '/sentient-forms/v1/site-context/generate',
+        $job_id = $this->queue_site_context_generation(
             [
                 'consent_status' => 'granted',
                 'generation_model_selection' => [
@@ -892,7 +1581,9 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
         $this->assertCount( 1, $calls );
         $payload = json_decode( (string) $calls[0]['args']['body'], true );
 
@@ -931,9 +1622,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $response = $this->dispatch_site_context_request(
-            'POST',
-            '/sentient-forms/v1/site-context/generate',
+        $job_id = $this->queue_site_context_generation(
             [
                 'consent_status' => 'granted',
                 'generation_model_selection' => [
@@ -945,7 +1634,9 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
         $this->assertCount( 1, $calls );
         $payload = json_decode( (string) $calls[0]['args']['body'], true );
 
@@ -963,9 +1654,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $calls = [];
         $this->mock_openrouter_site_context_generation( $calls );
 
-        $response = $this->dispatch_site_context_request(
-            'POST',
-            '/sentient-forms/v1/site-context/generate',
+        $job_id = $this->queue_site_context_generation(
             [
                 'consent_status' => 'granted',
                 'generation_model_selection' => [
@@ -977,7 +1666,9 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
         $this->assertCount( 1, $calls );
         $payload = json_decode( (string) $calls[0]['args']['body'], true );
 
@@ -1011,9 +1702,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $response = $this->dispatch_site_context_request(
-            'POST',
-            '/sentient-forms/v1/site-context/generate',
+        $job_id = $this->queue_site_context_generation(
             [
                 'consent_status' => 'granted',
                 'generation_model_selection' => [
@@ -1032,7 +1721,9 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
         $this->assertCount( 1, $calls );
         $payload = json_decode( (string) $calls[0]['args']['body'], true );
 
@@ -1201,9 +1892,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $response = $this->dispatch_site_context_request(
-            'POST',
-            '/sentient-forms/v1/site-context/generate',
+        $job_id = $this->queue_site_context_generation(
             [
                 'consent_status' => 'granted',
                 'generation_model_selection' => [
@@ -1222,7 +1911,9 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
         $this->assertCount( 1, $calls );
         $payload = json_decode( (string) $calls[0]['args']['body'], true );
 
@@ -1261,9 +1952,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $response = $this->dispatch_site_context_request(
-            'POST',
-            '/sentient-forms/v1/site-context/generate',
+        $job_id = $this->queue_site_context_generation(
             [
                 'consent_status' => 'granted',
                 'generation_model_selection' => [
@@ -1288,12 +1977,14 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
         $this->assertCount( 1, $calls );
         $payload = json_decode( (string) $calls[0]['args']['body'], true );
         $this->assertSame( 'example/web-search-server-tool-only', $payload['model'] ?? null );
         $this->assertSame( [ 'openrouter:web_search' ], array_column( $payload['tools'] ?? [], 'type' ) );
-        $this->assertSame( 6, $payload['tools'][0]['parameters']['max_results'] ?? null );
+        $this->assertSame( 5, $payload['tools'][0]['parameters']['max_results'] ?? null );
         $this->assertArrayNotHasKey( 'tool_choice', $payload );
     }
 
@@ -1352,9 +2043,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             3
         );
 
-        $response = $this->dispatch_site_context_request(
-            'POST',
-            '/sentient-forms/v1/site-context/generate',
+        $job_id = $this->queue_site_context_generation(
             [
                 'consent_status' => 'granted',
                 'generation_model_selection' => [
@@ -1371,12 +2060,13 @@ class SiteContextControllerTest extends WP_UnitTestCase
                 ],
             ]
         );
-        $data = $response->get_data();
 
-        $this->assertSame( 502, $response->get_status() );
-        $this->assertSame( 'site_context_generation_openrouter_server_tool_failed', $data['code'] ?? null );
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'site_context_generation_openrouter_server_tool_failed', $data['generation_job']['code'] ?? null );
         $this->assertCount( 1, $calls );
-        $diagnostics = $data['data']['diagnostics'] ?? [];
+        $diagnostics = $data['generation_job']['diagnostics'] ?? [];
         $this->assertSame( 'openrouter', $diagnostics['route'] ?? null );
         $this->assertSame( 'example/web-search-server-tool-only', $diagnostics['model'] ?? null );
         $this->assertSame( 'json_schema', $diagnostics['response_format'] ?? null );
@@ -1384,8 +2074,587 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( [ 'openrouter:web_search' ], $diagnostics['tool_types'] ?? null );
         $this->assertSame( '502', $diagnostics['provider_error_code'] ?? null );
         $this->assertSame( 502, $diagnostics['provider_status'] ?? null );
-        $this->assertArrayNotHasKey( 'payload', $data['data'] ?? [] );
+        $this->assertArrayNotHasKey( 'payload', $data['generation_job'] ?? [] );
         $this->assertStringNotContainsString( 'raw provider payload', wp_json_encode( $data ) );
+    }
+
+    public function test_generate_context_classifies_openrouter_success_status_error_envelope_safely(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+        $calls = [];
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, array $args, string $url ) use ( &$calls ) {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => wp_json_encode(
+                        [
+                            'error' => [
+                                'code'    => 429,
+                                'message' => 'Rate limit exceeded for this route.',
+                            ],
+                        ]
+                    ),
+                    'cookies'  => [],
+                ];
+            },
+            10,
+            3
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode' => 'required',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'site_context_generation_openrouter_request_failed', $data['generation_job']['code'] ?? null );
+        $this->assertSame( 'OpenRouter could not complete the Site Context request for the selected model and tool settings.', $data['generation_job']['error'] ?? null );
+        $this->assertSame( 429, $data['generation_job']['status_code'] ?? null );
+        $this->assertCount( 1, $calls );
+
+        $diagnostics = $data['generation_job']['diagnostics'] ?? [];
+        $this->assertSame( 'openrouter', $diagnostics['route'] ?? null );
+        $this->assertSame( 'google/gemini-pro-latest', $diagnostics['model'] ?? null );
+        $this->assertSame( 'json_schema', $diagnostics['response_format'] ?? null );
+        $this->assertSame( 'sentient_forms_site_context_generation_v1', $diagnostics['schema_name'] ?? null );
+        $this->assertSame( [ 'openrouter:web_search' ], $diagnostics['tool_types'] ?? null );
+        $this->assertSame( '429', $diagnostics['provider_error_code'] ?? null );
+        $this->assertSame( 429, $diagnostics['provider_status'] ?? null );
+        $this->assertStringNotContainsString( 'Rate limit exceeded', wp_json_encode( $data ) ?: '' );
+
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertSame( 'OpenRouter could not complete the Site Context request for the selected model and tool settings.', $settings['last_error'] ?? null );
+    }
+
+    public function test_manual_generation_retries_transient_openrouter_gateway_failure_once(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+        $calls = [];
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, array $args, string $url ) use ( &$calls ) {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                if ( 1 === count( $calls ) )
+                {
+                    return [
+                        'headers'  => [],
+                        'response' => [
+                            'code'    => 200,
+                            'message' => 'OK',
+                        ],
+                        'body'     => wp_json_encode(
+                            [
+                                'error' => [
+                                    'code'    => 504,
+                                    'message' => 'Upstream gateway timed out.',
+                                ],
+                            ]
+                        ),
+                        'cookies'  => [],
+                    ];
+                }
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'or-gen-retry-success',
+                            'model'   => 'google/gemini-pro-latest',
+                            'choices' => [
+                                [
+                                    'finish_reason' => 'stop',
+                                    'message'       => [
+                                        'content' => wp_json_encode(
+                                            [
+                                                'summary_text'         => 'Acme Plumbing serves local homeowners with emergency drain and water heater help.',
+                                                'legitimate_inquiries' => [ 'Drain repair', 'Water heater quote' ],
+                                                'spam_relevance'       => [ 'Unrelated crypto offers' ],
+                                                'source_urls'          => [ 'https://example.test/' ],
+                                                'confidence'           => 0.88,
+                                                'confidence_notes'     => 'Fixture generated after retry.',
+                                            ]
+                                        ),
+                                    ],
+                                ],
+                            ],
+                            'usage'   => [
+                                'total_tokens' => 84,
+                            ],
+                        ]
+                    ),
+                    'cookies'  => [],
+                ];
+            },
+            10,
+            3
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode' => 'required',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
+        $this->assertNull( $data['generation_job']['error'] ?? null );
+        $this->assertSame( 2, $data['generation_job']['attempts'] ?? null );
+        $this->assertSame( 2, $data['generation_job']['max_attempts'] ?? null );
+        $this->assertCount( 2, $calls );
+        $this->assertSame( 'google/gemini-pro-latest', $data['context']['metadata']['model'] ?? null );
+
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertNull( $settings['last_error'] ?? null );
+    }
+
+    public function test_manual_generation_retries_bare_openrouter_gateway_failure_once(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+        $calls = [];
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, array $args, string $url ) use ( &$calls ) {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                if ( 1 === count( $calls ) )
+                {
+                    return [
+                        'headers'  => [],
+                        'response' => [
+                            'code'    => 503,
+                            'message' => 'Service Unavailable',
+                        ],
+                        'body'     => '<html><body>upstream unavailable</body></html>',
+                        'cookies'  => [],
+                    ];
+                }
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'or-gen-retry-bare-success',
+                            'model'   => 'google/gemini-pro-latest',
+                            'choices' => [
+                                [
+                                    'finish_reason' => 'stop',
+                                    'message'       => [
+                                        'content' => wp_json_encode(
+                                            [
+                                                'summary_text'         => 'Acme Plumbing serves local homeowners with emergency drain and water heater help.',
+                                                'legitimate_inquiries' => [ 'Drain repair', 'Water heater quote' ],
+                                                'spam_relevance'       => [ 'Unrelated crypto offers' ],
+                                                'source_urls'          => [ 'https://example.test/' ],
+                                                'confidence'           => 0.88,
+                                                'confidence_notes'     => 'Fixture generated after retry.',
+                                            ]
+                                        ),
+                                    ],
+                                ],
+                            ],
+                            'usage'   => [
+                                'total_tokens' => 84,
+                            ],
+                        ]
+                    ),
+                    'cookies'  => [],
+                ];
+            },
+            10,
+            3
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode' => 'required',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
+        $this->assertNull( $data['generation_job']['error'] ?? null );
+        $this->assertSame( 2, $data['generation_job']['attempts'] ?? null );
+        $this->assertSame( 2, $data['generation_job']['max_attempts'] ?? null );
+        $this->assertCount( 2, $calls );
+        $this->assertSame( 'google/gemini-pro-latest', $data['context']['metadata']['model'] ?? null );
+
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertNull( $settings['last_error'] ?? null );
+    }
+
+    public function test_manual_generation_retries_openrouter_transport_error_once(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+        $calls = [];
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, array $args, string $url ) use ( &$calls ) {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                if ( 1 === count( $calls ) )
+                {
+                    return new WP_Error( 'http_request_failed', 'cURL error 28: Operation timed out' );
+                }
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'or-gen-retry-transport-success',
+                            'model'   => 'google/gemini-pro-latest',
+                            'choices' => [
+                                [
+                                    'finish_reason' => 'stop',
+                                    'message'       => [
+                                        'content' => wp_json_encode(
+                                            [
+                                                'summary_text'         => 'Acme Plumbing serves local homeowners with emergency drain and water heater help.',
+                                                'legitimate_inquiries' => [ 'Drain repair', 'Water heater quote' ],
+                                                'spam_relevance'       => [ 'Unrelated crypto offers' ],
+                                                'source_urls'          => [ 'https://example.test/' ],
+                                                'confidence'           => 0.88,
+                                                'confidence_notes'     => 'Fixture generated after transport retry.',
+                                            ]
+                                        ),
+                                    ],
+                                ],
+                            ],
+                            'usage'   => [
+                                'total_tokens' => 84,
+                            ],
+                        ]
+                    ),
+                    'cookies'  => [],
+                ];
+            },
+            10,
+            3
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode' => 'required',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 2, $data['generation_job']['attempts'] ?? null );
+        $this->assertCount( 2, $calls );
+    }
+
+    public function test_failed_manual_generation_rearms_refresh_and_first_generation_schedules(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+        add_filter(
+            'pre_http_request',
+            static function () {
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 400,
+                        'message' => 'Bad Request',
+                    ],
+                    'body'     => wp_json_encode(
+                        [
+                            'error' => [
+                                'message' => 'Selected route cannot satisfy this request.',
+                                'code'    => 'bad_request',
+                            ],
+                        ]
+                    ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status'       => 'granted',
+                'auto_refresh_enabled' => true,
+                'auto_refresh_days'    => 14,
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_refresh' ) );
+        $this->assertNotFalse( wp_next_scheduled( 'sentient_forms_site_context_first_generation' ) );
+
+        $settings = get_option( 'sentient_forms_site_context_settings' );
+        $this->assertNotEmpty( $settings['next_refresh_at'] ?? null );
+        $this->assertNotEmpty( $settings['first_generation_next_attempt_at'] ?? null );
+    }
+
+    public function test_manual_generation_does_not_retry_after_job_is_canceled(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'google/gemini-pro-latest' );
+        $calls = [];
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, array $args, string $url ) use ( &$calls ) {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                if ( 1 === count( $calls ) )
+                {
+                    delete_option( 'sentient_forms_site_context_generation_job' );
+                    return [
+                        'headers'  => [],
+                        'response' => [
+                            'code'    => 503,
+                            'message' => 'Service Unavailable',
+                        ],
+                        'body'     => '<html><body>upstream unavailable</body></html>',
+                        'cookies'  => [],
+                    ];
+                }
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'or-gen-stale-retry-success',
+                            'model'   => 'google/gemini-pro-latest',
+                            'choices' => [
+                                [
+                                    'finish_reason' => 'stop',
+                                    'message'       => [
+                                        'content' => wp_json_encode(
+                                            [
+                                                'summary_text'         => 'This retry should never commit.',
+                                                'legitimate_inquiries' => [ 'Drain repair' ],
+                                                'spam_relevance'       => [ 'Unrelated crypto offers' ],
+                                                'source_urls'          => [ 'https://example.test/' ],
+                                                'confidence'           => 0.88,
+                                                'confidence_notes'     => 'Fixture should not be used.',
+                                            ]
+                                        ),
+                                    ],
+                                ],
+                            ],
+                        ]
+                    ),
+                    'cookies'  => [],
+                ];
+            },
+            10,
+            3
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'google/gemini-pro-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode' => 'required',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertCount( 1, $calls );
+        $this->assertNull( $data['generation_job'] ?? null );
+        $this->assertNull( $data['context'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_site_context_generation_job' ) );
+        $this->assertFalse( get_option( 'sentient_forms_site_context' ) );
+    }
+
+    public function test_generate_context_classifies_openrouter_choice_error_safely(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'anthropic/claude-opus-latest' );
+        $calls = [];
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, array $args, string $url ) use ( &$calls ) {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => wp_json_encode(
+                        [
+                            'id'      => 'or-choice-error',
+                            'model'   => 'anthropic/claude-opus-latest',
+                            'choices' => [
+                                [
+                                    'finish_reason' => 'error',
+                                    'message'       => [
+                                        'role'    => 'assistant',
+                                        'content' => 'partial output...',
+                                    ],
+                                    'error'         => [
+                                        'code'    => 502,
+                                        'message' => 'Provider disconnected mid-stream',
+                                    ],
+                                ],
+                            ],
+                        ]
+                    ),
+                    'cookies'  => [],
+                ];
+            },
+            10,
+            3
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'anthropic/claude-opus-latest',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                    'tools'         => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [
+                            'mode' => 'required',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'site_context_generation_openrouter_request_failed', $data['generation_job']['code'] ?? null );
+        $this->assertSame( 502, $data['generation_job']['status_code'] ?? null );
+        $this->assertCount( 1, $calls );
+
+        $diagnostics = $data['generation_job']['diagnostics'] ?? [];
+        $this->assertSame( 'anthropic/claude-opus-latest', $diagnostics['model'] ?? null );
+        $this->assertSame( 'or-choice-error', $diagnostics['response_id'] ?? null );
+        $this->assertSame( 'error', $diagnostics['finish_reason'] ?? null );
+        $this->assertSame( [ 'openrouter:web_search' ], $diagnostics['tool_types'] ?? null );
+        $this->assertSame( '502', $diagnostics['provider_error_code'] ?? null );
+        $this->assertSame( 502, $diagnostics['provider_status'] ?? null );
+        $this->assertStringNotContainsString( 'partial output', wp_json_encode( $data ) ?: '' );
+        $this->assertStringNotContainsString( 'Provider disconnected', wp_json_encode( $data ) ?: '' );
     }
 
     /**
@@ -1406,9 +2675,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
 
-        $response = $this->dispatch_site_context_request(
-            'POST',
-            '/sentient-forms/v1/site-context/generate',
+        $job_id = $this->queue_site_context_generation(
             [
                 'consent_status' => 'granted',
                 'generation_model_selection' => [
@@ -1419,13 +2686,14 @@ class SiteContextControllerTest extends WP_UnitTestCase
                 ],
             ]
         );
-        $data = $response->get_data();
 
-        $this->assertSame( 502, $response->get_status() );
-        $this->assertSame( 'site_context_generation_invalid_json', $data['code'] ?? null );
+        $this->assertCount( 0, $calls );
+        $data = $this->run_site_context_generation_job( $job_id );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'site_context_generation_invalid_json', $data['generation_job']['code'] ?? null );
         $this->assertCount( 1, $calls );
 
-        $diagnostics = $data['data']['diagnostics'] ?? null;
+        $diagnostics = $data['generation_job']['diagnostics'] ?? null;
         $this->assertIsArray( $diagnostics );
         $this->assertSame( 'openrouter', $diagnostics['route'] ?? null );
         $this->assertSame( 'openai/gpt-5.5', $diagnostics['model'] ?? null );
@@ -1479,9 +2747,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             3
         );
 
-        $response = $this->dispatch_site_context_request(
-            'POST',
-            '/sentient-forms/v1/site-context/generate',
+        $job_id = $this->queue_site_context_generation(
             [
                 'consent_status' => 'granted',
                 'generation_model_selection' => [
@@ -1492,12 +2758,13 @@ class SiteContextControllerTest extends WP_UnitTestCase
                 ],
             ]
         );
-        $data = $response->get_data();
 
+        $this->assertFalse( $http_called );
+        $data = $this->run_site_context_generation_job( $job_id );
         $this->assertTrue( $http_called );
-        $this->assertSame( 400, $response->get_status() );
-        $this->assertSame( 'openrouter_invalid_json', $data['code'] ?? null );
-        $this->assertSame( 400, $data['data']['status'] ?? null );
+        $this->assertSame( 'failed', $data['generation_job']['status'] ?? null );
+        $this->assertSame( 'openrouter_invalid_json', $data['generation_job']['code'] ?? null );
+        $this->assertSame( 400, $data['generation_job']['status_code'] ?? null );
     }
 
     public function test_generate_context_rejects_empty_decrypted_openrouter_key_before_http(): void
@@ -1687,6 +2954,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertArrayHasKey( 'settings', $properties );
         $this->assertArrayHasKey( 'status', $properties );
         $this->assertArrayHasKey( 'generation_access', $properties );
+        $this->assertArrayHasKey( 'generation_job', $properties );
     }
 
     private function dispatch_site_context_request( string $method, string $path, array $params = [] ): WP_REST_Response
@@ -1699,6 +2967,35 @@ class SiteContextControllerTest extends WP_UnitTestCase
         }
 
         return rest_get_server()->dispatch( $request );
+    }
+
+    private function queue_site_context_generation( array $params ): string
+    {
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            $params
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertNull( $data['context'] ?? null );
+        $this->assertSame( 'queued', $data['generation_job']['status'] ?? null );
+
+        $job_id = (string) ( $data['generation_job']['id'] ?? '' );
+        $this->assertNotSame( '', $job_id );
+
+        return $job_id;
+    }
+
+    private function run_site_context_generation_job( string $job_id ): array
+    {
+        Sentient_Forms_Site_Context_Controller::run_scheduled_manual_generation( $job_id );
+
+        $response = $this->dispatch_site_context_request( 'GET', '/sentient-forms/v1/site-context' );
+        $this->assertSame( 200, $response->get_status() );
+
+        return $response->get_data();
     }
 
     private function create_openrouter_credential( string $status = 'valid', array $status_json_overrides = [] ): int
@@ -1846,11 +3143,11 @@ class SiteContextControllerTest extends WP_UnitTestCase
         return $count;
     }
 
-    private function mock_openrouter_site_context_generation( array &$calls, ?string $content_override = null, array $response_overrides = [] ): void
+    private function mock_openrouter_site_context_generation( array &$calls, ?string $content_override = null, array $response_overrides = [], ?callable $before_response = null ): void
     {
         add_filter(
             'pre_http_request',
-            static function ( $preempt, array $args, string $url ) use ( &$calls, $content_override, $response_overrides ) {
+            static function ( $preempt, array $args, string $url ) use ( &$calls, $content_override, $response_overrides, $before_response ) {
                 $calls[] = [
                     'args' => $args,
                     'url'  => $url,
@@ -1886,6 +3183,11 @@ class SiteContextControllerTest extends WP_UnitTestCase
                         'total_tokens' => (int) ( $response_overrides['total_tokens'] ?? 42 ),
                     ],
                 ];
+
+                if ( null !== $before_response )
+                {
+                    $before_response();
+                }
 
                 return [
                     'headers'  => [],

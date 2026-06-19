@@ -6,6 +6,7 @@ import {
 	normalizeSiteContextResponse,
 	siteContextModelSelectionChanged
 } from '$lib/utils/site-context';
+import { parseSiteContextStatusResponse } from '$lib/schemas/site-context';
 
 describe('normalizeSiteContextResponse', () => {
 	it('does not claim consent is missing for legacy context responses with consent acknowledged', () => {
@@ -50,6 +51,172 @@ describe('normalizeSiteContextResponse', () => {
 		expect(status.generation_access.setup_target).toBe('providers');
 		expect(status.generation_access.provider).toBe('openrouter');
 		expect(status.generation_access.model).toBe('openai/gpt-5.5');
+	});
+
+	it('preserves latest-alias model selection, reasoning, tools, and background job state through schema parsing', () => {
+		const status = parseSiteContextStatusResponse({
+			context: null,
+			settings: {
+				consent_status: 'granted',
+				consented_at: '2026-06-18T00:00:00Z',
+				declined_at: null,
+				auto_refresh_enabled: false,
+				auto_refresh_days: 30,
+				next_refresh_at: null,
+				last_generated_at: null,
+				last_error: null,
+				generation_model_selection: {
+					primary: '~google/gemini-pro-latest',
+					is_preset: false,
+					provider: 'openrouter',
+					credential_id: 1,
+					reasoning: {
+						effort: 'xhigh',
+						exclude: true
+					},
+					tools: {
+						tool_choice: 'auto',
+						web_search: { mode: 'required', max_results: 5 },
+						web_fetch: { mode: 'off' },
+						datetime: { mode: 'required' }
+					}
+				}
+			},
+			has_context: false,
+			is_empty: true,
+			is_stale: false,
+			stale_after_days: 90,
+			status: 'empty',
+			generation_access: {
+				can_generate: true,
+				reason_code: 'ready',
+				message: 'Ready.',
+				setup_target: null,
+				provider: 'openrouter',
+				model: '~google/gemini-pro-latest',
+				credential_id: 1
+			},
+			generation_job: {
+				id: 'site-context-abc',
+				status: 'running',
+				requested_at: '2026-06-18T00:00:00Z',
+				started_at: '2026-06-18T00:00:01Z',
+				finished_at: null,
+				error: null,
+				status_code: 0,
+				attempts: 1,
+				max_attempts: 2
+			}
+		});
+
+		expect(status.settings.generation_model_selection).toMatchObject({
+			primary: '~google/gemini-pro-latest',
+			provider: 'openrouter',
+			credential_id: 1,
+			reasoning: {
+				effort: 'xhigh',
+				exclude: true
+			},
+			tools: {
+				tool_choice: 'auto',
+				web_search: { mode: 'required', max_results: 5 },
+				web_fetch: { mode: 'off' },
+				datetime: { mode: 'required' }
+			}
+		});
+		expect(status.generation_job).toMatchObject({
+			id: 'site-context-abc',
+			status: 'running',
+			status_code: 0,
+			attempts: 1,
+			max_attempts: 2
+		});
+	});
+
+	it('clamps legacy saved Site Context web-search depth during schema parsing', () => {
+		const status = parseSiteContextStatusResponse({
+			context: null,
+			settings: {
+				consent_status: 'granted',
+				consented_at: '2026-06-18T00:00:00Z',
+				declined_at: null,
+				auto_refresh_enabled: false,
+				auto_refresh_days: 30,
+				next_refresh_at: null,
+				last_generated_at: null,
+				last_error: null,
+				generation_model_selection: {
+					primary: '~google/gemini-pro-latest',
+					is_preset: false,
+					provider: 'openrouter',
+					credential_id: 1,
+					tools: {
+						tool_choice: 'auto',
+						web_search: { mode: 'required', max_results: 8 }
+					}
+				}
+			},
+			has_context: false,
+			is_empty: true,
+			is_stale: false,
+			stale_after_days: 90,
+			status: 'empty',
+			generation_access: {
+				can_generate: true,
+				reason_code: 'ready',
+				message: 'Ready.',
+				setup_target: null,
+				provider: 'openrouter',
+				model: '~google/gemini-pro-latest',
+				credential_id: 1
+			},
+			generation_job: null
+		});
+
+		expect(status.settings.generation_model_selection?.tools).toMatchObject({
+			web_search: { mode: 'required', max_results: 5 }
+		});
+	});
+
+	it('accepts empty generation job diagnostics arrays from PHP responses', () => {
+		const status = parseSiteContextStatusResponse({
+			context: null,
+			settings: {
+				consent_status: 'granted',
+				consented_at: '2026-06-18T00:00:00Z',
+				declined_at: null,
+				auto_refresh_enabled: false,
+				auto_refresh_days: 30,
+				next_refresh_at: null,
+				last_generated_at: null,
+				last_error: null
+			},
+			has_context: false,
+			is_empty: true,
+			is_stale: false,
+			stale_after_days: 90,
+			status: 'empty',
+			generation_access: {
+				can_generate: true,
+				reason_code: 'ready',
+				message: 'Ready.',
+				setup_target: null,
+				provider: 'openrouter',
+				model: 'openai/gpt-5.5',
+				credential_id: 1
+			},
+			generation_job: {
+				id: 'site-context-queued',
+				status: 'queued',
+				requested_at: '2026-06-18T00:00:00Z',
+				started_at: null,
+				finished_at: null,
+				error: null,
+				diagnostics: []
+			}
+		});
+
+		expect(status.generation_job?.diagnostics).toEqual({});
 	});
 });
 
