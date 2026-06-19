@@ -324,6 +324,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $this->get_stored_context()
         );
 
+        $this->cancel_active_manual_generation_job();
         update_option( self::OPTION_NAME, $context, false );
         update_option( self::SETTINGS_OPTION_NAME, $settings, false );
         $this->sync_refresh_schedule( $settings );
@@ -1218,6 +1219,23 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         {
             return;
         }
+
+        $job_id = sanitize_text_field( (string) ( $job['id'] ?? '' ) );
+        if ( '' === $job_id )
+        {
+            return;
+        }
+        $worker_id = is_scalar( $job['worker_id'] ?? null ) ? (string) $job['worker_id'] : null;
+        $current_job = $this->get_generation_job_record();
+        if ( ! $this->generation_job_matches( $current_job, $job_id, $status ) )
+        {
+            return;
+        }
+        if ( 'running' === $status && (string) ( $current_job['worker_id'] ?? '' ) !== (string) $worker_id )
+        {
+            return;
+        }
+        $job = $current_job;
 
         $message = 'running' === $status
             ? __( 'Site Context generation timed out in the background.', 'sentient-forms' )

@@ -250,14 +250,19 @@
 		loading = true;
 		error = null;
 		try {
-			syncFromStatus(
-				parseSiteContextResponse(await wpFetch<SiteContextStatusResponse>('site-context'))
+			const next = parseSiteContextResponse(
+				await wpFetch<SiteContextStatusResponse>('site-context')
 			);
+			if (!mounted) return;
+			syncFromStatus(next);
 		} catch (e) {
+			if (!mounted) return;
 			console.error('Failed to load Site Context', e);
 			error = readableError(e, 'Failed to load Site Context');
 		} finally {
-			loading = false;
+			if (mounted) {
+				loading = false;
+			}
 		}
 	}
 

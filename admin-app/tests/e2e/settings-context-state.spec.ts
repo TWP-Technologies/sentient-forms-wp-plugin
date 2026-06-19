@@ -587,6 +587,100 @@ test.describe('Settings context state templates', () => {
 		expect(pollRequests).toBe(0);
 	});
 
+	test('does not recreate background generation toast when initial load resolves after navigation', async ({
+		page
+	}) => {
+		let loadRequests = 0;
+		let pollRequests = 0;
+		let releaseInitialLoad: (() => void) | null = null;
+
+		const readyEmptyStatus = {
+			context: null,
+			settings: {
+				consent_status: 'granted',
+				consented_at: '2026-05-28T00:00:00Z',
+				declined_at: null,
+				auto_refresh_enabled: false,
+				auto_refresh_days: 30,
+				next_refresh_at: null,
+				last_generated_at: null,
+				last_error: null,
+				generation_model_selection: {
+					primary: 'openai/gpt-5.5',
+					is_preset: false,
+					provider: 'openrouter',
+					credential_id: 12
+				}
+			},
+			has_context: false,
+			is_empty: true,
+			is_stale: false,
+			stale_after_days: 90,
+			status: 'empty',
+			generation_access: {
+				can_generate: true,
+				reason_code: 'ready',
+				message: 'Site Context generation is ready through your OpenRouter key.',
+				setup_target: null,
+				provider: 'openrouter',
+				model: 'openai/gpt-5.5',
+				credential_id: 12
+			},
+			generation_job: null
+		};
+
+		await page.route('**/wp-json/sentient-forms/v1/site-context**', async (route) => {
+			const request = route.request();
+			if (request.method() === 'GET') {
+				loadRequests += 1;
+				if (loadRequests === 1) {
+					await new Promise<void>((resolve) => {
+						releaseInitialLoad = resolve;
+					});
+					return route.fulfill({
+						status: 200,
+						contentType: 'application/json',
+						body: JSON.stringify({
+							...readyEmptyStatus,
+							generation_job: {
+								id: 'job-site-context-load-navigation',
+								status: 'running',
+								requested_at: '2026-05-28T00:00:00Z',
+								started_at: '2026-05-28T00:00:01Z',
+								finished_at: null,
+								error: null,
+								model: 'openai/gpt-5.5',
+								provider: 'openrouter',
+								tools: ['web_search']
+							}
+						})
+					});
+				}
+
+				pollRequests += 1;
+			}
+
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(readyEmptyStatus)
+			});
+		});
+
+		await page.goto('/#/settings/context', { waitUntil: 'domcontentloaded' });
+		await expect(page.getByTestId('site-context-loading-state')).toBeVisible();
+		await page.getByRole('link', { name: 'Providers' }).click();
+		await expect(page).toHaveURL(/\/providers$/);
+		expect(releaseInitialLoad).not.toBeNull();
+		releaseInitialLoad?.();
+
+		await expect(
+			page.getByText('Site Context generation is running in the background.')
+		).toHaveCount(0);
+		await page.waitForTimeout(3_500);
+		expect(pollRequests).toBe(0);
+	});
+
 	test('dismisses background generation toast when a save cancels the active job', async ({
 		page
 	}) => {

@@ -96,6 +96,50 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertFalse( $http_called );
     }
 
+    public function test_create_context_cancels_active_generation_job_before_storing_local_context(): void
+    {
+        $credential_id = $this->create_openrouter_credential();
+        $this->cache_openrouter_all_server_tool_model( 'openai/gpt-5.5' );
+        $calls = [];
+        $this->mock_openrouter_site_context_generation( $calls );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context',
+            [
+                'pii_ack' => true,
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'       => 'openai/gpt-5.5',
+                    'provider'      => 'openrouter',
+                    'credential_id' => $credential_id,
+                    'is_preset'     => false,
+                ],
+            ]
+        );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertFalse( get_option( 'sentient_forms_site_context_generation_job' ) );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertCount( 0, $calls );
+        $this->assertSame( 'local_starter', $data['context']['source'] ?? null );
+        $this->assertNull( $data['generation_job'] ?? null );
+    }
+
     public function test_update_context_persists_manual_local_context(): void
     {
         update_option(
@@ -1439,6 +1483,52 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 'queued', $data['generation_job']['status'] ?? null );
         $this->assertNull( $data['generation_job']['error'] ?? null );
         $this->assertNull( $data['generation_job']['code'] ?? null );
+    }
+
+    public function test_stale_generation_job_failure_does_not_overwrite_completed_job(): void
+    {
+        $stale_job = [
+            'id'           => 'stale-job-id',
+            'status'       => 'queued',
+            'requested_at' => '2000-01-01 00:00:00',
+            'started_at'   => null,
+            'finished_at'  => null,
+            'error'        => null,
+            'code'         => null,
+            'status_code'  => null,
+            'diagnostics'  => [],
+        ];
+        $completed_job = [
+            'id'           => 'stale-job-id',
+            'status'       => 'succeeded',
+            'requested_at' => '2000-01-01 00:00:00',
+            'started_at'   => '2000-01-01 00:00:01',
+            'finished_at'  => current_time( 'mysql' ),
+            'error'        => null,
+            'code'         => null,
+            'status_code'  => null,
+            'diagnostics'  => [],
+        ];
+        update_option( 'sentient_forms_site_context_generation_job', $completed_job, false );
+
+        $reads = 0;
+        $filter = static function ( $pre ) use ( &$reads, $stale_job ) {
+            $reads++;
+
+            return 1 === $reads ? $stale_job : $pre;
+        };
+        add_filter(
+            'pre_option_sentient_forms_site_context_generation_job',
+            $filter
+        );
+
+        $data = $this->dispatch_site_context_request( 'GET', '/sentient-forms/v1/site-context' )->get_data();
+        remove_filter( 'pre_option_sentient_forms_site_context_generation_job', $filter );
+
+        $this->assertSame( 'stale-job-id', $data['generation_job']['id'] ?? null );
+        $this->assertSame( 'succeeded', $data['generation_job']['status'] ?? null );
+        $this->assertNull( $data['generation_job']['error'] ?? null );
+        $this->assertSame( 'succeeded', get_option( 'sentient_forms_site_context_generation_job' )['status'] ?? null );
     }
 
     public function test_generate_context_omits_unsupported_optional_openrouter_parameters(): void
