@@ -127,6 +127,11 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
                 continue;
             }
 
+            if ( is_object( $value ) )
+            {
+                $value = $this->normalize_object_value( $value );
+            }
+
             if ( is_array( $value ) )
             {
                 $redacted[ $field_key ] = $this->redact_array( $value, $redacted_fields );
@@ -142,6 +147,16 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
         }
 
         return $redacted;
+    }
+
+    private function normalize_object_value( object $value ): mixed
+    {
+        if ( $value instanceof JsonSerializable )
+        {
+            return $value->jsonSerialize();
+        }
+
+        return get_object_vars( $value );
     }
 
     private function is_sensitive_key( string $key ): bool

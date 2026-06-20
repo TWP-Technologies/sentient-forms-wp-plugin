@@ -25,6 +25,7 @@ export function formatSubmissionLedgerFieldPreview(record: SubmissionLedgerRecor
 export function safeSubmissionNativeEntryUrl(value: string | null | undefined): string | null {
 	const trimmed = typeof value === 'string' ? value.trim() : '';
 	if (!trimmed) return null;
+	if (trimmed.startsWith('//')) return null;
 	if (trimmed.startsWith('/')) return trimmed;
 
 	try {

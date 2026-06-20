@@ -4985,6 +4985,62 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'https://example.test/uploads/spec.pdf', $record['file_refs_json'][0]['url'] ?? null );
     }
 
+    public function test_submission_ledger_preserves_composite_child_inputs_when_parent_value_is_empty(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+
+        $this->assertIsArray( $ledger_settings->set_enabled( 'gravity_forms', '322', true, 1 ) );
+
+        $this->adapter->handle_after_submission_entry_post_save(
+            [
+                'id'           => 908,
+                'form_id'      => 322,
+                '3'            => '',
+                '3.1'          => 'Lead scoring',
+                '3.2'          => 'Spam detection',
+                '3.3'          => '',
+                'date_created' => '2026-06-19 02:30:00',
+            ],
+            [
+                'id'     => 322,
+                'title'  => 'Composite Ledger Form',
+                'fields' => [
+                    (object) [
+                        'id'     => 3,
+                        'label'  => 'Preferred services',
+                        'type'   => 'checkbox',
+                        'inputs' => [
+                            [
+                                'id'    => '3.1',
+                                'label' => 'Lead scoring',
+                            ],
+                            [
+                                'id'    => '3.2',
+                                'label' => 'Spam detection',
+                            ],
+                            [
+                                'id'    => '3.3',
+                                'label' => 'Entry summary',
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $records = $ledger->list_for_form( 'gravity_forms', '322' );
+        $this->assertCount( 1, $records );
+        $this->assertSame( 'Lead scoring', $records[0]['logical_fields_json']['preferred_services']['3_1'] ?? null );
+        $this->assertSame( 'Spam detection', $records[0]['logical_fields_json']['preferred_services']['3_2'] ?? null );
+        $this->assertArrayNotHasKey( '3_3', $records[0]['logical_fields_json']['preferred_services'] ?? [] );
+    }
+
     public function test_async_spam_webhooks_hold_feeds_until_classification_when_suppression_enabled(): void
     {
         $form_id    = 3301;

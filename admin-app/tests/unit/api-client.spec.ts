@@ -973,6 +973,52 @@ describe('SentientFormsApiClient', () => {
 		expect(result.total).toBe(1);
 	});
 
+	it('normalizes nullable ledger JSON containers from PHP responses', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						form_source: 'gravity_forms',
+						form_id: 42,
+						records: [
+							{
+								id: 11,
+								submission_uuid: '123e4567-e89b-12d3-a456-426614174000',
+								form_source: 'gravity_forms',
+								form_id: 42,
+								native_entry_id: '99',
+								native_entry_url: null,
+								source_submitted_at: null,
+								captured_at: '2030-01-05T10:00:01Z',
+								logical_fields: { email: 'redacted' },
+								provider_metadata: null,
+								file_refs: null,
+								redaction_summary: null,
+								expires_at: null,
+								detail_endpoint:
+									'/sentient-forms/v1/gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000'
+							}
+						],
+						total: 1,
+						per_page: 10,
+						offset: 0
+					}
+				})
+		});
+
+		const result = await client.getSubmissionLedgerRecords('gravity_forms', 42, {
+			showNotifications: false
+		});
+
+		expect(result.records[0]?.provider_metadata).toEqual({});
+		expect(result.records[0]?.file_refs).toEqual([]);
+		expect(result.records[0]?.redaction_summary).toEqual({});
+	});
+
 	it('rejects malformed submission ledger settings responses', async () => {
 		mockFetch.mockResolvedValue(
 			jsonResponse({

@@ -114,4 +114,38 @@ class Tests_Submission_Ledger_Capture extends WP_UnitTestCase
         $this->assertNotSame( 'not-a-uuid', $result['submission_uuid'] ?? null );
         $this->assertNotNull( $ledger->get_by_submission_uuid( (string) $result['submission_uuid'] ) );
     }
+
+    public function test_capture_preserves_json_serializable_structured_logical_values(): void
+    {
+        $settings        = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );
+        $service         = new Sentient_Forms_Submission_Ledger_Capture_Service( $this->wpdb );
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $this->wpdb );
+        $submission_uuid = wp_generate_uuid4();
+
+        $settings->set_enabled( 'future_forms', 'structured-entry', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $address             = new stdClass();
+        $address->street     = '100 Future Adapter Way';
+        $address->city       = 'Austin';
+        $address->csrf_token = 'do-not-store';
+
+        $result = $service->capture(
+            [
+                'submission_uuid' => $submission_uuid,
+                'form_source'     => 'future_forms',
+                'form_id'         => 'structured-entry',
+                'native_entry_id' => 'opaque-123',
+                'logical_fields'  => [
+                    'address' => $address,
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+
+        $stored = $ledger->get_by_submission_uuid( $submission_uuid );
+        $this->assertSame( '100 Future Adapter Way', $stored['logical_fields_json']['address']['street'] ?? null );
+        $this->assertSame( 'Austin', $stored['logical_fields_json']['address']['city'] ?? null );
+        $this->assertSame( '[redacted]', $stored['logical_fields_json']['address']['csrf_token'] ?? null );
+    }
 }

@@ -415,7 +415,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 $field_key = sanitize_key( $field_key . '_field_' . str_replace( '.', '_', $field_id ) );
             }
             $value     = $this->submission_ledger_entry_value_for_field( $entry, $field );
-            if ( null === $value || '' === $value || [] === $value )
+            if ( $this->submission_ledger_value_is_empty( $value ) )
             {
                 continue;
             }
@@ -486,13 +486,34 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $field_id = $this->extract_gravity_field_property( $field, 'id' );
         if ( '' !== $field_id && array_key_exists( $field_id, $entry ) )
         {
-            return $entry[ $field_id ];
+            $direct_value = $entry[ $field_id ];
+            if ( ! $this->submission_ledger_value_is_empty( $direct_value ) )
+            {
+                return $direct_value;
+            }
+
+            $input_values = $this->submission_ledger_entry_input_values_for_field( $entry, $field );
+
+            return [] !== $input_values ? $input_values : $direct_value;
         }
 
+        return $this->submission_ledger_entry_input_values_for_field( $entry, $field );
+    }
+
+    private function submission_ledger_value_is_empty( mixed $value ): bool
+    {
+        return null === $value || '' === $value || [] === $value;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function submission_ledger_entry_input_values_for_field( array $entry, mixed $field ): array
+    {
         $input_values = [];
         foreach ( $this->submission_ledger_field_input_ids( $field ) as $input_id )
         {
-            if ( array_key_exists( $input_id, $entry ) )
+            if ( array_key_exists( $input_id, $entry ) && ! $this->submission_ledger_value_is_empty( $entry[ $input_id ] ) )
             {
                 $input_values[ str_replace( '.', '_', $input_id ) ] = $entry[ $input_id ];
             }

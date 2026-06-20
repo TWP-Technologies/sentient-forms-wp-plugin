@@ -39,6 +39,7 @@ describe('submission ledger utils', () => {
 
 	it('suppresses unsafe native entry links', () => {
 		expect(safeSubmissionNativeEntryUrl('javascript:alert(1)')).toBeNull();
+		expect(safeSubmissionNativeEntryUrl('//evil.example/phish')).toBeNull();
 		expect(safeSubmissionNativeEntryUrl('https://example.test/wp-admin/admin.php?page=gf_entries')).toBe(
 			'https://example.test/wp-admin/admin.php?page=gf_entries'
 		);

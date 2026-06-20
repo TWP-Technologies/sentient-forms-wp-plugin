@@ -149,6 +149,8 @@ const nullableScalarStringSchema = z
 	.union([z.string(), z.number(), z.null()])
 	.transform((value) => (value === null ? null : String(value)));
 const jsonRecordSchema = z.record(z.string(), z.unknown());
+const nullishJsonRecordSchema = jsonRecordSchema.nullish().transform((value) => value ?? {});
+const nullishJsonRecordArraySchema = z.array(jsonRecordSchema).nullish().transform((value) => value ?? []);
 const submissionLedgerRecordSchema = z.object({
 	id: z.coerce.number().int(),
 	submission_uuid: z.string(),
@@ -159,9 +161,9 @@ const submissionLedgerRecordSchema = z.object({
 	source_submitted_at: z.string().nullable(),
 	captured_at: z.string(),
 	logical_fields: jsonRecordSchema,
-	provider_metadata: jsonRecordSchema,
-	file_refs: z.array(jsonRecordSchema),
-	redaction_summary: jsonRecordSchema,
+	provider_metadata: nullishJsonRecordSchema,
+	file_refs: nullishJsonRecordArraySchema,
+	redaction_summary: nullishJsonRecordSchema,
 	expires_at: z.string().nullable(),
 	detail_endpoint: z.string()
 });
