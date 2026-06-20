@@ -54,9 +54,27 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
 {
     private Sentient_Forms_Realtime_Qna_Admin_Display $display;
 
+    /** @var array<string,int|null> */
+    private array $original_action_counts = [];
+
+    /** @var WP_Screen|null */
+    private $original_current_screen = null;
+
+    private bool $had_original_current_screen = false;
+
+    /** @var array<int,int> */
+    private array $original_ajax_filter_priorities = [];
+
+    /** @var array<string,array<string,mixed>> */
+    private array $original_qna_asset_state = [];
+
     public function set_up(): void
     {
         parent::set_up();
+
+        $this->original_action_counts = $this->capture_action_counts();
+        $this->capture_global_state();
+        $this->capture_qna_asset_state();
 
         if ( property_exists( 'GFAPI', 'forms' ) )
         {
@@ -78,6 +96,9 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
     public function tear_down(): void
     {
         $_GET = [];
+        $this->restore_qna_asset_state();
+        $this->restore_action_counts();
+        $this->restore_global_state();
 
         parent::tear_down();
     }
@@ -203,6 +224,385 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertStringContainsString( 'data-sf-qna-card-toggle', $html );
         $this->assertStringContainsString( 'aria-label="Hide details for What budget range should we plan around?"', $html );
         $this->assertSame( 2, substr_count( $html, 'data-sf-qna-card ' ) );
+    }
+
+    public function test_entry_detail_admin_render_enqueues_qna_assets(): void
+    {
+        $_GET['page'] = 'gf_entries';
+        set_current_screen( 'dashboard' );
+        $this->reset_qna_assets();
+
+        $form  = $this->form_fixture();
+        $entry = $this->entry_fixture();
+
+        $html = $this->display->format_entry_detail_field_value(
+            $entry['5'],
+            $form['fields'][1],
+            $entry,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $this->assertStringContainsString( 'data-sf-qna-panel', $html );
+        $this->assertTrue( wp_style_is( 'sentient-forms-gravity-qna-admin', 'enqueued' ) );
+        $this->assertTrue( wp_script_is( 'sentient-forms-gravity-qna-admin', 'enqueued' ) );
+    }
+
+    public function test_entry_detail_late_admin_render_includes_qna_assets_around_panel(): void
+    {
+        $_GET['page'] = 'gf_entries';
+        set_current_screen( 'dashboard' );
+        $this->reset_qna_assets();
+        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
+        if ( false !== $emoji_styles_priority )
+        {
+            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        ob_start();
+        do_action( 'admin_print_styles' );
+        ob_end_clean();
+        if ( false !== $emoji_styles_priority )
+        {
+            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+        $this->mark_qna_script_done();
+
+        $form  = $this->form_fixture();
+        $entry = $this->entry_fixture();
+
+        $html = $this->display->format_entry_detail_field_value(
+            $entry['5'],
+            $form['fields'][1],
+            $entry,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $stylesheet_position = strpos( $html, 'sentient-forms-gravity-qna-admin-css' );
+        $panel_position      = strpos( $html, 'data-sf-qna-panel' );
+        $script_position     = strpos( $html, 'sentientFormsGravityQnaAdminInit' );
+
+        $this->assertIsInt( $stylesheet_position );
+        $this->assertIsInt( $panel_position );
+        $this->assertIsInt( $script_position );
+        $this->assertLessThan( $panel_position, $stylesheet_position );
+        $this->assertGreaterThan( $panel_position, $script_position );
+    }
+
+    public function test_entry_detail_late_styles_print_script_without_global_script_action(): void
+    {
+        $_GET['page'] = 'gf_entries';
+        set_current_screen( 'dashboard' );
+        $this->reset_qna_assets();
+        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
+        if ( false !== $emoji_styles_priority )
+        {
+            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        ob_start();
+        do_action( 'admin_print_styles' );
+        ob_end_clean();
+        if ( false !== $emoji_styles_priority )
+        {
+            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        $form  = $this->form_fixture();
+        $entry = $this->entry_fixture();
+        $script_prints_before = did_action( 'wp_print_scripts' );
+
+        $html = $this->display->format_entry_detail_field_value(
+            $entry['5'],
+            $form['fields'][1],
+            $entry,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $this->assertStringContainsString( 'sentient-forms-gravity-qna-admin-css', $html );
+        $this->assertStringContainsString( 'sentient-forms-gravity-qna-admin-js', $html );
+        $this->assertStringContainsString( 'sentientFormsGravityQnaAdminInit', $html );
+        $this->assertTrue( wp_script_is( 'sentient-forms-gravity-qna-admin', 'done' ) );
+        $this->assertSame( $script_prints_before, did_action( 'wp_print_scripts' ) );
+    }
+
+    public function test_entry_detail_late_script_fallback_uses_registered_loader_pipeline(): void
+    {
+        $_GET['page'] = 'gf_entries';
+        set_current_screen( 'dashboard' );
+        $this->reset_qna_assets();
+        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
+        if ( false !== $emoji_styles_priority )
+        {
+            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        ob_start();
+        do_action( 'admin_print_styles' );
+        ob_end_clean();
+        if ( false !== $emoji_styles_priority )
+        {
+            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        $loader_filter = static function ( string $tag, string $handle, string $src ): string {
+            if ( 'sentient-forms-gravity-qna-admin' !== $handle )
+            {
+                return $tag;
+            }
+
+            return str_replace( '<script ', '<script data-qna-loader-filter="applied" ', $tag );
+        };
+        add_filter( 'script_loader_tag', $loader_filter, 10, 3 );
+
+        $form  = $this->form_fixture();
+        $entry = $this->entry_fixture();
+
+        try
+        {
+            $html = $this->display->format_entry_detail_field_value(
+                $entry['5'],
+                $form['fields'][1],
+                $entry,
+                $form
+            );
+        }
+        finally
+        {
+            remove_filter( 'script_loader_tag', $loader_filter, 10 );
+        }
+
+        $this->assertIsString( $html );
+        $this->assertStringContainsString( 'sentient-forms-gravity-qna-admin-js', $html );
+        $this->assertStringContainsString( 'data-qna-loader-filter="applied"', $html );
+    }
+
+    public function test_entry_detail_multiple_late_panels_each_get_qna_script_bootstrap(): void
+    {
+        $_GET['page'] = 'gf_entries';
+        set_current_screen( 'dashboard' );
+        $this->reset_qna_assets();
+        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
+        if ( false !== $emoji_styles_priority )
+        {
+            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        ob_start();
+        do_action( 'admin_print_styles' );
+        ob_end_clean();
+        if ( false !== $emoji_styles_priority )
+        {
+            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+        $this->mark_qna_script_done();
+
+        $form       = $this->form_fixture();
+        $first      = $this->entry_fixture();
+        $second     = $this->entry_fixture();
+        $second['id'] = 183;
+
+        $html = $this->display->format_entry_detail_field_value(
+            $first['5'],
+            $form['fields'][1],
+            $first,
+            $form
+        );
+        $html .= $this->display->format_entry_detail_field_value(
+            $second['5'],
+            $form['fields'][1],
+            $second,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $first_panel_position      = strpos( $html, 'data-sf-qna-panel' );
+        $first_bootstrap_position  = strpos( $html, 'sentientFormsGravityQnaAdminInit' );
+        $second_panel_position     = strpos( $html, 'data-sf-qna-panel', $first_panel_position + 1 );
+        $second_bootstrap_position = strpos( $html, 'sentientFormsGravityQnaAdminInit', $first_bootstrap_position + 1 );
+
+        $this->assertIsInt( $first_panel_position );
+        $this->assertIsInt( $first_bootstrap_position );
+        $this->assertIsInt( $second_panel_position );
+        $this->assertIsInt( $second_bootstrap_position );
+        $this->assertGreaterThan( $first_panel_position, $first_bootstrap_position );
+        $this->assertGreaterThan( $second_panel_position, $second_bootstrap_position );
+    }
+
+    public function test_entry_detail_ajax_render_includes_qna_script_without_footer_prints(): void
+    {
+        $_GET['page'] = 'gf_entries';
+        set_current_screen( 'dashboard' );
+        $this->reset_qna_assets();
+        add_filter( 'wp_doing_ajax', '__return_true' );
+        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
+        if ( false !== $emoji_styles_priority )
+        {
+            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        ob_start();
+        do_action( 'admin_print_styles' );
+        ob_end_clean();
+        if ( false !== $emoji_styles_priority )
+        {
+            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        $form  = $this->form_fixture();
+        $entry = $this->entry_fixture();
+        $script_prints_before = did_action( 'wp_print_scripts' );
+
+        $html = $this->display->format_entry_detail_field_value(
+            $entry['5'],
+            $form['fields'][1],
+            $entry,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $this->assertStringContainsString( 'sentient-forms-gravity-qna-admin-css', $html );
+        $this->assertStringContainsString( 'sentient-forms-gravity-qna-admin-js', $html );
+        $this->assertStringContainsString( 'sentientFormsGravityQnaAdminInit', $html );
+        $this->assertSame( $script_prints_before, did_action( 'wp_print_scripts' ) );
+    }
+
+    public function test_entry_detail_ajax_fragment_before_admin_styles_includes_qna_script(): void
+    {
+        $_GET['page'] = 'gf_entries';
+        set_current_screen( 'dashboard' );
+        $this->reset_qna_assets();
+        add_filter( 'wp_doing_ajax', '__return_true' );
+
+        $form  = $this->form_fixture();
+        $entry = $this->entry_fixture();
+        $script_prints_before = did_action( 'wp_print_scripts' );
+
+        $this->assertSame( 0, did_action( 'admin_print_styles' ) );
+
+        $html = $this->display->format_entry_detail_field_value(
+            $entry['5'],
+            $form['fields'][1],
+            $entry,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $stylesheet_position = strpos( $html, 'sentient-forms-gravity-qna-admin-css' );
+        $panel_position      = strpos( $html, 'data-sf-qna-panel' );
+
+        $this->assertIsInt( $stylesheet_position );
+        $this->assertIsInt( $panel_position );
+        $this->assertLessThan( $panel_position, $stylesheet_position );
+        $this->assertStringContainsString( 'sentient-forms-gravity-qna-admin-js', $html );
+        $this->assertStringContainsString( 'sentientFormsGravityQnaAdminInit', $html );
+        $this->assertTrue( wp_style_is( 'sentient-forms-gravity-qna-admin', 'enqueued' ) );
+        $this->assertTrue( wp_script_is( 'sentient-forms-gravity-qna-admin', 'done' ) );
+        $this->assertSame( $script_prints_before, did_action( 'wp_print_scripts' ) );
+    }
+
+    public function test_entry_detail_ajax_multiple_panels_load_external_script_once(): void
+    {
+        $_GET['page'] = 'gf_entries';
+        set_current_screen( 'dashboard' );
+        $this->reset_qna_assets();
+        add_filter( 'wp_doing_ajax', '__return_true' );
+        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
+        if ( false !== $emoji_styles_priority )
+        {
+            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        ob_start();
+        do_action( 'admin_print_styles' );
+        ob_end_clean();
+        if ( false !== $emoji_styles_priority )
+        {
+            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        $form       = $this->form_fixture();
+        $first      = $this->entry_fixture();
+        $second     = $this->entry_fixture();
+        $second['id'] = 183;
+
+        $html = $this->display->format_entry_detail_field_value(
+            $first['5'],
+            $form['fields'][1],
+            $first,
+            $form
+        );
+        $html .= $this->display->format_entry_detail_field_value(
+            $second['5'],
+            $form['fields'][1],
+            $second,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $this->assertSame( 1, substr_count( $html, 'sentient-forms-gravity-qna-admin-js' ) );
+        $this->assertSame( 2, substr_count( $html, 'sentientFormsGravityQnaAdminInit' ) );
+    }
+
+    public function test_entry_detail_late_script_fallback_does_not_fire_global_script_print_action(): void
+    {
+        $_GET['page'] = 'gf_entries';
+        set_current_screen( 'dashboard' );
+        $this->reset_qna_assets();
+        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
+        if ( false !== $emoji_styles_priority )
+        {
+            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        ob_start();
+        do_action( 'admin_print_styles' );
+        ob_end_clean();
+        if ( false !== $emoji_styles_priority )
+        {
+            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+        $GLOBALS['wp_actions']['admin_print_footer_scripts'] = 1;
+
+        $form  = $this->form_fixture();
+        $entry = $this->entry_fixture();
+        $script_prints_before = did_action( 'wp_print_scripts' );
+
+        $html = $this->display->format_entry_detail_field_value(
+            $entry['5'],
+            $form['fields'][1],
+            $entry,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $this->assertStringContainsString( 'sentient-forms-gravity-qna-admin-js', $html );
+        $this->assertSame( $script_prints_before, did_action( 'wp_print_scripts' ) );
+    }
+
+    public function test_entry_detail_render_outside_gf_entries_does_not_load_qna_assets(): void
+    {
+        $_GET['page'] = 'plugins';
+        set_current_screen( 'dashboard' );
+        $this->reset_qna_assets();
+
+        $form  = $this->form_fixture();
+        $entry = $this->entry_fixture();
+
+        $html = $this->display->format_entry_detail_field_value(
+            $entry['5'],
+            $form['fields'][1],
+            $entry,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $this->assertStringContainsString( 'data-sf-qna-panel', $html );
+        $this->assertStringNotContainsString( 'sentient-forms-gravity-qna-admin-css', $html );
+        $this->assertFalse( wp_style_is( 'sentient-forms-gravity-qna-admin', 'enqueued' ) );
+        $this->assertFalse( wp_script_is( 'sentient-forms-gravity-qna-admin', 'enqueued' ) );
     }
 
     public function test_entry_detail_high_volume_qna_gets_review_controls_without_losing_questions(): void
@@ -379,6 +779,45 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertStringContainsString( 'Raw data', $html );
     }
 
+    public function test_malformed_entry_detail_admin_render_includes_qna_assets_around_panel(): void
+    {
+        $_GET['page'] = 'gf_entries';
+        set_current_screen( 'dashboard' );
+        $this->reset_qna_assets();
+        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
+        if ( false !== $emoji_styles_priority )
+        {
+            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        ob_start();
+        do_action( 'admin_print_styles' );
+        ob_end_clean();
+        if ( false !== $emoji_styles_priority )
+        {
+            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        $form     = $this->form_fixture();
+        $bad_json = '{"schema":"sentient_forms_realtime_clarification_qna.v1",';
+
+        $html = $this->display->format_entry_detail_field_value(
+            $bad_json,
+            $form['fields'][1],
+            [ 'id' => 27, 'form_id' => 4, '5' => $bad_json ],
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $stylesheet_position = strpos( $html, 'sentient-forms-gravity-qna-admin-css' );
+        $panel_position      = strpos( $html, 'sentient-forms-qna-panel--error' );
+
+        $this->assertIsInt( $stylesheet_position );
+        $this->assertIsInt( $panel_position );
+        $this->assertLessThan( $panel_position, $stylesheet_position );
+        $this->assertStringContainsString( 'sentientFormsGravityQnaAdminInit', $html );
+    }
+
     public function test_empty_storage_value_stays_empty_instead_of_erroring(): void
     {
         $form = $this->form_fixture();
@@ -472,6 +911,228 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
                 ],
             ]
         );
+    }
+
+    private function reset_qna_assets(): void
+    {
+        wp_dequeue_style( 'sentient-forms-gravity-qna-admin' );
+        wp_deregister_style( 'sentient-forms-gravity-qna-admin' );
+        wp_dequeue_script( 'sentient-forms-gravity-qna-admin' );
+        wp_deregister_script( 'sentient-forms-gravity-qna-admin' );
+
+        wp_styles()->done  = array_values( array_diff( wp_styles()->done, [ 'sentient-forms-gravity-qna-admin' ] ) );
+        wp_scripts()->done = array_values( array_diff( wp_scripts()->done, [ 'sentient-forms-gravity-qna-admin' ] ) );
+    }
+
+    /**
+     * @return array<string,int|null>
+     */
+    private function capture_action_counts(): array
+    {
+        $counts = [];
+        foreach ( $this->qna_asset_timing_actions() as $action )
+        {
+            $counts[ $action ] = $GLOBALS['wp_actions'][ $action ] ?? null;
+        }
+
+        return $counts;
+    }
+
+    private function restore_action_counts(): void
+    {
+        foreach ( $this->original_action_counts as $action => $count )
+        {
+            if ( null === $count )
+            {
+                unset( $GLOBALS['wp_actions'][ $action ] );
+                continue;
+            }
+
+            $GLOBALS['wp_actions'][ $action ] = $count;
+        }
+    }
+
+    private function capture_global_state(): void
+    {
+        $this->had_original_current_screen    = array_key_exists( 'current_screen', $GLOBALS );
+        $this->original_current_screen        = $this->had_original_current_screen ? $GLOBALS['current_screen'] : null;
+        $this->original_ajax_filter_priorities = $this->capture_ajax_filter_priorities();
+    }
+
+    private function restore_global_state(): void
+    {
+        foreach ( $this->capture_ajax_filter_priorities() as $priority )
+        {
+            remove_filter( 'wp_doing_ajax', '__return_true', $priority );
+        }
+
+        foreach ( $this->original_ajax_filter_priorities as $priority )
+        {
+            add_filter( 'wp_doing_ajax', '__return_true', $priority );
+        }
+
+        if ( $this->had_original_current_screen )
+        {
+            $GLOBALS['current_screen'] = $this->original_current_screen;
+            return;
+        }
+
+        unset( $GLOBALS['current_screen'] );
+    }
+
+    private function capture_qna_asset_state(): void
+    {
+        $this->original_qna_asset_state = [
+            'styles'  => $this->capture_dependency_handle_state( wp_styles(), 'sentient-forms-gravity-qna-admin' ),
+            'scripts' => $this->capture_dependency_handle_state( wp_scripts(), 'sentient-forms-gravity-qna-admin' ),
+        ];
+    }
+
+    private function restore_qna_asset_state(): void
+    {
+        $this->reset_qna_assets();
+        $this->restore_dependency_handle_state(
+            wp_styles(),
+            'sentient-forms-gravity-qna-admin',
+            $this->original_qna_asset_state['styles']
+        );
+        $this->restore_dependency_handle_state(
+            wp_scripts(),
+            'sentient-forms-gravity-qna-admin',
+            $this->original_qna_asset_state['scripts']
+        );
+    }
+
+    /**
+     * @return array<int,int>
+     */
+    private function capture_ajax_filter_priorities(): array
+    {
+        $priorities = [];
+        $hook       = $GLOBALS['wp_filter']['wp_doing_ajax'] ?? null;
+        $callbacks  = is_object( $hook ) && isset( $hook->callbacks ) ? $hook->callbacks : [];
+
+        foreach ( $callbacks as $priority => $priority_callbacks )
+        {
+            if ( isset( $priority_callbacks['__return_true'] ) )
+            {
+                $priorities[] = (int) $priority;
+            }
+        }
+
+        return $priorities;
+    }
+
+    /**
+     * @param WP_Dependencies $dependencies Dependencies registry.
+     * @return array<string,mixed>
+     */
+    private function capture_dependency_handle_state( $dependencies, string $handle ): array
+    {
+        return [
+            'registered' => isset( $dependencies->registered[ $handle ] ) ? clone $dependencies->registered[ $handle ] : null,
+            'queue'      => in_array( $handle, $dependencies->queue, true ),
+            'to_do'      => in_array( $handle, $dependencies->to_do, true ),
+            'done'       => in_array( $handle, $dependencies->done, true ),
+            'args'       => $this->capture_dependency_handle_metadata( $dependencies, 'args', $handle ),
+            'groups'     => $this->capture_dependency_handle_metadata( $dependencies, 'groups', $handle ),
+        ];
+    }
+
+    /**
+     * @param WP_Dependencies     $dependencies Dependencies registry.
+     * @param array<string,mixed> $state Captured dependency state.
+     */
+    private function restore_dependency_handle_state( $dependencies, string $handle, array $state ): void
+    {
+        if ( null === $state['registered'] )
+        {
+            unset( $dependencies->registered[ $handle ] );
+        }
+        else
+        {
+            $dependencies->registered[ $handle ] = clone $state['registered'];
+        }
+
+        $dependencies->queue = $this->restore_handle_membership( $dependencies->queue, $handle, (bool) $state['queue'] );
+        $dependencies->to_do = $this->restore_handle_membership( $dependencies->to_do, $handle, (bool) $state['to_do'] );
+        $dependencies->done  = $this->restore_handle_membership( $dependencies->done, $handle, (bool) $state['done'] );
+        $this->restore_dependency_handle_metadata( $dependencies, 'args', $handle, $state['args'] );
+        $this->restore_dependency_handle_metadata( $dependencies, 'groups', $handle, $state['groups'] );
+    }
+
+    /**
+     * @param WP_Dependencies $dependencies Dependencies registry.
+     * @return array{exists:bool,value:mixed}
+     */
+    private function capture_dependency_handle_metadata( $dependencies, string $property, string $handle ): array
+    {
+        $values = property_exists( $dependencies, $property ) && is_array( $dependencies->{$property} )
+            ? $dependencies->{$property}
+            : [];
+
+        return [
+            'exists' => array_key_exists( $handle, $values ),
+            'value'  => $values[ $handle ] ?? null,
+        ];
+    }
+
+    /**
+     * @param WP_Dependencies              $dependencies Dependencies registry.
+     * @param array{exists:bool,value:mixed} $state Captured property state.
+     */
+    private function restore_dependency_handle_metadata( $dependencies, string $property, string $handle, array $state ): void
+    {
+        if ( ! property_exists( $dependencies, $property ) || ! is_array( $dependencies->{$property} ) )
+        {
+            return;
+        }
+
+        if ( $state['exists'] )
+        {
+            $dependencies->{$property}[ $handle ] = $state['value'];
+            return;
+        }
+
+        unset( $dependencies->{$property}[ $handle ] );
+    }
+
+    /**
+     * @param array<int,string> $handles Existing handles.
+     * @return array<int,string>
+     */
+    private function restore_handle_membership( array $handles, string $handle, bool $should_exist ): array
+    {
+        $handles = array_values( array_diff( $handles, [ $handle ] ) );
+
+        if ( $should_exist )
+        {
+            $handles[] = $handle;
+        }
+
+        return $handles;
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function qna_asset_timing_actions(): array
+    {
+        return [
+            'admin_print_styles',
+            'admin_print_footer_scripts',
+            'wp_print_footer_scripts',
+            'wp_print_scripts',
+        ];
+    }
+
+    private function mark_qna_script_done(): void
+    {
+        $wp_scripts = wp_scripts();
+        if ( ! in_array( 'sentient-forms-gravity-qna-admin', $wp_scripts->done, true ) )
+        {
+            $wp_scripts->done[] = 'sentient-forms-gravity-qna-admin';
+        }
     }
 
     private function high_volume_payload_fixture( int $count ): string
