@@ -108,7 +108,7 @@
 	import { formatModelSelectionPrimary, formatTemplateModelHint } from '$lib/utils/model-selection';
 	import { wpFetch } from '$lib/wp';
 
-	type Props = { data: { formSourceSlug: string; formId: number } };
+	type Props = { data: { formSourceSlug: string; formId: string } };
 	type CreateKind = 'template' | 'custom' | 'local_openrouter';
 	type LocalBuilderExecutionMode = 'sync' | 'async';
 	type LocalBuilderTemplateKey = 'spam_filter' | 'summary' | 'lead_qualification' | 'sentiment';
@@ -703,7 +703,12 @@
 	let appliedBootstrapKey = $state<string | null>(null);
 	const actionDefaultPreloadIds = new Set<string>();
 
-	function formDetailBootstrapKey(bootstrap: { form_source: string; form_id: number; generated_at: string; actions: unknown[] }): string {
+	function formDetailBootstrapKey(bootstrap: {
+		form_source: string;
+		form_id: string | number;
+		generated_at: string;
+		actions: unknown[];
+	}): string {
 		return `${bootstrap.form_source}:${bootstrap.form_id}:${bootstrap.generated_at}:${bootstrap.actions.length}`;
 	}
 
@@ -1611,6 +1616,8 @@
 	const selectedCustomAction = $derived(
 		selectedCustomId ? (customLookupById[selectedCustomId] ?? null) : null
 	);
+	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
+	const routeFormId = $derived(encodeURIComponent(data.formId));
 	const currentFormTitle = $derived(currentFormSummary?.title?.trim() || `Form #${data.formId}`);
 	const currentFormAdapterLabel = $derived(
 		currentFormSummary?.adapter_name?.trim() ||
@@ -1627,7 +1634,7 @@
 	);
 	const submissionLedgerRecordCount = $derived(submissionLedgerSettings?.record_count ?? 0);
 	const submissionLedgerDetailHref = $derived(
-		appHref(`/actions/${data.formSourceSlug}/${data.formId}/submissions`)
+		appHref(`/actions/${routeFormSourceSlug}/${routeFormId}/submissions`)
 	);
 	const sectionDescription = $derived(`Link actions and execution settings for ${currentFormTitle}.`);
 	const selectedCreateActionLabel = $derived.by(() => {
@@ -3996,7 +4003,7 @@
 			<ButtonLink variant="secondary" href={appHref('/actions')}>All forms</ButtonLink>
 			<ButtonLink
 				variant="secondary"
-				href={appHref(`/actions/${data.formSourceSlug}/${data.formId}/lead-value`)}
+				href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}/lead-value`)}
 			>
 				Lead Scoring
 			</ButtonLink>

@@ -35,7 +35,7 @@ export type MappingDependencyGraphProps = {
 	workflowPlanLoading?: boolean;
 	workflowPlanError?: string | null;
 	formSourceSlug?: string;
-	formId?: number;
+	formId?: string | number;
 	formFields?: FormFieldInfo[];
 	onSetEditingMapping?: (mappingId: string | null) => void;
 	onToggleDependency?: (mappingId: string) => void;

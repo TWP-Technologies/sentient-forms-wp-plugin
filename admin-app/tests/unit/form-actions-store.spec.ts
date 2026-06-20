@@ -272,6 +272,69 @@ describe('formActionsStore', () => {
 		expect(notifySuccessSpy).toHaveBeenCalledWith('Submission ledger storage enabled.');
 	});
 
+	it('updates submission ledger settings for opaque provider-native form IDs', async () => {
+		const opaqueFormId = 'form alpha/2026#north%';
+		stubClient.getFormActions.mockResolvedValue([]);
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+		stubClient.getFormDisabled.mockResolvedValue({
+			sf_disabled: false,
+			global_disabled: false,
+			provider_disabled: false,
+			effective_disabled: false
+		});
+		stubClient.getFormActionsBootstrap.mockResolvedValue({
+			form_source: 'opaque_forms',
+			form_id: opaqueFormId,
+			actions: [],
+			execution_status: noopStatus,
+			disabled_state: {
+				sf_disabled: false,
+				global_disabled: false,
+				provider_disabled: false,
+				effective_disabled: false
+			},
+			ledger_settings: {
+				form_source: 'opaque_forms',
+				form_id: opaqueFormId,
+				enabled: false,
+				enabled_at: null,
+				enabled_by_user_id: null,
+				disabled_at: null,
+				disabled_by_user_id: null,
+				settings_source: 'sentient_submission_ledger_settings',
+				ledger_records_endpoint: '/sentient-forms/v1/opaque_forms/forms/form%20alpha%2F2026%23north%25/submissions',
+				record_count: 0
+			},
+			generated_at: '2030-01-01T00:00:00Z'
+		});
+		stubClient.updateSubmissionLedgerSettings.mockResolvedValue({
+			form_source: 'opaque_forms',
+			form_id: opaqueFormId,
+			enabled: true,
+			enabled_at: '2030-01-01T00:01:00Z',
+			enabled_by_user_id: 7,
+			disabled_at: null,
+			disabled_by_user_id: null,
+			settings_source: 'sentient_submission_ledger_settings',
+			ledger_records_endpoint: '/sentient-forms/v1/opaque_forms/forms/form%20alpha%2F2026%23north%25/submissions',
+			record_count: 0
+		});
+
+		await formActionsStore.load('opaque_forms', opaqueFormId);
+		await formActionsStore.updateSubmissionLedgerSettings('opaque_forms', opaqueFormId, true);
+		const state = snapshotState();
+
+		expect(stubClient.updateSubmissionLedgerSettings).toHaveBeenCalledWith(
+			'opaque_forms',
+			opaqueFormId,
+			true,
+			{ showNotifications: false }
+		);
+		expect(state.bootstrap?.ledger_settings?.form_id).toBe(opaqueFormId);
+		expect(state.bootstrap?.ledger_settings?.enabled).toBe(true);
+	});
+
 	it('ignores stale refresh results after loading a different form', async () => {
 		const formOneStatus: FormExecutionStatus = {
 			status: 'success',

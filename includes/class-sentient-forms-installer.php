@@ -94,6 +94,7 @@ class Sentient_Forms_Installer
     {
         $current = get_option( self::OPTION_DB_VERSION, '' );
         $tables_ready = self::local_first_tables_exist();
+        $should_run_form_source_config_migration = $repair_missing_tables || $current !== SENTIENT_FORMS_DB_VERSION;
 
         if ( $current !== SENTIENT_FORMS_DB_VERSION || ( $repair_missing_tables && ! $tables_ready ) )
         {
@@ -109,7 +110,7 @@ class Sentient_Forms_Installer
         }
 
         self::seed_bundled_action_templates();
-        if ( class_exists( 'Sentient_Forms_Form_Source_Config_Migrator' ) )
+        if ( $should_run_form_source_config_migration && class_exists( 'Sentient_Forms_Form_Source_Config_Migrator' ) )
         {
             Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
         }

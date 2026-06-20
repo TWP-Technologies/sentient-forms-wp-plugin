@@ -1450,7 +1450,7 @@ export interface FormActionConfig {
  */
 export interface FormActionConfigResponse {
 	form_source: string;
-	form_id: number;
+	form_id: string | number;
 	action_id: string;
 	config: FormActionConfig;
 }
@@ -1465,7 +1465,7 @@ export interface ActionDefaultsBatchResponse {
  */
 export interface FormAllActionConfigsResponse {
 	form_source: string;
-	form_id: number;
+	form_id: string | number;
 	configs: Record<string, FormActionConfig>;
 }
 
@@ -1898,7 +1898,7 @@ export interface FormExecutionStatus {
 
 export interface ExecutionStatus {
 	entry_id: number;
-	form_id: number;
+	form_id: string | number;
 	last_response: unknown;
 	last_error: string | null;
 	processed_at: string | null;
@@ -2033,7 +2033,7 @@ export interface SubmissionLedgerRecordsResponse {
 
 export interface FormActionsBootstrapResponse {
 	form_source: string;
-	form_id: number;
+	form_id: string | number;
 	form?: FormSummary | null;
 	form_source_descriptor?: FormSourceDescriptor | null;
 	actions: FormActionLinkage[];
@@ -2139,6 +2139,6 @@ export interface UpdateFormMappingRequest {
 export interface CloneTemplateMappingRequest {
 	site_id: string;
 	form_source: string;
-	form_id: number;
+	form_id: string | number;
 	field_mapping?: Record<string, string>;
 }

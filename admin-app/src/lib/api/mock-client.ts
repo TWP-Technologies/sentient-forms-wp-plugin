@@ -383,7 +383,10 @@ export class MockSentientFormsApiClient {
 		};
 	}
 
-	async getFormActions(_formSourceSlug: string, _formId: number): Promise<FormActionLinkage[]> {
+	async getFormActions(
+		_formSourceSlug: string,
+		_formId: string | number
+	): Promise<FormActionLinkage[]> {
 		return this.formActions;
 	}
 
@@ -480,7 +483,7 @@ export class MockSentientFormsApiClient {
 
 	async getFormActionsBootstrap(
 		formSourceSlug: string,
-		formId: number
+		formId: string | number
 	): Promise<FormActionsBootstrapResponse> {
 		const actions = await this.getFormActions(formSourceSlug, formId);
 		const definitions = await this.getActionDefinitions();
@@ -493,7 +496,7 @@ export class MockSentientFormsApiClient {
 		return {
 			form_source: formSourceSlug,
 			form_id: formId,
-			form: this.forms.find((form) => Number(form.id) === formId) ?? null,
+			form: this.forms.find((form) => String(form.id) === String(formId)) ?? null,
 			form_source_descriptor: {
 				slug: formSourceSlug,
 				label: formSourceSlug === 'gravity_forms' ? 'Gravity Forms' : formSourceSlug,
@@ -552,7 +555,7 @@ export class MockSentientFormsApiClient {
 
 	async getWorkflowPlan(
 		_formSourceSlug: string,
-		_formId: number,
+		_formId: string | number,
 		hookScope: 'all' | string = 'all'
 	): Promise<WorkflowPlanResponse> {
 		return {
@@ -590,7 +593,10 @@ export class MockSentientFormsApiClient {
 		};
 	}
 
-	async getFormDisabled(formSourceSlug: string, formId: number): Promise<FormDisableStateResponse> {
+	async getFormDisabled(
+		formSourceSlug: string,
+		formId: string | number
+	): Promise<FormDisableStateResponse> {
 		const key = `${formSourceSlug}:${formId}`;
 		const sfDisabled = Boolean(this.formDisabled[key]);
 		const globalDisabled = Boolean(this.pluginSettings.execution_global_disabled);
@@ -608,7 +614,7 @@ export class MockSentientFormsApiClient {
 
 	async toggleFormDisabled(
 		formSourceSlug: string,
-		formId: number,
+		formId: string | number,
 		disabled: boolean
 	): Promise<FormDisableStateResponse> {
 		const key = `${formSourceSlug}:${formId}`;
@@ -643,7 +649,7 @@ export class MockSentientFormsApiClient {
 
 	async createFormAction(
 		_formSourceSlug: string,
-		formId: number,
+		formId: string | number,
 		payload: FormActionMutationPayload
 	): Promise<FormActionLinkage> {
 		const linkage: FormActionLinkage = {
@@ -669,7 +675,7 @@ export class MockSentientFormsApiClient {
 
 	async duplicateFormAction(
 		_formSourceSlug: string,
-		_formId: number,
+		_formId: string | number,
 		localMappingId: string,
 		payload: DuplicateFormActionRequest
 	): Promise<DuplicateFormActionResponse> {
@@ -800,7 +806,7 @@ export class MockSentientFormsApiClient {
 
 	async updateFormAction(
 		_formSourceSlug: string,
-		_formId: number,
+		_formId: string | number,
 		localMappingId: string,
 		patch: FormActionMutationPayload
 	): Promise<FormActionLinkage> {
@@ -814,7 +820,7 @@ export class MockSentientFormsApiClient {
 
 	async deleteFormAction(
 		_formSourceSlug: string,
-		_formId: number,
+		_formId: string | number,
 		localMappingId: string
 	): Promise<void> {
 		this.formActions = this.formActions.filter((fa) => fa.local_mapping_id !== localMappingId);
@@ -823,7 +829,7 @@ export class MockSentientFormsApiClient {
 	// Unused stubs to satisfy types
 	async getFormExecutionStatusForEntry(
 		_formSourceSlug: string,
-		formId: number,
+		formId: string | number,
 		entryId: number
 	): Promise<ExecutionStatus> {
 		return {
@@ -838,7 +844,7 @@ export class MockSentientFormsApiClient {
 
 	async refreshExecutionStatus(
 		formSourceSlug: string,
-		formId: number,
+		formId: string | number,
 		entryId: number
 	): Promise<ExecutionStatus> {
 		return this.getFormExecutionStatusForEntry(formSourceSlug, formId, entryId);

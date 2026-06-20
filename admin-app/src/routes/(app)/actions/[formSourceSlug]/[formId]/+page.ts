@@ -2,9 +2,9 @@ import { error } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = ({ params }) => {
-	const formId = Number.parseInt(params.formId, 10);
+	const formId = params.formId.trim();
 
-	if (Number.isNaN(formId) || formId <= 0) {
+	if (!formId) {
 		throw error(404, 'Invalid form identifier');
 	}
 

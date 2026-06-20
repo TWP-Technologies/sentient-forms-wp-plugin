@@ -2284,7 +2284,7 @@ test.describe('Actions admin flows', () => {
 		expect(createdActionPayload?.definition_json).not.toHaveProperty('response_format');
 		expect(createdMappingPayload).toMatchObject({
 			form_source: 'gravity_forms',
-			form_id: formId,
+			form_id: String(formId),
 			hook: 'gform_validation',
 			action_kind: 'custom_action',
 			action_id: 81,

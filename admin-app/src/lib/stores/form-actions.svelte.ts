@@ -142,7 +142,21 @@ let refreshInFlightKey: string | null = null;
 let loadRequestSequence = 0;
 let statusRefreshSequence = 0;
 
-function getFormKey(formSourceSlug: string, formId: number): string {
+type FormSourceFormId = string | number;
+
+function isInvalidFormSourceContext(formSourceSlug: string, formId: FormSourceFormId): boolean {
+	if (!formSourceSlug || formSourceSlug === 'undefined') {
+		return true;
+	}
+
+	if (typeof formId === 'number') {
+		return !Number.isFinite(formId);
+	}
+
+	return String(formId).trim() === '';
+}
+
+function getFormKey(formSourceSlug: string, formId: FormSourceFormId): string {
 	return `${formSourceSlug}:${formId}`;
 }
 
@@ -166,9 +180,9 @@ function isCurrentLoadRequest(formKey: string, requestSequence: number): boolean
 	return activeFormKey === formKey && loadRequestSequence === requestSequence;
 }
 
-async function load(formSourceSlug: string, formId: number) {
+async function load(formSourceSlug: string, formId: FormSourceFormId) {
 	// Guard against undefined or invalid parameters during hydration race conditions
-	if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+	if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 		console.warn('[formActionsStore] load called with invalid params:', { formSourceSlug, formId });
 		return;
 	}
@@ -243,7 +257,11 @@ async function load(formSourceSlug: string, formId: number) {
 	}
 }
 
-async function create(formSourceSlug: string, formId: number, payload: FormActionMutationPayload) {
+async function create(
+	formSourceSlug: string,
+	formId: FormSourceFormId,
+	payload: FormActionMutationPayload
+) {
 	try {
 		const created = await client.createFormAction(formSourceSlug, formId, payload);
 		formActionsState.items = [...formActionsState.items, created];
@@ -258,7 +276,7 @@ async function create(formSourceSlug: string, formId: number, payload: FormActio
 
 async function toggleEnabled(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	linkage: FormActionLinkage,
 	enabled: boolean
 ) {
@@ -289,7 +307,7 @@ async function toggleEnabled(
 
 async function updateHooks(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	linkage: FormActionLinkage,
 	hooks: string[]
 ) {
@@ -335,7 +353,7 @@ async function updateHooks(
 
 async function updateAction(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	linkage: FormActionLinkage,
 	payload: Partial<FormActionMutationPayload>,
 	successMessage = 'Action updated'
@@ -367,7 +385,7 @@ async function updateAction(
 	}
 }
 
-async function remove(formSourceSlug: string, formId: number, linkage: FormActionLinkage) {
+async function remove(formSourceSlug: string, formId: FormSourceFormId, linkage: FormActionLinkage) {
 	try {
 		await client.deleteFormAction(formSourceSlug, formId, linkage.local_mapping_id);
 		formActionsState.items = formActionsState.items.filter(
@@ -383,11 +401,11 @@ async function remove(formSourceSlug: string, formId: number, linkage: FormActio
 
 async function refresh(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	options: { forceRefresh?: boolean } = {}
 ) {
 	// Guard against undefined or invalid parameters during hydration race conditions
-	if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+	if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 		console.warn('[formActionsStore] refresh called with invalid params:', { formSourceSlug, formId });
 		return;
 	}
@@ -429,7 +447,7 @@ async function refresh(
 
 async function fetchExecutionStatus(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	entryId: number
 ): Promise<ExecutionStatus> {
 	try {
@@ -453,7 +471,7 @@ function applySubmissionLedgerSettings(settings: SubmissionLedgerSettingsRespons
 
 async function updateSubmissionLedgerSettings(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	enabled: boolean
 ) {
 	const formKey = getFormKey(formSourceSlug, formId);
@@ -491,7 +509,7 @@ async function updateSubmissionLedgerSettings(
 /** CB-FORMS-001: Toggle per-form master disable. */
 async function toggleFormDisabled(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	disabled: boolean
 ) {
 	const previous = {

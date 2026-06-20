@@ -807,6 +807,8 @@ describe('SentientFormsApiClient', () => {
 	});
 
 	it('keeps provider-native form identifiers opaque for submission ledger settings', async () => {
+		const opaqueFormId = 'form alpha/2026#north%';
+		const encodedFormId = encodeURIComponent(opaqueFormId);
 		mockFetch.mockResolvedValue({
 			ok: true,
 			status: 200,
@@ -816,7 +818,7 @@ describe('SentientFormsApiClient', () => {
 					success: true,
 					data: {
 						form_source: 'opaque_forms',
-						form_id: 'form-alpha_2026',
+						form_id: opaqueFormId,
 						enabled: true,
 						enabled_at: '2030-01-05T10:00:00Z',
 						enabled_by_user_id: 7,
@@ -824,7 +826,7 @@ describe('SentientFormsApiClient', () => {
 						disabled_by_user_id: null,
 						settings_source: 'sentient_submission_ledger_settings',
 						ledger_records_endpoint:
-							'/sentient-forms/v1/opaque_forms/forms/form-alpha_2026/submissions',
+							`/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
 						record_count: 0
 					}
 				})
@@ -832,20 +834,92 @@ describe('SentientFormsApiClient', () => {
 
 		const result = await client.updateSubmissionLedgerSettings(
 			'opaque_forms',
-			'form-alpha_2026',
+			opaqueFormId,
 			true,
 			{ showNotifications: false }
 		);
 
 		expect(mockFetch).toHaveBeenCalledWith(
-			`${baseUrl}opaque_forms/forms/form-alpha_2026/ledger-settings`,
+			`${baseUrl}opaque_forms/forms/${encodedFormId}/ledger-settings`,
 			expect.objectContaining({
 				method: 'PUT',
 				body: JSON.stringify({ enabled: true }),
 				credentials: 'same-origin'
 			})
 		);
-		expect(result.form_id).toBe('form-alpha_2026');
+		expect(result.form_id).toBe(opaqueFormId);
+	});
+
+	it('invalidates cached form-scoped ledger settings for encoded opaque IDs', async () => {
+		const opaqueFormId = 'form alpha/2026#north%';
+		const encodedFormId = encodeURIComponent(opaqueFormId);
+		let settingsRequests = 0;
+
+		mockFetch.mockImplementation((requestUrl, init) => {
+			const url = String(requestUrl);
+			const method = String(init?.method ?? 'GET').toUpperCase();
+
+			if (url === `${baseUrl}opaque_forms/forms/${encodedFormId}/ledger-settings`) {
+				if (method === 'GET') {
+					settingsRequests += 1;
+					return Promise.resolve(
+						jsonResponse({
+							success: true,
+							data: {
+								form_source: 'opaque_forms',
+								form_id: opaqueFormId,
+								enabled: settingsRequests > 1,
+								enabled_at: null,
+								enabled_by_user_id: null,
+								disabled_at: null,
+								disabled_by_user_id: null,
+								settings_source: 'sentient_submission_ledger_settings',
+								ledger_records_endpoint:
+									`/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
+								record_count: 0
+							}
+						})
+					);
+				}
+
+				if (method === 'PUT') {
+					return Promise.resolve(
+						jsonResponse({
+							success: true,
+							data: {
+								form_source: 'opaque_forms',
+								form_id: opaqueFormId,
+								enabled: true,
+								enabled_at: '2030-01-05T10:00:00Z',
+								enabled_by_user_id: 7,
+								disabled_at: null,
+								disabled_by_user_id: null,
+								settings_source: 'sentient_submission_ledger_settings',
+								ledger_records_endpoint:
+									`/sentient-forms/v1/opaque_forms/forms/${encodedFormId}/submissions`,
+								record_count: 0
+							}
+						})
+					);
+				}
+			}
+
+			throw new Error(`Unexpected request: ${method} ${url}`);
+		});
+
+		const first = await client.getSubmissionLedgerSettings('opaque_forms', opaqueFormId, {
+			showNotifications: false
+		});
+		await client.updateSubmissionLedgerSettings('opaque_forms', opaqueFormId, true, {
+			showNotifications: false
+		});
+		const second = await client.getSubmissionLedgerSettings('opaque_forms', opaqueFormId, {
+			showNotifications: false
+		});
+
+		expect(first.enabled).toBe(false);
+		expect(second.enabled).toBe(true);
+		expect(settingsRequests).toBe(2);
 	});
 
 	it('loads submission ledger records through the form-scoped endpoint', async () => {

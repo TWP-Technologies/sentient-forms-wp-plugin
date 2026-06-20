@@ -170,4 +170,38 @@ class Tests_Form_Source_Config_Migration extends WP_UnitTestCase
         );
         $this->assertArrayNotHasKey( 'gform_after_submission', $stored['map_summary']['settings']['trigger_sources'] ?? [] );
     }
+
+    public function test_installer_normal_boot_does_not_repeat_active_config_migration(): void
+    {
+        $option_key          = 'sentient_forms_actions_gravity_forms_214';
+        $this->option_keys[] = $option_key;
+
+        update_option( 'sentient_forms_db_version', SENTIENT_FORMS_DB_VERSION, false );
+        update_option(
+            $option_key,
+            [
+                'map_summary' => [
+                    'local_mapping_id' => 'map_summary',
+                    'central_action_id' => 'entry_summary_v1',
+                    'trigger_hooks'     => [ 'gform_after_submission' ],
+                    'settings'          => [
+                        'trigger_sources' => [
+                            'gform_after_submission' => [ 'type' => 'hook_root' ],
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        Sentient_Forms_Installer::maybe_upgrade( false );
+        $stored = get_option( $option_key, [] );
+
+        $this->assertSame( [ 'gform_after_submission' ], $stored['map_summary']['trigger_hooks'] ?? null );
+        $this->assertSame(
+            [ 'type' => 'hook_root' ],
+            $stored['map_summary']['settings']['trigger_sources']['gform_after_submission'] ?? null
+        );
+        $this->assertArrayNotHasKey( 'after_submission', $stored['map_summary']['settings']['trigger_sources'] ?? [] );
+    }
 }

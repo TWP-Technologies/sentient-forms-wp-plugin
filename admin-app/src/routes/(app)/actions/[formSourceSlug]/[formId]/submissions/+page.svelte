@@ -20,7 +20,9 @@
 	let records = $state<SubmissionLedgerRecord[]>([]);
 	let total = $state(0);
 
-	const formDetailHref = $derived(appHref(`/actions/${data.formSourceSlug}/${data.formId}`));
+	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
+	const routeFormId = $derived(encodeURIComponent(data.formId));
+	const formDetailHref = $derived(appHref(`/actions/${routeFormSourceSlug}/${routeFormId}`));
 	const formLabel = $derived(`${data.formSourceSlug.replaceAll('_', ' ')} #${data.formId}`);
 
 	function fieldPreview(record: SubmissionLedgerRecord): string {

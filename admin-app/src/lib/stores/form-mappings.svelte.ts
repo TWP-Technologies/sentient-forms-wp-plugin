@@ -185,11 +185,11 @@ async function saveAsTemplate(mappingId: string, displayName?: string): Promise<
 /**
  * Get mappings for a specific form.
  */
-function getMappingsForForm(siteId: string, formSource: string, formId: number): FormMapping[] {
+function getMappingsForForm(siteId: string, formSource: string, formId: string | number): FormMapping[] {
     return mappings.filter(m =>
         m.site_id === siteId &&
         m.form_source === formSource &&
-        m.form_id === formId
+        String(m.form_id) === String(formId)
     );
 }
 
