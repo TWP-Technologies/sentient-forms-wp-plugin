@@ -657,8 +657,8 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		const mappings = getLocalFormMappings(formId);
 		const expectedHook =
 			localOpenRouterBrowserExecutionMode === 'sync'
-				? 'gform_validation'
-				: 'gform_after_submission';
+				? 'validation'
+				: 'after_submission';
 		expect(mappings).toHaveLength(1);
 		expect(mappings[0]).toMatchObject({
 			form_source: 'gravity_forms',
@@ -875,8 +875,8 @@ test.describe('Local OpenRouter browser submission @local-openrouter-browser', f
 		const mappings = getLocalFormMappings(formId);
 		const expectedHook =
 			localOpenRouterBrowserExecutionMode === 'sync'
-				? 'gform_validation'
-				: 'gform_after_submission';
+				? 'validation'
+				: 'after_submission';
 		expect(mappings).toHaveLength(1);
 		expect(mappings[0]).toMatchObject({
 			form_source: 'gravity_forms',

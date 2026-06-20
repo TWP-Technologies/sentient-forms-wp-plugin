@@ -234,6 +234,17 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         delete_option( 'sentient_forms_actions_gravity_forms_2' );
     }
 
+    protected function tearDown(): void {
+        remove_filter( 'sentient_forms_supported_form_sources', [ $this, 'add_opaque_form_source' ] );
+        parent::tearDown();
+    }
+
+    public function add_opaque_form_source( array $sources ): array
+    {
+        $sources[] = 'opaque_forms';
+        return array_values( array_unique( $sources ) );
+    }
+
     private function dispatch_form_actions_request( WP_REST_Request $request ): WP_REST_Response
     {
         add_action( 'rest_api_init', [ $this->controller, 'register_routes' ] );
@@ -294,6 +305,211 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $this->assertSame( rest_authorization_required_code(), $response->get_status() );
         $this->assertSame( 'rest_forbidden', $data['code'] ?? null );
+    }
+
+    public function test_get_ledger_settings_defaults_disabled_for_form(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'     => 1,
+            'title'  => 'Contact Form',
+            'fields' => [],
+        ];
+
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/ledger-settings' ) );
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 'gravity_forms', $data['form_source'] ?? null );
+        $this->assertSame( '1', $data['form_id'] ?? null );
+        $this->assertFalse( $data['enabled'] ?? true );
+        $this->assertSame( 'sentient_submission_ledger_settings', $data['settings_source'] ?? null );
+    }
+
+    public function test_get_ledger_settings_includes_form_scoped_record_count(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'     => 1,
+            'title'  => 'Contact Form',
+            'fields' => [],
+        ];
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'     => '11111111-2222-4333-8444-555555555555',
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => '1',
+                    'logical_fields_json' => [ 'name' => 'Ada' ],
+                ]
+            )
+        );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'     => '22222222-3333-4444-8555-666666666666',
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => '1',
+                    'logical_fields_json' => [ 'name' => 'Grace' ],
+                ]
+            )
+        );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'     => '33333333-4444-4555-8666-777777777777',
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => '2',
+                    'logical_fields_json' => [ 'name' => 'Katherine' ],
+                ]
+            )
+        );
+
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/ledger-settings' ) );
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 2, $data['record_count'] ?? null );
+    }
+
+    public function test_put_ledger_settings_enables_storage_for_form(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'     => 1,
+            'title'  => 'Contact Form',
+            'fields' => [],
+        ];
+
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'PUT', '/sentient-forms/v1/gravity_forms/forms/1/ledger-settings' ) );
+        $request->set_param( 'enabled', true );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertTrue( $data['enabled'] ?? false );
+        $this->assertNotEmpty( $data['enabled_at'] ?? null );
+        $this->assertSame( get_current_user_id(), $data['enabled_by_user_id'] ?? null );
+        $this->assertNull( $data['disabled_at'] ?? null );
+    }
+
+    public function test_put_ledger_settings_accepts_opaque_form_ids_for_non_gravity_sources(): void
+    {
+        add_filter( 'sentient_forms_supported_form_sources', [ $this, 'add_opaque_form_source' ] );
+
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'PUT', '/sentient-forms/v1/opaque_forms/forms/form-alpha_2026/ledger-settings' ) );
+        $request->set_param( 'enabled', true );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 'opaque_forms', $data['form_source'] ?? null );
+        $this->assertSame( 'form-alpha_2026', $data['form_id'] ?? null );
+        $this->assertTrue( $data['enabled'] ?? false );
+    }
+
+    public function test_get_submission_ledger_list_returns_captured_form_submissions(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'    => 1,
+            'title' => 'Contact Form',
+        ];
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'        => '44444444-5555-4666-8777-888888888888',
+                    'form_source'            => 'gravity_forms',
+                    'form_id'                => '1',
+                    'native_entry_id'        => '123',
+                    'native_entry_url'       => 'https://example.test/wp-admin/admin.php?page=gf_entries&id=1&lid=123',
+                    'source_submitted_at'    => '2026-06-19 03:14:15',
+                    'logical_fields_json'    => [
+                        'name'  => 'Ada Lovelace',
+                        'email' => 'ada@example.test',
+                    ],
+                    'provider_metadata_json' => [
+                        'source' => 'gravity_forms',
+                    ],
+                    'file_refs_json'         => [],
+                    'redaction_summary_json' => [
+                        'redacted_keys' => [],
+                    ],
+                ]
+            )
+        );
+
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/submissions' ) );
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 1, $data['submissions'] ?? [] );
+        $this->assertSame( '44444444-5555-4666-8777-888888888888', $data['submissions'][0]['submission_uuid'] ?? null );
+        $this->assertSame( '123', $data['submissions'][0]['native_entry_id'] ?? null );
+        $this->assertSame( 'Ada Lovelace', $data['submissions'][0]['logical_fields']['name'] ?? null );
+        $this->assertSame( 'gravity_forms', $data['form_source'] ?? null );
+        $this->assertSame( '1', $data['form_id'] ?? null );
+    }
+
+    public function test_get_submission_ledger_detail_returns_scoped_submission(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'    => 1,
+            'title' => 'Contact Form',
+        ];
+
+        $submission_uuid = '55555555-6666-4777-8888-999999999999';
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'        => $submission_uuid,
+                    'form_source'            => 'gravity_forms',
+                    'form_id'                => '1',
+                    'native_entry_id'        => '124',
+                    'logical_fields_json'    => [
+                        'message' => 'Please call me.',
+                    ],
+                    'provider_metadata_json' => null,
+                    'file_refs_json'         => [],
+                    'redaction_summary_json' => [
+                        'redacted_keys' => [ 'captcha_token' ],
+                    ],
+                ]
+            )
+        );
+
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/submissions/' . $submission_uuid ) );
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( $submission_uuid, $data['submission_uuid'] ?? null );
+        $this->assertSame( '124', $data['native_entry_id'] ?? null );
+        $this->assertSame( 'Please call me.', $data['logical_fields']['message'] ?? null );
+        $this->assertSame( [ 'captcha_token' ], $data['redaction_summary']['redacted_keys'] ?? null );
+    }
+
+    public function test_form_actions_bootstrap_includes_submission_ledger_settings(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'     => 1,
+            'title'  => 'Contact Form',
+            'fields' => [],
+        ];
+
+        $request  = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/actions/bootstrap' ) );
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 'sentient_submission_ledger_settings', $data['ledger_settings']['settings_source'] ?? null );
+        $this->assertFalse( $data['ledger_settings']['enabled'] ?? true );
     }
 
     public function test_get_form_execution_status_falls_back_to_latest_action_log_entry(): void
@@ -649,6 +865,17 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $result );
     }
 
+    public function test_validate_trigger_hooks_accepts_canonical_lifecycle_ids_and_legacy_aliases(): void {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
+        $result  = $this->controller->validate_trigger_hooks_param(
+            [ 'validation', 'gform_after_submission', 'real_time' ],
+            $request,
+            'trigger_hooks'
+        );
+
+        $this->assertTrue( $result );
+    }
+
     public function test_validate_trigger_hooks_rejects_unknown_hook(): void {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
         $result  = $this->controller->validate_trigger_hooks_param(
@@ -672,9 +899,17 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $request->set_param( 'trigger_hooks', [ 'gform_validation', 'evil_hook', 'gform_validation' ] );
 
         $response = $this->controller->add_form_action( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
         $data     = $response->get_data();
 
-        $this->assertSame( [ 'gform_validation' ], $data['trigger_hooks'] );
+        $this->assertSame( [ 'validation' ], $data['trigger_hooks'] );
+
+        global $wpdb;
+        $mappings = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $stored   = $mappings->get( (int) str_replace( 'local_first_', '', (string) ( $data['local_mapping_id'] ?? '' ) ) );
+
+        $this->assertSame( 'validation', $stored['hook'] ?? null );
     }
 
     public function test_add_form_action_rejects_malformed_spam_guidance_settings(): void {
@@ -808,7 +1043,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'local_first', $data['action_type_indicator'] ?? null );
         $this->assertSame( 'spam_detection_v1', $data['central_action_id'] ?? null );
         $this->assertSame( 'Spam Detection', $data['action_name_label'] ?? null );
-        $this->assertSame( [ 'gform_validation' ], $data['trigger_hooks'] ?? null );
+        $this->assertSame( [ 'validation' ], $data['trigger_hooks'] ?? null );
         $this->assertSame( 'active', $data['linked_action_status'] ?? null );
         $this->assertSame( 'ok', $data['repair_state'] ?? null );
 
@@ -831,8 +1066,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $stored_mappings = $mappings->list_for_form( 'gravity_forms', '12' );
         $this->assertCount( 2, $stored_mappings );
 
-        $validation_mapping = $this->find_local_first_mapping_by_hook( $stored_mappings, 'gform_validation' );
-        $submission_mapping = $this->find_local_first_mapping_by_hook( $stored_mappings, 'gform_after_submission' );
+        $validation_mapping = $this->find_local_first_mapping_by_hook( $stored_mappings, 'validation' );
+        $submission_mapping = $this->find_local_first_mapping_by_hook( $stored_mappings, 'after_submission' );
 
         $this->assertIsArray( $validation_mapping );
         $this->assertIsArray( $submission_mapping );
@@ -862,7 +1097,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'local_first', $data['action_type_indicator'] ?? null );
         $this->assertSame( 'content_validation_v1', $data['central_action_id'] ?? null );
         $this->assertSame( 'Content Quality Validation', $data['action_name_label'] ?? null );
-        $this->assertSame( [ 'gform_validation' ], $data['trigger_hooks'] ?? null );
+        $this->assertSame( [ 'validation' ], $data['trigger_hooks'] ?? null );
         $this->assertSame( 'active', $data['linked_action_status'] ?? null );
 
         global $wpdb;
@@ -871,7 +1106,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $stored_mappings = $mappings->list_for_form( 'gravity_forms', '13' );
 
         $this->assertCount( 1, $stored_mappings );
-        $this->assertSame( 'gform_validation', $stored_mappings[0]['hook'] ?? null );
+        $this->assertSame( 'validation', $stored_mappings[0]['hook'] ?? null );
         $this->assertSame( 'sync', $stored_mappings[0]['execution_mode'] ?? null );
         $this->assertSame( [ 'message' => '4' ], $stored_mappings[0]['input_bindings_json'] ?? null );
         $this->assertTrue( $stored_mappings[0]['effect_mapping_json']['store_result'] ?? false );
@@ -1036,7 +1271,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 201, $response->get_status() );
 
         $data = $response->get_data();
-        $this->assertSame( $parent_linkage_id, $data['settings']['trigger_sources']['gform_after_submission']['mapping_id'] ?? null );
+        $this->assertSame( $parent_linkage_id, $data['settings']['trigger_sources']['after_submission']['mapping_id'] ?? null );
         $this->assertSame( [ $parent_linkage_id ], $data['settings']['dependency_ids'] ?? null );
 
         $stored_mappings = $mappings->list_for_form( 'gravity_forms', '16' );
@@ -1051,7 +1286,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         }
 
         $this->assertIsArray( $child_mapping );
-        $this->assertSame( $parent_linkage_id, $child_mapping['settings_json']['trigger_sources']['gform_after_submission']['mapping_id'] ?? null );
+        $this->assertSame( $parent_linkage_id, $child_mapping['settings_json']['trigger_sources']['after_submission']['mapping_id'] ?? null );
         $this->assertSame( [ $parent_linkage_id ], $child_mapping['settings_json']['dependency_ids'] ?? null );
     }
 
@@ -1114,7 +1349,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertInstanceOf( WP_REST_Response::class, $response );
         $this->assertSame( 201, $response->get_status() );
         $data = $response->get_data();
-        $this->assertSame( 'map_parent', $data['settings']['trigger_sources']['gform_after_submission']['mapping_id'] ?? null );
+        $this->assertSame( 'map_parent', $data['settings']['trigger_sources']['after_submission']['mapping_id'] ?? null );
 
         delete_option( $option_key );
     }
@@ -1281,7 +1516,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'local_first', $data['action_type_indicator'] ?? null );
         $this->assertSame( 'entry_summary_v1', $data['central_action_id'] ?? null );
         $this->assertSame( 'Entry Summary', $data['action_name_label'] ?? null );
-        $this->assertSame( [ 'gform_after_submission' ], $data['trigger_hooks'] ?? null );
+        $this->assertSame( [ 'after_submission' ], $data['trigger_hooks'] ?? null );
         $this->assertSame( 'active', $data['linked_action_status'] ?? null );
 
         global $wpdb;
@@ -1291,7 +1526,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $stored_mappings = $mappings->list_for_form( 'gravity_forms', '14' );
 
         $this->assertCount( 1, $stored_mappings );
-        $this->assertSame( 'gform_after_submission', $stored_mappings[0]['hook'] ?? null );
+        $this->assertSame( 'after_submission', $stored_mappings[0]['hook'] ?? null );
         $this->assertSame( 'async', $stored_mappings[0]['execution_mode'] ?? null );
         $this->assertSame( 'content', $stored_mappings[0]['effect_mapping_json']['meta']['sentient_forms_summary'] ?? null );
         $this->assertSame( 'content', $stored_mappings[0]['effect_mapping_json']['entry_note']['path'] ?? null );
@@ -1376,7 +1611,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             $this->assertSame( 'local_first', $data['action_type_indicator'] ?? null );
             $this->assertSame( $action_code, $data['central_action_id'] ?? null );
             $this->assertSame( $expected['display_name'], $data['action_name_label'] ?? null );
-            $this->assertSame( [ 'gform_after_submission' ], $data['trigger_hooks'] ?? null );
+            $this->assertSame( [ 'after_submission' ], $data['trigger_hooks'] ?? null );
 
             $stored_mappings = $mappings->list_for_form( 'gravity_forms', (string) $form_id );
             $this->assertCount( 1, $stored_mappings );
@@ -2243,7 +2478,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $data['deleted'] ?? false );
         $this->assertArrayNotHasKey( 'map_a', $stored );
         $this->assertArrayNotHasKey( 'dependency_ids', $stored['map_b']['settings'] ?? [] );
-        $this->assertSame( 'unbound', $stored['map_b']['settings']['trigger_sources']['gform_after_submission']['type'] ?? null );
+        $this->assertSame( 'unbound', $stored['map_b']['settings']['trigger_sources']['after_submission']['type'] ?? null );
 
         delete_option( $option_key );
     }
@@ -2326,7 +2561,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $this->assertTrue( $data['deleted'] ?? false );
         $this->assertNull( $mappings->get( $parent_mapping_id ) );
-        $this->assertSame( 'unbound', $child['settings_json']['trigger_sources']['gform_after_submission']['type'] ?? null );
+        $this->assertSame( 'unbound', $child['settings_json']['trigger_sources']['after_submission']['type'] ?? null );
         $this->assertArrayNotHasKey( 'dependency_ids', $child['settings_json'] ?? [] );
     }
 
@@ -2407,7 +2642,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertArrayHasKey( $duplicate_id, $stored );
         $this->assertSame(
             $duplicate_id,
-            $stored['map_child']['settings']['trigger_sources']['gform_validation']['mapping_id'] ?? null
+            $stored['map_child']['settings']['trigger_sources']['validation']['mapping_id'] ?? null
         );
         $this->assertSame( [ $duplicate_id ], $stored['map_child']['settings']['dependency_ids'] ?? [] );
 
@@ -2483,9 +2718,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
         $sanitized = $this->invoke_private( 'sanitize_trace_trigger_sources', [ $raw_sources ] );
 
-        $this->assertSame( 'unbound', $sanitized['gform_validation']['type'] ?? null );
-        $this->assertSame( 'mapping', $sanitized['gform_after_submission']['type'] ?? null );
-        $this->assertSame( 'map_upstream', $sanitized['gform_after_submission']['mapping_id'] ?? null );
+        $this->assertSame( 'unbound', $sanitized['validation']['type'] ?? null );
+        $this->assertSame( 'mapping', $sanitized['after_submission']['type'] ?? null );
+        $this->assertSame( 'map_upstream', $sanitized['after_submission']['mapping_id'] ?? null );
         $this->assertArrayNotHasKey( 'gform_unknown', $sanitized );
     }
 
@@ -2662,7 +2897,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'Local drawer qualification', $data[0]['action_name_label'] ?? null );
         $this->assertSame( 'active', $data[0]['linked_action_status'] ?? null );
         $this->assertSame( 'ok', $data[0]['repair_state'] ?? null );
-        $this->assertSame( [ 'gform_after_submission' ], $data[0]['trigger_hooks'] ?? null );
+        $this->assertSame( [ 'after_submission' ], $data[0]['trigger_hooks'] ?? null );
         $this->assertTrue( $data[0]['is_action_enabled_for_form'] ?? false );
         $this->assertSame( 'after_submission', $data[0]['settings']['execution_mode'] ?? null );
         $this->assertSame( [ 'email' => '3' ], $data[0]['settings']['input_mapping'] ?? null );
@@ -2850,6 +3085,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $data['disabled_state']['sf_disabled'] ?? false );
         $this->assertTrue( $data['disabled_state']['effective_disabled'] ?? false );
         $this->assertArrayHasKey( 'form', $data );
+        $this->assertArrayHasKey( 'form_source_descriptor', $data );
         $this->assertArrayHasKey( 'capabilities', $data );
         $this->assertArrayHasKey( 'definitions', $data );
         $this->assertArrayHasKey( 'custom_actions', $data );
@@ -2864,6 +3100,12 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertIsArray( $data['form_fields'] );
         $this->assertIsArray( $data['action_defaults'] );
         $this->assertIsArray( $data['workflow_plan'] );
+        $this->assertSame( 'gravity_forms', $data['form_source_descriptor']['slug'] ?? null );
+        $this->assertArrayHasKey( 'validation', $data['form_source_descriptor']['lifecycles'] ?? [] );
+        $this->assertSame(
+            'gform_validation',
+            $data['form_source_descriptor']['lifecycles']['validation']['native_hook'] ?? null
+        );
         $this->assertSame( 'cps', $data['workflow_plan']['authority'] ?? null );
         $this->assertSame( 2, $sync->plan_calls );
         $this->assertSame( 1, $sync->sync_calls );
@@ -3252,7 +3494,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $data['deleted'] ?? false );
         $this->assertNull( $mappings->get( $record['mapping_id'] ) );
         $this->assertArrayNotHasKey( 'dependency_ids', $stored['map_downstream']['settings'] ?? [] );
-        $this->assertSame( 'unbound', $stored['map_downstream']['settings']['trigger_sources']['gform_after_submission']['type'] ?? null );
+        $this->assertSame( 'unbound', $stored['map_downstream']['settings']['trigger_sources']['after_submission']['type'] ?? null );
 
         delete_option( $option_key );
     }
@@ -3294,7 +3536,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'local', $data['authority'] ?? null );
         $this->assertSame( 'cps_mismatch', $data['authority_reason'] ?? null );
         $this->assertFalse( $data['cps_unreachable'] ?? true );
-        $this->assertContains( 'gform_validation', $data['available_hooks'] ?? [] );
+        $this->assertContains( 'validation', $data['available_hooks'] ?? [] );
 
         $node_ids = array_column( $data['nodes'] ?? [], 'mapping_id' );
         $this->assertContains( 'map_spam_v1', $node_ids );

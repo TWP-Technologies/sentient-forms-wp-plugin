@@ -48,6 +48,9 @@ import type {
 	FormExecutionStatus,
 	FormFieldInfo,
 	FormsOverviewResponse,
+	SubmissionLedgerRecord,
+	SubmissionLedgerRecordsResponse,
+	SubmissionLedgerSettingsResponse,
 	RequestTraceRequest,
 	RequestTraceResponse,
 	WorkflowPlanResponse,
@@ -189,6 +192,18 @@ function getFormMutationCacheTags(path: string): string[] | null {
 			'form-actions',
 			'execution-status',
 			'dashboard',
+			`forms:${formSourceSlug}`,
+			`form:${formSourceSlug}:${formId}`
+		];
+	}
+
+	match = /^([^/]+)\/forms\/([^/]+)\/ledger-settings(?:\/|$)/.exec(path);
+	if (match) {
+		const [, formSourceSlug, formId] = match;
+		return [
+			'settings',
+			'submission-ledger',
+			'form-actions',
 			`forms:${formSourceSlug}`,
 			`form:${formSourceSlug}:${formId}`
 		];
@@ -1397,12 +1412,110 @@ export class SentientFormsApiClient {
 				tags: [
 					'form-actions',
 					'execution-status',
+					'submission-ledger',
 					'settings',
 					'providers',
 					'custom-actions',
 					'action-defaults',
 					`form:${formSourceSlug}:${formId}`
 				]
+			})
+		);
+		return this.unwrap(response);
+	}
+
+	async getSubmissionLedgerSettings(
+		formSourceSlug: string,
+		formId: string | number,
+		options: RequestOptions = {}
+	): Promise<SubmissionLedgerSettingsResponse> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const formIdSegment = String(formId);
+		const response = await this.request<RestEnvelope<SubmissionLedgerSettingsResponse>>(
+			`${slug}/forms/${formIdSegment}/ledger-settings`,
+			withCacheDefaults(options, {
+				ttlMs: 15_000,
+				tags: ['submission-ledger', 'settings', `form:${formSourceSlug}:${formIdSegment}`]
+			})
+		);
+		return this.unwrap(response);
+	}
+
+	async updateSubmissionLedgerSettings(
+		formSourceSlug: string,
+		formId: string | number,
+		enabled: boolean,
+		options: RequestOptions = {}
+	): Promise<SubmissionLedgerSettingsResponse> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const formIdSegment = String(formId);
+		const response = await this.request<RestEnvelope<SubmissionLedgerSettingsResponse>>(
+			`${slug}/forms/${formIdSegment}/ledger-settings`,
+			{
+				method: 'PUT',
+				body: { enabled },
+				...options
+			}
+		);
+		return this.unwrap(response);
+	}
+
+	async getSubmissionLedgerRecords(
+		formSourceSlug: string,
+		formId: string | number,
+		options: RequestOptions & { perPage?: number; offset?: number } = {}
+	): Promise<SubmissionLedgerRecordsResponse> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const formIdSegment = String(formId);
+		const params = new URLSearchParams();
+		if (typeof options.perPage === 'number') {
+			params.set('per_page', String(options.perPage));
+		}
+		if (typeof options.offset === 'number') {
+			params.set('offset', String(options.offset));
+		}
+		const query = params.toString();
+		const { perPage: _perPage, offset: _offset, ...requestOptions } = options;
+		type RawSubmissionLedgerRecordsResponse = Omit<
+			SubmissionLedgerRecordsResponse,
+			'records' | 'total'
+		> & {
+			records?: SubmissionLedgerRecordsResponse['records'];
+			total?: number;
+			submissions?: SubmissionLedgerRecordsResponse['records'];
+			count?: number;
+		};
+
+		const response = await this.request<RestEnvelope<RawSubmissionLedgerRecordsResponse>>(
+			`${slug}/forms/${formIdSegment}/submissions${query ? `?${query}` : ''}`,
+			withCacheDefaults(requestOptions, {
+				ttlMs: 15_000,
+				tags: ['submission-ledger', `form:${formSourceSlug}:${formIdSegment}`]
+			})
+		);
+		const payload = this.unwrap<RawSubmissionLedgerRecordsResponse>(response);
+		const records = payload.records ?? payload.submissions ?? [];
+		return {
+			...payload,
+			records,
+			total: payload.total ?? payload.count ?? records.length
+		};
+	}
+
+	async getSubmissionLedgerRecord(
+		formSourceSlug: string,
+		formId: string | number,
+		submissionUuid: string,
+		options: RequestOptions = {}
+	): Promise<SubmissionLedgerRecord> {
+		const slug = encodeURIComponent(formSourceSlug);
+		const formIdSegment = String(formId);
+		const uuid = encodeURIComponent(submissionUuid);
+		const response = await this.request<RestEnvelope<SubmissionLedgerRecord>>(
+			`${slug}/forms/${formIdSegment}/submissions/${uuid}`,
+			withCacheDefaults(options, {
+				ttlMs: 15_000,
+				tags: ['submission-ledger', `form:${formSourceSlug}:${formIdSegment}`]
 			})
 		);
 		return this.unwrap(response);

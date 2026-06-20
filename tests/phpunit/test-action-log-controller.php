@@ -504,6 +504,37 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'Submission looks legitimate.', $data['entries'][0]['details']['stored_result']['content'] );
     }
 
+    public function test_get_log_entries_includes_submission_uuid_for_grouped_local_events(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $events->record(
+            [
+                'execution_request_id' => 'req-ledger-grouped-log-1',
+                'submission_uuid'      => '55555555-5555-4555-8555-555555555555',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'entry_id'             => '77',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'structured' => [
+                        'classification' => 'ham',
+                    ],
+                ],
+            ]
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 'req-ledger-grouped-log-1', $data['entries'][0]['execution_request_id'] );
+        $this->assertSame( '55555555-5555-4555-8555-555555555555', $data['entries'][0]['submission_uuid'] );
+    }
+
     public function test_get_log_entries_sanitizes_managed_currency_from_local_events(): void
     {
         global $wpdb;

@@ -696,6 +696,28 @@ describe('SentientFormsApiClient', () => {
 					data: {
 						form_source: 'gravity_forms',
 						form_id: 42,
+						form_source_descriptor: {
+							slug: 'gravity_forms',
+							label: 'Gravity Forms',
+							is_active: true,
+							lifecycles: {
+								validation: {
+									id: 'validation',
+									supported: true,
+									label: 'During validation',
+									native_hook: 'gform_validation',
+									execution_mode: 'validation',
+									requires_ledger: false,
+									unsupported_reason: null
+								}
+							},
+							ledger: {
+								required_for_parity: false,
+								enabled: false,
+								settings_source: 'sentient_submission_ledger_settings',
+								unavailable_reason: null
+							}
+						},
 						actions: [{ local_mapping_id: 'map-1', central_action_id: 'spam_detection_v1' }],
 						execution_status: {
 							status: 'success',
@@ -709,6 +731,19 @@ describe('SentientFormsApiClient', () => {
 							global_disabled: false,
 							provider_disabled: false,
 							effective_disabled: false
+						},
+						ledger_settings: {
+							form_source: 'gravity_forms',
+							form_id: 42,
+							enabled: false,
+							enabled_at: null,
+							enabled_by_user_id: null,
+							disabled_at: null,
+							disabled_by_user_id: null,
+							settings_source: 'sentient_submission_ledger_settings',
+							ledger_records_endpoint:
+								'/sentient-forms/v1/gravity_forms/forms/42/submissions',
+							record_count: 0
 						},
 						generated_at: '2030-01-05T10:00:00Z'
 					}
@@ -726,6 +761,184 @@ describe('SentientFormsApiClient', () => {
 		expect(result.actions).toHaveLength(1);
 		expect(result.execution_status.status).toBe('success');
 		expect(result.disabled_state.effective_disabled).toBe(false);
+		expect(result.form_source_descriptor?.lifecycles.validation.native_hook).toBe(
+			'gform_validation'
+		);
+		expect(result.ledger_settings?.enabled).toBe(false);
+		expect(result.ledger_settings?.ledger_records_endpoint).toContain('/submissions');
+	});
+
+	it('updates submission ledger settings through the form-scoped endpoint', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						form_source: 'gravity_forms',
+						form_id: 42,
+						enabled: true,
+						enabled_at: '2030-01-05T10:00:00Z',
+						enabled_by_user_id: 7,
+						disabled_at: null,
+						disabled_by_user_id: null,
+						settings_source: 'sentient_submission_ledger_settings',
+						ledger_records_endpoint: '/sentient-forms/v1/gravity_forms/forms/42/submissions',
+						record_count: 0
+					}
+				})
+		});
+
+		const result = await client.updateSubmissionLedgerSettings('gravity_forms', 42, true, {
+			showNotifications: false
+		});
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}gravity_forms/forms/42/ledger-settings`,
+			expect.objectContaining({
+				method: 'PUT',
+				body: JSON.stringify({ enabled: true }),
+				credentials: 'same-origin'
+			})
+		);
+		expect(result.enabled).toBe(true);
+	});
+
+	it('keeps provider-native form identifiers opaque for submission ledger settings', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						form_source: 'opaque_forms',
+						form_id: 'form-alpha_2026',
+						enabled: true,
+						enabled_at: '2030-01-05T10:00:00Z',
+						enabled_by_user_id: 7,
+						disabled_at: null,
+						disabled_by_user_id: null,
+						settings_source: 'sentient_submission_ledger_settings',
+						ledger_records_endpoint:
+							'/sentient-forms/v1/opaque_forms/forms/form-alpha_2026/submissions',
+						record_count: 0
+					}
+				})
+		});
+
+		const result = await client.updateSubmissionLedgerSettings(
+			'opaque_forms',
+			'form-alpha_2026',
+			true,
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}opaque_forms/forms/form-alpha_2026/ledger-settings`,
+			expect.objectContaining({
+				method: 'PUT',
+				body: JSON.stringify({ enabled: true }),
+				credentials: 'same-origin'
+			})
+		);
+		expect(result.form_id).toBe('form-alpha_2026');
+	});
+
+	it('loads submission ledger records through the form-scoped endpoint', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						form_source: 'gravity_forms',
+						form_id: 42,
+						submissions: [
+							{
+								id: 11,
+								submission_uuid: '123e4567-e89b-12d3-a456-426614174000',
+								form_source: 'gravity_forms',
+								form_id: 42,
+								native_entry_id: '99',
+								native_entry_url: 'https://example.test/entry/99',
+								source_submitted_at: '2030-01-05T10:00:00Z',
+								captured_at: '2030-01-05T10:00:01Z',
+								logical_fields: { email: 'redacted' },
+								provider_metadata: {},
+								file_refs: [],
+								redaction_summary: { redacted_fields: ['email'] },
+								expires_at: null,
+								detail_endpoint:
+									'/sentient-forms/v1/gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000'
+							}
+						],
+						count: 1,
+						per_page: 10,
+						offset: 0
+					}
+				})
+		});
+
+		const result = await client.getSubmissionLedgerRecords('gravity_forms', 42, {
+			perPage: 10,
+			offset: 0,
+			showNotifications: false
+		});
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}gravity_forms/forms/42/submissions?per_page=10&offset=0`,
+			expect.objectContaining({ credentials: 'same-origin' })
+		);
+		expect(result.records[0]?.submission_uuid).toBe('123e4567-e89b-12d3-a456-426614174000');
+		expect(result.total).toBe(1);
+	});
+
+	it('loads a submission ledger detail record through the scoped endpoint', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						id: 11,
+						submission_uuid: '123e4567-e89b-12d3-a456-426614174000',
+						form_source: 'gravity_forms',
+						form_id: 42,
+						native_entry_id: '99',
+						native_entry_url: 'https://example.test/entry/99',
+						source_submitted_at: '2030-01-05T10:00:00Z',
+						captured_at: '2030-01-05T10:00:01Z',
+						logical_fields: { email: 'redacted' },
+						provider_metadata: {},
+						file_refs: [],
+						redaction_summary: { redacted_fields: ['email'] },
+						expires_at: null,
+						detail_endpoint:
+							'/sentient-forms/v1/gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000'
+					}
+				})
+		});
+
+		const result = await client.getSubmissionLedgerRecord(
+			'gravity_forms',
+			42,
+			'123e4567-e89b-12d3-a456-426614174000',
+			{ showNotifications: false }
+		);
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}gravity_forms/forms/42/submissions/123e4567-e89b-12d3-a456-426614174000`,
+			expect.objectContaining({ credentials: 'same-origin' })
+		);
+		expect(result.native_entry_id).toBe('99');
 	});
 
 	it('invalidates cached form bootstrap when embedded custom actions change', async () => {

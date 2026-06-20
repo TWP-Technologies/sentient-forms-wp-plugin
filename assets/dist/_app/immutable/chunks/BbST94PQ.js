@@ -1,1 +1,0 @@
-import{Q as e,Z as t,ct as n,dt as r,nt as i,p as a,rt as o}from"./Cyu-N0yl.js";function s(s,c){var l=t,u=e,d=s();let f=a(d,a=>{var c=d!==s(),f,p=e,m=t;o(u),i(l);try{f=n(()=>{r(()=>{let e=s();c&&a(e)})})}finally{o(p),i(m)}return c=!0,f});return c?{set:c,update:e=>c(e(s())),subscribe:f.subscribe}:{subscribe:f.subscribe}}export{s as t};

@@ -120,9 +120,10 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $execution_request_id = $this->resolve_execution_request_id( $mapping, $action, $form, $entry, $context );
+        $submission_uuid      = $this->resolve_submission_uuid( $context );
         if ( $this->should_skip_suggested_reply_for_reject_grade( $mapping, $entry, $context, $action_code ) )
         {
-            return $this->record_suggested_reply_skip( $execution_request_id, $mapping, $form, $entry, $action_code );
+            return $this->record_suggested_reply_skip( $execution_request_id, $submission_uuid, $mapping, $form, $entry, $action_code );
         }
 
         $structured_output_contract = $this->resolve_structured_output_contract( $action, $definition );
@@ -262,6 +263,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                 'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                 'entry_id'             => $entry['id'] ?? null,
+                'submission_uuid'      => $submission_uuid,
                 'provider'             => $provider,
                 'model'                => $model,
                 'status'               => 'running',
@@ -291,6 +293,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                     'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                     'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                     'entry_id'             => $entry['id'] ?? null,
+                    'submission_uuid'      => $submission_uuid,
                     'provider'             => $provider,
                     'model'                => $model,
                     'status'               => 'failed',
@@ -318,6 +321,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                     'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                     'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                     'entry_id'             => $entry['id'] ?? null,
+                    'submission_uuid'      => $submission_uuid,
                     'provider'             => $provider,
                     'model'                => $model,
                     'status'               => 'failed',
@@ -377,6 +381,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                 'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                 'entry_id'             => $entry['id'] ?? null,
+                'submission_uuid'      => $submission_uuid,
                 'provider'             => $provider,
                 'model'                => $model,
                 'status'               => 'succeeded',
@@ -660,7 +665,7 @@ class Sentient_Forms_Local_Action_Execution_Service
         return is_array( $result ) && 'Reject' === (string) ( $result['grade'] ?? '' );
     }
 
-    private function record_suggested_reply_skip( string $execution_request_id, array $mapping, array $form, array $entry, string $action_code ): array
+    private function record_suggested_reply_skip( string $execution_request_id, ?string $submission_uuid, array $mapping, array $form, array $entry, string $action_code ): array
     {
         $result = [
             'structured' => [
@@ -687,6 +692,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'form_source'          => $mapping['form_source'] ?? 'gravity_forms',
                 'form_id'              => $mapping['form_id'] ?? ( $form['id'] ?? null ),
                 'entry_id'             => $entry['id'] ?? null,
+                'submission_uuid'      => $submission_uuid,
                 'provider'             => 'local',
                 'model'                => 'not_applicable',
                 'status'               => 'skipped',
@@ -1966,6 +1972,22 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         return substr( hash( 'sha256', (string) wp_json_encode( [ $action_id, $form, $entry, $context ] ) ), 0, 32 );
+    }
+
+    private function resolve_submission_uuid( array $context ): ?string
+    {
+        if ( ! isset( $context['submission_uuid'] ) || ! is_scalar( $context['submission_uuid'] ) )
+        {
+            return null;
+        }
+
+        $submission_uuid = strtolower( sanitize_text_field( (string) $context['submission_uuid'] ) );
+        if ( 1 !== preg_match( '/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/', $submission_uuid ) )
+        {
+            return null;
+        }
+
+        return $submission_uuid;
     }
 
     private function normalize_openrouter_response( array $response ): array

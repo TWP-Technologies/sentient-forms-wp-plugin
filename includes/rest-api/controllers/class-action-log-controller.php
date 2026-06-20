@@ -386,6 +386,9 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                                     ? sanitize_textarea_field( $data['error_message'] )
                                     : null,
             'execution_request_id' => $execution_request_id,
+            'submission_uuid' => isset( $data['submission_uuid'] ) && is_scalar( $data['submission_uuid'] )
+                                    ? sanitize_text_field( (string) $data['submission_uuid'] )
+                                    : null,
             'mapping_id'     => isset( $data['mapping_id'] )
                                     ? sanitize_text_field( (string) $data['mapping_id'] )
                                     : null,
@@ -1196,6 +1199,9 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             'error_code'              => isset( $event['error_code'] ) ? sanitize_text_field( (string) $event['error_code'] ) : null,
             'error_message'           => isset( $event['error_message'] ) ? sanitize_textarea_field( (string) $event['error_message'] ) : null,
             'execution_request_id'    => isset( $event['execution_request_id'] ) ? sanitize_text_field( (string) $event['execution_request_id'] ) : null,
+            'submission_uuid'         => isset( $event['submission_uuid'] ) && is_scalar( $event['submission_uuid'] )
+                ? sanitize_text_field( (string) $event['submission_uuid'] )
+                : null,
             'mapping_id'              => isset( $event['mapping_id'] ) ? 'local_first_' . absint( $event['mapping_id'] ) : null,
             'resolved_model_id'       => isset( $event['model'] ) ? sanitize_text_field( (string) $event['model'] ) : null,
             'pricing'                 => $pricing,
@@ -1715,6 +1721,10 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 ],
                 'execution_request_id' => [
                     'description' => __( 'Stable execution request identifier.', 'sentient-forms' ),
+                    'type'        => [ 'string', 'null' ],
+                ],
+                'submission_uuid' => [
+                    'description' => __( 'Submission ledger UUID that groups action runs for one form submission.', 'sentient-forms' ),
                     'type'        => [ 'string', 'null' ],
                 ],
                 'mapping_id' => [

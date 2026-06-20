@@ -22,7 +22,7 @@ if ( !defined( 'ABSPATH' ) )
 
 // Define plugin constants.
 const SENTIENT_FORMS_VERSION     = '0.3.15';
-const SENTIENT_FORMS_DB_VERSION  = '2026.05.30.admin_performance_indexes';
+const SENTIENT_FORMS_DB_VERSION  = '2026.06.18.form_source_ledger';
 const SENTIENT_FORMS_PLUGIN_FILE = __FILE__;
 const SENTIENT_FORMS_DEFAULT_CPS_BASE_URL = 'https://api.sentientforms.com/v1';
 const SENTIENT_FORMS_RELEASE_SOURCE_URL = 'https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.3.15';

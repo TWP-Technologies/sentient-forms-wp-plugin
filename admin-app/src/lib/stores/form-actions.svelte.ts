@@ -8,6 +8,7 @@ import type {
 	ExecutionStatus,
 	FormExecutionStatus,
 	FormActionsBootstrapResponse,
+	SubmissionLedgerSettingsResponse,
 	ApiErrorPayload
 } from '$lib/api/types';
 
@@ -442,6 +443,51 @@ async function fetchExecutionStatus(
 	}
 }
 
+function applySubmissionLedgerSettings(settings: SubmissionLedgerSettingsResponse) {
+	if (!formActionsState.bootstrap) return;
+	formActionsState.bootstrap = {
+		...formActionsState.bootstrap,
+		ledger_settings: settings
+	};
+}
+
+async function updateSubmissionLedgerSettings(
+	formSourceSlug: string,
+	formId: number,
+	enabled: boolean
+) {
+	const formKey = getFormKey(formSourceSlug, formId);
+	const previousBootstrap = formActionsState.bootstrap;
+	const previousSettings = previousBootstrap?.ledger_settings ?? null;
+
+	if (activeFormKey === formKey && previousBootstrap && previousSettings) {
+		applySubmissionLedgerSettings({
+			...previousSettings,
+			enabled
+		});
+	}
+
+	try {
+		const result = await client.updateSubmissionLedgerSettings(formSourceSlug, formId, enabled, {
+			showNotifications: false
+		});
+		if (activeFormKey === formKey) {
+			applySubmissionLedgerSettings(result);
+		}
+		notifications.success(
+			result.enabled
+				? 'Submission ledger storage enabled.'
+				: 'Submission ledger storage disabled.'
+		);
+	} catch (error) {
+		if (activeFormKey === formKey && previousBootstrap) {
+			formActionsState.bootstrap = previousBootstrap;
+		}
+		const message = friendlyMessageFromError(error, 'Failed to update submission ledger storage');
+		notifications.error(message);
+	}
+}
+
 /** CB-FORMS-001: Toggle per-form master disable. */
 async function toggleFormDisabled(
 	formSourceSlug: string,
@@ -495,6 +541,7 @@ export const formActionsStore = {
 	remove,
 	refresh,
 	fetchExecutionStatus,
+	updateSubmissionLedgerSettings,
 	toggleFormDisabled,
 	reset: resetStore
 };

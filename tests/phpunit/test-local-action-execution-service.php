@@ -237,6 +237,35 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertStringNotContainsString( $fixture['secret'], wp_json_encode( $event ) );
     }
 
+    public function test_local_execution_events_link_to_submission_uuid_when_runtime_context_has_ledger_submission(): void
+    {
+        $fixture         = $this->create_local_openrouter_mapping();
+        $client          = new Sentient_Forms_Test_OpenRouter_Client();
+        $service         = $this->create_service( $client );
+        $submission_uuid = '11111111-2222-4333-8444-555555555555';
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'            => 'gform_after_submission',
+                'submission_uuid' => $submission_uuid,
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'succeeded', $result['status'] );
+
+        $event = $this->events->get_by_request_id( $result['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertSame( $submission_uuid, $event['submission_uuid'] );
+    }
+
     public function test_openrouter_payload_includes_prompt_safety_and_server_tools(): void
     {
         $fixture = $this->create_local_openrouter_mapping();

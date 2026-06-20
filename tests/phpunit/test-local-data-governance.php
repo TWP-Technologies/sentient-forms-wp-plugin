@@ -4,6 +4,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 {
     private wpdb $wpdb;
     private Sentient_Forms_Execution_Events_Repository $events;
+    private Sentient_Forms_Submission_Ledger_Repository $submission_ledger;
 
     protected function setUp(): void
     {
@@ -14,6 +15,7 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
 
         Sentient_Forms_Installer::maybe_upgrade();
         $this->events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $this->submission_ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
     }
 
     protected function tearDown(): void
@@ -92,6 +94,77 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $deleted = Sentient_Forms_Local_Data_Governance::run_retention_cleanup();
         $this->assertGreaterThanOrEqual( 1, $deleted );
         $this->assertNull( $this->events->get_by_request_id( 'retention-expired-1' ) );
+    }
+
+    public function test_submission_ledger_retention_cleanup_removes_expired_rows(): void
+    {
+        $expired_id = $this->submission_ledger->create(
+            [
+                'submission_uuid'     => '11111111-1111-4111-8111-111111111111',
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '7',
+                'logical_fields_json' => [ 'email' => 'expired@example.test' ],
+                'expires_at'          => gmdate( 'Y-m-d H:i:s', time() - DAY_IN_SECONDS ),
+            ]
+        );
+        $fresh_id = $this->submission_ledger->create(
+            [
+                'submission_uuid'     => '22222222-2222-4222-8222-222222222222',
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '7',
+                'logical_fields_json' => [ 'email' => 'fresh@example.test' ],
+                'expires_at'          => gmdate( 'Y-m-d H:i:s', time() + DAY_IN_SECONDS ),
+            ]
+        );
+
+        $this->assertIsInt( $expired_id );
+        $this->assertIsInt( $fresh_id );
+
+        $deleted = Sentient_Forms_Local_Data_Governance::run_retention_cleanup();
+
+        $this->assertGreaterThanOrEqual( 1, $deleted );
+        $this->assertNull( $this->submission_ledger->get_by_submission_uuid( '11111111-1111-4111-8111-111111111111' ) );
+        $this->assertNotNull( $this->submission_ledger->get_by_submission_uuid( '22222222-2222-4222-8222-222222222222' ) );
+    }
+
+    public function test_privacy_exporter_and_eraser_handle_submission_ledger_content(): void
+    {
+        $email = 'ledger-person@example.test';
+
+        $created = $this->submission_ledger->create(
+            [
+                'submission_uuid'         => '33333333-3333-4333-8333-333333333333',
+                'form_source'             => 'gravity_forms',
+                'form_id'                 => '7',
+                'native_entry_id'         => '91',
+                'logical_fields_json'     => [
+                    'email'   => $email,
+                    'message' => 'Please follow up.',
+                ],
+                'provider_metadata_json'  => [ 'source' => 'gravity_forms' ],
+                'redaction_summary_json'  => [ 'redacted_keys' => [] ],
+                'expires_at'              => null,
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        $export = Sentient_Forms_Local_Data_Governance::export_personal_data( $email, 1 );
+        $this->assertCount( 1, $export['data'] );
+        $this->assertSame( 'sentient-forms-submission-ledger', $export['data'][0]['group_id'] );
+        $this->assertStringContainsString( $email, wp_json_encode( $export['data'] ) );
+
+        $erase = Sentient_Forms_Local_Data_Governance::erase_personal_data( $email, 1 );
+        $this->assertTrue( $erase['items_removed'] );
+        $this->assertTrue( $erase['items_retained'] );
+        $this->assertTrue( $erase['done'] );
+
+        $row = $this->submission_ledger->get_by_submission_uuid( '33333333-3333-4333-8333-333333333333' );
+        $this->assertTrue( $row['logical_fields_json']['personal_data_erased'] ?? false );
+        $this->assertNull( $row['native_entry_id'] );
+
+        $after_export = Sentient_Forms_Local_Data_Governance::export_personal_data( $email, 1 );
+        $this->assertSame( [], $after_export['data'] );
+        $this->assertTrue( $after_export['done'] );
     }
 
     public function test_execution_event_retention_manual_only_disables_new_expiry(): void

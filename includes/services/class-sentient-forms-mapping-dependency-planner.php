@@ -64,7 +64,7 @@ class Sentient_Forms_Mapping_Dependency_Planner
      */
     public function build_execution_plan( array $form_settings, string $hook ): array
     {
-        $hook     = sanitize_key( $hook );
+        $hook     = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook ) ?? '';
         $mappings = $this->normalize_action_mappings( $form_settings );
         $nodes    = [];
 
@@ -178,8 +178,8 @@ class Sentient_Forms_Mapping_Dependency_Planner
      */
     public function extract_dependency_ids_for_hook( array $mapping, string $hook ): array
     {
-        $hook = sanitize_key( $hook );
-        if ( '' === $hook )
+        $hook = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
+        if ( null === $hook )
         {
             return [];
         }
@@ -225,24 +225,7 @@ class Sentient_Forms_Mapping_Dependency_Planner
             return [];
         }
 
-        $normalized = [];
-        foreach ( $hooks as $hook )
-        {
-            if ( ! is_scalar( $hook ) )
-            {
-                continue;
-            }
-
-            $value = sanitize_key( (string) $hook );
-            if ( '' === $value )
-            {
-                continue;
-            }
-
-            $normalized[] = $value;
-        }
-
-        return array_values( array_unique( $normalized ) );
+        return Sentient_Forms_Form_Source_Lifecycles::normalize_many( $hooks );
     }
 
     /**
@@ -274,8 +257,8 @@ class Sentient_Forms_Mapping_Dependency_Planner
             {
                 continue;
             }
-            $hook_key = sanitize_key( (string) $hook );
-            if ( '' === $hook_key || ! isset( $hook_lookup[ $hook_key ] ) )
+            $hook_key = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
+            if ( null === $hook_key || ! isset( $hook_lookup[ $hook_key ] ) )
             {
                 continue;
             }

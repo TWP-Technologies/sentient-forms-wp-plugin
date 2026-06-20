@@ -1207,6 +1207,11 @@
 
 	$effect(() => {
 		const next: Record<string, string> = { ...FALLBACK_HOOK_LABELS };
+		for (const [lifecycleId, lifecycle] of Object.entries(formSourceDescriptor?.lifecycles ?? {})) {
+			if (!lifecycle.supported) continue;
+			const hookKey = lifecycle.native_hook ?? lifecycleId;
+			next[hookKey] = lifecycle.label?.toString() || next[hookKey] || hookKey;
+		}
 		for (const definition of actionsState.definitions ?? []) {
 			if (!definition?.hooks) continue;
 
@@ -1610,6 +1615,19 @@
 	const currentFormAdapterLabel = $derived(
 		currentFormSummary?.adapter_name?.trim() ||
 			(data.formSourceSlug === 'gravity_forms' ? 'Gravity Forms' : data.formSourceSlug)
+	);
+	const formSourceDescriptor = $derived(actionsState.bootstrap?.form_source_descriptor ?? null);
+	const submissionLedgerSettings = $derived(actionsState.bootstrap?.ledger_settings ?? null);
+	const submissionLedgerEnabled = $derived(submissionLedgerSettings?.enabled === true);
+	const submissionLedgerRequired = $derived(
+		formSourceDescriptor?.ledger?.required_for_parity === true ||
+			Object.values(formSourceDescriptor?.lifecycles ?? {}).some(
+				(lifecycle) => lifecycle.requires_ledger === true
+			)
+	);
+	const submissionLedgerRecordCount = $derived(submissionLedgerSettings?.record_count ?? 0);
+	const submissionLedgerDetailHref = $derived(
+		appHref(`/actions/${data.formSourceSlug}/${data.formId}/submissions`)
 	);
 	const sectionDescription = $derived(`Link actions and execution settings for ${currentFormTitle}.`);
 	const selectedCreateActionLabel = $derived.by(() => {
@@ -3671,6 +3689,14 @@
 		}
 	}
 
+	async function toggleSubmissionLedger() {
+		await formActionsStore.updateSubmissionLedgerSettings(
+			data.formSourceSlug,
+			data.formId,
+			!submissionLedgerEnabled
+		);
+	}
+
 	function performStatusAction(actionId: AdviceActionId) {
 		if (actionId === 'refresh') {
 			refresh();
@@ -4035,6 +4061,52 @@
 				</a>
 			{/if}
 			<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
+		</div>
+	</div>
+
+	<div
+		class="sf:mt-2 sf:flex sf:flex-col sf:gap-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-4 sf:py-3 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between"
+		data-testid="submission-ledger-affordance"
+	>
+		<div class="sf:min-w-0">
+			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+				<p class="sf:text-sm sf:font-medium sf:text-slate-800">Submission Ledger</p>
+				<Badge variant={submissionLedgerEnabled ? 'success' : 'neutral'}>
+					{submissionLedgerEnabled ? 'On' : 'Off'}
+				</Badge>
+				{#if submissionLedgerRequired && !submissionLedgerEnabled}
+					<Badge variant="warning">Required for parity</Badge>
+				{/if}
+				{#if submissionLedgerEnabled}
+					<span class="sf:text-xs sf:text-slate-500">
+						{submissionLedgerRecordCount.toLocaleString()} stored
+					</span>
+				{/if}
+			</div>
+			<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
+				{submissionLedgerEnabled
+					? 'Logical field snapshots are stored for this form.'
+					: submissionLedgerRequired
+						? 'Ledger-required review features stay unavailable until storage is enabled.'
+						: 'Logical field snapshots are not stored until enabled.'}
+			</p>
+		</div>
+		<div class="sf:flex sf:shrink-0 sf:flex-wrap sf:items-center sf:gap-2">
+			<Toggle
+				checked={submissionLedgerEnabled}
+				onchange={toggleSubmissionLedger}
+				label="Store snapshots"
+				data-testid="submission-ledger-toggle"
+			/>
+			<ButtonLink
+				size="sm"
+				variant="secondary"
+				href={submissionLedgerDetailHref}
+				disabled={!submissionLedgerEnabled}
+				data-testid="submission-ledger-view-submissions"
+			>
+				View submissions
+			</ButtonLink>
 		</div>
 	</div>
 

@@ -63,6 +63,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
             'form_source'          => isset( $data['form_source'] ) ? sanitize_key( (string) $data['form_source'] ) : null,
             'form_id'              => isset( $data['form_id'] ) ? sanitize_text_field( (string) $data['form_id'] ) : null,
             'entry_id'             => isset( $data['entry_id'] ) ? sanitize_text_field( (string) $data['entry_id'] ) : null,
+            'submission_uuid'      => isset( $data['submission_uuid'] ) ? sanitize_text_field( (string) $data['submission_uuid'] ) : null,
             'provider'             => $provider,
             'model'                => isset( $data['model'] ) ? sanitize_text_field( (string) $data['model'] ) : null,
             'status'               => sanitize_key( (string) ( $data['status'] ?? 'queued' ) ),
@@ -85,7 +86,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
                 $this->table_name(),
                 $row,
                 [ 'execution_request_id' => $execution_request_id ],
-                [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ],
+                [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ],
                 [ '%s' ]
             );
 
@@ -100,7 +101,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $inserted = $this->wpdb->insert(
             $this->table_name(),
             $row,
-            [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
         );
 
         if ( false === $inserted )
