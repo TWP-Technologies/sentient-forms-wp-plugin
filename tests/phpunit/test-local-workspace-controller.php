@@ -102,11 +102,13 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         );
 
         $this->assertSame( 'gravity_forms', $mapping['form_source'] );
+        $this->assertSame( 'after_submission', $mapping['hook'] );
         $this->assertSame( [ 'email' => '3' ], $mapping['input_bindings_json'] );
 
         $mappings = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/form-mappings?form_source=gravity_forms&form_id=7' );
         $this->assertCount( 1, $mappings );
         $this->assertSame( $mapping['id'], $mappings[0]['id'] );
+        $this->assertSame( 'after_submission', $mappings[0]['hook'] );
 
         $event = $this->dispatch_json(
             'POST',
@@ -935,6 +937,8 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
                 'sentient_custom_actions',
                 'sentient_form_mappings',
                 'sentient_execution_events',
+                'sentient_submission_ledger_settings',
+                'sentient_submission_ledger',
                 'sentient_migration_runs',
                 'sentient_model_cache',
                 'sentient_async_requests',

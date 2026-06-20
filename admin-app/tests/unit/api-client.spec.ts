@@ -973,6 +973,55 @@ describe('SentientFormsApiClient', () => {
 		expect(result.total).toBe(1);
 	});
 
+	it('rejects malformed submission ledger settings responses', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				success: true,
+				data: {
+					form_source: 'gravity_forms',
+					form_id: 42,
+					enabled: 'yes',
+					enabled_at: null,
+					enabled_by_user_id: null,
+					disabled_at: null,
+					disabled_by_user_id: null,
+					settings_source: 'sentient_submission_ledger_settings',
+					ledger_records_endpoint: '/sentient-forms/v1/gravity_forms/forms/42/submissions'
+				}
+			})
+		);
+
+		await expect(
+			client.getSubmissionLedgerSettings('gravity_forms', 42, { showNotifications: false })
+		).rejects.toThrow();
+	});
+
+	it('rejects malformed submission ledger records responses', async () => {
+		mockFetch.mockResolvedValue(
+			jsonResponse({
+				success: true,
+				data: {
+					form_source: 'gravity_forms',
+					form_id: 42,
+					records: {
+						submission_uuid: 'not-an-array'
+					},
+					total: 1,
+					per_page: 10,
+					offset: 0
+				}
+			})
+		);
+
+		await expect(
+			client.getSubmissionLedgerRecords('gravity_forms', 42, {
+				perPage: 10,
+				offset: 0,
+				showNotifications: false
+			})
+		).rejects.toThrow();
+	});
+
 	it('loads a submission ledger detail record through the scoped endpoint', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,

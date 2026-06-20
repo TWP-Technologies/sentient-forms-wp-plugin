@@ -1626,6 +1626,7 @@
 	const formSourceDescriptor = $derived(actionsState.bootstrap?.form_source_descriptor ?? null);
 	const submissionLedgerSettings = $derived(actionsState.bootstrap?.ledger_settings ?? null);
 	const submissionLedgerEnabled = $derived(submissionLedgerSettings?.enabled === true);
+	const submissionLedgerSaving = $derived(actionsState.submissionLedgerSaving === true);
 	const submissionLedgerRequired = $derived(
 		formSourceDescriptor?.ledger?.required_for_parity === true ||
 			Object.values(formSourceDescriptor?.lifecycles ?? {}).some(
@@ -3697,6 +3698,8 @@
 	}
 
 	async function toggleSubmissionLedger() {
+		if (submissionLedgerSaving) return;
+
 		await formActionsStore.updateSubmissionLedgerSettings(
 			data.formSourceSlug,
 			data.formId,
@@ -4101,6 +4104,7 @@
 		<div class="sf:flex sf:shrink-0 sf:flex-wrap sf:items-center sf:gap-2">
 			<Toggle
 				checked={submissionLedgerEnabled}
+				disabled={submissionLedgerSaving}
 				onchange={toggleSubmissionLedger}
 				label="Store snapshots"
 				data-testid="submission-ledger-toggle"

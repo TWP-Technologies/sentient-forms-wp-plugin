@@ -2793,6 +2793,41 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( true, $payload['draft_applied'] ?? null );
     }
 
+    public function test_get_request_trace_reads_canonical_lifecycle_mappings(): void
+    {
+        update_option(
+            'sentient_forms_actions_gravity_forms_73',
+            [
+                'map_canonical_validation' => [
+                    'local_mapping_id'           => 'map_canonical_validation',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'validation' ],
+                ],
+            ],
+            false
+        );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/73/actions/request-trace' );
+        $request->set_param( 'form_source_slug', 'gravity_forms' );
+        $request->set_param( 'form_id', 73 );
+        $request->set_param( 'hook_scope', 'validation' );
+        $request->set_param( 'entry_values', [ '1' => 'prospect@example.test' ] );
+
+        $response = $this->controller->get_request_trace( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data = $response->get_data();
+        $this->assertSame( 'validation', $data['hook_scope'] ?? null );
+        $this->assertSame( [ 'validation' ], $data['available_hooks'] ?? null );
+        $this->assertSame( 'validation', $data['hooks'][0]['hook'] ?? null );
+        $this->assertSame( [ 'map_canonical_validation' ], $data['hooks'][0]['runnable'] ?? null );
+        $this->assertSame( 'would_run', $data['hooks'][0]['steps'][0]['outcome'] ?? null );
+
+        delete_option( 'sentient_forms_actions_gravity_forms_73' );
+    }
+
     // =========================================================================
     // CB-FORMS-001: Per-Form Master Disable Tests
     // =========================================================================

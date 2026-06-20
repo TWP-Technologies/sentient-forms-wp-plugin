@@ -8,6 +8,10 @@
 	} from '$lib/api/types';
 	import { appHref } from '$lib/navigation';
 	import { formatTimestamp } from '$lib/utils/date-time';
+	import {
+		formatSubmissionLedgerFieldPreview,
+		safeSubmissionNativeEntryUrl
+	} from '$lib/utils/submission-ledger';
 
 	type Props = { data: { formSourceSlug: string; formId: string } };
 
@@ -24,15 +28,6 @@
 	const routeFormId = $derived(encodeURIComponent(data.formId));
 	const formDetailHref = $derived(appHref(`/actions/${routeFormSourceSlug}/${routeFormId}`));
 	const formLabel = $derived(`${data.formSourceSlug.replaceAll('_', ' ')} #${data.formId}`);
-
-	function fieldPreview(record: SubmissionLedgerRecord): string {
-		const entries = Object.entries(record.logical_fields ?? {});
-		if (entries.length === 0) return 'No stored logical fields';
-		return entries
-			.slice(0, 3)
-			.map(([key, value]) => `${key}: ${String(value)}`)
-			.join(', ');
-	}
 
 	async function loadLedgerSubmissions() {
 		loading = true;
@@ -140,6 +135,7 @@
 					</thead>
 					<tbody class="sf:divide-y sf:divide-slate-200">
 						{#each records as record (record.submission_uuid)}
+							{@const nativeEntryUrl = safeSubmissionNativeEntryUrl(record.native_entry_url)}
 							<tr class="sf:text-sm sf:text-slate-700" data-testid="submission-ledger-row">
 								<td class="sf:px-4 sf:py-3">
 									<p class="sf:font-medium sf:text-slate-900">{record.submission_uuid}</p>
@@ -158,12 +154,14 @@
 									{/if}
 								</td>
 								<td class="sf:max-w-md sf:px-4 sf:py-3">
-									<p class="sf:line-clamp-2 sf:text-slate-700">{fieldPreview(record)}</p>
+									<p class="sf:line-clamp-2 sf:text-slate-700">
+										{formatSubmissionLedgerFieldPreview(record)}
+									</p>
 								</td>
 								<td class="sf:px-4 sf:py-3 sf:text-right">
-									{#if record.native_entry_url}
+									{#if nativeEntryUrl}
 										<a
-											href={record.native_entry_url}
+											href={nativeEntryUrl}
 											class="sf:text-sm sf:font-medium sf:text-primary-700 hover:sf:text-primary-800"
 											data-sveltekit-reload
 											rel="external"

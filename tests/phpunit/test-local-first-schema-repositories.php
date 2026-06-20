@@ -374,6 +374,34 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
         $this->assertSame( $submission_uuid, $list[0]['submission_uuid'] ?? null );
     }
 
+    public function test_submission_ledger_repository_rejects_empty_form_scope(): void
+    {
+        $repository = new Sentient_Forms_Submission_Ledger_Repository( $this->wpdb );
+
+        $missing_source = $repository->create(
+            [
+                'submission_uuid'     => wp_generate_uuid4(),
+                'form_source'         => '',
+                'form_id'             => '302',
+                'logical_fields_json' => [ 'email' => 'person@example.test' ],
+            ]
+        );
+        $missing_form_id = $repository->create(
+            [
+                'submission_uuid'     => wp_generate_uuid4(),
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '',
+                'logical_fields_json' => [ 'email' => 'person@example.test' ],
+            ]
+        );
+
+        $this->assertWPError( $missing_source );
+        $this->assertSame( 'sentient_forms_invalid_submission_ledger_scope', $missing_source->get_error_code() );
+        $this->assertWPError( $missing_form_id );
+        $this->assertSame( 'sentient_forms_invalid_submission_ledger_scope', $missing_form_id->get_error_code() );
+        $this->assertSame( 0, $repository->count_all() );
+    }
+
     public function test_execution_events_repository_records_submission_uuid_without_requiring_it_for_legacy_rows(): void
     {
         $events          = new Sentient_Forms_Execution_Events_Repository( $this->wpdb );

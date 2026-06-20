@@ -9,6 +9,7 @@ if ( ! defined( 'ABSPATH' ) )
 }
 
 // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Submission ledger records live in a plugin-owned custom table. WordPress core has no native CRUD/cache API for these rows; SQL is prepared and table names are escaped at each call site.
+// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared -- Static queries use $wpdb->prepare() with %i/%s/%d placeholders and plugin-owned table identifiers.
 class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_Repository
 {
     protected function table_name(): string
@@ -24,6 +25,12 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         if ( '' === $submission_uuid )
         {
             return new WP_Error( 'sentient_forms_missing_submission_uuid', __( 'Submission UUID is required.', 'sentient-forms' ) );
+        }
+        $form_source = sanitize_key( (string) ( $data['form_source'] ?? '' ) );
+        $form_id     = sanitize_text_field( (string) ( $data['form_id'] ?? '' ) );
+        if ( '' === $form_source || '' === $form_id )
+        {
+            return new WP_Error( 'sentient_forms_invalid_submission_ledger_scope', __( 'Submission ledger records require a form source and form ID.', 'sentient-forms' ) );
         }
 
         $logical_fields_json = $this->encode_json_field( $data['logical_fields_json'] ?? null, 'logical_fields_json', true );
@@ -55,8 +62,8 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
             $this->table_name(),
             [
                 'submission_uuid'        => $submission_uuid,
-                'form_source'            => sanitize_key( (string) ( $data['form_source'] ?? '' ) ),
-                'form_id'                => sanitize_text_field( (string) ( $data['form_id'] ?? '' ) ),
+                'form_source'            => $form_source,
+                'form_id'                => $form_id,
                 'native_entry_id'        => isset( $data['native_entry_id'] ) ? sanitize_text_field( (string) $data['native_entry_id'] ) : null,
                 'native_entry_url'       => isset( $data['native_entry_url'] ) ? esc_url_raw( (string) $data['native_entry_url'] ) : null,
                 'source_submitted_at'    => isset( $data['source_submitted_at'] ) ? sanitize_text_field( (string) $data['source_submitted_at'] ) : null,

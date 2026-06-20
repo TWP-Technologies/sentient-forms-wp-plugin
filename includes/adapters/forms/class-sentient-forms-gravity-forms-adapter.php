@@ -294,7 +294,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
 
         $submission_uuid = $this->capture_submission_ledger_for_entry( $entry, $form );
 
-        $this->backfill_validation_action_log_entry_ids( $entry, $form );
+        $this->backfill_validation_action_log_entry_ids( $entry, $form, $submission_uuid );
         $this->apply_validation_local_execution_results_to_entry( $validation_execution_request_ids, $entry, $form );
         $this->handle_after_submission( $entry, $form, $submission_uuid );
 
@@ -410,6 +410,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             }
 
             $field_key = $this->submission_ledger_field_key( $field, $field_id );
+            if ( array_key_exists( $field_key, $logical_fields ) )
+            {
+                $field_key = sanitize_key( $field_key . '_field_' . str_replace( '.', '_', $field_id ) );
+            }
             $value     = $this->submission_ledger_entry_value_for_field( $entry, $field );
             if ( null === $value || '' === $value || [] === $value )
             {
@@ -594,7 +598,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         return '' !== $submission_uuid ? [ 'submission_uuid' => $submission_uuid ] : [];
     }
 
-    private function backfill_validation_action_log_entry_ids( array $entry, array $form ): void
+    private function backfill_validation_action_log_entry_ids( array $entry, array $form, ?string $submission_uuid = null ): void
     {
         if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
         {
@@ -619,6 +623,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $entry_id,
             $this->get_id(),
             $form_id,
+            $submission_uuid
         );
 
         unset( $this->validation_execution_request_ids_by_form[ $form_id ] );
@@ -701,7 +706,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             }
 
             $mapping = $mappings->get( $mapping_id );
-            if ( ! is_array( $mapping ) || 'gform_validation' !== (string) ( $mapping['hook'] ?? '' ) )
+            $mapping_hook = is_array( $mapping )
+                ? Sentient_Forms_Form_Source_Lifecycles::normalize_id( (string) ( $mapping['hook'] ?? '' ) )
+                : '';
+            if ( ! is_array( $mapping ) || Sentient_Forms_Form_Source_Lifecycles::VALIDATION !== $mapping_hook )
             {
                 continue;
             }

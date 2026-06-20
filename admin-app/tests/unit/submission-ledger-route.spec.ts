@@ -15,4 +15,23 @@ describe('submission ledger route loader', () => {
 			formId: 'form-alpha_2026'
 		});
 	});
+
+	it('rejects blank form source params', () => {
+		let thrown: unknown = null;
+		try {
+			load({
+				params: {
+					formSourceSlug: ' ',
+					formId: 'form-alpha_2026'
+				}
+			} as never);
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toMatchObject({
+			status: 404,
+			body: { message: 'Invalid form identifier' }
+		});
+	});
 });

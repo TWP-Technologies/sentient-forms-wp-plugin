@@ -535,6 +535,71 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( '55555555-5555-4555-8555-555555555555', $data['entries'][0]['submission_uuid'] );
     }
 
+    public function test_get_log_entries_normalizes_submission_uuid_for_option_and_local_event_rows(): void
+    {
+        Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'          => 'gravity_forms',
+            'form_id'              => 7,
+            'entry_id'             => 77,
+            'action_code'          => 'entry_summary_v1',
+            'action_label'         => 'Entry Summary',
+            'status'               => 'success',
+            'execution_request_id' => 'req-option-invalid-submission-uuid',
+            'submission_uuid'      => 'not-a-uuid',
+        ] );
+        Sentient_Forms_Action_Log_Controller::log_execution( [
+            'form_source'          => 'gravity_forms',
+            'form_id'              => 7,
+            'entry_id'             => 78,
+            'action_code'          => 'entry_summary_v1',
+            'action_label'         => 'Entry Summary',
+            'status'               => 'success',
+            'execution_request_id' => 'req-option-uppercase-submission-uuid',
+            'submission_uuid'      => 'AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE',
+        ] );
+
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $events->record(
+            [
+                'execution_request_id' => 'req-local-invalid-submission-uuid',
+                'submission_uuid'      => 'also-not-a-uuid',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'entry_id'             => '79',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+            ]
+        );
+        $events->record(
+            [
+                'execution_request_id' => 'req-local-uppercase-submission-uuid',
+                'submission_uuid'      => 'FFFFFFFF-1111-4222-8333-444444444444',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'entry_id'             => '80',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+            ]
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+        $entries  = [];
+        foreach ( $data['entries'] as $entry )
+        {
+            $entries[ $entry['execution_request_id'] ] = $entry;
+        }
+
+        $this->assertNull( $entries['req-option-invalid-submission-uuid']['submission_uuid'] ?? null );
+        $this->assertSame( 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', $entries['req-option-uppercase-submission-uuid']['submission_uuid'] ?? null );
+        $this->assertNull( $entries['req-local-invalid-submission-uuid']['submission_uuid'] ?? null );
+        $this->assertSame( 'ffffffff-1111-4222-8333-444444444444', $entries['req-local-uppercase-submission-uuid']['submission_uuid'] ?? null );
+    }
+
     public function test_get_log_entries_sanitizes_managed_currency_from_local_events(): void
     {
         global $wpdb;

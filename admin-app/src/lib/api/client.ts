@@ -1,5 +1,6 @@
 import type { SentientFormsConfig } from '$lib/api/http';
 import { safeParseFormActionConfigPayload } from '$lib/schemas/action-config';
+import { z } from 'zod';
 import {
 	announceWordPressSessionExpired,
 	isWordPressSessionExpired
@@ -142,6 +143,62 @@ interface AdminApiInFlightEntry {
 	showNotifications?: boolean;
 	tags: string[];
 }
+
+const ledgerFormIdSchema = z.union([z.string(), z.number()]).transform((value) => String(value));
+const nullableScalarStringSchema = z
+	.union([z.string(), z.number(), z.null()])
+	.transform((value) => (value === null ? null : String(value)));
+const jsonRecordSchema = z.record(z.string(), z.unknown());
+const submissionLedgerRecordSchema = z.object({
+	id: z.coerce.number().int(),
+	submission_uuid: z.string(),
+	form_source: z.string(),
+	form_id: ledgerFormIdSchema,
+	native_entry_id: nullableScalarStringSchema,
+	native_entry_url: z.string().nullable(),
+	source_submitted_at: z.string().nullable(),
+	captured_at: z.string(),
+	logical_fields: jsonRecordSchema,
+	provider_metadata: jsonRecordSchema,
+	file_refs: z.array(jsonRecordSchema),
+	redaction_summary: jsonRecordSchema,
+	expires_at: z.string().nullable(),
+	detail_endpoint: z.string()
+});
+const submissionLedgerSettingsResponseSchema = z.object({
+	form_source: z.string(),
+	form_id: ledgerFormIdSchema,
+	enabled: z.boolean(),
+	enabled_at: z.string().nullable(),
+	enabled_by_user_id: z.number().int().nullable(),
+	disabled_at: z.string().nullable(),
+	disabled_by_user_id: z.number().int().nullable(),
+	settings_source: z.string(),
+	ledger_records_endpoint: z.string(),
+	record_count: z.number().int().optional()
+});
+const submissionLedgerRecordsResponseSchema = z
+	.object({
+		form_source: z.string(),
+		form_id: ledgerFormIdSchema,
+		records: z.array(submissionLedgerRecordSchema).optional(),
+		submissions: z.array(submissionLedgerRecordSchema).optional(),
+		total: z.number().int().optional(),
+		count: z.number().int().optional(),
+		per_page: z.number().int(),
+		offset: z.number().int()
+	})
+	.transform((payload) => {
+		const records = payload.records ?? payload.submissions ?? [];
+		return {
+			form_source: payload.form_source,
+			form_id: payload.form_id,
+			records,
+			total: payload.total ?? payload.count ?? records.length,
+			per_page: payload.per_page,
+			offset: payload.offset
+		};
+	});
 
 const adminApiMemoryCache = new Map<string, AdminApiCacheEntry>();
 const adminApiInFlight = new Map<string, AdminApiInFlightEntry>();
@@ -1479,7 +1536,9 @@ export class SentientFormsApiClient {
 				tags: ['submission-ledger', 'settings', formCacheTag(formSourceSlug, formId)]
 			})
 		);
-		return this.unwrap(response);
+		return submissionLedgerSettingsResponseSchema.parse(
+			this.unwrap(response)
+		) as SubmissionLedgerSettingsResponse;
 	}
 
 	async updateSubmissionLedgerSettings(
@@ -1498,7 +1557,9 @@ export class SentientFormsApiClient {
 				...options
 			}
 		);
-		return this.unwrap(response);
+		return submissionLedgerSettingsResponseSchema.parse(
+			this.unwrap(response)
+		) as SubmissionLedgerSettingsResponse;
 	}
 
 	async getSubmissionLedgerRecords(
@@ -1517,30 +1578,16 @@ export class SentientFormsApiClient {
 		}
 		const query = params.toString();
 		const { perPage: _perPage, offset: _offset, ...requestOptions } = options;
-		type RawSubmissionLedgerRecordsResponse = Omit<
-			SubmissionLedgerRecordsResponse,
-			'records' | 'total'
-		> & {
-			records?: SubmissionLedgerRecordsResponse['records'];
-			total?: number;
-			submissions?: SubmissionLedgerRecordsResponse['records'];
-			count?: number;
-		};
-
-		const response = await this.request<RestEnvelope<RawSubmissionLedgerRecordsResponse>>(
+		const response = await this.request<RestEnvelope<unknown>>(
 			`${slug}/forms/${formIdSegment}/submissions${query ? `?${query}` : ''}`,
 			withCacheDefaults(requestOptions, {
 				ttlMs: 15_000,
 				tags: ['submission-ledger', formCacheTag(formSourceSlug, formId)]
 			})
 		);
-		const payload = this.unwrap<RawSubmissionLedgerRecordsResponse>(response);
-		const records = payload.records ?? payload.submissions ?? [];
-		return {
-			...payload,
-			records,
-			total: payload.total ?? payload.count ?? records.length
-		};
+		return submissionLedgerRecordsResponseSchema.parse(
+			this.unwrap(response)
+		) as SubmissionLedgerRecordsResponse;
 	}
 
 	async getSubmissionLedgerRecord(
@@ -1559,7 +1606,7 @@ export class SentientFormsApiClient {
 				tags: ['submission-ledger', formCacheTag(formSourceSlug, formId)]
 			})
 		);
-		return this.unwrap(response);
+		return submissionLedgerRecordSchema.parse(this.unwrap(response)) as SubmissionLedgerRecord;
 	}
 
 	async getFormActions(

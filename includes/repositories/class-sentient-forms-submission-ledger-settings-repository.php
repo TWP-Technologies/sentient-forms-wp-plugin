@@ -9,6 +9,7 @@ if ( ! defined( 'ABSPATH' ) )
 }
 
 // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Submission ledger settings live in a plugin-owned custom table. WordPress core has no native CRUD/cache API for these rows; SQL is prepared and table names are escaped at each call site.
+// phpcs:disable WordPress.DB.PreparedSQL.NotPrepared -- Static queries use $wpdb->prepare() with %i/%s/%d placeholders and plugin-owned table identifiers.
 class Sentient_Forms_Submission_Ledger_Settings_Repository extends Sentient_Forms_Local_Repository
 {
     protected function table_name(): string

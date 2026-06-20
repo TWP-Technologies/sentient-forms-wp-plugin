@@ -4394,10 +4394,13 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
         $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
         $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
         $vault          = new Sentient_Forms_Provider_Credential_Vault();
         $encrypted      = $vault->encrypt( 'sk-or-gf-local-validation-failure-secret' );
 
         $this->assertIsString( $encrypted );
+        $this->assertIsArray( $ledger_settings->set_enabled( 'gravity_forms', '326', true, 1 ) );
 
         $credential_id = $credentials->create(
             [
@@ -4440,7 +4443,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             [
                 'form_source'         => 'gravity_forms',
                 'form_id'             => '326',
-                'hook'                => 'gform_validation',
+                'hook'                => 'validation',
                 'action_kind'         => 'custom_action',
                 'action_id'           => $action_id,
                 'input_bindings_json' => [],
@@ -4467,7 +4470,13 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 'form'     => [
                     'id'                => 326,
                     'failed_validation' => false,
-                    'fields'            => [],
+                    'fields'            => [
+                        (object) [
+                            'id'    => 3,
+                            'label' => 'Project Details',
+                            'type'  => 'textarea',
+                        ],
+                    ],
                 ],
             ]
         );
@@ -4476,11 +4485,18 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                 'id'      => 812,
                 'form_id' => 326,
                 '3'       => 'This entry should save even though validation analysis failed.',
+                'date_created' => '2026-06-19 01:15:00',
             ],
             [
                 'id'     => 326,
                 'title'  => 'Content Validation Failure Replay Form',
-                'fields' => [],
+                'fields' => [
+                    (object) [
+                        'id'    => 3,
+                        'label' => 'Project Details',
+                        'type'  => 'textarea',
+                    ],
+                ],
             ]
         );
         remove_filter( 'pre_http_request', $http_filter, 10 );
@@ -4499,6 +4515,12 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'failed', $recent_events[0]['status'] ?? null );
         $this->assertSame( $mapping_id, (int) ( $recent_events[0]['mapping_id'] ?? 0 ) );
         $this->assertSame( '812', $recent_events[0]['entry_id'] ?? null );
+        $this->assertMatchesRegularExpression( '/^[0-9a-f-]{36}$/', $recent_events[0]['submission_uuid'] ?? '' );
+
+        $record = $ledger->get_by_submission_uuid( (string) ( $recent_events[0]['submission_uuid'] ?? '' ) );
+        $this->assertIsArray( $record );
+        $this->assertSame( '812', $record['native_entry_id'] ?? null );
+        $this->assertSame( 'This entry should save even though validation analysis failed.', $record['logical_fields_json']['project_details'] ?? null );
     }
 
     public function test_entry_post_save_replays_failed_spam_validation_action_with_delivery_suppression(): void
@@ -4897,6 +4919,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
             '1'       => 'Async Local First Lead',
             '2'       => 'do-not-store-this-secret',
             '3'       => 'https://example.test/uploads/spec.pdf',
+            '4'       => 'Backup Contact',
             'date_created' => '2026-06-19 01:00:00',
         ];
         $form = [
@@ -4917,6 +4940,11 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
                     'id'    => 3,
                     'label' => 'Attachment',
                     'type'  => 'fileupload',
+                ],
+                (object) [
+                    'id'    => 4,
+                    'label' => 'Name',
+                    'type'  => 'text',
                 ],
             ],
         ];
@@ -4950,6 +4978,7 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         $this->assertIsArray( $record );
         $this->assertSame( '655', $record['native_entry_id'] ?? null );
         $this->assertSame( 'Async Local First Lead', $record['logical_fields_json']['name'] ?? null );
+        $this->assertSame( 'Backup Contact', $record['logical_fields_json']['name_field_4'] ?? null );
         $this->assertSame( '[redacted]', $record['logical_fields_json']['password'] ?? null );
         $this->assertArrayNotHasKey( 'attachment', $record['logical_fields_json'] );
         $this->assertSame( '3', $record['file_refs_json'][0]['field_id'] ?? null );

@@ -88,4 +88,30 @@ class Tests_Submission_Ledger_Capture extends WP_UnitTestCase
         $this->assertContains( 'password', $stored['redaction_summary_json']['redacted_fields'] ?? [] );
         $this->assertContains( 'raw_request', $stored['redaction_summary_json']['redacted_fields'] ?? [] );
     }
+
+    public function test_capture_generates_submission_uuid_when_payload_uuid_is_invalid(): void
+    {
+        $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );
+        $service  = new Sentient_Forms_Submission_Ledger_Capture_Service( $this->wpdb );
+        $ledger   = new Sentient_Forms_Submission_Ledger_Repository( $this->wpdb );
+
+        $settings->set_enabled( 'gravity_forms', '403', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $result = $service->capture(
+            [
+                'submission_uuid' => 'not-a-uuid',
+                'form_source'     => 'gravity_forms',
+                'form_id'         => '403',
+                'native_entry_id' => '503',
+                'logical_fields'  => [
+                    'email' => 'person@example.test',
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertMatchesRegularExpression( '/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $result['submission_uuid'] ?? '' );
+        $this->assertNotSame( 'not-a-uuid', $result['submission_uuid'] ?? null );
+        $this->assertNotNull( $ledger->get_by_submission_uuid( (string) $result['submission_uuid'] ) );
+    }
 }

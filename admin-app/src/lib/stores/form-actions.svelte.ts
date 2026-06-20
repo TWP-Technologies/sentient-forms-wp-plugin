@@ -30,6 +30,7 @@ export interface FormActionsState {
 	/** CB-FORMS-002: Effective disable state (form OR global OR provider) */
 	effectiveDisabled: boolean;
 	bootstrap: FormActionsBootstrapResponse | null;
+	submissionLedgerSaving: boolean;
 }
 
 const client = createClientFromConfig();
@@ -48,7 +49,8 @@ function initialState(): FormActionsState {
 		globalDisabled: false,
 		providerDisabled: false,
 		effectiveDisabled: false,
-		bootstrap: null
+		bootstrap: null,
+		submissionLedgerSaving: false
 	};
 }
 
@@ -139,6 +141,7 @@ export const formActionsState = $state(initialState());
 const readable = toStore(() => formActionsState);
 let activeFormKey: string | null = null;
 let refreshInFlightKey: string | null = null;
+let submissionLedgerUpdateInFlightKey: string | null = null;
 let loadRequestSequence = 0;
 let statusRefreshSequence = 0;
 
@@ -167,6 +170,7 @@ function resetState() {
 function resetStore() {
 	activeFormKey = null;
 	refreshInFlightKey = null;
+	submissionLedgerUpdateInFlightKey = null;
 	loadRequestSequence += 1;
 	statusRefreshSequence += 1;
 	resetState();
@@ -475,8 +479,17 @@ async function updateSubmissionLedgerSettings(
 	enabled: boolean
 ) {
 	const formKey = getFormKey(formSourceSlug, formId);
+	if (submissionLedgerUpdateInFlightKey === formKey) {
+		return;
+	}
+
+	submissionLedgerUpdateInFlightKey = formKey;
 	const previousBootstrap = formActionsState.bootstrap;
 	const previousSettings = previousBootstrap?.ledger_settings ?? null;
+
+	if (activeFormKey === formKey) {
+		formActionsState.submissionLedgerSaving = true;
+	}
 
 	if (activeFormKey === formKey && previousBootstrap && previousSettings) {
 		applySubmissionLedgerSettings({
@@ -503,6 +516,13 @@ async function updateSubmissionLedgerSettings(
 		}
 		const message = friendlyMessageFromError(error, 'Failed to update submission ledger storage');
 		notifications.error(message);
+	} finally {
+		if (submissionLedgerUpdateInFlightKey === formKey) {
+			submissionLedgerUpdateInFlightKey = null;
+		}
+		if (activeFormKey === formKey) {
+			formActionsState.submissionLedgerSaving = false;
+		}
 	}
 }
 

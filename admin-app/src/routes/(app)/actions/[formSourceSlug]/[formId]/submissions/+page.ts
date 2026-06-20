@@ -1,15 +1,21 @@
 import { error } from '@sveltejs/kit';
+import { z } from 'zod';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = ({ params }) => {
-	const formId = params.formId.trim();
+const paramsSchema = z.object({
+	formSourceSlug: z.string().trim().min(1),
+	formId: z.string().trim().min(1)
+});
 
-	if (!formId) {
+export const load: PageLoad = ({ params }) => {
+	const parsed = paramsSchema.safeParse(params);
+
+	if (!parsed.success) {
 		throw error(404, 'Invalid form identifier');
 	}
 
 	return {
-		formSourceSlug: params.formSourceSlug,
-		formId
+		formSourceSlug: parsed.data.formSourceSlug,
+		formId: parsed.data.formId
 	};
 };

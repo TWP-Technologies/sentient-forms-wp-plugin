@@ -56,9 +56,7 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
             ? $this->sanitize_file_references( $payload['files'] )
             : null;
 
-        $submission_uuid = isset( $payload['submission_uuid'] ) && is_scalar( $payload['submission_uuid'] )
-            ? sanitize_text_field( (string) $payload['submission_uuid'] )
-            : wp_generate_uuid4();
+        $submission_uuid = $this->normalize_submission_uuid( $payload['submission_uuid'] ?? null ) ?? wp_generate_uuid4();
 
         $created = $this->ledger->create(
             [
@@ -91,6 +89,17 @@ class Sentient_Forms_Submission_Ledger_Capture_Service
         }
 
         return $stored;
+    }
+
+    private function normalize_submission_uuid( mixed $submission_uuid ): ?string
+    {
+        if ( ! is_scalar( $submission_uuid ) )
+        {
+            return null;
+        }
+
+        $submission_uuid = strtolower( sanitize_text_field( (string) $submission_uuid ) );
+        return wp_is_uuid( $submission_uuid ) ? $submission_uuid : null;
     }
 
     /**

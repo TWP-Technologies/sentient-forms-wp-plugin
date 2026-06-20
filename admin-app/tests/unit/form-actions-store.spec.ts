@@ -269,7 +269,76 @@ describe('formActionsStore', () => {
 		});
 		expect(state.bootstrap?.ledger_settings?.enabled).toBe(true);
 		expect(state.bootstrap?.ledger_settings?.enabled_by_user_id).toBe(7);
+		expect(state.submissionLedgerSaving).toBe(false);
 		expect(notifySuccessSpy).toHaveBeenCalledWith('Submission ledger storage enabled.');
+	});
+
+	it('ignores overlapping submission ledger setting writes for the active form', async () => {
+		const pending = deferred({
+			form_source: 'gravity_forms',
+			form_id: 1,
+			enabled: true,
+			enabled_at: '2030-01-01T00:01:00Z',
+			enabled_by_user_id: 7,
+			disabled_at: null,
+			disabled_by_user_id: null,
+			settings_source: 'sentient_submission_ledger_settings',
+			ledger_records_endpoint: '/sentient-forms/v1/gravity_forms/forms/1/submissions',
+			record_count: 0
+		});
+
+		stubClient.getFormActions.mockResolvedValue([]);
+		stubClient.getActionDefinitions.mockResolvedValue([]);
+		stubClient.getFormExecutionStatus.mockResolvedValue(noopStatus);
+		stubClient.getFormActionsBootstrap.mockResolvedValue({
+			form_source: 'gravity_forms',
+			form_id: 1,
+			actions: [],
+			execution_status: noopStatus,
+			disabled_state: {
+				sf_disabled: false,
+				global_disabled: false,
+				provider_disabled: false,
+				effective_disabled: false
+			},
+			ledger_settings: {
+				form_source: 'gravity_forms',
+				form_id: 1,
+				enabled: false,
+				enabled_at: null,
+				enabled_by_user_id: null,
+				disabled_at: null,
+				disabled_by_user_id: null,
+				settings_source: 'sentient_submission_ledger_settings',
+				ledger_records_endpoint: '/sentient-forms/v1/gravity_forms/forms/1/submissions',
+				record_count: 0
+			},
+			generated_at: '2030-01-01T00:00:00Z'
+		});
+		stubClient.updateSubmissionLedgerSettings.mockReturnValue(pending.promise);
+
+		await formActionsStore.load('gravity_forms', 1);
+		const first = formActionsStore.updateSubmissionLedgerSettings('gravity_forms', 1, true);
+		const second = formActionsStore.updateSubmissionLedgerSettings('gravity_forms', 1, false);
+		expect(snapshotState().submissionLedgerSaving).toBe(true);
+
+		pending.resolve({
+			form_source: 'gravity_forms',
+			form_id: 1,
+			enabled: true,
+			enabled_at: '2030-01-01T00:01:00Z',
+			enabled_by_user_id: 7,
+			disabled_at: null,
+			disabled_by_user_id: null,
+			settings_source: 'sentient_submission_ledger_settings',
+			ledger_records_endpoint: '/sentient-forms/v1/gravity_forms/forms/1/submissions',
+			record_count: 0
+		});
+		await Promise.all([first, second]);
+
+		expect(stubClient.updateSubmissionLedgerSettings).toHaveBeenCalledTimes(1);
+		expect(snapshotState().bootstrap?.ledger_settings?.enabled).toBe(true);
+		expect(snapshotState().submissionLedgerSaving).toBe(false);
 	});
 
 	it('updates submission ledger settings for opaque provider-native form IDs', async () => {
