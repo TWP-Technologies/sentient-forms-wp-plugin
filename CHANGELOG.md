@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.16](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.15...v0.3.16) (2026-06-22)
+
+
+### Bug Fixes
+
+* **gravity-forms:** ensure qna admin assets render with entry panel ([b7b35b8](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b7b35b817632456300837e998d0bf528112d3f5e))
+
 ## [0.3.15](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.14...v0.3.15) (2026-06-19)
 
 
