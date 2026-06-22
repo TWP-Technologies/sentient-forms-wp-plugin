@@ -253,19 +253,7 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $_GET['page'] = 'gf_entries';
         set_current_screen( 'dashboard' );
         $this->reset_qna_assets();
-        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
-        if ( false !== $emoji_styles_priority )
-        {
-            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
-
-        ob_start();
-        do_action( 'admin_print_styles' );
-        ob_end_clean();
-        if ( false !== $emoji_styles_priority )
-        {
-            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
+        $this->fire_admin_print_styles_without_emoji();
         $this->mark_qna_script_done();
 
         $form  = $this->form_fixture();
@@ -295,19 +283,7 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $_GET['page'] = 'gf_entries';
         set_current_screen( 'dashboard' );
         $this->reset_qna_assets();
-        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
-        if ( false !== $emoji_styles_priority )
-        {
-            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
-
-        ob_start();
-        do_action( 'admin_print_styles' );
-        ob_end_clean();
-        if ( false !== $emoji_styles_priority )
-        {
-            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
+        $this->fire_admin_print_styles_without_emoji();
 
         $form  = $this->form_fixture();
         $entry = $this->entry_fixture();
@@ -333,19 +309,7 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $_GET['page'] = 'gf_entries';
         set_current_screen( 'dashboard' );
         $this->reset_qna_assets();
-        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
-        if ( false !== $emoji_styles_priority )
-        {
-            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
-
-        ob_start();
-        do_action( 'admin_print_styles' );
-        ob_end_clean();
-        if ( false !== $emoji_styles_priority )
-        {
-            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
+        $this->fire_admin_print_styles_without_emoji();
 
         $loader_filter = static function ( string $tag, string $handle, string $src ): string {
             if ( 'sentient-forms-gravity-qna-admin' !== $handle )
@@ -384,19 +348,7 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $_GET['page'] = 'gf_entries';
         set_current_screen( 'dashboard' );
         $this->reset_qna_assets();
-        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
-        if ( false !== $emoji_styles_priority )
-        {
-            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
-
-        ob_start();
-        do_action( 'admin_print_styles' );
-        ob_end_clean();
-        if ( false !== $emoji_styles_priority )
-        {
-            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
+        $this->fire_admin_print_styles_without_emoji();
         $this->mark_qna_script_done();
 
         $form       = $this->form_fixture();
@@ -437,19 +389,7 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         set_current_screen( 'dashboard' );
         $this->reset_qna_assets();
         add_filter( 'wp_doing_ajax', '__return_true' );
-        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
-        if ( false !== $emoji_styles_priority )
-        {
-            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
-
-        ob_start();
-        do_action( 'admin_print_styles' );
-        ob_end_clean();
-        if ( false !== $emoji_styles_priority )
-        {
-            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
+        $this->fire_admin_print_styles_without_emoji();
 
         $form  = $this->form_fixture();
         $entry = $this->entry_fixture();
@@ -509,19 +449,7 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         set_current_screen( 'dashboard' );
         $this->reset_qna_assets();
         add_filter( 'wp_doing_ajax', '__return_true' );
-        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
-        if ( false !== $emoji_styles_priority )
-        {
-            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
-
-        ob_start();
-        do_action( 'admin_print_styles' );
-        ob_end_clean();
-        if ( false !== $emoji_styles_priority )
-        {
-            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
+        $this->fire_admin_print_styles_without_emoji();
 
         $form       = $this->form_fixture();
         $first      = $this->entry_fixture();
@@ -551,19 +479,7 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $_GET['page'] = 'gf_entries';
         set_current_screen( 'dashboard' );
         $this->reset_qna_assets();
-        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
-        if ( false !== $emoji_styles_priority )
-        {
-            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
-
-        ob_start();
-        do_action( 'admin_print_styles' );
-        ob_end_clean();
-        if ( false !== $emoji_styles_priority )
-        {
-            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
+        $this->fire_admin_print_styles_without_emoji();
         $GLOBALS['wp_actions']['admin_print_footer_scripts'] = 1;
 
         $form  = $this->form_fixture();
@@ -784,19 +700,7 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $_GET['page'] = 'gf_entries';
         set_current_screen( 'dashboard' );
         $this->reset_qna_assets();
-        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
-        if ( false !== $emoji_styles_priority )
-        {
-            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
-
-        ob_start();
-        do_action( 'admin_print_styles' );
-        ob_end_clean();
-        if ( false !== $emoji_styles_priority )
-        {
-            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
-        }
+        $this->fire_admin_print_styles_without_emoji();
 
         $form     = $this->form_fixture();
         $bad_json = '{"schema":"sentient_forms_realtime_clarification_qna.v1",';
@@ -1132,6 +1036,24 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         if ( ! in_array( 'sentient-forms-gravity-qna-admin', $wp_scripts->done, true ) )
         {
             $wp_scripts->done[] = 'sentient-forms-gravity-qna-admin';
+        }
+    }
+
+    private function fire_admin_print_styles_without_emoji(): void
+    {
+        $emoji_styles_priority = has_action( 'admin_print_styles', 'print_emoji_styles' );
+        if ( false !== $emoji_styles_priority )
+        {
+            remove_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
+        }
+
+        ob_start();
+        do_action( 'admin_print_styles' );
+        ob_end_clean();
+
+        if ( false !== $emoji_styles_priority )
+        {
+            add_action( 'admin_print_styles', 'print_emoji_styles', $emoji_styles_priority );
         }
     }
 
