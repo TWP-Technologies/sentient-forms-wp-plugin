@@ -176,6 +176,26 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertTrue( $descriptors['fake_source']['ledger']['required_for_parity'] );
     }
 
+    public function test_unregister_adapter_removes_registered_adapter(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $registry->register_adapter(
+            new Sentient_Forms_Test_Form_Source_Adapter(
+                'temporary_source',
+                'Temporary Source',
+                true,
+                []
+            )
+        );
+
+        $this->assertInstanceOf( Sentient_Forms_Adapter_Interface::class, $registry->get_adapter_by_id( 'temporary_source' ) );
+
+        $registry->unregister_adapter( 'temporary_source' );
+
+        $this->assertNull( $registry->get_adapter_by_id( 'temporary_source' ) );
+        $this->assertArrayNotHasKey( 'temporary_source', $registry->get_all_adapters() );
+    }
+
     public function test_gravity_forms_descriptor_uses_canonical_lifecycle_ids_with_native_hooks(): void
     {
         $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );

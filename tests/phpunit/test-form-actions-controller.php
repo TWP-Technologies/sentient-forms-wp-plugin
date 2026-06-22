@@ -301,6 +301,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     protected function tearDown(): void {
         remove_filter( 'sentient_forms_supported_form_sources', [ $this, 'add_opaque_form_source' ] );
+        Sentient_Forms_Plugin::instance()->get_form_adapter_registry()->unregister_adapter( 'opaque_forms' );
+        $this->opaque_form_adapter = null;
         parent::tearDown();
     }
 
