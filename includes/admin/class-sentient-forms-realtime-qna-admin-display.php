@@ -20,6 +20,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
     private const STORAGE_FIELD_LEGACY_LABEL = 'Sentient Forms Clarification Q&A';
     private const STORAGE_FIELD_INPUT_NAME = 'sentient_forms_realtime_qna';
     private const STORAGE_FIELD_CLASS = 'sentient-forms-realtime-qna-storage';
+    private const ADMIN_ASSET_HANDLE = 'sentient-forms-gravity-qna-admin';
 
     private static bool $hooks_registered = false;
 
@@ -36,6 +37,8 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
      * @var array<int,bool>
      */
     private array $print_entry_ids_rendered = [];
+
+    private bool $entry_detail_external_script_printed = false;
 
     public function register_hooks(): void
     {
@@ -153,6 +156,13 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
                 return '';
             }
 
+            if ( $this->is_gravity_entries_admin_request() && ! $this->is_print_entry_request() )
+            {
+                $asset_markup = $this->get_entry_detail_asset_markup();
+
+                return $asset_markup['before'] . $this->render_malformed_payload_notice( $value ) . $asset_markup['after'];
+            }
+
             return $this->render_malformed_payload_notice( $value );
         }
 
@@ -173,7 +183,9 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             $this->entry_detail_ids_rendered[ $entry_id ] = true;
         }
 
-        return $this->render_entry_detail_panel( $summary );
+        $asset_markup = $this->get_entry_detail_asset_markup();
+
+        return $asset_markup['before'] . $this->render_entry_detail_panel( $summary ) . $asset_markup['after'];
     }
 
     /**
@@ -204,7 +216,9 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             $this->entry_detail_ids_rendered[ $entry_id ] = true;
         }
 
-        echo '<div class="sentient-forms-qna-entry-detail-fallback">' . $this->render_entry_detail_panel( $summary ) . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Markup is escaped by renderer methods.
+        $asset_markup = $this->get_entry_detail_asset_markup();
+
+        echo $asset_markup['before'] . '<div class="sentient-forms-qna-entry-detail-fallback">' . $this->render_entry_detail_panel( $summary ) . '</div>' . $asset_markup['after']; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Markup is escaped by renderer methods.
     }
 
     /**
@@ -246,6 +260,112 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         }
 
         $this->enqueue_assets( false );
+    }
+
+    /**
+     * @return array{before:string,after:string}
+     */
+    private function get_entry_detail_asset_markup(): array
+    {
+        $markup = [
+            'before' => '',
+            'after'  => '',
+        ];
+
+        if ( ! $this->is_gravity_entries_admin_request() )
+        {
+            return $markup;
+        }
+
+        $this->enqueue_assets( true );
+
+        if ( ( did_action( 'admin_print_styles' ) || wp_doing_ajax() ) && ! wp_style_is( self::ADMIN_ASSET_HANDLE, 'done' ) )
+        {
+            ob_start();
+            wp_print_styles( [ self::ADMIN_ASSET_HANDLE ] );
+            $markup['before'] = (string) ob_get_clean();
+        }
+
+        $script_markup = $this->get_entry_detail_script_markup();
+        if ( '' !== trim( $script_markup ) )
+        {
+            $markup['after'] = $script_markup;
+        }
+
+        return $markup;
+    }
+
+    private function get_entry_detail_script_markup(): string
+    {
+        if ( ! $this->should_print_entry_detail_script_markup() )
+        {
+            return '';
+        }
+
+        $script_markup = '';
+
+        if ( ! wp_script_is( self::ADMIN_ASSET_HANDLE, 'done' ) && ! $this->entry_detail_external_script_printed )
+        {
+            $script_markup = $this->render_entry_detail_script_tag();
+            $this->entry_detail_external_script_printed = '' !== trim( $script_markup );
+        }
+
+        $script_markup .= $this->render_entry_detail_bootstrap_tag();
+
+        if ( '' !== trim( $script_markup ) )
+        {
+            $this->mark_entry_detail_script_done();
+        }
+
+        return $script_markup;
+    }
+
+    private function should_print_entry_detail_script_markup(): bool
+    {
+        return wp_script_is( self::ADMIN_ASSET_HANDLE, 'done' )
+            || did_action( 'admin_print_styles' )
+            || wp_doing_ajax()
+            || $this->have_admin_footer_scripts_printed();
+    }
+
+    private function have_admin_footer_scripts_printed(): bool
+    {
+        return did_action( 'admin_print_footer_scripts' ) || did_action( 'wp_print_footer_scripts' );
+    }
+
+    private function render_entry_detail_script_tag(): string
+    {
+        $wp_scripts = wp_scripts();
+
+        if ( ! isset( $wp_scripts->registered[ self::ADMIN_ASSET_HANDLE ] ) )
+        {
+            return '';
+        }
+
+        ob_start();
+        $wp_scripts->do_item( self::ADMIN_ASSET_HANDLE );
+
+        return (string) ob_get_clean();
+    }
+
+    private function render_entry_detail_bootstrap_tag(): string
+    {
+        $script = 'var sentientFormsQnaInit = window["sentientFormsGravityQnaAdminInit"];';
+        $script .= ' if (typeof sentientFormsQnaInit === "function") { sentientFormsQnaInit(document); }';
+
+        return wp_get_inline_script_tag( $script );
+    }
+
+    private function mark_entry_detail_script_done(): void
+    {
+        $wp_scripts = wp_scripts();
+
+        if ( ! in_array( self::ADMIN_ASSET_HANDLE, $wp_scripts->done, true ) )
+        {
+            $wp_scripts->done[] = self::ADMIN_ASSET_HANDLE;
+        }
+
+        wp_dequeue_script( self::ADMIN_ASSET_HANDLE );
     }
 
     /**
@@ -296,7 +416,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
 
         $style_path = 'assets/css/gravity-forms-qna-admin.css';
         wp_enqueue_style(
-            'sentient-forms-gravity-qna-admin',
+            self::ADMIN_ASSET_HANDLE,
             SENTIENT_FORMS_PLUGIN_URL . $style_path,
             [],
             $this->get_asset_version( $style_path )
@@ -309,7 +429,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
 
         $script_path = 'assets/js/gravity-forms-qna-admin.js';
         wp_enqueue_script(
-            'sentient-forms-gravity-qna-admin',
+            self::ADMIN_ASSET_HANDLE,
             SENTIENT_FORMS_PLUGIN_URL . $script_path,
             [],
             $this->get_asset_version( $script_path ),
