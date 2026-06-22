@@ -217,8 +217,73 @@ if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient
 	}
 }
 
+if ( ! class_exists( 'Sentient_Forms_Test_Opaque_Form_Source_Adapter' ) ) {
+	class Sentient_Forms_Test_Opaque_Form_Source_Adapter implements Sentient_Forms_Adapter_Interface {
+		/** @var array<int,string> */
+		public array $form_exists_calls = [];
+
+		public function get_id(): string {
+			return 'opaque_forms';
+		}
+
+		public function get_name(): string {
+			return 'Opaque Forms';
+		}
+
+		public function is_active(): bool {
+			return true;
+		}
+
+		public function get_forms(): array {
+			return [
+				[ 'id' => 'form-alpha_2026', 'name' => 'Alpha 2026' ],
+			];
+		}
+
+		public function get_form_fields( $form_id ): array {
+			return [];
+		}
+
+		public function get_entry_data( $entry_id, $form_id = null ) {
+			return null;
+		}
+
+		public function update_entry_meta( $entry_id, string $meta_key, $meta_value ): bool {
+			return false;
+		}
+
+		public function mark_entry_as_spam( mixed $entry_id ): bool {
+			return false;
+		}
+
+		public function reject_submission( mixed $entry_id, string $message ): bool {
+			return false;
+		}
+
+		public function add_entry_note( mixed $entry_id, string $note_author, string $note_content ): bool {
+			return false;
+		}
+
+		public function get_action_hook_for_event( string $event_name ): ?string {
+			return null;
+		}
+
+		public function get_form_object( int $form_id ): object | array | null {
+			return null;
+		}
+
+		public function form_exists( mixed $form_id ): bool {
+			$form_id                   = (string) $form_id;
+			$this->form_exists_calls[] = $form_id;
+
+			return 'form-alpha_2026' === $form_id;
+		}
+	}
+}
+
 class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     private Sentient_Forms_Form_Actions_Controller $controller;
+    private ?Sentient_Forms_Test_Opaque_Form_Source_Adapter $opaque_form_adapter = null;
 
     protected function setUp(): void {
         parent::setUp();
@@ -243,6 +308,19 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
     {
         $sources[] = 'opaque_forms';
         return array_values( array_unique( $sources ) );
+    }
+
+    private function register_opaque_form_source_adapter(): Sentient_Forms_Test_Opaque_Form_Source_Adapter
+    {
+        add_filter( 'sentient_forms_supported_form_sources', [ $this, 'add_opaque_form_source' ] );
+
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        $adapter  = new Sentient_Forms_Test_Opaque_Form_Source_Adapter();
+        $registry->register_adapter( $adapter );
+
+        $this->opaque_form_adapter = $adapter;
+
+        return $adapter;
     }
 
     private function dispatch_form_actions_request( WP_REST_Request $request ): WP_REST_Response
@@ -397,7 +475,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     public function test_put_ledger_settings_accepts_opaque_form_ids_for_non_gravity_sources(): void
     {
-        add_filter( 'sentient_forms_supported_form_sources', [ $this, 'add_opaque_form_source' ] );
+        $adapter = $this->register_opaque_form_source_adapter();
 
         $request = $this->authenticate_rest_request( new WP_REST_Request( 'PUT', '/sentient-forms/v1/opaque_forms/forms/form-alpha_2026/ledger-settings' ) );
         $request->set_param( 'enabled', true );
@@ -409,6 +487,22 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'opaque_forms', $data['form_source'] ?? null );
         $this->assertSame( 'form-alpha_2026', $data['form_id'] ?? null );
         $this->assertTrue( $data['enabled'] ?? false );
+        $this->assertSame( [ 'form-alpha_2026' ], $adapter->form_exists_calls );
+    }
+
+    public function test_put_ledger_settings_rejects_missing_opaque_form_when_adapter_can_verify(): void
+    {
+        $adapter = $this->register_opaque_form_source_adapter();
+
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'PUT', '/sentient-forms/v1/opaque_forms/forms/missing-form/ledger-settings' ) );
+        $request->set_param( 'enabled', true );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 404, $response->get_status() );
+        $this->assertSame( 'rest_form_not_found', $data['code'] ?? null );
+        $this->assertSame( [ 'missing-form' ], $adapter->form_exists_calls );
     }
 
     public function test_get_submission_ledger_list_returns_captured_form_submissions(): void
