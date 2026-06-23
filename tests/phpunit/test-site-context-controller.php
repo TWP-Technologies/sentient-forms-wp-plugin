@@ -842,6 +842,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
         $this->create_managed_credential();
+        $this->cache_managed_zdr_site_context_model();
         $calls = [];
         $this->mock_managed_site_context_generation( $calls );
 
@@ -904,6 +905,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
         $this->create_managed_credential();
+        $this->cache_managed_zdr_site_context_model();
         $calls = [];
         $this->mock_managed_site_context_generation( $calls );
 
@@ -1075,6 +1077,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
         $this->create_managed_credential();
+        $this->cache_managed_zdr_site_context_model();
         $calls = [];
         $this->mock_managed_site_context_generation(
             $calls,
@@ -1128,6 +1131,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
         $this->create_managed_credential();
+        $this->cache_managed_zdr_site_context_model();
         $calls = [];
         $this->mock_managed_site_context_generation(
             $calls,
@@ -1189,6 +1193,7 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ]
         );
         $this->create_managed_credential();
+        $this->cache_managed_zdr_site_context_model();
         $calls = [];
         $this->mock_managed_site_context_generation(
             $calls,
@@ -3496,6 +3501,26 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $result = $repository->upsert( 'openrouter', $model_id, $metadata, gmdate( 'Y-m-d H:i:s', time() + DAY_IN_SECONDS ) );
 
         $this->assertTrue( $result );
+    }
+
+    private function cache_managed_zdr_site_context_model(): void
+    {
+        $this->cache_openrouter_model(
+            'google/gemini-3-flash-preview',
+            [
+                'id'                   => 'google/gemini-3-flash-preview',
+                'name'                 => 'Google: Gemini 3 Flash Preview',
+                'free'                 => false,
+                'pricing'              => [
+                    'prompt'     => '0.0000005',
+                    'completion' => '0.000003',
+                ],
+                'recommended_for'      => [ 'General purpose', 'Speed', 'Research' ],
+                'zdr_eligible'         => true,
+                'zdr_source'           => 'openrouter_models_zdr_filter',
+                'zdr_checked_at'       => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
     }
 
     private function cache_openrouter_all_server_tool_model( string $model_id ): void
