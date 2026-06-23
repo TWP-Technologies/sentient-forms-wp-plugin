@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.17](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.16...v0.3.17) (2026-06-23)
+
+
+### Bug Fixes
+
+* **form-source:** validate ledger settings through adapters ([b5e3d4f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b5e3d4ffdf8f5aa03522fd01b79668fb1edcd372))
+
 ## [0.3.16](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.15...v0.3.16) (2026-06-22)
 
 
