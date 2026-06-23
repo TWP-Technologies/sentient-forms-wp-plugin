@@ -1,6 +1,8 @@
 (function () {
 	'use strict';
 
+	var eventListenersBound = window.sentientFormsGravityQnaAdminEventListenersBound === true;
+
 	function closest(element, selector) {
 		if (!element || typeof element.closest !== 'function') {
 			return null;
@@ -273,119 +275,128 @@
 		setTemporaryLabel(button, 'Downloaded');
 	}
 
-	document.addEventListener('click', function (event) {
-		var reviewFilter = closest(event.target, '[data-sf-qna-filter]');
-		if (reviewFilter) {
-			var reviewPanel = closest(reviewFilter, '[data-sf-qna-panel]');
-			if (reviewPanel) {
-				reviewPanel.querySelectorAll('[data-sf-qna-filter]').forEach(function (button) {
-					var active = button === reviewFilter;
-					button.classList.toggle('is-active', active);
-					button.setAttribute('aria-pressed', active ? 'true' : 'false');
-				});
-				updateReviewPanel(reviewPanel);
+	if (!eventListenersBound) {
+		document.addEventListener('click', function (event) {
+			var reviewFilter = closest(event.target, '[data-sf-qna-filter]');
+			if (reviewFilter) {
+				var reviewPanel = closest(reviewFilter, '[data-sf-qna-panel]');
+				if (reviewPanel) {
+					reviewPanel.querySelectorAll('[data-sf-qna-filter]').forEach(function (button) {
+						var active = button === reviewFilter;
+						button.classList.toggle('is-active', active);
+						button.setAttribute('aria-pressed', active ? 'true' : 'false');
+					});
+					updateReviewPanel(reviewPanel);
+				}
+				return;
 			}
-			return;
-		}
 
-		var cardToggle = closest(event.target, '[data-sf-qna-card-toggle]');
-		if (cardToggle) {
-			var card = closest(cardToggle, '[data-sf-qna-card]');
-			if (card) {
-				setCardExpanded(card, cardToggle.getAttribute('aria-expanded') !== 'true');
-				updateExpandAllButtonState(closest(card, '[data-sf-qna-panel]'));
+			var cardToggle = closest(event.target, '[data-sf-qna-card-toggle]');
+			if (cardToggle) {
+				var card = closest(cardToggle, '[data-sf-qna-card]');
+				if (card) {
+					setCardExpanded(card, cardToggle.getAttribute('aria-expanded') !== 'true');
+					updateExpandAllButtonState(closest(card, '[data-sf-qna-panel]'));
+				}
+				return;
 			}
-			return;
-		}
 
-		var expandAllButton = closest(event.target, '[data-sf-qna-expand-all]');
-		if (expandAllButton) {
-			var expandPanel = closest(expandAllButton, '[data-sf-qna-panel]');
-			var expanding = expandAllButton.getAttribute('aria-pressed') !== 'true';
-			if (expandPanel) {
-				getCards(expandPanel).forEach(function (card) {
-					if (!card.hidden) {
-						setCardExpanded(card, expanding);
-					}
-				});
-				expandAllButton.setAttribute('aria-pressed', expanding ? 'true' : 'false');
-				setIconButtonState(expandAllButton, expanding);
+			var expandAllButton = closest(event.target, '[data-sf-qna-expand-all]');
+			if (expandAllButton) {
+				var expandPanel = closest(expandAllButton, '[data-sf-qna-panel]');
+				var expanding = expandAllButton.getAttribute('aria-pressed') !== 'true';
+				if (expandPanel) {
+					getCards(expandPanel).forEach(function (card) {
+						if (!card.hidden) {
+							setCardExpanded(card, expanding);
+						}
+					});
+					expandAllButton.setAttribute('aria-pressed', expanding ? 'true' : 'false');
+					setIconButtonState(expandAllButton, expanding);
+				}
+				return;
 			}
-			return;
-		}
 
-		var viewTab = closest(event.target, '[data-sf-qna-view-tab]');
-		if (viewTab) {
-			var panel = closest(viewTab, '[data-sf-qna-panel]');
-			if (panel) {
-				activatePanelView(panel, viewTab.getAttribute('data-sf-qna-view-tab') || 'cards');
+			var viewTab = closest(event.target, '[data-sf-qna-view-tab]');
+			if (viewTab) {
+				var panel = closest(viewTab, '[data-sf-qna-panel]');
+				if (panel) {
+					activatePanelView(panel, viewTab.getAttribute('data-sf-qna-view-tab') || 'cards');
+				}
+				return;
 			}
-			return;
-		}
 
-		var rowToggle = closest(event.target, '[data-sf-qna-row-toggle]');
-		if (rowToggle) {
-			var row = closest(rowToggle, '[data-sf-qna-row]');
-			var preview = row ? row.querySelector('[data-sf-qna-row-preview]') : null;
-			if (preview) {
-				var expanded = preview.hidden;
-				preview.hidden = !expanded;
-				rowToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+			var rowToggle = closest(event.target, '[data-sf-qna-row-toggle]');
+			if (rowToggle) {
+				var row = closest(rowToggle, '[data-sf-qna-row]');
+				var preview = row ? row.querySelector('[data-sf-qna-row-preview]') : null;
+				if (preview) {
+					var expanded = preview.hidden;
+					preview.hidden = !expanded;
+					rowToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+				}
+				return;
 			}
-			return;
-		}
 
-		var copyButton = closest(event.target, '[data-sf-qna-copy]');
-		if (copyButton) {
-			var copyContainer = closest(copyButton, '[data-sf-qna-panel]') || closest(copyButton, '[data-sf-qna-row]');
-			var copySource = findSource(copyContainer, copyButton.getAttribute('data-sf-qna-copy') || 'summary');
-			if (copySource) {
-				copyText(copySource.value).then(function () {
-					setTemporaryLabel(copyButton, 'Copied');
-				}).catch(function () {
-					setTemporaryLabel(copyButton, 'Copy failed');
-				});
+			var copyButton = closest(event.target, '[data-sf-qna-copy]');
+			if (copyButton) {
+				var copyContainer = closest(copyButton, '[data-sf-qna-panel]') || closest(copyButton, '[data-sf-qna-row]');
+				var copySource = findSource(copyContainer, copyButton.getAttribute('data-sf-qna-copy') || 'summary');
+				if (copySource) {
+					copyText(copySource.value).then(function () {
+						setTemporaryLabel(copyButton, 'Copied');
+					}).catch(function () {
+						setTemporaryLabel(copyButton, 'Copy failed');
+					});
+				}
+				return;
 			}
-			return;
-		}
 
-		var exportButton = closest(event.target, '[data-sf-qna-export]');
-		if (exportButton) {
-			var exportContainer = closest(exportButton, '[data-sf-qna-panel]') || closest(exportButton, '[data-sf-qna-row]');
-			var exportSource = findSource(exportContainer, exportButton.getAttribute('data-sf-qna-export') || 'csv');
-			if (exportSource) {
-				downloadCsv(exportButton, exportSource.value);
+			var exportButton = closest(event.target, '[data-sf-qna-export]');
+			if (exportButton) {
+				var exportContainer = closest(exportButton, '[data-sf-qna-panel]') || closest(exportButton, '[data-sf-qna-row]');
+				var exportSource = findSource(exportContainer, exportButton.getAttribute('data-sf-qna-export') || 'csv');
+				if (exportSource) {
+					downloadCsv(exportButton, exportSource.value);
+				}
 			}
-		}
-	});
+		});
 
-	document.addEventListener('input', function (event) {
-		var searchInput = closest(event.target, '[data-sf-qna-search-input]');
-		if (searchInput) {
-			var panel = closest(searchInput, '[data-sf-qna-panel]');
-			if (panel) {
-				updateReviewPanel(panel);
+		document.addEventListener('input', function (event) {
+			var searchInput = closest(event.target, '[data-sf-qna-search-input]');
+			if (searchInput) {
+				var panel = closest(searchInput, '[data-sf-qna-panel]');
+				if (panel) {
+					updateReviewPanel(panel);
+				}
 			}
-		}
-	});
+		});
 
-	document.addEventListener('change', function (event) {
-		var sort = closest(event.target, '[data-sf-qna-sort]');
-		if (sort) {
-			var panel = closest(sort, '[data-sf-qna-panel]');
-			if (panel) {
-				updateReviewPanel(panel);
+		document.addEventListener('change', function (event) {
+			var sort = closest(event.target, '[data-sf-qna-sort]');
+			if (sort) {
+				var panel = closest(sort, '[data-sf-qna-panel]');
+				if (panel) {
+					updateReviewPanel(panel);
+				}
 			}
-		}
-	});
+		});
+
+		window.sentientFormsGravityQnaAdminEventListenersBound = true;
+	}
+
+	function initializePanels(root) {
+		initializeReviewPanels(root);
+		initializeDetailPanels(root);
+	}
+
+	window.sentientFormsGravityQnaAdminInit = initializePanels;
 
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', function () {
-			initializeReviewPanels(document);
-			initializeDetailPanels(document);
+			initializePanels(document);
 		});
 	} else {
-		initializeReviewPanels(document);
-		initializeDetailPanels(document);
+		initializePanels(document);
 	}
 }());

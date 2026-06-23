@@ -64,6 +64,18 @@ class Sentient_Forms_Form_Adapter_Registry
     }
 
     /**
+     * Unregisters a form adapter by ID.
+     *
+     * @param string $id The unique ID of the adapter to unregister.
+     *
+     * @return void
+     */
+    public function unregister_adapter( string $id ): void
+    {
+        unset( $this->adapters[ $id ] );
+    }
+
+    /**
      * Retrieves a specific adapter by its ID.
      *
      * @param string $id The unique ID of the adapter (e.g., 'gravity_forms').

@@ -1189,10 +1189,19 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             {
                 return $this->prepare_error_response( 'rest_invalid_form_id', __( 'Invalid form ID provided.', 'sentient-forms' ), 400 );
             }
+        }
 
-            $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
-            $adapter  = $registry ? $registry->get_adapter_by_id( $source ) : null;
-            if ( $adapter && method_exists( $adapter, 'get_form_object' ) && null === $adapter->get_form_object( absint( $form_id ) ) )
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        $adapter  = $registry ? $registry->get_adapter_by_id( $source ) : null;
+        if ( $adapter && method_exists( $adapter, 'form_exists' ) )
+        {
+            $form_exists = $adapter->form_exists( $form_id );
+            if ( is_wp_error( $form_exists ) )
+            {
+                return $form_exists;
+            }
+
+            if ( ! $form_exists )
             {
                 return $this->prepare_error_response(
                     'rest_form_not_found',
@@ -1200,6 +1209,17 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                     404,
                 );
             }
+
+            return true;
+        }
+
+        if ( $adapter && ctype_digit( $form_id ) && method_exists( $adapter, 'get_form_object' ) && null === $adapter->get_form_object( absint( $form_id ) ) )
+        {
+            return $this->prepare_error_response(
+                'rest_form_not_found',
+                __( 'Form not found for the given source and ID.', 'sentient-forms' ),
+                404,
+            );
         }
 
         return true;
