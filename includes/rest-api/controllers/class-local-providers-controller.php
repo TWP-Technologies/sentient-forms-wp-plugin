@@ -406,9 +406,16 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
         $limit     = max( 1, min( 1000, (int) $request->get_param( 'limit' ) ) );
         $free_only = rest_sanitize_boolean( $request->get_param( 'free_only' ) );
         $zdr_only  = rest_sanitize_boolean( $request->get_param( 'zdr_only' ) );
-        $rows      = $this->model_cache->list( 'openrouter', true, $limit );
+        $fetch_limit = ( $free_only || $zdr_only ) ? 1000 : $limit;
+        $rows        = $this->model_cache->list( 'openrouter', true, $fetch_limit );
+        $response    = $this->format_model_catalog_response( $rows, $free_only, $zdr_only );
+        if ( count( $response['models'] ) > $limit )
+        {
+            $response['models']         = array_slice( $response['models'], 0, $limit );
+            $response['total_returned'] = count( $response['models'] );
+        }
 
-        return $this->prepare_item_for_response( $this->format_model_catalog_response( $rows, $free_only, $zdr_only ) );
+        return $this->prepare_item_for_response( $response );
     }
 
     public function refresh_openrouter_models( WP_REST_Request $request ): WP_REST_Response | WP_Error
@@ -464,6 +471,28 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
         $zdr_ids        = null;
         $zdr_checked_at = gmdate( 'Y-m-d H:i:s' );
         $zdr_remote     = $this->openrouter->list_models( [ 'zdr' => true ] );
+        if ( is_wp_error( $zdr_remote ) )
+        {
+            return new WP_Error(
+                'openrouter_zdr_models_unavailable',
+                __( 'OpenRouter model metadata was refreshed, but ZDR eligibility could not be verified. Try refreshing again before using ZDR filters.', 'sentient-forms' ),
+                [
+                    'status' => 502,
+                ]
+            );
+        }
+
+        if ( ! is_array( $zdr_remote['data'] ?? null ) )
+        {
+            return new WP_Error(
+                'openrouter_zdr_models_invalid',
+                __( 'OpenRouter returned invalid ZDR model metadata. Try refreshing again before using ZDR filters.', 'sentient-forms' ),
+                [
+                    'status' => 502,
+                ]
+            );
+        }
+
         if ( ! is_wp_error( $zdr_remote ) )
         {
             $zdr_ids = $this->openrouter_model_id_set( is_array( $zdr_remote['data'] ?? null ) ? $zdr_remote['data'] : [] );

@@ -245,7 +245,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'execution_request_id' => $execution_request_id,
                 'status'               => 'succeeded',
                 'provider'             => $provider,
-                'model'                => $model,
+                'model'                => $this->effective_response_model( $model, $cached_result ),
                 'cached'               => true,
                 'result'               => $cached_result,
                 'effects'              => is_array( $cached_result['effects'] ?? null ) ? $cached_result['effects'] : [],
@@ -331,6 +331,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             : $this->normalize_openrouter_response( $response );
         $result = $this->stamp_lead_profile_structured_metadata( $result, $context, $action_code );
         $normalized_result = $result;
+        $effective_model   = $this->effective_response_model( $model, $normalized_result );
         $result            = $this->validate_structured_output( $result, $structured_output_contract );
         if ( is_wp_error( $result ) )
         {
@@ -343,7 +344,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                     'entry_id'             => $entry['id'] ?? null,
                     'submission_uuid'      => $submission_uuid,
                     'provider'             => $provider,
-                    'model'                => $model,
+                    'model'                => $effective_model,
                     'status'               => 'failed',
                     'token_usage_json'     => 'sentient_managed' === $provider
                         ? ( is_array( $response['token_usage'] ?? null ) ? $response['token_usage'] : null )
@@ -356,7 +357,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                     'result_json'          => $this->structured_output_failure_result_json(
                         $result,
                         $provider,
-                        $model,
+                        $effective_model,
                         $action_code,
                         $structured_output_contract,
                         $payload,
@@ -374,7 +375,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             'execution_request_id' => $execution_request_id,
             'status'               => 'succeeded',
             'provider'             => $provider,
-            'model'                => $model,
+            'model'                => $effective_model,
             'cached'               => false,
             'result'               => $result,
         ];
@@ -403,7 +404,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 'entry_id'             => $entry['id'] ?? null,
                 'submission_uuid'      => $submission_uuid,
                 'provider'             => $provider,
-                'model'                => $model,
+                'model'                => $effective_model,
                 'status'               => 'succeeded',
                 'token_usage_json'     => $result['usage'] ?? null,
                 'cost_json'            => $result['cost'] ?? null,
@@ -417,11 +418,27 @@ class Sentient_Forms_Local_Action_Execution_Service
             'execution_request_id' => $execution_request_id,
             'status'               => 'succeeded',
             'provider'             => $provider,
-            'model'                => $model,
+            'model'                => $effective_model,
             'cached'               => false,
             'result'               => $result,
             'effects'              => $effects,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    private function effective_response_model( string $selected_model, array $result ): string
+    {
+        $fallback = is_array( $result['privacy_route_fallback'] ?? null )
+            ? sanitize_text_field( (string) ( $result['privacy_route_fallback']['fallback_model'] ?? '' ) )
+            : '';
+        if ( '' !== $fallback )
+        {
+            return $fallback;
+        }
+
+        return $selected_model;
     }
 
     private function index_lead_scoring_result( array $mapping, array $form, array $entry, array $context, string $action_code, array $execution_result, array $result ): void

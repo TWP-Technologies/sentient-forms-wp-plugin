@@ -80,6 +80,13 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             : '';
         if ( is_array( $saved_selection ) )
         {
+            $saved_selection        = $this->normalize_runtime_selection_for_resolution( $saved_selection, $provider );
+            $selection['selection'] = $saved_selection;
+            if ( array_key_exists( 'require_zdr', $saved_selection ) )
+            {
+                $selection['require_zdr'] = rest_sanitize_boolean( $saved_selection['require_zdr'] );
+            }
+
             $resolved_model = $this->resolve_runtime_model_selection( $saved_selection );
             if ( '' !== $resolved_model )
             {
@@ -212,11 +219,12 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             }
         }
 
+        $runtime        = $this->normalize_runtime_selection_for_resolution( $runtime, (string) ( $selection['provider'] ?? 'openrouter' ) );
         $resolved_model = $this->resolve_runtime_model_selection( $runtime );
         if ( '' !== $resolved_model )
         {
             $selection['model']             = $resolved_model;
-            $selection['selection']         = $this->sanitize_runtime_selection( $runtime );
+            $selection['selection']         = $runtime;
             $selection['resolution_source'] = 'runtime_settings';
         }
 
@@ -805,7 +813,21 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             ? sanitize_key( (string) $selection['provider'] )
             : '';
 
-        return 'sentient_managed' === $provider && ! empty( $selection['require_zdr'] );
+        return 'sentient_managed' === $provider && rest_sanitize_boolean( $selection['require_zdr'] ?? false );
+    }
+
+    /**
+     * @param array<string, mixed> $selection
+     * @return array<string, mixed>
+     */
+    private function normalize_runtime_selection_for_resolution( array $selection, string $provider ): array
+    {
+        if ( ! isset( $selection['provider'] ) || ! is_scalar( $selection['provider'] ) || '' === sanitize_key( (string) $selection['provider'] ) )
+        {
+            $selection['provider'] = $provider;
+        }
+
+        return $this->sanitize_runtime_selection( $selection );
     }
 
     private function zdr_eligible_models( array $models ): array

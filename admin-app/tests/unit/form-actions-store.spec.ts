@@ -238,6 +238,7 @@ describe('formActionsStore', () => {
 		expect(snapshotState().items).toEqual([]);
 		expect(notifyErrorSpy).toHaveBeenCalledWith(friendlyMessage);
 		expect(notifySuccessSpy).not.toHaveBeenCalled();
+		expect(stubClient.getExecutionStatus).not.toHaveBeenCalled();
 		expect(stubClient.getFormExecutionStatus).not.toHaveBeenCalled();
 	});
 

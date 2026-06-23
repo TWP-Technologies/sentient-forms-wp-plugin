@@ -7,6 +7,7 @@
 	import { asyncHealthStore } from '$lib/stores/async-health.svelte';
 	import { loggingStore } from '$lib/stores/logging.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
+	import { licenseState } from '$lib/stores/license';
 	import { notifications } from '$lib/stores/notifications';
 	import { Alert, Badge, Button, StateTemplate } from '$lib/components/ui';
 	import type {
@@ -57,6 +58,15 @@
 	let deleteDataOnUninstall = $state(true);
 	let storeFullAiOutputs = $state(false);
 	let managedZdrRequired = $state(false);
+	let managedAccountReady = $derived(
+		['active', 'trial', 'valid'].includes(licenseState.status) &&
+			licenseState.proxyKeyPresent &&
+			Boolean(licenseState.licenseId) &&
+			Boolean(licenseState.siteId)
+	);
+	let managedZdrControlDisabled = $derived(
+		settingsWriteInFlight || executionLoading || !managedAccountReady
+	);
 	let privacySetupProfile =
 		$state<NonNullable<PluginSettingsResponse['privacy_setup_profile']>>('balanced');
 	let privacySetupCompletedAt = $state<string | null>(null);
@@ -233,6 +243,12 @@
 	}
 
 	async function toggleManagedZdrRequired(nextRequired: boolean) {
+		if (!managedAccountReady) {
+			managedZdrRequired = false;
+			notifications.warning('Active Sentient Forms Managed Service is required to enforce ZDR.');
+			return;
+		}
+
 		const previous = managedZdrRequired;
 		managedZdrRequired = nextRequired;
 		managedZdrSaving = true;
@@ -615,6 +631,11 @@
 					Retention and to deny provider data collection. If the selected model is no longer
 					eligible, Sentient Forms uses a comparable ZDR-safe model when available or fails safely.
 				</p>
+				{#if !managedAccountReady}
+					<p class="sf:text-sm sf:text-slate-500">
+						Requires an active Sentient Forms Managed Service subscription.
+					</p>
+				{/if}
 			</div>
 			<label class="sf:flex sf:items-center sf:gap-3">
 				<span class="sf:text-sm sf:font-semibold">{managedZdrRequired ? 'On' : 'Off'}</span>
@@ -622,7 +643,7 @@
 					type="checkbox"
 					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 					checked={managedZdrRequired}
-					disabled={settingsWriteInFlight || executionLoading}
+					disabled={managedZdrControlDisabled}
 					onchange={(event) =>
 						toggleManagedZdrRequired((event.currentTarget as HTMLInputElement).checked)}
 					aria-label="Enforce ZDR for managed service"

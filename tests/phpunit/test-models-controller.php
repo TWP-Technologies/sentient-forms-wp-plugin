@@ -377,6 +377,41 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertStringContainsString( 'ZDR', $applied[0]['reason'] );
     }
 
+    public function test_resolve_model_does_not_fallback_to_non_zdr_default_when_managed_zdr_is_required(): void
+    {
+        $this->seed_model_cache();
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
+        $request->set_body_params(
+            [
+                'mapping_selection' => [
+                    'primary'     => 'sf_default',
+                    'is_preset'   => true,
+                    'provider'    => 'sentient_managed',
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( '', $data['model_id'] );
+        $this->assertNotSame( '~openai/gpt-latest', $data['model_id'] );
+
+        $applied = array_values(
+            array_filter(
+                $data['override_chain'],
+                static fn ( array $step ): bool => ! empty( $step['applied'] )
+            )
+        );
+
+        $this->assertCount( 1, $applied );
+        $this->assertStringContainsString( 'No ZDR-safe local model', $applied[0]['reason'] );
+    }
+
     public function test_resolve_model_keeps_direct_openrouter_zdr_selection_advisory(): void
     {
         $this->seed_zdr_model_cache();

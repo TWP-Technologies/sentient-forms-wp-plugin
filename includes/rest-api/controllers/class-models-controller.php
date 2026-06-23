@@ -1247,16 +1247,23 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
             }
         }
 
+        $requires_zdr_resolution = $this->override_chain_requires_managed_zdr( $chain );
         if ( null === $applied_index )
         {
-            $fallback_model_id = $this->pick_default_model_id( $models );
+            $fallback_models   = $requires_zdr_resolution ? $this->zdr_eligible_models( $models ) : $models;
+            $fallback_model_id = [] === $fallback_models ? '' : $this->pick_default_model_id( $fallback_models );
             $chain[] = [
                 'level'           => 'fallback',
                 'selection'       => 'sf_default',
                 'model_id'        => $fallback_model_id,
                 'backup_model_id' => null,
+                'requires_zdr'    => $requires_zdr_resolution,
                 'applied'         => true,
-                'reason'          => __( 'No override was configured, so the local default preset was used.', 'sentient-forms' ),
+                'reason'          => $requires_zdr_resolution
+                    ? ( '' !== $fallback_model_id
+                        ? __( 'No selected ZDR-safe managed preset was available, so the ZDR-safe local default was used.', 'sentient-forms' )
+                        : __( 'No ZDR-safe local model is available for the managed service requirement.', 'sentient-forms' ) )
+                    : __( 'No override was configured, so the local default preset was used.', 'sentient-forms' ),
             ];
             $applied_index = count( $chain ) - 1;
         }
@@ -1320,6 +1327,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                     'selection'       => $selection_key,
                     'model_id'        => $model_id,
                     'backup_model_id' => $backup,
+                    'requires_zdr'    => $requires_zdr,
                     'applied'         => false,
                     'reason'          => '' !== $model_id
                         ? ( $requires_zdr
@@ -1342,11 +1350,12 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
             return [
                 'level'           => $level,
                 'selection'       => null,
-                'model_id'        => '',
-                'backup_model_id' => null,
-                'applied'         => false,
-                'reason'          => __( 'No model selection configured at this level.', 'sentient-forms' ),
-            ];
+            'model_id'        => '',
+            'backup_model_id' => null,
+            'requires_zdr'    => false,
+            'applied'         => false,
+            'reason'          => __( 'No model selection configured at this level.', 'sentient-forms' ),
+        ];
         }
 
         $model_id = $is_preset && $allow_presets ? $this->resolve_preset_model_id( $primary, $presets ) : $primary;
@@ -1359,9 +1368,23 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
             'selection'       => $selection_key,
             'model_id'        => $model_id,
             'backup_model_id' => $backup,
+            'requires_zdr'    => false,
             'applied'         => false,
             'reason'          => '' !== $model_id ? $reason : __( 'The selected preset is not available in the local model policy.', 'sentient-forms' ),
         ];
+    }
+
+    private function override_chain_requires_managed_zdr( array $chain ): bool
+    {
+        foreach ( $chain as $step )
+        {
+            if ( ! empty( $step['requires_zdr'] ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function resolve_preset_model_id( string $preset_code, array $presets ): string

@@ -55,8 +55,9 @@ test.describe('Settings context state templates', () => {
 			})
 		);
 
-		await page.route('**/wp-json/sentient-forms/v1/models**', (route) =>
-			route.fulfill({
+		await page.route(
+			(url) => url.pathname.endsWith('/wp-json/sentient-forms/v1/models'),
+			(route) => route.fulfill({
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({
@@ -956,8 +957,9 @@ test.describe('Settings context state templates', () => {
 				})
 			})
 		);
-		await page.route('**/wp-json/sentient-forms/v1/models**', (route) =>
-			route.fulfill({
+		await page.route(
+			(url) => url.pathname.endsWith('/wp-json/sentient-forms/v1/models'),
+			(route) => route.fulfill({
 				status: 200,
 				contentType: 'application/json',
 				body: JSON.stringify({

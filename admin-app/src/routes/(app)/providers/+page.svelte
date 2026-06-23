@@ -73,6 +73,8 @@
 	let modelCatalogRefreshing = $state(false);
 	let managedZdrRequired = $state(false);
 	let managedZdrSaving = $state(false);
+	let settingsLoaded = $state(false);
+	let settingsRequestToken = 0;
 
 	let openRouterCredentials = $derived(
 		credentials.filter((credential) => credential.provider === 'openrouter')
@@ -107,6 +109,9 @@
 			licenseState.proxyKeyPresent &&
 			Boolean(licenseState.licenseId) &&
 			Boolean(licenseState.siteId)
+	);
+	let managedZdrControlDisabled = $derived(
+		managedZdrSaving || !settingsLoaded || !managedAccountReady
 	);
 	let localSetupUnavailableTitle = $derived(
 		managedAccountReady
@@ -244,16 +249,28 @@
 	}
 
 	async function loadSettings(): Promise<void> {
+		const requestToken = ++settingsRequestToken;
 		settingsError = null;
 
 		try {
-			syncManagedZdrSettings(await client.getSettings({ showNotifications: false }));
+			const settings = await client.getSettings({ showNotifications: false });
+			if (requestToken !== settingsRequestToken) return;
+			syncManagedZdrSettings(settings);
+			settingsLoaded = true;
 		} catch (requestError) {
+			if (requestToken !== settingsRequestToken) return;
 			settingsError = errorMessage(requestError);
 		}
 	}
 
 	async function toggleManagedZdrRequired(nextRequired: boolean): Promise<void> {
+		if (!managedAccountReady) {
+			managedZdrRequired = false;
+			notifications.warning('Active Sentient Forms Managed Service is required to enforce ZDR.');
+			return;
+		}
+
+		settingsRequestToken += 1;
 		const previous = managedZdrRequired;
 		managedZdrRequired = nextRequired;
 		managedZdrSaving = true;
@@ -265,6 +282,7 @@
 				{ showNotifications: false }
 			);
 			syncManagedZdrSettings(settings);
+			settingsLoaded = true;
 			notifications.success(
 				nextRequired ? 'Managed ZDR enforcement enabled' : 'Managed ZDR enforcement disabled'
 			);
@@ -642,7 +660,7 @@
 					type="checkbox"
 					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 					checked={managedZdrRequired}
-					disabled={managedZdrSaving || !managedAccountReady}
+					disabled={managedZdrControlDisabled}
 					onchange={(event) =>
 						toggleManagedZdrRequired((event.currentTarget as HTMLInputElement).checked)}
 					aria-label="Enforce ZDR for managed service"

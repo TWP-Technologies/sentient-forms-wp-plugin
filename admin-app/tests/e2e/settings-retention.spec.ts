@@ -7,7 +7,17 @@ test.describe('Settings retention controls', () => {
 		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
 			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
-			siteUrl: previewHost
+			siteUrl: previewHost,
+			license: {
+				status: 'active',
+				licenseKeyMasked: 'LIC-****-TEST',
+				proxyKeyPresent: true,
+				tier: 'starter',
+				expiresAt: '2030-01-01T00:00:00Z',
+				lastSynced: '2030-01-05T10:00:00Z',
+				licenseId: 'license-managed-test',
+				siteId: 'site-managed-test'
+			}
 		});
 
 		let resolveSettingsRequest: (() => void) | null = null;
@@ -93,7 +103,17 @@ test.describe('Settings retention controls', () => {
 		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
 			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
-			siteUrl: previewHost
+			siteUrl: previewHost,
+			license: {
+				status: 'active',
+				licenseKeyMasked: 'LIC-****-TEST',
+				proxyKeyPresent: true,
+				tier: 'starter',
+				expiresAt: '2030-01-01T00:00:00Z',
+				lastSynced: '2030-01-05T10:00:00Z',
+				licenseId: 'license-managed-test',
+				siteId: 'site-managed-test'
+			}
 		});
 
 		const settingsState = {

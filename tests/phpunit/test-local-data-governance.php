@@ -308,6 +308,51 @@ class Tests_Local_Data_Governance extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'currency', $context['metadata']['metering'] );
     }
 
+    public function test_managed_usage_scrub_selects_rows_with_provider_payload_only(): void
+    {
+        $table = $this->wpdb->prefix . 'sentient_execution_events';
+        $now   = current_time( 'mysql' );
+
+        $inserted = $this->wpdb->insert(
+            $table,
+            [
+                'execution_request_id' => 'managed-provider-payload-only',
+                'provider'             => 'sentient_managed',
+                'model'                => 'google/gemini-3-flash-preview',
+                'status'               => 'succeeded',
+                'cost_json'            => wp_json_encode( [ 'debited_credits' => 1 ] ),
+                'result_json'          => wp_json_encode(
+                    [
+                        'privacy_route_fallback' => [
+                            'schema'         => 'sentient_forms_privacy_route_fallback.v1',
+                            'policy_version' => '2026-06-managed-zdr-fallback-v1',
+                            'reason_code'    => 'managed_zdr_primary_route_unavailable',
+                            'original_model' => 'openai/gpt-5.5',
+                            'fallback_model' => 'google/gemini-3-flash-preview',
+                            'attempts'       => 1,
+                        ],
+                        'provider_payload'       => [
+                            'raw_error' => 'Provider route details must not remain in local storage.',
+                        ],
+                    ]
+                ),
+                'created_at'           => $now,
+                'updated_at'           => $now,
+            ],
+            [ '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+        );
+        $this->assertNotFalse( $inserted );
+
+        $summary = Sentient_Forms_Managed_Usage_Sanitizer::scrub_local_storage();
+
+        $this->assertSame( 1, $summary['execution_events_scanned'] );
+        $this->assertSame( 1, $summary['execution_events_updated'] );
+
+        $event = $this->events->get_by_request_id( 'managed-provider-payload-only' );
+        $this->assertArrayHasKey( 'privacy_route_fallback', $event['result_json'] );
+        $this->assertArrayNotHasKey( 'provider_payload', $event['result_json'] );
+    }
+
     public function test_uninstall_deletes_data_by_default_and_can_be_disabled(): void
     {
         $table = $this->wpdb->prefix . 'sentient_execution_events';

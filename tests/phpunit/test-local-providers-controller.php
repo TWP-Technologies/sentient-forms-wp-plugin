@@ -582,6 +582,58 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertTrue( $data['models'][0]['free'] );
     }
 
+    public function test_list_openrouter_models_filters_zdr_before_applying_limit(): void
+    {
+        $models     = new Sentient_Forms_Model_Cache_Repository( $GLOBALS['wpdb'] );
+        $expires_at = gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS );
+
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'aaa/non-zdr-first',
+                [
+                    'id'             => 'aaa/non-zdr-first',
+                    'name'           => 'Non-ZDR first model',
+                    'free'           => false,
+                    'zdr_eligible'   => false,
+                    'zdr_source'     => 'openrouter_models_zdr_filter',
+                    'zdr_checked_at' => gmdate( 'Y-m-d H:i:s' ),
+                ],
+                $expires_at
+            )
+        );
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'zzz/zdr-second',
+                [
+                    'id'             => 'zzz/zdr-second',
+                    'name'           => 'ZDR second model',
+                    'free'           => false,
+                    'zdr_eligible'   => true,
+                    'zdr_source'     => 'openrouter_models_zdr_filter',
+                    'zdr_checked_at' => gmdate( 'Y-m-d H:i:s' ),
+                ],
+                $expires_at
+            )
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/local/providers/openrouter/models' );
+        $request->set_query_params(
+            [
+                'zdr_only' => true,
+                'limit'    => 1,
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 1, $data['total_returned'] );
+        $this->assertSame( 'zzz/zdr-second', $data['models'][0]['id'] ?? null );
+    }
+
     public function test_refresh_openrouter_models_requires_consent_before_external_call(): void
     {
         $external_call_count = 0;
@@ -721,6 +773,45 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertIsArray( $zdr_model );
         $this->assertTrue( $zdr_model['metadata_json']['zdr_eligible'] );
         $this->assertSame( 'openrouter_models_zdr_filter', $zdr_model['metadata_json']['zdr_source'] );
+    }
+
+    public function test_refresh_openrouter_models_fails_closed_when_zdr_catalog_fails(): void
+    {
+        $this->mock_openrouter_models_response(
+            static function ( array $args, string $url ): ?array {
+                if ( str_contains( $url, 'zdr=true' ) )
+                {
+                    return [
+                        'headers'  => [ 'content-type' => 'application/json' ],
+                        'body'     => wp_json_encode( [ 'error' => [ 'message' => 'Temporary unavailable' ] ] ),
+                        'response' => [
+                            'code'    => 503,
+                            'message' => 'Service Unavailable',
+                        ],
+                        'cookies'  => [],
+                    ];
+                }
+
+                return null;
+            }
+        );
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/models/refresh' ) );
+        $request->set_body_params(
+            [
+                'disclosure_version'              => '2026-04-18',
+                'accepted_external_service_terms' => true,
+                'output_modalities'               => 'text',
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 502, $response->get_status() );
+        $this->assertSame( 'openrouter_zdr_models_unavailable', $response->get_data()['code'] ?? null );
+
+        $models = new Sentient_Forms_Model_Cache_Repository( $GLOBALS['wpdb'] );
+        $this->assertSame( [], $models->list( 'openrouter', true ) );
     }
 
     public function test_setup_sentient_managed_requires_consent_before_local_writes(): void

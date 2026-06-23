@@ -28,7 +28,17 @@ test.describe('Privacy setup assistant', () => {
 		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
 			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
-			siteUrl: previewHost
+			siteUrl: previewHost,
+			license: {
+				status: 'active',
+				licenseKeyMasked: 'LIC-****-TEST',
+				proxyKeyPresent: true,
+				tier: 'starter',
+				expiresAt: '2030-01-01T00:00:00Z',
+				lastSynced: '2030-01-05T10:00:00Z',
+				licenseId: 'license-managed-test',
+				siteId: 'site-managed-test'
+			}
 		});
 
 		const settingsState = {
@@ -56,7 +66,7 @@ test.describe('Privacy setup assistant', () => {
 						execution_event_retention_days: 180,
 						delete_data_on_uninstall: true,
 						store_full_ai_outputs: true,
-						managed_zdr_required: Boolean(payload.managed_zdr_required),
+						managed_zdr_required: payload.managed_zdr_required === true,
 						privacy_setup_profile: 'maximum_visibility',
 						privacy_setup_completed_at: '2026-04-21T00:00:00Z'
 					});

@@ -1726,12 +1726,14 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         );
 
         $this->assertIsArray( $result );
+        $this->assertSame( 'google/gemini-3-flash-preview', $result['model'] ?? null );
         $this->assertSame( $privacy_route_fallback, $result['result']['privacy_route_fallback'] ?? null );
         $this->assertStringNotContainsString( 'No ZDR route', wp_json_encode( $result['result'] ?? [] ) );
         $this->assertStringNotContainsString( 'cps-request-id-should-not-be-stored', wp_json_encode( $result['result'] ?? [] ) );
 
         $event = $this->events->get_by_request_id( 'runtime-managed-zdr-fallback-success' );
         $this->assertIsArray( $event );
+        $this->assertSame( 'google/gemini-3-flash-preview', $event['model'] ?? null );
         $this->assertSame( $privacy_route_fallback, $event['result_json']['privacy_route_fallback'] ?? null );
         $this->assertStringNotContainsString( 'No ZDR route', wp_json_encode( $event['result_json'] ?? [] ) );
         $this->assertStringNotContainsString( 'cps-request-id-should-not-be-stored', wp_json_encode( $event['result_json'] ?? [] ) );
@@ -1806,16 +1808,23 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         );
 
         $this->assertIsArray( $result );
+        $this->assertSame( 'google/gemini-3-flash-preview', $result['model'] ?? null );
         $this->assertSame( $privacy_route_fallback, $result['result']['privacy_route_fallback'] ?? null );
 
         $event = $this->events->get_by_request_id( 'runtime-managed-zdr-launch-lane-fallback' );
         $this->assertIsArray( $event );
+        $this->assertSame( 'google/gemini-3-flash-preview', $event['model'] ?? null );
         $this->assertSame( $privacy_route_fallback, $event['result_json']['privacy_route_fallback'] ?? null );
     }
 
     public function test_global_managed_zdr_setting_requires_managed_privacy_route(): void
     {
         $this->seed_openrouter_model_cache();
+        $had_plugin_settings      = false !== get_option( 'sentient_forms_plugin_settings', false );
+        $previous_plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+
+        try
+        {
         update_option(
             'sentient_forms_plugin_settings',
             [
@@ -1889,6 +1898,18 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             ],
             $managed_proxy->execute_calls[0]['payload']['privacy_route_policy'] ?? null
         );
+        }
+        finally
+        {
+            if ( $had_plugin_settings )
+            {
+                update_option( 'sentient_forms_plugin_settings', $previous_plugin_settings );
+            }
+            else
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+        }
     }
 
     public function test_managed_zdr_required_run_fails_when_proxy_omits_privacy_route_assertion(): void
