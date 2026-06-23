@@ -1280,6 +1280,7 @@ export interface ModelSelection {
 	provider?: LocalProvider | null;
 	credential_id?: number | null;
 	require_zdr?: boolean;
+	managed_zdr_required?: boolean;
 	reasoning?:
 		| string
 		| {

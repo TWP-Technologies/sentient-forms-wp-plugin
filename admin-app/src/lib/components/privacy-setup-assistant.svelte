@@ -51,10 +51,7 @@
 		settings?: PluginSettingsResponse | null;
 		dismissible?: boolean;
 		managedAccountReady?: boolean;
-		onapply?: (
-			preset: PrivacyPresetId,
-			options: { managedZdrRequired: boolean }
-		) => void;
+		onapply?: (preset: PrivacyPresetId, options: { managedZdrRequired?: boolean }) => void;
 		onclose?: () => void;
 	}
 
@@ -135,6 +132,7 @@
 	let siteContextRefreshDays = $state(DEFAULT_SITE_CONTEXT_REFRESH_DAYS);
 	let siteContextModelSelection = $state<ModelSelection>(DEFAULT_SITE_CONTEXT_MODEL_SELECTION);
 	let managedZdrRequired = $state(Boolean(settings?.managed_zdr_required));
+	let managedZdrTouched = $state(false);
 	let applyErrorRegion = $state<HTMLDivElement | null>(null);
 	let siteContextGenerationPollTimer: ReturnType<typeof setTimeout> | null = null;
 	let siteContextGenerationPollFailures = 0;
@@ -192,6 +190,7 @@
 		if (!open) return;
 		selectedPreset = initialPreset(settings);
 		managedZdrRequired = managedAccountReady && Boolean(settings?.managed_zdr_required);
+		managedZdrTouched = false;
 		siteContextTouched = false;
 		siteContextApplyError = null;
 		void loadSiteContext();
@@ -200,6 +199,7 @@
 	$effect(() => {
 		if (managedAccountReady) return;
 		managedZdrRequired = false;
+		managedZdrTouched = false;
 	});
 
 	$effect(() => {
@@ -231,14 +231,24 @@
 		if (siteContextShouldSaveBeforeApply && !(await saveSiteContext('apply'))) {
 			return;
 		}
-		onapply?.(selectedPreset, { managedZdrRequired: managedAccountReady && managedZdrRequired });
+		onapply?.(selectedPreset, managedZdrApplyOptions());
 	}
 
 	async function useBalancedDefaults(): Promise<void> {
 		if (siteContextShouldSaveBeforeApply && !(await saveSiteContext('apply'))) {
 			return;
 		}
-		onapply?.('balanced', { managedZdrRequired: managedAccountReady && managedZdrRequired });
+		onapply?.('balanced', managedZdrApplyOptions());
+	}
+
+	function managedZdrApplyOptions(): { managedZdrRequired?: boolean } {
+		if (!managedAccountReady || !managedZdrTouched) return {};
+		return { managedZdrRequired: managedZdrRequired };
+	}
+
+	function handleManagedZdrChange(event: Event): void {
+		managedZdrRequired = (event.currentTarget as HTMLInputElement).checked;
+		managedZdrTouched = true;
 	}
 
 	function parseSiteContextResponse(
@@ -355,7 +365,10 @@
 			return;
 		}
 
-		if (job?.status === 'failed' && siteContextGenerationFailureIsFresh(previousStatus, nextStatus)) {
+		if (
+			job?.status === 'failed' &&
+			siteContextGenerationFailureIsFresh(previousStatus, nextStatus)
+		) {
 			const message = job.error ?? 'Unable to generate Site Context.';
 			siteContextError = message;
 			failSiteContextGenerationToast(message);
@@ -417,6 +430,12 @@
 	}
 
 	function siteContextPayload() {
+		const generationModelSelection = compactSiteContextModelSelection(siteContextModelSelection);
+		if (managedAccountReady && managedZdrRequired) {
+			generationModelSelection.require_zdr = true;
+			generationModelSelection.managed_zdr_required = true;
+		}
+
 		return {
 			summary_text: siteContextText,
 			auto_include: true,
@@ -424,7 +443,7 @@
 			consent_status: siteContextConsent ? 'granted' : 'unset',
 			auto_refresh_enabled: siteContextConsent && siteContextAutoRefresh,
 			auto_refresh_days: siteContextRefreshDays,
-			generation_model_selection: compactSiteContextModelSelection(siteContextModelSelection)
+			generation_model_selection: generationModelSelection
 		};
 	}
 
@@ -696,10 +715,10 @@
 											Enforce ZDR for managed service
 										</p>
 										<p class="sf:max-w-2xl sf:text-sm sf:leading-6 sf:text-slate-600">
-											Requires Sentient Forms Managed Service to use routes that OpenRouter
-											marks for Zero Data Retention and to deny provider data collection. If the
-											selected model is no longer eligible, Sentient Forms uses a comparable
-											ZDR-safe model when available or fails safely.
+											Requires Sentient Forms Managed Service to use routes that OpenRouter marks
+											for Zero Data Retention and to deny provider data collection. If the selected
+											model is no longer eligible, Sentient Forms uses a comparable ZDR-safe model
+											when available or fails safely.
 										</p>
 									</div>
 								</div>
@@ -710,7 +729,8 @@
 									<input
 										type="checkbox"
 										class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
-										bind:checked={managedZdrRequired}
+										checked={managedZdrRequired}
+										onchange={handleManagedZdrChange}
 										disabled={managedZdrControlDisabled}
 										aria-label="Enforce ZDR for managed service"
 									/>

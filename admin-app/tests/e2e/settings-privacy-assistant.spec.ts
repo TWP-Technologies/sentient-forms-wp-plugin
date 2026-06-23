@@ -447,6 +447,436 @@ test.describe('Privacy setup assistant', () => {
 		expect(capturedPayloads[0]).not.toHaveProperty('managed_zdr_required');
 	});
 
+	test('requires local managed ZDR when generating Site Context before applying setup', async ({
+		page
+	}) => {
+		const previewHost = getPreviewOrigin();
+		await seedRuntimeConfig(page, {
+			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
+			siteUrl: previewHost,
+			license: {
+				status: 'active',
+				licenseKeyMasked: 'LIC-****-TEST',
+				proxyKeyPresent: true,
+				tier: 'starter',
+				expiresAt: '2030-01-01T00:00:00Z',
+				lastSynced: '2030-01-05T10:00:00Z',
+				licenseId: 'license-managed-test',
+				siteId: 'site-managed-test'
+			}
+		});
+
+		const settingsState = {
+			enable_logging: false,
+			execution_global_disabled: false,
+			execution_provider_disabled: { gravity_forms: false },
+			execution_event_retention_days: 90,
+			delete_data_on_uninstall: true,
+			store_full_ai_outputs: false,
+			managed_zdr_required: false,
+			privacy_setup_profile: 'balanced',
+			privacy_setup_completed_at: null as string | null
+		};
+		let generatePayload: Record<string, unknown> | null = null;
+
+		await page.route('**/wp-json/sentient-forms/v1/settings', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(settingsState)
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/telemetry', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					telemetry_opt_in: false,
+					updated_at: '2026-04-21T00:00:00Z',
+					synced_at: '2026-04-21T00:00:00Z',
+					remote_updated_at: '2026-04-21T00:00:00Z',
+					last_error: null
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/async-settings', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					max_attempts: 3,
+					base_delay_seconds: 60,
+					max_delay_seconds: 3600,
+					updated_at: '2026-04-21T00:00:00Z',
+					updated_by: 'privacy-assistant-e2e'
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/async-health', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					queue_depth: 0,
+					oldest_run_at: null,
+					recent_failures: {},
+					warnings: []
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ success: true, data: [] })
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/models/resolve**', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						model_id: 'openai/gpt-5.5',
+						display_name: 'OpenAI: GPT-5.5',
+						resolution_source: 'mock',
+						override_chain: [],
+						backup_model_id: null
+					}
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/models', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						models: [
+							{
+								id: 'openai/gpt-5.5',
+								display_name: 'OpenAI: GPT-5.5',
+								provider: 'sentient_managed',
+								speed_tier: 'balanced',
+								cost_tier: 'medium',
+								capabilities: {
+									reasoning: true,
+									tools: true,
+									structured: true,
+									web_search: true,
+									long_context: true
+								},
+								context_window: 400000,
+								tags: ['zdr', 'reasoning', 'structured-output'],
+								supported_parameters: ['reasoning', 'tools']
+							}
+						],
+						presets: [
+							{
+								code: 'sf_research',
+								display_name: 'Research',
+								category: 'managed',
+								resolved_model_id: 'openai/gpt-5.5',
+								auto_upgrade: true
+							}
+						]
+					}
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/site-context**', async (route) => {
+			const request = route.request();
+			if (request.method() === 'POST' && request.url().endsWith('/site-context/generate')) {
+				generatePayload = request.postDataJSON() as Record<string, unknown>;
+				await route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						context: null,
+						settings: {
+							consent_status: 'granted',
+							consented_at: '2026-06-18T00:00:00Z',
+							declined_at: null,
+							auto_refresh_enabled: false,
+							auto_refresh_days: 30,
+							next_refresh_at: null,
+							last_generated_at: null,
+							last_error: null,
+							generation_model_selection: {
+								primary: 'sf_research',
+								is_preset: true,
+								provider: 'sentient_managed'
+							}
+						},
+						has_context: false,
+						is_empty: true,
+						is_stale: false,
+						stale_after_days: 90,
+						status: 'empty',
+						generation_access: {
+							can_generate: true,
+							reason_code: 'ready',
+							message: 'Site Context generation is ready through Sentient Forms Managed Service.',
+							setup_target: null,
+							provider: 'sentient_managed',
+							model: 'openai/gpt-5.5'
+						},
+						generation_job: {
+							id: 'job-managed-zdr-local-toggle',
+							status: 'queued',
+							requested_at: '2026-06-18T00:00:00Z',
+							started_at: null,
+							finished_at: null,
+							error: null,
+							model: 'openai/gpt-5.5',
+							provider: 'sentient_managed',
+							tools: []
+						}
+					})
+				});
+				return;
+			}
+
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					context: null,
+					settings: {
+						consent_status: 'granted',
+						consented_at: '2026-06-18T00:00:00Z',
+						declined_at: null,
+						auto_refresh_enabled: false,
+						auto_refresh_days: 30,
+						next_refresh_at: null,
+						last_generated_at: null,
+						last_error: null,
+						generation_model_selection: {
+							primary: 'sf_research',
+							is_preset: true,
+							provider: 'sentient_managed'
+						}
+					},
+					has_context: false,
+					is_empty: true,
+					is_stale: false,
+					stale_after_days: 90,
+					status: 'empty',
+					generation_access: {
+						can_generate: true,
+						reason_code: 'ready',
+						message: 'Site Context generation is ready through Sentient Forms Managed Service.',
+						setup_target: null,
+						provider: 'sentient_managed',
+						model: 'openai/gpt-5.5'
+					},
+					generation_job: null
+				})
+			});
+		});
+
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
+		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
+		await page
+			.getByTestId('privacy-setup-managed-zdr')
+			.getByLabel('Enforce ZDR for managed service')
+			.check();
+		await page.getByTestId('site-context-generate-now').click();
+
+		await expect.poll(() => generatePayload).not.toBeNull();
+		expect(generatePayload?.generation_model_selection).toMatchObject({
+			primary: 'sf_research',
+			is_preset: true,
+			provider: 'sentient_managed',
+			require_zdr: true
+		});
+	});
+
+	test('does not overwrite newer managed ZDR settings when applying stale assistant state', async ({
+		page
+	}) => {
+		const previewHost = getPreviewOrigin();
+		await seedRuntimeConfig(page, {
+			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
+			siteUrl: previewHost,
+			license: {
+				status: 'active',
+				licenseKeyMasked: 'LIC-****-TEST',
+				proxyKeyPresent: true,
+				tier: 'starter',
+				expiresAt: '2030-01-01T00:00:00Z',
+				lastSynced: '2030-01-05T10:00:00Z',
+				licenseId: 'license-managed-test',
+				siteId: 'site-managed-test'
+			}
+		});
+
+		const settingsState = {
+			enable_logging: false,
+			execution_global_disabled: false,
+			execution_provider_disabled: { gravity_forms: false },
+			execution_event_retention_days: 90,
+			delete_data_on_uninstall: true,
+			store_full_ai_outputs: false,
+			managed_zdr_required: false,
+			privacy_setup_profile: 'balanced',
+			privacy_setup_completed_at: null as string | null
+		};
+		let capturedPayload: Record<string, unknown> | null = null;
+
+		await page.route('**/wp-json/sentient-forms/v1/settings', async (route) => {
+			const request = route.request();
+			if (request.method() === 'PUT') {
+				capturedPayload = request.postDataJSON() as Record<string, unknown>;
+				Object.assign(settingsState, capturedPayload, {
+					privacy_setup_completed_at: '2026-04-21T00:00:00Z'
+				});
+			}
+
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(settingsState)
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/telemetry', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					telemetry_opt_in: false,
+					updated_at: '2026-04-21T00:00:00Z',
+					synced_at: '2026-04-21T00:00:00Z',
+					remote_updated_at: '2026-04-21T00:00:00Z',
+					last_error: null
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/async-settings', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					max_attempts: 3,
+					base_delay_seconds: 60,
+					max_delay_seconds: 3600,
+					updated_at: '2026-04-21T00:00:00Z',
+					updated_by: 'privacy-assistant-e2e'
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/async-health', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					queue_depth: 0,
+					oldest_run_at: null,
+					recent_failures: {},
+					warnings: []
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ success: true, data: [] })
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/models/resolve**', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						model_id: 'openai/gpt-5.5',
+						display_name: 'OpenAI: GPT-5.5',
+						resolution_source: 'mock',
+						override_chain: [],
+						backup_model_id: null
+					}
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/models', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						models: [],
+						presets: []
+					}
+				})
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/site-context**', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					context: null,
+					settings: {
+						consent_status: 'unset',
+						consented_at: null,
+						declined_at: null,
+						auto_refresh_enabled: false,
+						auto_refresh_days: 30,
+						next_refresh_at: null,
+						last_generated_at: null,
+						last_error: null,
+						generation_model_selection: {
+							primary: 'sf_research',
+							is_preset: true,
+							provider: 'sentient_managed'
+						}
+					},
+					has_context: false,
+					is_empty: true,
+					is_stale: false,
+					stale_after_days: 90,
+					status: 'empty',
+					generation_access: {
+						can_generate: false,
+						reason_code: 'site_context_generation_consent_required',
+						message: 'Allow AI-generated Site Context before running generation.',
+						setup_target: 'site_context_consent',
+						provider: 'sentient_managed',
+						model: 'openai/gpt-5.5'
+					}
+				})
+			});
+		});
+
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
+		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
+		settingsState.managed_zdr_required = true;
+		await page.getByRole('button', { name: 'Apply Balanced' }).click();
+
+		await expect.poll(() => capturedPayload).not.toBeNull();
+		expect(capturedPayload).not.toHaveProperty('managed_zdr_required');
+		expect(settingsState.managed_zdr_required).toBe(true);
+	});
+
 	test('keeps the first-run modal open while Site Context generation runs in the background', async ({
 		page
 	}) => {
