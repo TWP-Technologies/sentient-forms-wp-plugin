@@ -94,9 +94,7 @@ test.describe('Settings retention controls', () => {
 		await expect(page.getByTestId('settings-retention-loading-state')).toBeHidden();
 		await expect(page.getByText('Maximum visibility')).toBeVisible();
 		await expect(page.getByTestId('settings-profile-execution-history')).toContainText('180 days');
-		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText(
-			'Stored locally'
-		);
+		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText('Stored locally');
 	});
 
 	test('updates local retention and uninstall cleanup settings', async ({ page }) => {
@@ -189,7 +187,7 @@ test.describe('Settings retention controls', () => {
 			});
 		});
 
-		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 
 		await expect(page.getByTestId('settings-managed-zdr')).toContainText(
 			'Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data Retention'
@@ -289,7 +287,7 @@ test.describe('Settings retention controls', () => {
 			});
 		});
 
-		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 
 		await expect(page.getByTestId('settings-profile-customized-badge')).toBeVisible();
 		await expect(page.getByTestId('settings-profile-base-badge')).toContainText(
@@ -368,7 +366,7 @@ test.describe('Settings retention controls', () => {
 			});
 		});
 
-		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 
 		await expect(
 			page.getByText('Keep all providers running. Turn this off to pause everything.')

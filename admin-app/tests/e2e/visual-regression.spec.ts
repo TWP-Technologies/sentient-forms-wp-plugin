@@ -53,8 +53,14 @@ const routeVisualAudits: RouteVisualAudit[] = [
 	}
 ];
 
+function routeWaitUntil(path: string): 'domcontentloaded' | 'networkidle' {
+	return path.startsWith('/#/settings') ? 'domcontentloaded' : 'networkidle';
+}
+
 async function expectNoSeriousAxeViolations(page: Page, routeName: string): Promise<void> {
-	const results = await new AxeBuilder({ page }).include('[data-testid="app-content-frame"]').analyze();
+	const results = await new AxeBuilder({ page })
+		.include('[data-testid="app-content-frame"]')
+		.analyze();
 	const blockingViolations = results.violations
 		.filter((violation) => ['serious', 'critical'].includes(violation.impact ?? ''))
 		.map((violation) => ({
@@ -66,9 +72,10 @@ async function expectNoSeriousAxeViolations(page: Page, routeName: string): Prom
 			}))
 		}));
 
-	expect(blockingViolations, `${routeName} should not have serious or critical axe violations`).toEqual(
-		[]
-	);
+	expect(
+		blockingViolations,
+		`${routeName} should not have serious or critical axe violations`
+	).toEqual([]);
 }
 
 test.describe('Preview visual regression and accessibility @visual @a11y', () => {
@@ -87,7 +94,7 @@ test.describe('Preview visual regression and accessibility @visual @a11y', () =>
 
 	for (const route of routeVisualAudits) {
 		test(`${route.name} shell stays visually stable`, async ({ page }) => {
-			await page.goto(route.path, { waitUntil: 'networkidle' });
+			await page.goto(route.path, { waitUntil: routeWaitUntil(route.path) });
 			await expect(route.ready(page)).toBeVisible();
 			await expectNoSeriousAxeViolations(page, route.name);
 
