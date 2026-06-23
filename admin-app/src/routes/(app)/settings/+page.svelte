@@ -52,6 +52,7 @@
 	let executionProviderDisabled = $state<Record<string, boolean>>({});
 	let retentionSaving = $state(false);
 	let managedZdrSaving = $state(false);
+	let settingsWriteInFlight = $derived(executionSaving || retentionSaving || managedZdrSaving);
 	let executionEventRetentionDays = $state(90);
 	let deleteDataOnUninstall = $state(true);
 	let storeFullAiOutputs = $state(false);
@@ -621,7 +622,7 @@
 					type="checkbox"
 					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 					checked={managedZdrRequired}
-					disabled={managedZdrSaving || executionLoading}
+					disabled={settingsWriteInFlight || executionLoading}
 					onchange={(event) =>
 						toggleManagedZdrRequired((event.currentTarget as HTMLInputElement).checked)}
 					aria-label="Enforce ZDR for managed service"
@@ -887,7 +888,7 @@
 					<select
 						class="sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
 						bind:value={executionEventRetentionDays}
-						disabled={retentionSaving || executionLoading}
+						disabled={settingsWriteInFlight || executionLoading}
 					>
 						{#each retentionOptions as option}
 							<option value={option.value}>{option.label}</option>
@@ -902,7 +903,7 @@
 						type="checkbox"
 						class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 						bind:checked={storeFullAiOutputs}
-						disabled={retentionSaving || executionLoading}
+						disabled={settingsWriteInFlight || executionLoading}
 						data-testid="settings-store-full-ai-outputs"
 					/>
 					<span class="sf:space-y-1">
@@ -923,7 +924,7 @@
 						type="checkbox"
 						class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 						bind:checked={deleteDataOnUninstall}
-						disabled={retentionSaving || executionLoading}
+						disabled={settingsWriteInFlight || executionLoading}
 					/>
 					<span class="sf:space-y-1">
 						<span class="sf:block sf:text-sm sf:font-medium sf:text-slate-900">
@@ -959,7 +960,7 @@
 			</Alert>
 
 			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
-				<Button type="submit" disabled={retentionSaving || executionLoading}>
+				<Button type="submit" disabled={settingsWriteInFlight || executionLoading}>
 					{retentionSaving ? 'Saving…' : 'Save retention'}
 				</Button>
 				<p class="sf:text-xs sf:text-slate-500">
@@ -1007,7 +1008,7 @@
 					type="checkbox"
 					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 					checked={!executionGlobalDisabled}
-					disabled={executionSaving || executionLoading}
+					disabled={settingsWriteInFlight || executionLoading}
 					onchange={(event) =>
 						toggleExecutionGlobal(!(event.currentTarget as HTMLInputElement).checked)}
 				/>
@@ -1034,7 +1035,7 @@
 								type="checkbox"
 								class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 								checked={!executionProviderDisabled[source.slug]}
-								disabled={executionSaving || executionLoading || !source.isActive}
+								disabled={settingsWriteInFlight || executionLoading || !source.isActive}
 								onchange={(event) =>
 									toggleExecutionProvider(
 										source.slug,

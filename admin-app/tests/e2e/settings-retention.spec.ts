@@ -184,9 +184,10 @@ test.describe('Settings retention controls', () => {
 		await page.getByLabel('Execution logs').selectOption('30');
 		await page.getByLabel('Store full AI outputs locally').check();
 		await page.getByLabel('Delete local data on uninstall').check();
+		const retentionPayloadCount = capturedPayloads.length;
 		await page.getByRole('button', { name: 'Save retention' }).click();
 
-		await expect.poll(() => capturedPayloads.length).toBeGreaterThan(0);
+		await expect.poll(() => capturedPayloads.length).toBeGreaterThan(retentionPayloadCount);
 		expect(capturedPayloads.at(-1)).toMatchObject({
 			execution_event_retention_days: 30,
 			delete_data_on_uninstall: true,
