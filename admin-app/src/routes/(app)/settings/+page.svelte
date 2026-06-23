@@ -7,6 +7,7 @@
 	import { asyncHealthStore } from '$lib/stores/async-health.svelte';
 	import { loggingStore } from '$lib/stores/logging.svelte';
 	import { createClientFromConfig } from '$lib/api/client';
+	import { licenseState } from '$lib/stores/license';
 	import { notifications } from '$lib/stores/notifications';
 	import { Alert, Badge, Button, StateTemplate } from '$lib/components/ui';
 	import type {
@@ -51,9 +52,21 @@
 	let executionGlobalDisabled = $state(false);
 	let executionProviderDisabled = $state<Record<string, boolean>>({});
 	let retentionSaving = $state(false);
+	let managedZdrSaving = $state(false);
+	let settingsWriteInFlight = $derived(executionSaving || retentionSaving || managedZdrSaving);
 	let executionEventRetentionDays = $state(90);
 	let deleteDataOnUninstall = $state(true);
 	let storeFullAiOutputs = $state(false);
+	let managedZdrRequired = $state(false);
+	let managedAccountReady = $derived(
+		['active', 'trial', 'valid'].includes(licenseState.status) &&
+			licenseState.proxyKeyPresent &&
+			Boolean(licenseState.licenseId) &&
+			Boolean(licenseState.siteId)
+	);
+	let managedZdrControlDisabled = $derived(
+		settingsWriteInFlight || executionLoading || !managedAccountReady
+	);
 	let privacySetupProfile =
 		$state<NonNullable<PluginSettingsResponse['privacy_setup_profile']>>('balanced');
 	let privacySetupCompletedAt = $state<string | null>(null);
@@ -179,6 +192,7 @@
 				: 90;
 		deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
 		storeFullAiOutputs = Boolean(settings.store_full_ai_outputs);
+		managedZdrRequired = Boolean(settings.managed_zdr_required);
 		governanceLoggingEnabled =
 			typeof settings.enable_logging === 'boolean' ? settings.enable_logging : null;
 		privacySetupProfile = (settings.privacy_setup_profile ?? 'balanced') as NonNullable<
@@ -188,6 +202,12 @@
 			typeof settings.privacy_setup_completed_at === 'string'
 				? settings.privacy_setup_completed_at
 				: null;
+		governanceLoaded = true;
+		governanceLoadError = null;
+	}
+
+	function syncManagedZdrSetting(settings: PluginSettingsResponse): void {
+		managedZdrRequired = Boolean(settings.managed_zdr_required);
 		governanceLoaded = true;
 		governanceLoadError = null;
 	}
@@ -225,6 +245,33 @@
 			notifications.warning('Failed to load execution control settings');
 		} finally {
 			executionLoading = false;
+		}
+	}
+
+	async function toggleManagedZdrRequired(nextRequired: boolean) {
+		if (!managedAccountReady) {
+			managedZdrRequired = false;
+			notifications.warning('Active Sentient Forms Managed Service is required to enforce ZDR.');
+			return;
+		}
+
+		const previous = managedZdrRequired;
+		managedZdrRequired = nextRequired;
+		managedZdrSaving = true;
+		try {
+			const settings = await client.updateSettings(
+				{
+					managed_zdr_required: nextRequired
+				},
+				{ showNotifications: false }
+			);
+			syncManagedZdrSetting(settings);
+			notifications.success(nextRequired ? 'Managed ZDR enforcement enabled' : 'Managed ZDR enforcement disabled');
+		} catch {
+			managedZdrRequired = previous;
+			notifications.error('Unable to update managed ZDR enforcement');
+		} finally {
+			managedZdrSaving = false;
 		}
 	}
 
@@ -399,7 +446,7 @@
 
 	<div
 		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"
-	>
+		>
 		{#if !governanceLoaded && executionLoading}
 			<StateTemplate
 				variant="loading"
@@ -573,6 +620,41 @@
 				</svg>
 				Manage Site Context
 			</Button>
+		</div>
+	</div>
+
+	<div
+		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-3"
+		data-testid="settings-managed-zdr"
+	>
+		<div
+			class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-start"
+		>
+			<div class="sf:min-w-0 sf:space-y-1">
+				<p class="sf:font-medium sf:text-slate-900">Enforce ZDR for managed service</p>
+				<p class="sf:max-w-2xl sf:text-sm sf:leading-6 sf:text-slate-600">
+					Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data
+					Retention and to deny provider data collection. If the selected model is no longer
+					eligible, Sentient Forms uses a comparable ZDR-safe model when available or fails safely.
+				</p>
+				{#if !managedAccountReady}
+					<p class="sf:text-sm sf:text-slate-500">
+						Requires an active Sentient Forms Managed Service subscription.
+					</p>
+				{/if}
+			</div>
+			<label class="sf:flex sf:items-center sf:gap-3">
+				<span class="sf:text-sm sf:font-semibold">{managedZdrRequired ? 'On' : 'Off'}</span>
+				<input
+					type="checkbox"
+					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+					checked={managedZdrRequired}
+					disabled={managedZdrControlDisabled}
+					onchange={(event) =>
+						toggleManagedZdrRequired((event.currentTarget as HTMLInputElement).checked)}
+					aria-label="Enforce ZDR for managed service"
+				/>
+			</label>
 		</div>
 	</div>
 
@@ -833,7 +915,7 @@
 					<select
 						class="sf:rounded-lg sf:border sf:border-slate-300 sf:bg-white sf:px-3 sf:py-2 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white sf:focus-visible:border-primary-600"
 						bind:value={executionEventRetentionDays}
-						disabled={retentionSaving || executionLoading}
+						disabled={settingsWriteInFlight || executionLoading}
 					>
 						{#each retentionOptions as option}
 							<option value={option.value}>{option.label}</option>
@@ -848,7 +930,7 @@
 						type="checkbox"
 						class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 						bind:checked={storeFullAiOutputs}
-						disabled={retentionSaving || executionLoading}
+						disabled={settingsWriteInFlight || executionLoading}
 						data-testid="settings-store-full-ai-outputs"
 					/>
 					<span class="sf:space-y-1">
@@ -869,7 +951,7 @@
 						type="checkbox"
 						class="sf:mt-1 sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 						bind:checked={deleteDataOnUninstall}
-						disabled={retentionSaving || executionLoading}
+						disabled={settingsWriteInFlight || executionLoading}
 					/>
 					<span class="sf:space-y-1">
 						<span class="sf:block sf:text-sm sf:font-medium sf:text-slate-900">
@@ -905,7 +987,7 @@
 			</Alert>
 
 			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-3">
-				<Button type="submit" disabled={retentionSaving || executionLoading}>
+				<Button type="submit" disabled={settingsWriteInFlight || executionLoading}>
 					{retentionSaving ? 'Saving…' : 'Save retention'}
 				</Button>
 				<p class="sf:text-xs sf:text-slate-500">
@@ -953,7 +1035,7 @@
 					type="checkbox"
 					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 					checked={!executionGlobalDisabled}
-					disabled={executionSaving || executionLoading}
+					disabled={settingsWriteInFlight || executionLoading}
 					onchange={(event) =>
 						toggleExecutionGlobal(!(event.currentTarget as HTMLInputElement).checked)}
 				/>
@@ -980,7 +1062,7 @@
 								type="checkbox"
 								class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 								checked={!executionProviderDisabled[source.slug]}
-								disabled={executionSaving || executionLoading || !source.isActive}
+								disabled={settingsWriteInFlight || executionLoading || !source.isActive}
 								onchange={(event) =>
 									toggleExecutionProvider(
 										source.slug,

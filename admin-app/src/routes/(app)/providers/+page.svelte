@@ -5,6 +5,7 @@
 		LocalProviderCredential,
 		OpenRouterModelsResponse,
 		OpenRouterValidateResponse,
+		PluginSettingsResponse,
 		SentientManagedRevokeResponse,
 		SentientManagedSetupResponse
 	} from '$lib/api/types';
@@ -53,11 +54,12 @@
 	let managedSetupError = $state<string | null>(null);
 	let managedRevokeError = $state<string | null>(null);
 	let modelCatalogError = $state<string | null>(null);
+	let settingsError = $state<string | null>(null);
 	let apiKey = $state('');
 	let label = $state('OpenRouter key');
 	let constantLabel = $state('OpenRouter server secret');
 	let constantName = $state('SENTIENT_FORMS_OPENROUTER_KEY');
-	let managedLabel = $state('Sentient Forms managed service');
+	let managedLabel = $state('Sentient Forms Managed Service');
 	let saveKey = $state(true);
 	let acceptedDisclosure = $state(false);
 	let acceptedManagedDisclosure = $state(false);
@@ -69,6 +71,10 @@
 	let managedRevokeLoading = $state(false);
 	let modelCatalogLoading = $state(true);
 	let modelCatalogRefreshing = $state(false);
+	let managedZdrRequired = $state(false);
+	let managedZdrSaving = $state(false);
+	let settingsLoaded = $state(false);
+	let settingsRequestToken = 0;
 
 	let openRouterCredentials = $derived(
 		credentials.filter((credential) => credential.provider === 'openrouter')
@@ -104,6 +110,9 @@
 			Boolean(licenseState.licenseId) &&
 			Boolean(licenseState.siteId)
 	);
+	let managedZdrControlDisabled = $derived(
+		managedZdrSaving || !settingsLoaded || !managedAccountReady
+	);
 	let localSetupUnavailableTitle = $derived(
 		managedAccountReady
 			? 'Connect a provider before building actions'
@@ -111,7 +120,7 @@
 	);
 	let localSetupUnavailableMessage = $derived(
 		managedAccountReady
-			? 'Enable the Sentient Forms managed service here or validate an OpenRouter key or server secret for direct local execution.'
+			? 'Enable the Sentient Forms Managed Service here or validate an OpenRouter key or server secret for direct local execution.'
 			: localOpenRouterSetupUnavailableMessage(openRouterCredentials)
 	);
 	let freeModelPreview = $derived(
@@ -232,6 +241,57 @@
 			modelCatalogError = errorMessage(requestError);
 		} finally {
 			modelCatalogLoading = false;
+		}
+	}
+
+	function syncManagedZdrSettings(settings: PluginSettingsResponse): void {
+		managedZdrRequired = Boolean(settings.managed_zdr_required);
+	}
+
+	async function loadSettings(): Promise<void> {
+		const requestToken = ++settingsRequestToken;
+		settingsError = null;
+
+		try {
+			const settings = await client.getSettings({ showNotifications: false });
+			if (requestToken !== settingsRequestToken) return;
+			syncManagedZdrSettings(settings);
+			settingsLoaded = true;
+		} catch (requestError) {
+			if (requestToken !== settingsRequestToken) return;
+			settingsError = errorMessage(requestError);
+		}
+	}
+
+	async function toggleManagedZdrRequired(nextRequired: boolean): Promise<void> {
+		if (!managedAccountReady) {
+			managedZdrRequired = false;
+			notifications.warning('Active Sentient Forms Managed Service is required to enforce ZDR.');
+			return;
+		}
+
+		settingsRequestToken += 1;
+		const previous = managedZdrRequired;
+		managedZdrRequired = nextRequired;
+		managedZdrSaving = true;
+		settingsError = null;
+
+		try {
+			const settings = await client.updateSettings(
+				{ managed_zdr_required: nextRequired },
+				{ showNotifications: false }
+			);
+			syncManagedZdrSettings(settings);
+			settingsLoaded = true;
+			notifications.success(
+				nextRequired ? 'Managed ZDR enforcement enabled' : 'Managed ZDR enforcement disabled'
+			);
+		} catch (requestError) {
+			managedZdrRequired = previous;
+			settingsError = errorMessage(requestError);
+			notifications.error('Unable to update managed ZDR enforcement');
+		} finally {
+			managedZdrSaving = false;
 		}
 	}
 
@@ -383,13 +443,13 @@
 
 		if (!managedAccountReady) {
 			managedSetupError =
-				'Activate a Sentient Forms managed account before enabling managed execution.';
+				'Activate a Sentient Forms Managed Service account before enabling managed service.';
 			return;
 		}
 
 		if (!acceptedManagedDisclosure) {
 			managedSetupError =
-				'Accept the Sentient Forms managed service disclosure before enabling managed execution.';
+				'Accept the Sentient Forms Managed Service disclosure before enabling managed service.';
 			return;
 		}
 
@@ -441,6 +501,7 @@
 	onMount(() => {
 		void loadCredentials();
 		void loadModelCatalog();
+		void loadSettings();
 	});
 </script>
 
@@ -475,7 +536,7 @@
 					<Badge variant="info">Recommended</Badge>
 				</div>
 				<h3 class="sf:mt-3 sf:text-base sf:font-semibold sf:text-slate-900">
-					Managed Sentient Forms service
+					Sentient Forms Managed Service
 				</h3>
 				<p class="sf:mt-2 sf:text-sm sf:text-slate-600">
 					Use a Sentient Forms subscription when you want model access, spend controls, metering,
@@ -534,7 +595,7 @@
 					<Badge variant="info">Sentient Forms billed</Badge>
 				</div>
 				<h3 class="sf:text-xl sf:font-semibold sf:text-slate-900">
-					Sentient Forms managed service
+					Sentient Forms Managed Service
 				</h3>
 				<p class="sf:max-w-2xl sf:text-sm sf:text-slate-600">
 					Sentient Forms receives rendered prompts and required form fields only for managed service
@@ -567,6 +628,44 @@
 					</p>
 				</div>
 			</div>
+		</div>
+	</Card>
+
+	<Card class="sf:border-slate-300 sf:bg-white" data-testid="providers-managed-zdr">
+		<div
+			class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-start"
+		>
+			<div class="sf:min-w-0 sf:space-y-1">
+				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+					<Badge variant={managedAccountReady ? 'success' : 'warning'}>
+						{managedAccountReady ? 'Managed service active' : 'Managed service required'}
+					</Badge>
+					{#if managedZdrRequired}
+						<Badge variant="success">ZDR enforced</Badge>
+					{/if}
+				</div>
+				<p class="sf:font-medium sf:text-slate-900">Enforce ZDR for managed service</p>
+				<p class="sf:max-w-2xl sf:text-sm sf:leading-6 sf:text-slate-600">
+					Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data
+					Retention and to deny provider data collection. If the selected model is no longer
+					eligible, Sentient Forms uses a comparable ZDR-safe model when available or fails safely.
+				</p>
+				{#if settingsError}
+					<p class="sf:text-sm sf:text-danger-700" role="alert">{settingsError}</p>
+				{/if}
+			</div>
+			<label class="sf:flex sf:items-center sf:gap-3">
+				<span class="sf:text-sm sf:font-semibold">{managedZdrRequired ? 'On' : 'Off'}</span>
+				<input
+					type="checkbox"
+					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+					checked={managedZdrRequired}
+					disabled={managedZdrControlDisabled}
+					onchange={(event) =>
+						toggleManagedZdrRequired((event.currentTarget as HTMLInputElement).checked)}
+					aria-label="Enforce ZDR for managed service"
+				/>
+			</label>
 		</div>
 	</Card>
 
@@ -620,9 +719,10 @@
 			<Alert variant="warning">
 				<p class="sf:font-semibold">Privacy depends on the route you choose</p>
 				<p class="sf:mt-1">
-					OpenRouter Zero Data Retention is only available on supported routes and upstream
-					providers. Many free routes have different retention or training policies, so review the
-					provider privacy posture before using them on sensitive forms.
+					OpenRouter can mark models as available on Zero Data Retention (ZDR) routes, and
+					Sentient Forms shows those tags to help you choose. ZDR
+					<span class="sf:font-semibold sf:italic sf:underline">enforcement</span>
+					for direct OpenRouter users can only be configured in OpenRouter.
 				</p>
 			</Alert>
 		</div>
@@ -1067,15 +1167,15 @@
 	<div class="sf:grid sf:gap-4 sf:xl:grid-cols-[1fr_0.9fr]">
 		<Card
 			title={managedConsent.state === 'accepted'
-				? 'Manage Sentient Forms managed service'
-				: 'Enable Sentient Forms managed service'}
+				? 'Manage Sentient Forms Managed Service'
+				: 'Enable Sentient Forms Managed Service'}
 			data-testid="providers-managed-setup-card"
 		>
 			{#if !managedAccountReady}
 				<StateTemplate
 					variant="empty"
 					title="Activate managed service first"
-					message="Managed execution needs an active Sentient Forms subscription for this WordPress site. Direct OpenRouter remains available without Sentient Forms billing."
+					message="Sentient Forms Managed Service needs an active subscription for this WordPress site. Direct OpenRouter remains available without Sentient Forms billing."
 					actionLabel="Open Managed Service"
 					onAction={() => navigateToAppPath('/licensing')}
 					dense
@@ -1103,23 +1203,23 @@
 						</div>
 						<h3 class="sf:mt-3 sf:text-base sf:font-semibold sf:text-slate-900">
 							{#if managedConsent.state === 'accepted'}
-								Managed execution is allowed for this site
+								Sentient Forms Managed Service is allowed for this site
 							{:else if managedConsent.state === 'revoked'}
-								Managed execution is disabled locally
+								Sentient Forms Managed Service is disabled locally
 							{:else}
-								Consent is required before managed execution can run
+								Consent is required before Sentient Forms Managed Service can run
 							{/if}
 						</h3>
 						<p class="sf:mt-2 sf:text-sm sf:text-slate-700">
 							{#if managedConsent.state === 'accepted'}
 								This WordPress site may send rendered prompts and required form fields through the
-								Sentient Forms managed service. You can revoke this local consent without canceling
+								Sentient Forms Managed Service. You can revoke this local consent without canceling
 								or changing the Stripe subscription.
 							{:else if managedConsent.state === 'revoked'}
 								New managed-service requests are blocked from this plugin until consent is enabled
 								again. Revocation does not cancel or change the Stripe subscription.
 							{:else}
-								Enable managed execution only when this site should use Sentient Forms billing and
+								Enable managed service only when this site should use Sentient Forms billing and
 								the central proxy for model runs.
 							{/if}
 						</p>
@@ -1149,7 +1249,7 @@
 							<InputField
 								id="sentient-managed-label"
 								label="Label"
-								placeholder="Sentient Forms managed service"
+								placeholder="Sentient Forms Managed Service"
 								bind:value={managedLabel}
 								disabled={managedSetupLoading}
 							/>
@@ -1245,7 +1345,7 @@
 		</Card>
 
 		<Card
-			title="Sentient Forms managed service credentials"
+			title="Sentient Forms Managed Service credentials"
 			data-testid="providers-managed-list-card"
 		>
 			{#if loading}

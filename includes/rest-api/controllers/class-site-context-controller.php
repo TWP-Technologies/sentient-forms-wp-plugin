@@ -40,6 +40,9 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     private const DEFAULT_REFRESH_DAYS        = 30;
     private const MANUAL_STALE_DAYS           = 90;
     private const READY_CREDENTIAL_STATUSES   = [ 'valid', 'limited' ];
+    private const PRIVACY_ROUTE_POLICY_SCHEMA = 'sentient_forms_privacy_route_policy.v1';
+    private const PRIVACY_ROUTE_ASSERTION_SCHEMA = 'sentient_forms_privacy_route_assertion.v1';
+    private const PRIVACY_ROUTE_FALLBACK_SCHEMA = 'sentient_forms_privacy_route_fallback.v1';
     private const OPENROUTER_SITE_CONTEXT_SCHEMA_NAME    = 'sentient_forms_site_context_generation_v1';
     private const OPENROUTER_SITE_CONTEXT_MIN_MAX_TOKENS = 1800;
     private const OPENROUTER_SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS = 5;
@@ -721,6 +724,18 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
                     'reason_code'  => 'site_context_generation_consent_required',
                     'message'      => __( 'Allow AI-generated Site Context before running generation.', 'sentient-forms' ),
                     'setup_target' => 'site_context_consent',
+                ]
+            );
+        }
+
+        if ( 'sentient_managed' === $provider && '' === $model && $this->managed_privacy_route_required( $selection ) )
+        {
+            return array_merge(
+                $base,
+                [
+                    'reason_code'  => 'site_context_generation_managed_zdr_model_unavailable',
+                    'message'      => __( 'Choose a ZDR-capable managed model before generating Site Context.', 'sentient-forms' ),
+                    'setup_target' => 'settings',
                 ]
             );
         }
@@ -1517,12 +1532,24 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $primary = isset( $selection['primary'] ) && is_scalar( $selection['primary'] )
             ? sanitize_key( (string) $selection['primary'] )
             : '';
+        $provider = isset( $selection['provider'] ) && is_scalar( $selection['provider'] )
+            ? sanitize_key( (string) $selection['provider'] )
+            : 'openrouter';
         $model = strtolower( trim( $model ) );
 
-        return 'sf_free' === $primary
-            || 'openrouter/auto' === $model
+        if ( 'openrouter/auto' === $model
             || 'openrouter/free' === $model
-            || str_contains( $model, ':free' );
+            || str_contains( $model, ':free' ) )
+        {
+            return true;
+        }
+
+        if ( 'sf_free' !== $primary )
+        {
+            return false;
+        }
+
+        return ! ( 'sentient_managed' === $provider && $this->managed_privacy_route_required( $selection ) );
     }
 
     private function resolve_ready_openrouter_credential( array $selection ): array | WP_Error
@@ -1667,6 +1694,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             'route'  => $provider,
             'manual' => $manual,
         ];
+        $executed_model = $model;
 
         if ( 'sentient_managed' === $provider )
         {
@@ -1680,6 +1708,25 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $metadata['metering'] = is_array( $response['metering'] ?? null )
                 ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $response['metering'] )
                 : null;
+            $privacy_route_assertion = $this->normalize_managed_privacy_route_assertion( $response['privacy_route_assertion'] ?? null );
+            if ( null !== $privacy_route_assertion )
+            {
+                $metadata['privacy_route_assertion'] = $privacy_route_assertion;
+            }
+            $privacy_route_fallback = $this->normalize_managed_privacy_route_fallback( $response['privacy_route_fallback'] ?? null );
+            if ( null !== $privacy_route_fallback )
+            {
+                $metadata['privacy_route_fallback'] = $privacy_route_fallback;
+                $executed_model                     = $privacy_route_fallback['executed_model'];
+            }
+            elseif ( isset( $response['model'] ) && is_scalar( $response['model'] ) )
+            {
+                $response_model = sanitize_text_field( (string) $response['model'] );
+                if ( '' !== $response_model )
+                {
+                    $executed_model = $response_model;
+                }
+            }
         }
         else
         {
@@ -1742,6 +1789,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $context['metadata'] = array_merge(
             $metadata,
             [
+                'model'                => $executed_model,
                 'confidence'           => $generated['confidence'],
                 'confidence_notes'     => $generated['confidence_notes'],
                 'legitimate_inquiries' => $generated['legitimate_inquiries'],
@@ -1810,6 +1858,10 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             'output_contract'      => [ 'schema' => $this->generation_output_schema(), 'source' => 'site_context_generation_v1' ],
             'metadata'             => [ 'kind' => 'site_context_generation' ],
         ];
+        if ( $this->managed_privacy_route_required( $selection ) )
+        {
+            $payload['privacy_route_policy'] = $this->managed_privacy_route_policy();
+        }
         if ( [] !== $tools )
         {
             $payload['tools'] = $tools;
@@ -1821,10 +1873,157 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         $client = new Sentient_Forms_Managed_Proxy_Client( null, 60 );
-        return $client->execute(
+        $response = $client->execute(
             $managed_context['proxy_api_key'],
             $payload
         );
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        if ( $this->managed_privacy_route_required( $selection ) )
+        {
+            $privacy_route_assertion = $this->normalize_managed_privacy_route_assertion( $response['privacy_route_assertion'] ?? null );
+            if ( null === $privacy_route_assertion )
+            {
+                return new WP_Error(
+                    'site_context_generation_managed_privacy_route_not_asserted',
+                    __( 'Sentient Forms Managed Service did not confirm the required ZDR route, so Site Context generation was stopped.', 'sentient-forms' ),
+                    [
+                        'status' => 502,
+                    ]
+                );
+            }
+
+            $response['privacy_route_assertion'] = $privacy_route_assertion;
+        }
+
+        return $response;
+    }
+
+    /**
+     * @param array<string, mixed> $selection
+     */
+    private function managed_privacy_route_required( array $selection ): bool
+    {
+        return rest_sanitize_boolean( $selection['require_zdr'] ?? false )
+            || rest_sanitize_boolean( $selection['managed_zdr_required'] ?? false )
+            || $this->global_managed_zdr_required();
+    }
+
+    private function global_managed_zdr_required(): bool
+    {
+        $settings = get_option( 'sentient_forms_plugin_settings', [] );
+        if ( ! is_array( $settings ) )
+        {
+            return false;
+        }
+
+        return rest_sanitize_boolean( $settings['managed_zdr_required'] ?? false );
+    }
+
+    /**
+     * @return array{schema: string, require_zdr: bool, data_collection: string}
+     */
+    private function managed_privacy_route_policy(): array
+    {
+        return [
+            'schema'          => self::PRIVACY_ROUTE_POLICY_SCHEMA,
+            'require_zdr'     => true,
+            'data_collection' => 'deny',
+        ];
+    }
+
+    /**
+     * @return array{schema: string, zdr_enforced: bool, data_collection: string, route_policy_schema: string}|null
+     */
+    private function normalize_managed_privacy_route_assertion( mixed $assertion ): ?array
+    {
+        if ( ! is_array( $assertion ) )
+        {
+            return null;
+        }
+
+        $schema = isset( $assertion['schema'] ) && is_scalar( $assertion['schema'] )
+            ? sanitize_text_field( (string) $assertion['schema'] )
+            : '';
+        $route_policy_schema = isset( $assertion['route_policy_schema'] ) && is_scalar( $assertion['route_policy_schema'] )
+            ? sanitize_text_field( (string) $assertion['route_policy_schema'] )
+            : '';
+        $data_collection = isset( $assertion['data_collection'] ) && is_scalar( $assertion['data_collection'] )
+            ? sanitize_key( (string) $assertion['data_collection'] )
+            : '';
+
+        if (
+            self::PRIVACY_ROUTE_ASSERTION_SCHEMA !== $schema
+            || self::PRIVACY_ROUTE_POLICY_SCHEMA !== $route_policy_schema
+            || true !== ( $assertion['zdr_enforced'] ?? null )
+            || 'deny' !== $data_collection
+        )
+        {
+            return null;
+        }
+
+        return [
+            'schema'              => self::PRIVACY_ROUTE_ASSERTION_SCHEMA,
+            'zdr_enforced'        => true,
+            'data_collection'     => 'deny',
+            'route_policy_schema' => self::PRIVACY_ROUTE_POLICY_SCHEMA,
+        ];
+    }
+
+    private function normalize_managed_privacy_route_fallback( mixed $fallback ): ?array
+    {
+        if ( ! is_array( $fallback ) )
+        {
+            return null;
+        }
+
+        $schema = isset( $fallback['schema'] ) && is_scalar( $fallback['schema'] )
+            ? sanitize_text_field( (string) $fallback['schema'] )
+            : '';
+        $policy_version = isset( $fallback['policy_version'] ) && is_scalar( $fallback['policy_version'] )
+            ? sanitize_text_field( (string) $fallback['policy_version'] )
+            : '';
+        $reason_code = isset( $fallback['reason_code'] ) && is_scalar( $fallback['reason_code'] )
+            ? sanitize_key( (string) $fallback['reason_code'] )
+            : '';
+        $original_model = isset( $fallback['original_model'] ) && is_scalar( $fallback['original_model'] )
+            ? sanitize_text_field( (string) $fallback['original_model'] )
+            : '';
+        $fallback_model = isset( $fallback['fallback_model'] ) && is_scalar( $fallback['fallback_model'] )
+            ? sanitize_text_field( (string) $fallback['fallback_model'] )
+            : '';
+        $executed_model = isset( $fallback['executed_model'] ) && is_scalar( $fallback['executed_model'] )
+            ? sanitize_text_field( (string) $fallback['executed_model'] )
+            : $fallback_model;
+        $attempts = isset( $fallback['attempts'] ) && is_numeric( $fallback['attempts'] )
+            ? absint( $fallback['attempts'] )
+            : 0;
+
+        if (
+            self::PRIVACY_ROUTE_FALLBACK_SCHEMA !== $schema
+            || '' === $policy_version
+            || '' === $reason_code
+            || '' === $original_model
+            || '' === $fallback_model
+            || '' === $executed_model
+            || $attempts < 1
+        )
+        {
+            return null;
+        }
+
+        return [
+            'schema'         => self::PRIVACY_ROUTE_FALLBACK_SCHEMA,
+            'policy_version' => $policy_version,
+            'reason_code'    => $reason_code,
+            'original_model' => $original_model,
+            'fallback_model' => $fallback_model,
+            'executed_model' => $executed_model,
+            'attempts'       => $attempts,
+        ];
     }
 
     private function build_openrouter_payload( string $model, string $prompt, array $selection ): array
@@ -2412,6 +2611,29 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $primary = isset( $selection['primary'] ) && is_scalar( $selection['primary'] )
             ? sanitize_text_field( (string) $selection['primary'] )
             : 'sf_research';
+        $provider = isset( $selection['provider'] ) && is_scalar( $selection['provider'] )
+            ? sanitize_key( (string) $selection['provider'] )
+            : 'openrouter';
+
+        if ( 'sentient_managed' === $provider )
+        {
+            $requires_zdr = $this->managed_privacy_route_required( $selection );
+            if ( str_contains( $primary, '/' ) )
+            {
+                if ( $requires_zdr && ! $this->generation_model_zdr_eligible( $primary ) )
+                {
+                    return '';
+                }
+
+                return $primary;
+            }
+
+            $model_id     = $this->resolve_generation_preset_model_id( sanitize_key( $primary ), $requires_zdr );
+            if ( '' !== $model_id || $requires_zdr )
+            {
+                return $model_id;
+            }
+        }
 
         if ( str_contains( $primary, '/' ) )
         {
@@ -2423,6 +2645,172 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             'sf_free' => 'openrouter/auto',
             default => 'openai/gpt-5.5',
         };
+    }
+
+    private function generation_model_zdr_eligible( string $model ): bool
+    {
+        $metadata = $this->find_openrouter_generation_model_metadata( $model );
+
+        return is_array( $metadata )
+            && array_key_exists( 'zdr_eligible', $metadata )
+            && true === rest_sanitize_boolean( $metadata['zdr_eligible'] );
+    }
+
+    private function resolve_generation_preset_model_id( string $preset_code, bool $require_zdr ): string
+    {
+        $models = $this->list_generation_model_candidates();
+        if ( $require_zdr )
+        {
+            $models = $this->zdr_generation_model_candidates( $models );
+            if ( [] === $models )
+            {
+                return '';
+            }
+        }
+
+        $recommended   = $this->pick_generation_default_model_id( $models );
+        $evidence_pick = $this->pick_generation_evidence_model_id( $models, $preset_code );
+        if ( null !== $evidence_pick )
+        {
+            return $evidence_pick;
+        }
+
+        return match ( $preset_code ) {
+            'sf_speed' => $this->pick_generation_preferred_model_id(
+                $models,
+                [ 'google/gemini-3-flash-preview', 'google/gemini-3.1-flash-lite-preview', 'openai/gpt-5.4', 'openai/gpt-5.4-mini' ]
+            ) ?: $recommended,
+            'sf_free' => $require_zdr ? $recommended : 'openrouter/auto',
+            default   => $recommended,
+        };
+    }
+
+    /**
+     * @return array<string, array{id: string, zdr_eligible: bool|null}>
+     */
+    private function list_generation_model_candidates(): array
+    {
+        global $wpdb;
+
+        $repository = new Sentient_Forms_Model_Cache_Repository( $wpdb );
+        $models     = [];
+
+        foreach ( $repository->list( 'openrouter', true, 1000 ) as $row )
+        {
+            $model = $this->normalize_generation_model_candidate( $row['model_id'] ?? '', $row['metadata_json'] ?? [] );
+            if ( '' !== $model['id'] )
+            {
+                $models[ $model['id'] ] = $model;
+            }
+        }
+
+        foreach ( Sentient_Forms_OpenRouter_Model_Recommendations::all() as $model_id => $metadata )
+        {
+            if ( isset( $models[ $model_id ] ) )
+            {
+                continue;
+            }
+
+            $model = $this->normalize_generation_model_candidate( $model_id, $metadata );
+            if ( '' !== $model['id'] )
+            {
+                $models[ $model['id'] ] = $model;
+            }
+        }
+
+        return $models;
+    }
+
+    /**
+     * @param mixed $metadata
+     * @return array{id: string, zdr_eligible: bool|null}
+     */
+    private function normalize_generation_model_candidate( mixed $model_id, mixed $metadata ): array
+    {
+        $metadata = is_array( $metadata ) ? $metadata : [];
+        $id       = is_scalar( $model_id ) ? sanitize_text_field( (string) $model_id ) : '';
+        if ( '' === $id && is_scalar( $metadata['id'] ?? null ) )
+        {
+            $id = sanitize_text_field( (string) $metadata['id'] );
+        }
+
+        return [
+            'id'           => $id,
+            'zdr_eligible' => array_key_exists( 'zdr_eligible', $metadata )
+                ? rest_sanitize_boolean( $metadata['zdr_eligible'] )
+                : null,
+        ];
+    }
+
+    /**
+     * @param array<string, array{id: string, zdr_eligible: bool|null}> $models
+     * @return array<string, array{id: string, zdr_eligible: bool|null}>
+     */
+    private function zdr_generation_model_candidates( array $models ): array
+    {
+        return array_filter(
+            $models,
+            static fn ( array $model ): bool => true === ( $model['zdr_eligible'] ?? null )
+        );
+    }
+
+    /**
+     * @param array<string, array{id: string, zdr_eligible: bool|null}> $models
+     */
+    private function pick_generation_default_model_id( array $models ): string
+    {
+        $first_model_id = array_key_first( $models );
+
+        return $this->pick_generation_preferred_model_id(
+            $models,
+            [ 'openai/gpt-5.5', 'anthropic/claude-sonnet-4.6', 'google/gemini-3-flash-preview', 'openai/gpt-5.4' ]
+        ) ?: ( is_string( $first_model_id ) ? $first_model_id : '' );
+    }
+
+    /**
+     * @param array<string, array{id: string, zdr_eligible: bool|null}> $models
+     */
+    private function pick_generation_evidence_model_id( array $models, string $preset_code ): ?string
+    {
+        $evidence_file = __DIR__ . '/../../data/model-selector-preset-evidence.php';
+        if ( ! file_exists( $evidence_file ) )
+        {
+            return null;
+        }
+
+        $evidence = require $evidence_file;
+        if ( ! is_array( $evidence ) || ! is_array( $evidence[ $preset_code ]['preferred_model_ids'] ?? null ) )
+        {
+            return null;
+        }
+
+        $preferred_ids = [];
+        foreach ( $evidence[ $preset_code ]['preferred_model_ids'] as $model_id )
+        {
+            if ( is_scalar( $model_id ) )
+            {
+                $preferred_ids[] = sanitize_text_field( (string) $model_id );
+            }
+        }
+
+        return $this->pick_generation_preferred_model_id( $models, $preferred_ids );
+    }
+
+    /**
+     * @param array<string, array{id: string, zdr_eligible: bool|null}> $models
+     * @param array<int, string>                                      $preferred_model_ids
+     */
+    private function pick_generation_preferred_model_id( array $models, array $preferred_model_ids ): ?string
+    {
+        foreach ( $preferred_model_ids as $model_id )
+        {
+            if ( isset( $models[ $model_id ] ) )
+            {
+                return $model_id;
+            }
+        }
+
+        return null;
     }
 
     private function sanitize_model_selection( mixed $value ): array
@@ -2468,6 +2856,11 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         if ( null !== $reasoning )
         {
             $selection['reasoning'] = $reasoning;
+        }
+        if ( array_key_exists( 'require_zdr', $value ) || array_key_exists( 'managed_zdr_required', $value ) )
+        {
+            $selection['require_zdr'] = rest_sanitize_boolean( $value['require_zdr'] ?? false )
+                || rest_sanitize_boolean( $value['managed_zdr_required'] ?? false );
         }
 
         return $selection;

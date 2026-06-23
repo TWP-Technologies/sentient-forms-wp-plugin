@@ -142,6 +142,40 @@ class Tests_OpenRouter_Direct_Client extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'Authorization', $calls[0]['args']['headers'] );
     }
 
+    public function test_list_models_can_request_zdr_filtered_catalog(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => file_get_contents( __DIR__ . '/../fixtures/openrouter/models-zdr-success.json' ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $client = new Sentient_Forms_OpenRouter_Direct_Client();
+        $result = $client->list_models( [ 'zdr' => true ] );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $result['data'] );
+        $this->assertSame( 'openai/gpt-5.5', $result['data'][0]['id'] );
+        $this->assertCount( 1, $calls );
+        $this->assertSame( 'https://openrouter.ai/api/v1/models?zdr=true', $calls[0]['url'] );
+        $this->assertSame( 'GET', $calls[0]['args']['method'] );
+        $this->assertArrayNotHasKey( 'Authorization', $calls[0]['args']['headers'] );
+    }
+
     public function test_openrouter_error_response_is_returned_without_exposing_key(): void
     {
         $this->mock_http(

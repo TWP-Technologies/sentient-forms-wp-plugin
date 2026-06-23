@@ -426,6 +426,11 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
             }
         }
 
+        if ( array_key_exists( 'require_zdr', $value ) && rest_sanitize_boolean( $value['require_zdr'] ) )
+        {
+            $selection['require_zdr'] = true;
+        }
+
         $reasoning = isset( $value['reasoning'] ) ? sanitize_key( (string) $value['reasoning'] ) : '';
         if ( in_array( $reasoning, [ 'none', 'minimal', 'low', 'medium', 'high', 'xhigh' ], true ) )
         {

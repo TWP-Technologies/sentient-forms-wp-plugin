@@ -241,6 +241,29 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertStringContainsString( 'not just the largest advertised context window', $presets_by_code['sf_long_context']['description'] );
     }
 
+    public function test_list_models_exposes_openrouter_zdr_advisory_tags(): void
+    {
+        $this->seed_zdr_model_cache();
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/models' );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $models_by_id = [];
+        foreach ( $data['models'] as $model )
+        {
+            $models_by_id[ $model['id'] ] = $model;
+        }
+
+        $this->assertTrue( $models_by_id['google/gemini-3-flash-preview']['zdr_eligible'] );
+        $this->assertSame( 'openrouter_models_zdr_filter', $models_by_id['google/gemini-3-flash-preview']['zdr_source'] );
+        $this->assertContains( 'zdr', $models_by_id['google/gemini-3-flash-preview']['tags'] );
+        $this->assertFalse( $models_by_id['openai/gpt-5.5']['zdr_eligible'] );
+        $this->assertNotContains( 'zdr', $models_by_id['openai/gpt-5.5']['tags'] );
+    }
+
     public function test_resolve_model_prefers_mapping_selection_over_lower_scopes(): void
     {
         $this->seed_model_cache();
@@ -316,6 +339,270 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertCount( 1, $applied );
         $this->assertSame( 'mapping', $applied[0]['level'] );
         $this->assertStringContainsString( 'managed service', $applied[0]['reason'] );
+    }
+
+    public function test_resolve_model_uses_zdr_safe_preset_candidate_for_managed_zdr_selection(): void
+    {
+        $this->seed_zdr_model_cache();
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
+        $request->set_body_params(
+            [
+                'mapping_selection' => [
+                    'primary'     => 'sf_default',
+                    'is_preset'   => true,
+                    'provider'    => 'sentient_managed',
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'google/gemini-3-flash-preview', $data['model_id'] );
+        $this->assertSame( 'Google: Gemini 3 Flash Preview', $data['display_name'] );
+        $this->assertSame( 'mapping', $data['resolution_source'] );
+
+        $applied = array_values(
+            array_filter(
+                $data['override_chain'],
+                static fn ( array $step ): bool => ! empty( $step['applied'] )
+            )
+        );
+
+        $this->assertCount( 1, $applied );
+        $this->assertStringContainsString( 'ZDR', $applied[0]['reason'] );
+    }
+
+    public function test_resolve_model_rejects_explicit_non_zdr_model_for_managed_zdr_selection(): void
+    {
+        $this->seed_zdr_model_cache();
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
+        $request->set_body_params(
+            [
+                'mapping_selection' => [
+                    'primary'     => 'openai/gpt-5.5',
+                    'is_preset'   => false,
+                    'provider'    => 'sentient_managed',
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'google/gemini-3-flash-preview', $data['model_id'] );
+        $this->assertSame( 'sentient_managed', $data['provider'] );
+        $this->assertSame( 'fallback', $data['resolution_source'] );
+
+        $applied = array_values(
+            array_filter(
+                $data['override_chain'],
+                static fn ( array $step ): bool => ! empty( $step['applied'] )
+            )
+        );
+
+        $this->assertCount( 1, $applied );
+        $this->assertSame( 'fallback', $applied[0]['level'] );
+        $this->assertStringContainsString( 'ZDR-safe local default', $applied[0]['reason'] );
+    }
+
+    public function test_resolve_model_applies_global_managed_zdr_policy_to_managed_selection(): void
+    {
+        $this->seed_zdr_model_cache();
+        update_option( 'sentient_forms_plugin_settings', [ 'managed_zdr_required' => true ] );
+
+        try
+        {
+            $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
+            $request->set_body_params(
+                [
+                    'mapping_selection' => [
+                        'primary'   => 'sf_default',
+                        'is_preset' => true,
+                        'provider'  => 'sentient_managed',
+                    ],
+                ]
+            );
+
+            $response = rest_get_server()->dispatch( $request );
+
+            $this->assertSame( 200, $response->get_status() );
+
+            $data = $response->get_data();
+            $this->assertSame( 'google/gemini-3-flash-preview', $data['model_id'] );
+            $this->assertSame( 'sentient_managed', $data['provider'] );
+
+            $applied = array_values(
+                array_filter(
+                    $data['override_chain'],
+                    static fn ( array $step ): bool => ! empty( $step['applied'] )
+                )
+            );
+
+            $this->assertCount( 1, $applied );
+            $this->assertStringContainsString( 'ZDR', $applied[0]['reason'] );
+        }
+        finally
+        {
+            delete_option( 'sentient_forms_plugin_settings' );
+        }
+    }
+
+    public function test_resolve_model_ignores_lower_priority_non_zdr_model_when_higher_priority_zdr_is_unresolved(): void
+    {
+        $this->seed_zdr_model_cache();
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
+        $request->set_body_params(
+            [
+                'global_selection'  => [
+                    'primary'   => 'openai/gpt-5.5',
+                    'is_preset' => false,
+                    'provider'  => 'openrouter',
+                ],
+                'mapping_selection' => [
+                    'primary'     => 'sf_missing_zdr',
+                    'is_preset'   => true,
+                    'provider'    => 'sentient_managed',
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'google/gemini-3-flash-preview', $data['model_id'] );
+        $this->assertSame( 'sentient_managed', $data['provider'] );
+        $this->assertSame( 'fallback', $data['resolution_source'] );
+        $this->assertNotSame( 'openai/gpt-5.5', $data['model_id'] );
+
+        $applied = array_values(
+            array_filter(
+                $data['override_chain'],
+                static fn ( array $step ): bool => ! empty( $step['applied'] )
+            )
+        );
+
+        $this->assertCount( 1, $applied );
+        $this->assertSame( 'fallback', $applied[0]['level'] );
+        $this->assertSame( 'sentient_managed', $applied[0]['provider'] );
+        $this->assertStringContainsString( 'ZDR-safe local default', $applied[0]['reason'] );
+    }
+
+    public function test_estimate_model_keeps_managed_route_for_zdr_fallback_resolution(): void
+    {
+        $this->seed_zdr_model_cache();
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/estimate' ) );
+        $request->set_body_params(
+            [
+                'action_id'        => 'entry_summary',
+                'base_credit_cost' => 7,
+                'global_selection' => [
+                    'primary'   => 'openai/gpt-5.5',
+                    'is_preset' => false,
+                    'provider'  => 'openrouter',
+                ],
+                'mapping_selection' => [
+                    'primary'     => 'sf_missing_zdr',
+                    'is_preset'   => true,
+                    'provider'    => 'sentient_managed',
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'google/gemini-3-flash-preview', $data['resolved_model']['model_id'] );
+        $this->assertSame( 'sentient_managed', $data['resolved_model']['provider'] );
+        $this->assertSame( 'fallback', $data['resolved_model']['resolution_source'] );
+        $this->assertSame( 'sentient_managed', $data['pricing_estimate']['route'] );
+        $this->assertSame( 'sentient_credits', $data['pricing_estimate']['kind'] );
+    }
+
+    public function test_resolve_model_does_not_fallback_to_non_zdr_default_when_managed_zdr_is_required(): void
+    {
+        $this->seed_model_cache();
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
+        $request->set_body_params(
+            [
+                'mapping_selection' => [
+                    'primary'     => 'sf_default',
+                    'is_preset'   => true,
+                    'provider'    => 'sentient_managed',
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( '', $data['model_id'] );
+        $this->assertNotSame( '~openai/gpt-latest', $data['model_id'] );
+
+        $applied = array_values(
+            array_filter(
+                $data['override_chain'],
+                static fn ( array $step ): bool => ! empty( $step['applied'] )
+            )
+        );
+
+        $this->assertCount( 1, $applied );
+        $this->assertStringContainsString( 'No ZDR-safe local model', $applied[0]['reason'] );
+    }
+
+    public function test_resolve_model_keeps_direct_openrouter_zdr_selection_advisory(): void
+    {
+        $this->seed_zdr_model_cache();
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
+        $request->set_body_params(
+            [
+                'mapping_selection' => [
+                    'primary'     => 'sf_default',
+                    'is_preset'   => true,
+                    'provider'    => 'openrouter',
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( '~openai/gpt-latest', $data['model_id'] );
+        $this->assertSame( 'mapping', $data['resolution_source'] );
+
+        $applied = array_values(
+            array_filter(
+                $data['override_chain'],
+                static fn ( array $step ): bool => ! empty( $step['applied'] )
+            )
+        );
+
+        $this->assertCount( 1, $applied );
+        $this->assertStringNotContainsString( 'ZDR', $applied[0]['reason'] );
     }
 
     public function test_resolve_model_accepts_custom_openrouter_model_id_outside_cached_catalog(): void
@@ -532,6 +819,62 @@ class Tests_Models_Controller extends WP_UnitTestCase
                         'prompt'     => '0.000003',
                         'completion' => '0.000015',
                     ],
+                ],
+                $expires_at
+            )
+        );
+    }
+
+    private function seed_zdr_model_cache(): void
+    {
+        $models     = new Sentient_Forms_Model_Cache_Repository( $GLOBALS['wpdb'] );
+        $expires_at = gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS );
+        $checked_at = gmdate( 'Y-m-d H:i:s' );
+
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'openai/gpt-5.5',
+                [
+                    'id'                   => 'openai/gpt-5.5',
+                    'name'                 => 'OpenAI: GPT-5.5',
+                    'free'                 => false,
+                    'context_length'       => 1050000,
+                    'input_modalities'     => [ 'file', 'image', 'text' ],
+                    'output_modalities'    => [ 'text' ],
+                    'supported_parameters' => [ 'response_format', 'structured_outputs', 'tools' ],
+                    'pricing'              => [
+                        'prompt'     => '0.000005',
+                        'completion' => '0.00003',
+                    ],
+                    'zdr_eligible'         => false,
+                    'zdr_source'           => 'openrouter_models_zdr_filter',
+                    'zdr_checked_at'       => $checked_at,
+                ],
+                $expires_at
+            )
+        );
+
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'google/gemini-3-flash-preview',
+                [
+                    'id'                   => 'google/gemini-3-flash-preview',
+                    'name'                 => 'Google: Gemini 3 Flash Preview',
+                    'free'                 => false,
+                    'context_length'       => 1048576,
+                    'input_modalities'     => [ 'file', 'image', 'text' ],
+                    'output_modalities'    => [ 'text' ],
+                    'supported_parameters' => [ 'response_format', 'structured_outputs', 'tools' ],
+                    'pricing'              => [
+                        'prompt'     => '0.0000005',
+                        'completion' => '0.000003',
+                    ],
+                    'recommended_for'      => [ 'General purpose', 'Speed', 'Structured output' ],
+                    'zdr_eligible'         => true,
+                    'zdr_source'           => 'openrouter_models_zdr_filter',
+                    'zdr_checked_at'       => $checked_at,
                 ],
                 $expires_at
             )

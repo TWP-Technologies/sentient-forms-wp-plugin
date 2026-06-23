@@ -266,6 +266,43 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( $submission_uuid, $event['submission_uuid'] );
     }
 
+    public function test_openrouter_runtime_zdr_setting_does_not_inject_provider_privacy_controls(): void
+    {
+        $fixture = $this->create_local_openrouter_mapping();
+        $client  = new Sentient_Forms_Test_OpenRouter_Client();
+        $service = $this->create_service( $client );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'     => 'gform_after_submission',
+                'settings' => [
+                    'model_selection' => [
+                        'provider'    => 'openrouter',
+                        'model'       => 'openrouter/auto',
+                        'require_zdr' => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'openrouter', $result['provider'] );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $provider_routing = $client->chat_calls[0]['payload']['provider'] ?? [];
+        $this->assertIsArray( $provider_routing );
+        $this->assertArrayNotHasKey( 'zdr', $provider_routing );
+        $this->assertArrayNotHasKey( 'data_collection', $provider_routing );
+        $this->assertArrayNotHasKey( 'privacy_route_policy', $client->chat_calls[0]['payload'] );
+    }
+
     public function test_openrouter_payload_includes_prompt_safety_and_server_tools(): void
     {
         $fixture = $this->create_local_openrouter_mapping();
@@ -1524,6 +1561,583 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertSame( '~openai/gpt-latest', $payload['model'] );
         $this->assertSame( 'contact_spam_triage', $payload['action_code'] );
         $this->assertSame( [ 'effort' => 'high', 'exclude' => true ], $payload['reasoning'] ?? null );
+    }
+
+    public function test_managed_runtime_model_selection_can_require_zdr_privacy_route(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+
+        $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            [
+                'execution_request_id'     => 'runtime-managed-zdr-req',
+                'provider'                 => 'sentient_managed',
+                'model'                    => '~openai/gpt-latest',
+                'status'                   => 'succeeded',
+                'output'                   => [
+                    'text' => 'Managed runtime route succeeded.',
+                ],
+                'token_usage'              => [
+                    'input_tokens'  => 12,
+                    'output_tokens' => 6,
+                    'total_tokens'  => 18,
+                ],
+                'metering'                 => [
+                    'event_id'        => '55555555-5555-4555-8555-555555555555',
+                    'free_usage'      => false,
+                    'debited_credits' => 2,
+                ],
+                'privacy_route_assertion' => [
+                    'schema'              => 'sentient_forms_privacy_route_assertion.v1',
+                    'zdr_enforced'        => true,
+                    'data_collection'     => 'deny',
+                    'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
+                ],
+            ]
+        );
+        $service       = $this->create_service( $openrouter, $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'runtime-managed-zdr-req',
+                'settings'             => [
+                    'model_selection' => [
+                        'primary'       => 'sf_default',
+                        'is_preset'     => true,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed['credential_id'],
+                        'require_zdr'   => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 0, $openrouter->chat_calls );
+        $this->assertCount( 1, $managed_proxy->execute_calls );
+
+        $this->assertSame(
+            [
+                'schema'          => 'sentient_forms_privacy_route_policy.v1',
+                'require_zdr'     => true,
+                'data_collection' => 'deny',
+            ],
+            $managed_proxy->execute_calls[0]['payload']['privacy_route_policy'] ?? null
+        );
+
+        $expected_assertion = [
+            'schema'              => 'sentient_forms_privacy_route_assertion.v1',
+            'zdr_enforced'        => true,
+            'data_collection'     => 'deny',
+            'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
+        ];
+        $this->assertSame( $expected_assertion, $result['result']['privacy_route_assertion'] ?? null );
+
+        $event = $this->events->get_by_request_id( 'runtime-managed-zdr-req' );
+        $this->assertIsArray( $event );
+        $this->assertSame( $expected_assertion, $event['result_json']['privacy_route_assertion'] ?? null );
+    }
+
+    public function test_managed_zdr_fallback_success_records_safe_privacy_metadata(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+
+        $privacy_route_fallback = [
+            'schema'         => 'sentient_forms_privacy_route_fallback.v1',
+            'policy_version' => '2026-06-managed-zdr-fallback-v1',
+            'reason_code'    => 'managed_zdr_primary_route_unavailable',
+            'original_model' => '~openai/gpt-latest',
+            'fallback_model' => 'google/gemini-3-flash-preview',
+            'executed_model' => 'google/gemini-3-flash-preview',
+            'attempts'       => 2,
+        ];
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            [
+                'execution_request_id'    => 'runtime-managed-zdr-fallback-success',
+                'provider'                => 'sentient_managed',
+                'model'                   => 'google/gemini-3-flash-preview',
+                'status'                  => 'succeeded',
+                'output'                  => [
+                    'text' => 'Managed fallback route succeeded.',
+                ],
+                'token_usage'             => [
+                    'input_tokens'  => 12,
+                    'output_tokens' => 6,
+                    'total_tokens'  => 18,
+                ],
+                'metering'                => [
+                    'event_id'        => '55555555-5555-4555-8555-555555555555',
+                    'free_usage'      => false,
+                    'debited_credits' => 2,
+                ],
+                'privacy_route_assertion' => [
+                    'schema'              => 'sentient_forms_privacy_route_assertion.v1',
+                    'zdr_enforced'        => true,
+                    'data_collection'     => 'deny',
+                    'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
+                ],
+                'privacy_route_fallback'  => array_merge(
+                    $privacy_route_fallback,
+                    [
+                        'provider_payload'      => [
+                            'raw_error' => 'No ZDR route is available for the selected provider.',
+                        ],
+                        'execution_request_id' => 'cps-request-id-should-not-be-stored',
+                    ]
+                ),
+            ]
+        );
+        $service       = $this->create_service( new Sentient_Forms_Test_OpenRouter_Client(), $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'runtime-managed-zdr-fallback-success',
+                'settings'             => [
+                    'model_selection' => [
+                        'primary'       => 'sf_default',
+                        'is_preset'     => true,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed['credential_id'],
+                        'require_zdr'   => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'google/gemini-3-flash-preview', $result['model'] ?? null );
+        $this->assertSame( $privacy_route_fallback, $result['result']['privacy_route_fallback'] ?? null );
+        $this->assertStringNotContainsString( 'No ZDR route', wp_json_encode( $result['result'] ?? [] ) );
+        $this->assertStringNotContainsString( 'cps-request-id-should-not-be-stored', wp_json_encode( $result['result'] ?? [] ) );
+
+        $event = $this->events->get_by_request_id( 'runtime-managed-zdr-fallback-success' );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'google/gemini-3-flash-preview', $event['model'] ?? null );
+        $this->assertSame( $privacy_route_fallback, $event['result_json']['privacy_route_fallback'] ?? null );
+        $this->assertStringNotContainsString( 'No ZDR route', wp_json_encode( $event['result_json'] ?? [] ) );
+        $this->assertStringNotContainsString( 'cps-request-id-should-not-be-stored', wp_json_encode( $event['result_json'] ?? [] ) );
+    }
+
+    public function test_managed_zdr_launch_lane_fallback_records_single_attempt_metadata(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+
+        $privacy_route_fallback = [
+            'schema'         => 'sentient_forms_privacy_route_fallback.v1',
+            'policy_version' => '2026-06-managed-zdr-fallback-v1',
+            'reason_code'    => 'managed_zdr_primary_route_unavailable',
+            'original_model' => 'allenai/olmo-3-32b-think',
+            'fallback_model' => 'google/gemini-3-flash-preview',
+            'executed_model' => 'google/gemini-3-flash-preview',
+            'attempts'       => 1,
+        ];
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            [
+                'execution_request_id'    => 'runtime-managed-zdr-launch-lane-fallback',
+                'provider'                => 'sentient_managed',
+                'model'                   => 'google/gemini-3-flash-preview',
+                'status'                  => 'succeeded',
+                'output'                  => [
+                    'text' => 'Managed launch-lane fallback route succeeded.',
+                ],
+                'token_usage'             => [
+                    'input_tokens'  => 12,
+                    'output_tokens' => 6,
+                    'total_tokens'  => 18,
+                ],
+                'metering'                => [
+                    'event_id'        => '55555555-5555-4555-8555-555555555555',
+                    'free_usage'      => false,
+                    'debited_credits' => 2,
+                ],
+                'privacy_route_assertion' => [
+                    'schema'              => 'sentient_forms_privacy_route_assertion.v1',
+                    'zdr_enforced'        => true,
+                    'data_collection'     => 'deny',
+                    'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
+                ],
+                'privacy_route_fallback'  => $privacy_route_fallback,
+            ]
+        );
+        $service       = $this->create_service( new Sentient_Forms_Test_OpenRouter_Client(), $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'runtime-managed-zdr-launch-lane-fallback',
+                'settings'             => [
+                    'model_selection' => [
+                        'primary'       => 'allenai/olmo-3-32b-think',
+                        'is_preset'     => false,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed['credential_id'],
+                        'require_zdr'   => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( 'google/gemini-3-flash-preview', $result['model'] ?? null );
+        $this->assertSame( $privacy_route_fallback, $result['result']['privacy_route_fallback'] ?? null );
+
+        $event = $this->events->get_by_request_id( 'runtime-managed-zdr-launch-lane-fallback' );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'google/gemini-3-flash-preview', $event['model'] ?? null );
+        $this->assertSame( $privacy_route_fallback, $event['result_json']['privacy_route_fallback'] ?? null );
+    }
+
+    public function test_global_managed_zdr_setting_requires_managed_privacy_route(): void
+    {
+        $this->seed_openrouter_model_cache();
+        $had_plugin_settings      = false !== get_option( 'sentient_forms_plugin_settings', false );
+        $previous_plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+
+        try
+        {
+            update_option(
+                'sentient_forms_plugin_settings',
+                [
+                    'managed_zdr_required' => true,
+                ]
+            );
+
+            $fixture = $this->create_local_openrouter_mapping();
+            $managed = $this->create_ready_managed_service_credential();
+
+            $openrouter    = new Sentient_Forms_Test_OpenRouter_Client();
+            $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+                [
+                    'execution_request_id'     => 'runtime-managed-global-zdr-req',
+                    'provider'                 => 'sentient_managed',
+                    'model'                    => '~openai/gpt-latest',
+                    'status'                   => 'succeeded',
+                    'output'                   => [
+                        'text' => 'Managed runtime route succeeded.',
+                    ],
+                    'token_usage'              => [
+                        'input_tokens'  => 12,
+                        'output_tokens' => 6,
+                        'total_tokens'  => 18,
+                    ],
+                    'metering'                 => [
+                        'event_id'        => '55555555-5555-4555-8555-555555555555',
+                        'free_usage'      => false,
+                        'debited_credits' => 2,
+                    ],
+                    'privacy_route_assertion' => [
+                        'schema'              => 'sentient_forms_privacy_route_assertion.v1',
+                        'zdr_enforced'        => true,
+                        'data_collection'     => 'deny',
+                        'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
+                    ],
+                ]
+            );
+            $service       = $this->create_service( $openrouter, $managed_proxy );
+
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [
+                    'id' => 99,
+                    '1'  => 'Ada Lovelace',
+                    '2'  => 'ada@example.test',
+                ],
+                [
+                    'hook'                 => 'gform_after_submission',
+                    'execution_request_id' => 'runtime-managed-global-zdr-req',
+                    'settings'             => [
+                        'model_selection' => [
+                            'primary'       => 'sf_default',
+                            'is_preset'     => true,
+                            'provider'      => 'sentient_managed',
+                            'credential_id' => $managed['credential_id'],
+                        ],
+                    ],
+                ]
+            );
+
+            $this->assertIsArray( $result );
+            $this->assertCount( 0, $openrouter->chat_calls );
+            $this->assertCount( 1, $managed_proxy->execute_calls );
+            $this->assertSame(
+                [
+                    'schema'          => 'sentient_forms_privacy_route_policy.v1',
+                    'require_zdr'     => true,
+                    'data_collection' => 'deny',
+                ],
+                $managed_proxy->execute_calls[0]['payload']['privacy_route_policy'] ?? null
+            );
+        }
+        finally
+        {
+            if ( $had_plugin_settings )
+            {
+                update_option( 'sentient_forms_plugin_settings', $previous_plugin_settings );
+            }
+            else
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+        }
+    }
+
+    public function test_managed_zdr_string_false_flags_do_not_require_privacy_route(): void
+    {
+        $this->seed_openrouter_model_cache();
+        $had_plugin_settings      = false !== get_option( 'sentient_forms_plugin_settings', false );
+        $previous_plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+
+        try
+        {
+            update_option(
+                'sentient_forms_plugin_settings',
+                [
+                    'managed_zdr_required' => 'false',
+                ]
+            );
+
+            $fixture = $this->create_local_openrouter_mapping();
+            $managed = $this->create_ready_managed_service_credential();
+            $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+                [
+                    'execution_request_id' => 'runtime-managed-zdr-string-false',
+                    'provider'             => 'sentient_managed',
+                    'model'                => '~openai/gpt-latest',
+                    'status'               => 'succeeded',
+                    'output'               => [
+                        'text' => 'Managed runtime route succeeded without explicit ZDR.',
+                    ],
+                    'token_usage'          => [
+                        'input_tokens'  => 12,
+                        'output_tokens' => 6,
+                        'total_tokens'  => 18,
+                    ],
+                    'metering'             => [
+                        'event_id'        => '55555555-5555-4555-8555-555555555556',
+                        'free_usage'      => false,
+                        'debited_credits' => 2,
+                    ],
+                ]
+            );
+            $service = $this->create_service( new Sentient_Forms_Test_OpenRouter_Client(), $managed_proxy );
+
+            $result = $service->execute_mapping(
+                $fixture['mapping_id'],
+                [ 'id' => 7, 'title' => 'Contact Form' ],
+                [
+                    'id' => 99,
+                    '1'  => 'Ada Lovelace',
+                    '2'  => 'ada@example.test',
+                ],
+                [
+                    'hook'                 => 'gform_after_submission',
+                    'execution_request_id' => 'runtime-managed-zdr-string-false',
+                    'settings'             => [
+                        'managed_zdr_required' => 'false',
+                        'model_selection'       => [
+                            'primary'       => 'sf_default',
+                            'is_preset'     => true,
+                            'provider'      => 'sentient_managed',
+                            'credential_id' => $managed['credential_id'],
+                            'require_zdr'   => 'false',
+                        ],
+                    ],
+                ]
+            );
+
+            $this->assertIsArray( $result );
+            $this->assertArrayNotHasKey(
+                'privacy_route_policy',
+                $managed_proxy->execute_calls[0]['payload'] ?? []
+            );
+        }
+        finally
+        {
+            if ( $had_plugin_settings )
+            {
+                update_option( 'sentient_forms_plugin_settings', $previous_plugin_settings );
+            }
+            else
+            {
+                delete_option( 'sentient_forms_plugin_settings' );
+            }
+        }
+    }
+
+    public function test_managed_zdr_required_run_fails_when_proxy_omits_privacy_route_assertion(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            [
+                'execution_request_id' => 'runtime-managed-zdr-missing-assertion',
+                'provider'             => 'sentient_managed',
+                'model'                => '~openai/gpt-latest',
+                'status'               => 'succeeded',
+                'output'               => [
+                    'text' => 'Managed runtime route succeeded without assertion.',
+                ],
+                'token_usage'          => [
+                    'input_tokens'  => 12,
+                    'output_tokens' => 6,
+                    'total_tokens'  => 18,
+                ],
+                'metering'             => [
+                    'event_id'        => '55555555-5555-4555-8555-555555555555',
+                    'free_usage'      => false,
+                    'debited_credits' => 2,
+                ],
+            ]
+        );
+        $service = $this->create_service( new Sentient_Forms_Test_OpenRouter_Client(), $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'runtime-managed-zdr-missing-assertion',
+                'settings'             => [
+                    'model_selection' => [
+                        'primary'       => 'sf_default',
+                        'is_preset'     => true,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed['credential_id'],
+                        'require_zdr'   => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'sentient_forms_managed_privacy_route_not_asserted', $result->get_error_code() );
+
+        $event = $this->events->get_by_request_id( 'runtime-managed-zdr-missing-assertion' );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'failed', $event['status'] );
+        $this->assertSame( 'sentient_forms_managed_privacy_route_not_asserted', $event['error_code'] );
+        $this->assertStringNotContainsString( 'Ada Lovelace', wp_json_encode( $event ) );
+        $this->assertStringNotContainsString( 'ada@example.test', wp_json_encode( $event ) );
+    }
+
+    public function test_managed_zdr_route_failure_records_safe_privacy_metadata(): void
+    {
+        $this->seed_openrouter_model_cache();
+
+        $fixture = $this->create_local_openrouter_mapping();
+        $managed = $this->create_ready_managed_service_credential();
+
+        $privacy_route_failure = [
+            'schema'         => 'sentient_forms_privacy_route_failure.v1',
+            'policy_version' => '2026-06-managed-zdr-fallback-v1',
+            'reason_code'    => 'managed_zdr_route_unavailable',
+            'selected_model' => 'google/gemini-3-flash-preview',
+        ];
+        $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
+            new WP_Error(
+                'managed_privacy_route_unavailable',
+                'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.',
+                [
+                    'status'  => 503,
+                    'payload' => [
+                        'success' => false,
+                        'error'   => [
+                            'code'    => 'managed_privacy_route_unavailable',
+                            'message' => 'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.',
+                            'meta'    => [
+                                'privacy_route_failure' => $privacy_route_failure,
+                                'provider_payload'       => [
+                                    'raw_error' => 'No ZDR route is available for this model.',
+                                ],
+                            ],
+                        ],
+                    ],
+                ]
+            )
+        );
+        $service = $this->create_service( new Sentient_Forms_Test_OpenRouter_Client(), $managed_proxy );
+
+        $result = $service->execute_mapping(
+            $fixture['mapping_id'],
+            [ 'id' => 7, 'title' => 'Contact Form' ],
+            [
+                'id' => 99,
+                '1'  => 'Ada Lovelace',
+                '2'  => 'ada@example.test',
+            ],
+            [
+                'hook'                 => 'gform_after_submission',
+                'execution_request_id' => 'runtime-managed-zdr-route-unavailable',
+                'settings'             => [
+                    'model_selection' => [
+                        'primary'       => 'sf_default',
+                        'is_preset'     => true,
+                        'provider'      => 'sentient_managed',
+                        'credential_id' => $managed['credential_id'],
+                        'require_zdr'   => true,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertWPError( $result );
+        $this->assertSame( 'managed_privacy_route_unavailable', $result->get_error_code() );
+        $error_data = $result->get_error_data();
+        $this->assertSame( 503, $error_data['status'] ?? null );
+        $this->assertSame( $privacy_route_failure, $error_data['payload']['error']['meta']['privacy_route_failure'] ?? null );
+        $encoded_error_data = wp_json_encode( $error_data );
+        $this->assertStringNotContainsString( 'provider_payload', $encoded_error_data );
+        $this->assertStringNotContainsString( 'No ZDR route', $encoded_error_data );
+
+        $event = $this->events->get_by_request_id( 'runtime-managed-zdr-route-unavailable' );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'failed', $event['status'] );
+        $this->assertSame( 'managed_privacy_route_unavailable', $event['error_code'] );
+        $this->assertSame( $privacy_route_failure, $event['result_json']['privacy_route_failure'] ?? null );
+        $this->assertStringNotContainsString( 'No ZDR route', wp_json_encode( $event['result_json'] ?? [] ) );
+        $this->assertStringNotContainsString( 'Ada Lovelace', wp_json_encode( $event ) );
+        $this->assertStringNotContainsString( 'ada@example.test', wp_json_encode( $event ) );
     }
 
     public function test_rejects_ambiguous_openrouter_credential_fallback_before_provider_call(): void

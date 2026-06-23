@@ -1407,6 +1407,16 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
     private function extract_local_result_summary( array $result_json, array $result_data ): ?string
     {
+        if ( is_array( $result_json['privacy_route_failure'] ?? null ) )
+        {
+            return $this->managed_zdr_failure_summary();
+        }
+
+        if ( is_array( $result_json['privacy_route_fallback'] ?? null ) )
+        {
+            return $this->managed_zdr_fallback_summary();
+        }
+
         foreach (
             [
                 $result_data['summary'] ?? null,
@@ -1425,6 +1435,16 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         }
 
         return null;
+    }
+
+    private function managed_zdr_fallback_summary(): string
+    {
+        return __( 'The selected model was not available on a ZDR-safe route, so Sentient Forms used a comparable ZDR-safe managed model instead.', 'sentient-forms' );
+    }
+
+    private function managed_zdr_failure_summary(): string
+    {
+        return __( 'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.', 'sentient-forms' );
     }
 
     private function extract_local_result_classification( array $result_json, array $result_data ): ?string

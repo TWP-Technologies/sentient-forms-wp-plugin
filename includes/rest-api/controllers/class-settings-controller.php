@@ -312,6 +312,14 @@ class Sentient_Forms_Settings_Controller extends Sentient_Forms_Abstract_Base_Co
                 'validate_callback' => [ $this->validator, 'validate_provider_disabled_map_param' ],
                 'default'           => [],
             ];
+            $args[ 'managed_zdr_required' ] = [
+                'description'       => __( 'Require ZDR routing for Sentient Forms Managed Service execution when available.', 'sentient-forms' ),
+                'type'              => 'boolean',
+                'required'          => false,
+                'sanitize_callback' => 'wp_validate_boolean',
+                'validate_callback' => [ $this->validator, 'validate_boolean_param' ],
+                'default'           => false,
+            ];
             $args[ 'execution_event_retention_days' ] = [
                 'description'       => __( 'Local execution log retention window in days. Use 0 for manual cleanup only.', 'sentient-forms' ),
                 'type'              => 'integer',

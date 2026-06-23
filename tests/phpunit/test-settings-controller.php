@@ -57,6 +57,43 @@ class Tests_Settings_Controller extends WP_UnitTestCase
         $this->assertNull( $data['privacy_setup_completed_at'] );
         $this->assertFalse( $data['execution_global_disabled'] );
         $this->assertSame( [], $data['execution_provider_disabled'] );
+        $this->assertFalse( $data['managed_zdr_required'] );
+    }
+
+    public function test_settings_update_persists_managed_zdr_requirement(): void
+    {
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' ) );
+        $request->set_body_params(
+            [
+                'managed_zdr_required' => true,
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertTrue( $data['success'] );
+        $this->assertTrue( $data['settings']['managed_zdr_required'] );
+
+        $plugin_settings = get_option( 'sentient_forms_plugin_settings', [] );
+        $this->assertIsArray( $plugin_settings );
+        $this->assertTrue( $plugin_settings['managed_zdr_required'] );
+
+        $get_response = rest_get_server()->dispatch( new WP_REST_Request( 'GET', '/sentient-forms/v1/settings' ) );
+        $this->assertSame( 200, $get_response->get_status() );
+        $this->assertTrue( $get_response->get_data()['managed_zdr_required'] );
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'PUT', '/sentient-forms/v1/settings' ) );
+        $request->set_body_params(
+            [
+                'managed_zdr_required' => false,
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertFalse( $response->get_data()['settings']['managed_zdr_required'] );
     }
 
     public function test_settings_update_persists_local_retention_controls_in_governance_options(): void

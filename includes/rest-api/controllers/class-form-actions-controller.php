@@ -5652,7 +5652,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 'required'          => WP_REST_Server::CREATABLE === $method,
                 'items'             => [
                     'type' => 'string',
-                    'enum' => self::ALLOWED_TRIGGER_HOOKS,
+                    'enum' => Sentient_Forms_Form_Source_Lifecycles::accepted_input_ids(),
                 ],
                 'validate_callback' => [ $this, 'validate_trigger_hooks_param' ],
             ];

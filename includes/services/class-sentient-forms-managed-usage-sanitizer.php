@@ -25,6 +25,7 @@ class Sentient_Forms_Managed_Usage_Sanitizer
         'total_billed_micro_usd'    => true,
         'currency'                  => true,
         'provider_cost'             => true,
+        'provider_payload'          => true,
     ];
 
     private const EMPTY_AFTER_SCRUB_CONTAINER_KEYS = [
@@ -163,16 +164,19 @@ class Sentient_Forms_Managed_Usage_Sanitizer
         {
             $like_micro    = '%' . $wpdb->esc_like( 'microusd' ) . '%';
             $like_currency = '%' . $wpdb->esc_like( '"currency"' ) . '%';
+            $like_provider_payload = '%' . $wpdb->esc_like( '"provider_payload"' ) . '%';
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT id, cost_json, result_json FROM %i
                     WHERE provider IN ('sentient_managed', 'sentient_forms', 'sentient_forms_managed')
-                      AND (cost_json LIKE %s OR cost_json LIKE %s OR result_json LIKE %s OR result_json LIKE %s)",
+                      AND (cost_json LIKE %s OR cost_json LIKE %s OR cost_json LIKE %s OR result_json LIKE %s OR result_json LIKE %s OR result_json LIKE %s)",
                     $table,
                     $like_micro,
                     $like_currency,
+                    $like_provider_payload,
                     $like_micro,
-                    $like_currency
+                    $like_currency,
+                    $like_provider_payload
                 ),
                 ARRAY_A
             ) ?: [];

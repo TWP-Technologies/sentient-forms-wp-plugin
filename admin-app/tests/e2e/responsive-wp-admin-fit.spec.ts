@@ -28,7 +28,10 @@ const routeChecks: RouteCheck[] = [
 	{ path: '/#/licensing', ready: (page) => page.getByRole('heading', { name: 'Managed service' }) },
 	{ path: '/#/actions', ready: (page) => page.getByRole('heading', { name: 'Actions' }) },
 	{ path: '/#/actions/log', ready: (page) => page.getByRole('heading', { name: 'Action Log' }) },
-	{ path: '/#/actions/custom', ready: (page) => page.getByRole('heading', { name: 'Custom Actions' }) },
+	{
+		path: '/#/actions/custom',
+		ready: (page) => page.getByRole('heading', { name: 'Custom Actions' })
+	},
 	{
 		path: '/#/actions/custom/new',
 		ready: (page) => page.getByTestId('custom-action-form')
@@ -50,6 +53,10 @@ const routeChecks: RouteCheck[] = [
 		ready: (page) => page.getByRole('heading', { name: 'Site Context' })
 	}
 ];
+
+function routeWaitUntil(path: string): 'domcontentloaded' | 'networkidle' {
+	return path.startsWith('/#/settings') ? 'domcontentloaded' : 'networkidle';
+}
 
 async function assertNoPageOverflow(page: Page, contextLabel: string): Promise<void> {
 	const overflow = await page.evaluate(() => {
@@ -79,10 +86,7 @@ async function assertHorizontalOverflowContainer(
 	expect(['auto', 'scroll'], `${contextLabel} overflow-x`).toContain(overflowX);
 }
 
-async function assertElementWithinViewport(
-	locator: Locator,
-	contextLabel: string
-): Promise<void> {
+async function assertElementWithinViewport(locator: Locator, contextLabel: string): Promise<void> {
 	const bounds = await locator.evaluate((element) => {
 		const rect = element.getBoundingClientRect();
 		return {
@@ -98,7 +102,9 @@ async function assertElementWithinViewport(
 	expect(bounds.left, `${contextLabel} left bound`).toBeGreaterThanOrEqual(-1);
 	expect(bounds.right, `${contextLabel} right bound`).toBeLessThanOrEqual(bounds.viewportWidth + 1);
 	expect(bounds.top, `${contextLabel} top bound`).toBeGreaterThanOrEqual(-1);
-	expect(bounds.bottom, `${contextLabel} bottom bound`).toBeLessThanOrEqual(bounds.viewportHeight + 1);
+	expect(bounds.bottom, `${contextLabel} bottom bound`).toBeLessThanOrEqual(
+		bounds.viewportHeight + 1
+	);
 }
 
 async function assertContentFrameWidth(page: Page, contextLabel: string): Promise<void> {
@@ -137,8 +143,11 @@ test.describe('Responsive WP admin fit (FR-UI-015)', () => {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height });
 
 			for (const route of routeChecks) {
-				await page.goto(route.path, { waitUntil: 'networkidle' });
-				await expect(route.ready(page), `${viewport.name} ${route.path} ready marker`).toBeVisible();
+				await page.goto(route.path, { waitUntil: routeWaitUntil(route.path) });
+				await expect(
+					route.ready(page),
+					`${viewport.name} ${route.path} ready marker`
+				).toBeVisible();
 				await assertNoPageOverflow(page, `${viewport.name} ${route.path}`);
 				if (viewport.width >= 1920) {
 					await assertContentFrameWidth(page, `${viewport.name} ${route.path}`);
@@ -147,7 +156,9 @@ test.describe('Responsive WP admin fit (FR-UI-015)', () => {
 		});
 	}
 
-	test('dense data routes keep local horizontal overflow wrappers on narrow widths', async ({ page }) => {
+	test('dense data routes keep local horizontal overflow wrappers on narrow widths', async ({
+		page
+	}) => {
 		await page.setViewportSize({ width: 360, height: 800 });
 
 		await page.goto('/#/actions/log', { waitUntil: 'networkidle' });

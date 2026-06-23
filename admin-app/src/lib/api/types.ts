@@ -273,6 +273,7 @@ export interface PluginSettingsResponse {
 	execution_event_retention_days?: number;
 	delete_data_on_uninstall?: boolean;
 	store_full_ai_outputs?: boolean;
+	managed_zdr_required?: boolean;
 	privacy_setup_profile?:
 		| 'balanced'
 		| 'privacy_focused'
@@ -494,6 +495,10 @@ export interface OpenRouterModelCacheItem {
 	fetched_at: string | null;
 	expires_at: string | null;
 	stale: boolean;
+	zdr_eligible: boolean | null;
+	zdr_source: string | null;
+	zdr_checked_at: string | null;
+	tags: string[];
 }
 
 export interface OpenRouterModelsResponse {
@@ -503,6 +508,7 @@ export interface OpenRouterModelsResponse {
 	total_returned: number;
 	free_count: number;
 	stale_count: number;
+	zdr_filtered?: boolean;
 	models: OpenRouterModelCacheItem[];
 	refresh_consent?: OpenRouterModelRefreshConsentState;
 	consent_recorded?: boolean;
@@ -1273,6 +1279,8 @@ export interface ModelSelection {
 	is_preset: boolean;
 	provider?: LocalProvider | null;
 	credential_id?: number | null;
+	require_zdr?: boolean;
+	managed_zdr_required?: boolean;
 	reasoning?:
 		| string
 		| {
@@ -1320,6 +1328,9 @@ export interface ModelInfo {
 	output_modalities?: string[];
 	pricing?: Record<string, string>;
 	recommended_for: string[];
+	zdr_eligible?: boolean | null;
+	zdr_source?: string | null;
+	zdr_checked_at?: string | null;
 	recommendation_categories?: string[];
 	category_rankings?: Record<string, number>;
 	ranking_snapshot?: Record<string, unknown>;

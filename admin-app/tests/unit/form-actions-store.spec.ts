@@ -218,6 +218,30 @@ describe('formActionsStore', () => {
 		expect(notifyWarningSpy).not.toHaveBeenCalled();
 	});
 
+	it('rejects action creation failures so the add action drawer can stay open', async () => {
+		const friendlyMessage =
+			'Sentient Forms sent an invalid execution payload. Review your action configuration and try again.';
+		const apiError = new ApiClientError('Request failed', 400, {
+			error: { code: 'invalid_request', message: 'Action mapping could not be created.' }
+		});
+
+		stubClient.createFormAction.mockRejectedValue(apiError);
+
+		await expect(
+			formActionsStore.create('gravity_forms', 1, {
+				central_action_id: 'entry_summary_v1',
+				action_type_indicator: 'master',
+				trigger_hooks: ['gform_after_submission']
+			})
+		).rejects.toThrow(friendlyMessage);
+
+		expect(snapshotState().items).toEqual([]);
+		expect(notifyErrorSpy).toHaveBeenCalledWith(friendlyMessage);
+		expect(notifySuccessSpy).not.toHaveBeenCalled();
+		expect(stubClient.getExecutionStatus).not.toHaveBeenCalled();
+		expect(stubClient.getFormExecutionStatus).not.toHaveBeenCalled();
+	});
+
 	it('updates submission ledger settings in the loaded bootstrap state', async () => {
 		stubClient.getFormActions.mockResolvedValue([]);
 		stubClient.getActionDefinitions.mockResolvedValue([]);

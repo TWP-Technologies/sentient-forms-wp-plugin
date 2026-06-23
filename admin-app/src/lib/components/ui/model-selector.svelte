@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Alert, Badge, Button, ReasoningEffortRail, SelectField } from '$lib/components/ui';
+	import * as Popover from '$lib/components/ui/popover/index.js';
 	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 	import type {
 		LocalProvider,
@@ -25,6 +26,7 @@
 		filterAndSortModels,
 		isModelFree as modelIsFree,
 		missingRequiredCapabilities,
+		modelSelectorZdrControl,
 		modelCapabilityCount,
 		modelCostLabel,
 		modelBestRank,
@@ -45,6 +47,7 @@
 		type ModelReasoningControlValue,
 		type ModelReasoningEffort
 	} from '$lib/utils/model-selection';
+	import { loadSharedManagedZdrRequirement } from '$lib/utils/managed-zdr-requirement-cache';
 	import { wpFetch } from '$lib/wp';
 
 	interface Props {
@@ -63,6 +66,7 @@
 		allowedProviders?: LocalProvider[] | null;
 		requiredCapabilities?: ModelSelectorCapabilityKey[] | null;
 		lockRequiredCapabilities?: boolean;
+		managedZdrRequired?: boolean | null;
 		webSearchMaxResultsLimit?: number;
 		onchange?: (selection: ModelSelection) => void;
 	}
@@ -90,6 +94,7 @@
 		allowedProviders = null,
 		requiredCapabilities: requiredCapabilitiesProp = null,
 		lockRequiredCapabilities = false,
+		managedZdrRequired = null,
 		webSearchMaxResultsLimit = 10,
 		onchange
 	}: Props = $props();
@@ -129,6 +134,8 @@
 	let rankLimit = $state<RankLimit>('0');
 	let contextLimit = $state<ContextLimit>('0');
 	let sortMode = $state<ModelSelectorSortMode>('name');
+	let zdrOnly = $state(false);
+	let explicitRequireZdr = $state(false);
 	let requiredCapabilities = $state<Set<ModelSelectorCapabilityKey>>(
 		new Set(requiredCapabilitiesProp ?? [])
 	);
@@ -144,6 +151,7 @@
 	let refreshingCatalog = $state(false);
 	let resolved = $state<ResolvedModelSelection | null>(null);
 	let pricingEstimate = $state<ModelPricingEstimate | null>(null);
+	let loadedManagedZdrRequired = $state(false);
 	let resolving = $state(false);
 	let resolutionError = $state<string | null>(null);
 	let resolutionRequestToken = 0;
@@ -253,8 +261,7 @@
 
 	function capabilityLabel(capability: ModelSelectorCapabilityKey): string {
 		return (
-			capabilityFilterOptions.find((option) => option.value === capability)?.label ??
-			capability
+			capabilityFilterOptions.find((option) => option.value === capability)?.label ?? capability
 		);
 	}
 
@@ -361,7 +368,7 @@
 	}
 
 	function providerRouteLabel(provider: string): string {
-		if (provider === MANAGED_PROVIDER) return 'Sentient Forms managed service';
+		if (provider === MANAGED_PROVIDER) return 'Sentient Forms Managed Service';
 		if (provider === OPENROUTER_PROVIDER) return 'Bring your own OpenRouter key';
 		return provider;
 	}
@@ -372,6 +379,10 @@
 
 	function modelIsPaid(model: ModelInfo): boolean {
 		return !modelIsFree(model) && model.id !== 'openrouter/auto';
+	}
+
+	function modelIsZdrEligible(model: ModelInfo | null | undefined): boolean {
+		return model?.zdr_eligible === true;
 	}
 
 	function isModelLocked(model: ModelInfo): boolean {
@@ -452,6 +463,8 @@
 			selectedReasoning = 'default';
 			savedReasoningSettings = null;
 			savedReasoningSelectionKey = '';
+			zdrOnly = effectiveManagedZdrRequired;
+			explicitRequireZdr = false;
 			syncToolSettings(null);
 			return;
 		}
@@ -499,6 +512,9 @@
 		selectedReasoning = normalizeModelReasoningEffort(nextValue.reasoning) ?? 'default';
 		savedReasoningSettings = normalizeReasoningSettings(nextValue.reasoning);
 		savedReasoningSelectionKey = savedReasoningSettings ? reasoningSelectionKey(nextValue) : '';
+		explicitRequireZdr = selectedProvider === MANAGED_PROVIDER && nextValue.require_zdr === true;
+		zdrOnly =
+			effectiveManagedZdrRequired || (selectedProvider === MANAGED_PROVIDER && explicitRequireZdr);
 		syncToolSettings(nextValue.tools);
 		if (!readonly && clearUnsupportedToolSelections()) {
 			const sanitizedSelection = currentSelection();
@@ -538,8 +554,11 @@
 		webSearchMaxResults = clampWebSearchMaxResults(maxResults);
 	}
 
-	function clearUnsupportedToolSelections(model: ModelInfo | null = selectedPrimaryModelInfo()): boolean {
-		if (selectedProvider !== OPENROUTER_PROVIDER || selectionMode === 'custom' || !model) return false;
+	function clearUnsupportedToolSelections(
+		model: ModelInfo | null = selectedPrimaryModelInfo()
+	): boolean {
+		if (selectedProvider !== OPENROUTER_PROVIDER || selectionMode === 'custom' || !model)
+			return false;
 		let changed = false;
 		if (!modelSupportsServerTool(model, 'web_search') && webSearchMode !== 'inherit') {
 			webSearchMode = 'inherit';
@@ -626,6 +645,23 @@
 		}
 	}
 
+	async function loadManagedZdrRequirement() {
+		if (managedZdrRequired !== null) {
+			loadedManagedZdrRequired = Boolean(managedZdrRequired);
+			return;
+		}
+
+		try {
+			loadedManagedZdrRequired = await loadSharedManagedZdrRequirement(() =>
+				client.getSettings({ showNotifications: false })
+			);
+			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
+		} catch (e) {
+			console.warn('Failed to load managed ZDR requirement for model selector', e);
+			loadedManagedZdrRequired = false;
+		}
+	}
+
 	function modelRefreshErrorMessage(err: unknown): string {
 		return err instanceof Error ? err.message : 'Unable to refresh the model catalog.';
 	}
@@ -692,7 +728,11 @@
 		return selectedModel;
 	}
 
-	function reasoningSelectionKeyFromParts(primary: string, isPreset: boolean, provider: string): string {
+	function reasoningSelectionKeyFromParts(
+		primary: string,
+		isPreset: boolean,
+		provider: string
+	): string {
 		return JSON.stringify({
 			primary,
 			is_preset: isPreset,
@@ -711,7 +751,7 @@
 	function selectedPrimaryModelInfo(): ModelInfo | null {
 		const primary =
 			selectionMode === 'presets'
-				? resolvedModelForPreset(selectedPreset)
+				? (resolved?.model_id ?? resolvedModelForPreset(selectedPreset))
 				: selectionMode === 'custom'
 					? selectedCustomModel.trim()
 					: selectedModel;
@@ -760,8 +800,8 @@
 	function selectedModelIdLabel(): string {
 		if (selectionMode === 'presets') {
 			const catalogModelId = catalogPresetModelId(selectedPreset);
-			if (catalogModelId) return displayModelId(catalogModelId);
 			if (resolved?.model_id) return displayModelId(resolved.model_id);
+			if (catalogModelId) return displayModelId(catalogModelId);
 			if (loading) return 'Resolving preset...';
 			return displayModelId(resolvedModelForPreset(selectedPreset));
 		}
@@ -769,6 +809,15 @@
 	}
 
 	function activeDetailModel(): ModelInfo | null {
+		if (
+			selectionMode === 'presets' &&
+			highlightedPresetCode === selectedPreset &&
+			resolved?.model_id
+		) {
+			const resolvedModel = modelById(resolved.model_id);
+			if (resolvedModel) return resolvedModel;
+		}
+
 		return modelById(highlightedModelId) ?? modelById(selectedConcreteModelId());
 	}
 
@@ -891,12 +940,16 @@
 	function currentSelection(): ModelSelection {
 		const reasoning = currentReasoningSettings();
 		const tools = currentToolSettings();
+		const requireZdr =
+			selectedProvider === MANAGED_PROVIDER &&
+			(explicitRequireZdr || (zdrOnly === true && !effectiveManagedZdrRequired));
 		return {
 			primary: selectedPrimaryValue(),
 			backup: selectedBackupValue(),
 			is_preset: selectionMode === 'presets',
 			provider: selectedProvider,
 			credential_id: selectedCredentialId,
+			...(requireZdr ? { require_zdr: true } : {}),
 			...(reasoning ? { reasoning } : {}),
 			...(tools ? { tools } : {})
 		};
@@ -925,6 +978,17 @@
 	function handleProviderChange() {
 		selectedCredentialId = defaultCredentialIdForProvider(selectedProvider);
 		selectedReasoning = 'default';
+		explicitRequireZdr = false;
+		handleSelectionChange();
+	}
+
+	function handleZdrControlClick(event: MouseEvent) {
+		if (zdrControl.disabled) return;
+
+		event.preventDefault();
+		zdrOnly = !zdrControl.checked;
+		explicitRequireZdr =
+			selectedProvider === MANAGED_PROVIDER && zdrOnly && !effectiveManagedZdrRequired;
 		handleSelectionChange();
 	}
 
@@ -1015,14 +1079,8 @@
 	) {
 		return {
 			template_model_hint: templateModelHint ?? undefined,
-			global_selection: payloadSelection(
-				level === 'global' ? selection : globalSelection,
-				options
-			),
-			action_selection: payloadSelection(
-				level === 'action' ? selection : actionSelection,
-				options
-			),
+			global_selection: payloadSelection(level === 'global' ? selection : globalSelection, options),
+			action_selection: payloadSelection(level === 'action' ? selection : actionSelection, options),
 			form_selection: payloadSelection(level === 'form' ? selection : formSelection, options),
 			mapping_selection: payloadSelection(
 				level === 'mapping' ? selection : mappingSelection,
@@ -1117,6 +1175,18 @@
 	const selectedRouteCredential = $derived(
 		readyCredentials().find((credential) => credential.id === selectedCredentialId) ?? null
 	);
+	const managedServiceActive = $derived(credentialsForProvider(MANAGED_PROVIDER).length > 0);
+	const effectiveManagedZdrRequired = $derived(
+		managedZdrRequired === null ? loadedManagedZdrRequired : Boolean(managedZdrRequired)
+	);
+	const zdrControl = $derived(
+		modelSelectorZdrControl({
+			managedServiceActive,
+			managedZdrRequired: effectiveManagedZdrRequired,
+			provider: selectedProvider,
+			zdrOnly
+		})
+	);
 
 	const lockedModelCount = $derived(models.filter((model) => isModelLocked(model)).length);
 
@@ -1171,7 +1241,8 @@
 			maxRank: activeRankLimit,
 			minContext: activeContextLimit,
 			requiredCapabilities: effectiveRequiredCapabilities,
-			sortMode
+			sortMode,
+			zdrOnly: zdrControl.checked
 		});
 	});
 
@@ -1375,6 +1446,7 @@
 		void loadModels();
 		void loadProviderCredentials();
 		void loadOpenRouterRefreshConsent();
+		void loadManagedZdrRequirement();
 	});
 
 	$effect(() => {
@@ -1384,6 +1456,13 @@
 	$effect(() => {
 		if (Array.isArray(providerCredentials)) {
 			loadedProviderCredentials = providerCredentials;
+			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
+		}
+	});
+
+	$effect(() => {
+		if (managedZdrRequired !== null) {
+			loadedManagedZdrRequired = Boolean(managedZdrRequired);
 			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
 		}
 	});
@@ -1463,6 +1542,9 @@
 								<Badge variant={modelIsFree(selectedModelInfo) ? 'success' : 'warning'}>
 									{modelAccessLabel(selectedModelInfo)}
 								</Badge>
+								{#if modelIsZdrEligible(selectedModelInfo)}
+									<Badge variant="success">ZDR</Badge>
+								{/if}
 							{/if}
 						{/if}
 					</div>
@@ -1484,7 +1566,9 @@
 					<div class="sf:w-full sf:min-w-0 sf:lg:w-80 sf:lg:flex-none">
 						<div class="sf:rounded-md sf:bg-slate-50 sf:px-3 sf:py-2 sf:text-left sf:lg:text-right">
 							<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">
-								{selectedProvider === MANAGED_PROVIDER ? 'Managed action credits' : 'Provider estimate'}
+								{selectedProvider === MANAGED_PROVIDER
+									? 'Managed action credits'
+									: 'Provider estimate'}
 							</p>
 							<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
 								{pricingEstimateLabel()}
@@ -1508,11 +1592,7 @@
 			{/if}
 
 			{#if !loading && selectedModelMissingRequiredCapabilities.length > 0}
-				<Alert
-					variant="warning"
-					class="sf:mt-4"
-					data-testid="model-required-capability-warning"
-				>
+				<Alert variant="warning" class="sf:mt-4" data-testid="model-required-capability-warning">
 					This action requires {capabilityListLabel(selectedModelMissingRequiredCapabilities)}.
 					Choose a compatible OpenRouter model before saving.
 				</Alert>
@@ -1805,6 +1885,58 @@
 						{/if}
 					</div>
 
+					<div class="sf:mt-3 sf:flex sf:flex-wrap sf:items-center sf:gap-3">
+						<Popover.Root>
+							<Popover.Trigger
+								class={[
+									'sf:inline-flex sf:min-h-10 sf:items-center sf:gap-3 sf:rounded-lg sf:border sf:px-3 sf:py-2 sf:text-left sf:text-sm sf:transition-colors sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-2',
+									zdrControl.checked
+										? 'sf:border-emerald-300 sf:bg-emerald-50 sf:text-emerald-950'
+										: 'sf:border-slate-200 sf:bg-white sf:text-slate-700',
+									zdrControl.disabled
+										? 'sf:cursor-help sf:opacity-80'
+										: 'sf:hover:border-primary-300 sf:hover:bg-primary-50'
+								].join(' ')}
+								role="switch"
+								aria-checked={zdrControl.checked}
+								aria-disabled={zdrControl.disabled}
+								aria-label="ZDR-only model filter"
+								onclick={handleZdrControlClick}
+								data-testid="model-selector-zdr-control"
+							>
+								<span
+									class={[
+										'sf:flex sf:h-5 sf:w-9 sf:flex-none sf:items-center sf:rounded-full sf:p-0.5 sf:transition-colors',
+										zdrControl.checked ? 'sf:bg-emerald-600' : 'sf:bg-slate-300'
+									].join(' ')}
+									aria-hidden="true"
+								>
+									<span
+										class={[
+											'sf:h-4 sf:w-4 sf:rounded-full sf:bg-white sf:shadow-sm sf:transition-transform',
+											zdrControl.checked ? 'sf:translate-x-4' : 'sf:translate-x-0'
+										].join(' ')}
+									></span>
+								</span>
+								<span class="sf:min-w-0">
+									<span
+										class="sf:block sf:text-xs sf:font-semibold sf:uppercase sf:tracking-normal"
+									>
+										ZDR-only
+									</span>
+									<span class="sf:block sf:text-xs sf:text-slate-600">
+										Show models OpenRouter marks for ZDR routes.
+									</span>
+								</span>
+							</Popover.Trigger>
+							{#if zdrControl.popover}
+								<Popover.Content data-testid="model-selector-zdr-popover">
+									{zdrControl.popover}
+								</Popover.Content>
+							{/if}
+						</Popover.Root>
+					</div>
+
 					{#if !hasSelectedProviderPaidRoute()}
 						<p class="sf:mt-3 sf:text-sm sf:text-slate-600">
 							Paid OpenRouter models are visible but locked until Sentient Forms Managed Service or
@@ -1872,6 +2004,9 @@
 														<Badge variant="info">
 															{model ? modelCostLabel(model) : 'Paid'}
 														</Badge>
+													{/if}
+													{#if modelIsZdrEligible(model)}
+														<Badge variant="success">ZDR</Badge>
 													{/if}
 												</span>
 												<span class="sf:text-sm sf:text-slate-600">{preset.description}</span>
@@ -2068,6 +2203,9 @@
 															<Badge variant={costBadgeVariant(model.cost_tier)}>
 																{modelCostLabel(model)}
 															</Badge>
+															{#if modelIsZdrEligible(model)}
+																<Badge variant="success">ZDR</Badge>
+															{/if}
 															{#if locked}
 																<Badge variant="warning">Paid model</Badge>
 															{/if}
@@ -2260,6 +2398,17 @@
 
 							<p class="sf:text-sm sf:text-slate-600">{modelDescription(detailModel)}</p>
 
+							{#if modelIsZdrEligible(detailModel)}
+								<div class="sf:flex sf:flex-wrap sf:items-start sf:gap-2">
+									<Badge variant="success">ZDR</Badge>
+									<div class="sf:min-w-0 sf:space-y-1 sf:text-xs sf:leading-5 sf:text-slate-600">
+										{#each zdrControl.helperSentences as helperSentence}
+											<p>{helperSentence}</p>
+										{/each}
+									</div>
+								</div>
+							{/if}
+
 							{#if selectionMode === 'presets'}
 								{@const selectedPresetDetails = activePreset()}
 								{@const topCandidates = presetTopCandidates(selectedPresetDetails)}
@@ -2318,7 +2467,9 @@
 								</div>
 								<div class="sf:rounded-md sf:bg-white sf:p-3">
 									<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">
-										{selectedProvider === MANAGED_PROVIDER ? 'Managed action credits' : 'Provider price'}
+										{selectedProvider === MANAGED_PROVIDER
+											? 'Managed action credits'
+											: 'Provider price'}
 									</p>
 									<p class="sf:mt-1 sf:text-sm sf:font-medium sf:text-slate-900">
 										{detailModel ? priceLabel(detailModel) : 'Route-defined'}

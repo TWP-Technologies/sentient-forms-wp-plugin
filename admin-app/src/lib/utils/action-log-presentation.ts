@@ -62,6 +62,11 @@ const STATUS_LABELS: Record<ActionLogStatus, string> = {
 	error: 'Error'
 };
 
+const MANAGED_ZDR_ROUTE_SUMMARY_MARKERS = [
+	'ZDR-safe route',
+	'No ZDR-safe managed route'
+] as const;
+
 function toTitleCase(value: string): string {
 	return value
 		.split(/[\s_-]+/)
@@ -147,6 +152,23 @@ export function buildActionLogRowPresentation(entry: ActionLogRowInput): ActionL
 			: 'warning'
 		: 'neutral';
 
+	const resultSummary = entry.resultSummary?.trim() ?? '';
+	if (
+		resultSummary &&
+		MANAGED_ZDR_ROUTE_SUMMARY_MARKERS.some((marker) => resultSummary.includes(marker))
+	) {
+		return {
+			statusLabel,
+			statusVariant,
+			outputLabel,
+			outputVariant,
+			resultLabel: truncate(resultSummary, 80),
+			resultVariant: 'neutral',
+			resultKind: 'text',
+			resultTitle: resultSummary
+		};
+	}
+
 	const classification = entry.classification?.trim() ?? '';
 	if (classification) {
 		const normalized = classification.toLowerCase();
@@ -161,7 +183,6 @@ export function buildActionLogRowPresentation(entry: ActionLogRowInput): ActionL
 		};
 	}
 
-	const resultSummary = entry.resultSummary?.trim() ?? '';
 	if (resultSummary) {
 		return {
 			statusLabel,

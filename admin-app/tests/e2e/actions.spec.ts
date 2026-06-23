@@ -1440,7 +1440,7 @@ test.describe('Actions admin flows', () => {
 		await expect(appNavLink(page, '/actions')).toHaveClass(/sf-text-slate-900/);
 		await expect(appNavLink(page, '/actions/custom')).not.toHaveClass(/sf-bg-slate-200/);
 
-		await page.goto('/actions/custom/new', { waitUntil: 'networkidle' });
+		await page.goto('/actions/custom/new', { waitUntil: 'domcontentloaded' });
 		await expect(
 			page.locator('header').getByRole('heading', { name: 'Create Custom Action' })
 		).toBeVisible();

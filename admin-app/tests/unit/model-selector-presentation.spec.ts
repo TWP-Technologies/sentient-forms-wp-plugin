@@ -4,6 +4,7 @@ import {
 	filterAndSortModels,
 	missingRequiredCapabilities,
 	modelCostLabel,
+	modelSelectorZdrControl,
 	modelSupportsToolChoice,
 	modelSupportsServerTool,
 	providerMonogram,
@@ -45,7 +46,8 @@ const baseFilters: ModelSelectorFilters = {
 	maxRank: 0,
 	minContext: 0,
 	requiredCapabilities: [],
-	sortMode: 'name'
+	sortMode: 'name',
+	zdrOnly: false
 };
 
 describe('model selector presentation utilities', () => {
@@ -183,6 +185,132 @@ describe('model selector presentation utilities', () => {
 			'anthropic/claude-sonnet-4.6',
 			'moonshotai/kimi-k2.6'
 		]);
+	});
+
+	it('filters ZDR-only results to models OpenRouter marks as ZDR eligible', () => {
+		const filtered = filterAndSortModels(
+			[
+				model({
+					id: 'openai/gpt-5.5',
+					display_name: 'OpenAI GPT-5.5',
+					zdr_eligible: true,
+					zdr_source: 'openrouter_models_zdr_filter',
+					zdr_checked_at: '2026-06-22T22:00:00+00:00'
+				}),
+				model({
+					id: 'anthropic/fable-preview',
+					display_name: 'Anthropic Fable Preview',
+					zdr_eligible: false,
+					zdr_source: 'openrouter_models_zdr_filter',
+					zdr_checked_at: '2026-06-22T22:00:00+00:00'
+				}),
+				model({
+					id: 'unknown/provider',
+					display_name: 'Unknown Provider',
+					zdr_eligible: null
+				})
+			],
+			{
+				...baseFilters,
+				zdrOnly: true
+			}
+		);
+
+		expect(filtered.map((candidate) => candidate.id)).toEqual(['openai/gpt-5.5']);
+	});
+
+	it('describes premium and forced ZDR-only selector control states', () => {
+		expect(
+			modelSelectorZdrControl({
+				managedServiceActive: false,
+				managedZdrRequired: false,
+				provider: 'sentient_managed',
+				zdrOnly: false
+			})
+		).toMatchObject({
+			checked: false,
+			disabled: true,
+			popover: 'Requires an active Sentient Forms Managed Service subscription.',
+			helperSentences: [
+				'OpenRouter marks this model as available on ZDR routes.',
+				'ZDR enforcement for direct OpenRouter users can only be configured in OpenRouter.'
+			]
+		});
+
+		expect(
+			modelSelectorZdrControl({
+				managedServiceActive: true,
+				managedZdrRequired: false,
+				provider: 'sentient_managed',
+				zdrOnly: false
+			})
+		).toMatchObject({
+			checked: false,
+			disabled: false,
+			popover: null,
+			helperSentences: ['OpenRouter marks this model as available on ZDR routes.']
+		});
+
+		expect(
+			modelSelectorZdrControl({
+				managedServiceActive: true,
+				managedZdrRequired: true,
+				provider: 'sentient_managed',
+				zdrOnly: false
+			})
+		).toMatchObject({
+			checked: true,
+			disabled: true,
+			popover: 'Required by Enforce ZDR in Settings. Disable the option to change this filter'
+		});
+	});
+
+	it('disables the ZDR enforcement toggle for direct OpenRouter routes', () => {
+		expect(
+			modelSelectorZdrControl({
+				managedServiceActive: false,
+				managedZdrRequired: false,
+				provider: 'openrouter',
+				zdrOnly: true
+			})
+		).toMatchObject({
+			checked: false,
+			disabled: true,
+			popover: 'Requires an active Sentient Forms Managed Service subscription.',
+			helperSentences: [
+				'OpenRouter marks this model as available on ZDR routes.',
+				'ZDR enforcement for direct OpenRouter users can only be configured in OpenRouter.'
+			]
+		});
+
+		expect(
+			modelSelectorZdrControl({
+				managedServiceActive: true,
+				managedZdrRequired: true,
+				provider: 'openrouter',
+				zdrOnly: true
+			})
+		).toMatchObject({
+			checked: false,
+			disabled: true,
+			popover: 'Plugin ZDR enforcement only applies to Sentient Forms Managed Service.',
+			helperSentences: ['OpenRouter marks this model as available on ZDR routes.']
+		});
+	});
+
+	it('disables the ZDR enforcement toggle for unknown non-managed routes', () => {
+		expect(
+			modelSelectorZdrControl({
+				managedServiceActive: true,
+				managedZdrRequired: false,
+				provider: 'local_provider',
+				zdrOnly: true
+			})
+		).toMatchObject({
+			checked: false,
+			disabled: true,
+			popover: 'Plugin ZDR enforcement only applies to Sentient Forms Managed Service.'
+		});
 	});
 
 	it('reports incompatible saved selections that are missing required structured output', () => {

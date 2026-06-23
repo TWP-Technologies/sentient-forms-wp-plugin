@@ -54,6 +54,11 @@ class Sentient_Forms_OpenRouter_Direct_Client implements Sentient_Forms_Provider
             }
         }
 
+        if ( array_key_exists( 'zdr', $options ) && rest_sanitize_boolean( $options['zdr'] ) )
+        {
+            $query['zdr'] = 'true';
+        }
+
         $path = '/models';
         if ( ! empty( $query ) )
         {

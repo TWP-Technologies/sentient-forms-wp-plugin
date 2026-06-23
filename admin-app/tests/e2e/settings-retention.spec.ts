@@ -7,7 +7,17 @@ test.describe('Settings retention controls', () => {
 		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
 			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
-			siteUrl: previewHost
+			siteUrl: previewHost,
+			license: {
+				status: 'active',
+				licenseKeyMasked: 'LIC-****-TEST',
+				proxyKeyPresent: true,
+				tier: 'starter',
+				expiresAt: '2030-01-01T00:00:00Z',
+				lastSynced: '2030-01-05T10:00:00Z',
+				licenseId: 'license-managed-test',
+				siteId: 'site-managed-test'
+			}
 		});
 
 		let resolveSettingsRequest: (() => void) | null = null;
@@ -84,16 +94,24 @@ test.describe('Settings retention controls', () => {
 		await expect(page.getByTestId('settings-retention-loading-state')).toBeHidden();
 		await expect(page.getByText('Maximum visibility')).toBeVisible();
 		await expect(page.getByTestId('settings-profile-execution-history')).toContainText('180 days');
-		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText(
-			'Stored locally'
-		);
+		await expect(page.getByTestId('settings-profile-full-outputs')).toContainText('Stored locally');
 	});
 
 	test('updates local retention and uninstall cleanup settings', async ({ page }) => {
 		const previewHost = getPreviewOrigin();
 		await seedRuntimeConfig(page, {
 			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
-			siteUrl: previewHost
+			siteUrl: previewHost,
+			license: {
+				status: 'active',
+				licenseKeyMasked: 'LIC-****-TEST',
+				proxyKeyPresent: true,
+				tier: 'starter',
+				expiresAt: '2030-01-01T00:00:00Z',
+				lastSynced: '2030-01-05T10:00:00Z',
+				licenseId: 'license-managed-test',
+				siteId: 'site-managed-test'
+			}
 		});
 
 		const settingsState = {
@@ -103,6 +121,7 @@ test.describe('Settings retention controls', () => {
 			execution_event_retention_days: 90,
 			delete_data_on_uninstall: true,
 			store_full_ai_outputs: false,
+			managed_zdr_required: false,
 			privacy_setup_profile: 'balanced',
 			privacy_setup_completed_at: '2026-04-21T00:00:00Z'
 		};
@@ -168,15 +187,29 @@ test.describe('Settings retention controls', () => {
 			});
 		});
 
-		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 
+		await expect(page.getByTestId('settings-managed-zdr')).toContainText(
+			'Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data Retention'
+		);
 		await expect(page.getByText('Local data retention')).toBeVisible();
 		await page.getByLabel('Execution logs').selectOption('30');
 		await page.getByLabel('Store full AI outputs locally').check();
 		await page.getByLabel('Delete local data on uninstall').check();
+
+		await page.getByLabel('Enforce ZDR for managed service').check();
+		await expect.poll(() => capturedPayloads.length).toBeGreaterThan(0);
+		expect(capturedPayloads.at(-1)).toMatchObject({
+			managed_zdr_required: true
+		});
+		await expect(page.getByLabel('Execution logs')).toHaveValue('30');
+		await expect(page.getByLabel('Store full AI outputs locally')).toBeChecked();
+		await expect(page.getByLabel('Delete local data on uninstall')).toBeChecked();
+
+		const retentionPayloadCount = capturedPayloads.length;
 		await page.getByRole('button', { name: 'Save retention' }).click();
 
-		await expect.poll(() => capturedPayloads.length).toBeGreaterThan(0);
+		await expect.poll(() => capturedPayloads.length).toBeGreaterThan(retentionPayloadCount);
 		expect(capturedPayloads.at(-1)).toMatchObject({
 			execution_event_retention_days: 30,
 			delete_data_on_uninstall: true,
@@ -254,7 +287,7 @@ test.describe('Settings retention controls', () => {
 			});
 		});
 
-		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 
 		await expect(page.getByTestId('settings-profile-customized-badge')).toBeVisible();
 		await expect(page.getByTestId('settings-profile-base-badge')).toContainText(
@@ -333,7 +366,7 @@ test.describe('Settings retention controls', () => {
 			});
 		});
 
-		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 
 		await expect(
 			page.getByText('Keep all providers running. Turn this off to pause everything.')

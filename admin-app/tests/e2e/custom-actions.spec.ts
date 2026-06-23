@@ -48,6 +48,32 @@ test.describe('Custom actions admin view', () => {
 
 		const quotaMax = 5;
 		let lastCreatePayload: Record<string, unknown> | null = null;
+		const settingsState = {
+			enable_logging: false,
+			execution_global_disabled: false,
+			execution_provider_disabled: {},
+			execution_event_retention_days: 90,
+			delete_data_on_uninstall: true,
+			store_full_ai_outputs: false,
+			privacy_setup_profile: 'balanced',
+			privacy_setup_completed_at: '2026-06-22T12:00:00Z',
+			managed_zdr_required: false
+		};
+		let providerCredentials = [
+			{
+				id: 1,
+				provider: 'openrouter',
+				label: 'OpenRouter test key',
+				auth_mode: 'constant',
+				constant_name: 'SENTIENT_FORMS_OPENROUTER_API_KEY',
+				status: 'valid',
+				status_json: null,
+				last_validated_at: '2026-05-01T12:00:00Z',
+				created_at: '2026-05-01T12:00:00Z',
+				updated_at: '2026-05-01T12:00:00Z',
+				secret_configured: true
+			}
+		];
 
 		function quotaSummary() {
 			const activeCount = actions.filter((action) => action.status === 'active').length;
@@ -72,6 +98,20 @@ test.describe('Custom actions admin view', () => {
 							supports_custom_actions: true,
 							cps_version: '1.2.0'
 						}
+					})
+				});
+			}
+
+			if (url.endsWith('/settings')) {
+				if (method === 'PUT') {
+					Object.assign(settingsState, route.request().postDataJSON() as Partial<typeof settingsState>);
+				}
+				return route.fulfill({
+					status: 200,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						success: true,
+						data: settingsState
 					})
 				});
 			}
@@ -102,21 +142,7 @@ test.describe('Custom actions admin view', () => {
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({
 						success: true,
-						data: [
-							{
-								id: 1,
-								provider: 'openrouter',
-								label: 'OpenRouter test key',
-								auth_mode: 'constant',
-								constant_name: 'SENTIENT_FORMS_OPENROUTER_API_KEY',
-								status: 'valid',
-								status_json: null,
-								last_validated_at: '2026-05-01T12:00:00Z',
-								created_at: '2026-05-01T12:00:00Z',
-								updated_at: '2026-05-01T12:00:00Z',
-								secret_configured: true
-							}
-						]
+						data: providerCredentials
 					})
 				});
 			}
@@ -157,6 +183,9 @@ test.describe('Custom actions admin view', () => {
 									context_window: 400000,
 									is_preview: false,
 									tags: ['structured-output', 'reasoning'],
+									zdr_eligible: true,
+									zdr_source: 'openrouter_models_zdr_filter',
+									zdr_checked_at: '2026-06-22T22:00:00Z',
 									recommended_for: ['General purpose']
 								},
 								{
@@ -182,6 +211,9 @@ test.describe('Custom actions admin view', () => {
 									context_window: 128000,
 									is_preview: false,
 									tags: ['coding', 'reasoning'],
+									zdr_eligible: true,
+									zdr_source: 'openrouter_models_zdr_filter',
+									zdr_checked_at: '2026-06-22T22:00:00Z',
 									recommended_for: ['Programming', 'Science']
 								},
 								{
@@ -229,6 +261,9 @@ test.describe('Custom actions admin view', () => {
 									context_window: 131072,
 									is_preview: false,
 									tags: ['free'],
+									zdr_eligible: true,
+									zdr_source: 'openrouter_models_zdr_filter',
+									zdr_checked_at: '2026-06-22T22:00:00Z',
 									recommended_for: ['Cheap smoke tests']
 								}
 							],
@@ -496,6 +531,17 @@ test.describe('Custom actions admin view', () => {
 		await expect(page.getByLabel('Current date/time', { exact: true })).toHaveValue('auto');
 		await page.getByTestId('model-selector-tab-models').click();
 		await expect(page.getByTestId('model-selector-catalog')).toBeVisible();
+		const premiumZdrControl = page.getByTestId('model-selector-zdr-control');
+		await expect(premiumZdrControl).toBeVisible();
+		await expect(premiumZdrControl).toHaveAttribute('aria-disabled', 'true');
+		await expect(premiumZdrControl).toHaveAttribute('aria-checked', 'false');
+		await premiumZdrControl.click({ force: true });
+		await expect(page.getByTestId('model-selector-zdr-popover')).toContainText(
+			'Requires an active Sentient Forms Managed Service subscription.'
+		);
+		await expect(page.getByTestId('model-selector-detail')).toContainText(
+			'ZDR enforcement for direct OpenRouter users can only be configured in OpenRouter.'
+		);
 		await page.getByTestId('model-selector-tab-custom').click();
 		await expect(page.getByTestId('model-custom-input')).toBeVisible();
 		await page.getByTestId('model-selector-tab-presets').click();
@@ -505,6 +551,22 @@ test.describe('Custom actions admin view', () => {
 		tableRows = page.getByTestId('custom-actions-table').locator('tbody tr');
 		await expect(tableRows).toHaveCount(1);
 
+		providerCredentials = [
+			...providerCredentials,
+			{
+				id: 2,
+				provider: 'sentient_managed',
+				label: 'Sentient Forms Managed Service',
+				auth_mode: 'managed_proxy',
+				constant_name: null,
+				status: 'valid',
+				status_json: null,
+				last_validated_at: '2026-06-22T12:00:00Z',
+				created_at: '2026-06-22T12:00:00Z',
+				updated_at: '2026-06-22T12:00:00Z',
+				secret_configured: true
+			}
+		];
 		await page.getByRole('button', { name: /Create Action/i }).click();
 		await expectAppUrl(page, '/actions/custom/new');
 
@@ -517,6 +579,12 @@ test.describe('Custom actions admin view', () => {
 		await expect(
 			page.getByTestId('model-selector-dialog').getByLabel('Reasoning effort')
 		).toBeVisible();
+		const managedZdrControl = page.getByTestId('model-selector-zdr-control');
+		await expect(managedZdrControl).toHaveAttribute('aria-disabled', 'false');
+		await expect(managedZdrControl).toHaveAttribute('aria-checked', 'false');
+		await managedZdrControl.click();
+		await expect(managedZdrControl).toHaveAttribute('aria-checked', 'true');
+		await expect(page.getByTestId('model-selector-zdr-popover')).toHaveCount(0);
 		const presetRanking = page.getByTestId('model-preset-top-candidates');
 		await expect(presetRanking).toContainText('Recommendation ranking');
 		await expect(presetRanking).toContainText('92/100');
@@ -544,9 +612,14 @@ test.describe('Custom actions admin view', () => {
 		await expect(
 			page.getByTestId('model-selector-catalog').getByLabel('Search models')
 		).toBeVisible();
+		const zdrControl = page.getByTestId('model-selector-zdr-control');
+		await expect(zdrControl).toBeVisible();
+		await expect(zdrControl).toHaveAttribute('aria-disabled', 'false');
+		await expect(zdrControl).toHaveAttribute('aria-checked', 'true');
 		await expect(page.getByTestId('model-selector-detail')).toBeVisible();
 		await expect(page.getByTestId('model-selector-advanced-filters-panel')).toHaveCount(0);
 		await expect(page.getByTestId('model-row-openai/gpt-5.5')).toBeVisible();
+		await expect(page.getByTestId('model-row-openai/gpt-5.5')).toContainText('ZDR');
 		await expect(
 			page
 				.getByTestId('model-row-openai/gpt-5.5')
@@ -710,6 +783,8 @@ test.describe('Custom actions admin view', () => {
 			model_selection: {
 				primary: 'openai/gpt-5.5',
 				is_preset: false,
+				provider: 'sentient_managed',
+				require_zdr: true,
 				reasoning: 'medium'
 			},
 			prompt_overrides: {

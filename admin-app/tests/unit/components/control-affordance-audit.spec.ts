@@ -9,6 +9,7 @@ const allowedPrimitiveRawButtons = new Map<string, number>([
 	['lib/components/ui/button.svelte', 1],
 	['lib/components/ui/toggle.svelte', 1],
 	['lib/components/ui/mapping-dependency-graph-node.svelte', 1],
+	['lib/components/ui/popover/trigger.svelte', 1],
 	['lib/components/ui/reasoning-effort-rail.svelte', 2]
 ]);
 
@@ -135,5 +136,25 @@ describe('control affordance audit', () => {
 		expect(content).toContain('submissionLedgerRequired');
 		expect(content).toContain('data-testid="submission-ledger-toggle"');
 		expect(content).toContain('data-testid="submission-ledger-view-submissions"');
+	});
+
+	it('keeps popovers dismissible by outside click and Escape', () => {
+		const content = readFileSync(resolve(srcRoot, 'lib/components/ui/popover/root.svelte'), 'utf8');
+
+		expect(content).toContain('<svelte:document onclick={handleDocumentClick} onkeydown={handleDocumentKeydown}');
+		expect(content).toContain('!rootElement.contains(event.target)');
+		expect(content).toContain("event.key === 'Escape'");
+		expect(content).toContain('onfocusout={handleFocusOut}');
+	});
+
+	it('does not serialize inherited global managed ZDR as an action-level override', () => {
+		const content = readFileSync(resolve(srcRoot, 'lib/components/ui/model-selector.svelte'), 'utf8');
+
+		expect(content).toContain(
+			'explicitRequireZdr || (zdrOnly === true && !effectiveManagedZdrRequired)'
+		);
+		expect(content).toContain(
+			'explicitRequireZdr = selectedProvider === MANAGED_PROVIDER && nextValue.require_zdr === true'
+		);
 	});
 });

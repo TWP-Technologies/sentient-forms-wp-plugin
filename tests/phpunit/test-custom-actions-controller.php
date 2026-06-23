@@ -213,6 +213,39 @@ class Tests_Custom_Actions_Controller extends WP_UnitTestCase
         $this->assertSame( 4, $data['action']['model_selection']['tools']['web_search']['max_results'] ?? null );
     }
 
+    public function test_create_local_custom_definition_preserves_managed_zdr_requirement(): void
+    {
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/custom-actions' );
+        $request->set_param( 'code', 'managed-zdr-custom-definition-' . substr( md5( (string) wp_rand() ), 0, 8 ) );
+        $request->set_param( 'display_name', 'Managed ZDR Custom Definition' );
+        $request->set_param( 'action_kind', 'custom_definition' );
+        $request->set_param( 'definition_version', 1 );
+        $request->set_param( 'supported_execution_modes', [ 'after_submission' ] );
+        $request->set_param(
+            'definition',
+            [
+                'prompt_template' => 'Review {{entry}} and return a concise summary.',
+            ]
+        );
+        $request->set_param(
+            'model_selection',
+            [
+                'primary'     => 'sf_default',
+                'is_preset'   => true,
+                'provider'    => 'sentient_managed',
+                'require_zdr' => true,
+            ]
+        );
+
+        $response = $this->controller->create_custom_action( $request );
+
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 201, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'sentient_managed', $data['action']['model_selection']['provider'] ?? null );
+        $this->assertTrue( $data['action']['model_selection']['require_zdr'] ?? false );
+    }
+
     public function test_build_update_payload_rejects_workflow_edge_with_unknown_node(): void
     {
         $request = new WP_REST_Request( 'PUT', '/sentient-forms/v1/custom-actions/test-id' );

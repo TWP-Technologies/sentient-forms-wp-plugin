@@ -209,6 +209,29 @@ class Tests_Form_Action_Config_Controller extends WP_UnitTestCase {
 		$this->assertArrayNotHasKey( 'model_override', $stored['summary_v1'] );
 	}
 
+	public function test_update_action_config_preserves_managed_zdr_model_selection_requirement(): void {
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/gravity_forms/999/action-config/summary_v1' );
+		$request->set_param( 'form_source', 'gravity_forms' );
+		$request->set_param( 'form_id', 999 );
+		$request->set_param( 'action_id', 'summary_v1' );
+		$request->set_param(
+			'model_selection',
+			[
+				'primary'     => 'sf_default',
+				'is_preset'   => true,
+				'provider'    => 'sentient_managed',
+				'require_zdr' => true,
+			]
+		);
+
+		$response = $this->controller->update_action_config( $request );
+		$data     = $response->get_data();
+		$stored   = get_option( $this->option_key, [] );
+
+		$this->assertTrue( $data['config']['model_selection']['require_zdr'] ?? false );
+		$this->assertTrue( $stored['summary_v1']['model_selection']['require_zdr'] ?? false );
+	}
+
 	public function test_update_action_config_stores_spam_policy_booleans(): void {
 		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/forms/gravity_forms/999/action-config/spam_detection_v1' );
 		$request->set_param( 'form_source', 'gravity_forms' );
