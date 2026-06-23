@@ -268,6 +268,23 @@ describe('model selector presentation utilities', () => {
 	it('disables the ZDR enforcement toggle for direct OpenRouter routes', () => {
 		expect(
 			modelSelectorZdrControl({
+				managedServiceActive: false,
+				managedZdrRequired: false,
+				provider: 'openrouter',
+				zdrOnly: true
+			})
+		).toMatchObject({
+			checked: false,
+			disabled: true,
+			popover: 'Requires an active Sentient Forms Managed Service subscription.',
+			helperSentences: [
+				'OpenRouter marks this model as available on ZDR routes.',
+				'ZDR enforcement for direct OpenRouter users can only be configured in OpenRouter.'
+			]
+		});
+
+		expect(
+			modelSelectorZdrControl({
 				managedServiceActive: true,
 				managedZdrRequired: true,
 				provider: 'openrouter',

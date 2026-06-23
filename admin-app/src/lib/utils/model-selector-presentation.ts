@@ -107,7 +107,7 @@ export function modelSelectorZdrControl(
 	}
 	const managedRoute = input.provider === 'sentient_managed';
 
-	if (!managedRoute) {
+	if (!managedRoute && input.managedServiceActive) {
 		return {
 			checked: false,
 			disabled: true,
