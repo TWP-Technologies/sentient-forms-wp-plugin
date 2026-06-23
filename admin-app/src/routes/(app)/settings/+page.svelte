@@ -51,9 +51,11 @@
 	let executionGlobalDisabled = $state(false);
 	let executionProviderDisabled = $state<Record<string, boolean>>({});
 	let retentionSaving = $state(false);
+	let managedZdrSaving = $state(false);
 	let executionEventRetentionDays = $state(90);
 	let deleteDataOnUninstall = $state(true);
 	let storeFullAiOutputs = $state(false);
+	let managedZdrRequired = $state(false);
 	let privacySetupProfile =
 		$state<NonNullable<PluginSettingsResponse['privacy_setup_profile']>>('balanced');
 	let privacySetupCompletedAt = $state<string | null>(null);
@@ -179,6 +181,7 @@
 				: 90;
 		deleteDataOnUninstall = Boolean(settings.delete_data_on_uninstall);
 		storeFullAiOutputs = Boolean(settings.store_full_ai_outputs);
+		managedZdrRequired = Boolean(settings.managed_zdr_required);
 		governanceLoggingEnabled =
 			typeof settings.enable_logging === 'boolean' ? settings.enable_logging : null;
 		privacySetupProfile = (settings.privacy_setup_profile ?? 'balanced') as NonNullable<
@@ -225,6 +228,27 @@
 			notifications.warning('Failed to load execution control settings');
 		} finally {
 			executionLoading = false;
+		}
+	}
+
+	async function toggleManagedZdrRequired(nextRequired: boolean) {
+		const previous = managedZdrRequired;
+		managedZdrRequired = nextRequired;
+		managedZdrSaving = true;
+		try {
+			const settings = await client.updateSettings(
+				{
+					managed_zdr_required: nextRequired
+				},
+				{ showNotifications: false }
+			);
+			syncGovernanceSettings(settings);
+			notifications.success(nextRequired ? 'Managed ZDR enforcement enabled' : 'Managed ZDR enforcement disabled');
+		} catch {
+			managedZdrRequired = previous;
+			notifications.error('Unable to update managed ZDR enforcement');
+		} finally {
+			managedZdrSaving = false;
 		}
 	}
 
@@ -399,7 +423,7 @@
 
 	<div
 		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-4"
-	>
+		>
 		{#if !governanceLoaded && executionLoading}
 			<StateTemplate
 				variant="loading"
@@ -573,6 +597,36 @@
 				</svg>
 				Manage Site Context
 			</Button>
+		</div>
+	</div>
+
+	<div
+		class="sf:rounded-xl sf:border sf:border-slate-200 sf:bg-white sf:p-6 sf:shadow-sm sf:space-y-3"
+		data-testid="settings-managed-zdr"
+	>
+		<div
+			class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-start"
+		>
+			<div class="sf:min-w-0 sf:space-y-1">
+				<p class="sf:font-medium sf:text-slate-900">Enforce ZDR for managed service</p>
+				<p class="sf:max-w-2xl sf:text-sm sf:leading-6 sf:text-slate-600">
+					Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data
+					Retention and to deny provider data collection. If the selected model is no longer
+					eligible, Sentient Forms uses a comparable ZDR-safe model when available or fails safely.
+				</p>
+			</div>
+			<label class="sf:flex sf:items-center sf:gap-3">
+				<span class="sf:text-sm sf:font-semibold">{managedZdrRequired ? 'On' : 'Off'}</span>
+				<input
+					type="checkbox"
+					class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+					checked={managedZdrRequired}
+					disabled={managedZdrSaving || executionLoading}
+					onchange={(event) =>
+						toggleManagedZdrRequired((event.currentTarget as HTMLInputElement).checked)}
+					aria-label="Enforce ZDR for managed service"
+				/>
+			</label>
 		</div>
 	</div>
 

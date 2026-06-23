@@ -129,6 +129,10 @@ function validateModelSelection(
 		}
 	}
 
+	if (value.require_zdr === true) {
+		selection.require_zdr = true;
+	}
+
 	if (isRecord(value.tools)) {
 		selection.tools = value.tools;
 	}

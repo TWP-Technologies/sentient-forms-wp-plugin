@@ -40,6 +40,8 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     private const DEFAULT_REFRESH_DAYS        = 30;
     private const MANUAL_STALE_DAYS           = 90;
     private const READY_CREDENTIAL_STATUSES   = [ 'valid', 'limited' ];
+    private const PRIVACY_ROUTE_POLICY_SCHEMA = 'sentient_forms_privacy_route_policy.v1';
+    private const PRIVACY_ROUTE_ASSERTION_SCHEMA = 'sentient_forms_privacy_route_assertion.v1';
     private const OPENROUTER_SITE_CONTEXT_SCHEMA_NAME    = 'sentient_forms_site_context_generation_v1';
     private const OPENROUTER_SITE_CONTEXT_MIN_MAX_TOKENS = 1800;
     private const OPENROUTER_SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS = 5;
@@ -1680,6 +1682,10 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $metadata['metering'] = is_array( $response['metering'] ?? null )
                 ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $response['metering'] )
                 : null;
+            if ( is_array( $response['privacy_route_assertion'] ?? null ) )
+            {
+                $metadata['privacy_route_assertion'] = $response['privacy_route_assertion'];
+            }
         }
         else
         {
@@ -1810,6 +1816,10 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             'output_contract'      => [ 'schema' => $this->generation_output_schema(), 'source' => 'site_context_generation_v1' ],
             'metadata'             => [ 'kind' => 'site_context_generation' ],
         ];
+        if ( $this->managed_privacy_route_required( $selection ) )
+        {
+            $payload['privacy_route_policy'] = $this->managed_privacy_route_policy();
+        }
         if ( [] !== $tools )
         {
             $payload['tools'] = $tools;
@@ -1821,10 +1831,104 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         $client = new Sentient_Forms_Managed_Proxy_Client( null, 60 );
-        return $client->execute(
+        $response = $client->execute(
             $managed_context['proxy_api_key'],
             $payload
         );
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        if ( $this->managed_privacy_route_required( $selection ) )
+        {
+            $privacy_route_assertion = $this->normalize_managed_privacy_route_assertion( $response['privacy_route_assertion'] ?? null );
+            if ( null === $privacy_route_assertion )
+            {
+                return new WP_Error(
+                    'site_context_generation_managed_privacy_route_not_asserted',
+                    __( 'Sentient Forms Managed Service did not confirm the required ZDR route, so Site Context generation was stopped.', 'sentient-forms' ),
+                    [
+                        'status' => 502,
+                    ]
+                );
+            }
+
+            $response['privacy_route_assertion'] = $privacy_route_assertion;
+        }
+
+        return $response;
+    }
+
+    /**
+     * @param array<string, mixed> $selection
+     */
+    private function managed_privacy_route_required( array $selection ): bool
+    {
+        return ! empty( $selection['require_zdr'] )
+            || ! empty( $selection['managed_zdr_required'] )
+            || $this->global_managed_zdr_required();
+    }
+
+    private function global_managed_zdr_required(): bool
+    {
+        $settings = get_option( 'sentient_forms_plugin_settings', [] );
+        if ( ! is_array( $settings ) )
+        {
+            return false;
+        }
+
+        return ! empty( $settings['managed_zdr_required'] );
+    }
+
+    /**
+     * @return array{schema: string, require_zdr: bool, data_collection: string}
+     */
+    private function managed_privacy_route_policy(): array
+    {
+        return [
+            'schema'          => self::PRIVACY_ROUTE_POLICY_SCHEMA,
+            'require_zdr'     => true,
+            'data_collection' => 'deny',
+        ];
+    }
+
+    /**
+     * @return array{schema: string, zdr_enforced: bool, data_collection: string, route_policy_schema: string}|null
+     */
+    private function normalize_managed_privacy_route_assertion( mixed $assertion ): ?array
+    {
+        if ( ! is_array( $assertion ) )
+        {
+            return null;
+        }
+
+        $schema = isset( $assertion['schema'] ) && is_scalar( $assertion['schema'] )
+            ? sanitize_text_field( (string) $assertion['schema'] )
+            : '';
+        $route_policy_schema = isset( $assertion['route_policy_schema'] ) && is_scalar( $assertion['route_policy_schema'] )
+            ? sanitize_text_field( (string) $assertion['route_policy_schema'] )
+            : '';
+        $data_collection = isset( $assertion['data_collection'] ) && is_scalar( $assertion['data_collection'] )
+            ? sanitize_key( (string) $assertion['data_collection'] )
+            : '';
+
+        if (
+            self::PRIVACY_ROUTE_ASSERTION_SCHEMA !== $schema
+            || self::PRIVACY_ROUTE_POLICY_SCHEMA !== $route_policy_schema
+            || true !== ( $assertion['zdr_enforced'] ?? null )
+            || 'deny' !== $data_collection
+        )
+        {
+            return null;
+        }
+
+        return [
+            'schema'              => self::PRIVACY_ROUTE_ASSERTION_SCHEMA,
+            'zdr_enforced'        => true,
+            'data_collection'     => 'deny',
+            'route_policy_schema' => self::PRIVACY_ROUTE_POLICY_SCHEMA,
+        ];
     }
 
     private function build_openrouter_payload( string $model, string $prompt, array $selection ): array
@@ -2468,6 +2572,10 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         if ( null !== $reasoning )
         {
             $selection['reasoning'] = $reasoning;
+        }
+        if ( array_key_exists( 'require_zdr', $value ) )
+        {
+            $selection['require_zdr'] = rest_sanitize_boolean( $value['require_zdr'] );
         }
 
         return $selection;

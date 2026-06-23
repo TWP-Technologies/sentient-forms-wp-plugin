@@ -883,6 +883,191 @@ test.describe('Settings context state templates', () => {
 		await expect(page.getByTestId('site-context-save')).toBeEnabled();
 	});
 
+	test('forces the Site Context model selector to ZDR-only when Settings requires managed ZDR', async ({
+		page
+	}) => {
+		await page.unroute('**/wp-json/sentient-forms/v1/settings');
+		await page.route('**/wp-json/sentient-forms/v1/settings', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					enable_logging: false,
+					execution_global_disabled: false,
+					execution_provider_disabled: {},
+					execution_event_retention_days: 90,
+					delete_data_on_uninstall: true,
+					store_full_ai_outputs: false,
+					managed_zdr_required: true,
+					privacy_setup_profile: 'balanced',
+					privacy_setup_completed_at: '2026-04-21T00:00:00Z'
+				})
+			})
+		);
+
+		await page.unroute('**/wp-json/sentient-forms/v1/local/providers/credentials**');
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: [
+						{
+							id: 2,
+							provider: 'sentient_managed',
+							label: 'Sentient Forms Managed Service',
+							auth_mode: 'sentient_proxy',
+							constant_name: null,
+							status: 'valid',
+							status_json: {
+								managed_consent: {
+									state: 'accepted',
+									consent_id: 88,
+									disclosure_version: '2026-04-sentient-managed-proxy-v1',
+									accepted_at: '2026-06-22T00:00:00Z',
+									revoked_at: null
+								}
+							},
+							last_validated_at: '2026-06-22T00:00:00Z',
+							created_at: '2026-06-22T00:00:00Z',
+							updated_at: '2026-06-22T00:00:00Z',
+							secret_configured: true
+						}
+					]
+				})
+			})
+		);
+
+		await page.unroute('**/wp-json/sentient-forms/v1/models**');
+		await page.route('**/wp-json/sentient-forms/v1/models/resolve**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						model_id: 'openai/gpt-5.5',
+						display_name: 'OpenAI: GPT-5.5',
+						resolution_source: 'mock',
+						override_chain: [],
+						backup_model_id: null
+					}
+				})
+			})
+		);
+		await page.route('**/wp-json/sentient-forms/v1/models**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					success: true,
+					data: {
+						models: [
+							{
+								id: 'openai/gpt-5.5',
+								display_name: 'OpenAI: GPT-5.5',
+								provider: 'openrouter',
+								speed_tier: 'balanced',
+								cost_tier: 'medium',
+								capabilities: {
+									reasoning: true,
+									tools: true,
+									structured: true,
+									web_search: true,
+									long_context: true
+								},
+								context_window: 400000,
+								tags: ['reasoning', 'structured-output'],
+								supported_parameters: ['reasoning', 'tools'],
+								zdr_eligible: true,
+								zdr_source: 'openrouter_models_zdr_filter',
+								zdr_checked_at: '2026-06-22T00:00:00Z'
+							},
+							{
+								id: 'anthropic/fable-preview',
+								display_name: 'Anthropic: Fable Preview',
+								provider: 'openrouter',
+								speed_tier: 'balanced',
+								cost_tier: 'medium',
+								capabilities: {
+									reasoning: true,
+									tools: true,
+									structured: true,
+									web_search: true,
+									long_context: true
+								},
+								context_window: 200000,
+								tags: ['reasoning', 'structured-output'],
+								supported_parameters: ['reasoning', 'tools'],
+								zdr_eligible: false,
+								zdr_source: 'openrouter_models_zdr_filter',
+								zdr_checked_at: '2026-06-22T00:00:00Z'
+							}
+						],
+						presets: []
+					}
+				})
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/site-context**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					context: null,
+					settings: {
+						consent_status: 'granted',
+						consented_at: '2026-06-22T00:00:00Z',
+						declined_at: null,
+						auto_refresh_enabled: false,
+						auto_refresh_days: 30,
+						next_refresh_at: null,
+						last_generated_at: null,
+						last_error: null,
+						generation_model_selection: {
+							primary: 'openai/gpt-5.5',
+							is_preset: false,
+							provider: 'sentient_managed',
+							credential_id: 2
+						}
+					},
+					has_context: false,
+					is_empty: true,
+					is_stale: false,
+					stale_after_days: 90,
+					status: 'empty',
+					generation_access: {
+						can_generate: true,
+						reason_code: 'ready',
+						message: 'Site Context generation is ready through Sentient Forms Managed Service.',
+						setup_target: null,
+						provider: 'sentient_managed',
+						model: 'openai/gpt-5.5',
+						credential_id: 2
+					}
+				})
+			})
+		);
+
+		await page.goto('/#/settings/context', { waitUntil: 'networkidle' });
+		await page.getByTestId('site-context-model-tools').locator('summary').click();
+		await page.getByTestId('model-selector-open').click();
+		await expect(page.getByTestId('model-selector-dialog')).toBeVisible();
+
+		const zdrControl = page.getByTestId('model-selector-zdr-control');
+		await expect(zdrControl).toHaveAttribute('aria-checked', 'true');
+		await expect(zdrControl).toHaveAttribute('aria-disabled', 'true');
+		await zdrControl.click({ force: true });
+		await expect(page.getByTestId('model-selector-zdr-popover')).toContainText(
+			'Required by Enforce ZDR in Settings. Disable the option to change this filter'
+		);
+		await page.getByTestId('model-selector-tab-models').click();
+		await expect(page.getByTestId('model-row-openai/gpt-5.5')).toBeVisible();
+		await expect(page.getByTestId('model-row-anthropic/fable-preview')).toHaveCount(0);
+	});
+
 	test('keeps a saved paid OpenRouter alias when the model tools pane opens before credentials load', async ({
 		page
 	}) => {

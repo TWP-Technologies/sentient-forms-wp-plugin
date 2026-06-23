@@ -32,7 +32,29 @@ export interface ModelSelectorFilters {
 	minContext: number;
 	requiredCapabilities: ModelSelectorCapabilityKey[];
 	sortMode: ModelSelectorSortMode;
+	zdrOnly: boolean;
 }
+
+export interface ModelSelectorZdrControlInput {
+	managedServiceActive: boolean;
+	managedZdrRequired: boolean;
+	zdrOnly: boolean;
+}
+
+export interface ModelSelectorZdrControlState {
+	checked: boolean;
+	disabled: boolean;
+	popover: string | null;
+	helperSentences: string[];
+}
+
+export const ZDR_MODEL_TAG_HELPER = 'OpenRouter marks this model as available on ZDR routes.';
+export const DIRECT_OPENROUTER_ZDR_ENFORCEMENT_HELPER =
+	'ZDR enforcement for direct OpenRouter users can only be configured in OpenRouter.';
+export const ZDR_PREMIUM_POPOVER =
+	'Requires an active Sentient Forms Managed Service subscription.';
+export const ZDR_FORCED_POPOVER =
+	'Required by Enforce ZDR in Settings. Disable the option to change this filter';
 
 export const MODEL_RANK_CATEGORIES = [
 	'programming',
@@ -71,6 +93,40 @@ const CAPABILITY_KEYS: ModelSelectorCapabilityKey[] = [
 
 export function isModelFree(model: ModelInfo): boolean {
 	return model.cost_tier === 'free' || model.id.endsWith(':free') || model.id === 'openrouter/free';
+}
+
+export function modelSelectorZdrControl(
+	input: ModelSelectorZdrControlInput
+): ModelSelectorZdrControlState {
+	const helperSentences = [ZDR_MODEL_TAG_HELPER];
+	if (!input.managedServiceActive) {
+		helperSentences.push(DIRECT_OPENROUTER_ZDR_ENFORCEMENT_HELPER);
+	}
+
+	if (input.managedZdrRequired) {
+		return {
+			checked: true,
+			disabled: true,
+			popover: ZDR_FORCED_POPOVER,
+			helperSentences
+		};
+	}
+
+	if (!input.managedServiceActive) {
+		return {
+			checked: false,
+			disabled: true,
+			popover: ZDR_PREMIUM_POPOVER,
+			helperSentences
+		};
+	}
+
+	return {
+		checked: input.zdrOnly,
+		disabled: false,
+		popover: null,
+		helperSentences
+	};
 }
 
 export function priceSymbolFromTier(tier: string): string {
@@ -171,6 +227,7 @@ export function modelMatchesFilters(model: ModelInfo, filters: ModelSelectorFilt
 	const search = filters.searchTerm.trim().toLowerCase();
 	const costLimitOrder = filters.costLimit === 'all' ? null : COST_TIER_ORDER[filters.costLimit];
 
+	if (filters.zdrOnly && model.zdr_eligible !== true) return false;
 	if (costLimitOrder !== null && modelCostOrder(model) > costLimitOrder) return false;
 	if (filters.provider !== 'all' && providerKey(model) !== filters.provider) return false;
 	if (filters.minContext > 0 && Number(model.context_window || 0) < filters.minContext)

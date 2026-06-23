@@ -132,6 +132,11 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             unset( $selection['tools'] );
         }
 
+        if ( array_key_exists( 'require_zdr', $selection ) )
+        {
+            $selection['require_zdr'] = rest_sanitize_boolean( $selection['require_zdr'] );
+        }
+
         return $selection;
     }
 
@@ -241,6 +246,11 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         elseif ( isset( $selection['tools'] ) )
         {
             unset( $selection['tools'] );
+        }
+
+        if ( array_key_exists( 'require_zdr', $runtime ) )
+        {
+            $selection['require_zdr'] = rest_sanitize_boolean( $runtime['require_zdr'] );
         }
 
         return $selection;
@@ -735,12 +745,21 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             return $primary;
         }
 
-        return $this->resolve_local_preset_model_id( sanitize_key( $primary ) );
+        return $this->resolve_local_preset_model_id( sanitize_key( $primary ), $this->selection_requires_managed_zdr( $selection ) );
     }
 
-    private function resolve_local_preset_model_id( string $preset_code ): string
+    private function resolve_local_preset_model_id( string $preset_code, bool $require_zdr = false ): string
     {
         $models      = $this->list_local_openrouter_models();
+        if ( $require_zdr )
+        {
+            $models = $this->zdr_eligible_models( $models );
+            if ( [] === $models )
+            {
+                return '';
+            }
+        }
+
         $recommended = $this->pick_default_model_id( $models );
 
         $evidence_model = $this->pick_evidence_model_id( $models, $preset_code );
@@ -778,6 +797,23 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             'sf_agentic'    => $this->pick_preferred_model_id( $models, [ 'google/gemini-3.1-pro-preview', 'openai/gpt-5.5', 'anthropic/claude-opus-4.7' ] ) ?: $recommended,
             default         => '',
         };
+    }
+
+    private function selection_requires_managed_zdr( array $selection ): bool
+    {
+        $provider = isset( $selection['provider'] ) && is_scalar( $selection['provider'] )
+            ? sanitize_key( (string) $selection['provider'] )
+            : '';
+
+        return 'sentient_managed' === $provider && ! empty( $selection['require_zdr'] );
+    }
+
+    private function zdr_eligible_models( array $models ): array
+    {
+        return array_filter(
+            $models,
+            static fn ( array $model ): bool => true === ( $model['zdr_eligible'] ?? null )
+        );
     }
 
     private function pick_evidence_model_id( array $models, string $preset_code ): ?string
@@ -885,6 +921,7 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
         $output_modalities    = $this->sanitize_string_list( $metadata['output_modalities'] ?? $architecture['output_modalities'] ?? [] );
         $context_window       = isset( $metadata['context_length'] ) ? absint( $metadata['context_length'] ) : 0;
         $is_free              = ! empty( $metadata['free'] );
+        $zdr                  = $this->format_zdr_eligibility( $metadata );
 
         $capabilities = [
             'reasoning'    => $this->model_has_reasoning( $model_id, $name, $supported_parameters ),
@@ -910,6 +947,7 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
                     $capabilities['web_search'] ? 'web-search' : null,
                     $capabilities['vision'] ? 'vision' : null,
                     $capabilities['long_context'] ? 'long-context' : null,
+                    true === $zdr['eligible'] ? 'zdr' : null,
                 ]
             )
         );
@@ -923,11 +961,33 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             'capabilities'   => $capabilities,
             'context_window' => $context_window,
             'tags'           => $tags,
+            'zdr_eligible'   => $zdr['eligible'],
+            'zdr_source'     => $zdr['source'],
+            'zdr_checked_at' => $zdr['checked_at'],
             'supported_parameters' => $supported_parameters,
             'input_modalities' => $input_modalities,
             'output_modalities' => $output_modalities,
             'recommended_for' => $this->sanitize_string_label_list( $metadata['recommended_for'] ?? [] ),
             'category_rankings' => $this->sanitize_category_rankings( $metadata['category_rankings'] ?? [] ),
+        ];
+    }
+
+    private function format_zdr_eligibility( array $metadata ): array
+    {
+        $eligible = array_key_exists( 'zdr_eligible', $metadata )
+            ? rest_sanitize_boolean( $metadata['zdr_eligible'] )
+            : null;
+        $source = isset( $metadata['zdr_source'] ) && is_scalar( $metadata['zdr_source'] )
+            ? sanitize_key( (string) $metadata['zdr_source'] )
+            : null;
+        $checked_at = isset( $metadata['zdr_checked_at'] ) && is_scalar( $metadata['zdr_checked_at'] )
+            ? sanitize_text_field( (string) $metadata['zdr_checked_at'] )
+            : null;
+
+        return [
+            'eligible'   => $eligible,
+            'source'     => '' !== (string) $source ? $source : null,
+            'checked_at' => '' !== (string) $checked_at ? $checked_at : null,
         ];
     }
 
@@ -1068,6 +1128,10 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             $sanitized['tools'] = $tools;
         }
         $sanitized['is_preset'] = ! empty( $selection['is_preset'] );
+        if ( array_key_exists( 'require_zdr', $selection ) )
+        {
+            $sanitized['require_zdr'] = rest_sanitize_boolean( $selection['require_zdr'] );
+        }
 
         return $sanitized;
     }

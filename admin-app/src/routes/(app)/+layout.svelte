@@ -165,13 +165,19 @@
 	}
 
 	async function applyPrivacyPreset(
-		profile: NonNullable<PluginSettingsResponse['privacy_setup_profile']>
+		profile: NonNullable<PluginSettingsResponse['privacy_setup_profile']>,
+		options: { managedZdrRequired?: boolean } = {}
 	) {
 		privacyAssistantSaving = true;
 		privacyApplyError = null;
 		try {
 			const settings = await client.updateSettings(
-				{ privacy_setup_profile: profile },
+				{
+					privacy_setup_profile: profile,
+					...(typeof options.managedZdrRequired === 'boolean'
+						? { managed_zdr_required: options.managedZdrRequired }
+						: {})
+				},
 				{ showNotifications: false }
 			);
 			if (!settings.privacy_setup_completed_at) {

@@ -241,6 +241,29 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertStringContainsString( 'not just the largest advertised context window', $presets_by_code['sf_long_context']['description'] );
     }
 
+    public function test_list_models_exposes_openrouter_zdr_advisory_tags(): void
+    {
+        $this->seed_zdr_model_cache();
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/models' );
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $models_by_id = [];
+        foreach ( $data['models'] as $model )
+        {
+            $models_by_id[ $model['id'] ] = $model;
+        }
+
+        $this->assertTrue( $models_by_id['google/gemini-3-flash-preview']['zdr_eligible'] );
+        $this->assertSame( 'openrouter_models_zdr_filter', $models_by_id['google/gemini-3-flash-preview']['zdr_source'] );
+        $this->assertContains( 'zdr', $models_by_id['google/gemini-3-flash-preview']['tags'] );
+        $this->assertFalse( $models_by_id['openai/gpt-5.5']['zdr_eligible'] );
+        $this->assertNotContains( 'zdr', $models_by_id['openai/gpt-5.5']['tags'] );
+    }
+
     public function test_resolve_model_prefers_mapping_selection_over_lower_scopes(): void
     {
         $this->seed_model_cache();
@@ -316,6 +339,77 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertCount( 1, $applied );
         $this->assertSame( 'mapping', $applied[0]['level'] );
         $this->assertStringContainsString( 'managed service', $applied[0]['reason'] );
+    }
+
+    public function test_resolve_model_uses_zdr_safe_preset_candidate_for_managed_zdr_selection(): void
+    {
+        $this->seed_zdr_model_cache();
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
+        $request->set_body_params(
+            [
+                'mapping_selection' => [
+                    'primary'     => 'sf_default',
+                    'is_preset'   => true,
+                    'provider'    => 'sentient_managed',
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'google/gemini-3-flash-preview', $data['model_id'] );
+        $this->assertSame( 'Google: Gemini 3 Flash Preview', $data['display_name'] );
+        $this->assertSame( 'mapping', $data['resolution_source'] );
+
+        $applied = array_values(
+            array_filter(
+                $data['override_chain'],
+                static fn ( array $step ): bool => ! empty( $step['applied'] )
+            )
+        );
+
+        $this->assertCount( 1, $applied );
+        $this->assertStringContainsString( 'ZDR', $applied[0]['reason'] );
+    }
+
+    public function test_resolve_model_keeps_direct_openrouter_zdr_selection_advisory(): void
+    {
+        $this->seed_zdr_model_cache();
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
+        $request->set_body_params(
+            [
+                'mapping_selection' => [
+                    'primary'     => 'sf_default',
+                    'is_preset'   => true,
+                    'provider'    => 'openrouter',
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( '~openai/gpt-latest', $data['model_id'] );
+        $this->assertSame( 'mapping', $data['resolution_source'] );
+
+        $applied = array_values(
+            array_filter(
+                $data['override_chain'],
+                static fn ( array $step ): bool => ! empty( $step['applied'] )
+            )
+        );
+
+        $this->assertCount( 1, $applied );
+        $this->assertStringNotContainsString( 'ZDR', $applied[0]['reason'] );
     }
 
     public function test_resolve_model_accepts_custom_openrouter_model_id_outside_cached_catalog(): void
@@ -532,6 +626,62 @@ class Tests_Models_Controller extends WP_UnitTestCase
                         'prompt'     => '0.000003',
                         'completion' => '0.000015',
                     ],
+                ],
+                $expires_at
+            )
+        );
+    }
+
+    private function seed_zdr_model_cache(): void
+    {
+        $models     = new Sentient_Forms_Model_Cache_Repository( $GLOBALS['wpdb'] );
+        $expires_at = gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS );
+        $checked_at = gmdate( 'Y-m-d H:i:s' );
+
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'openai/gpt-5.5',
+                [
+                    'id'                   => 'openai/gpt-5.5',
+                    'name'                 => 'OpenAI: GPT-5.5',
+                    'free'                 => false,
+                    'context_length'       => 1050000,
+                    'input_modalities'     => [ 'file', 'image', 'text' ],
+                    'output_modalities'    => [ 'text' ],
+                    'supported_parameters' => [ 'response_format', 'structured_outputs', 'tools' ],
+                    'pricing'              => [
+                        'prompt'     => '0.000005',
+                        'completion' => '0.00003',
+                    ],
+                    'zdr_eligible'         => false,
+                    'zdr_source'           => 'openrouter_models_zdr_filter',
+                    'zdr_checked_at'       => $checked_at,
+                ],
+                $expires_at
+            )
+        );
+
+        $this->assertTrue(
+            $models->upsert(
+                'openrouter',
+                'google/gemini-3-flash-preview',
+                [
+                    'id'                   => 'google/gemini-3-flash-preview',
+                    'name'                 => 'Google: Gemini 3 Flash Preview',
+                    'free'                 => false,
+                    'context_length'       => 1048576,
+                    'input_modalities'     => [ 'file', 'image', 'text' ],
+                    'output_modalities'    => [ 'text' ],
+                    'supported_parameters' => [ 'response_format', 'structured_outputs', 'tools' ],
+                    'pricing'              => [
+                        'prompt'     => '0.0000005',
+                        'completion' => '0.000003',
+                    ],
+                    'recommended_for'      => [ 'General purpose', 'Speed', 'Structured output' ],
+                    'zdr_eligible'         => true,
+                    'zdr_source'           => 'openrouter_models_zdr_filter',
+                    'zdr_checked_at'       => $checked_at,
                 ],
                 $expires_at
             )

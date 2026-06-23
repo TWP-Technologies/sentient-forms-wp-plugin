@@ -488,6 +488,127 @@ test.describe('Dashboard and Licensing hierarchy uplift', () => {
 		});
 	});
 
+	test('providers exposes approved ZDR guidance and managed service enforcement control', async ({
+		page
+	}) => {
+		const previewHost = getPreviewOrigin();
+		await seedRuntimeConfig(page, {
+			apiBaseUrl: `${previewHost}/wp-json/sentient-forms/v1/`,
+			siteUrl: previewHost,
+			license: {
+				status: 'active',
+				licenseKeyMasked: 'LIC-****-TEST',
+				proxyKeyPresent: true,
+				tier: 'starter',
+				expiresAt: '2030-01-01T00:00:00Z',
+				lastSynced: '2030-01-05T10:00:00Z',
+				licenseId: 'license-managed-test',
+				siteId: 'site-managed-test'
+			}
+		});
+
+		let latestSettingsPayload: Record<string, unknown> | null = null;
+		const settingsState = {
+			enable_logging: false,
+			execution_global_disabled: false,
+			execution_provider_disabled: {},
+			execution_event_retention_days: 90,
+			delete_data_on_uninstall: true,
+			store_full_ai_outputs: false,
+			privacy_setup_profile: 'balanced',
+			privacy_setup_completed_at: '2030-01-05T00:00:00Z',
+			managed_zdr_required: false
+		};
+
+		await page.route('**/wp-json/sentient-forms/v1/settings', (route) => {
+			if (route.request().method() === 'PUT') {
+				latestSettingsPayload = route.request().postDataJSON() as Record<string, unknown>;
+				Object.assign(settingsState, latestSettingsPayload);
+			}
+
+			return route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(settingsState)
+			});
+		});
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([
+					{
+						id: 77,
+						provider: 'sentient_managed',
+						label: 'Primary managed service',
+						auth_mode: 'sentient_proxy',
+						constant_name: null,
+						status: 'valid',
+						status_json: {
+							license_id: 'license-managed-test',
+							site_id: 'site-managed-test',
+							proxy_key_present: true,
+							managed_consent: {
+								state: 'accepted',
+								consent_id: 88,
+								disclosure_version: '2026-04-sentient-managed-proxy-v1',
+								accepted_at: '2030-01-05T10:00:00Z',
+								revoked_at: null
+							}
+						},
+						last_validated_at: '2030-01-05T10:00:00Z',
+						created_at: '2030-01-05T09:00:00Z',
+						updated_at: '2030-01-05T10:00:00Z',
+						secret_configured: true
+					},
+					{
+						id: 42,
+						provider: 'openrouter',
+						label: 'OpenRouter ready key',
+						auth_mode: 'manual_key',
+						constant_name: null,
+						status: 'valid',
+						status_json: null,
+						last_validated_at: '2030-01-05T10:00:00Z',
+						created_at: '2030-01-05T09:00:00Z',
+						updated_at: '2030-01-05T10:00:00Z',
+						secret_configured: true
+					}
+				])
+			})
+		);
+
+		await page.route('**/wp-json/sentient-forms/v1/local/providers/openrouter/models**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					provider: 'openrouter',
+					source: 'local_cache',
+					total_cached: 0,
+					total_returned: 0,
+					free_count: 0,
+					stale_count: 0,
+					models: []
+				})
+			})
+		);
+
+		await page.goto('/#/providers', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('providers-openrouter-summary')).toContainText(
+			'ZDR enforcement for direct OpenRouter users can only be configured in OpenRouter.'
+		);
+		await expect(page.getByTestId('providers-managed-zdr')).toContainText(
+			'Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data Retention'
+		);
+		await page.getByLabel('Enforce ZDR for managed service').check();
+		await expect.poll(() => latestSettingsPayload).toMatchObject({
+			managed_zdr_required: true
+		});
+	});
+
 	test('providers points local action setup to the Actions builder', async ({ page }) => {
 		await page.route('**/wp-json/sentient-forms/v1/local/providers/credentials**', (route) =>
 			route.fulfill({

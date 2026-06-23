@@ -11,6 +11,9 @@ if ( ! defined( 'ABSPATH' ) )
 class Sentient_Forms_Local_Action_Execution_Service
 {
     private const REALTIME_STRUCTURED_OUTPUT_MIN_MAX_TOKENS = 1800;
+    private const PRIVACY_ROUTE_POLICY_SCHEMA = 'sentient_forms_privacy_route_policy.v1';
+    private const PRIVACY_ROUTE_FALLBACK_SCHEMA = 'sentient_forms_privacy_route_fallback.v1';
+    private const PRIVACY_ROUTE_FAILURE_SCHEMA = 'sentient_forms_privacy_route_failure.v1';
 
     public function __construct(
         private ?Sentient_Forms_Form_Mappings_Repository $mappings = null,
@@ -282,9 +285,25 @@ class Sentient_Forms_Local_Action_Execution_Service
             $secret_for_redaction = $api_key;
         }
 
+        if (
+            ! is_wp_error( $response )
+            && 'sentient_managed' === $provider
+            && $this->managed_privacy_route_required( $model_selection, $context )
+        )
+        {
+            $privacy_route_assertion = $this->assert_managed_privacy_route_assertion( $response );
+            if ( is_wp_error( $privacy_route_assertion ) )
+            {
+                $response = $privacy_route_assertion;
+            }
+        }
+
         if ( is_wp_error( $response ) )
         {
             $redacted_message = $this->redact_secret( $response->get_error_message(), $secret_for_redaction );
+            $safe_failure_result = 'sentient_managed' === $provider
+                ? $this->managed_privacy_route_failure_result_json( $response )
+                : null;
             $this->update_credential_status_after_error( (int) $credential['id'], $response, $redacted_message );
             $this->events->record(
                 [
@@ -300,6 +319,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                     'error_code'           => $response->get_error_code(),
                     'error_message'        => $redacted_message,
                     'payload_digest'       => $payload_digest,
+                    'result_json'          => $safe_failure_result,
                 ]
             );
 
@@ -1917,7 +1937,231 @@ class Sentient_Forms_Local_Action_Execution_Service
             ];
         }
 
+        if ( $this->managed_privacy_route_required( $model_selection, $context ) )
+        {
+            $payload['privacy_route_policy'] = $this->managed_privacy_route_policy();
+        }
+
         return $payload;
+    }
+
+    /**
+     * @param array<string, mixed> $response
+     */
+    private function assert_managed_privacy_route_assertion( array $response ): true | WP_Error
+    {
+        if ( null === $this->normalize_managed_privacy_route_assertion( $response['privacy_route_assertion'] ?? null ) )
+        {
+            return new WP_Error(
+                'sentient_forms_managed_privacy_route_not_asserted',
+                __( 'Sentient Forms Managed Service did not confirm the required ZDR route, so the run was stopped.', 'sentient-forms' ),
+                [
+                    'status' => 502,
+                ]
+            );
+        }
+
+        return true;
+    }
+
+    /**
+     * @param mixed $assertion
+     * @return array{schema: string, zdr_enforced: bool, data_collection: string, route_policy_schema: string}|null
+     */
+    private function normalize_managed_privacy_route_assertion( mixed $assertion ): ?array
+    {
+        if ( ! is_array( $assertion ) )
+        {
+            return null;
+        }
+
+        $schema = isset( $assertion['schema'] ) && is_scalar( $assertion['schema'] )
+            ? sanitize_text_field( (string) $assertion['schema'] )
+            : '';
+        $route_policy_schema = isset( $assertion['route_policy_schema'] ) && is_scalar( $assertion['route_policy_schema'] )
+            ? sanitize_text_field( (string) $assertion['route_policy_schema'] )
+            : '';
+        $data_collection = isset( $assertion['data_collection'] ) && is_scalar( $assertion['data_collection'] )
+            ? sanitize_key( (string) $assertion['data_collection'] )
+            : '';
+
+        if (
+            'sentient_forms_privacy_route_assertion.v1' !== $schema
+            || self::PRIVACY_ROUTE_POLICY_SCHEMA !== $route_policy_schema
+            || true !== ( $assertion['zdr_enforced'] ?? null )
+            || 'deny' !== $data_collection
+        )
+        {
+            return null;
+        }
+
+        return [
+            'schema'              => 'sentient_forms_privacy_route_assertion.v1',
+            'zdr_enforced'        => true,
+            'data_collection'     => 'deny',
+            'route_policy_schema' => self::PRIVACY_ROUTE_POLICY_SCHEMA,
+        ];
+    }
+
+    /**
+     * @return array{privacy_route_failure: array{schema: string, policy_version: string, reason_code: string, selected_model: string}}|null
+     */
+    private function managed_privacy_route_failure_result_json( WP_Error $error ): ?array
+    {
+        $data = $error->get_error_data();
+        if ( ! is_array( $data ) )
+        {
+            return null;
+        }
+
+        $payload = is_array( $data['payload'] ?? null ) ? $data['payload'] : [];
+        $error_payload = is_array( $payload['error'] ?? null ) ? $payload['error'] : [];
+        $meta = is_array( $error_payload['meta'] ?? null ) ? $error_payload['meta'] : [];
+        $failure = $this->normalize_managed_privacy_route_failure( $meta['privacy_route_failure'] ?? null );
+
+        if ( null === $failure )
+        {
+            return null;
+        }
+
+        return [
+            'privacy_route_failure' => $failure,
+        ];
+    }
+
+    /**
+     * @return array{schema: string, policy_version: string, reason_code: string, selected_model: string}|null
+     */
+    private function normalize_managed_privacy_route_failure( mixed $failure ): ?array
+    {
+        if ( ! is_array( $failure ) )
+        {
+            return null;
+        }
+
+        $schema = isset( $failure['schema'] ) && is_scalar( $failure['schema'] )
+            ? sanitize_text_field( (string) $failure['schema'] )
+            : '';
+        $policy_version = isset( $failure['policy_version'] ) && is_scalar( $failure['policy_version'] )
+            ? sanitize_text_field( (string) $failure['policy_version'] )
+            : '';
+        $reason_code = isset( $failure['reason_code'] ) && is_scalar( $failure['reason_code'] )
+            ? sanitize_key( (string) $failure['reason_code'] )
+            : '';
+        $selected_model = isset( $failure['selected_model'] ) && is_scalar( $failure['selected_model'] )
+            ? sanitize_text_field( (string) $failure['selected_model'] )
+            : '';
+
+        if (
+            self::PRIVACY_ROUTE_FAILURE_SCHEMA !== $schema
+            || '' === $policy_version
+            || '' === $reason_code
+            || '' === $selected_model
+        )
+        {
+            return null;
+        }
+
+        return [
+            'schema'         => self::PRIVACY_ROUTE_FAILURE_SCHEMA,
+            'policy_version' => $policy_version,
+            'reason_code'    => $reason_code,
+            'selected_model' => $selected_model,
+        ];
+    }
+
+    /**
+     * @return array{schema: string, policy_version: string, reason_code: string, original_model: string, fallback_model: string, attempts: int}|null
+     */
+    private function normalize_managed_privacy_route_fallback( mixed $fallback ): ?array
+    {
+        if ( ! is_array( $fallback ) )
+        {
+            return null;
+        }
+
+        $schema = isset( $fallback['schema'] ) && is_scalar( $fallback['schema'] )
+            ? sanitize_text_field( (string) $fallback['schema'] )
+            : '';
+        $policy_version = isset( $fallback['policy_version'] ) && is_scalar( $fallback['policy_version'] )
+            ? sanitize_text_field( (string) $fallback['policy_version'] )
+            : '';
+        $reason_code = isset( $fallback['reason_code'] ) && is_scalar( $fallback['reason_code'] )
+            ? sanitize_key( (string) $fallback['reason_code'] )
+            : '';
+        $original_model = isset( $fallback['original_model'] ) && is_scalar( $fallback['original_model'] )
+            ? sanitize_text_field( (string) $fallback['original_model'] )
+            : '';
+        $fallback_model = isset( $fallback['fallback_model'] ) && is_scalar( $fallback['fallback_model'] )
+            ? sanitize_text_field( (string) $fallback['fallback_model'] )
+            : '';
+        $attempts = isset( $fallback['attempts'] ) && is_numeric( $fallback['attempts'] )
+            ? absint( $fallback['attempts'] )
+            : 0;
+
+        if (
+            self::PRIVACY_ROUTE_FALLBACK_SCHEMA !== $schema
+            || '' === $policy_version
+            || '' === $reason_code
+            || '' === $original_model
+            || '' === $fallback_model
+            || $attempts < 1
+        )
+        {
+            return null;
+        }
+
+        return [
+            'schema'         => self::PRIVACY_ROUTE_FALLBACK_SCHEMA,
+            'policy_version' => $policy_version,
+            'reason_code'    => $reason_code,
+            'original_model' => $original_model,
+            'fallback_model' => $fallback_model,
+            'attempts'       => $attempts,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $model_selection
+     * @param array<string, mixed> $context
+     */
+    private function managed_privacy_route_required( array $model_selection, array $context ): bool
+    {
+        if ( ! empty( $model_selection['require_zdr'] ) )
+        {
+            return true;
+        }
+
+        if ( $this->global_managed_zdr_required() )
+        {
+            return true;
+        }
+
+        $settings = is_array( $context['settings'] ?? null ) ? $context['settings'] : [];
+        return ! empty( $settings['require_zdr'] ) || ! empty( $settings['managed_zdr_required'] );
+    }
+
+    private function global_managed_zdr_required(): bool
+    {
+        $settings = get_option( 'sentient_forms_plugin_settings', [] );
+        if ( ! is_array( $settings ) )
+        {
+            return false;
+        }
+
+        return ! empty( $settings['managed_zdr_required'] );
+    }
+
+    /**
+     * @return array{schema: string, require_zdr: bool, data_collection: string}
+     */
+    private function managed_privacy_route_policy(): array
+    {
+        return [
+            'schema'          => self::PRIVACY_ROUTE_POLICY_SCHEMA,
+            'require_zdr'     => true,
+            'data_collection' => 'deny',
+        ];
     }
 
     /**
@@ -2064,6 +2308,18 @@ class Sentient_Forms_Local_Action_Execution_Service
         if ( null !== $structured )
         {
             $result['structured'] = $structured;
+        }
+
+        $privacy_route_assertion = $this->normalize_managed_privacy_route_assertion( $response['privacy_route_assertion'] ?? null );
+        if ( null !== $privacy_route_assertion )
+        {
+            $result['privacy_route_assertion'] = $privacy_route_assertion;
+        }
+
+        $privacy_route_fallback = $this->normalize_managed_privacy_route_fallback( $response['privacy_route_fallback'] ?? null );
+        if ( null !== $privacy_route_fallback )
+        {
+            $result['privacy_route_fallback'] = $privacy_route_fallback;
         }
 
         return $result;

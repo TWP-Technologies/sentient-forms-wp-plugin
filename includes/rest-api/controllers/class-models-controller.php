@@ -833,6 +833,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
         $is_stale             = isset( $row['expires_at'] ) && (string) $row['expires_at'] < current_time( 'mysql', true );
         $provider_family      = str_contains( $model_id, '/' ) ? sanitize_key( strtok( $model_id, '/' ) ) : '';
         $server_tools         = $this->openrouter_server_tool_capabilities( $metadata, $supported_parameters, $pricing, $model_id );
+        $zdr                  = $this->format_zdr_eligibility( $metadata );
 
         $capabilities = [
             'reasoning'    => $this->model_has_reasoning( $model_id, $name, $supported_parameters ),
@@ -862,6 +863,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                     in_array( 'text', $output_modalities, true ) ? 'text-output' : null,
                     $capabilities['vision'] ? 'vision' : null,
                     $capabilities['long_context'] ? 'long-context' : null,
+                    true === $zdr['eligible'] ? 'zdr' : null,
                 ]
             )
         );
@@ -882,6 +884,9 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
             'context_window'  => $context_window,
             'is_preview'      => $is_preview,
             'tags'            => $tags,
+            'zdr_eligible'    => $zdr['eligible'],
+            'zdr_source'      => $zdr['source'],
+            'zdr_checked_at'  => $zdr['checked_at'],
             'supported_parameters' => $supported_parameters,
             'input_modalities' => $input_modalities,
             'output_modalities' => $output_modalities,
@@ -1218,17 +1223,18 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
 
     private function resolve_local_model( array $payload ): array
     {
-        $models  = $this->list_local_openrouter_models();
-        $presets = $this->build_presets( $models );
-        $chain   = [];
+        $models      = $this->list_local_openrouter_models();
+        $presets     = $this->build_presets( $models );
+        $zdr_presets = $this->build_zdr_presets( $models );
+        $chain       = [];
 
         $template_hint = isset( $payload['template_model_hint'] ) ? sanitize_text_field( (string) $payload['template_model_hint'] ) : '';
-        $chain[] = $this->build_resolution_step( 'template', $template_hint, false, $presets );
+        $chain[] = $this->build_resolution_step( 'template', $template_hint, false, $presets, $zdr_presets );
 
         foreach ( [ 'global', 'action', 'form', 'mapping' ] as $level )
         {
             $selection = $payload[ $level . '_selection' ] ?? null;
-            $chain[]   = $this->build_resolution_step( $level, $selection, true, $presets );
+            $chain[]   = $this->build_resolution_step( $level, $selection, true, $presets, $zdr_presets );
         }
 
         $applied_index = null;
@@ -1285,7 +1291,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
         ];
     }
 
-    private function build_resolution_step( string $level, mixed $selection, bool $allow_presets, array $presets ): array
+    private function build_resolution_step( string $level, mixed $selection, bool $allow_presets, array $presets, array $zdr_presets ): array
     {
         $primary       = '';
         $backup        = null;
@@ -1305,7 +1311,9 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                 && self::MANAGED_PROVIDER === sanitize_key( (string) $selection['provider'] )
             )
             {
-                $model_id = $is_preset && $allow_presets ? $this->resolve_preset_model_id( $primary, $presets ) : $primary;
+                $requires_zdr   = ! empty( $selection['require_zdr'] );
+                $policy_presets = $requires_zdr ? $zdr_presets : $presets;
+                $model_id       = $is_preset && $allow_presets ? $this->resolve_preset_model_id( $primary, $policy_presets ) : $primary;
 
                 return [
                     'level'           => $level,
@@ -1314,8 +1322,12 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                     'backup_model_id' => $backup,
                     'applied'         => false,
                     'reason'          => '' !== $model_id
-                        ? __( 'Selection resolves through the Sentient Forms managed service route.', 'sentient-forms' )
-                        : __( 'The selected managed preset is not available in the local model policy.', 'sentient-forms' ),
+                        ? ( $requires_zdr
+                            ? __( 'Selection resolves through the Sentient Forms managed service route using the ZDR-safe local model policy.', 'sentient-forms' )
+                            : __( 'Selection resolves through the Sentient Forms managed service route.', 'sentient-forms' ) )
+                        : ( $requires_zdr
+                            ? __( 'The selected managed preset is not available in the ZDR-safe local model policy.', 'sentient-forms' )
+                            : __( 'The selected managed preset is not available in the local model policy.', 'sentient-forms' ) ),
                 ];
             }
         }
@@ -1363,6 +1375,25 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
         }
 
         return '';
+    }
+
+    private function build_zdr_presets( array $models ): array
+    {
+        $zdr_models = $this->zdr_eligible_models( $models );
+        if ( [] === $zdr_models )
+        {
+            return [];
+        }
+
+        return $this->build_presets( $zdr_models );
+    }
+
+    private function zdr_eligible_models( array $models ): array
+    {
+        return array_filter(
+            $models,
+            static fn ( array $model ): bool => true === ( $model['zdr_eligible'] ?? null )
+        );
     }
 
     private function pick_default_model_id( array $models ): string
@@ -1440,6 +1471,25 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
             'anthropic/claude-haiku-4.5'       => '~anthropic/claude-haiku-latest',
             default                            => null,
         };
+    }
+
+    private function format_zdr_eligibility( array $metadata ): array
+    {
+        $eligible = array_key_exists( 'zdr_eligible', $metadata )
+            ? rest_sanitize_boolean( $metadata['zdr_eligible'] )
+            : null;
+        $source = isset( $metadata['zdr_source'] ) && is_scalar( $metadata['zdr_source'] )
+            ? sanitize_key( (string) $metadata['zdr_source'] )
+            : null;
+        $checked_at = isset( $metadata['zdr_checked_at'] ) && is_scalar( $metadata['zdr_checked_at'] )
+            ? sanitize_text_field( (string) $metadata['zdr_checked_at'] )
+            : null;
+
+        return [
+            'eligible'   => $eligible,
+            'source'     => '' !== (string) $source ? $source : null,
+            'checked_at' => '' !== (string) $checked_at ? $checked_at : null,
+        ];
     }
 
     private function pick_long_context_model_id( array $models ): ?string

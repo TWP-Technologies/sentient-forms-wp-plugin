@@ -14,6 +14,7 @@ class Sentient_Forms_Managed_Proxy_Client
 {
     private const DEFAULT_BASE_URL = 'https://api.sentientforms.com/v2';
     private const MANAGED_PROVIDER = 'sentient_managed';
+    private const PRIVACY_ROUTE_POLICY_SCHEMA = 'sentient_forms_privacy_route_policy.v1';
     private const ALLOWED_EXECUTE_PAYLOAD_KEYS = [
         'site_id'              => true,
         'execution_request_id' => true,
@@ -29,6 +30,7 @@ class Sentient_Forms_Managed_Proxy_Client
         'reasoning'            => true,
         'tools'                => true,
         'tool_choice'          => true,
+        'privacy_route_policy' => true,
     ];
 
     private string $base_url;
@@ -299,6 +301,17 @@ class Sentient_Forms_Managed_Proxy_Client
             $normalized['metadata'] = $metadata;
         }
 
+        if ( isset( $payload['privacy_route_policy'] ) )
+        {
+            $privacy_route_policy = $this->normalize_privacy_route_policy( $payload['privacy_route_policy'] );
+            if ( is_wp_error( $privacy_route_policy ) )
+            {
+                return $privacy_route_policy;
+            }
+
+            $normalized['privacy_route_policy'] = $privacy_route_policy;
+        }
+
         if ( isset( $payload['reasoning'] ) )
         {
             $reasoning = $this->normalize_reasoning_payload( $payload['reasoning'] );
@@ -333,6 +346,47 @@ class Sentient_Forms_Managed_Proxy_Client
         }
 
         return $normalized;
+    }
+
+    /**
+     * @param mixed $policy
+     *
+     * @return array{schema: string, require_zdr: bool, data_collection: string}|WP_Error
+     */
+    private function normalize_privacy_route_policy( mixed $policy ): array | WP_Error
+    {
+        if ( ! is_array( $policy ) || array_is_list( $policy ) )
+        {
+            return new WP_Error(
+                'sentient_managed_invalid_privacy_route_policy',
+                __( 'Managed execution privacy route policy must be an object.', 'sentient-forms' )
+            );
+        }
+
+        $schema = isset( $policy['schema'] ) && is_scalar( $policy['schema'] )
+            ? sanitize_text_field( (string) $policy['schema'] )
+            : '';
+        $data_collection = isset( $policy['data_collection'] ) && is_scalar( $policy['data_collection'] )
+            ? sanitize_key( (string) $policy['data_collection'] )
+            : '';
+
+        if (
+            self::PRIVACY_ROUTE_POLICY_SCHEMA !== $schema
+            || true !== ( $policy['require_zdr'] ?? null )
+            || 'deny' !== $data_collection
+        )
+        {
+            return new WP_Error(
+                'sentient_managed_invalid_privacy_route_policy',
+                __( 'Managed execution privacy route policy must require ZDR and deny provider data collection.', 'sentient-forms' )
+            );
+        }
+
+        return [
+            'schema'          => self::PRIVACY_ROUTE_POLICY_SCHEMA,
+            'require_zdr'     => true,
+            'data_collection' => 'deny',
+        ];
     }
 
     /**

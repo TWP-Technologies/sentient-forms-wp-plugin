@@ -25,6 +25,7 @@ class Sentient_Forms_Managed_Usage_Sanitizer
         'total_billed_micro_usd'    => true,
         'currency'                  => true,
         'provider_cost'             => true,
+        'provider_payload'          => true,
     ];
 
     private const EMPTY_AFTER_SCRUB_CONTAINER_KEYS = [

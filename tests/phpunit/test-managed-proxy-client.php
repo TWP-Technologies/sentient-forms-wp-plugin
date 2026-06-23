@@ -90,6 +90,58 @@ class Tests_Managed_Proxy_Client extends WP_UnitTestCase
         $this->assertSame( '99', $payload['metadata']['entry_id'] );
     }
 
+    public function test_execute_can_send_managed_privacy_route_policy(): void
+    {
+        $calls = [];
+        $this->mock_http(
+            static function ( $preempt, array $args, string $url ) use ( &$calls ): array {
+                $calls[] = [
+                    'args' => $args,
+                    'url'  => $url,
+                ];
+
+                return [
+                    'headers'  => [],
+                    'response' => [
+                        'code'    => 200,
+                        'message' => 'OK',
+                    ],
+                    'body'     => file_get_contents( __DIR__ . '/../fixtures/managed/execute-success.json' ),
+                    'cookies'  => [],
+                ];
+            }
+        );
+
+        $client = new Sentient_Forms_Managed_Proxy_Client( 'https://minimal.sentient.test/v2' );
+        $result = $client->execute(
+            'proxy-secret',
+            [
+                'site_id'              => '22222222-2222-4222-8222-222222222222',
+                'execution_request_id' => 'managed-zdr-req-1',
+                'model'                => 'openai/gpt-4.1-mini',
+                'prompt'               => 'Summarize this entry.',
+                'privacy_route_policy' => [
+                    'schema'          => 'sentient_forms_privacy_route_policy.v1',
+                    'require_zdr'     => true,
+                    'data_collection' => 'deny',
+                ],
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertCount( 1, $calls );
+
+        $payload = json_decode( $calls[0]['args']['body'], true );
+        $this->assertSame(
+            [
+                'schema'          => 'sentient_forms_privacy_route_policy.v1',
+                'require_zdr'     => true,
+                'data_collection' => 'deny',
+            ],
+            $payload['privacy_route_policy']
+        );
+    }
+
     public function test_execute_rejects_invalid_reasoning_before_http_request(): void
     {
         $this->mock_http(

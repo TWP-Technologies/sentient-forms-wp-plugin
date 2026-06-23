@@ -50,7 +50,10 @@
 		applyError?: string | null;
 		settings?: PluginSettingsResponse | null;
 		dismissible?: boolean;
-		onapply?: (preset: PrivacyPresetId) => void;
+		onapply?: (
+			preset: PrivacyPresetId,
+			options: { managedZdrRequired: boolean }
+		) => void;
 		onclose?: () => void;
 	}
 
@@ -129,6 +132,7 @@
 	let siteContextAutoRefresh = $state(false);
 	let siteContextRefreshDays = $state(DEFAULT_SITE_CONTEXT_REFRESH_DAYS);
 	let siteContextModelSelection = $state<ModelSelection>(DEFAULT_SITE_CONTEXT_MODEL_SELECTION);
+	let managedZdrRequired = $state(Boolean(settings?.managed_zdr_required));
 	let applyErrorRegion = $state<HTMLDivElement | null>(null);
 	let siteContextGenerationPollTimer: ReturnType<typeof setTimeout> | null = null;
 	let siteContextGenerationPollFailures = 0;
@@ -184,6 +188,7 @@
 	$effect(() => {
 		if (!open) return;
 		selectedPreset = initialPreset(settings);
+		managedZdrRequired = Boolean(settings?.managed_zdr_required);
 		siteContextTouched = false;
 		siteContextApplyError = null;
 		void loadSiteContext();
@@ -218,14 +223,14 @@
 		if (siteContextShouldSaveBeforeApply && !(await saveSiteContext('apply'))) {
 			return;
 		}
-		onapply?.(selectedPreset);
+		onapply?.(selectedPreset, { managedZdrRequired });
 	}
 
 	async function useBalancedDefaults(): Promise<void> {
 		if (siteContextShouldSaveBeforeApply && !(await saveSiteContext('apply'))) {
 			return;
 		}
-		onapply?.('balanced');
+		onapply?.('balanced', { managedZdrRequired });
 	}
 
 	function parseSiteContextResponse(
@@ -665,13 +670,53 @@
 					</div>
 
 					<div class="sf:space-y-6">
+						<div
+							class="sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:p-4"
+							data-testid="privacy-setup-managed-zdr"
+						>
+							<div
+								class="sf:flex sf:flex-col sf:items-start sf:justify-between sf:gap-3 sf:sm:flex-row sf:sm:items-start"
+							>
+								<div class="sf:flex sf:min-w-0 sf:items-start sf:gap-3">
+									<span
+										class="sf:inline-flex sf:h-7 sf:w-7 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-full sf:bg-slate-900 sf:text-sm sf:font-semibold sf:text-white"
+									>
+										3
+									</span>
+									<div class="sf:min-w-0 sf:space-y-1">
+										<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
+											Enforce ZDR for managed service
+										</p>
+										<p class="sf:max-w-2xl sf:text-sm sf:leading-6 sf:text-slate-600">
+											Requires Sentient Forms Managed Service to use routes that OpenRouter
+											marks for Zero Data Retention and to deny provider data collection. If the
+											selected model is no longer eligible, Sentient Forms uses a comparable
+											ZDR-safe model when available or fails safely.
+										</p>
+									</div>
+								</div>
+								<label class="sf:flex sf:shrink-0 sf:items-center sf:gap-3">
+									<span class="sf:text-sm sf:font-semibold">
+										{managedZdrRequired ? 'On' : 'Off'}
+									</span>
+									<input
+										type="checkbox"
+										class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
+										bind:checked={managedZdrRequired}
+										disabled={saving || siteContextSaving}
+										aria-label="Enforce ZDR for managed service"
+									/>
+								</label>
+							</div>
+						</div>
+
 						{#if siteContextError}
 							<Alert variant="danger" data-testid="privacy-site-context-error">
 								{siteContextError}
 							</Alert>
 						{/if}
 						<SiteContextSetupPanel
-							stepNumber={3}
+							stepNumber={4}
 							statusLabel={siteContextSetupLabel}
 							statusVariant={siteContextSetupVariant}
 							loading={siteContextLoading}
@@ -703,7 +748,7 @@
 							<span
 								class="sf:inline-flex sf:h-7 sf:w-7 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-full sf:bg-slate-900 sf:text-sm sf:font-semibold sf:text-white"
 							>
-								4
+								5
 							</span>
 							<p class="sf:min-w-0 sf:text-sm sf:text-slate-500">
 								Skip Setup applies the recommended Balanced defaults and keeps the plugin ready to

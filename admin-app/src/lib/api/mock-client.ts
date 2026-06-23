@@ -119,6 +119,7 @@ export class MockSentientFormsApiClient {
 		execution_event_retention_days: 90,
 		delete_data_on_uninstall: true,
 		store_full_ai_outputs: false,
+		managed_zdr_required: false,
 		privacy_setup_profile: 'balanced',
 		privacy_setup_completed_at: '2030-01-05T10:00:00Z'
 	};

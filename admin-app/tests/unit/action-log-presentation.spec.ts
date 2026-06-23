@@ -61,6 +61,24 @@ describe('action-log-presentation utilities', () => {
 		expect(presentation.resultVariant).toBe('danger');
 	});
 
+	it('prioritizes managed ZDR fallback summaries over classification badges', () => {
+		const fallbackSummary =
+			'The selected model was not available on a ZDR-safe route, so Sentient Forms used a comparable ZDR-safe managed model instead.';
+
+		const presentation = buildActionLogRowPresentation({
+			status: 'success',
+			structuredOutputValid: true,
+			classification: 'ham',
+			resultSummary: fallbackSummary,
+			errorCode: null,
+			errorMessage: null
+		});
+
+		expect(presentation.resultKind).toBe('text');
+		expect(presentation.resultLabel).toContain('ZDR-safe route');
+		expect(presentation.resultTitle).toBe(fallbackSummary);
+	});
+
 	it('builds row presentation for blocked spam outcomes with output details', () => {
 		const presentation = buildActionLogRowPresentation({
 			status: 'blocked',

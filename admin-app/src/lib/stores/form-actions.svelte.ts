@@ -275,6 +275,7 @@ async function create(
 		console.error('formActionsStore.create failed', error);
 		const message = friendlyMessageFromError(error, 'Failed to create action mapping');
 		notifications.error(message);
+		throw new Error(message);
 	}
 }
 

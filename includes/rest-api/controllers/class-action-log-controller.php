@@ -27,6 +27,8 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
     private const OPTION_KEY = 'sentient_forms_action_log';
     private const MAX_LOG_ENTRIES = 500; // Retention limit
+    private const MANAGED_ZDR_FALLBACK_SUMMARY = 'The selected model was not available on a ZDR-safe route, so Sentient Forms used a comparable ZDR-safe managed model instead.';
+    private const MANAGED_ZDR_FAILURE_SUMMARY = 'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.';
 
     private Sentient_Forms_Admin_Permission $permission_checker;
     private array $local_mapping_cache = [];
@@ -1407,6 +1409,16 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
     private function extract_local_result_summary( array $result_json, array $result_data ): ?string
     {
+        if ( is_array( $result_json['privacy_route_failure'] ?? null ) )
+        {
+            return self::MANAGED_ZDR_FAILURE_SUMMARY;
+        }
+
+        if ( is_array( $result_json['privacy_route_fallback'] ?? null ) )
+        {
+            return self::MANAGED_ZDR_FALLBACK_SUMMARY;
+        }
+
         foreach (
             [
                 $result_data['summary'] ?? null,

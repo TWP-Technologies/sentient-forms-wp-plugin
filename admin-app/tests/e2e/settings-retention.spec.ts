@@ -103,6 +103,7 @@ test.describe('Settings retention controls', () => {
 			execution_event_retention_days: 90,
 			delete_data_on_uninstall: true,
 			store_full_ai_outputs: false,
+			managed_zdr_required: false,
 			privacy_setup_profile: 'balanced',
 			privacy_setup_completed_at: '2026-04-21T00:00:00Z'
 		};
@@ -169,6 +170,15 @@ test.describe('Settings retention controls', () => {
 		});
 
 		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('settings-managed-zdr')).toContainText(
+			'Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data Retention'
+		);
+		await page.getByLabel('Enforce ZDR for managed service').check();
+		await expect.poll(() => capturedPayloads.length).toBeGreaterThan(0);
+		expect(capturedPayloads.at(-1)).toMatchObject({
+			managed_zdr_required: true
+		});
 
 		await expect(page.getByText('Local data retention')).toBeVisible();
 		await page.getByLabel('Execution logs').selectOption('30');

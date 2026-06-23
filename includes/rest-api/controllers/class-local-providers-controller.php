@@ -405,9 +405,10 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
     {
         $limit     = max( 1, min( 1000, (int) $request->get_param( 'limit' ) ) );
         $free_only = rest_sanitize_boolean( $request->get_param( 'free_only' ) );
+        $zdr_only  = rest_sanitize_boolean( $request->get_param( 'zdr_only' ) );
         $rows      = $this->model_cache->list( 'openrouter', true, $limit );
 
-        return $this->prepare_item_for_response( $this->format_model_catalog_response( $rows, $free_only ) );
+        return $this->prepare_item_for_response( $this->format_model_catalog_response( $rows, $free_only, $zdr_only ) );
     }
 
     public function refresh_openrouter_models( WP_REST_Request $request ): WP_REST_Response | WP_Error
@@ -460,6 +461,14 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
             );
         }
 
+        $zdr_ids        = null;
+        $zdr_checked_at = gmdate( 'Y-m-d H:i:s' );
+        $zdr_remote     = $this->openrouter->list_models( [ 'zdr' => true ] );
+        if ( ! is_wp_error( $zdr_remote ) )
+        {
+            $zdr_ids = $this->openrouter_model_id_set( is_array( $zdr_remote['data'] ?? null ) ? $zdr_remote['data'] : [] );
+        }
+
         $normalised = [];
         foreach ( $models as $model )
         {
@@ -468,6 +477,12 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
                 $normalised_model = $this->normalise_openrouter_model( $model );
                 if ( null !== $normalised_model )
                 {
+                    if ( is_array( $zdr_ids ) )
+                    {
+                        $normalised_model['zdr_eligible']   = isset( $zdr_ids[ $normalised_model['id'] ] );
+                        $normalised_model['zdr_source']     = 'openrouter_models_zdr_filter';
+                        $normalised_model['zdr_checked_at'] = $zdr_checked_at;
+                    }
                     $normalised[] = $normalised_model;
                 }
             }
@@ -481,7 +496,7 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
         }
 
         $rows     = $this->model_cache->list( 'openrouter', true, 1000 );
-        $response = $this->format_model_catalog_response( $rows, false );
+        $response = $this->format_model_catalog_response( $rows, false, false );
         $response['consent_recorded'] = true;
         $response['consent_id']       = $consent_id;
         $response['stored']           = (int) $stored;
@@ -784,6 +799,13 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
                 'sanitize_callback' => 'rest_sanitize_boolean',
                 'validate_callback' => 'rest_validate_request_arg',
             ],
+            'zdr_only' => [
+                'type'              => 'boolean',
+                'required'          => false,
+                'default'           => false,
+                'sanitize_callback' => 'rest_sanitize_boolean',
+                'validate_callback' => 'rest_validate_request_arg',
+            ],
             'limit' => [
                 'type'              => 'integer',
                 'required'          => false,
@@ -1032,7 +1054,7 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
         );
     }
 
-    private function format_model_catalog_response( array $rows, bool $free_only ): array
+    private function format_model_catalog_response( array $rows, bool $free_only, bool $zdr_only ): array
     {
         $models      = [];
         $free_count  = 0;
@@ -1056,6 +1078,11 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
                 continue;
             }
 
+            if ( $zdr_only && true !== $formatted['zdr_eligible'] )
+            {
+                continue;
+            }
+
             $models[] = $formatted;
         }
 
@@ -1066,6 +1093,7 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
             'total_returned'  => count( $models ),
             'free_count'      => $free_count,
             'stale_count'     => $stale_count,
+            'zdr_filtered'    => $zdr_only,
             'models'          => $models,
             'refresh_consent' => $this->format_openrouter_model_refresh_consent(),
         ];
@@ -1106,6 +1134,8 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
     private function format_cached_model( array $row ): array
     {
         $metadata = is_array( $row['metadata_json'] ?? null ) ? $row['metadata_json'] : [];
+        $zdr      = $this->format_zdr_eligibility( $metadata );
+        $tags     = true === $zdr['eligible'] ? [ 'zdr' ] : [];
 
         return [
             'id'                   => (string) ( $row['model_id'] ?? $metadata['id'] ?? '' ),
@@ -1119,6 +1149,10 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
             'fetched_at'           => $row['fetched_at'] ?? null,
             'expires_at'           => $row['expires_at'] ?? null,
             'stale'                => isset( $row['expires_at'] ) && (string) $row['expires_at'] < current_time( 'mysql', true ),
+            'zdr_eligible'         => $zdr['eligible'],
+            'zdr_source'           => $zdr['source'],
+            'zdr_checked_at'       => $zdr['checked_at'],
+            'tags'                 => $tags,
         ];
     }
 
@@ -1147,6 +1181,43 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
             'output_modalities'    => array_map( 'sanitize_key', $output_modalities ),
             'supported_parameters' => array_map( 'sanitize_key', $supported_params ),
             'expiration_date'      => isset( $model['expiration_date'] ) ? sanitize_text_field( (string) $model['expiration_date'] ) : null,
+        ];
+    }
+
+    private function openrouter_model_id_set( array $models ): array
+    {
+        $ids = [];
+        foreach ( $models as $model )
+        {
+            if ( is_array( $model ) && isset( $model['id'] ) && is_scalar( $model['id'] ) )
+            {
+                $model_id = sanitize_text_field( (string) $model['id'] );
+                if ( '' !== $model_id )
+                {
+                    $ids[ $model_id ] = true;
+                }
+            }
+        }
+
+        return $ids;
+    }
+
+    private function format_zdr_eligibility( array $metadata ): array
+    {
+        $eligible = array_key_exists( 'zdr_eligible', $metadata )
+            ? rest_sanitize_boolean( $metadata['zdr_eligible'] )
+            : null;
+        $source = isset( $metadata['zdr_source'] ) && is_scalar( $metadata['zdr_source'] )
+            ? sanitize_key( (string) $metadata['zdr_source'] )
+            : null;
+        $checked_at = isset( $metadata['zdr_checked_at'] ) && is_scalar( $metadata['zdr_checked_at'] )
+            ? sanitize_text_field( (string) $metadata['zdr_checked_at'] )
+            : null;
+
+        return [
+            'eligible'   => $eligible,
+            'source'     => '' !== (string) $source ? $source : null,
+            'checked_at' => '' !== (string) $checked_at ? $checked_at : null,
         ];
     }
 

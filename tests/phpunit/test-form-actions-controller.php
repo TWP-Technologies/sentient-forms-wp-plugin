@@ -1538,6 +1538,39 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'active', $custom_action['status'] ?? null );
     }
 
+    public function test_rest_add_form_action_accepts_legacy_gravity_after_submission_hook(): void
+    {
+        GFAPI::$forms[15] = [
+            'id'    => 15,
+            'title' => 'REST Hook Validation Fixture',
+        ];
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/15/actions' );
+        $request->set_body_params(
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'trigger_hooks'         => [ 'gform_after_submission' ],
+                'action_name_label'     => 'Entry Summary',
+                'settings'              => [
+                    'execution_mode'  => 'after_submission',
+                    'trigger_sources' => [
+                        'gform_after_submission' => [
+                            'type' => 'hook_root',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $response = $this->dispatch_form_actions_request( $this->authenticate_rest_request( $request ) );
+
+        $this->assertSame( 201, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'entry_summary_v1', $data['central_action_id'] ?? null );
+        $this->assertSame( [ 'after_submission' ], $data['trigger_hooks'] ?? null );
+    }
+
     public function test_add_form_action_creates_marketer_ready_bundled_after_submission_mappings(): void
     {
         global $wpdb;

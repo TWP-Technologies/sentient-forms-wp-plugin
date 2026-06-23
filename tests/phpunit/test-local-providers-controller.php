@@ -614,7 +614,14 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->mock_openrouter_models_response(
             function ( array $args, string $url ) use ( &$external_call_count ): void {
                 ++$external_call_count;
-                $this->assertStringContainsString( '/models?output_modalities=text', $url );
+                if ( str_contains( $url, 'zdr=true' ) )
+                {
+                    $this->assertStringContainsString( '/models?zdr=true', $url );
+                }
+                else
+                {
+                    $this->assertStringContainsString( '/models?output_modalities=text', $url );
+                }
                 $this->assertArrayNotHasKey( 'Authorization', $args['headers'] );
             }
         );
@@ -631,7 +638,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $response = rest_get_server()->dispatch( $request );
 
         $this->assertSame( 200, $response->get_status() );
-        $this->assertSame( 1, $external_call_count );
+        $this->assertSame( 2, $external_call_count );
 
         $data = $response->get_data();
         $this->assertSame( 'openrouter', $data['provider'] );
@@ -650,6 +657,70 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $latest   = $consents->latest_for_provider( 'openrouter' );
         $this->assertIsArray( $latest );
         $this->assertSame( '2026-04-18', $latest['disclosure_version'] );
+    }
+
+    public function test_refresh_openrouter_models_cross_references_zdr_filtered_catalog(): void
+    {
+        $calls = [];
+        $this->mock_openrouter_models_response(
+            function ( array $args, string $url ) use ( &$calls ): ?array {
+                $calls[] = $url;
+                $this->assertArrayNotHasKey( 'Authorization', $args['headers'] );
+
+                if ( str_contains( $url, 'zdr=true' ) )
+                {
+                    return [
+                        'headers'  => [ 'content-type' => 'application/json' ],
+                        'body'     => file_get_contents( dirname( __DIR__ ) . '/fixtures/openrouter/models-zdr-success.json' ),
+                        'response' => [
+                            'code'    => 200,
+                            'message' => 'OK',
+                        ],
+                        'cookies'  => [],
+                    ];
+                }
+
+                return null;
+            }
+        );
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/models/refresh' ) );
+        $request->set_body_params(
+            [
+                'disclosure_version'              => '2026-04-18',
+                'accepted_external_service_terms' => true,
+                'output_modalities'               => 'text',
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 2, $calls );
+        $this->assertStringContainsString( '/models?output_modalities=text', $calls[0] );
+        $this->assertStringContainsString( '/models?zdr=true', $calls[1] );
+
+        $data = $response->get_data();
+        $models_by_id = [];
+        foreach ( $data['models'] as $model )
+        {
+            $models_by_id[ $model['id'] ] = $model;
+        }
+
+        $this->assertTrue( $models_by_id['openai/gpt-5.5']['zdr_eligible'] );
+        $this->assertSame( 'openrouter_models_zdr_filter', $models_by_id['openai/gpt-5.5']['zdr_source'] );
+        $this->assertIsString( $models_by_id['openai/gpt-5.5']['zdr_checked_at'] );
+        $this->assertContains( 'zdr', $models_by_id['openai/gpt-5.5']['tags'] );
+
+        $this->assertFalse( $models_by_id['openai/gpt-oss-20b:free']['zdr_eligible'] );
+        $this->assertSame( 'openrouter_models_zdr_filter', $models_by_id['openai/gpt-oss-20b:free']['zdr_source'] );
+        $this->assertNotContains( 'zdr', $models_by_id['openai/gpt-oss-20b:free']['tags'] );
+
+        $models = new Sentient_Forms_Model_Cache_Repository( $GLOBALS['wpdb'] );
+        $zdr_model = $models->get( 'openrouter', 'openai/gpt-5.5' );
+        $this->assertIsArray( $zdr_model );
+        $this->assertTrue( $zdr_model['metadata_json']['zdr_eligible'] );
+        $this->assertSame( 'openrouter_models_zdr_filter', $zdr_model['metadata_json']['zdr_source'] );
     }
 
     public function test_setup_sentient_managed_requires_consent_before_local_writes(): void
@@ -810,7 +881,11 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
 
             if ( is_callable( $on_request ) )
             {
-                $on_request( $args, $url );
+                $response = $on_request( $args, $url );
+                if ( is_array( $response ) )
+                {
+                    return $response;
+                }
             }
 
             return [
@@ -838,7 +913,11 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
 
             if ( is_callable( $on_request ) )
             {
-                $on_request( $args, $url );
+                $response = $on_request( $args, $url );
+                if ( is_array( $response ) )
+                {
+                    return $response;
+                }
             }
 
             return [

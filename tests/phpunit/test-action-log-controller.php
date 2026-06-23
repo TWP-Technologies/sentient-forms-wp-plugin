@@ -670,6 +670,81 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertStringNotContainsString( '"currency"', wp_json_encode( $entry ) );
     }
 
+    public function test_get_log_entries_surfaces_managed_zdr_fallback_and_failure_messages(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $events->record(
+            [
+                'execution_request_id' => 'req-managed-zdr-fallback-success',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'entry_id'             => '77',
+                'provider'             => 'sentient_managed',
+                'model'                => 'google/gemini-3-flash-preview',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'privacy_route_fallback' => [
+                        'schema'         => 'sentient_forms_privacy_route_fallback.v1',
+                        'policy_version' => '2026-06-managed-zdr-fallback-v1',
+                        'reason_code'    => 'managed_zdr_primary_route_unavailable',
+                        'original_model' => '~openai/gpt-latest',
+                        'fallback_model' => 'google/gemini-3-flash-preview',
+                        'attempts'       => 2,
+                    ],
+                    'provider_payload'        => [
+                        'raw_error' => 'No ZDR route is available for this model.',
+                    ],
+                ],
+            ]
+        );
+        $events->record(
+            [
+                'execution_request_id' => 'req-managed-zdr-failure',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '7',
+                'entry_id'             => '78',
+                'provider'             => 'sentient_managed',
+                'model'                => 'google/gemini-3-flash-preview',
+                'status'               => 'failed',
+                'error_code'           => 'managed_privacy_route_unavailable',
+                'error_message'        => 'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.',
+                'result_json'          => [
+                    'privacy_route_failure' => [
+                        'schema'         => 'sentient_forms_privacy_route_failure.v1',
+                        'policy_version' => '2026-06-managed-zdr-fallback-v1',
+                        'reason_code'    => 'managed_zdr_route_unavailable',
+                        'selected_model' => 'google/gemini-3-flash-preview',
+                    ],
+                    'provider_payload'       => [
+                        'raw_error' => 'No ZDR route is available for this model.',
+                    ],
+                ],
+            ]
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+        $entries  = [];
+        foreach ( $data['entries'] as $entry )
+        {
+            $entries[ $entry['execution_request_id'] ] = $entry;
+        }
+
+        $this->assertSame(
+            'The selected model was not available on a ZDR-safe route, so Sentient Forms used a comparable ZDR-safe managed model instead.',
+            $entries['req-managed-zdr-fallback-success']['result_summary'] ?? null
+        );
+        $this->assertSame(
+            'No ZDR-safe managed route was available, so Sentient Forms did not run this action without ZDR.',
+            $entries['req-managed-zdr-failure']['result_summary'] ?? null
+        );
+        $this->assertStringNotContainsString( 'No ZDR route', wp_json_encode( $entries['req-managed-zdr-fallback-success'] ) );
+        $this->assertStringNotContainsString( 'No ZDR route', wp_json_encode( $entries['req-managed-zdr-failure'] ) );
+    }
+
     public function test_get_log_entries_filters_unbacked_local_first_legacy_success_rows(): void
     {
         update_option(

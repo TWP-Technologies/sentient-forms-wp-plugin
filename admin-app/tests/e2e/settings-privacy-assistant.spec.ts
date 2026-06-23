@@ -38,6 +38,7 @@ test.describe('Privacy setup assistant', () => {
 			execution_event_retention_days: 90,
 			delete_data_on_uninstall: true,
 			store_full_ai_outputs: false,
+			managed_zdr_required: false,
 			privacy_setup_profile: 'balanced',
 			privacy_setup_completed_at: null as string | null
 		};
@@ -55,6 +56,7 @@ test.describe('Privacy setup assistant', () => {
 						execution_event_retention_days: 180,
 						delete_data_on_uninstall: true,
 						store_full_ai_outputs: true,
+						managed_zdr_required: Boolean(payload.managed_zdr_required),
 						privacy_setup_profile: 'maximum_visibility',
 						privacy_setup_completed_at: '2026-04-21T00:00:00Z'
 					});
@@ -228,13 +230,21 @@ test.describe('Privacy setup assistant', () => {
 		await expect(page.getByTestId('site-context-setup-panel')).toBeVisible();
 		await expect(page.getByTestId('site-context-model-tools')).toBeVisible();
 		await expect(page.getByTestId('site-context-notices')).toBeVisible();
+		await expect(page.getByTestId('privacy-setup-managed-zdr')).toContainText(
+			'Requires Sentient Forms Managed Service to use routes that OpenRouter marks for Zero Data Retention'
+		);
+		await page
+			.getByTestId('privacy-setup-managed-zdr')
+			.getByLabel('Enforce ZDR for managed service')
+			.check();
 		await page.getByTestId('privacy-setup-preset-maximum_visibility').click();
 		await page.getByRole('button', { name: 'Apply Maximum visibility' }).click();
 
 		await expect.poll(() => capturedPayloads.length).toBe(1);
 		expect(capturedSiteContextPayloads).toHaveLength(0);
 		expect(capturedPayloads[0]).toMatchObject({
-			privacy_setup_profile: 'maximum_visibility'
+			privacy_setup_profile: 'maximum_visibility',
+			managed_zdr_required: true
 		});
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeHidden();
 
