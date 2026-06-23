@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.17...v0.4.0) (2026-06-23)
+
+
+### Features
+
+* **managed:** add ZDR enforcement controls ([700d6af](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/700d6af1d48bbdead4f20822c9f98a023bf26c96))
+* **managed:** add ZDR enforcement controls ([ecb3a92](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ecb3a928bc11c8a898e3cc7ff6f37b0dc348d7cf))
+
+
+### Bug Fixes
+
+* **managed:** address ZDR review findings ([1b28150](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/1b281505e3b0b26272e91f987dd1aa02cc7b5911))
+* **managed:** align ZDR popover gating ([0612754](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/06127549ce9702312a94cba35099bf45772db76b))
+* **managed:** close ZDR policy gaps ([5a46cc3](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/5a46cc3148a6ce6fc3e3392b37234d0d94066e29))
+* **managed:** harden ZDR review edge cases ([40cd32e](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/40cd32e521ef6652e42151e34643335504cb51b2))
+* **managed:** harden ZDR review findings ([0b1a50e](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0b1a50eb20a3e3d34183c32143e555fa762f1875))
+* **managed:** harden ZDR Site Context selection ([feefd63](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/feefd63e77665a1794b0ef5595621d9283ee9b4c))
+* **managed:** preserve assistant ZDR intent ([85f623c](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/85f623c705b211203866db0f270d1ed41ae416ea))
+* **managed:** preserve ZDR fallback attribution ([3eba1b1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/3eba1b1c6bbe2d1bb4c16171c9df8df76b8c42a3))
+* **managed:** require ZDR-eligible explicit models ([83b1a1a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/83b1a1ad684877a61336786f05c2f01681c96ea3))
+* **settings:** prevent settings response clobbering drafts ([ae38b9f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ae38b9f7382b15b6aa6dc42fd6dc53486c0c6192))
+
 ## [0.3.17](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.16...v0.3.17) (2026-06-23)
 
 
