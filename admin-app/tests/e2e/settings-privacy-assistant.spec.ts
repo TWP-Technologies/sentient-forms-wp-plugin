@@ -129,7 +129,7 @@ test.describe('Privacy setup assistant', () => {
 			});
 		});
 
-		await page.route('**/wp-json/sentient-forms/v1/models/resolve', async (route) => {
+		await page.route('**/wp-json/sentient-forms/v1/models/resolve**', async (route) => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
@@ -230,7 +230,7 @@ test.describe('Privacy setup assistant', () => {
 			});
 		});
 
-		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
 		await expect(page.getByText('Updated before')).toHaveCount(0);
@@ -358,7 +358,7 @@ test.describe('Privacy setup assistant', () => {
 			});
 		});
 
-		await page.route('**/wp-json/sentient-forms/v1/models/resolve', async (route) => {
+		await page.route('**/wp-json/sentient-forms/v1/models/resolve**', async (route) => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
@@ -428,7 +428,7 @@ test.describe('Privacy setup assistant', () => {
 			});
 		});
 
-		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
 		const zdrCheckbox = page
@@ -743,7 +743,7 @@ test.describe('Privacy setup assistant', () => {
 			});
 		});
 
-		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
 		await expect(page.getByTestId('site-context-generate-now')).toBeEnabled();
 		await page.getByTestId('site-context-generate-now').click();
@@ -910,7 +910,7 @@ test.describe('Privacy setup assistant', () => {
 			});
 		});
 
-		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
 		await page.getByTestId('site-context-generation-consent').click();
 		await page.getByRole('button', { name: 'Apply Balanced' }).click();
@@ -1016,7 +1016,7 @@ test.describe('Privacy setup assistant', () => {
 			});
 		});
 
-		await page.route('**/wp-json/sentient-forms/v1/models/resolve', async (route) => {
+		await page.route('**/wp-json/sentient-forms/v1/models/resolve**', async (route) => {
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
@@ -1085,7 +1085,7 @@ test.describe('Privacy setup assistant', () => {
 			});
 		});
 
-		await page.goto('/#/settings', { waitUntil: 'networkidle' });
+		await page.goto('/#/settings', { waitUntil: 'domcontentloaded' });
 		await expect(page.getByTestId('privacy-setup-assistant')).toBeVisible();
 		await page.getByRole('button', { name: 'Apply Balanced' }).click();
 
