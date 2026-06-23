@@ -404,6 +404,7 @@ class Tests_Models_Controller extends WP_UnitTestCase
 
         $data = $response->get_data();
         $this->assertSame( 'google/gemini-3-flash-preview', $data['model_id'] );
+        $this->assertSame( 'sentient_managed', $data['provider'] );
         $this->assertSame( 'fallback', $data['resolution_source'] );
         $this->assertNotSame( 'openai/gpt-5.5', $data['model_id'] );
 
@@ -416,7 +417,43 @@ class Tests_Models_Controller extends WP_UnitTestCase
 
         $this->assertCount( 1, $applied );
         $this->assertSame( 'fallback', $applied[0]['level'] );
+        $this->assertSame( 'sentient_managed', $applied[0]['provider'] );
         $this->assertStringContainsString( 'ZDR-safe local default', $applied[0]['reason'] );
+    }
+
+    public function test_estimate_model_keeps_managed_route_for_zdr_fallback_resolution(): void
+    {
+        $this->seed_zdr_model_cache();
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/estimate' ) );
+        $request->set_body_params(
+            [
+                'action_id'        => 'entry_summary',
+                'base_credit_cost' => 7,
+                'global_selection' => [
+                    'primary'   => 'openai/gpt-5.5',
+                    'is_preset' => false,
+                    'provider'  => 'openrouter',
+                ],
+                'mapping_selection' => [
+                    'primary'     => 'sf_missing_zdr',
+                    'is_preset'   => true,
+                    'provider'    => 'sentient_managed',
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'google/gemini-3-flash-preview', $data['resolved_model']['model_id'] );
+        $this->assertSame( 'sentient_managed', $data['resolved_model']['provider'] );
+        $this->assertSame( 'fallback', $data['resolved_model']['resolution_source'] );
+        $this->assertSame( 'sentient_managed', $data['pricing_estimate']['route'] );
+        $this->assertSame( 'sentient_credits', $data['pricing_estimate']['kind'] );
     }
 
     public function test_resolve_model_does_not_fallback_to_non_zdr_default_when_managed_zdr_is_required(): void

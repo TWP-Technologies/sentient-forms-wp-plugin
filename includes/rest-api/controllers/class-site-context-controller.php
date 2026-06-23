@@ -42,6 +42,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
     private const READY_CREDENTIAL_STATUSES   = [ 'valid', 'limited' ];
     private const PRIVACY_ROUTE_POLICY_SCHEMA = 'sentient_forms_privacy_route_policy.v1';
     private const PRIVACY_ROUTE_ASSERTION_SCHEMA = 'sentient_forms_privacy_route_assertion.v1';
+    private const PRIVACY_ROUTE_FALLBACK_SCHEMA = 'sentient_forms_privacy_route_fallback.v1';
     private const OPENROUTER_SITE_CONTEXT_SCHEMA_NAME    = 'sentient_forms_site_context_generation_v1';
     private const OPENROUTER_SITE_CONTEXT_MIN_MAX_TOKENS = 1800;
     private const OPENROUTER_SITE_CONTEXT_WEB_SEARCH_MAX_RESULTS = 5;
@@ -1669,6 +1670,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             'route'  => $provider,
             'manual' => $manual,
         ];
+        $executed_model = $model;
 
         if ( 'sentient_managed' === $provider )
         {
@@ -1686,6 +1688,20 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             if ( null !== $privacy_route_assertion )
             {
                 $metadata['privacy_route_assertion'] = $privacy_route_assertion;
+            }
+            $privacy_route_fallback = $this->normalize_managed_privacy_route_fallback( $response['privacy_route_fallback'] ?? null );
+            if ( null !== $privacy_route_fallback )
+            {
+                $metadata['privacy_route_fallback'] = $privacy_route_fallback;
+                $executed_model                     = $privacy_route_fallback['executed_model'];
+            }
+            elseif ( isset( $response['model'] ) && is_scalar( $response['model'] ) )
+            {
+                $response_model = sanitize_text_field( (string) $response['model'] );
+                if ( '' !== $response_model )
+                {
+                    $executed_model = $response_model;
+                }
             }
         }
         else
@@ -1749,6 +1765,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $context['metadata'] = array_merge(
             $metadata,
             [
+                'model'                => $executed_model,
                 'confidence'           => $generated['confidence'],
                 'confidence_notes'     => $generated['confidence_notes'],
                 'legitimate_inquiries' => $generated['legitimate_inquiries'],
@@ -1866,8 +1883,8 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
      */
     private function managed_privacy_route_required( array $selection ): bool
     {
-        return ! empty( $selection['require_zdr'] )
-            || ! empty( $selection['managed_zdr_required'] )
+        return rest_sanitize_boolean( $selection['require_zdr'] ?? false )
+            || rest_sanitize_boolean( $selection['managed_zdr_required'] ?? false )
             || $this->global_managed_zdr_required();
     }
 
@@ -1879,7 +1896,7 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             return false;
         }
 
-        return ! empty( $settings['managed_zdr_required'] );
+        return rest_sanitize_boolean( $settings['managed_zdr_required'] ?? false );
     }
 
     /**
@@ -1929,6 +1946,59 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             'zdr_enforced'        => true,
             'data_collection'     => 'deny',
             'route_policy_schema' => self::PRIVACY_ROUTE_POLICY_SCHEMA,
+        ];
+    }
+
+    private function normalize_managed_privacy_route_fallback( mixed $fallback ): ?array
+    {
+        if ( ! is_array( $fallback ) )
+        {
+            return null;
+        }
+
+        $schema = isset( $fallback['schema'] ) && is_scalar( $fallback['schema'] )
+            ? sanitize_text_field( (string) $fallback['schema'] )
+            : '';
+        $policy_version = isset( $fallback['policy_version'] ) && is_scalar( $fallback['policy_version'] )
+            ? sanitize_text_field( (string) $fallback['policy_version'] )
+            : '';
+        $reason_code = isset( $fallback['reason_code'] ) && is_scalar( $fallback['reason_code'] )
+            ? sanitize_key( (string) $fallback['reason_code'] )
+            : '';
+        $original_model = isset( $fallback['original_model'] ) && is_scalar( $fallback['original_model'] )
+            ? sanitize_text_field( (string) $fallback['original_model'] )
+            : '';
+        $fallback_model = isset( $fallback['fallback_model'] ) && is_scalar( $fallback['fallback_model'] )
+            ? sanitize_text_field( (string) $fallback['fallback_model'] )
+            : '';
+        $executed_model = isset( $fallback['executed_model'] ) && is_scalar( $fallback['executed_model'] )
+            ? sanitize_text_field( (string) $fallback['executed_model'] )
+            : $fallback_model;
+        $attempts = isset( $fallback['attempts'] ) && is_numeric( $fallback['attempts'] )
+            ? absint( $fallback['attempts'] )
+            : 0;
+
+        if (
+            self::PRIVACY_ROUTE_FALLBACK_SCHEMA !== $schema
+            || '' === $policy_version
+            || '' === $reason_code
+            || '' === $original_model
+            || '' === $fallback_model
+            || '' === $executed_model
+            || $attempts < 1
+        )
+        {
+            return null;
+        }
+
+        return [
+            'schema'         => self::PRIVACY_ROUTE_FALLBACK_SCHEMA,
+            'policy_version' => $policy_version,
+            'reason_code'    => $reason_code,
+            'original_model' => $original_model,
+            'fallback_model' => $fallback_model,
+            'executed_model' => $executed_model,
+            'attempts'       => $attempts,
         ];
     }
 

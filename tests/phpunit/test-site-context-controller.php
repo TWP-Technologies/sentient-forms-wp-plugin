@@ -939,6 +939,50 @@ class SiteContextControllerTest extends WP_UnitTestCase
         );
     }
 
+    public function test_string_false_global_managed_zdr_setting_does_not_require_site_context_privacy_route(): void
+    {
+        update_option(
+            'sentient_forms_plugin_settings',
+            [
+                'managed_zdr_required' => 'false',
+            ]
+        );
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'proxy_api_key'  => 'proxy-site-context-test',
+                'site_id'        => 'site-context-site-id',
+            ]
+        );
+        $this->create_managed_credential();
+        $calls = [];
+        $this->mock_managed_site_context_generation( $calls );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'   => 'sf_research',
+                    'provider'  => 'sentient_managed',
+                    'is_preset' => true,
+                    'tools'     => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [ 'mode' => 'off' ],
+                    ],
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'ai_generated', $data['context']['source'] ?? null );
+        $this->assertCount( 1, $calls );
+
+        $payload = json_decode( (string) ( $calls[0]['args']['body'] ?? '' ), true );
+        $this->assertIsArray( $payload );
+        $this->assertArrayNotHasKey( 'privacy_route_policy', $payload );
+    }
+
     public function test_managed_generation_normalizes_optional_privacy_route_assertion(): void
     {
         Sentient_Forms_Plugin::instance()->set_license_data(
@@ -990,6 +1034,67 @@ class SiteContextControllerTest extends WP_UnitTestCase
             ],
             $data['context']['metadata']['privacy_route_assertion'] ?? null
         );
+    }
+
+    public function test_managed_generation_preserves_optional_privacy_route_fallback_metadata(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'proxy_api_key'  => 'proxy-site-context-test',
+                'site_id'        => 'site-context-site-id',
+            ]
+        );
+        $this->create_managed_credential();
+        $calls = [];
+        $this->mock_managed_site_context_generation(
+            $calls,
+            [
+                'privacy_route_fallback' => [
+                    'schema'               => '<b>sentient_forms_privacy_route_fallback.v1</b>',
+                    'policy_version'       => "2026-06-managed-zdr-fallback-v1\n",
+                    'reason_code'          => 'managed_zdr_primary_route_unavailable',
+                    'original_model'       => "openai/gpt-5.5\n",
+                    'fallback_model'       => 'google/gemini-3-flash-preview',
+                    'executed_model'       => 'google/gemini-3-flash-preview',
+                    'attempts'             => 1,
+                    'execution_request_id' => 'raw-cps-id-should-not-survive',
+                ],
+            ]
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'   => 'sf_research',
+                    'provider'  => 'sentient_managed',
+                    'is_preset' => true,
+                    'tools'     => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [ 'mode' => 'off' ],
+                    ],
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'ai_generated', $data['context']['source'] ?? null );
+        $this->assertSame( 'google/gemini-3-flash-preview', $data['context']['metadata']['model'] ?? null );
+        $this->assertSame(
+            [
+                'schema'         => 'sentient_forms_privacy_route_fallback.v1',
+                'policy_version' => '2026-06-managed-zdr-fallback-v1',
+                'reason_code'    => 'managed_zdr_primary_route_unavailable',
+                'original_model' => 'openai/gpt-5.5',
+                'fallback_model' => 'google/gemini-3-flash-preview',
+                'executed_model' => 'google/gemini-3-flash-preview',
+                'attempts'       => 1,
+            ],
+            $data['context']['metadata']['privacy_route_fallback'] ?? null
+        );
+        $this->assertStringNotContainsString( 'raw-cps-id-should-not-survive', wp_json_encode( $data['context']['metadata'] ?? [] ) );
     }
 
     public function test_managed_generation_fails_when_required_zdr_route_is_not_asserted(): void

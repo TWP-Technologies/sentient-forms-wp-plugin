@@ -238,9 +238,14 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
             $selection_payload
         );
 
-        $model    = $this->get_model_by_id( (string) $resolution['model_id'] );
-        $provider = $this->infer_selected_provider( $selection_payload, (string) ( $resolution['resolution_source'] ?? '' ) );
-        $base     = absint( $request->get_param( 'base_credit_cost' ) );
+        $model             = $this->get_model_by_id( (string) $resolution['model_id'] );
+        $resolved_provider = isset( $resolution['provider'] ) && is_scalar( $resolution['provider'] )
+            ? sanitize_key( (string) $resolution['provider'] )
+            : '';
+        $provider          = in_array( $resolved_provider, [ 'openrouter', self::MANAGED_PROVIDER ], true )
+            ? $resolved_provider
+            : $this->infer_selected_provider( $selection_payload, (string) ( $resolution['resolution_source'] ?? '' ) );
+        $base              = absint( $request->get_param( 'base_credit_cost' ) );
 
         return $this->prepare_item_for_response(
             [
@@ -1266,6 +1271,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                 'selection'       => 'sf_default',
                 'model_id'        => $fallback_model_id,
                 'backup_model_id' => null,
+                'provider'        => $requires_zdr_resolution ? self::MANAGED_PROVIDER : 'openrouter',
                 'requires_zdr'    => $requires_zdr_resolution,
                 'applied'         => true,
                 'reason'          => $requires_zdr_resolution
@@ -1292,11 +1298,17 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                     ? __( 'Sentient Forms managed default', 'sentient-forms' )
                     : (string) $applied['model_id'] ),
             'resolution_source' => (string) $applied['level'],
+            'provider'          => in_array( (string) ( $applied['provider'] ?? '' ), [ 'openrouter', self::MANAGED_PROVIDER ], true )
+                ? (string) $applied['provider']
+                : 'openrouter',
             'override_chain'    => array_map(
                 static function ( array $step ): array {
                     return [
                         'level'     => (string) $step['level'],
                         'selection' => '' !== (string) ( $step['selection'] ?? '' ) ? (string) $step['selection'] : null,
+                        'provider'  => in_array( (string) ( $step['provider'] ?? '' ), [ 'openrouter', self::MANAGED_PROVIDER ], true )
+                            ? (string) $step['provider']
+                            : 'openrouter',
                         'applied'   => ! empty( $step['applied'] ),
                         'reason'    => (string) $step['reason'],
                     ];
@@ -1336,6 +1348,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                     'selection'       => $selection_key,
                     'model_id'        => $model_id,
                     'backup_model_id' => $backup,
+                    'provider'        => self::MANAGED_PROVIDER,
                     'requires_zdr'    => $requires_zdr,
                     'applied'         => false,
                     'reason'          => '' !== $model_id
@@ -1361,6 +1374,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                 'selection'       => null,
                 'model_id'        => '',
                 'backup_model_id' => null,
+                'provider'        => 'openrouter',
                 'requires_zdr'    => false,
                 'applied'         => false,
                 'reason'          => __( 'No model selection configured at this level.', 'sentient-forms' ),
@@ -1377,6 +1391,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
             'selection'       => $selection_key,
             'model_id'        => $model_id,
             'backup_model_id' => $backup,
+            'provider'        => 'openrouter',
             'requires_zdr'    => false,
             'applied'         => false,
             'reason'          => '' !== $model_id ? $reason : __( 'The selected preset is not available in the local model policy.', 'sentient-forms' ),

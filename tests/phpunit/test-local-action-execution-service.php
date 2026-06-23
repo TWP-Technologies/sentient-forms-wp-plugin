@@ -1662,6 +1662,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             'reason_code'    => 'managed_zdr_primary_route_unavailable',
             'original_model' => '~openai/gpt-latest',
             'fallback_model' => 'google/gemini-3-flash-preview',
+            'executed_model' => 'google/gemini-3-flash-preview',
             'attempts'       => 2,
         ];
         $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(
@@ -1752,6 +1753,7 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             'reason_code'    => 'managed_zdr_primary_route_unavailable',
             'original_model' => 'allenai/olmo-3-32b-think',
             'fallback_model' => 'google/gemini-3-flash-preview',
+            'executed_model' => 'google/gemini-3-flash-preview',
             'attempts'       => 1,
         ];
         $managed_proxy = new Sentient_Forms_Test_Managed_Proxy_Client(

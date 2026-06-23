@@ -434,7 +434,13 @@ class Sentient_Forms_Local_Action_Execution_Service
     private function effective_response_model( string $selected_model, array $result ): string
     {
         $fallback = is_array( $result['privacy_route_fallback'] ?? null )
-            ? sanitize_text_field( (string) ( $result['privacy_route_fallback']['fallback_model'] ?? '' ) )
+            ? sanitize_text_field(
+                (string) (
+                    $result['privacy_route_fallback']['executed_model']
+                    ?? $result['privacy_route_fallback']['fallback_model']
+                    ?? ''
+                )
+            )
             : '';
         if ( '' !== $fallback )
         {
@@ -2159,6 +2165,9 @@ class Sentient_Forms_Local_Action_Execution_Service
         $fallback_model = isset( $fallback['fallback_model'] ) && is_scalar( $fallback['fallback_model'] )
             ? sanitize_text_field( (string) $fallback['fallback_model'] )
             : '';
+        $executed_model = isset( $fallback['executed_model'] ) && is_scalar( $fallback['executed_model'] )
+            ? sanitize_text_field( (string) $fallback['executed_model'] )
+            : $fallback_model;
         $attempts = isset( $fallback['attempts'] ) && is_numeric( $fallback['attempts'] )
             ? absint( $fallback['attempts'] )
             : 0;
@@ -2169,6 +2178,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             || '' === $reason_code
             || '' === $original_model
             || '' === $fallback_model
+            || '' === $executed_model
             || $attempts < 1
         )
         {
@@ -2181,6 +2191,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             'reason_code'    => $reason_code,
             'original_model' => $original_model,
             'fallback_model' => $fallback_model,
+            'executed_model' => $executed_model,
             'attempts'       => $attempts,
         ];
     }

@@ -813,7 +813,22 @@ class Sentient_Forms_Local_Action_Model_Selection_Service
             ? sanitize_key( (string) $selection['provider'] )
             : '';
 
-        return 'sentient_managed' === $provider && rest_sanitize_boolean( $selection['require_zdr'] ?? false );
+        return 'sentient_managed' === $provider
+            && (
+                rest_sanitize_boolean( $selection['require_zdr'] ?? false )
+                || $this->global_managed_zdr_required()
+            );
+    }
+
+    private function global_managed_zdr_required(): bool
+    {
+        $settings = get_option( 'sentient_forms_plugin_settings', [] );
+        if ( ! is_array( $settings ) )
+        {
+            return false;
+        }
+
+        return rest_sanitize_boolean( $settings['managed_zdr_required'] ?? false );
     }
 
     /**
