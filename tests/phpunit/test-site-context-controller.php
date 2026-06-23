@@ -939,6 +939,59 @@ class SiteContextControllerTest extends WP_UnitTestCase
         );
     }
 
+    public function test_managed_generation_normalizes_optional_privacy_route_assertion(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'proxy_api_key'  => 'proxy-site-context-test',
+                'site_id'        => 'site-context-site-id',
+            ]
+        );
+        $this->create_managed_credential();
+        $calls = [];
+        $this->mock_managed_site_context_generation(
+            $calls,
+            [
+                'privacy_route_assertion' => [
+                    'schema'              => '<b>sentient_forms_privacy_route_assertion.v1</b>',
+                    'zdr_enforced'        => true,
+                    'data_collection'     => 'deny',
+                    'route_policy_schema' => "sentient_forms_privacy_route_policy.v1\n",
+                    'untrusted_extra'     => '<script>alert(1)</script>',
+                ],
+            ]
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'   => 'sf_research',
+                    'provider'  => 'sentient_managed',
+                    'is_preset' => true,
+                    'tools'     => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [ 'mode' => 'off' ],
+                    ],
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'ai_generated', $data['context']['source'] ?? null );
+        $this->assertSame(
+            [
+                'schema'              => 'sentient_forms_privacy_route_assertion.v1',
+                'zdr_enforced'        => true,
+                'data_collection'     => 'deny',
+                'route_policy_schema' => 'sentient_forms_privacy_route_policy.v1',
+            ],
+            $data['context']['metadata']['privacy_route_assertion'] ?? null
+        );
+    }
+
     public function test_managed_generation_fails_when_required_zdr_route_is_not_asserted(): void
     {
         Sentient_Forms_Plugin::instance()->set_license_data(

@@ -47,6 +47,7 @@
 		type ModelReasoningControlValue,
 		type ModelReasoningEffort
 	} from '$lib/utils/model-selection';
+	import { loadSharedManagedZdrRequirement } from '$lib/utils/managed-zdr-requirement-cache';
 	import { wpFetch } from '$lib/wp';
 
 	interface Props {
@@ -647,8 +648,9 @@
 		}
 
 		try {
-			const settings = await client.getSettings({ showNotifications: false });
-			loadedManagedZdrRequired = Boolean(settings.managed_zdr_required);
+			loadedManagedZdrRequired = await loadSharedManagedZdrRequirement(() =>
+				client.getSettings({ showNotifications: false })
+			);
 			if (!isPickerOpen) syncSelectionFromValue(value, { force: true });
 		} catch (e) {
 			console.warn('Failed to load managed ZDR requirement for model selector', e);

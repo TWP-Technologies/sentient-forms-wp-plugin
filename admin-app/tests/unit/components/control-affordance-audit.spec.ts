@@ -137,4 +137,13 @@ describe('control affordance audit', () => {
 		expect(content).toContain('data-testid="submission-ledger-toggle"');
 		expect(content).toContain('data-testid="submission-ledger-view-submissions"');
 	});
+
+	it('keeps popovers dismissible by outside click and Escape', () => {
+		const content = readFileSync(resolve(srcRoot, 'lib/components/ui/popover/root.svelte'), 'utf8');
+
+		expect(content).toContain('<svelte:document onclick={handleDocumentClick} onkeydown={handleDocumentKeydown}');
+		expect(content).toContain('!rootElement.contains(event.target)');
+		expect(content).toContain("event.key === 'Escape'");
+		expect(content).toContain('onfocusout={handleFocusOut}');
+	});
 });

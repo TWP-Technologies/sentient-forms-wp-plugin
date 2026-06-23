@@ -1682,9 +1682,10 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             $metadata['metering'] = is_array( $response['metering'] ?? null )
                 ? Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $response['metering'] )
                 : null;
-            if ( is_array( $response['privacy_route_assertion'] ?? null ) )
+            $privacy_route_assertion = $this->normalize_managed_privacy_route_assertion( $response['privacy_route_assertion'] ?? null );
+            if ( null !== $privacy_route_assertion )
             {
-                $metadata['privacy_route_assertion'] = $response['privacy_route_assertion'];
+                $metadata['privacy_route_assertion'] = $privacy_route_assertion;
             }
         }
         else
