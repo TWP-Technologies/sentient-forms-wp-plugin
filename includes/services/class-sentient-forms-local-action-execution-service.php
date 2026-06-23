@@ -304,6 +304,9 @@ class Sentient_Forms_Local_Action_Execution_Service
             $safe_failure_result = 'sentient_managed' === $provider
                 ? $this->managed_privacy_route_failure_result_json( $response )
                 : null;
+            $safe_error_data = 'sentient_managed' === $provider
+                ? $this->managed_privacy_route_failure_error_data( $response )
+                : $response->get_error_data();
             $this->update_credential_status_after_error( (int) $credential['id'], $response, $redacted_message );
             $this->events->record(
                 [
@@ -323,7 +326,7 @@ class Sentient_Forms_Local_Action_Execution_Service
                 ]
             );
 
-            return new WP_Error( $response->get_error_code(), $redacted_message, $response->get_error_data() );
+            return new WP_Error( $response->get_error_code(), $redacted_message, $safe_error_data );
         }
 
         $result = 'sentient_managed' === $provider
@@ -2047,6 +2050,50 @@ class Sentient_Forms_Local_Action_Execution_Service
     }
 
     /**
+     * @return array<string, mixed>|null
+     */
+    private function managed_privacy_route_failure_error_data( WP_Error $error ): ?array
+    {
+        $data = $error->get_error_data();
+        if ( ! is_array( $data ) )
+        {
+            return null;
+        }
+
+        $safe_error_data = [];
+        if ( isset( $data['status'] ) )
+        {
+            $safe_error_data['status'] = absint( $data['status'] );
+        }
+
+        $payload = is_array( $data['payload'] ?? null ) ? $data['payload'] : [];
+        $error_payload = is_array( $payload['error'] ?? null ) ? $payload['error'] : [];
+        $meta = is_array( $error_payload['meta'] ?? null ) ? $error_payload['meta'] : [];
+        $failure = $this->normalize_managed_privacy_route_failure( $meta['privacy_route_failure'] ?? null );
+        if ( null === $failure )
+        {
+            if ( class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
+            {
+                return Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $data );
+            }
+
+            return $safe_error_data ?: null;
+        }
+
+        $safe_error_data['payload'] = [
+            'success' => false,
+            'error'   => [
+                'code' => sanitize_key( (string) ( $error_payload['code'] ?? $error->get_error_code() ) ),
+                'meta' => [
+                    'privacy_route_failure' => $failure,
+                ],
+            ],
+        ];
+
+        return $safe_error_data;
+    }
+
+    /**
      * @return array{schema: string, policy_version: string, reason_code: string, selected_model: string}|null
      */
     private function normalize_managed_privacy_route_failure( mixed $failure ): ?array
@@ -2144,7 +2191,7 @@ class Sentient_Forms_Local_Action_Execution_Service
      */
     private function managed_privacy_route_required( array $model_selection, array $context ): bool
     {
-        if ( ! empty( $model_selection['require_zdr'] ) )
+        if ( array_key_exists( 'require_zdr', $model_selection ) && rest_sanitize_boolean( $model_selection['require_zdr'] ) )
         {
             return true;
         }
@@ -2155,7 +2202,8 @@ class Sentient_Forms_Local_Action_Execution_Service
         }
 
         $settings = is_array( $context['settings'] ?? null ) ? $context['settings'] : [];
-        return ! empty( $settings['require_zdr'] ) || ! empty( $settings['managed_zdr_required'] );
+        return rest_sanitize_boolean( $settings['require_zdr'] ?? false )
+            || rest_sanitize_boolean( $settings['managed_zdr_required'] ?? false );
     }
 
     private function global_managed_zdr_required(): bool
@@ -2166,7 +2214,7 @@ class Sentient_Forms_Local_Action_Execution_Service
             return false;
         }
 
-        return ! empty( $settings['managed_zdr_required'] );
+        return rest_sanitize_boolean( $settings['managed_zdr_required'] ?? false );
     }
 
     /**

@@ -1248,6 +1248,15 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
         }
 
         $requires_zdr_resolution = $this->override_chain_requires_managed_zdr( $chain );
+        $unresolved_zdr_index    = $this->highest_priority_unresolved_managed_zdr_index( $chain );
+        if (
+            null !== $unresolved_zdr_index
+            && ( null === $applied_index || $unresolved_zdr_index > $applied_index )
+        )
+        {
+            $applied_index = null;
+        }
+
         if ( null === $applied_index )
         {
             $fallback_models   = $requires_zdr_resolution ? $this->zdr_eligible_models( $models ) : $models;
@@ -1318,7 +1327,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                 && self::MANAGED_PROVIDER === sanitize_key( (string) $selection['provider'] )
             )
             {
-                $requires_zdr   = ! empty( $selection['require_zdr'] );
+                $requires_zdr   = array_key_exists( 'require_zdr', $selection ) && rest_sanitize_boolean( $selection['require_zdr'] );
                 $policy_presets = $requires_zdr ? $zdr_presets : $presets;
                 $model_id       = $is_preset && $allow_presets ? $this->resolve_preset_model_id( $primary, $policy_presets ) : $primary;
 
@@ -1350,12 +1359,12 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
             return [
                 'level'           => $level,
                 'selection'       => null,
-            'model_id'        => '',
-            'backup_model_id' => null,
-            'requires_zdr'    => false,
-            'applied'         => false,
-            'reason'          => __( 'No model selection configured at this level.', 'sentient-forms' ),
-        ];
+                'model_id'        => '',
+                'backup_model_id' => null,
+                'requires_zdr'    => false,
+                'applied'         => false,
+                'reason'          => __( 'No model selection configured at this level.', 'sentient-forms' ),
+            ];
         }
 
         $model_id = $is_preset && $allow_presets ? $this->resolve_preset_model_id( $primary, $presets ) : $primary;
@@ -1385,6 +1394,25 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
         }
 
         return false;
+    }
+
+    private function highest_priority_unresolved_managed_zdr_index( array $chain ): ?int
+    {
+        for ( $index = count( $chain ) - 1; $index >= 0; $index-- )
+        {
+            $step = $chain[ $index ];
+            if ( empty( $step['requires_zdr'] ) )
+            {
+                continue;
+            }
+
+            if ( '' === (string) ( $step['model_id'] ?? '' ) )
+            {
+                return $index;
+            }
+        }
+
+        return null;
     }
 
     private function resolve_preset_model_id( string $preset_code, array $presets ): string

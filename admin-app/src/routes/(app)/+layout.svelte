@@ -6,6 +6,7 @@
 		SECURITY_ROADBLOCK_EVENT,
 		type SecurityRoadblockDetail
 	} from '$lib/api/security-roadblock';
+	import { licenseState } from '$lib/stores/license';
 	import sentientFormsLogo from '$lib/assets/sentient-forms-logo-horizontal.svg';
 	import PrivacySetupAssistant from '$lib/components/privacy-setup-assistant.svelte';
 	import WpAdminNoticeTray from '$lib/components/wp-admin-notice-tray.svelte';
@@ -73,6 +74,12 @@
 		Boolean(securityRoadblock?.rayId || securityRoadblock?.providerDetails?.length)
 	);
 	const canRetrySecurityRoadblock = $derived(Boolean(securityRoadblock?.retryEventName));
+	let managedAccountReady = $derived(
+		['active', 'trial', 'valid'].includes(licenseState.status) &&
+			licenseState.proxyKeyPresent &&
+			Boolean(licenseState.licenseId) &&
+			Boolean(licenseState.siteId)
+	);
 
 	function handleNavClick(event: MouseEvent, path: NavigationLinkPath): void {
 		if (event.defaultPrevented || event.button !== 0) return;
@@ -174,7 +181,7 @@
 			const settings = await client.updateSettings(
 				{
 					privacy_setup_profile: profile,
-					...(typeof options.managedZdrRequired === 'boolean'
+					...(managedAccountReady && typeof options.managedZdrRequired === 'boolean'
 						? { managed_zdr_required: options.managedZdrRequired }
 						: {})
 				},
@@ -460,6 +467,7 @@
 	settings={privacySettings}
 	saving={privacyAssistantSaving}
 	applyError={privacyApplyError}
+	managedAccountReady={managedAccountReady}
 	dismissible={Boolean(privacySettings?.privacy_setup_completed_at)}
 	onapply={applyPrivacyPreset}
 	onclose={() => {

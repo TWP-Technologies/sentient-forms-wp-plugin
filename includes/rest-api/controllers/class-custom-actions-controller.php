@@ -1007,6 +1007,11 @@ class Sentient_Forms_Custom_Actions_Controller extends Sentient_Forms_Abstract_B
             }
         }
 
+        if ( array_key_exists( 'require_zdr', $value ) && rest_sanitize_boolean( $value['require_zdr'] ) )
+        {
+            $selection['require_zdr'] = true;
+        }
+
         if ( isset( $value['backup'] ) && is_scalar( $value['backup'] ) )
         {
             $backup = sanitize_text_field( (string) $value['backup'] );

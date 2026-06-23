@@ -206,6 +206,12 @@
 		governanceLoadError = null;
 	}
 
+	function syncManagedZdrSetting(settings: PluginSettingsResponse): void {
+		managedZdrRequired = Boolean(settings.managed_zdr_required);
+		governanceLoaded = true;
+		governanceLoadError = null;
+	}
+
 	function normalizeProviderDisabledMap(
 		value: unknown,
 		knownProviders: FormSourceSummary[]
@@ -259,7 +265,7 @@
 				},
 				{ showNotifications: false }
 			);
-			syncGovernanceSettings(settings);
+			syncManagedZdrSetting(settings);
 			notifications.success(nextRequired ? 'Managed ZDR enforcement enabled' : 'Managed ZDR enforcement disabled');
 		} catch {
 			managedZdrRequired = previous;

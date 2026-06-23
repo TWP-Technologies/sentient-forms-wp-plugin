@@ -146,4 +146,15 @@ describe('control affordance audit', () => {
 		expect(content).toContain("event.key === 'Escape'");
 		expect(content).toContain('onfocusout={handleFocusOut}');
 	});
+
+	it('does not serialize inherited global managed ZDR as an action-level override', () => {
+		const content = readFileSync(resolve(srcRoot, 'lib/components/ui/model-selector.svelte'), 'utf8');
+
+		expect(content).toContain(
+			'explicitRequireZdr || (zdrOnly === true && !effectiveManagedZdrRequired)'
+		);
+		expect(content).toContain(
+			'explicitRequireZdr = selectedProvider === MANAGED_PROVIDER && nextValue.require_zdr === true'
+		);
+	});
 });

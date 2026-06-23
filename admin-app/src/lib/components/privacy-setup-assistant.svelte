@@ -50,6 +50,7 @@
 		applyError?: string | null;
 		settings?: PluginSettingsResponse | null;
 		dismissible?: boolean;
+		managedAccountReady?: boolean;
 		onapply?: (
 			preset: PrivacyPresetId,
 			options: { managedZdrRequired: boolean }
@@ -106,6 +107,7 @@
 		applyError = null,
 		settings = null,
 		dismissible = false,
+		managedAccountReady = false,
 		onapply,
 		onclose
 	}: Props = $props();
@@ -164,6 +166,7 @@
 	);
 	let siteContextShouldSaveBeforeApply = $derived(siteContextTouched && siteContextHasChanges);
 	let footerApplyError = $derived(applyError ?? siteContextApplyError);
+	let managedZdrControlDisabled = $derived(!managedAccountReady || saving || siteContextSaving);
 	let siteContextGenerationJobActive = $derived(
 		siteContextGenerationJobIsActive(siteContextStatus)
 	);
@@ -188,10 +191,15 @@
 	$effect(() => {
 		if (!open) return;
 		selectedPreset = initialPreset(settings);
-		managedZdrRequired = Boolean(settings?.managed_zdr_required);
+		managedZdrRequired = managedAccountReady && Boolean(settings?.managed_zdr_required);
 		siteContextTouched = false;
 		siteContextApplyError = null;
 		void loadSiteContext();
+	});
+
+	$effect(() => {
+		if (managedAccountReady) return;
+		managedZdrRequired = false;
 	});
 
 	$effect(() => {
@@ -223,14 +231,14 @@
 		if (siteContextShouldSaveBeforeApply && !(await saveSiteContext('apply'))) {
 			return;
 		}
-		onapply?.(selectedPreset, { managedZdrRequired });
+		onapply?.(selectedPreset, { managedZdrRequired: managedAccountReady && managedZdrRequired });
 	}
 
 	async function useBalancedDefaults(): Promise<void> {
 		if (siteContextShouldSaveBeforeApply && !(await saveSiteContext('apply'))) {
 			return;
 		}
-		onapply?.('balanced', { managedZdrRequired });
+		onapply?.('balanced', { managedZdrRequired: managedAccountReady && managedZdrRequired });
 	}
 
 	function parseSiteContextResponse(
@@ -703,7 +711,7 @@
 										type="checkbox"
 										class="sf:h-5 sf:w-5 sf:rounded sf:text-primary-600 sf:focus-visible:outline-none sf:focus-visible:ring-2 sf:focus-visible:ring-primary-500 sf:focus-visible:ring-offset-1 sf:focus-visible:ring-offset-white"
 										bind:checked={managedZdrRequired}
-										disabled={saving || siteContextSaving}
+										disabled={managedZdrControlDisabled}
 										aria-label="Enforce ZDR for managed service"
 									/>
 								</label>

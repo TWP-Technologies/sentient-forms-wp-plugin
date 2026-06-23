@@ -135,6 +135,7 @@
 	let contextLimit = $state<ContextLimit>('0');
 	let sortMode = $state<ModelSelectorSortMode>('name');
 	let zdrOnly = $state(false);
+	let explicitRequireZdr = $state(false);
 	let requiredCapabilities = $state<Set<ModelSelectorCapabilityKey>>(
 		new Set(requiredCapabilitiesProp ?? [])
 	);
@@ -464,6 +465,7 @@
 			savedReasoningSettings = null;
 			savedReasoningSelectionKey = '';
 			zdrOnly = effectiveManagedZdrRequired;
+			explicitRequireZdr = false;
 			syncToolSettings(null);
 			return;
 		}
@@ -511,9 +513,10 @@
 		selectedReasoning = normalizeModelReasoningEffort(nextValue.reasoning) ?? 'default';
 		savedReasoningSettings = normalizeReasoningSettings(nextValue.reasoning);
 		savedReasoningSelectionKey = savedReasoningSettings ? reasoningSelectionKey(nextValue) : '';
+		explicitRequireZdr = selectedProvider === MANAGED_PROVIDER && nextValue.require_zdr === true;
 		zdrOnly =
 			effectiveManagedZdrRequired ||
-			(selectedProvider === MANAGED_PROVIDER && nextValue.require_zdr === true);
+			(selectedProvider === MANAGED_PROVIDER && explicitRequireZdr);
 		syncToolSettings(nextValue.tools);
 		if (!readonly && clearUnsupportedToolSelections()) {
 			const sanitizedSelection = currentSelection();
@@ -923,7 +926,9 @@
 	function currentSelection(): ModelSelection {
 		const reasoning = currentReasoningSettings();
 		const tools = currentToolSettings();
-		const requireZdr = selectedProvider === MANAGED_PROVIDER && zdrControl.checked;
+		const requireZdr =
+			selectedProvider === MANAGED_PROVIDER &&
+			(explicitRequireZdr || (zdrOnly === true && !effectiveManagedZdrRequired));
 		return {
 			primary: selectedPrimaryValue(),
 			backup: selectedBackupValue(),
@@ -959,6 +964,7 @@
 	function handleProviderChange() {
 		selectedCredentialId = defaultCredentialIdForProvider(selectedProvider);
 		selectedReasoning = 'default';
+		explicitRequireZdr = false;
 		handleSelectionChange();
 	}
 
@@ -967,6 +973,7 @@
 
 		event.preventDefault();
 		zdrOnly = !zdrControl.checked;
+		explicitRequireZdr = selectedProvider === MANAGED_PROVIDER && zdrOnly && !effectiveManagedZdrRequired;
 		handleSelectionChange();
 	}
 
