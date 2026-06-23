@@ -1023,6 +1023,116 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 'google/gemini-3-flash-preview', $data['context']['metadata']['model'] ?? null );
     }
 
+    public function test_global_managed_zdr_setting_allows_free_preset_remapped_to_zdr_model(): void
+    {
+        update_option(
+            'sentient_forms_plugin_settings',
+            [
+                'managed_zdr_required' => true,
+            ]
+        );
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'proxy_api_key'  => 'proxy-site-context-test',
+                'site_id'        => 'site-context-site-id',
+            ]
+        );
+        $this->create_managed_credential();
+        $this->cache_managed_zdr_site_context_model();
+        $calls = [];
+        $this->mock_managed_site_context_generation(
+            $calls,
+            [
+                'model' => 'google/gemini-3-flash-preview',
+            ]
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'   => 'sf_free',
+                    'provider'  => 'sentient_managed',
+                    'is_preset' => true,
+                    'tools'     => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [ 'mode' => 'off' ],
+                    ],
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'ai_generated', $data['context']['source'] ?? null );
+        $this->assertCount( 1, $calls );
+
+        $payload = json_decode( (string) ( $calls[0]['args']['body'] ?? '' ), true );
+        $this->assertIsArray( $payload );
+        $this->assertSame( 'google/gemini-3-flash-preview', $payload['model'] ?? null );
+        $this->assertSame(
+            [
+                'schema'          => 'sentient_forms_privacy_route_policy.v1',
+                'require_zdr'     => true,
+                'data_collection' => 'deny',
+            ],
+            $payload['privacy_route_policy'] ?? null
+        );
+    }
+
+    public function test_managed_zdr_required_alias_sets_site_context_privacy_route(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'proxy_api_key'  => 'proxy-site-context-test',
+                'site_id'        => 'site-context-site-id',
+            ]
+        );
+        $this->create_managed_credential();
+        $this->cache_managed_zdr_site_context_model();
+        $calls = [];
+        $this->mock_managed_site_context_generation(
+            $calls,
+            [
+                'model' => 'google/gemini-3-flash-preview',
+            ]
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'              => 'sf_research',
+                    'provider'             => 'sentient_managed',
+                    'is_preset'            => true,
+                    'managed_zdr_required' => true,
+                    'tools'                => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [ 'mode' => 'off' ],
+                    ],
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'ai_generated', $data['context']['source'] ?? null );
+        $this->assertCount( 1, $calls );
+
+        $payload = json_decode( (string) ( $calls[0]['args']['body'] ?? '' ), true );
+        $this->assertIsArray( $payload );
+        $this->assertSame(
+            [
+                'schema'          => 'sentient_forms_privacy_route_policy.v1',
+                'require_zdr'     => true,
+                'data_collection' => 'deny',
+            ],
+            $payload['privacy_route_policy'] ?? null
+        );
+    }
+
     public function test_string_false_global_managed_zdr_setting_does_not_require_site_context_privacy_route(): void
     {
         update_option(

@@ -105,7 +105,7 @@ export function modelSelectorZdrControl(
 	if (!input.managedServiceActive) {
 		helperSentences.push(DIRECT_OPENROUTER_ZDR_ENFORCEMENT_HELPER);
 	}
-	const managedRoute = input.provider !== 'openrouter';
+	const managedRoute = input.provider === 'sentient_managed';
 
 	if (!managedRoute) {
 		return {

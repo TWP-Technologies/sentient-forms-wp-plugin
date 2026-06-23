@@ -224,6 +224,7 @@ describe('model selector presentation utilities', () => {
 			modelSelectorZdrControl({
 				managedServiceActive: false,
 				managedZdrRequired: false,
+				provider: 'sentient_managed',
 				zdrOnly: false
 			})
 		).toMatchObject({
@@ -240,6 +241,7 @@ describe('model selector presentation utilities', () => {
 			modelSelectorZdrControl({
 				managedServiceActive: true,
 				managedZdrRequired: false,
+				provider: 'sentient_managed',
 				zdrOnly: false
 			})
 		).toMatchObject({
@@ -253,6 +255,7 @@ describe('model selector presentation utilities', () => {
 			modelSelectorZdrControl({
 				managedServiceActive: true,
 				managedZdrRequired: true,
+				provider: 'sentient_managed',
 				zdrOnly: false
 			})
 		).toMatchObject({
@@ -275,6 +278,21 @@ describe('model selector presentation utilities', () => {
 			disabled: true,
 			popover: 'Plugin ZDR enforcement only applies to Sentient Forms Managed Service.',
 			helperSentences: ['OpenRouter marks this model as available on ZDR routes.']
+		});
+	});
+
+	it('disables the ZDR enforcement toggle for unknown non-managed routes', () => {
+		expect(
+			modelSelectorZdrControl({
+				managedServiceActive: true,
+				managedZdrRequired: false,
+				provider: 'local_provider',
+				zdrOnly: true
+			})
+		).toMatchObject({
+			checked: false,
+			disabled: true,
+			popover: 'Plugin ZDR enforcement only applies to Sentient Forms Managed Service.'
 		});
 	});
 

@@ -1532,12 +1532,24 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $primary = isset( $selection['primary'] ) && is_scalar( $selection['primary'] )
             ? sanitize_key( (string) $selection['primary'] )
             : '';
+        $provider = isset( $selection['provider'] ) && is_scalar( $selection['provider'] )
+            ? sanitize_key( (string) $selection['provider'] )
+            : 'openrouter';
         $model = strtolower( trim( $model ) );
 
-        return 'sf_free' === $primary
-            || 'openrouter/auto' === $model
+        if ( 'openrouter/auto' === $model
             || 'openrouter/free' === $model
-            || str_contains( $model, ':free' );
+            || str_contains( $model, ':free' ) )
+        {
+            return true;
+        }
+
+        if ( 'sf_free' !== $primary )
+        {
+            return false;
+        }
+
+        return ! ( 'sentient_managed' === $provider && $this->managed_privacy_route_required( $selection ) );
     }
 
     private function resolve_ready_openrouter_credential( array $selection ): array | WP_Error
@@ -2826,9 +2838,10 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         {
             $selection['reasoning'] = $reasoning;
         }
-        if ( array_key_exists( 'require_zdr', $value ) )
+        if ( array_key_exists( 'require_zdr', $value ) || array_key_exists( 'managed_zdr_required', $value ) )
         {
-            $selection['require_zdr'] = rest_sanitize_boolean( $value['require_zdr'] );
+            $selection['require_zdr'] = rest_sanitize_boolean( $value['require_zdr'] ?? false )
+                || rest_sanitize_boolean( $value['managed_zdr_required'] ?? false );
         }
 
         return $selection;
