@@ -2212,6 +2212,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 	{
 		Sentient_Forms_Installer::maybe_upgrade();
 		$this->truncate_local_first_runtime_tables();
+		$submission_uuid = '33333333-4444-4555-8666-777777777777';
 
 		$scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
 			77,
@@ -2230,6 +2231,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 					'entry_id'             => 654,
 					'action_id'            => 'local_first_77',
 					'execution_request_id' => null,
+					'submission_uuid'      => $submission_uuid,
 				]
 			);
 
@@ -2246,6 +2248,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 			$this->assertSame( '654', $payload['entry_id'] ?? null );
 			$this->assertNotEmpty( $payload['execution_request_id'] ?? '' );
 			$this->assertSame( $payload['execution_request_id'], $payload['context']['execution_request_id'] ?? null );
+			$this->assertSame( $submission_uuid, $payload['context']['submission_uuid'] ?? null );
 			$this->assertArrayNotHasKey( 'form', $payload );
 			$this->assertArrayNotHasKey( 'entry', $payload );
 
@@ -2260,6 +2263,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertIsArray( $event );
 		$this->assertSame( 'queued', $event['status'] ?? null );
 		$this->assertSame( 77, (int) ( $event['mapping_id'] ?? 0 ) );
+		$this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
 	}
 
     public function test_bulk_local_mapping_scheduling_preserves_identifier_only_payloads_under_backlog(): void
@@ -2339,6 +2343,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
 		$vault          = new Sentient_Forms_Provider_Credential_Vault();
 		$encrypted      = $vault->encrypt( 'sk-or-local-async-test-secret' );
+		$submission_uuid = '22222222-3333-4444-8555-666666666666';
 
 		$this->assertIsString( $encrypted );
 
@@ -2462,6 +2467,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 				'entry_id'             => 654,
 				'action_id'            => 'local_first_' . $mapping_id,
 				'execution_request_id' => 'local-async-request-success',
+				'submission_uuid'      => $submission_uuid,
 			]
 		);
 		$this->assertTrue( $scheduled );
@@ -2476,6 +2482,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		$this->assertIsArray( $event );
 		$this->assertSame( 'succeeded', $event['status'] ?? null );
 		$this->assertSame( $mapping_id, (int) ( $event['mapping_id'] ?? 0 ) );
+		$this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
 		$this->assertSame( 'Async local execution completed.', $event['result_json']['structured']['summary'] ?? null );
 
 		$request = $this->plugin->get_async_request_store()->get( 'local-async-request-success' );

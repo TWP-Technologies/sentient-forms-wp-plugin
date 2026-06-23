@@ -22,6 +22,8 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
             'sentient_action_templates',
             'sentient_custom_actions',
             'sentient_form_mappings',
+            'sentient_submission_ledger_settings',
+            'sentient_submission_ledger',
             'sentient_execution_events',
             'sentient_migration_runs',
             'sentient_model_cache',
@@ -60,6 +62,46 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
 
         $this->assertCount( 4, $index );
         $this->assertSame( [ 'form_source', 'form_id', 'created_at', 'id' ], array_column( $index, 'Column_name' ) );
+    }
+
+    public function test_submission_ledger_tables_and_execution_submission_uuid_index_exist(): void
+    {
+        $settings_table = $this->wpdb->prefix . 'sentient_submission_ledger_settings';
+        $ledger_table   = $this->wpdb->prefix . 'sentient_submission_ledger';
+        $events_table   = $this->wpdb->prefix . 'sentient_execution_events';
+
+        $this->assertSame(
+            $settings_table,
+            $this->wpdb->get_var( $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $settings_table ) )
+        );
+        $this->assertSame(
+            $ledger_table,
+            $this->wpdb->get_var( $this->wpdb->prepare( 'SHOW TABLES LIKE %s', $ledger_table ) )
+        );
+
+        $event_columns = $this->wpdb->get_results( 'DESCRIBE ' . esc_sql( $events_table ), ARRAY_A );
+        $this->assertContains( 'submission_uuid', array_column( $event_columns, 'Field' ) );
+
+        $event_index = $this->wpdb->get_results(
+            'SHOW INDEX FROM ' . esc_sql( $events_table ) . " WHERE Key_name = 'form_submission_idx'",
+            ARRAY_A
+        );
+        $this->assertCount( 3, $event_index );
+        $this->assertSame( [ 'form_source', 'form_id', 'submission_uuid' ], array_column( $event_index, 'Column_name' ) );
+
+        $settings_index = $this->wpdb->get_results(
+            'SHOW INDEX FROM ' . esc_sql( $settings_table ) . " WHERE Key_name = 'form_unique'",
+            ARRAY_A
+        );
+        $this->assertCount( 2, $settings_index );
+        $this->assertSame( [ 'form_source', 'form_id' ], array_column( $settings_index, 'Column_name' ) );
+
+        $ledger_index = $this->wpdb->get_results(
+            'SHOW INDEX FROM ' . esc_sql( $ledger_table ) . " WHERE Key_name = 'submission_unique'",
+            ARRAY_A
+        );
+        $this->assertCount( 1, $ledger_index );
+        $this->assertSame( [ 'submission_uuid' ], array_column( $ledger_index, 'Column_name' ) );
     }
 
     public function test_provider_credentials_repository_records_local_openrouter_credentials(): void
@@ -256,6 +298,139 @@ class Tests_Local_First_Schema_Repositories extends WP_UnitTestCase
         $this->assertSame( $user_id, (int) $latest['accepted_by_user_id'] );
         $this->assertSame( 'https://openrouter.ai/terms', $latest['metadata_json']['terms_url'] );
         $this->assertMatchesRegularExpression( '/^[a-f0-9]{64}$/', $latest['site_url_hash'] );
+    }
+
+    public function test_submission_ledger_settings_repository_defaults_disabled_and_tracks_opt_in_actor(): void
+    {
+        $repository = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );
+        $user_id    = self::factory()->user->create( [ 'role' => 'administrator' ] );
+
+        $default = $repository->get_or_default( 'gravity_forms', '301' );
+        $this->assertFalse( $default['enabled'] );
+        $this->assertNull( $default['enabled_at'] );
+        $this->assertNull( $default['enabled_by_user_id'] );
+
+        $enabled = $repository->set_enabled( 'gravity_forms', '301', true, $user_id );
+        $this->assertIsArray( $enabled );
+        $this->assertTrue( $enabled['enabled'] );
+        $this->assertSame( $user_id, (int) $enabled['enabled_by_user_id'] );
+        $this->assertNotEmpty( $enabled['enabled_at'] );
+        $this->assertNull( $enabled['disabled_at'] );
+
+        $disabled = $repository->set_enabled( 'gravity_forms', '301', false, $user_id );
+        $this->assertIsArray( $disabled );
+        $this->assertFalse( $disabled['enabled'] );
+        $this->assertSame( $user_id, (int) $disabled['disabled_by_user_id'] );
+        $this->assertNotEmpty( $disabled['disabled_at'] );
+        $this->assertSame( $enabled['id'], $disabled['id'] );
+    }
+
+    public function test_submission_ledger_repository_round_trips_logical_snapshot_by_submission_uuid(): void
+    {
+        $repository      = new Sentient_Forms_Submission_Ledger_Repository( $this->wpdb );
+        $submission_uuid = wp_generate_uuid4();
+
+        $id = $repository->create(
+            [
+                'submission_uuid'        => $submission_uuid,
+                'form_source'            => 'gravity_forms',
+                'form_id'                => '302',
+                'native_entry_id'        => '88',
+                'native_entry_url'       => 'https://example.test/wp-admin/admin.php?page=gf_entries&view=entry&id=302&lid=88',
+                'source_submitted_at'    => '2026-06-18 18:45:00',
+                'logical_fields_json'    => [
+                    'email'   => 'person@example.test',
+                    'message' => 'Need help with pricing.',
+                ],
+                'provider_metadata_json' => [
+                    'entry_type' => 'gravity_forms_entry',
+                ],
+                'file_refs_json'         => [
+                    [
+                        'field_id' => '9',
+                        'filename' => 'proposal.pdf',
+                    ],
+                ],
+                'redaction_summary_json' => [
+                    'redacted_fields' => [ 'captcha' ],
+                ],
+                'expires_at'             => '2026-09-18 18:45:00',
+            ]
+        );
+
+        $this->assertIsInt( $id );
+
+        $stored = $repository->get_by_submission_uuid( $submission_uuid );
+        $this->assertSame( 'gravity_forms', $stored['form_source'] ?? null );
+        $this->assertSame( '302', $stored['form_id'] ?? null );
+        $this->assertSame( '88', $stored['native_entry_id'] ?? null );
+        $this->assertSame( 'person@example.test', $stored['logical_fields_json']['email'] ?? null );
+        $this->assertSame( 'gravity_forms_entry', $stored['provider_metadata_json']['entry_type'] ?? null );
+        $this->assertSame( 'proposal.pdf', $stored['file_refs_json'][0]['filename'] ?? null );
+        $this->assertSame( [ 'captcha' ], $stored['redaction_summary_json']['redacted_fields'] ?? null );
+
+        $list = $repository->list_for_form( 'gravity_forms', '302' );
+        $this->assertCount( 1, $list );
+        $this->assertSame( $submission_uuid, $list[0]['submission_uuid'] ?? null );
+    }
+
+    public function test_submission_ledger_repository_rejects_empty_form_scope(): void
+    {
+        $repository = new Sentient_Forms_Submission_Ledger_Repository( $this->wpdb );
+
+        $missing_source = $repository->create(
+            [
+                'submission_uuid'     => wp_generate_uuid4(),
+                'form_source'         => '',
+                'form_id'             => '302',
+                'logical_fields_json' => [ 'email' => 'person@example.test' ],
+            ]
+        );
+        $missing_form_id = $repository->create(
+            [
+                'submission_uuid'     => wp_generate_uuid4(),
+                'form_source'         => 'gravity_forms',
+                'form_id'             => '',
+                'logical_fields_json' => [ 'email' => 'person@example.test' ],
+            ]
+        );
+
+        $this->assertWPError( $missing_source );
+        $this->assertSame( 'sentient_forms_invalid_submission_ledger_scope', $missing_source->get_error_code() );
+        $this->assertWPError( $missing_form_id );
+        $this->assertSame( 'sentient_forms_invalid_submission_ledger_scope', $missing_form_id->get_error_code() );
+        $this->assertSame( 0, $repository->count_all() );
+    }
+
+    public function test_execution_events_repository_records_submission_uuid_without_requiring_it_for_legacy_rows(): void
+    {
+        $events          = new Sentient_Forms_Execution_Events_Repository( $this->wpdb );
+        $submission_uuid = wp_generate_uuid4();
+
+        $linked_id = $events->record(
+            [
+                'execution_request_id' => 'req-ledger-linked',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '303',
+                'submission_uuid'      => $submission_uuid,
+                'provider'             => 'openrouter',
+                'status'               => 'succeeded',
+            ]
+        );
+        $legacy_id = $events->record(
+            [
+                'execution_request_id' => 'req-ledger-legacy',
+                'form_source'          => 'gravity_forms',
+                'form_id'              => '303',
+                'provider'             => 'openrouter',
+                'status'               => 'succeeded',
+            ]
+        );
+
+        $this->assertIsInt( $linked_id );
+        $this->assertIsInt( $legacy_id );
+        $this->assertSame( $submission_uuid, $events->get_by_request_id( 'req-ledger-linked' )['submission_uuid'] ?? null );
+        $this->assertNull( $events->get_by_request_id( 'req-ledger-legacy' )['submission_uuid'] ?? null );
     }
 
     public function test_template_custom_action_mapping_and_execution_event_repositories_round_trip(): void

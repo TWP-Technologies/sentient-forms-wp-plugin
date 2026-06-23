@@ -120,4 +120,20 @@ describe('control affordance audit', () => {
 			expect(actualCount, `Unexpected raw <button> count in ${filePath}`).toBe(expectedCount);
 		}
 	});
+
+	it('keeps the submission ledger opt-in as a compact form-context affordance', () => {
+		const content = readFileSync(resolve(srcRoot, mappingRoutePath), 'utf8');
+		const formContextIndex = content.indexOf('data-testid="form-context-band"');
+		const ledgerIndex = content.indexOf('data-testid="submission-ledger-affordance"');
+		const actionsCardIndex = content.indexOf('data-testid="action-definitions-card"', formContextIndex);
+
+		expect(formContextIndex).toBeGreaterThan(-1);
+		expect(ledgerIndex).toBeGreaterThan(formContextIndex);
+		expect(ledgerIndex).toBeLessThan(actionsCardIndex);
+		expect(content).toContain('formActionsStore.updateSubmissionLedgerSettings');
+		expect(content).toContain('form_source_descriptor');
+		expect(content).toContain('submissionLedgerRequired');
+		expect(content).toContain('data-testid="submission-ledger-toggle"');
+		expect(content).toContain('data-testid="submission-ledger-view-submissions"');
+	});
 });

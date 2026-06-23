@@ -46,6 +46,10 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
     private ?Sentient_Forms_Execution_Events_Repository $local_execution_events = null;
 
+    private ?Sentient_Forms_Submission_Ledger_Settings_Repository $submission_ledger_settings = null;
+
+    private ?Sentient_Forms_Submission_Ledger_Repository $submission_ledger = null;
+
     const FORM_ACTIONS_OPTION_BASE = 'sentient_forms_actions_';
 
     private const ACTION_LOG_OPTION_KEY = 'sentient_forms_action_log';
@@ -53,10 +57,10 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
     /** Allowed values for action_type_indicator. */
     private const ACTION_TYPE_INDICATORS = [ 'master', 'custom', 'local_first' ];
 
-    /** Allowed Gravity Forms hooks that can trigger Sentient Forms actions. */
+    /** Allowed canonical lifecycle IDs that can trigger Sentient Forms actions. */
     private const ALLOWED_TRIGGER_HOOKS = [
-        'gform_validation',
-        'gform_after_submission',
+        'validation',
+        'after_submission',
         'real_time',
     ];
 
@@ -109,6 +113,9 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
     /** Maximum string length per trace entry value. */
     private const MAX_TRACE_VALUE_LENGTH = 4096;
+
+    /** Provider-native form identifiers accepted by submission ledger routes. */
+    private const SUBMISSION_LEDGER_FORM_ID_PATTERN = '[A-Za-z0-9._:-]+';
 
     public function __construct()
     {
@@ -163,6 +170,16 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         if ( class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
         {
             $this->local_execution_events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        }
+
+        if ( class_exists( 'Sentient_Forms_Submission_Ledger_Settings_Repository' ) )
+        {
+            $this->submission_ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        }
+
+        if ( class_exists( 'Sentient_Forms_Submission_Ledger_Repository' ) )
+        {
+            $this->submission_ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
         }
     }
 
@@ -322,8 +339,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             return null;
         }
 
-        $hook = sanitize_key( (string) ( $row['hook'] ?? '' ) );
-        if ( ! in_array( $hook, self::ALLOWED_TRIGGER_HOOKS, true ) )
+        $hook = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $row['hook'] ?? '' );
+        if ( null === $hook )
         {
             return null;
         }
@@ -743,6 +760,89 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             ],
         );
 
+        register_rest_route(
+            $this->namespace,
+            '/(?P<form_source_slug>[a-z0-9_]+)/forms/(?P<form_id>' . self::SUBMISSION_LEDGER_FORM_ID_PATTERN . ')/ledger-settings',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_submission_ledger_settings' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_submission_ledger_form' ],
+                    'args'                => $this->get_submission_ledger_args(),
+                ],
+                [
+                    'methods'             => WP_REST_Server::EDITABLE,
+                    'callback'            => [ $this, 'update_submission_ledger_settings' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_submission_ledger_form' ],
+                    'args'                => array_merge(
+                        $this->get_submission_ledger_args(),
+                        [
+                            'enabled' => [
+                                'description'       => __( 'Whether Sentient Forms should store logical submitted field snapshots for this form.', 'sentient-forms' ),
+                                'type'              => 'boolean',
+                                'required'          => true,
+                                'sanitize_callback' => 'rest_sanitize_boolean',
+                            ],
+                        ],
+                    ),
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/(?P<form_source_slug>[a-z0-9_]+)/forms/(?P<form_id>' . self::SUBMISSION_LEDGER_FORM_ID_PATTERN . ')/submissions',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_submission_ledger_records' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_submission_ledger_form' ],
+                    'args'                => array_merge(
+                        $this->get_submission_ledger_args(),
+                        [
+                            'per_page' => [
+                                'description'       => __( 'Maximum number of submission ledger records to return.', 'sentient-forms' ),
+                                'type'              => 'integer',
+                                'required'          => false,
+                                'default'           => 50,
+                                'sanitize_callback' => 'absint',
+                            ],
+                            'offset'   => [
+                                'description'       => __( 'Number of submission ledger records to skip.', 'sentient-forms' ),
+                                'type'              => 'integer',
+                                'required'          => false,
+                                'default'           => 0,
+                                'sanitize_callback' => 'absint',
+                            ],
+                        ],
+                    ),
+                ],
+            ],
+        );
+
+        register_rest_route(
+            $this->namespace,
+            '/(?P<form_source_slug>[a-z0-9_]+)/forms/(?P<form_id>' . self::SUBMISSION_LEDGER_FORM_ID_PATTERN . ')/submissions/(?P<submission_uuid>[a-fA-F0-9-]{36})',
+            [
+                [
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => [ $this, 'get_submission_ledger_record' ],
+                    'permission_callback' => [ $this, 'permissions_check_for_submission_ledger_form' ],
+                    'args'                => array_merge(
+                        $this->get_submission_ledger_args(),
+                        [
+                            'submission_uuid' => [
+                                'description'       => __( 'Submission ledger UUID.', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => true,
+                                'sanitize_callback' => 'sanitize_text_field',
+                            ],
+                        ],
+                    ),
+                ],
+            ],
+        );
+
         // CB-FORMS-001: Per-form master disable toggle
         // IMPORTANT: Must be registered BEFORE /{local_mapping_id} to avoid route conflict
         register_rest_route(
@@ -946,6 +1046,23 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         );
     }
 
+    /** Submission ledger routes accept provider-native opaque form identifiers. */
+    protected function get_submission_ledger_args(): array
+    {
+        return array_merge(
+            $this->get_source_args(),
+            [
+                'form_id' => [
+                    'validate_callback' => [ $this, 'validate_submission_ledger_form_id_param' ],
+                    'sanitize_callback' => 'sanitize_text_field',
+                    'required'          => true,
+                    'type'              => 'string',
+                    'description'       => __( 'The provider-native form identifier.', 'sentient-forms' ),
+                ],
+            ],
+        );
+    }
+
     /** Source-only args for source-level optimized overview endpoints. */
     protected function get_source_args(): array
     {
@@ -1040,6 +1157,74 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         return true;
     }
 
+    /** Permission check for provider-neutral submission ledger routes. */
+    public function permissions_check_for_submission_ledger_form( WP_REST_Request $request ): WP_Error | bool
+    {
+        $permission = $this->permission_callback_with_nonce( $request );
+        if ( true !== $permission )
+        {
+            return $permission;
+        }
+
+        $source = Sentient_Forms_Form_Sources::rest_sanitize_form_source_slug(
+            $request->get_param( 'form_source_slug' ),
+            $request,
+            'form_source_slug'
+        );
+        if ( ! Sentient_Forms_Form_Sources::is_supported_source( $source ) )
+        {
+            return $this->prepare_error_response( 'rest_invalid_form_source', __( 'Invalid form source provided.', 'sentient-forms' ), 400 );
+        }
+
+        $form_id    = sanitize_text_field( (string) $request->get_param( 'form_id' ) );
+        $validation = $this->validate_submission_ledger_form_id_param( $form_id, $request, 'form_id' );
+        if ( is_wp_error( $validation ) )
+        {
+            return $validation;
+        }
+
+        if ( Sentient_Forms_Form_Sources::GRAVITY_FORMS === $source )
+        {
+            if ( ! ctype_digit( $form_id ) || absint( $form_id ) <= 0 )
+            {
+                return $this->prepare_error_response( 'rest_invalid_form_id', __( 'Invalid form ID provided.', 'sentient-forms' ), 400 );
+            }
+        }
+
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        $adapter  = $registry ? $registry->get_adapter_by_id( $source ) : null;
+        if ( $adapter && method_exists( $adapter, 'form_exists' ) )
+        {
+            $form_exists = $adapter->form_exists( $form_id );
+            if ( is_wp_error( $form_exists ) )
+            {
+                return $form_exists;
+            }
+
+            if ( ! $form_exists )
+            {
+                return $this->prepare_error_response(
+                    'rest_form_not_found',
+                    __( 'Form not found for the given source and ID.', 'sentient-forms' ),
+                    404,
+                );
+            }
+
+            return true;
+        }
+
+        if ( $adapter && ctype_digit( $form_id ) && method_exists( $adapter, 'get_form_object' ) && null === $adapter->get_form_object( absint( $form_id ) ) )
+        {
+            return $this->prepare_error_response(
+                'rest_form_not_found',
+                __( 'Form not found for the given source and ID.', 'sentient-forms' ),
+                404,
+            );
+        }
+
+        return true;
+    }
+
     /** Permission check for form source-only optimized endpoints. */
     public function permissions_check_for_form_source( WP_REST_Request $request ): WP_Error | bool
     {
@@ -1077,6 +1262,23 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
     private function can_validate_form_action_objects( WP_REST_Request $request ): bool
     {
         return true === $this->permission_callback_with_nonce( $request );
+    }
+
+    /** Validate provider-native form IDs used by submission ledger routes. */
+    public function validate_submission_ledger_form_id_param( mixed $value, WP_REST_Request $request, string $param ): true | WP_Error
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return new WP_Error( 'rest_invalid_param', __( 'Form ID must be a string identifier.', 'sentient-forms' ), [ 'status' => 400, 'param' => $param ] );
+        }
+
+        $form_id = sanitize_text_field( trim( (string) $value ) );
+        if ( '' === $form_id || strlen( $form_id ) > 100 || ! preg_match( '/^' . self::SUBMISSION_LEDGER_FORM_ID_PATTERN . '$/', $form_id ) )
+        {
+            return new WP_Error( 'rest_invalid_param', __( 'Form ID must be a valid provider-native identifier.', 'sentient-forms' ), [ 'status' => 400, 'param' => $param ] );
+        }
+
+        return true;
     }
 
     /** Validate form_id param. */
@@ -1323,6 +1525,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 'form_source'      => $form_source_slug,
                 'form_id'          => $form_id,
                 'form'             => $this->get_bootstrap_form_summary( $form_source_slug, $form_id ),
+                'form_source_descriptor' => $this->get_form_source_descriptor( $form_source_slug ),
+                'ledger_settings'  => $this->get_bootstrap_submission_ledger_settings( $form_source_slug, $form_id ),
                 'actions'          => $actions,
                 'execution_status' => $this->build_form_execution_status( $form_source_slug, $form_id ),
                 'disabled_state'   => $this->build_form_disabled_state( $form_source_slug, $form_id ),
@@ -1337,6 +1541,242 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 'generated_at'     => gmdate( 'c' ),
             ]
         );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function get_bootstrap_submission_ledger_settings( string $form_source_slug, int $form_id ): array
+    {
+        if ( ! $this->submission_ledger_settings )
+        {
+            return [
+                'form_source'     => $form_source_slug,
+                'form_id'         => (string) $form_id,
+                'enabled'         => false,
+                'settings_source' => 'unavailable',
+                'record_count'    => 0,
+            ];
+        }
+
+        return $this->format_submission_ledger_settings(
+            $this->submission_ledger_settings->get_or_default( $form_source_slug, (string) $form_id )
+        );
+    }
+
+    public function get_submission_ledger_settings( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        if ( ! $this->submission_ledger_settings )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_submission_ledger_unavailable',
+                __( 'Submission ledger settings are not available.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        $form_source_slug = Sentient_Forms_Form_Sources::rest_sanitize_form_source_slug(
+            $request->get_param( 'form_source_slug' ),
+            $request,
+            'form_source_slug'
+        );
+        $form_id = sanitize_text_field( (string) $request->get_param( 'form_id' ) );
+
+        return $this->prepare_item_for_response(
+            $this->format_submission_ledger_settings(
+                $this->submission_ledger_settings->get_or_default( $form_source_slug, $form_id )
+            )
+        );
+    }
+
+    public function update_submission_ledger_settings( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        if ( ! $this->submission_ledger_settings )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_submission_ledger_unavailable',
+                __( 'Submission ledger settings are not available.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        $form_source_slug = Sentient_Forms_Form_Sources::rest_sanitize_form_source_slug(
+            $request->get_param( 'form_source_slug' ),
+            $request,
+            'form_source_slug'
+        );
+        $form_id = sanitize_text_field( (string) $request->get_param( 'form_id' ) );
+        $updated = $this->submission_ledger_settings->set_enabled(
+            $form_source_slug,
+            $form_id,
+            rest_sanitize_boolean( $request->get_param( 'enabled' ) ),
+            get_current_user_id()
+        );
+
+        if ( is_wp_error( $updated ) )
+        {
+            return $updated;
+        }
+
+        return $this->prepare_item_for_response( $this->format_submission_ledger_settings( $updated ) );
+    }
+
+    public function get_submission_ledger_records( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        if ( ! $this->submission_ledger )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_submission_ledger_unavailable',
+                __( 'Submission ledger records are not available.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        $form_source_slug = Sentient_Forms_Form_Sources::rest_sanitize_form_source_slug(
+            $request->get_param( 'form_source_slug' ),
+            $request,
+            'form_source_slug'
+        );
+        $form_id     = sanitize_text_field( (string) $request->get_param( 'form_id' ) );
+        $per_page    = max( 1, min( 100, absint( $request->get_param( 'per_page' ) ?: 50 ) ) );
+        $offset      = max( 0, absint( $request->get_param( 'offset' ) ?: 0 ) );
+        $submissions = array_map(
+            [ $this, 'format_submission_ledger_record' ],
+            $this->submission_ledger->list_for_form( $form_source_slug, $form_id, $per_page, $offset )
+        );
+
+        return $this->prepare_item_for_response(
+            [
+                'form_source' => $form_source_slug,
+                'form_id'     => $form_id,
+                'submissions' => $submissions,
+                'count'       => count( $submissions ),
+                'per_page'    => $per_page,
+                'offset'      => $offset,
+            ]
+        );
+    }
+
+    public function get_submission_ledger_record( WP_REST_Request $request ): WP_Error | WP_REST_Response
+    {
+        if ( ! $this->submission_ledger )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_submission_ledger_unavailable',
+                __( 'Submission ledger records are not available.', 'sentient-forms' ),
+                500
+            );
+        }
+
+        $form_source_slug = Sentient_Forms_Form_Sources::rest_sanitize_form_source_slug(
+            $request->get_param( 'form_source_slug' ),
+            $request,
+            'form_source_slug'
+        );
+        $form_id         = sanitize_text_field( (string) $request->get_param( 'form_id' ) );
+        $submission_uuid = sanitize_text_field( (string) $request->get_param( 'submission_uuid' ) );
+        $record          = $this->submission_ledger->get_by_submission_uuid( $submission_uuid );
+
+        if (
+            null === $record
+            || sanitize_key( (string) ( $record['form_source'] ?? '' ) ) !== $form_source_slug
+            || sanitize_text_field( (string) ( $record['form_id'] ?? '' ) ) !== $form_id
+        )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_submission_ledger_record_not_found',
+                __( 'Submission ledger record not found for this form.', 'sentient-forms' ),
+                404
+            );
+        }
+
+        return $this->prepare_item_for_response( $this->format_submission_ledger_record( $record ) );
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     *
+     * @return array<string, mixed>
+     */
+    private function format_submission_ledger_settings( array $settings ): array
+    {
+        $form_source = sanitize_key( (string) ( $settings['form_source'] ?? '' ) );
+        $form_id     = sanitize_text_field( (string) ( $settings['form_id'] ?? '' ) );
+
+        return [
+            'form_source'              => $form_source,
+            'form_id'                  => $form_id,
+            'enabled'                  => ! empty( $settings['enabled'] ),
+            'enabled_at'               => $settings['enabled_at'] ?? null,
+            'enabled_by_user_id'       => $settings['enabled_by_user_id'] ?? null,
+            'disabled_at'              => $settings['disabled_at'] ?? null,
+            'disabled_by_user_id'      => $settings['disabled_by_user_id'] ?? null,
+            'settings_source'          => 'sentient_submission_ledger_settings',
+            'record_count'             => $this->submission_ledger
+                ? $this->submission_ledger->count_for_form( $form_source, $form_id )
+                : 0,
+            'ledger_records_endpoint'  => sprintf(
+                '/%s/%s/forms/%s/submissions',
+                $this->namespace,
+                $form_source,
+                rawurlencode( $form_id )
+            ),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     *
+     * @return array<string, mixed>
+     */
+    private function format_submission_ledger_record( array $row ): array
+    {
+        $submission_uuid = sanitize_text_field( (string) ( $row['submission_uuid'] ?? '' ) );
+        $form_source     = sanitize_key( (string) ( $row['form_source'] ?? '' ) );
+        $form_id         = sanitize_text_field( (string) ( $row['form_id'] ?? '' ) );
+
+        return [
+            'id'                 => absint( $row['id'] ?? 0 ),
+            'submission_uuid'    => $submission_uuid,
+            'form_source'        => $form_source,
+            'form_id'            => $form_id,
+            'native_entry_id'    => isset( $row['native_entry_id'] ) ? sanitize_text_field( (string) $row['native_entry_id'] ) : null,
+            'native_entry_url'   => isset( $row['native_entry_url'] ) ? esc_url_raw( (string) $row['native_entry_url'] ) : null,
+            'source_submitted_at' => $row['source_submitted_at'] ?? null,
+            'captured_at'        => $row['captured_at'] ?? null,
+            'logical_fields'     => is_array( $row['logical_fields_json'] ?? null ) ? $row['logical_fields_json'] : [],
+            'provider_metadata'  => is_array( $row['provider_metadata_json'] ?? null ) ? $row['provider_metadata_json'] : null,
+            'file_refs'          => is_array( $row['file_refs_json'] ?? null ) ? $row['file_refs_json'] : [],
+            'redaction_summary'  => is_array( $row['redaction_summary_json'] ?? null ) ? $row['redaction_summary_json'] : [],
+            'expires_at'         => $row['expires_at'] ?? null,
+            'detail_endpoint'    => sprintf(
+                '/%s/%s/forms/%s/submissions/%s',
+                $this->namespace,
+                $form_source,
+                rawurlencode( $form_id ),
+                rawurlencode( $submission_uuid )
+            ),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function get_form_source_descriptor( string $form_source_slug ): ?array
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        if ( ! method_exists( $plugin, 'get_form_adapter_registry' ) )
+        {
+            return null;
+        }
+
+        $registry = $plugin->get_form_adapter_registry();
+        if ( ! $registry || ! method_exists( $registry, 'get_capability_descriptor' ) )
+        {
+            return null;
+        }
+
+        return $registry->get_capability_descriptor( $form_source_slug );
     }
 
     /**
@@ -1874,12 +2314,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
     {
         $form_source_slug = $request->get_param( 'form_source_slug' );
         $form_id          = (int) $request->get_param( 'form_id' );
-        $hook_scope       = sanitize_text_field( (string) ( $request->get_param( 'hook_scope' ) ?? 'all' ) );
-
-        if ( 'all' !== $hook_scope && ! in_array( $hook_scope, self::ALLOWED_TRIGGER_HOOKS, true ) )
-        {
-            $hook_scope = 'all';
-        }
+        $hook_scope       = $this->sanitize_lifecycle_scope( $request->get_param( 'hook_scope' ) );
 
         $option_key    = $this->get_actions_option_key( $form_source_slug, $form_id );
         $local_actions = get_option( $option_key, [] );
@@ -1983,10 +2418,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
     {
         $form_source_slug = $request->get_param( 'form_source_slug' );
         $form_id          = (int) $request->get_param( 'form_id' );
-        $hook_scope       = sanitize_text_field( (string) ( $request->get_param( 'hook_scope' ) ?? 'all' ) );
-        $hook_scope       = 'all' === $hook_scope || in_array( $hook_scope, self::ALLOWED_TRIGGER_HOOKS, true )
-            ? $hook_scope
-            : 'all';
+        $hook_scope       = $this->sanitize_lifecycle_scope( $request->get_param( 'hook_scope' ) );
         $field_scope      = $this->sanitize_trace_field_scope( (string) ( $request->get_param( 'field_scope' ) ?? 'mapped_and_rule' ) );
         $manual_values    = $this->sanitize_trace_entry_values( $request->get_param( 'entry_values' ) );
         $entry_id         = (int) ( $request->get_param( 'entry_id' ) ?? 0 );
@@ -2230,8 +2662,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 continue;
             }
 
-            $hook_key = sanitize_key( (string) $hook );
-            if ( '' === $hook_key || ! in_array( $hook_key, self::ALLOWED_TRIGGER_HOOKS, true ) )
+            $hook_key = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
+            if ( null === $hook_key )
             {
                 continue;
             }
@@ -3220,7 +3652,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $trigger_hooks = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
         if ( [] === $trigger_hooks )
         {
-            $trigger_hooks = [ 'gform_after_submission' ];
+            $trigger_hooks = [ Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION ];
         }
 
         $storage_validation = $this->validate_realtime_storage_target( $form_source, $form_id, $settings );
@@ -3380,13 +3812,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             return $storage_validation;
         }
 
-        $definition_hooks = array_values(
-            array_filter(
-                array_map(
-                    'sanitize_key',
-                    is_array( $definition['hooks'] ?? null ) ? $definition['hooks'] : []
-                )
-            )
+        $definition_hooks = Sentient_Forms_Form_Source_Lifecycles::normalize_many(
+            is_array( $definition['hooks'] ?? null ) ? $definition['hooks'] : []
         );
         $requested_hooks  = $this->sanitize_trigger_hooks( (array) $request->get_param( 'trigger_hooks' ) );
         $trigger_hooks    = $requested_hooks;
@@ -3935,7 +4362,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             return 'real_time';
         }
 
-        if ( 'gform_validation' === $hook )
+        if ( Sentient_Forms_Form_Source_Lifecycles::VALIDATION === $hook )
         {
             return 'sync';
         }
@@ -4355,7 +4782,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         $source_mapping      = $actions[ $source_id ];
         $source_trigger_hooks = $this->sanitize_trigger_hooks( (array) ( $source_mapping['trigger_hooks'] ?? [] ) );
-        $target_hook         = sanitize_key( (string) $parent['hook'] );
+        $target_hook         = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $parent['hook'] ?? null ) ?? '';
         if ( ! in_array( $target_hook, $source_trigger_hooks, true ) )
         {
             return $this->prepare_error_response(
@@ -4391,7 +4818,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 );
             }
 
-            if ( 'gform_after_submission' === $target_hook )
+            if ( Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === $target_hook )
             {
                 $parent_is_async = $this->is_mapping_async( $actions[ $parent_mapping_id ] );
                 $source_is_async = $this->is_mapping_async( $source_mapping );
@@ -5355,14 +5782,13 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 return new WP_Error( 'rest_invalid_param', __( 'Each trigger hook must be a string.', 'sentient-forms' ), [ 'status' => 400 ] );
             }
 
-            $hook_key = sanitize_key( $hook );
-            if ( ! in_array( $hook_key, self::ALLOWED_TRIGGER_HOOKS, true ) )
+            if ( ! Sentient_Forms_Form_Source_Lifecycles::is_accepted_input( $hook ) )
             {
                 return new WP_Error(
                     'rest_invalid_hook',
                     sprintf(
                         /* translators: %s: invalid hook name */
-                        __( 'Hook %s is not supported. Allowed hooks: gform_validation, gform_after_submission, real_time.', 'sentient-forms' ),
+                        __( 'Hook %s is not supported. Allowed lifecycle IDs: validation, after_submission, real_time.', 'sentient-forms' ),
                         esc_html( $hook )
                     ),
                     [ 'status' => 400 ],
@@ -5383,13 +5809,18 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             return [];
         }
 
-        $normalized = array_map( 'sanitize_key', $hooks );
-        $normalized = array_filter(
-            $normalized,
-            static fn( $hook ) => in_array( $hook, self::ALLOWED_TRIGGER_HOOKS, true )
-        );
+        return Sentient_Forms_Form_Source_Lifecycles::normalize_many( $hooks );
+    }
 
-        return array_values( array_unique( $normalized ) );
+    private function sanitize_lifecycle_scope( mixed $scope ): string
+    {
+        $scope_key = is_scalar( $scope ) ? sanitize_key( (string) $scope ) : 'all';
+        if ( 'all' === $scope_key )
+        {
+            return 'all';
+        }
+
+        return Sentient_Forms_Form_Source_Lifecycles::normalize_id( $scope_key ) ?? 'all';
     }
 
     private function action_allows_realtime_hook( mixed $central_action_id ): bool
@@ -5811,7 +6242,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                     continue;
                 }
 
-                if ( 'gform_after_submission' === $hook )
+                if ( Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === $hook )
                 {
                     $invalid_dependency = null;
                     foreach ( $dependency_ids as $dependency_id )
@@ -6050,7 +6481,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                         continue;
                     }
 
-                    if ( 'gform_after_submission' !== $hook )
+                    if ( Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION !== $hook )
                     {
                         continue;
                     }
@@ -6816,8 +7247,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 continue;
             }
 
-            $hook_key = sanitize_key( (string) $hook );
-            if ( '' === $hook_key || ! in_array( $hook_key, self::ALLOWED_TRIGGER_HOOKS, true ) )
+            $hook_key = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
+            if ( null === $hook_key )
             {
                 continue;
             }
@@ -6890,10 +7321,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             );
         }
 
-        $hook = isset( $parent['hook'] ) && is_scalar( $parent['hook'] )
-            ? sanitize_key( (string) $parent['hook'] )
-            : '';
-        if ( '' === $hook || ! in_array( $hook, self::ALLOWED_TRIGGER_HOOKS, true ) )
+        $hook = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $parent['hook'] ?? null );
+        if ( null === $hook )
         {
             return new WP_Error(
                 'rest_invalid_duplicate_parent_hook',
@@ -7022,8 +7451,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      */
     private function set_mapping_trigger_source_for_hook( array $mapping, string $hook, array $source ): array | WP_Error
     {
-        $hook = sanitize_key( $hook );
-        if ( '' === $hook || ! in_array( $hook, self::ALLOWED_TRIGGER_HOOKS, true ) )
+        $hook = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
+        if ( null === $hook )
         {
             return new WP_Error(
                 'rest_invalid_duplicate_parent_hook',
@@ -7149,8 +7578,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $serialized = [];
         foreach ( $trigger_sources as $hook => $source )
         {
-            $hook_key = sanitize_key( (string) $hook );
-            if ( '' === $hook_key || ! in_array( $hook_key, self::ALLOWED_TRIGGER_HOOKS, true ) )
+            $hook_key = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
+            if ( null === $hook_key )
             {
                 continue;
             }
@@ -7375,7 +7804,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                         );
                     }
 
-                    if ( 'gform_after_submission' !== $hook )
+                    if ( Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION !== $hook )
                     {
                         continue;
                     }
@@ -7498,8 +7927,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
     private function is_mapping_async( array $mapping ): bool
     {
         $trigger_hooks        = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
-        $has_validation_hook  = in_array( 'gform_validation', $trigger_hooks, true );
-        $has_after_hook       = in_array( 'gform_after_submission', $trigger_hooks, true );
+        $has_validation_hook  = in_array( Sentient_Forms_Form_Source_Lifecycles::VALIDATION, $trigger_hooks, true );
+        $has_after_hook       = in_array( Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION, $trigger_hooks, true );
 
         if ( $has_validation_hook && ! $has_after_hook )
         {
@@ -7559,8 +7988,8 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             return true;
         }
 
-        return 'gform_after_submission' === $required_hook
-            && in_array( 'gform_validation', $normalized_dependency_hooks, true );
+        return Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === $required_hook
+            && in_array( Sentient_Forms_Form_Source_Lifecycles::VALIDATION, $normalized_dependency_hooks, true );
     }
 
     /**

@@ -15,8 +15,8 @@ class Sentient_Forms_Request_Tracer
     private const POLICY_VERSION = '2026-02-request-tracer-v1';
 
     private const ALLOWED_TRIGGER_HOOKS = [
-        'gform_validation',
-        'gform_after_submission',
+        Sentient_Forms_Form_Source_Lifecycles::VALIDATION,
+        Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION,
     ];
 
     private Sentient_Forms_Mapping_Dependency_Planner $planner;
@@ -195,7 +195,7 @@ class Sentient_Forms_Request_Tracer
                 continue;
             }
 
-            if ( 'gform_after_submission' === $hook )
+            if ( Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === $hook )
             {
                 $policy_violation_dependency = null;
                 foreach ( $dependency_ids as $dependency_id )
@@ -568,7 +568,7 @@ class Sentient_Forms_Request_Tracer
                         continue;
                     }
 
-                    if ( 'gform_after_submission' !== $hook )
+                    if ( Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION !== $hook )
                     {
                         continue;
                     }
@@ -647,8 +647,8 @@ class Sentient_Forms_Request_Tracer
     private function is_mapping_async( array $mapping ): bool
     {
         $trigger_hooks       = $this->sanitize_trigger_hooks( (array) ( $mapping['trigger_hooks'] ?? [] ) );
-        $has_validation_hook = in_array( 'gform_validation', $trigger_hooks, true );
-        $has_after_hook      = in_array( 'gform_after_submission', $trigger_hooks, true );
+        $has_validation_hook = in_array( Sentient_Forms_Form_Source_Lifecycles::VALIDATION, $trigger_hooks, true );
+        $has_after_hook      = in_array( Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION, $trigger_hooks, true );
 
         if ( $has_validation_hook && ! $has_after_hook )
         {
@@ -700,8 +700,8 @@ class Sentient_Forms_Request_Tracer
             return true;
         }
 
-        return 'gform_after_submission' === $required_hook
-            && in_array( 'gform_validation', $normalized_dependencies, true );
+        return Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === $required_hook
+            && in_array( Sentient_Forms_Form_Source_Lifecycles::VALIDATION, $normalized_dependencies, true );
     }
 
     /**
@@ -719,7 +719,7 @@ class Sentient_Forms_Request_Tracer
                 continue;
             }
 
-            $hook_key = sanitize_key( (string) $hook );
+            $hook_key = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
             if ( '' === $hook_key || ! in_array( $hook_key, self::ALLOWED_TRIGGER_HOOKS, true ) )
             {
                 continue;
@@ -737,8 +737,8 @@ class Sentient_Forms_Request_Tracer
     private function compare_hook_ids( string $left, string $right ): int
     {
         $order = [
-            'gform_validation'       => 10,
-            'gform_after_submission' => 20,
+            Sentient_Forms_Form_Source_Lifecycles::VALIDATION => 10,
+            Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION => 20,
         ];
 
         $left_rank  = $order[ $left ] ?? 1000;

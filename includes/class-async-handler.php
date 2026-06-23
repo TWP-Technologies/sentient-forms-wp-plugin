@@ -1512,6 +1512,7 @@ class Sentient_Forms_Async_Handler
             'form_source'          => $payload['form_source'] ?? $context['form_source'] ?? 'gravity_forms',
             'form_id'              => $payload['form_id'] ?? $context['form_id'] ?? null,
             'entry_id'             => $payload['entry_id'] ?? $context['entry_id'] ?? null,
+            'submission_uuid'      => $this->resolve_submission_uuid( $payload, $context ),
             'provider'             => $result['provider'] ?? $context['provider'] ?? 'openrouter',
             'model'                => $result['model'] ?? $context['model'] ?? null,
             'status'               => $status,
@@ -1536,6 +1537,25 @@ class Sentient_Forms_Async_Handler
         }
 
         $this->get_execution_events_repository()->record( $event );
+    }
+
+    private function resolve_submission_uuid( array $payload, array $context ): ?string
+    {
+        foreach ( [ $payload['submission_uuid'] ?? null, $context['submission_uuid'] ?? null ] as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $submission_uuid = strtolower( sanitize_text_field( (string) $candidate ) );
+            if ( 1 === preg_match( '/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/', $submission_uuid ) )
+            {
+                return $submission_uuid;
+            }
+        }
+
+        return null;
     }
 
     private function get_execution_events_repository(): Sentient_Forms_Execution_Events_Repository

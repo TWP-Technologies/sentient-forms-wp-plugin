@@ -1,5 +1,6 @@
 import type { SentientFormsConfig } from '$lib/api/http';
 import { safeParseFormActionConfigPayload } from '$lib/schemas/action-config';
+import { z } from 'zod';
 import {
 	announceWordPressSessionExpired,
 	isWordPressSessionExpired
@@ -48,6 +49,9 @@ import type {
 	FormExecutionStatus,
 	FormFieldInfo,
 	FormsOverviewResponse,
+	SubmissionLedgerRecord,
+	SubmissionLedgerRecordsResponse,
+	SubmissionLedgerSettingsResponse,
 	RequestTraceRequest,
 	RequestTraceResponse,
 	WorkflowPlanResponse,
@@ -121,6 +125,8 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
 	invalidateCacheTags?: string[] | false;
 }
 
+type FormSourceFormId = string | number;
+
 interface RestEnvelope<T> {
 	success: boolean;
 	data: T;
@@ -137,6 +143,64 @@ interface AdminApiInFlightEntry {
 	showNotifications?: boolean;
 	tags: string[];
 }
+
+const ledgerFormIdSchema = z.union([z.string(), z.number()]).transform((value) => String(value));
+const nullableScalarStringSchema = z
+	.union([z.string(), z.number(), z.null()])
+	.transform((value) => (value === null ? null : String(value)));
+const jsonRecordSchema = z.record(z.string(), z.unknown());
+const nullishJsonRecordSchema = jsonRecordSchema.nullish().transform((value) => value ?? {});
+const nullishJsonRecordArraySchema = z.array(jsonRecordSchema).nullish().transform((value) => value ?? []);
+const submissionLedgerRecordSchema = z.object({
+	id: z.coerce.number().int(),
+	submission_uuid: z.string(),
+	form_source: z.string(),
+	form_id: ledgerFormIdSchema,
+	native_entry_id: nullableScalarStringSchema,
+	native_entry_url: z.string().nullable(),
+	source_submitted_at: z.string().nullable(),
+	captured_at: z.string(),
+	logical_fields: jsonRecordSchema,
+	provider_metadata: nullishJsonRecordSchema,
+	file_refs: nullishJsonRecordArraySchema,
+	redaction_summary: nullishJsonRecordSchema,
+	expires_at: z.string().nullable(),
+	detail_endpoint: z.string()
+});
+const submissionLedgerSettingsResponseSchema = z.object({
+	form_source: z.string(),
+	form_id: ledgerFormIdSchema,
+	enabled: z.boolean(),
+	enabled_at: z.string().nullable(),
+	enabled_by_user_id: z.number().int().nullable(),
+	disabled_at: z.string().nullable(),
+	disabled_by_user_id: z.number().int().nullable(),
+	settings_source: z.string(),
+	ledger_records_endpoint: z.string(),
+	record_count: z.number().int().optional()
+});
+const submissionLedgerRecordsResponseSchema = z
+	.object({
+		form_source: z.string(),
+		form_id: ledgerFormIdSchema,
+		records: z.array(submissionLedgerRecordSchema).optional(),
+		submissions: z.array(submissionLedgerRecordSchema).optional(),
+		total: z.number().int().optional(),
+		count: z.number().int().optional(),
+		per_page: z.number().int(),
+		offset: z.number().int()
+	})
+	.transform((payload) => {
+		const records = payload.records ?? payload.submissions ?? [];
+		return {
+			form_source: payload.form_source,
+			form_id: payload.form_id,
+			records,
+			total: payload.total ?? payload.count ?? records.length,
+			per_page: payload.per_page,
+			offset: payload.offset
+		};
+	});
 
 const adminApiMemoryCache = new Map<string, AdminApiCacheEntry>();
 const adminApiInFlight = new Map<string, AdminApiInFlightEntry>();
@@ -180,29 +244,79 @@ function uniqueCacheTags(tags: string[]): string[] {
 	return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))];
 }
 
+function decodePathSegmentForCache(segment: string): string {
+	try {
+		return decodeURIComponent(segment);
+	} catch {
+		return segment;
+	}
+}
+
+function formSourcePathSegment(formSourceSlug: string): string {
+	return encodeURIComponent(formSourceSlug);
+}
+
+function formIdPathSegment(formId: FormSourceFormId): string {
+	return encodeURIComponent(String(formId));
+}
+
+function formCacheTag(formSourceSlug: string, formId: FormSourceFormId): string {
+	return `form:${formSourceSlug}:${String(formId)}`;
+}
+
+function isInvalidFormSourceContext(formSourceSlug: string, formId: FormSourceFormId): boolean {
+	if (!formSourceSlug || formSourceSlug === 'undefined') {
+		return true;
+	}
+
+	if (typeof formId === 'number') {
+		return !Number.isFinite(formId);
+	}
+
+	return String(formId).trim() === '';
+}
+
 function getFormMutationCacheTags(path: string): string[] | null {
 	let match = /^([^/]+)\/forms\/([^/]+)\/actions(?:\/|$)/.exec(path);
 	if (match) {
 		const [, formSourceSlug, formId] = match;
+		const decodedSourceSlug = decodePathSegmentForCache(formSourceSlug);
+		const decodedFormId = decodePathSegmentForCache(formId);
 		return [
 			'actions',
 			'form-actions',
 			'execution-status',
 			'dashboard',
-			`forms:${formSourceSlug}`,
-			`form:${formSourceSlug}:${formId}`
+			`forms:${decodedSourceSlug}`,
+			formCacheTag(decodedSourceSlug, decodedFormId)
+		];
+	}
+
+	match = /^([^/]+)\/forms\/([^/]+)\/ledger-settings(?:\/|$)/.exec(path);
+	if (match) {
+		const [, formSourceSlug, formId] = match;
+		const decodedSourceSlug = decodePathSegmentForCache(formSourceSlug);
+		const decodedFormId = decodePathSegmentForCache(formId);
+		return [
+			'settings',
+			'submission-ledger',
+			'form-actions',
+			`forms:${decodedSourceSlug}`,
+			formCacheTag(decodedSourceSlug, decodedFormId)
 		];
 	}
 
 	match = /^forms\/([^/]+)\/([^/]+)\/action-config(?:\/|$)/.exec(path);
 	if (match) {
 		const [, formSourceSlug, formId] = match;
+		const decodedSourceSlug = decodePathSegmentForCache(formSourceSlug);
+		const decodedFormId = decodePathSegmentForCache(formId);
 		return [
 			'form-actions',
 			'action-defaults',
 			'dashboard',
-			`forms:${formSourceSlug}`,
-			`form:${formSourceSlug}:${formId}`
+			`forms:${decodedSourceSlug}`,
+			formCacheTag(decodedSourceSlug, decodedFormId)
 		];
 	}
 
@@ -1360,10 +1474,10 @@ export class SentientFormsApiClient {
 
 	async getFormActionsBootstrap(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		options: RequestOptions = {}
 	): Promise<FormActionsBootstrapResponse> {
-		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+		if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 			console.warn('[ApiClient] getFormActionsBootstrap called with invalid params:', {
 				formSourceSlug,
 				formId
@@ -1389,44 +1503,134 @@ export class SentientFormsApiClient {
 				generated_at: new Date().toISOString()
 			};
 		}
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<FormActionsBootstrapResponse>>(
-			`${slug}/forms/${formId}/actions/bootstrap`,
+			`${slug}/forms/${formIdSegment}/actions/bootstrap`,
 			withCacheDefaults(options, {
 				ttlMs: 15_000,
 				tags: [
 					'form-actions',
 					'execution-status',
+					'submission-ledger',
 					'settings',
 					'providers',
 					'custom-actions',
 					'action-defaults',
-					`form:${formSourceSlug}:${formId}`
+					formCacheTag(formSourceSlug, formId)
 				]
 			})
 		);
 		return this.unwrap(response);
 	}
 
+	async getSubmissionLedgerSettings(
+		formSourceSlug: string,
+		formId: string | number,
+		options: RequestOptions = {}
+	): Promise<SubmissionLedgerSettingsResponse> {
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
+		const response = await this.request<RestEnvelope<SubmissionLedgerSettingsResponse>>(
+			`${slug}/forms/${formIdSegment}/ledger-settings`,
+			withCacheDefaults(options, {
+				ttlMs: 15_000,
+				tags: ['submission-ledger', 'settings', formCacheTag(formSourceSlug, formId)]
+			})
+		);
+		return submissionLedgerSettingsResponseSchema.parse(
+			this.unwrap(response)
+		) as SubmissionLedgerSettingsResponse;
+	}
+
+	async updateSubmissionLedgerSettings(
+		formSourceSlug: string,
+		formId: string | number,
+		enabled: boolean,
+		options: RequestOptions = {}
+	): Promise<SubmissionLedgerSettingsResponse> {
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
+		const response = await this.request<RestEnvelope<SubmissionLedgerSettingsResponse>>(
+			`${slug}/forms/${formIdSegment}/ledger-settings`,
+			{
+				method: 'PUT',
+				body: { enabled },
+				...options
+			}
+		);
+		return submissionLedgerSettingsResponseSchema.parse(
+			this.unwrap(response)
+		) as SubmissionLedgerSettingsResponse;
+	}
+
+	async getSubmissionLedgerRecords(
+		formSourceSlug: string,
+		formId: string | number,
+		options: RequestOptions & { perPage?: number; offset?: number } = {}
+	): Promise<SubmissionLedgerRecordsResponse> {
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
+		const params = new URLSearchParams();
+		if (typeof options.perPage === 'number') {
+			params.set('per_page', String(options.perPage));
+		}
+		if (typeof options.offset === 'number') {
+			params.set('offset', String(options.offset));
+		}
+		const query = params.toString();
+		const { perPage: _perPage, offset: _offset, ...requestOptions } = options;
+		const response = await this.request<RestEnvelope<unknown>>(
+			`${slug}/forms/${formIdSegment}/submissions${query ? `?${query}` : ''}`,
+			withCacheDefaults(requestOptions, {
+				ttlMs: 15_000,
+				tags: ['submission-ledger', formCacheTag(formSourceSlug, formId)]
+			})
+		);
+		return submissionLedgerRecordsResponseSchema.parse(
+			this.unwrap(response)
+		) as SubmissionLedgerRecordsResponse;
+	}
+
+	async getSubmissionLedgerRecord(
+		formSourceSlug: string,
+		formId: string | number,
+		submissionUuid: string,
+		options: RequestOptions = {}
+	): Promise<SubmissionLedgerRecord> {
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
+		const uuid = encodeURIComponent(submissionUuid);
+		const response = await this.request<RestEnvelope<SubmissionLedgerRecord>>(
+			`${slug}/forms/${formIdSegment}/submissions/${uuid}`,
+			withCacheDefaults(options, {
+				ttlMs: 15_000,
+				tags: ['submission-ledger', formCacheTag(formSourceSlug, formId)]
+			})
+		);
+		return submissionLedgerRecordSchema.parse(this.unwrap(response)) as SubmissionLedgerRecord;
+	}
+
 	async getFormActions(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		options: RequestOptions = {}
 	): Promise<FormActionLinkage[]> {
 		// Guard against undefined parameters during hydration race conditions
-		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+		if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 			console.warn('[ApiClient] getFormActions called with invalid params:', {
 				formSourceSlug,
 				formId
 			});
 			return [];
 		}
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<FormActionLinkage[]>>(
-			`${slug}/forms/${formId}/actions`,
+			`${slug}/forms/${formIdSegment}/actions`,
 			withCacheDefaults(options, {
 				ttlMs: 30_000,
-				tags: ['actions', 'form-actions', `form:${formSourceSlug}:${formId}`]
+				tags: ['actions', 'form-actions', formCacheTag(formSourceSlug, formId)]
 			})
 		);
 		return this.unwrap(response);
@@ -1434,11 +1638,11 @@ export class SentientFormsApiClient {
 
 	async getWorkflowPlan(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		hookScope: 'all' | string = 'all',
 		options: RequestOptions = {}
 	): Promise<WorkflowPlanResponse> {
-		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+		if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 			console.warn('[ApiClient] getWorkflowPlan called with invalid params:', {
 				formSourceSlug,
 				formId,
@@ -1458,10 +1662,11 @@ export class SentientFormsApiClient {
 			};
 		}
 
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const scope = encodeURIComponent(hookScope);
 		const response = await this.request<RestEnvelope<WorkflowPlanResponse>>(
-			`${slug}/forms/${formId}/actions/workflow-plan?hook_scope=${scope}`,
+			`${slug}/forms/${formIdSegment}/actions/workflow-plan?hook_scope=${scope}`,
 			options
 		);
 		return this.unwrap(response);
@@ -1469,11 +1674,11 @@ export class SentientFormsApiClient {
 
 	async runRequestTrace(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		payload: RequestTraceRequest,
 		options: RequestOptions = {}
 	): Promise<RequestTraceResponse> {
-		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+		if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 			console.warn('[ApiClient] runRequestTrace called with invalid params:', {
 				formSourceSlug,
 				formId
@@ -1500,9 +1705,10 @@ export class SentientFormsApiClient {
 			};
 		}
 
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<RequestTraceResponse>>(
-			`${slug}/forms/${formId}/actions/request-trace`,
+			`${slug}/forms/${formIdSegment}/actions/request-trace`,
 			{
 				method: 'POST',
 				body: payload,
@@ -1517,10 +1723,10 @@ export class SentientFormsApiClient {
 	 */
 	async getFormDisabled(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		options: RequestOptions = {}
 	): Promise<FormDisableStateResponse> {
-		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+		if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 			return {
 				sf_disabled: false,
 				global_disabled: false,
@@ -1528,12 +1734,13 @@ export class SentientFormsApiClient {
 				effective_disabled: false
 			};
 		}
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<FormDisableStateResponse>>(
-			`${slug}/forms/${formId}/actions/disable`,
+			`${slug}/forms/${formIdSegment}/actions/disable`,
 			withCacheDefaults(options, {
 				ttlMs: 30_000,
-				tags: ['settings', 'form-actions', `form:${formSourceSlug}:${formId}`]
+				tags: ['settings', 'form-actions', formCacheTag(formSourceSlug, formId)]
 			})
 		);
 		return this.unwrap(response);
@@ -1544,13 +1751,14 @@ export class SentientFormsApiClient {
 	 */
 	async toggleFormDisabled(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		disabled: boolean,
 		options: RequestOptions = {}
 	): Promise<FormDisableStateResponse> {
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<FormDisableStateResponse>>(
-			`${slug}/forms/${formId}/actions/disable`,
+			`${slug}/forms/${formIdSegment}/actions/disable`,
 			{
 				...options,
 				method: 'PUT',
@@ -1566,22 +1774,23 @@ export class SentientFormsApiClient {
 	 */
 	async getFormFields(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		options: RequestOptions = {}
 	): Promise<FormFieldInfo[]> {
-		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+		if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 			console.warn('[ApiClient] getFormFields called with invalid params:', {
 				formSourceSlug,
 				formId
 			});
 			return [];
 		}
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<FormFieldInfo[]>>(
-			`${slug}/forms/${formId}/actions/fields`,
+			`${slug}/forms/${formIdSegment}/actions/fields`,
 			withCacheDefaults(options, {
 				ttlMs: 300_000,
-				tags: ['forms', `form:${formSourceSlug}:${formId}`],
+				tags: ['forms', formCacheTag(formSourceSlug, formId)],
 				storage: 'session'
 			})
 		);
@@ -1590,11 +1799,11 @@ export class SentientFormsApiClient {
 
 	async getFormExecutionStatus(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		options: RequestOptions = {}
 	): Promise<FormExecutionStatus> {
 		// Guard against undefined parameters during hydration race conditions
-		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+		if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 			console.warn('[ApiClient] getFormExecutionStatus called with invalid params:', {
 				formSourceSlug,
 				formId
@@ -1608,12 +1817,13 @@ export class SentientFormsApiClient {
 				last_result: null
 			};
 		}
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<FormExecutionStatus>>(
-			`${slug}/forms/${formId}/actions/status`,
+			`${slug}/forms/${formIdSegment}/actions/status`,
 			withCacheDefaults(options, {
 				ttlMs: 15_000,
-				tags: ['execution-status', `form:${formSourceSlug}:${formId}`]
+				tags: ['execution-status', formCacheTag(formSourceSlug, formId)]
 			})
 		);
 		return this.unwrap(response);
@@ -1632,13 +1842,14 @@ export class SentientFormsApiClient {
 
 	async createFormAction(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		payload: FormActionMutationPayload,
 		options: RequestOptions = {}
 	): Promise<FormActionLinkage> {
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<FormActionLinkage>>(
-			`${slug}/forms/${formId}/actions`,
+			`${slug}/forms/${formIdSegment}/actions`,
 			{ method: 'POST', body: payload, ...options }
 		);
 		return this.unwrap(response);
@@ -1646,14 +1857,15 @@ export class SentientFormsApiClient {
 
 	async duplicateFormAction(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		localMappingId: string,
 		payload: DuplicateFormActionRequest,
 		options: RequestOptions = {}
 	): Promise<DuplicateFormActionResponse> {
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<DuplicateFormActionResponse>>(
-			`${slug}/forms/${formId}/actions/${encodeURIComponent(localMappingId)}/duplicate`,
+			`${slug}/forms/${formIdSegment}/actions/${encodeURIComponent(localMappingId)}/duplicate`,
 			{ method: 'POST', body: payload, ...options }
 		);
 		return this.unwrap(response);
@@ -1661,14 +1873,15 @@ export class SentientFormsApiClient {
 
 	async updateFormAction(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		localMappingId: string,
 		payload: FormActionMutationPayload,
 		options: RequestOptions = {}
 	): Promise<FormActionLinkage> {
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<FormActionLinkage>>(
-			`${slug}/forms/${formId}/actions/${encodeURIComponent(localMappingId)}`,
+			`${slug}/forms/${formIdSegment}/actions/${encodeURIComponent(localMappingId)}`,
 			{ method: 'PUT', body: payload, ...options }
 		);
 		return this.unwrap(response);
@@ -1676,15 +1889,19 @@ export class SentientFormsApiClient {
 
 	async deleteFormAction(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		localMappingId: string,
 		options: RequestOptions = {}
 	): Promise<void> {
-		const slug = encodeURIComponent(formSourceSlug);
-		await this.request(`${slug}/forms/${formId}/actions/${encodeURIComponent(localMappingId)}`, {
-			method: 'DELETE',
-			...options
-		});
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
+		await this.request(
+			`${slug}/forms/${formIdSegment}/actions/${encodeURIComponent(localMappingId)}`,
+			{
+				method: 'DELETE',
+				...options
+			}
+		);
 	}
 
 	// ==========================================================================
@@ -1697,19 +1914,20 @@ export class SentientFormsApiClient {
 	 */
 	async getFormActionConfigs(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		options: RequestOptions = {}
 	): Promise<Record<string, FormActionConfig>> {
-		if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+		if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 			console.warn('[ApiClient] getFormActionConfigs called with invalid params:', {
 				formSourceSlug,
 				formId
 			});
 			return {};
 		}
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<FormAllActionConfigsResponse>>(
-			`forms/${slug}/${formId}/action-config`,
+			`forms/${slug}/${formIdSegment}/action-config`,
 			{ showNotifications: false, ...options }
 		);
 		return this.unwrap<FormAllActionConfigsResponse>(response).configs;
@@ -1720,11 +1938,11 @@ export class SentientFormsApiClient {
 	 */
 	async getFormActionConfig(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		actionId: string,
 		options: RequestOptions = {}
 	): Promise<FormActionConfig> {
-		if (!formSourceSlug || !formId || !actionId) {
+		if (isInvalidFormSourceContext(formSourceSlug, formId) || !actionId) {
 			console.warn('[ApiClient] getFormActionConfig called with invalid params:', {
 				formSourceSlug,
 				formId,
@@ -1732,9 +1950,10 @@ export class SentientFormsApiClient {
 			});
 			return {};
 		}
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
-			`forms/${slug}/${formId}/action-config/${encodeURIComponent(actionId)}`,
+			`forms/${slug}/${formIdSegment}/action-config/${encodeURIComponent(actionId)}`,
 			{ showNotifications: false, ...options }
 		);
 		return this.unwrap<FormActionConfigResponse>(response).config;
@@ -1746,15 +1965,16 @@ export class SentientFormsApiClient {
 	 */
 	async updateFormActionConfig(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		actionId: string,
 		config: Partial<FormActionConfig>,
 		options: RequestOptions = {}
 	): Promise<FormActionConfig> {
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const payload = this.validateFormActionConfigPayload(config);
 		const response = await this.request<RestEnvelope<FormActionConfigResponse>>(
-			`forms/${slug}/${formId}/action-config/${encodeURIComponent(actionId)}`,
+			`forms/${slug}/${formIdSegment}/action-config/${encodeURIComponent(actionId)}`,
 			{ method: 'POST', body: payload, ...options }
 		);
 		return this.unwrap<FormActionConfigResponse>(response).config;
@@ -1765,15 +1985,19 @@ export class SentientFormsApiClient {
 	 */
 	async deleteFormActionConfig(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		actionId: string,
 		options: RequestOptions = {}
 	): Promise<void> {
-		const slug = encodeURIComponent(formSourceSlug);
-		await this.request(`forms/${slug}/${formId}/action-config/${encodeURIComponent(actionId)}`, {
-			method: 'DELETE',
-			...options
-		});
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
+		await this.request(
+			`forms/${slug}/${formIdSegment}/action-config/${encodeURIComponent(actionId)}`,
+			{
+				method: 'DELETE',
+				...options
+			}
+		);
 	}
 
 	// ============================================================
@@ -2028,13 +2252,14 @@ export class SentientFormsApiClient {
 
 	async getExecutionStatus(
 		formSourceSlug: string,
-		formId: number,
+		formId: FormSourceFormId,
 		entryId: number,
 		options: RequestOptions = {}
 	): Promise<ExecutionStatus> {
-		const slug = encodeURIComponent(formSourceSlug);
+		const slug = formSourcePathSegment(formSourceSlug);
+		const formIdSegment = formIdPathSegment(formId);
 		const response = await this.request<RestEnvelope<ExecutionStatus>>(
-			`${slug}/forms/${formId}/actions/entries/${entryId}/status`,
+			`${slug}/forms/${formIdSegment}/actions/entries/${entryId}/status`,
 			options
 		);
 		return this.unwrap(response);

@@ -26,6 +26,9 @@ import type {
 	FormExecutionStatus,
 	FormFieldInfo,
 	FormsOverviewResponse,
+	SubmissionLedgerRecord,
+	SubmissionLedgerRecordsResponse,
+	SubmissionLedgerSettingsResponse,
 	WorkflowPlanResponse,
 	FormSummary,
 	LicenseActivationRequest,
@@ -100,6 +103,8 @@ export class MockSentientFormsApiClient {
 	];
 
 	private formActions: FormActionLinkage[] = [];
+	private submissionLedgerSettings: Record<string, SubmissionLedgerSettingsResponse> = {};
+	private submissionLedgerRecords: SubmissionLedgerRecord[] = [];
 	private formFields: FormFieldInfo[] = [
 		{ id: '1', label: 'Name', type: 'text' },
 		{ id: '2', label: 'Email', type: 'email' },
@@ -378,13 +383,107 @@ export class MockSentientFormsApiClient {
 		};
 	}
 
-	async getFormActions(_formSourceSlug: string, _formId: number): Promise<FormActionLinkage[]> {
+	async getFormActions(
+		_formSourceSlug: string,
+		_formId: string | number
+	): Promise<FormActionLinkage[]> {
 		return this.formActions;
+	}
+
+	private getSubmissionLedgerKey(formSourceSlug: string, formId: string | number): string {
+		return `${formSourceSlug}:${String(formId)}`;
+	}
+
+	private buildSubmissionLedgerSettings(
+		formSourceSlug: string,
+		formId: string | number,
+		enabled = false
+	): SubmissionLedgerSettingsResponse {
+		const formIdValue = String(formId);
+		return {
+			form_source: formSourceSlug,
+			form_id: formIdValue,
+			enabled,
+			enabled_at: enabled ? new Date().toISOString() : null,
+			enabled_by_user_id: enabled ? 1 : null,
+			disabled_at: enabled ? null : new Date().toISOString(),
+			disabled_by_user_id: enabled ? null : 1,
+			settings_source: 'sentient_submission_ledger_settings',
+			ledger_records_endpoint: `/sentient-forms/v1/${formSourceSlug}/forms/${formIdValue}/submissions`,
+			record_count: this.submissionLedgerRecords.filter(
+				(record) => record.form_source === formSourceSlug && record.form_id === formIdValue
+			).length
+		};
+	}
+
+	async getSubmissionLedgerSettings(
+		formSourceSlug: string,
+		formId: string | number
+	): Promise<SubmissionLedgerSettingsResponse> {
+		const key = this.getSubmissionLedgerKey(formSourceSlug, formId);
+		this.submissionLedgerSettings[key] ??= this.buildSubmissionLedgerSettings(
+			formSourceSlug,
+			formId
+		);
+		return this.submissionLedgerSettings[key]!;
+	}
+
+	async updateSubmissionLedgerSettings(
+		formSourceSlug: string,
+		formId: string | number,
+		enabled: boolean
+	): Promise<SubmissionLedgerSettingsResponse> {
+		const key = this.getSubmissionLedgerKey(formSourceSlug, formId);
+		this.submissionLedgerSettings[key] = this.buildSubmissionLedgerSettings(
+			formSourceSlug,
+			formId,
+			enabled
+		);
+		return this.submissionLedgerSettings[key]!;
+	}
+
+	async getSubmissionLedgerRecords(
+		formSourceSlug: string,
+		formId: string | number,
+		options: { perPage?: number; offset?: number } = {}
+	): Promise<SubmissionLedgerRecordsResponse> {
+		const formIdValue = String(formId);
+		const matchingRecords = this.submissionLedgerRecords.filter(
+			(record) => record.form_source === formSourceSlug && record.form_id === formIdValue
+		);
+		const offset = Math.max(0, options.offset ?? 0);
+		const perPage = Math.max(1, options.perPage ?? 20);
+		return {
+			form_source: formSourceSlug,
+			form_id: formIdValue,
+			records: matchingRecords.slice(offset, offset + perPage),
+			total: matchingRecords.length,
+			per_page: perPage,
+			offset
+		};
+	}
+
+	async getSubmissionLedgerRecord(
+		formSourceSlug: string,
+		formId: string | number,
+		submissionUuid: string
+	): Promise<SubmissionLedgerRecord> {
+		const formIdValue = String(formId);
+		const record = this.submissionLedgerRecords.find(
+			(candidate) =>
+				candidate.form_source === formSourceSlug &&
+				candidate.form_id === formIdValue &&
+				candidate.submission_uuid === submissionUuid
+		);
+		if (!record) {
+			throw new Error('Submission ledger record not found');
+		}
+		return record;
 	}
 
 	async getFormActionsBootstrap(
 		formSourceSlug: string,
-		formId: number
+		formId: string | number
 	): Promise<FormActionsBootstrapResponse> {
 		const actions = await this.getFormActions(formSourceSlug, formId);
 		const definitions = await this.getActionDefinitions();
@@ -397,7 +496,47 @@ export class MockSentientFormsApiClient {
 		return {
 			form_source: formSourceSlug,
 			form_id: formId,
-			form: this.forms.find((form) => Number(form.id) === formId) ?? null,
+			form: this.forms.find((form) => String(form.id) === String(formId)) ?? null,
+			form_source_descriptor: {
+				slug: formSourceSlug,
+				label: formSourceSlug === 'gravity_forms' ? 'Gravity Forms' : formSourceSlug,
+				is_active: formSourceSlug === 'gravity_forms',
+				lifecycles: {
+					validation: {
+						id: 'validation',
+						supported: true,
+						label: 'During validation',
+						native_hook: 'gform_validation',
+						execution_mode: 'validation',
+						requires_ledger: false,
+						unsupported_reason: null
+					},
+					after_submission: {
+						id: 'after_submission',
+						supported: true,
+						label: 'After submission',
+						native_hook: 'gform_after_submission',
+						execution_mode: 'after_submission',
+						requires_ledger: false,
+						unsupported_reason: null
+					},
+					real_time: {
+						id: 'real_time',
+						supported: true,
+						label: 'Realtime',
+						native_hook: 'real_time',
+						execution_mode: 'real_time',
+						requires_ledger: false,
+						unsupported_reason: null
+					}
+				},
+				ledger: {
+					required_for_parity: false,
+					enabled: false,
+					settings_source: 'sentient_submission_ledger_settings',
+					unavailable_reason: null
+				}
+			},
 			actions,
 			execution_status: await this.getFormExecutionStatus(),
 			disabled_state: await this.getFormDisabled(formSourceSlug, formId),
@@ -409,13 +548,14 @@ export class MockSentientFormsApiClient {
 			form_fields: this.formFields,
 			action_defaults: actionDefaults,
 			workflow_plan: await this.getWorkflowPlan(formSourceSlug, formId, 'all'),
+			ledger_settings: await this.getSubmissionLedgerSettings(formSourceSlug, formId),
 			generated_at: new Date().toISOString()
 		};
 	}
 
 	async getWorkflowPlan(
 		_formSourceSlug: string,
-		_formId: number,
+		_formId: string | number,
 		hookScope: 'all' | string = 'all'
 	): Promise<WorkflowPlanResponse> {
 		return {
@@ -453,7 +593,10 @@ export class MockSentientFormsApiClient {
 		};
 	}
 
-	async getFormDisabled(formSourceSlug: string, formId: number): Promise<FormDisableStateResponse> {
+	async getFormDisabled(
+		formSourceSlug: string,
+		formId: string | number
+	): Promise<FormDisableStateResponse> {
 		const key = `${formSourceSlug}:${formId}`;
 		const sfDisabled = Boolean(this.formDisabled[key]);
 		const globalDisabled = Boolean(this.pluginSettings.execution_global_disabled);
@@ -471,7 +614,7 @@ export class MockSentientFormsApiClient {
 
 	async toggleFormDisabled(
 		formSourceSlug: string,
-		formId: number,
+		formId: string | number,
 		disabled: boolean
 	): Promise<FormDisableStateResponse> {
 		const key = `${formSourceSlug}:${formId}`;
@@ -506,7 +649,7 @@ export class MockSentientFormsApiClient {
 
 	async createFormAction(
 		_formSourceSlug: string,
-		formId: number,
+		formId: string | number,
 		payload: FormActionMutationPayload
 	): Promise<FormActionLinkage> {
 		const linkage: FormActionLinkage = {
@@ -532,7 +675,7 @@ export class MockSentientFormsApiClient {
 
 	async duplicateFormAction(
 		_formSourceSlug: string,
-		_formId: number,
+		_formId: string | number,
 		localMappingId: string,
 		payload: DuplicateFormActionRequest
 	): Promise<DuplicateFormActionResponse> {
@@ -663,7 +806,7 @@ export class MockSentientFormsApiClient {
 
 	async updateFormAction(
 		_formSourceSlug: string,
-		_formId: number,
+		_formId: string | number,
 		localMappingId: string,
 		patch: FormActionMutationPayload
 	): Promise<FormActionLinkage> {
@@ -677,7 +820,7 @@ export class MockSentientFormsApiClient {
 
 	async deleteFormAction(
 		_formSourceSlug: string,
-		_formId: number,
+		_formId: string | number,
 		localMappingId: string
 	): Promise<void> {
 		this.formActions = this.formActions.filter((fa) => fa.local_mapping_id !== localMappingId);
@@ -686,7 +829,7 @@ export class MockSentientFormsApiClient {
 	// Unused stubs to satisfy types
 	async getFormExecutionStatusForEntry(
 		_formSourceSlug: string,
-		formId: number,
+		formId: string | number,
 		entryId: number
 	): Promise<ExecutionStatus> {
 		return {
@@ -701,7 +844,7 @@ export class MockSentientFormsApiClient {
 
 	async refreshExecutionStatus(
 		formSourceSlug: string,
-		formId: number,
+		formId: string | number,
 		entryId: number
 	): Promise<ExecutionStatus> {
 		return this.getFormExecutionStatusForEntry(formSourceSlug, formId, entryId);

@@ -50,7 +50,7 @@
 		SpamGuidanceExample
 	} from '$lib/api/types';
 
-	type Props = { data: { formSourceSlug: string; formId: number } };
+	type Props = { data: { formSourceSlug: string; formId: string } };
 	type ViewKey = LeadScoringViewKey;
 	type LeadExampleDraft = {
 		entry_id: string;
@@ -83,6 +83,8 @@
 	let historicalRuns = $state<LeadValueHistoricalRun[]>([]);
 	let globalSpamConfig = $state<FormActionConfig>({});
 	let formSpamConfig = $state<FormActionConfig>({});
+	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
+	const routeFormId = $derived(encodeURIComponent(data.formId));
 
 	let consent = $state(false);
 	let goodCriteria = $state('');
@@ -870,7 +872,7 @@
 		<div class="sf:flex sf:min-w-max sf:flex-wrap sf:items-center sf:gap-3">
 			<ButtonLink
 				variant="secondary"
-				href={appHref(`/actions/${data.formSourceSlug}/${data.formId}`)}
+				href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}`)}
 			>
 				Back to actions
 			</ButtonLink>
@@ -1622,7 +1624,7 @@
 					</form>
 					<EntriesTable
 						entries={dashboard?.entries ?? []}
-						basePath={`/actions/${data.formSourceSlug}/${data.formId}/lead-value`}
+						basePath={`/actions/${routeFormSourceSlug}/${routeFormId}/lead-value`}
 						showForm={false}
 						onOpenDetail={openEntryDetail}
 						emptyMessage="No scored entries yet. Run lead scoring on new or historical entries to populate this table."

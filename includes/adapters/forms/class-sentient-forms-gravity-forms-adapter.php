@@ -71,6 +71,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     private ?Sentient_Forms_Local_Action_Execution_Service $local_execution_service = null;
 
     /**
+     * Submission ledger capture service, lazily initialized for opted-in forms.
+     */
+    private ?Sentient_Forms_Submission_Ledger_Capture_Service $submission_ledger_capture_service = null;
+
+    /**
      * Cache async spam notification mapping checks per form/entry.
      *
      * @var array<string, array<int, string>>
@@ -126,6 +131,84 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
     public function get_name(): string
     {
         return __( 'Gravity Forms', 'sentient-forms' );
+    }
+
+    /**
+     * Describe Gravity Forms capabilities using Sentient Forms Form Source terms.
+     *
+     * @return array<string, mixed>
+     */
+    public function get_capability_descriptor(): array
+    {
+        $is_active = $this->is_active();
+
+        return [
+            'slug'                 => 'gravity_forms',
+            'label'                => __( 'Gravity Forms', 'sentient-forms' ),
+            'availability'         => $is_active ? 'available' : 'inactive',
+            'availability_message' => $is_active
+                ? __( 'Gravity Forms is active and ready for Sentient Forms actions.', 'sentient-forms' )
+                : __( 'Activate Gravity Forms to configure Sentient Forms actions for Gravity forms.', 'sentient-forms' ),
+            'forms_discovery'      => [
+                'supported' => $is_active,
+                'reason'    => $is_active ? null : __( 'Gravity Forms must be active before forms can be listed.', 'sentient-forms' ),
+            ],
+            'field_manifest'       => [
+                'supported' => $is_active,
+                'reason'    => $is_active ? null : __( 'Gravity Forms must be active before fields can be inspected.', 'sentient-forms' ),
+            ],
+            'lifecycles'           => [
+                'validation'       => [
+                    'supported'          => true,
+                    'label'              => __( 'Validation', 'sentient-forms' ),
+                    'native_hook'        => 'gform_validation',
+                    'execution_mode'     => 'blocking',
+                    'requires_ledger'    => false,
+                    'unsupported_reason' => null,
+                ],
+                'after_submission' => [
+                    'supported'          => true,
+                    'label'              => __( 'After submission', 'sentient-forms' ),
+                    'native_hook'        => 'gform_after_submission',
+                    'execution_mode'     => 'async',
+                    'requires_ledger'    => false,
+                    'unsupported_reason' => null,
+                ],
+                'real_time'        => [
+                    'supported'          => true,
+                    'label'              => __( 'Real time', 'sentient-forms' ),
+                    'native_hook'        => 'real_time',
+                    'execution_mode'     => 'real_time',
+                    'requires_ledger'    => false,
+                    'unsupported_reason' => null,
+                ],
+            ],
+            'native_entry'         => [
+                'id'    => true,
+                'link'  => true,
+                'read'  => true,
+                'write' => true,
+            ],
+            'native_enrichment'    => [
+                'notes'                 => true,
+                'status'                => true,
+                'spam'                  => true,
+                'notification_controls' => true,
+                'webhook_controls'      => $this->gravity_forms_webhooks_feed_controls_available(),
+            ],
+            'ledger'               => [
+                'required_for_parity' => false,
+                'enabled'             => false,
+                'settings_source'     => 'sentient_submission_ledger_settings',
+                'unavailable_reason'  => null,
+            ],
+            'requirements'         => [
+                'plugin'         => 'gravityforms/gravityforms.php',
+                'module'         => null,
+                'requires_pro'   => false,
+                'requires_addon' => false,
+            ],
+        ];
     }
 
     /**
@@ -209,14 +292,334 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             ? ( $this->validation_execution_request_ids_by_form[ $form_id ] ?? [] )
             : [];
 
-        $this->backfill_validation_action_log_entry_ids( $entry, $form );
+        $submission_uuid = $this->capture_submission_ledger_for_entry( $entry, $form );
+
+        $this->backfill_validation_action_log_entry_ids( $entry, $form, $submission_uuid );
         $this->apply_validation_local_execution_results_to_entry( $validation_execution_request_ids, $entry, $form );
-        $this->handle_after_submission( $entry, $form );
+        $this->handle_after_submission( $entry, $form, $submission_uuid );
 
         return $entry;
     }
 
-    private function backfill_validation_action_log_entry_ids( array $entry, array $form ): void
+    private function capture_submission_ledger_for_entry( array $entry, array $form ): ?string
+    {
+        $entry_id = absint( $entry['id'] ?? 0 );
+        $form_id  = absint( $form['id'] ?? ( $entry['form_id'] ?? 0 ) );
+        if ( $entry_id <= 0 || $form_id <= 0 )
+        {
+            return null;
+        }
+
+        $capture_service = $this->get_submission_ledger_capture_service();
+        if ( null === $capture_service )
+        {
+            return null;
+        }
+
+        $captured = $capture_service->capture(
+            [
+                'form_source'         => $this->get_id(),
+                'form_id'             => (string) $form_id,
+                'native_entry_id'     => (string) $entry_id,
+                'native_entry_url'    => $this->build_submission_ledger_entry_url( $form_id, $entry_id ),
+                'source_submitted_at' => isset( $entry['date_created'] ) && is_scalar( $entry['date_created'] )
+                    ? sanitize_text_field( (string) $entry['date_created'] )
+                    : null,
+                'logical_fields'      => $this->build_submission_ledger_logical_fields( $entry, $form ),
+                'files'               => $this->build_submission_ledger_file_references( $entry, $form ),
+            ]
+        );
+
+        if ( is_wp_error( $captured ) )
+        {
+            if ( 'sentient_forms_submission_ledger_disabled' !== $captured->get_error_code() )
+            {
+                sentient_forms_debug_log(
+                    'Sentient Forms submission ledger capture failed.',
+                    [
+                        'form_id'       => $form_id,
+                        'entry_id'      => $entry_id,
+                        'error_code'    => $captured->get_error_code(),
+                        'error_message' => $captured->get_error_message(),
+                    ]
+                );
+            }
+
+            return null;
+        }
+
+        $submission_uuid = isset( $captured['submission_uuid'] ) && is_scalar( $captured['submission_uuid'] )
+            ? sanitize_text_field( (string) $captured['submission_uuid'] )
+            : '';
+
+        return '' !== $submission_uuid ? $submission_uuid : null;
+    }
+
+    private function get_submission_ledger_capture_service(): ?Sentient_Forms_Submission_Ledger_Capture_Service
+    {
+        if ( ! class_exists( 'Sentient_Forms_Submission_Ledger_Capture_Service' ) )
+        {
+            return null;
+        }
+
+        if ( null === $this->submission_ledger_capture_service )
+        {
+            global $wpdb;
+            $this->submission_ledger_capture_service = new Sentient_Forms_Submission_Ledger_Capture_Service( $wpdb );
+        }
+
+        return $this->submission_ledger_capture_service;
+    }
+
+    private function build_submission_ledger_entry_url( int $form_id, int $entry_id ): string
+    {
+        return admin_url(
+            add_query_arg(
+                [
+                    'page' => 'gf_entries',
+                    'view' => 'entry',
+                    'id'   => $form_id,
+                    'lid'  => $entry_id,
+                ],
+                'admin.php'
+            )
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function build_submission_ledger_logical_fields( array $entry, array $form ): array
+    {
+        $fields = isset( $form['fields'] ) && is_array( $form['fields'] )
+            ? $form['fields']
+            : [];
+        $logical_fields = [];
+
+        foreach ( $fields as $field )
+        {
+            if ( 'fileupload' === strtolower( $this->extract_gravity_field_property( $field, 'type' ) ) )
+            {
+                continue;
+            }
+
+            $field_id = $this->extract_gravity_field_property( $field, 'id' );
+            if ( '' === $field_id )
+            {
+                continue;
+            }
+
+            $field_key = $this->submission_ledger_field_key( $field, $field_id );
+            if ( array_key_exists( $field_key, $logical_fields ) )
+            {
+                $field_key = sanitize_key( $field_key . '_field_' . str_replace( '.', '_', $field_id ) );
+            }
+            $value     = $this->submission_ledger_entry_value_for_field( $entry, $field );
+            if ( $this->submission_ledger_value_is_empty( $value ) )
+            {
+                continue;
+            }
+
+            $logical_fields[ $field_key ] = $value;
+        }
+
+        return $logical_fields;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function build_submission_ledger_file_references( array $entry, array $form ): array
+    {
+        $fields = isset( $form['fields'] ) && is_array( $form['fields'] )
+            ? $form['fields']
+            : [];
+        $file_references = [];
+
+        foreach ( $fields as $field )
+        {
+            $field_type = strtolower( $this->extract_gravity_field_property( $field, 'type' ) );
+            if ( 'fileupload' !== $field_type )
+            {
+                continue;
+            }
+
+            $field_id = $this->extract_gravity_field_property( $field, 'id' );
+            if ( '' === $field_id )
+            {
+                continue;
+            }
+
+            foreach ( $this->submission_ledger_file_values( $entry[ $field_id ] ?? null ) as $file_value )
+            {
+                $path     = wp_parse_url( $file_value, PHP_URL_PATH );
+                $filename = is_string( $path ) && '' !== $path ? basename( $path ) : basename( $file_value );
+
+                $file_references[] = [
+                    'field_id' => $field_id,
+                    'filename' => $filename,
+                    'url'      => $file_value,
+                ];
+            }
+        }
+
+        return $file_references;
+    }
+
+    private function submission_ledger_field_key( mixed $field, string $field_id ): string
+    {
+        $label = $this->extract_gravity_field_property( $field, 'adminLabel' );
+        if ( '' === $label )
+        {
+            $label = $this->extract_gravity_field_property( $field, 'label' );
+        }
+
+        $key = sanitize_key( str_replace( [ ' ', '.', '-' ], '_', strtolower( $label ) ) );
+
+        return '' !== $key
+            ? $key
+            : sanitize_key( 'field_' . str_replace( '.', '_', $field_id ) );
+    }
+
+    private function submission_ledger_entry_value_for_field( array $entry, mixed $field ): mixed
+    {
+        $field_id = $this->extract_gravity_field_property( $field, 'id' );
+        if ( '' !== $field_id && array_key_exists( $field_id, $entry ) )
+        {
+            $direct_value = $entry[ $field_id ];
+            if ( ! $this->submission_ledger_value_is_empty( $direct_value ) )
+            {
+                return $direct_value;
+            }
+
+            $input_values = $this->submission_ledger_entry_input_values_for_field( $entry, $field );
+
+            return [] !== $input_values ? $input_values : $direct_value;
+        }
+
+        return $this->submission_ledger_entry_input_values_for_field( $entry, $field );
+    }
+
+    private function submission_ledger_value_is_empty( mixed $value ): bool
+    {
+        return null === $value || '' === $value || [] === $value;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function submission_ledger_entry_input_values_for_field( array $entry, mixed $field ): array
+    {
+        $input_values = [];
+        foreach ( $this->submission_ledger_field_input_ids( $field ) as $input_id )
+        {
+            if ( array_key_exists( $input_id, $entry ) && ! $this->submission_ledger_value_is_empty( $entry[ $input_id ] ) )
+            {
+                $input_values[ str_replace( '.', '_', $input_id ) ] = $entry[ $input_id ];
+            }
+        }
+
+        return $input_values;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function submission_ledger_field_input_ids( mixed $field ): array
+    {
+        $inputs = [];
+        if ( is_array( $field ) && isset( $field['inputs'] ) && is_array( $field['inputs'] ) )
+        {
+            $inputs = $field['inputs'];
+        }
+        elseif ( is_object( $field ) && isset( $field->inputs ) && is_array( $field->inputs ) )
+        {
+            $inputs = $field->inputs;
+        }
+
+        $input_ids = [];
+        foreach ( $inputs as $input )
+        {
+            $input_id = '';
+            if ( is_array( $input ) && isset( $input['id'] ) && is_scalar( $input['id'] ) )
+            {
+                $input_id = (string) $input['id'];
+            }
+            elseif ( is_object( $input ) && isset( $input->id ) && is_scalar( $input->id ) )
+            {
+                $input_id = (string) $input->id;
+            }
+
+            if ( '' !== trim( $input_id ) )
+            {
+                $input_ids[] = $input_id;
+            }
+        }
+
+        return $input_ids;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function submission_ledger_file_values( mixed $value ): array
+    {
+        if ( is_array( $value ) )
+        {
+            $values = [];
+            array_walk_recursive(
+                $value,
+                static function ( mixed $item ) use ( &$values ): void {
+                    if ( is_scalar( $item ) )
+                    {
+                        $item = trim( (string) $item );
+                        if ( '' !== $item )
+                        {
+                            $values[] = $item;
+                        }
+                    }
+                }
+            );
+
+            return array_values( array_unique( $values ) );
+        }
+
+        if ( ! is_scalar( $value ) )
+        {
+            return [];
+        }
+
+        $value = trim( (string) $value );
+        if ( '' === $value )
+        {
+            return [];
+        }
+
+        $decoded = json_decode( $value, true );
+        if ( is_array( $decoded ) )
+        {
+            return $this->submission_ledger_file_values( $decoded );
+        }
+
+        return array_values(
+            array_filter(
+                array_map( 'trim', explode( ',', $value ) ),
+                static fn ( string $item ): bool => '' !== $item
+            )
+        );
+    }
+
+    /**
+     * @return array{submission_uuid?: string}
+     */
+    private function submission_uuid_context( ?string $submission_uuid ): array
+    {
+        $submission_uuid = null !== $submission_uuid ? sanitize_text_field( $submission_uuid ) : '';
+
+        return '' !== $submission_uuid ? [ 'submission_uuid' => $submission_uuid ] : [];
+    }
+
+    private function backfill_validation_action_log_entry_ids( array $entry, array $form, ?string $submission_uuid = null ): void
     {
         if ( ! class_exists( 'Sentient_Forms_Action_Log_Controller' ) )
         {
@@ -241,6 +644,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $entry_id,
             $this->get_id(),
             $form_id,
+            $submission_uuid
         );
 
         unset( $this->validation_execution_request_ids_by_form[ $form_id ] );
@@ -323,7 +727,10 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             }
 
             $mapping = $mappings->get( $mapping_id );
-            if ( ! is_array( $mapping ) || 'gform_validation' !== (string) ( $mapping['hook'] ?? '' ) )
+            $mapping_hook = is_array( $mapping )
+                ? Sentient_Forms_Form_Source_Lifecycles::normalize_id( (string) ( $mapping['hook'] ?? '' ) )
+                : '';
+            if ( ! is_array( $mapping ) || Sentient_Forms_Form_Source_Lifecycles::VALIDATION !== $mapping_hook )
             {
                 continue;
             }
@@ -714,11 +1121,12 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      *
      * @return void
      */
-    public function handle_after_submission( array $entry, array $form ): void
+    public function handle_after_submission( array $entry, array $form, ?string $submission_uuid = null ): void
     {
         $form_id = $form[ 'id' ];
         $logger  = $this->plugin->get_logger();
         $correlation_id = $logger->correlation_id( $entry['id'] ?? null );
+        $submission_context = $this->submission_uuid_context( $submission_uuid );
 
         // Get form settings - these are stored directly under local_mapping_id keys
         $settings = $this->get_form_settings( $form_id );
@@ -950,17 +1358,20 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                         $mapping_id,
                         $action_settings,
                         $execution_request_ids[ $mapping_id ] ?? null,
-                        [
-                            'dependency_mapping_ids'           => $dependency_ids,
-                            'dependency_execution_request_ids' => $dependency_execution_request_ids,
-                            'dependency_initial_outcomes'      => $dependency_initial_outcomes,
-                            'dependency_wait_started_at'       => time(),
-                            'dependency_wait_max_seconds'      => max(
-                                30,
-                                (int) ( $action_settings['settings']['batch_settings']['max_wait_seconds'] ?? 600 )
-                            ),
-                            'dependency_wait_poll_seconds'     => 10,
-                        ]
+                        array_merge(
+                            $submission_context,
+                            [
+                                'dependency_mapping_ids'           => $dependency_ids,
+                                'dependency_execution_request_ids' => $dependency_execution_request_ids,
+                                'dependency_initial_outcomes'      => $dependency_initial_outcomes,
+                                'dependency_wait_started_at'       => time(),
+                                'dependency_wait_max_seconds'      => max(
+                                    30,
+                                    (int) ( $action_settings['settings']['batch_settings']['max_wait_seconds'] ?? 600 )
+                                ),
+                                'dependency_wait_poll_seconds'     => 10,
+                            ]
+                        )
                     );
 
                     $mapping_outcomes[ $mapping_id ] = $scheduled ? 'queued' : 'failed';
@@ -987,7 +1398,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                     $entry,
                     $mapping_id,
                     $action_settings,
-                    $execution_request_ids[ $mapping_id ] ?? null
+                    $execution_request_ids[ $mapping_id ] ?? null,
+                    $submission_uuid
                 );
 
                 $mapping_outcomes[ $mapping_id ] = is_wp_error( $result ) ? 'failed' : 'succeeded';
@@ -1034,7 +1446,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                     $action_id,
                     $data,
                     $action_settings,
-                    [
+                    array_merge(
+                        [
                         'hook'                           => 'gform_after_submission',
                         'form_source'                    => $this->get_id(),
                         'action_id'                      => $mapping_id,
@@ -1058,7 +1471,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                             (int) ( $action_settings['settings']['batch_settings']['max_wait_seconds'] ?? 600 )
                         ),
                         'dependency_wait_poll_seconds'   => 10,
-                    ],
+                        ],
+                        $submission_context
+                    ),
                 );
 
                 $mapping_outcomes[ $mapping_id ] = $scheduled ? 'queued' : 'failed';
@@ -1066,7 +1481,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 if ( $scheduled )
                 {
                     $this->log_action_execution(
-                        [
+                        array_merge(
+                            [
                             'hook'                 => 'gform_after_submission',
                             'form_source'          => $this->get_id(),
                             'action_id'            => $mapping_id,
@@ -1080,7 +1496,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                             'settings'             => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
                                 ? $action_settings['settings']
                                 : [],
-                        ],
+                            ],
+                            $submission_context
+                        ),
                         [],
                         'pending'
                     );
@@ -1094,7 +1512,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 if ( $this->is_cps_managed_mapping( $action_settings ) )
                 {
                     $ran_via_cps_executor = true;
-                    $result = $this->execute_blocking_after_submission_cps_action( $form, $entry, $mapping_id, $action_settings );
+                    $result = $this->execute_blocking_after_submission_cps_action( $form, $entry, $mapping_id, $action_settings, $submission_uuid );
                 }
                 else
                 {
@@ -1113,7 +1531,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $entry_id = $entry['id'] ?? 0;
             $mapping_outcomes[ $mapping_id ] = is_wp_error( $result ) ? 'failed' : 'succeeded';
 
-            $context = [
+            $context = array_merge(
+                [
                 'hook'              => 'gform_after_submission',
                 'form_source'       => $this->get_id(),
                 'action_id'         => $mapping_id,
@@ -1130,7 +1549,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
                 'settings'          => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
                     ? $action_settings['settings']
                     : [],
-            ];
+                ],
+                $submission_context
+            );
 
             if ( is_array( $result ) )
             {
@@ -1206,14 +1627,26 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return false;
         }
 
+        $lifecycle_hook = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
+        $hook_keys      = array_values( array_unique( array_filter( [ $hook, $lifecycle_hook ] ) ) );
+
         $trigger_sources = is_array( $node['trigger_sources'] ?? null )
             ? $node['trigger_sources']
             : [];
-        $source = is_array( $trigger_sources[ $hook ] ?? null )
-            ? $trigger_sources[ $hook ]
-            : null;
 
-        return 'unbound' === sanitize_key( (string) ( $source['type'] ?? '' ) );
+        foreach ( $hook_keys as $hook_key )
+        {
+            $source = is_array( $trigger_sources[ $hook_key ] ?? null )
+                ? $trigger_sources[ $hook_key ]
+                : null;
+
+            if ( 'unbound' === sanitize_key( (string) ( $source['type'] ?? '' ) ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -1866,6 +2299,7 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      * @param string               $mapping_id           Runtime planner mapping id.
      * @param array<string, mixed> $action_settings      Mapping settings.
      * @param string|null          $execution_request_id Optional precomputed request id.
+     * @param string|null          $submission_uuid      Optional submission ledger UUID.
      *
      * @return array<string, mixed>|WP_Error
      */
@@ -1874,7 +2308,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         array $entry,
         string $mapping_id,
         array $action_settings,
-        ?string $execution_request_id = null
+        ?string $execution_request_id = null,
+        ?string $submission_uuid = null
     ): array | WP_Error
     {
         $local_mapping_id = absint( $action_settings['local_form_mapping_id'] ?? 0 );
@@ -1886,23 +2321,26 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             );
         }
 
-        $context = [
-            'hook'                    => 'gform_after_submission',
-            'form_source'             => $this->get_id(),
-            'mapping_id'              => $mapping_id,
-            'local_mapping_id'        => $mapping_id,
-            'local_form_mapping_id'   => $local_mapping_id,
-            'form_id'                 => $form['id'] ?? null,
-            'entry_id'                => $entry['id'] ?? null,
-            'action_name_label'       => $action_settings['action_name_label'] ?? __( 'Local OpenRouter action', 'sentient-forms' ),
-            'central_action_id'       => $action_settings['central_action_id'] ?? 'sentient_forms_local_custom_action',
-            'mark_as_spam'            => ! empty( $action_settings['mark_as_spam'] ),
-            'spam_confidence_threshold' => $this->get_local_spam_confidence_threshold( $action_settings ),
-            'settings'                => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
-                ? $action_settings['settings']
-                : [],
-            'execution_request_id'    => $execution_request_id,
-        ];
+        $context = array_merge(
+            [
+                'hook'                    => 'gform_after_submission',
+                'form_source'             => $this->get_id(),
+                'mapping_id'              => $mapping_id,
+                'local_mapping_id'        => $mapping_id,
+                'local_form_mapping_id'   => $local_mapping_id,
+                'form_id'                 => $form['id'] ?? null,
+                'entry_id'                => $entry['id'] ?? null,
+                'action_name_label'       => $action_settings['action_name_label'] ?? __( 'Local OpenRouter action', 'sentient-forms' ),
+                'central_action_id'       => $action_settings['central_action_id'] ?? 'sentient_forms_local_custom_action',
+                'mark_as_spam'            => ! empty( $action_settings['mark_as_spam'] ),
+                'spam_confidence_threshold' => $this->get_local_spam_confidence_threshold( $action_settings ),
+                'settings'                => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                    ? $action_settings['settings']
+                    : [],
+                'execution_request_id'    => $execution_request_id,
+            ],
+            $this->submission_uuid_context( $submission_uuid )
+        );
 
         return $this->get_local_execution_service()->execute_mapping( $local_mapping_id, $form, $entry, $context );
     }
@@ -2074,10 +2512,11 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
      * @param array<string, mixed> $entry           Entry payload.
      * @param string               $mapping_id      Local mapping id.
      * @param array<string, mixed> $action_settings Mapping settings.
+     * @param string|null          $submission_uuid Optional submission ledger UUID.
      *
      * @return array|WP_Error
      */
-    private function execute_blocking_after_submission_cps_action( array $form, array $entry, string $mapping_id, array $action_settings )
+    private function execute_blocking_after_submission_cps_action( array $form, array $entry, string $mapping_id, array $action_settings, ?string $submission_uuid = null )
     {
         $central_action_id = isset( $action_settings['central_action_id'] ) && is_scalar( $action_settings['central_action_id'] )
             ? (string) $action_settings['central_action_id']
@@ -2095,21 +2534,24 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             ? (string) $action_settings['local_mapping_id']
             : $mapping_id;
 
-        $context = [
-            'hook'                  => 'gform_after_submission',
-            'form_source'           => $this->get_id(),
-            'action_id'             => $mapping_id,
-            'mapping_id'            => $mapping_id,
-            'local_mapping_id'      => $local_mapping_id,
-            'form_id'               => $form['id'] ?? null,
-            'entry_id'              => $entry['id'] ?? null,
-            'action_name_label'     => $action_settings['action_name_label'] ?? $central_action_id,
-            'action_type_indicator' => $action_settings['action_type_indicator'] ?? null,
-            'central_action_id'     => $central_action_id,
-            'settings'              => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
-                ? $action_settings['settings']
-                : [],
-        ];
+        $context = array_merge(
+            [
+                'hook'                  => 'gform_after_submission',
+                'form_source'           => $this->get_id(),
+                'action_id'             => $mapping_id,
+                'mapping_id'            => $mapping_id,
+                'local_mapping_id'      => $local_mapping_id,
+                'form_id'               => $form['id'] ?? null,
+                'entry_id'              => $entry['id'] ?? null,
+                'action_name_label'     => $action_settings['action_name_label'] ?? $central_action_id,
+                'action_type_indicator' => $action_settings['action_type_indicator'] ?? null,
+                'central_action_id'     => $central_action_id,
+                'settings'              => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
+                    ? $action_settings['settings']
+                    : [],
+            ],
+            $this->submission_uuid_context( $submission_uuid )
+        );
 
         return $this->plugin->get_action_executor()->execute(
             $central_action_id,
@@ -3919,11 +4361,18 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             return null;
         }
 
-        $hook = sanitize_key( (string) ( $row['hook'] ?? '' ) );
-        if ( ! in_array( $hook, [ 'gform_validation', 'gform_after_submission', 'real_time' ], true ) )
+        $raw_hook = sanitize_key( (string) ( $row['hook'] ?? '' ) );
+        $lifecycle_id = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $raw_hook );
+        if ( null === $lifecycle_id )
         {
             return null;
         }
+
+        $hook = match ( $lifecycle_id ) {
+            Sentient_Forms_Form_Source_Lifecycles::VALIDATION => 'gform_validation',
+            Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION => 'gform_after_submission',
+            default => 'real_time',
+        };
 
         if ( 'custom_action' !== sanitize_key( (string) ( $row['action_kind'] ?? '' ) ) )
         {
@@ -3934,8 +4383,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $identity      = $this->resolve_local_first_action_identity( $custom_action );
         $row_execution_mode = sanitize_key( (string) ( $row['execution_mode'] ?? '' ) );
         $execution_mode     = match ( true ) {
-            'real_time' === $hook || 'real_time' === $row_execution_mode => 'real_time',
-            'gform_validation' === $hook || 'sync' === $row_execution_mode => 'validation',
+            Sentient_Forms_Form_Source_Lifecycles::REAL_TIME === $lifecycle_id || 'real_time' === $row_execution_mode => 'real_time',
+            Sentient_Forms_Form_Source_Lifecycles::VALIDATION === $lifecycle_id || 'sync' === $row_execution_mode => 'validation',
             default => 'after_submission',
         };
 
@@ -6038,6 +6487,9 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             'error_code'               => $error ? $error->get_error_code() : null,
             'error_message'            => $error ? $error->get_error_message() : null,
             'execution_request_id'     => $this->extract_execution_request_id_from_log( $context, $result ),
+            'submission_uuid'          => isset( $context['submission_uuid'] ) && is_scalar( $context['submission_uuid'] )
+                ? sanitize_text_field( (string) $context['submission_uuid'] )
+                : null,
             'mapping_id'               => $context['mapping_id'] ?? $context['local_mapping_id'] ?? $context['action_id'] ?? null,
             'resolved_model_id'        => isset( $meta['resolved_model_id'] ) && is_scalar( $meta['resolved_model_id'] )
                 ? sanitize_text_field( (string) $meta['resolved_model_id'] )

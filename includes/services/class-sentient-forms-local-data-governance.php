@@ -456,6 +456,11 @@ class Sentient_Forms_Local_Data_Governance
             $lead_scoring = new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
             $deleted += $lead_scoring->cleanup_expired( gmdate( 'Y-m-d H:i:s' ) );
         }
+        if ( class_exists( 'Sentient_Forms_Submission_Ledger_Repository' ) )
+        {
+            $submission_ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+            $deleted += $submission_ledger->cleanup_expired( gmdate( 'Y-m-d H:i:s' ) );
+        }
 
         return $deleted;
     }
@@ -547,15 +552,33 @@ class Sentient_Forms_Local_Data_Governance
             ),
             ARRAY_A
         ) ?: [];
+        $ledger_rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT * FROM %i
+                WHERE logical_fields_json LIKE %s OR provider_metadata_json LIKE %s OR file_refs_json LIKE %s OR native_entry_id LIKE %s OR native_entry_url LIKE %s
+                ORDER BY id ASC
+                LIMIT %d OFFSET %d',
+                $wpdb->prefix . 'sentient_submission_ledger',
+                $like,
+                $like,
+                $like,
+                $like,
+                $like,
+                $per_page,
+                $offset
+            ),
+            ARRAY_A
+        ) ?: [];
 
         $data = array_merge(
             array_map( [ self::class, 'format_export_item' ], $event_rows ),
-            array_map( [ self::class, 'format_lead_scoring_export_item' ], $lead_rows )
+            array_map( [ self::class, 'format_lead_scoring_export_item' ], $lead_rows ),
+            array_map( [ self::class, 'format_submission_ledger_export_item' ], $ledger_rows )
         );
 
         return [
             'data' => $data,
-            'done' => count( $event_rows ) < $per_page && count( $lead_rows ) < $per_page,
+            'done' => count( $event_rows ) < $per_page && count( $lead_rows ) < $per_page && count( $ledger_rows ) < $per_page,
         ];
     }
 
@@ -613,6 +636,22 @@ class Sentient_Forms_Local_Data_Governance
             ),
             ARRAY_A
         ) ?: [];
+        $ledger_rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT id FROM %i
+                WHERE logical_fields_json LIKE %s OR provider_metadata_json LIKE %s OR file_refs_json LIKE %s OR native_entry_id LIKE %s OR native_entry_url LIKE %s
+                ORDER BY id ASC
+                LIMIT %d',
+                $wpdb->prefix . 'sentient_submission_ledger',
+                $like,
+                $like,
+                $like,
+                $like,
+                $like,
+                $per_page
+            ),
+            ARRAY_A
+        ) ?: [];
 
         $erased_at = gmdate( 'Y-m-d H:i:s' );
         $payload   = wp_json_encode(
@@ -660,15 +699,35 @@ class Sentient_Forms_Local_Data_Governance
             );
         }
 
-        $removed = count( $event_rows ) > 0 || count( $lead_rows ) > 0;
+        $ledger_update_table = $wpdb->prefix . 'sentient_submission_ledger';
+        foreach ( $ledger_rows as $row )
+        {
+            $wpdb->update(
+                $ledger_update_table,
+                [
+                    'native_entry_id'        => null,
+                    'native_entry_url'       => null,
+                    'logical_fields_json'    => $payload,
+                    'provider_metadata_json' => $payload,
+                    'file_refs_json'         => $payload,
+                    'redaction_summary_json' => $payload,
+                    'updated_at'             => $erased_at,
+                ],
+                [ 'id' => (int) $row['id'] ],
+                [ '%s', '%s', '%s', '%s', '%s', '%s', '%s' ],
+                [ '%d' ]
+            );
+        }
+
+        $removed = count( $event_rows ) > 0 || count( $lead_rows ) > 0 || count( $ledger_rows ) > 0;
 
         return [
             'items_removed'  => $removed,
             'items_retained' => $removed,
             'messages'       => $removed
-                ? [ __( 'Sentient Forms removed local execution and lead scoring result content and retained non-content audit metadata.', 'sentient-forms' ) ]
+                ? [ __( 'Sentient Forms removed local execution, lead scoring, and submission ledger content and retained non-content audit metadata.', 'sentient-forms' ) ]
                 : [],
-            'done'           => count( $event_rows ) < $per_page && count( $lead_rows ) < $per_page,
+            'done'           => count( $event_rows ) < $per_page && count( $lead_rows ) < $per_page && count( $ledger_rows ) < $per_page,
         ];
     }
 
@@ -718,6 +777,8 @@ class Sentient_Forms_Local_Data_Governance
             'sentient_action_templates',
             'sentient_custom_actions',
             'sentient_form_mappings',
+            'sentient_submission_ledger_settings',
+            'sentient_submission_ledger',
             'sentient_execution_events',
             'sentient_lead_profiles',
             'sentient_historical_analysis_runs',
@@ -897,6 +958,54 @@ class Sentient_Forms_Local_Data_Governance
                 [
                     'name'  => __( 'Updated At', 'sentient-forms' ),
                     'value' => (string) ( $row['updated_at'] ?? '' ),
+                ],
+            ],
+        ];
+    }
+
+    private static function format_submission_ledger_export_item( array $row ): array
+    {
+        $logical_fields    = json_decode( (string) ( $row['logical_fields_json'] ?? '' ), true );
+        $provider_metadata = json_decode( (string) ( $row['provider_metadata_json'] ?? '' ), true );
+        $file_refs         = json_decode( (string) ( $row['file_refs_json'] ?? '' ), true );
+
+        return [
+            'group_id'          => 'sentient-forms-submission-ledger',
+            'group_label'       => __( 'Sentient Forms Submission Ledger', 'sentient-forms' ),
+            'group_description' => __( 'Local submission snapshots stored by Sentient Forms after explicit ledger opt-in.', 'sentient-forms' ),
+            'item_id'           => 'sentient-forms-submission-ledger-' . (string) ( $row['id'] ?? '' ),
+            'data'              => [
+                [
+                    'name'  => __( 'Submission UUID', 'sentient-forms' ),
+                    'value' => (string) ( $row['submission_uuid'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Form Source', 'sentient-forms' ),
+                    'value' => (string) ( $row['form_source'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Form ID', 'sentient-forms' ),
+                    'value' => (string) ( $row['form_id'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Native Entry ID', 'sentient-forms' ),
+                    'value' => (string) ( $row['native_entry_id'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Logical Fields', 'sentient-forms' ),
+                    'value' => is_array( $logical_fields ) ? (string) wp_json_encode( $logical_fields ) : (string) ( $row['logical_fields_json'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Provider Metadata', 'sentient-forms' ),
+                    'value' => is_array( $provider_metadata ) ? (string) wp_json_encode( $provider_metadata ) : (string) ( $row['provider_metadata_json'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'File References', 'sentient-forms' ),
+                    'value' => is_array( $file_refs ) ? (string) wp_json_encode( $file_refs ) : (string) ( $row['file_refs_json'] ?? '' ),
+                ],
+                [
+                    'name'  => __( 'Captured At', 'sentient-forms' ),
+                    'value' => (string) ( $row['captured_at'] ?? '' ),
                 ],
             ],
         ];

@@ -18,6 +18,12 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
 
     public function create( array $data ): int | WP_Error
     {
+        $hook = $this->normalize_hook( $data['hook'] ?? '' );
+        if ( is_wp_error( $hook ) )
+        {
+            return $hook;
+        }
+
         $conditions_json = $this->encode_json_field( $data['conditions_json'] ?? null, 'conditions_json' );
         if ( is_wp_error( $conditions_json ) )
         {
@@ -49,7 +55,7 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
                 'external_id'         => isset( $data['external_id'] ) ? sanitize_text_field( (string) $data['external_id'] ) : null,
                 'form_source'         => sanitize_key( (string) ( $data['form_source'] ?? 'gravity_forms' ) ),
                 'form_id'             => sanitize_text_field( (string) ( $data['form_id'] ?? '' ) ),
-                'hook'                => sanitize_key( (string) ( $data['hook'] ?? '' ) ),
+                'hook'                => $hook,
                 'action_kind'         => sanitize_key( (string) ( $data['action_kind'] ?? '' ) ),
                 'action_id'           => (int) ( $data['action_id'] ?? 0 ),
                 'conditions_json'     => $conditions_json,
@@ -207,7 +213,13 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
 
         if ( array_key_exists( 'hook', $data ) )
         {
-            $fields['hook'] = sanitize_key( (string) $data['hook'] );
+            $hook = $this->normalize_hook( $data['hook'] );
+            if ( is_wp_error( $hook ) )
+            {
+                return $hook;
+            }
+
+            $fields['hook'] = $hook;
             $formats[]      = '%s';
         }
 
@@ -321,6 +333,20 @@ class Sentient_Forms_Form_Mappings_Repository extends Sentient_Forms_Local_Repos
             [ 'id' => $id ],
             [ '%d' ]
         );
+    }
+
+    private function normalize_hook( mixed $hook ): string | WP_Error
+    {
+        $normalized = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
+        if ( null === $normalized )
+        {
+            return new WP_Error(
+                'sentient_forms_invalid_mapping_hook',
+                __( 'Form mapping hook must be a supported lifecycle ID.', 'sentient-forms' )
+            );
+        }
+
+        return $normalized;
     }
 
     private function decode_row( array $row ): array

@@ -40,6 +40,7 @@ class Sentient_Forms_Local_Support_Bundle_Service
             'providers'          => $this->provider_summaries(),
             'external_consents'  => $this->consent_summaries(),
             'execution_summary'  => $this->execution_summary(),
+            'submission_ledger'  => $this->submission_ledger_summary(),
             'retention'          => [
                 'event_retention_days'    => Sentient_Forms_Local_Data_Governance::current_execution_event_retention_days(),
                 'delete_data_on_uninstall' => Sentient_Forms_Local_Data_Governance::delete_data_on_uninstall_enabled(),
@@ -50,6 +51,43 @@ class Sentient_Forms_Local_Support_Bundle_Service
         ];
 
         return self::redact( $bundle );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function submission_ledger_summary(): array
+    {
+        if ( ! class_exists( 'Sentient_Forms_Submission_Ledger_Settings_Repository' ) || ! class_exists( 'Sentient_Forms_Submission_Ledger_Repository' ) )
+        {
+            return [
+                'enabled_form_count' => 0,
+                'record_count'       => 0,
+                'recent'             => [],
+            ];
+        }
+
+        $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $this->wpdb );
+        $ledger   = new Sentient_Forms_Submission_Ledger_Repository( $this->wpdb );
+
+        return [
+            'enabled_form_count' => $settings->count_enabled(),
+            'record_count'       => $ledger->count_all(),
+            'recent'             => array_map(
+                static fn ( array $row ): array => [
+                    'id'                 => (int) ( $row['id'] ?? 0 ),
+                    'submission_uuid'    => $row['submission_uuid'] ?? null,
+                    'form_source'        => $row['form_source'] ?? null,
+                    'form_id'            => $row['form_id'] ?? null,
+                    'native_entry_id'    => $row['native_entry_id'] ?? null,
+                    'has_logical_fields' => ! empty( $row['logical_fields_json'] ),
+                    'file_ref_count'     => is_array( $row['file_refs_json'] ?? null ) ? count( $row['file_refs_json'] ) : 0,
+                    'captured_at'        => $row['captured_at'] ?? null,
+                    'expires_at'         => $row['expires_at'] ?? null,
+                ],
+                $ledger->list_recent( 10 )
+            ),
+        ];
     }
 
     /**

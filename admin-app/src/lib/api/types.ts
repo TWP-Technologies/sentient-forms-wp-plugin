@@ -1450,7 +1450,7 @@ export interface FormActionConfig {
  */
 export interface FormActionConfigResponse {
 	form_source: string;
-	form_id: number;
+	form_id: string | number;
 	action_id: string;
 	config: FormActionConfig;
 }
@@ -1465,7 +1465,7 @@ export interface ActionDefaultsBatchResponse {
  */
 export interface FormAllActionConfigsResponse {
 	form_source: string;
-	form_id: number;
+	form_id: string | number;
 	configs: Record<string, FormActionConfig>;
 }
 
@@ -1898,7 +1898,7 @@ export interface FormExecutionStatus {
 
 export interface ExecutionStatus {
 	entry_id: number;
-	form_id: number;
+	form_id: string | number;
 	last_response: unknown;
 	last_error: string | null;
 	processed_at: string | null;
@@ -1967,10 +1967,75 @@ export interface FormsOverviewResponse {
 	generated_at: string;
 }
 
+export interface FormSourceLifecycleDescriptor {
+	id?: string;
+	supported: boolean;
+	label: string;
+	native_hook: string | null;
+	execution_mode: ExecutionMode;
+	requires_ledger: boolean;
+	unsupported_reason: string | null;
+}
+
+export interface FormSourceDescriptor {
+	slug: string;
+	label: string;
+	is_active: boolean;
+	adapter_class?: string | null;
+	capabilities?: Record<string, boolean | string | number | null>;
+	lifecycles: Record<string, FormSourceLifecycleDescriptor>;
+	ledger?: {
+		required_for_parity: boolean;
+		enabled: boolean;
+		settings_source: string;
+		unavailable_reason?: string | null;
+	};
+}
+
+export interface SubmissionLedgerSettingsResponse {
+	form_source: string;
+	form_id: string;
+	enabled: boolean;
+	enabled_at: string | null;
+	enabled_by_user_id: number | null;
+	disabled_at: string | null;
+	disabled_by_user_id: number | null;
+	settings_source: string;
+	ledger_records_endpoint: string;
+	record_count?: number;
+}
+
+export interface SubmissionLedgerRecord {
+	id: number;
+	submission_uuid: string;
+	form_source: string;
+	form_id: string;
+	native_entry_id: string | null;
+	native_entry_url: string | null;
+	source_submitted_at: string | null;
+	captured_at: string;
+	logical_fields: Record<string, unknown>;
+	provider_metadata: Record<string, unknown>;
+	file_refs: Array<Record<string, unknown>>;
+	redaction_summary: Record<string, unknown>;
+	expires_at: string | null;
+	detail_endpoint: string;
+}
+
+export interface SubmissionLedgerRecordsResponse {
+	form_source: string;
+	form_id: string;
+	records: SubmissionLedgerRecord[];
+	total: number;
+	per_page: number;
+	offset: number;
+}
+
 export interface FormActionsBootstrapResponse {
 	form_source: string;
-	form_id: number;
+	form_id: string | number;
 	form?: FormSummary | null;
+	form_source_descriptor?: FormSourceDescriptor | null;
 	actions: FormActionLinkage[];
 	execution_status: FormExecutionStatus;
 	disabled_state: FormDisableStateResponse;
@@ -1985,6 +2050,7 @@ export interface FormActionsBootstrapResponse {
 	form_fields?: FormFieldInfo[];
 	action_defaults?: Record<string, FormActionConfig>;
 	workflow_plan?: WorkflowPlanResponse | null;
+	ledger_settings?: SubmissionLedgerSettingsResponse;
 	generated_at: string;
 }
 
@@ -2073,6 +2139,6 @@ export interface UpdateFormMappingRequest {
 export interface CloneTemplateMappingRequest {
 	site_id: string;
 	form_source: string;
-	form_id: number;
+	form_id: string | number;
 	field_mapping?: Record<string, string>;
 }

@@ -94,6 +94,7 @@ class Sentient_Forms_Installer
     {
         $current = get_option( self::OPTION_DB_VERSION, '' );
         $tables_ready = self::local_first_tables_exist();
+        $should_run_form_source_config_migration = $repair_missing_tables || $current !== SENTIENT_FORMS_DB_VERSION;
 
         if ( $current !== SENTIENT_FORMS_DB_VERSION || ( $repair_missing_tables && ! $tables_ready ) )
         {
@@ -109,6 +110,10 @@ class Sentient_Forms_Installer
         }
 
         self::seed_bundled_action_templates();
+        if ( $should_run_form_source_config_migration && class_exists( 'Sentient_Forms_Form_Source_Config_Migrator' ) )
+        {
+            Sentient_Forms_Form_Source_Config_Migrator::migrate_active_configuration();
+        }
         self::repair_local_first_action_integrity();
         Sentient_Forms_Managed_Usage_Sanitizer::scrub_local_storage();
     }
@@ -341,6 +346,44 @@ class Sentient_Forms_Installer
                 KEY hook_idx (hook),
                 KEY enabled_idx (enabled)
             ) {$charset_collate};",
+            "CREATE TABLE {$wpdb->prefix}sentient_submission_ledger_settings (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                form_source VARCHAR(100) NOT NULL,
+                form_id VARCHAR(100) NOT NULL,
+                enabled TINYINT(1) NOT NULL DEFAULT 0,
+                enabled_at DATETIME NULL,
+                enabled_by_user_id BIGINT UNSIGNED NULL,
+                disabled_at DATETIME NULL,
+                disabled_by_user_id BIGINT UNSIGNED NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                PRIMARY KEY  (id),
+                UNIQUE KEY form_unique (form_source, form_id),
+                KEY enabled_idx (enabled),
+                KEY updated_idx (updated_at)
+            ) {$charset_collate};",
+            "CREATE TABLE {$wpdb->prefix}sentient_submission_ledger (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                submission_uuid VARCHAR(36) NOT NULL,
+                form_source VARCHAR(100) NOT NULL,
+                form_id VARCHAR(100) NOT NULL,
+                native_entry_id VARCHAR(191) NULL,
+                native_entry_url TEXT NULL,
+                source_submitted_at DATETIME NULL,
+                captured_at DATETIME NOT NULL,
+                logical_fields_json LONGTEXT NOT NULL,
+                provider_metadata_json LONGTEXT NULL,
+                file_refs_json LONGTEXT NULL,
+                redaction_summary_json LONGTEXT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                expires_at DATETIME NULL,
+                PRIMARY KEY  (id),
+                UNIQUE KEY submission_unique (submission_uuid),
+                KEY form_captured_idx (form_source, form_id, captured_at, id),
+                KEY form_entry_idx (form_source, form_id, native_entry_id),
+                KEY expires_idx (expires_at)
+            ) {$charset_collate};",
             "CREATE TABLE {$wpdb->prefix}sentient_execution_events (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
                 execution_request_id VARCHAR(191) NOT NULL,
@@ -348,6 +391,7 @@ class Sentient_Forms_Installer
                 form_source VARCHAR(100) NULL,
                 form_id VARCHAR(100) NULL,
                 entry_id VARCHAR(191) NULL,
+                submission_uuid VARCHAR(36) NULL,
                 provider VARCHAR(50) NOT NULL,
                 model VARCHAR(191) NULL,
                 status VARCHAR(30) NOT NULL,
@@ -368,7 +412,8 @@ class Sentient_Forms_Installer
                 KEY expires_idx (expires_at),
                 KEY created_idx (created_at),
                 KEY created_id_idx (created_at, id),
-                KEY form_created_id_idx (form_source, form_id, created_at, id)
+                KEY form_created_id_idx (form_source, form_id, created_at, id),
+                KEY form_submission_idx (form_source, form_id, submission_uuid)
             ) {$charset_collate};",
             "CREATE TABLE {$wpdb->prefix}sentient_lead_profiles (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,

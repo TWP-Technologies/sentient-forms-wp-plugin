@@ -8,6 +8,7 @@ import type {
 	ExecutionStatus,
 	FormExecutionStatus,
 	FormActionsBootstrapResponse,
+	SubmissionLedgerSettingsResponse,
 	ApiErrorPayload
 } from '$lib/api/types';
 
@@ -29,6 +30,7 @@ export interface FormActionsState {
 	/** CB-FORMS-002: Effective disable state (form OR global OR provider) */
 	effectiveDisabled: boolean;
 	bootstrap: FormActionsBootstrapResponse | null;
+	submissionLedgerSaving: boolean;
 }
 
 const client = createClientFromConfig();
@@ -47,7 +49,8 @@ function initialState(): FormActionsState {
 		globalDisabled: false,
 		providerDisabled: false,
 		effectiveDisabled: false,
-		bootstrap: null
+		bootstrap: null,
+		submissionLedgerSaving: false
 	};
 }
 
@@ -138,10 +141,25 @@ export const formActionsState = $state(initialState());
 const readable = toStore(() => formActionsState);
 let activeFormKey: string | null = null;
 let refreshInFlightKey: string | null = null;
+let submissionLedgerUpdateInFlightKey: string | null = null;
 let loadRequestSequence = 0;
 let statusRefreshSequence = 0;
 
-function getFormKey(formSourceSlug: string, formId: number): string {
+type FormSourceFormId = string | number;
+
+function isInvalidFormSourceContext(formSourceSlug: string, formId: FormSourceFormId): boolean {
+	if (!formSourceSlug || formSourceSlug === 'undefined') {
+		return true;
+	}
+
+	if (typeof formId === 'number') {
+		return !Number.isFinite(formId);
+	}
+
+	return String(formId).trim() === '';
+}
+
+function getFormKey(formSourceSlug: string, formId: FormSourceFormId): string {
 	return `${formSourceSlug}:${formId}`;
 }
 
@@ -152,6 +170,7 @@ function resetState() {
 function resetStore() {
 	activeFormKey = null;
 	refreshInFlightKey = null;
+	submissionLedgerUpdateInFlightKey = null;
 	loadRequestSequence += 1;
 	statusRefreshSequence += 1;
 	resetState();
@@ -165,9 +184,9 @@ function isCurrentLoadRequest(formKey: string, requestSequence: number): boolean
 	return activeFormKey === formKey && loadRequestSequence === requestSequence;
 }
 
-async function load(formSourceSlug: string, formId: number) {
+async function load(formSourceSlug: string, formId: FormSourceFormId) {
 	// Guard against undefined or invalid parameters during hydration race conditions
-	if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+	if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 		console.warn('[formActionsStore] load called with invalid params:', { formSourceSlug, formId });
 		return;
 	}
@@ -242,7 +261,11 @@ async function load(formSourceSlug: string, formId: number) {
 	}
 }
 
-async function create(formSourceSlug: string, formId: number, payload: FormActionMutationPayload) {
+async function create(
+	formSourceSlug: string,
+	formId: FormSourceFormId,
+	payload: FormActionMutationPayload
+) {
 	try {
 		const created = await client.createFormAction(formSourceSlug, formId, payload);
 		formActionsState.items = [...formActionsState.items, created];
@@ -257,7 +280,7 @@ async function create(formSourceSlug: string, formId: number, payload: FormActio
 
 async function toggleEnabled(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	linkage: FormActionLinkage,
 	enabled: boolean
 ) {
@@ -288,7 +311,7 @@ async function toggleEnabled(
 
 async function updateHooks(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	linkage: FormActionLinkage,
 	hooks: string[]
 ) {
@@ -334,7 +357,7 @@ async function updateHooks(
 
 async function updateAction(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	linkage: FormActionLinkage,
 	payload: Partial<FormActionMutationPayload>,
 	successMessage = 'Action updated'
@@ -366,7 +389,7 @@ async function updateAction(
 	}
 }
 
-async function remove(formSourceSlug: string, formId: number, linkage: FormActionLinkage) {
+async function remove(formSourceSlug: string, formId: FormSourceFormId, linkage: FormActionLinkage) {
 	try {
 		await client.deleteFormAction(formSourceSlug, formId, linkage.local_mapping_id);
 		formActionsState.items = formActionsState.items.filter(
@@ -382,11 +405,11 @@ async function remove(formSourceSlug: string, formId: number, linkage: FormActio
 
 async function refresh(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	options: { forceRefresh?: boolean } = {}
 ) {
 	// Guard against undefined or invalid parameters during hydration race conditions
-	if (!formSourceSlug || formSourceSlug === 'undefined' || !formId || Number.isNaN(formId)) {
+	if (isInvalidFormSourceContext(formSourceSlug, formId)) {
 		console.warn('[formActionsStore] refresh called with invalid params:', { formSourceSlug, formId });
 		return;
 	}
@@ -428,7 +451,7 @@ async function refresh(
 
 async function fetchExecutionStatus(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	entryId: number
 ): Promise<ExecutionStatus> {
 	try {
@@ -442,10 +465,71 @@ async function fetchExecutionStatus(
 	}
 }
 
+function applySubmissionLedgerSettings(settings: SubmissionLedgerSettingsResponse) {
+	if (!formActionsState.bootstrap) return;
+	formActionsState.bootstrap = {
+		...formActionsState.bootstrap,
+		ledger_settings: settings
+	};
+}
+
+async function updateSubmissionLedgerSettings(
+	formSourceSlug: string,
+	formId: FormSourceFormId,
+	enabled: boolean
+) {
+	const formKey = getFormKey(formSourceSlug, formId);
+	if (submissionLedgerUpdateInFlightKey === formKey) {
+		return;
+	}
+
+	submissionLedgerUpdateInFlightKey = formKey;
+	const previousBootstrap = formActionsState.bootstrap;
+	const previousSettings = previousBootstrap?.ledger_settings ?? null;
+
+	if (activeFormKey === formKey) {
+		formActionsState.submissionLedgerSaving = true;
+	}
+
+	if (activeFormKey === formKey && previousBootstrap && previousSettings) {
+		applySubmissionLedgerSettings({
+			...previousSettings,
+			enabled
+		});
+	}
+
+	try {
+		const result = await client.updateSubmissionLedgerSettings(formSourceSlug, formId, enabled, {
+			showNotifications: false
+		});
+		if (activeFormKey === formKey) {
+			applySubmissionLedgerSettings(result);
+		}
+		notifications.success(
+			result.enabled
+				? 'Submission ledger storage enabled.'
+				: 'Submission ledger storage disabled.'
+		);
+	} catch (error) {
+		if (activeFormKey === formKey && previousBootstrap) {
+			formActionsState.bootstrap = previousBootstrap;
+		}
+		const message = friendlyMessageFromError(error, 'Failed to update submission ledger storage');
+		notifications.error(message);
+	} finally {
+		if (submissionLedgerUpdateInFlightKey === formKey) {
+			submissionLedgerUpdateInFlightKey = null;
+		}
+		if (activeFormKey === formKey) {
+			formActionsState.submissionLedgerSaving = false;
+		}
+	}
+}
+
 /** CB-FORMS-001: Toggle per-form master disable. */
 async function toggleFormDisabled(
 	formSourceSlug: string,
-	formId: number,
+	formId: FormSourceFormId,
 	disabled: boolean
 ) {
 	const previous = {
@@ -495,6 +579,7 @@ export const formActionsStore = {
 	remove,
 	refresh,
 	fetchExecutionStatus,
+	updateSubmissionLedgerSettings,
 	toggleFormDisabled,
 	reset: resetStore
 };

@@ -102,11 +102,13 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         );
 
         $this->assertSame( 'gravity_forms', $mapping['form_source'] );
+        $this->assertSame( 'after_submission', $mapping['hook'] );
         $this->assertSame( [ 'email' => '3' ], $mapping['input_bindings_json'] );
 
         $mappings = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/form-mappings?form_source=gravity_forms&form_id=7' );
         $this->assertCount( 1, $mappings );
         $this->assertSame( $mapping['id'], $mappings[0]['id'] );
+        $this->assertSame( 'after_submission', $mappings[0]['hook'] );
 
         $event = $this->dispatch_json(
             'POST',
@@ -159,6 +161,42 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 'request-123', $support_bundle['execution_summary']['recent'][0]['execution_request_id'] );
         $this->assertArrayNotHasKey( 'result_json', $support_bundle['execution_summary']['recent'][0] );
         $this->assertTrue( $support_bundle['execution_summary']['recent'][0]['has_result'] );
+    }
+
+    public function test_support_bundle_summarizes_submission_ledger_without_field_values(): void
+    {
+        global $wpdb;
+
+        $settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger   = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+
+        $settings->set_enabled( 'gravity_forms', '7', true, self::$admin_id );
+        $created = $ledger->create(
+            [
+                'submission_uuid'        => '44444444-4444-4444-8444-444444444444',
+                'form_source'            => 'gravity_forms',
+                'form_id'                => '7',
+                'native_entry_id'        => '101',
+                'logical_fields_json'    => [
+                    'email'   => 'diagnostic-person@example.test',
+                    'message' => 'Do not expose this.',
+                ],
+                'provider_metadata_json' => [ 'source' => 'gravity_forms' ],
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        $support_bundle = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/support-bundle' );
+
+        $this->assertSame( 1, $support_bundle['submission_ledger']['enabled_form_count'] );
+        $this->assertSame( 1, $support_bundle['submission_ledger']['record_count'] );
+        $this->assertSame( 'gravity_forms', $support_bundle['submission_ledger']['recent'][0]['form_source'] );
+        $this->assertSame( '7', $support_bundle['submission_ledger']['recent'][0]['form_id'] );
+        $this->assertTrue( $support_bundle['submission_ledger']['recent'][0]['has_logical_fields'] );
+        $this->assertStringNotContainsString(
+            'diagnostic-person@example.test',
+            wp_json_encode( $support_bundle )
+        );
     }
 
     public function test_mapping_list_requires_form_filter(): void
@@ -899,6 +937,8 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
                 'sentient_custom_actions',
                 'sentient_form_mappings',
                 'sentient_execution_events',
+                'sentient_submission_ledger_settings',
+                'sentient_submission_ledger',
                 'sentient_migration_runs',
                 'sentient_model_cache',
                 'sentient_async_requests',

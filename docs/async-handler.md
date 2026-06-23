@@ -1,6 +1,6 @@
 # Sentient Forms Async Handler
 
-_Last updated: 2025-11-16_
+_Last updated: 2026-06-19_
 
 ## Why it exists
 Gravity Forms (and future adapters) need to run expensive CPS actions without blocking form submissions. The async handler wraps WordPress Action Scheduler (or core `wp-cron`) and exposes two entry points:
@@ -42,6 +42,8 @@ $handler->schedule_action(
 3. Enqueues the job via Action Scheduler (preferred) or `wp_schedule_single_event` fallback.
 
 Failures trigger exponential backoff (base 60 seconds, capped at 1 hour). On the final failure, the handler emits `sentient_forms_async_failure` and notifies the adapter via `finalize_async_error()`.
+
+When a form adapter captured an opt-in Sentient Forms Submission Ledger record, it should pass the generated `submission_uuid` in the job context. The async handler preserves that value through queued execution, retries, local execution events, and Action Log payloads so multiple action runs can be grouped under one logical form submission.
 
 ## Dispatching evaluation jobs
 Adapters that need a second-phase evaluation (e.g., apply CPS output to form entries) may call:
@@ -109,6 +111,7 @@ Every job receives a normalized `context` array that the handler enriches before
 | `form_source` | Adapter slug such as `gravity_forms`; derived from `adapter_id` when omitted. |
 | `adapter_id` | Optional; used when the evaluation job needs an adapter that differs from `form_source`. |
 | `form_id` / `entry_id` | Adapter-provided identifiers for downstream bookkeeping and logging. |
+| `submission_uuid` | Optional Sentient Forms Submission Ledger identifier. Present only when the source adapter captured an opt-in ledger record for the saved submission. |
 | `execution_request_id` | Deterministic idempotency key generated from the form payload and central action. |
 | `evaluation_request_id` | Present on evaluation jobs; deterministic hash used to dedupe `dispatch_evaluation()` calls. |
 | `attempt` / `max_attempts` | Current retry counters. Defaults to `1` / `Sentient_Forms_Async_Handler::MAX_ATTEMPTS`. |

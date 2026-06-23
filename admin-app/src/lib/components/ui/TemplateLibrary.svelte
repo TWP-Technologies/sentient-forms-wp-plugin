@@ -21,7 +21,7 @@
 		open: boolean;
 		siteId: string;
 		formSource: string;
-		formId: number;
+		formId: string | number;
 		formFields: FormFieldInfo[];
 		onImport?: (mapping: FormMapping) => void;
 	} = $props();

@@ -238,6 +238,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             'error_code'     => $request->get_param( 'error_code' ) ?: null,
             'error_message'  => $request->get_param( 'error_message' ) ?: null,
             'execution_request_id' => $request->get_param( 'execution_request_id' ) ?: null,
+            'submission_uuid' => self::normalize_submission_uuid( $request->get_param( 'submission_uuid' ) ),
             'mapping_id'     => $request->get_param( 'mapping_id' ) ?: null,
             'resolved_model_id' => $request->get_param( 'resolved_model_id' ) ?: null,
             'usage_cost'     => self::build_legacy_usage_cost_summary(
@@ -386,6 +387,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                                     ? sanitize_textarea_field( $data['error_message'] )
                                     : null,
             'execution_request_id' => $execution_request_id,
+            'submission_uuid' => self::normalize_submission_uuid( $data['submission_uuid'] ?? null ),
             'mapping_id'     => isset( $data['mapping_id'] )
                                     ? sanitize_text_field( (string) $data['mapping_id'] )
                                     : null,
@@ -442,7 +444,8 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         array $execution_request_ids,
         int $entry_id,
         ?string $form_source = null,
-        ?int $form_id = null
+        ?int $form_id = null,
+        ?string $submission_uuid = null
     ): int
     {
         $entry_id = absint( $entry_id );
@@ -473,6 +476,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
         $expected_form_source = null !== $form_source ? sanitize_key( $form_source ) : null;
         $expected_form_id     = null !== $form_id ? absint( $form_id ) : null;
+        $submission_uuid      = self::normalize_submission_uuid( $submission_uuid );
         $entries              = get_option( self::OPTION_KEY, [] );
         if ( ! is_array( $entries ) )
         {
@@ -507,12 +511,22 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             }
 
             $current_entry_id = absint( $entry['entry_id'] ?? 0 );
-            if ( $current_entry_id > 0 )
+            $current_submission_uuid = self::normalize_submission_uuid( $entry['submission_uuid'] ?? null );
+            $needs_entry_id          = $current_entry_id <= 0;
+            $needs_submission_uuid   = null !== $submission_uuid && null === $current_submission_uuid;
+            if ( ! $needs_entry_id && ! $needs_submission_uuid )
             {
                 continue;
             }
 
-            $entry['entry_id'] = $entry_id;
+            if ( $needs_entry_id )
+            {
+                $entry['entry_id'] = $entry_id;
+            }
+            if ( $needs_submission_uuid )
+            {
+                $entry['submission_uuid'] = $submission_uuid;
+            }
             $updated_entries[] = $entry;
         }
         unset( $entry );
@@ -527,7 +541,8 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             array_keys( $request_ids ),
             $entry_id,
             $expected_form_source,
-            $expected_form_id
+            $expected_form_id,
+            $submission_uuid
         );
 
         return $updated_count;
@@ -1196,6 +1211,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             'error_code'              => isset( $event['error_code'] ) ? sanitize_text_field( (string) $event['error_code'] ) : null,
             'error_message'           => isset( $event['error_message'] ) ? sanitize_textarea_field( (string) $event['error_message'] ) : null,
             'execution_request_id'    => isset( $event['execution_request_id'] ) ? sanitize_text_field( (string) $event['execution_request_id'] ) : null,
+            'submission_uuid'         => self::normalize_submission_uuid( $event['submission_uuid'] ?? null ),
             'mapping_id'              => isset( $event['mapping_id'] ) ? 'local_first_' . absint( $event['mapping_id'] ) : null,
             'resolved_model_id'       => isset( $event['model'] ) ? sanitize_text_field( (string) $event['model'] ) : null,
             'pricing'                 => $pricing,
@@ -1218,6 +1234,17 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
         $normalized = absint( $entry_id );
         return $normalized > 0 ? $normalized : null;
+    }
+
+    private static function normalize_submission_uuid( mixed $submission_uuid ): ?string
+    {
+        if ( ! is_scalar( $submission_uuid ) )
+        {
+            return null;
+        }
+
+        $submission_uuid = strtolower( sanitize_text_field( (string) $submission_uuid ) );
+        return wp_is_uuid( $submission_uuid ) ? $submission_uuid : null;
     }
 
     private function normalize_local_execution_status( string $status ): string
@@ -1540,7 +1567,8 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         array $execution_request_ids,
         int $entry_id,
         ?string $expected_form_source,
-        ?int $expected_form_id
+        ?int $expected_form_id,
+        ?string $submission_uuid = null
     ): int
     {
         if ( ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
@@ -1570,13 +1598,25 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 continue;
             }
 
-            if ( absint( $event['entry_id'] ?? 0 ) > 0 )
+            $current_entry_id        = absint( $event['entry_id'] ?? 0 );
+            $current_submission_uuid = self::normalize_submission_uuid( $event['submission_uuid'] ?? null );
+            $needs_entry_id          = $current_entry_id <= 0;
+            $needs_submission_uuid   = null !== $submission_uuid && null === $current_submission_uuid;
+            if ( ! $needs_entry_id && ! $needs_submission_uuid )
             {
                 continue;
             }
 
-            $event['entry_id'] = (string) $entry_id;
-            $recorded          = $repository->record( $event );
+            if ( $needs_entry_id )
+            {
+                $event['entry_id'] = (string) $entry_id;
+            }
+            if ( $needs_submission_uuid )
+            {
+                $event['submission_uuid'] = $submission_uuid;
+            }
+
+            $recorded = $repository->record( $event );
             if ( ! is_wp_error( $recorded ) )
             {
                 $updated++;
@@ -1715,6 +1755,10 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 ],
                 'execution_request_id' => [
                     'description' => __( 'Stable execution request identifier.', 'sentient-forms' ),
+                    'type'        => [ 'string', 'null' ],
+                ],
+                'submission_uuid' => [
+                    'description' => __( 'Submission ledger UUID that groups action runs for one form submission.', 'sentient-forms' ),
                     'type'        => [ 'string', 'null' ],
                 ],
                 'mapping_id' => [

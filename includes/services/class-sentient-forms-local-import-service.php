@@ -1290,7 +1290,7 @@ class Sentient_Forms_Local_Import_Service
         $form_source = $this->code( $form_mapping, 'form_source', 'gravity_forms' );
         $form_id     = $this->text( $form_mapping, 'form_id' );
         $external_id = $this->text( $form_mapping, 'external_id' );
-        $hook        = $this->code( $form_mapping, 'hook' );
+        $hook        = Sentient_Forms_Form_Source_Lifecycles::normalize_id( $form_mapping['hook'] ?? '' );
 
         foreach ( $this->mappings->list_for_form( $form_source, $form_id ) as $candidate )
         {
@@ -1301,7 +1301,8 @@ class Sentient_Forms_Local_Import_Service
 
             if (
                 null !== $action_ref['local_id']
-                && $hook === (string) ( $candidate['hook'] ?? '' )
+                && null !== $hook
+                && $hook === Sentient_Forms_Form_Source_Lifecycles::normalize_id( $candidate['hook'] ?? '' )
                 && (string) ( $candidate['action_kind'] ?? '' ) === $this->code( $form_mapping, 'action_kind', 'custom_action' )
                 && (int) ( $candidate['action_id'] ?? 0 ) === (int) $action_ref['local_id']
             )
