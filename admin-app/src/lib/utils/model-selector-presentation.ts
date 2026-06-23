@@ -38,6 +38,7 @@ export interface ModelSelectorFilters {
 export interface ModelSelectorZdrControlInput {
 	managedServiceActive: boolean;
 	managedZdrRequired: boolean;
+	provider?: string;
 	zdrOnly: boolean;
 }
 
@@ -55,6 +56,8 @@ export const ZDR_PREMIUM_POPOVER =
 	'Requires an active Sentient Forms Managed Service subscription.';
 export const ZDR_FORCED_POPOVER =
 	'Required by Enforce ZDR in Settings. Disable the option to change this filter';
+export const ZDR_DIRECT_OPENROUTER_ROUTE_POPOVER =
+	'Plugin ZDR enforcement only applies to Sentient Forms Managed Service.';
 
 export const MODEL_RANK_CATEGORIES = [
 	'programming',
@@ -101,6 +104,16 @@ export function modelSelectorZdrControl(
 	const helperSentences = [ZDR_MODEL_TAG_HELPER];
 	if (!input.managedServiceActive) {
 		helperSentences.push(DIRECT_OPENROUTER_ZDR_ENFORCEMENT_HELPER);
+	}
+	const managedRoute = input.provider !== 'openrouter';
+
+	if (!managedRoute) {
+		return {
+			checked: false,
+			disabled: true,
+			popover: ZDR_DIRECT_OPENROUTER_ROUTE_POPOVER,
+			helperSentences
+		};
 	}
 
 	if (input.managedZdrRequired) {

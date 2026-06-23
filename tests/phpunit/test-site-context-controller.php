@@ -939,6 +939,88 @@ class SiteContextControllerTest extends WP_UnitTestCase
         );
     }
 
+    public function test_global_managed_zdr_setting_resolves_site_context_preset_to_zdr_model(): void
+    {
+        update_option(
+            'sentient_forms_plugin_settings',
+            [
+                'managed_zdr_required' => true,
+            ]
+        );
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'proxy_api_key'  => 'proxy-site-context-test',
+                'site_id'        => 'site-context-site-id',
+            ]
+        );
+        $this->create_managed_credential();
+        $this->cache_openrouter_model(
+            'openai/gpt-5.5',
+            [
+                'id'                   => 'openai/gpt-5.5',
+                'name'                 => 'OpenAI: GPT-5.5',
+                'free'                 => false,
+                'pricing'              => [
+                    'prompt'     => '0.000005',
+                    'completion' => '0.00003',
+                ],
+                'recommended_for'      => [ 'General purpose', 'Research' ],
+                'zdr_eligible'         => false,
+                'zdr_source'           => 'openrouter_models_zdr_filter',
+                'zdr_checked_at'       => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $this->cache_openrouter_model(
+            'google/gemini-3-flash-preview',
+            [
+                'id'                   => 'google/gemini-3-flash-preview',
+                'name'                 => 'Google: Gemini 3 Flash Preview',
+                'free'                 => false,
+                'pricing'              => [
+                    'prompt'     => '0.0000005',
+                    'completion' => '0.000003',
+                ],
+                'recommended_for'      => [ 'General purpose', 'Speed', 'Research' ],
+                'zdr_eligible'         => true,
+                'zdr_source'           => 'openrouter_models_zdr_filter',
+                'zdr_checked_at'       => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+        $calls = [];
+        $this->mock_managed_site_context_generation(
+            $calls,
+            [
+                'model' => 'google/gemini-3-flash-preview',
+            ]
+        );
+
+        $job_id = $this->queue_site_context_generation(
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'   => 'sf_research',
+                    'provider'  => 'sentient_managed',
+                    'is_preset' => true,
+                    'tools'     => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [ 'mode' => 'off' ],
+                    ],
+                ],
+            ]
+        );
+
+        $data = $this->run_site_context_generation_job( $job_id );
+
+        $this->assertSame( 'ai_generated', $data['context']['source'] ?? null );
+        $this->assertCount( 1, $calls );
+
+        $payload = json_decode( (string) ( $calls[0]['args']['body'] ?? '' ), true );
+        $this->assertIsArray( $payload );
+        $this->assertSame( 'google/gemini-3-flash-preview', $payload['model'] ?? null );
+        $this->assertSame( 'google/gemini-3-flash-preview', $data['context']['metadata']['model'] ?? null );
+    }
+
     public function test_string_false_global_managed_zdr_setting_does_not_require_site_context_privacy_route(): void
     {
         update_option(

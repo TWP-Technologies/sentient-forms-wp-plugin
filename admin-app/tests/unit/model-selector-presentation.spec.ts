@@ -262,6 +262,22 @@ describe('model selector presentation utilities', () => {
 		});
 	});
 
+	it('disables the ZDR enforcement toggle for direct OpenRouter routes', () => {
+		expect(
+			modelSelectorZdrControl({
+				managedServiceActive: true,
+				managedZdrRequired: true,
+				provider: 'openrouter',
+				zdrOnly: true
+			})
+		).toMatchObject({
+			checked: false,
+			disabled: true,
+			popover: 'Plugin ZDR enforcement only applies to Sentient Forms Managed Service.',
+			helperSentences: ['OpenRouter marks this model as available on ZDR routes.']
+		});
+	});
+
 	it('reports incompatible saved selections that are missing required structured output', () => {
 		const missing = missingRequiredCapabilities(models[2], ['structured', 'tools']);
 

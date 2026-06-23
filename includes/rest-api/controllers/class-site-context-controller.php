@@ -728,6 +728,18 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             );
         }
 
+        if ( 'sentient_managed' === $provider && '' === $model && $this->managed_privacy_route_required( $selection ) )
+        {
+            return array_merge(
+                $base,
+                [
+                    'reason_code'  => 'site_context_generation_managed_zdr_model_unavailable',
+                    'message'      => __( 'Choose a ZDR-capable managed model before generating Site Context.', 'sentient-forms' ),
+                    'setup_target' => 'settings',
+                ]
+            );
+        }
+
         if ( $this->is_free_or_auto_generation_model( $model, $selection ) )
         {
             return array_merge(
@@ -2587,10 +2599,23 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
         $primary = isset( $selection['primary'] ) && is_scalar( $selection['primary'] )
             ? sanitize_text_field( (string) $selection['primary'] )
             : 'sf_research';
+        $provider = isset( $selection['provider'] ) && is_scalar( $selection['provider'] )
+            ? sanitize_key( (string) $selection['provider'] )
+            : 'openrouter';
 
         if ( str_contains( $primary, '/' ) )
         {
             return $primary;
+        }
+
+        if ( 'sentient_managed' === $provider )
+        {
+            $requires_zdr = $this->managed_privacy_route_required( $selection );
+            $model_id     = $this->resolve_generation_preset_model_id( sanitize_key( $primary ), $requires_zdr );
+            if ( '' !== $model_id || $requires_zdr )
+            {
+                return $model_id;
+            }
         }
 
         return match ( sanitize_key( $primary ) ) {
@@ -2598,6 +2623,163 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             'sf_free' => 'openrouter/auto',
             default => 'openai/gpt-5.5',
         };
+    }
+
+    private function resolve_generation_preset_model_id( string $preset_code, bool $require_zdr ): string
+    {
+        $models = $this->list_generation_model_candidates();
+        if ( $require_zdr )
+        {
+            $models = $this->zdr_generation_model_candidates( $models );
+            if ( [] === $models )
+            {
+                return '';
+            }
+        }
+
+        $recommended   = $this->pick_generation_default_model_id( $models );
+        $evidence_pick = $this->pick_generation_evidence_model_id( $models, $preset_code );
+        if ( null !== $evidence_pick )
+        {
+            return $evidence_pick;
+        }
+
+        return match ( $preset_code ) {
+            'sf_speed' => $this->pick_generation_preferred_model_id(
+                $models,
+                [ 'google/gemini-3-flash-preview', 'google/gemini-3.1-flash-lite-preview', 'openai/gpt-5.4', 'openai/gpt-5.4-mini' ]
+            ) ?: $recommended,
+            'sf_free' => $require_zdr ? $recommended : 'openrouter/auto',
+            default   => $recommended,
+        };
+    }
+
+    /**
+     * @return array<string, array{id: string, zdr_eligible: bool|null}>
+     */
+    private function list_generation_model_candidates(): array
+    {
+        global $wpdb;
+
+        $repository = new Sentient_Forms_Model_Cache_Repository( $wpdb );
+        $models     = [];
+
+        foreach ( $repository->list( 'openrouter', true, 1000 ) as $row )
+        {
+            $model = $this->normalize_generation_model_candidate( $row['model_id'] ?? '', $row['metadata_json'] ?? [] );
+            if ( '' !== $model['id'] )
+            {
+                $models[ $model['id'] ] = $model;
+            }
+        }
+
+        foreach ( Sentient_Forms_OpenRouter_Model_Recommendations::all() as $model_id => $metadata )
+        {
+            if ( isset( $models[ $model_id ] ) )
+            {
+                continue;
+            }
+
+            $model = $this->normalize_generation_model_candidate( $model_id, $metadata );
+            if ( '' !== $model['id'] )
+            {
+                $models[ $model['id'] ] = $model;
+            }
+        }
+
+        return $models;
+    }
+
+    /**
+     * @param mixed $metadata
+     * @return array{id: string, zdr_eligible: bool|null}
+     */
+    private function normalize_generation_model_candidate( mixed $model_id, mixed $metadata ): array
+    {
+        $metadata = is_array( $metadata ) ? $metadata : [];
+        $id       = is_scalar( $model_id ) ? sanitize_text_field( (string) $model_id ) : '';
+        if ( '' === $id && is_scalar( $metadata['id'] ?? null ) )
+        {
+            $id = sanitize_text_field( (string) $metadata['id'] );
+        }
+
+        return [
+            'id'           => $id,
+            'zdr_eligible' => array_key_exists( 'zdr_eligible', $metadata )
+                ? rest_sanitize_boolean( $metadata['zdr_eligible'] )
+                : null,
+        ];
+    }
+
+    /**
+     * @param array<string, array{id: string, zdr_eligible: bool|null}> $models
+     * @return array<string, array{id: string, zdr_eligible: bool|null}>
+     */
+    private function zdr_generation_model_candidates( array $models ): array
+    {
+        return array_filter(
+            $models,
+            static fn ( array $model ): bool => true === ( $model['zdr_eligible'] ?? null )
+        );
+    }
+
+    /**
+     * @param array<string, array{id: string, zdr_eligible: bool|null}> $models
+     */
+    private function pick_generation_default_model_id( array $models ): string
+    {
+        $first_model_id = array_key_first( $models );
+
+        return $this->pick_generation_preferred_model_id(
+            $models,
+            [ 'openai/gpt-5.5', 'anthropic/claude-sonnet-4.6', 'google/gemini-3-flash-preview', 'openai/gpt-5.4' ]
+        ) ?: ( is_string( $first_model_id ) ? $first_model_id : '' );
+    }
+
+    /**
+     * @param array<string, array{id: string, zdr_eligible: bool|null}> $models
+     */
+    private function pick_generation_evidence_model_id( array $models, string $preset_code ): ?string
+    {
+        $evidence_file = __DIR__ . '/../../data/model-selector-preset-evidence.php';
+        if ( ! file_exists( $evidence_file ) )
+        {
+            return null;
+        }
+
+        $evidence = require $evidence_file;
+        if ( ! is_array( $evidence ) || ! is_array( $evidence[ $preset_code ]['preferred_model_ids'] ?? null ) )
+        {
+            return null;
+        }
+
+        $preferred_ids = [];
+        foreach ( $evidence[ $preset_code ]['preferred_model_ids'] as $model_id )
+        {
+            if ( is_scalar( $model_id ) )
+            {
+                $preferred_ids[] = sanitize_text_field( (string) $model_id );
+            }
+        }
+
+        return $this->pick_generation_preferred_model_id( $models, $preferred_ids );
+    }
+
+    /**
+     * @param array<string, array{id: string, zdr_eligible: bool|null}> $models
+     * @param array<int, string>                                      $preferred_model_ids
+     */
+    private function pick_generation_preferred_model_id( array $models, array $preferred_model_ids ): ?string
+    {
+        foreach ( $preferred_model_ids as $model_id )
+        {
+            if ( isset( $models[ $model_id ] ) )
+            {
+                return $model_id;
+            }
+        }
+
+        return null;
     }
 
     private function sanitize_model_selection( mixed $value ): array

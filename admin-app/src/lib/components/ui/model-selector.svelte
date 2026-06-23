@@ -261,8 +261,7 @@
 
 	function capabilityLabel(capability: ModelSelectorCapabilityKey): string {
 		return (
-			capabilityFilterOptions.find((option) => option.value === capability)?.label ??
-			capability
+			capabilityFilterOptions.find((option) => option.value === capability)?.label ?? capability
 		);
 	}
 
@@ -515,8 +514,7 @@
 		savedReasoningSelectionKey = savedReasoningSettings ? reasoningSelectionKey(nextValue) : '';
 		explicitRequireZdr = selectedProvider === MANAGED_PROVIDER && nextValue.require_zdr === true;
 		zdrOnly =
-			effectiveManagedZdrRequired ||
-			(selectedProvider === MANAGED_PROVIDER && explicitRequireZdr);
+			effectiveManagedZdrRequired || (selectedProvider === MANAGED_PROVIDER && explicitRequireZdr);
 		syncToolSettings(nextValue.tools);
 		if (!readonly && clearUnsupportedToolSelections()) {
 			const sanitizedSelection = currentSelection();
@@ -556,8 +554,11 @@
 		webSearchMaxResults = clampWebSearchMaxResults(maxResults);
 	}
 
-	function clearUnsupportedToolSelections(model: ModelInfo | null = selectedPrimaryModelInfo()): boolean {
-		if (selectedProvider !== OPENROUTER_PROVIDER || selectionMode === 'custom' || !model) return false;
+	function clearUnsupportedToolSelections(
+		model: ModelInfo | null = selectedPrimaryModelInfo()
+	): boolean {
+		if (selectedProvider !== OPENROUTER_PROVIDER || selectionMode === 'custom' || !model)
+			return false;
 		let changed = false;
 		if (!modelSupportsServerTool(model, 'web_search') && webSearchMode !== 'inherit') {
 			webSearchMode = 'inherit';
@@ -727,7 +728,11 @@
 		return selectedModel;
 	}
 
-	function reasoningSelectionKeyFromParts(primary: string, isPreset: boolean, provider: string): string {
+	function reasoningSelectionKeyFromParts(
+		primary: string,
+		isPreset: boolean,
+		provider: string
+	): string {
 		return JSON.stringify({
 			primary,
 			is_preset: isPreset,
@@ -746,7 +751,7 @@
 	function selectedPrimaryModelInfo(): ModelInfo | null {
 		const primary =
 			selectionMode === 'presets'
-				? resolvedModelForPreset(selectedPreset)
+				? (resolved?.model_id ?? resolvedModelForPreset(selectedPreset))
 				: selectionMode === 'custom'
 					? selectedCustomModel.trim()
 					: selectedModel;
@@ -795,8 +800,8 @@
 	function selectedModelIdLabel(): string {
 		if (selectionMode === 'presets') {
 			const catalogModelId = catalogPresetModelId(selectedPreset);
-			if (catalogModelId) return displayModelId(catalogModelId);
 			if (resolved?.model_id) return displayModelId(resolved.model_id);
+			if (catalogModelId) return displayModelId(catalogModelId);
 			if (loading) return 'Resolving preset...';
 			return displayModelId(resolvedModelForPreset(selectedPreset));
 		}
@@ -804,6 +809,15 @@
 	}
 
 	function activeDetailModel(): ModelInfo | null {
+		if (
+			selectionMode === 'presets' &&
+			highlightedPresetCode === selectedPreset &&
+			resolved?.model_id
+		) {
+			const resolvedModel = modelById(resolved.model_id);
+			if (resolvedModel) return resolvedModel;
+		}
+
 		return modelById(highlightedModelId) ?? modelById(selectedConcreteModelId());
 	}
 
@@ -973,7 +987,8 @@
 
 		event.preventDefault();
 		zdrOnly = !zdrControl.checked;
-		explicitRequireZdr = selectedProvider === MANAGED_PROVIDER && zdrOnly && !effectiveManagedZdrRequired;
+		explicitRequireZdr =
+			selectedProvider === MANAGED_PROVIDER && zdrOnly && !effectiveManagedZdrRequired;
 		handleSelectionChange();
 	}
 
@@ -1064,14 +1079,8 @@
 	) {
 		return {
 			template_model_hint: templateModelHint ?? undefined,
-			global_selection: payloadSelection(
-				level === 'global' ? selection : globalSelection,
-				options
-			),
-			action_selection: payloadSelection(
-				level === 'action' ? selection : actionSelection,
-				options
-			),
+			global_selection: payloadSelection(level === 'global' ? selection : globalSelection, options),
+			action_selection: payloadSelection(level === 'action' ? selection : actionSelection, options),
 			form_selection: payloadSelection(level === 'form' ? selection : formSelection, options),
 			mapping_selection: payloadSelection(
 				level === 'mapping' ? selection : mappingSelection,
@@ -1174,6 +1183,7 @@
 		modelSelectorZdrControl({
 			managedServiceActive,
 			managedZdrRequired: effectiveManagedZdrRequired,
+			provider: selectedProvider,
 			zdrOnly
 		})
 	);
@@ -1556,7 +1566,9 @@
 					<div class="sf:w-full sf:min-w-0 sf:lg:w-80 sf:lg:flex-none">
 						<div class="sf:rounded-md sf:bg-slate-50 sf:px-3 sf:py-2 sf:text-left sf:lg:text-right">
 							<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">
-								{selectedProvider === MANAGED_PROVIDER ? 'Managed action credits' : 'Provider estimate'}
+								{selectedProvider === MANAGED_PROVIDER
+									? 'Managed action credits'
+									: 'Provider estimate'}
 							</p>
 							<p class="sf:text-sm sf:font-semibold sf:text-slate-900">
 								{pricingEstimateLabel()}
@@ -1580,11 +1592,7 @@
 			{/if}
 
 			{#if !loading && selectedModelMissingRequiredCapabilities.length > 0}
-				<Alert
-					variant="warning"
-					class="sf:mt-4"
-					data-testid="model-required-capability-warning"
-				>
+				<Alert variant="warning" class="sf:mt-4" data-testid="model-required-capability-warning">
 					This action requires {capabilityListLabel(selectedModelMissingRequiredCapabilities)}.
 					Choose a compatible OpenRouter model before saving.
 				</Alert>
@@ -1911,7 +1919,9 @@
 									></span>
 								</span>
 								<span class="sf:min-w-0">
-									<span class="sf:block sf:text-xs sf:font-semibold sf:uppercase sf:tracking-normal">
+									<span
+										class="sf:block sf:text-xs sf:font-semibold sf:uppercase sf:tracking-normal"
+									>
 										ZDR-only
 									</span>
 									<span class="sf:block sf:text-xs sf:text-slate-600">
@@ -2457,7 +2467,9 @@
 								</div>
 								<div class="sf:rounded-md sf:bg-white sf:p-3">
 									<p class="sf:text-[11px] sf:font-semibold sf:uppercase sf:text-slate-500">
-										{selectedProvider === MANAGED_PROVIDER ? 'Managed action credits' : 'Provider price'}
+										{selectedProvider === MANAGED_PROVIDER
+											? 'Managed action credits'
+											: 'Provider price'}
 									</p>
 									<p class="sf:mt-1 sf:text-sm sf:font-medium sf:text-slate-900">
 										{detailModel ? priceLabel(detailModel) : 'Route-defined'}

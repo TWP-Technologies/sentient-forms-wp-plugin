@@ -1339,7 +1339,8 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                 && self::MANAGED_PROVIDER === sanitize_key( (string) $selection['provider'] )
             )
             {
-                $requires_zdr   = array_key_exists( 'require_zdr', $selection ) && rest_sanitize_boolean( $selection['require_zdr'] );
+                $requires_zdr   = ( array_key_exists( 'require_zdr', $selection ) && rest_sanitize_boolean( $selection['require_zdr'] ) )
+                    || $this->global_managed_zdr_required();
                 $policy_presets = $requires_zdr ? $zdr_presets : $presets;
                 $model_id       = $is_preset && $allow_presets ? $this->resolve_preset_model_id( $primary, $policy_presets ) : $primary;
 
@@ -1409,6 +1410,17 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
         }
 
         return false;
+    }
+
+    private function global_managed_zdr_required(): bool
+    {
+        $settings = get_option( 'sentient_forms_plugin_settings', [] );
+        if ( ! is_array( $settings ) )
+        {
+            return false;
+        }
+
+        return rest_sanitize_boolean( $settings['managed_zdr_required'] ?? false );
     }
 
     private function highest_priority_unresolved_managed_zdr_index( array $chain ): ?int
