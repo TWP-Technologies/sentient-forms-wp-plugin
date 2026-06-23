@@ -1023,6 +1023,104 @@ class SiteContextControllerTest extends WP_UnitTestCase
         $this->assertSame( 'google/gemini-3-flash-preview', $data['context']['metadata']['model'] ?? null );
     }
 
+    public function test_managed_generation_rejects_explicit_non_zdr_model_when_zdr_required(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'proxy_api_key'  => 'proxy-site-context-test',
+                'site_id'        => 'site-context-site-id',
+            ]
+        );
+        $this->create_managed_credential();
+        $this->cache_openrouter_model(
+            'openai/gpt-5.5',
+            [
+                'id'                   => 'openai/gpt-5.5',
+                'name'                 => 'OpenAI: GPT-5.5',
+                'free'                 => false,
+                'pricing'              => [
+                    'prompt'     => '0.000005',
+                    'completion' => '0.00003',
+                ],
+                'recommended_for'      => [ 'General purpose', 'Research' ],
+                'zdr_eligible'         => false,
+                'zdr_source'           => 'openrouter_models_zdr_filter',
+                'zdr_checked_at'       => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'     => 'openai/gpt-5.5',
+                    'provider'    => 'sentient_managed',
+                    'is_preset'   => false,
+                    'require_zdr' => true,
+                    'tools'       => [
+                        'tool_choice' => 'auto',
+                        'web_search'  => [ 'mode' => 'off' ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame( 400, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'site_context_generation_managed_zdr_model_unavailable', $data['code'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_site_context_generation_job' ) );
+    }
+
+    public function test_managed_generation_rejects_preset_when_no_zdr_model_is_available(): void
+    {
+        Sentient_Forms_Plugin::instance()->set_license_data(
+            [
+                'license_status' => 'active',
+                'proxy_api_key'  => 'proxy-site-context-test',
+                'site_id'        => 'site-context-site-id',
+            ]
+        );
+        $this->create_managed_credential();
+        $this->cache_openrouter_model(
+            'openai/gpt-5.5',
+            [
+                'id'                   => 'openai/gpt-5.5',
+                'name'                 => 'OpenAI: GPT-5.5',
+                'free'                 => false,
+                'pricing'              => [
+                    'prompt'     => '0.000005',
+                    'completion' => '0.00003',
+                ],
+                'recommended_for'      => [ 'General purpose', 'Research' ],
+                'zdr_eligible'         => false,
+                'zdr_source'           => 'openrouter_models_zdr_filter',
+                'zdr_checked_at'       => gmdate( 'Y-m-d H:i:s' ),
+            ]
+        );
+
+        $response = $this->dispatch_site_context_request(
+            'POST',
+            '/sentient-forms/v1/site-context/generate',
+            [
+                'consent_status' => 'granted',
+                'generation_model_selection' => [
+                    'primary'     => 'sf_research',
+                    'provider'    => 'sentient_managed',
+                    'is_preset'   => true,
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $this->assertSame( 400, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'site_context_generation_managed_zdr_model_unavailable', $data['code'] ?? null );
+        $this->assertFalse( get_option( 'sentient_forms_site_context_generation_job' ) );
+    }
+
     public function test_global_managed_zdr_setting_allows_free_preset_remapped_to_zdr_model(): void
     {
         update_option(

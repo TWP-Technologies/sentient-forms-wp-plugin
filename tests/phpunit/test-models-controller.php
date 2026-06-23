@@ -377,6 +377,43 @@ class Tests_Models_Controller extends WP_UnitTestCase
         $this->assertStringContainsString( 'ZDR', $applied[0]['reason'] );
     }
 
+    public function test_resolve_model_rejects_explicit_non_zdr_model_for_managed_zdr_selection(): void
+    {
+        $this->seed_zdr_model_cache();
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/models/resolve' ) );
+        $request->set_body_params(
+            [
+                'mapping_selection' => [
+                    'primary'     => 'openai/gpt-5.5',
+                    'is_preset'   => false,
+                    'provider'    => 'sentient_managed',
+                    'require_zdr' => true,
+                ],
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'google/gemini-3-flash-preview', $data['model_id'] );
+        $this->assertSame( 'sentient_managed', $data['provider'] );
+        $this->assertSame( 'fallback', $data['resolution_source'] );
+
+        $applied = array_values(
+            array_filter(
+                $data['override_chain'],
+                static fn ( array $step ): bool => ! empty( $step['applied'] )
+            )
+        );
+
+        $this->assertCount( 1, $applied );
+        $this->assertSame( 'fallback', $applied[0]['level'] );
+        $this->assertStringContainsString( 'ZDR-safe local default', $applied[0]['reason'] );
+    }
+
     public function test_resolve_model_applies_global_managed_zdr_policy_to_managed_selection(): void
     {
         $this->seed_zdr_model_cache();

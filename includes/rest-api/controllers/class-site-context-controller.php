@@ -2615,14 +2615,19 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             ? sanitize_key( (string) $selection['provider'] )
             : 'openrouter';
 
-        if ( str_contains( $primary, '/' ) )
-        {
-            return $primary;
-        }
-
         if ( 'sentient_managed' === $provider )
         {
             $requires_zdr = $this->managed_privacy_route_required( $selection );
+            if ( str_contains( $primary, '/' ) )
+            {
+                if ( $requires_zdr && ! $this->generation_model_zdr_eligible( $primary ) )
+                {
+                    return '';
+                }
+
+                return $primary;
+            }
+
             $model_id     = $this->resolve_generation_preset_model_id( sanitize_key( $primary ), $requires_zdr );
             if ( '' !== $model_id || $requires_zdr )
             {
@@ -2630,11 +2635,25 @@ class Sentient_Forms_Site_Context_Controller extends Sentient_Forms_Abstract_Bas
             }
         }
 
+        if ( str_contains( $primary, '/' ) )
+        {
+            return $primary;
+        }
+
         return match ( sanitize_key( $primary ) ) {
             'sf_speed' => 'google/gemini-3-flash-preview',
             'sf_free' => 'openrouter/auto',
             default => 'openai/gpt-5.5',
         };
+    }
+
+    private function generation_model_zdr_eligible( string $model ): bool
+    {
+        $metadata = $this->find_openrouter_generation_model_metadata( $model );
+
+        return is_array( $metadata )
+            && array_key_exists( 'zdr_eligible', $metadata )
+            && true === rest_sanitize_boolean( $metadata['zdr_eligible'] );
     }
 
     private function resolve_generation_preset_model_id( string $preset_code, bool $require_zdr ): string

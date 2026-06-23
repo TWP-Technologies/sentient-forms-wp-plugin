@@ -1231,15 +1231,19 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
         $models      = $this->list_local_openrouter_models();
         $presets     = $this->build_presets( $models );
         $zdr_presets = $this->build_zdr_presets( $models );
+        $zdr_model_ids = array_map(
+            static fn ( array $model ): string => (string) ( $model['id'] ?? '' ),
+            $this->zdr_eligible_models( $models )
+        );
         $chain       = [];
 
         $template_hint = isset( $payload['template_model_hint'] ) ? sanitize_text_field( (string) $payload['template_model_hint'] ) : '';
-        $chain[] = $this->build_resolution_step( 'template', $template_hint, false, $presets, $zdr_presets );
+        $chain[] = $this->build_resolution_step( 'template', $template_hint, false, $presets, $zdr_presets, $zdr_model_ids );
 
         foreach ( [ 'global', 'action', 'form', 'mapping' ] as $level )
         {
             $selection = $payload[ $level . '_selection' ] ?? null;
-            $chain[]   = $this->build_resolution_step( $level, $selection, true, $presets, $zdr_presets );
+            $chain[]   = $this->build_resolution_step( $level, $selection, true, $presets, $zdr_presets, $zdr_model_ids );
         }
 
         $applied_index = null;
@@ -1319,7 +1323,7 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
         ];
     }
 
-    private function build_resolution_step( string $level, mixed $selection, bool $allow_presets, array $presets, array $zdr_presets ): array
+    private function build_resolution_step( string $level, mixed $selection, bool $allow_presets, array $presets, array $zdr_presets, array $zdr_model_ids ): array
     {
         $primary       = '';
         $backup        = null;
@@ -1342,7 +1346,18 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                 $requires_zdr   = ( array_key_exists( 'require_zdr', $selection ) && rest_sanitize_boolean( $selection['require_zdr'] ) )
                     || $this->global_managed_zdr_required();
                 $policy_presets = $requires_zdr ? $zdr_presets : $presets;
-                $model_id       = $is_preset && $allow_presets ? $this->resolve_preset_model_id( $primary, $policy_presets ) : $primary;
+                if ( $is_preset && $allow_presets )
+                {
+                    $model_id = $this->resolve_preset_model_id( $primary, $policy_presets );
+                }
+                elseif ( $requires_zdr )
+                {
+                    $model_id = in_array( $primary, $zdr_model_ids, true ) ? $primary : '';
+                }
+                else
+                {
+                    $model_id = $primary;
+                }
 
                 return [
                     'level'           => $level,
@@ -1357,7 +1372,9 @@ class Sentient_Forms_Models_Controller extends Sentient_Forms_Abstract_Base_Cont
                             ? __( 'Selection resolves through the Sentient Forms managed service route using the ZDR-safe local model policy.', 'sentient-forms' )
                             : __( 'Selection resolves through the Sentient Forms managed service route.', 'sentient-forms' ) )
                         : ( $requires_zdr
-                            ? __( 'The selected managed preset is not available in the ZDR-safe local model policy.', 'sentient-forms' )
+                            ? ( $is_preset
+                                ? __( 'The selected managed preset is not available in the ZDR-safe local model policy.', 'sentient-forms' )
+                                : __( 'The selected managed model is not available in the ZDR-safe local model policy.', 'sentient-forms' ) )
                             : __( 'The selected managed preset is not available in the local model policy.', 'sentient-forms' ) ),
                 ];
             }
