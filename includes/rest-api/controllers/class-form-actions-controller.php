@@ -3467,18 +3467,34 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $fields         = [];
 
         foreach ( $raw_fields as $field ) {
-            $field_type = strtolower( $field->type ?? '' );
+            $field_type = strtolower( $this->extract_form_field_property( $field, 'type' ) );
             if ( in_array( $field_type, $excluded_types, true ) ) {
                 continue;
             }
 
-            $fields[] = [
-                'id'         => (string) ( $field->id ?? '' ),
-                'label'      => $field->label ?? '',
+            $field_payload = [
+                'id'         => $this->extract_form_field_property( $field, 'id' ),
+                'label'      => $this->extract_form_field_property( $field, 'label' ),
                 'type'       => $field_type,
-                'adminLabel' => $field->{'adminLabel'} ?? null,
-                'page_index' => isset( $field->pageNumber ) ? max( 1, (int) $field->pageNumber ) : 1,
+                'adminLabel' => $this->extract_form_field_property( $field, 'adminLabel' ) ?: null,
+                'page_index' => max( 1, (int) $this->extract_form_field_property( $field, 'pageNumber' ) ),
             ];
+
+            foreach ( [ 'visibility', 'storage_eligible', 'file_reference_eligible', 'required' ] as $optional_key )
+            {
+                if ( is_array( $field ) && array_key_exists( $optional_key, $field ) )
+                {
+                    $field_payload[ $optional_key ] = $field[ $optional_key ];
+                    continue;
+                }
+
+                if ( is_object( $field ) && isset( $field->{$optional_key} ) )
+                {
+                    $field_payload[ $optional_key ] = $field->{$optional_key};
+                }
+            }
+
+            $fields[] = $field_payload;
         }
 
         return new WP_REST_Response(

@@ -25,6 +25,7 @@ import type {
 	FormActionMutationPayload,
 	FormExecutionStatus,
 	FormFieldInfo,
+	FormSourceDescriptor,
 	FormsOverviewResponse,
 	SubmissionLedgerRecord,
 	SubmissionLedgerRecordsResponse,
@@ -99,6 +100,17 @@ export class MockSentientFormsApiClient {
 			adapter_name: 'Gravity Forms',
 			provider_edit_url: 'admin.php?page=gf_edit_forms&id=123',
 			settings: { enabled: true, actions: {} }
+		}
+	];
+
+	private contactForm7Forms: FormSummary[] = [
+		{
+			id: 77,
+			title: 'CF7 contact form',
+			adapter: 'contact_form_7',
+			adapter_name: 'Contact Form 7',
+			provider_edit_url: 'admin.php?page=wpcf7&post=77&action=edit',
+			settings: null
 		}
 	];
 
@@ -363,6 +375,7 @@ export class MockSentientFormsApiClient {
 
 	async getForms(formSourceSlug: string): Promise<FormSummary[]> {
 		if (formSourceSlug === 'gravity_forms') return this.forms;
+		if (formSourceSlug === 'contact_form_7') return this.contactForm7Forms;
 		return [];
 	}
 
@@ -489,6 +502,8 @@ export class MockSentientFormsApiClient {
 		const actions = await this.getFormActions(formSourceSlug, formId);
 		const definitions = await this.getActionDefinitions();
 		const customActions = await this.getCustomActions({ status: 'active' });
+		const forms = await this.getForms(formSourceSlug);
+		const ledgerSettings = await this.getSubmissionLedgerSettings(formSourceSlug, formId);
 		const actionDefaults = await this.getActionDefaultsBatch([
 			...definitions.map((definition) => definition.id),
 			...customActions.actions.map((action) => action.code)
@@ -497,47 +512,8 @@ export class MockSentientFormsApiClient {
 		return {
 			form_source: formSourceSlug,
 			form_id: formId,
-			form: this.forms.find((form) => String(form.id) === String(formId)) ?? null,
-			form_source_descriptor: {
-				slug: formSourceSlug,
-				label: formSourceSlug === 'gravity_forms' ? 'Gravity Forms' : formSourceSlug,
-				is_active: formSourceSlug === 'gravity_forms',
-				lifecycles: {
-					validation: {
-						id: 'validation',
-						supported: true,
-						label: 'During validation',
-						native_hook: 'gform_validation',
-						execution_mode: 'validation',
-						requires_ledger: false,
-						unsupported_reason: null
-					},
-					after_submission: {
-						id: 'after_submission',
-						supported: true,
-						label: 'After submission',
-						native_hook: 'gform_after_submission',
-						execution_mode: 'after_submission',
-						requires_ledger: false,
-						unsupported_reason: null
-					},
-					real_time: {
-						id: 'real_time',
-						supported: true,
-						label: 'Realtime',
-						native_hook: 'real_time',
-						execution_mode: 'real_time',
-						requires_ledger: false,
-						unsupported_reason: null
-					}
-				},
-				ledger: {
-					required_for_parity: false,
-					enabled: false,
-					settings_source: 'sentient_submission_ledger_settings',
-					unavailable_reason: null
-				}
-			},
+			form: forms.find((form) => String(form.id) === String(formId)) ?? null,
+			form_source_descriptor: this.buildFormSourceDescriptor(formSourceSlug, ledgerSettings),
 			actions,
 			execution_status: await this.getFormExecutionStatus(),
 			disabled_state: await this.getFormDisabled(formSourceSlug, formId),
@@ -549,8 +525,124 @@ export class MockSentientFormsApiClient {
 			form_fields: this.formFields,
 			action_defaults: actionDefaults,
 			workflow_plan: await this.getWorkflowPlan(formSourceSlug, formId, 'all'),
-			ledger_settings: await this.getSubmissionLedgerSettings(formSourceSlug, formId),
+			ledger_settings: ledgerSettings,
 			generated_at: new Date().toISOString()
+		};
+	}
+
+	private buildFormSourceDescriptor(
+		formSourceSlug: string,
+		ledgerSettings: SubmissionLedgerSettingsResponse
+	): FormSourceDescriptor {
+		if (formSourceSlug === 'contact_form_7') {
+			return {
+				slug: 'contact_form_7',
+				label: 'Contact Form 7',
+				is_active: true,
+				lifecycles: {
+					validation: {
+						id: 'validation',
+						supported: false,
+						label: 'Validation',
+						native_hook: null,
+						execution_mode: 'blocking',
+						requires_ledger: false,
+						unsupported_reason: 'Contact Form 7 validation blocking is not supported.'
+					},
+					after_submission: {
+						id: 'after_submission',
+						supported: true,
+						label: 'After submission',
+						native_hook: 'wpcf7_mail_sent',
+						execution_mode: 'async',
+						requires_ledger: true,
+						unsupported_reason: null
+					},
+					real_time: {
+						id: 'real_time',
+						supported: false,
+						label: 'Realtime',
+						native_hook: null,
+						execution_mode: 'real_time',
+						requires_ledger: false,
+						unsupported_reason: 'Realtime Contact Form 7 support is not available.'
+					}
+				},
+				native_entry: {
+					id: false,
+					link: false,
+					read: false,
+					write: false
+				},
+				native_enrichment: {
+					notes: false,
+					status: false,
+					spam: false,
+					notification_controls: false,
+					webhook_controls: false
+				},
+				ledger: {
+					required_for_parity: true,
+					enabled: ledgerSettings.enabled,
+					settings_source: ledgerSettings.settings_source,
+					unavailable_reason:
+						'Enable the Sentient Forms Submission Ledger before reviewing Contact Form 7 submissions in Sentient Forms.'
+				}
+			};
+		}
+
+		return {
+			slug: formSourceSlug,
+			label: formSourceSlug === 'gravity_forms' ? 'Gravity Forms' : formSourceSlug,
+			is_active: formSourceSlug === 'gravity_forms',
+			lifecycles: {
+				validation: {
+					id: 'validation',
+					supported: true,
+					label: 'During validation',
+					native_hook: 'gform_validation',
+					execution_mode: 'blocking',
+					requires_ledger: false,
+					unsupported_reason: null
+				},
+				after_submission: {
+					id: 'after_submission',
+					supported: true,
+					label: 'After submission',
+					native_hook: 'gform_after_submission',
+					execution_mode: 'async',
+					requires_ledger: false,
+					unsupported_reason: null
+				},
+				real_time: {
+					id: 'real_time',
+					supported: true,
+					label: 'Realtime',
+					native_hook: 'real_time',
+					execution_mode: 'real_time',
+					requires_ledger: false,
+					unsupported_reason: null
+				}
+			},
+			native_entry: {
+				id: true,
+				link: true,
+				read: true,
+				write: true
+			},
+			native_enrichment: {
+				notes: true,
+				status: true,
+				spam: true,
+				notification_controls: true,
+				webhook_controls: true
+			},
+			ledger: {
+				required_for_parity: false,
+				enabled: ledgerSettings.enabled,
+				settings_source: ledgerSettings.settings_source,
+				unavailable_reason: null
+			}
 		};
 	}
 

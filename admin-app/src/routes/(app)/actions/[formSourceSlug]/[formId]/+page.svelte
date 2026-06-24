@@ -265,6 +265,73 @@
 		}
 	};
 	const LOCAL_BUILDER_TEMPLATE_OPTIONS = Object.values(LOCAL_BUILDER_TEMPLATES);
+
+	function fallbackFormSourceLabel(slug: string): string {
+		if (slug === 'gravity_forms') return 'Gravity Forms';
+		if (slug === 'contact_form_7') return 'Contact Form 7';
+
+		return slug
+			.split('_')
+			.filter(Boolean)
+			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+			.join(' ');
+	}
+
+	function sourceAwareLocalBuilderTemplate(
+		baseTemplate: LocalBuilderTemplate,
+		formSourceLabel: string,
+		supportsNativeSpamEffects: boolean
+	): LocalBuilderTemplate {
+		if (supportsNativeSpamEffects) {
+			return baseTemplate;
+		}
+
+		const sourceLabel = formSourceLabel.trim() || 'this form source';
+		const effectMapping = baseTemplate.effectMapping
+			? (structuredClone(baseTemplate.effectMapping) as Record<string, unknown>)
+			: undefined;
+		if (effectMapping) {
+			delete effectMapping.spam;
+		}
+
+		switch (baseTemplate.key) {
+			case 'spam_filter':
+				return {
+					...baseTemplate,
+					description: `Classify ${sourceLabel} submissions after submission. This does not block validation or write native notes.`,
+					systemPrompt: `You classify ${sourceLabel} submissions for a WordPress site owner. Return only compact JSON with classification, confidence, and justification. Classify as ham unless the submission is clearly abusive, bot-like, promotional, phishing, or irrelevant.`,
+					promptTemplate:
+						'Form: {{form.title}}\nSubmission: {{entry}}\n\nReturn JSON shaped as {"classification":"ham|likely_spam|spam","confidence":0.0,"justification":"short reason"}. Use likely_spam or spam only when the evidence is strong.',
+					defaultExecutionMode: 'async',
+					effectMapping
+				};
+			case 'summary':
+				return {
+					...baseTemplate,
+					description: 'Save a concise submission summary in Sentient Forms action results.',
+					systemPrompt: `You summarize ${sourceLabel} submissions for a WordPress site owner. Return only compact JSON with a summary field.`,
+					promptTemplate:
+						'Form: {{form.title}}\nSubmission: {{entry}}\n\nReturn JSON shaped as {"summary":"one concise sentence about this submission"}.'
+				};
+			case 'lead_qualification':
+				return {
+					...baseTemplate,
+					systemPrompt: `You qualify ${sourceLabel} submissions for a WordPress site owner. Return only compact JSON with a qualification field.`,
+					promptTemplate:
+						'Form: {{form.title}}\nSubmission: {{entry}}\n\nReturn JSON shaped as {"qualification":"hot|warm|cold|not_a_lead"} based on buying intent and fit.'
+				};
+			case 'sentiment':
+				return {
+					...baseTemplate,
+					systemPrompt: `You classify the sentiment of ${sourceLabel} submissions. Return only compact JSON with a sentiment field.`,
+					promptTemplate:
+						'Form: {{form.title}}\nSubmission: {{entry}}\n\nReturn JSON shaped as {"sentiment":"positive|neutral|negative|urgent"} based on the sender tone.'
+				};
+			default:
+				return baseTemplate;
+		}
+	}
+
 	const DOCUMENTED_BUILT_IN_DEFINITIONS: ActionDefinition[] = [
 		{
 			id: 'spam_detection_v1',
@@ -320,11 +387,41 @@
 	let currentFormSummary = $state<FormSummary | null>(null);
 	let currentFormSummaryLoading = $state(false);
 	let currentFormSummaryError = $state<string | null>(null);
+	const formSourceDescriptor = $derived(actionsState.bootstrap?.form_source_descriptor ?? null);
+	const currentFormAdapterLabel = $derived(
+		currentFormSummary?.adapter_name?.trim() ||
+			formSourceDescriptor?.label?.trim() ||
+			fallbackFormSourceLabel(data.formSourceSlug)
+	);
+	const providerEditLinkLabel = $derived(`Open in ${currentFormAdapterLabel}`);
 	const providerEditUrl = $derived(
 		currentFormSummary?.provider_edit_url ??
 			(data.formSourceSlug === 'gravity_forms'
 				? `admin.php?page=gf_edit_forms&id=${encodeURIComponent(String(data.formId))}`
-				: null)
+				: data.formSourceSlug === 'contact_form_7'
+					? `admin.php?page=wpcf7&post=${encodeURIComponent(String(data.formId))}&action=edit`
+					: null)
+	);
+	const supportsNativeSpamEffects = $derived(
+		formSourceDescriptor?.native_enrichment?.spam === true ||
+			(formSourceDescriptor === null && data.formSourceSlug === 'gravity_forms')
+	);
+	const supportsNativeNotes = $derived(
+		formSourceDescriptor?.native_enrichment?.notes === true ||
+			(formSourceDescriptor === null && data.formSourceSlug === 'gravity_forms')
+	);
+	const supportsSpamNoteControls = $derived(supportsNativeSpamEffects && supportsNativeNotes);
+	const localBuilderSupportsSync = $derived.by(() => {
+		if (formSourceDescriptor) {
+			return formSourceDescriptor.lifecycles.validation?.supported === true;
+		}
+
+		return data.formSourceSlug === 'gravity_forms';
+	});
+	const initialLocalBuilderTemplate = sourceAwareLocalBuilderTemplate(
+		LOCAL_BUILDER_TEMPLATES.spam_filter,
+		fallbackFormSourceLabel(data.formSourceSlug),
+		data.formSourceSlug === 'gravity_forms'
 	);
 
 	let createKind = $state<CreateKind>('template');
@@ -339,12 +436,12 @@
 	let selectedCreateDependencyIds = $state<Set<string>>(new Set());
 	let localBuilderCredentialId = $state('');
 	let localBuilderTemplateKey = $state<LocalBuilderTemplateKey>('spam_filter');
-	let localBuilderActionName = $state(LOCAL_BUILDER_TEMPLATES.spam_filter.actionName);
-	let localBuilderSystemPrompt = $state(LOCAL_BUILDER_TEMPLATES.spam_filter.systemPrompt);
-	let localBuilderPromptTemplate = $state(LOCAL_BUILDER_TEMPLATES.spam_filter.promptTemplate);
-	let localBuilderResultMetaKey = $state(LOCAL_BUILDER_TEMPLATES.spam_filter.resultMetaKey);
+	let localBuilderActionName = $state(initialLocalBuilderTemplate.actionName);
+	let localBuilderSystemPrompt = $state(initialLocalBuilderTemplate.systemPrompt);
+	let localBuilderPromptTemplate = $state(initialLocalBuilderTemplate.promptTemplate);
+	let localBuilderResultMetaKey = $state(initialLocalBuilderTemplate.resultMetaKey);
 	let localBuilderExecutionMode = $state<LocalBuilderExecutionMode>(
-		LOCAL_BUILDER_TEMPLATES.spam_filter.defaultExecutionMode ?? 'async'
+		initialLocalBuilderTemplate.defaultExecutionMode ?? 'async'
 	);
 	let localBuilderModelSelection = $state<ModelSelection>(cloneDefaultModelSelection());
 	let localBuilderSpamResultDisplayMode = $state<SpamResultDisplayMode>('spam_only');
@@ -406,7 +503,13 @@
 	let providerCredentialsLoading = $state(false);
 	let providerCredentialsError = $state<string | null>(null);
 	const openRouterHealth = $derived(openRouterActionHealth(providerCredentials));
-	const localBuilderTemplate = $derived(LOCAL_BUILDER_TEMPLATES[localBuilderTemplateKey]);
+	const localBuilderTemplate = $derived.by(() =>
+		sourceAwareLocalBuilderTemplate(
+			LOCAL_BUILDER_TEMPLATES[localBuilderTemplateKey],
+			currentFormAdapterLabel,
+			supportsSpamNoteControls
+		)
+	);
 	const readyOpenRouterCredentials = $derived(
 		providerCredentials
 			.filter((credential) => credential.provider === 'openrouter')
@@ -424,7 +527,45 @@
 	let formFields = $state<FormFieldInfo[]>([]);
 	let fieldsLoading = $state(false);
 
+	function lifecycleIdForHook(hook: string): string | null {
+		const normalized = hook.trim();
+		if (!normalized) return null;
+
+		for (const [lifecycleId, lifecycle] of Object.entries(formSourceDescriptor?.lifecycles ?? {})) {
+			if (lifecycle.native_hook === normalized || lifecycleId === normalized) {
+				return lifecycleId;
+			}
+		}
+
+		if (normalized === 'gform_validation') return 'validation';
+		if (normalized === 'gform_after_submission' || normalized === 'wpcf7_mail_sent') {
+			return 'after_submission';
+		}
+		if (normalized === 'real_time') return 'real_time';
+
+		return null;
+	}
+
+	function adaptHookForCurrentSource(hook: string): string | null {
+		if (!formSourceDescriptor) return hook;
+
+		const lifecycleId = lifecycleIdForHook(hook);
+		if (!lifecycleId) return null;
+
+		const lifecycle = formSourceDescriptor.lifecycles?.[lifecycleId];
+		return lifecycle?.supported ? lifecycleId : null;
+	}
+
+	function adaptHooksForCurrentSource(hooks: Iterable<string>): string[] {
+		const adapted = Array.from(hooks)
+			.map((hook) => adaptHookForCurrentSource(hook))
+			.filter((hook): hook is string => Boolean(hook));
+
+		return normalizeHookIds(adapted);
+	}
+
 	function hookEntriesForAction(actionId: string | null | undefined): [string, string][] {
+		const availableHookKeys = new Set(hookEntries.map(([hookKey]) => hookKey));
 		const fallbackEntries = hookEntries.filter(
 			([hookKey]) => hookKey !== 'real_time' || isRealtimeEligibleActionId(actionId)
 		);
@@ -443,7 +584,8 @@
 					: fallbackEntries.map(([hookKey]) => hookKey);
 		const entryByHook = new Map(hookEntries);
 
-		return normalizeHookIds(allowedHooks)
+		return adaptHooksForCurrentSource(allowedHooks)
+			.filter((hookKey) => availableHookKeys.has(hookKey))
 			.filter((hookKey) => hookKey !== 'real_time' || isRealtimeEligibleActionId(actionId))
 			.map((hookKey) => [
 				hookKey,
@@ -455,9 +597,39 @@
 		hooks: Iterable<string>,
 		actionId: string | null | undefined
 	): string[] {
-		const normalized = normalizeHookIds(hooks);
-		if (isRealtimeEligibleActionId(actionId)) return normalized;
-		return normalized.filter((hook) => hook !== 'real_time');
+		const availableHookKeys = new Set(hookEntries.map(([hookKey]) => hookKey));
+		const normalized = adaptHooksForCurrentSource(hooks);
+		const available = normalized.filter((hook) => availableHookKeys.has(hook));
+		if (isRealtimeEligibleActionId(actionId)) return available;
+		return available.filter((hook) => hook !== 'real_time');
+	}
+
+	function defaultAvailableHookKeys(): string[] {
+		return hookEntries.map(([hookKey]) => hookKey);
+	}
+
+	function defaultLocalBuilderHooks(): string[] {
+		const availableHookKeys = new Set(defaultAvailableHookKeys());
+		if (localBuilderExecutionMode === 'sync' && availableHookKeys.has('validation')) {
+			return ['validation'];
+		}
+		if (localBuilderExecutionMode === 'sync' && availableHookKeys.has('gform_validation')) {
+			return ['gform_validation'];
+		}
+		if (availableHookKeys.has('after_submission')) {
+			return ['after_submission'];
+		}
+		if (availableHookKeys.has('gform_after_submission')) {
+			return ['gform_after_submission'];
+		}
+
+		return defaultAvailableHookKeys().slice(0, 1);
+	}
+
+	function normalizeLocalBuilderExecutionMode(
+		mode: LocalBuilderExecutionMode
+	): LocalBuilderExecutionMode {
+		return mode === 'sync' && !localBuilderSupportsSync ? 'async' : mode;
 	}
 
 	function deriveExecutionModeForHooks(hooks: Iterable<string>, current?: unknown): ExecutionMode {
@@ -470,7 +642,9 @@
 			return current;
 		}
 
-		return normalizedHooks.includes('gform_validation') ? 'validation' : 'after_submission';
+		return normalizedHooks.includes('validation') || normalizedHooks.includes('gform_validation')
+			? 'validation'
+			: 'after_submission';
 	}
 
 	function resolveRealtimeSettingsChain(
@@ -1211,10 +1385,13 @@
 	let hookOptions = $state<Record<string, string>>({ ...FALLBACK_HOOK_LABELS });
 
 	$effect(() => {
-		const next: Record<string, string> = { ...FALLBACK_HOOK_LABELS };
+		const hasSourceDescriptor = formSourceDescriptor !== null;
+		const next: Record<string, string> = hasSourceDescriptor ? {} : { ...FALLBACK_HOOK_LABELS };
+		const descriptorHookKeys = new Set<string>();
 		for (const [lifecycleId, lifecycle] of Object.entries(formSourceDescriptor?.lifecycles ?? {})) {
 			if (!lifecycle.supported) continue;
-			const hookKey = lifecycle.native_hook ?? lifecycleId;
+			const hookKey = lifecycleId;
+			descriptorHookKeys.add(hookKey);
 			next[hookKey] = lifecycle.label?.toString() || next[hookKey] || hookKey;
 		}
 		for (const definition of actionsState.definitions ?? []) {
@@ -1222,12 +1399,15 @@
 
 			if (Array.isArray(definition.hooks)) {
 				for (const hook of definition.hooks) {
-					const key = hook?.toString();
+					const key = hasSourceDescriptor ? adaptHookForCurrentSource(hook?.toString() ?? '') : hook?.toString();
+					if (hasSourceDescriptor && (!key || !descriptorHookKeys.has(key))) continue;
 					if (key) next[key] = next[key] ?? key;
 				}
 			} else if (typeof definition.hooks === 'object') {
 				for (const [hook, label] of Object.entries(definition.hooks)) {
-					if (hook) next[hook] = label?.toString() ?? hook;
+					const key = hasSourceDescriptor ? adaptHookForCurrentSource(hook) : hook;
+					if (hasSourceDescriptor && (!key || !descriptorHookKeys.has(key))) continue;
+					if (key) next[key] = label?.toString() ?? next[key] ?? key;
 				}
 			}
 		}
@@ -1619,11 +1799,6 @@
 	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
 	const routeFormId = $derived(encodeURIComponent(data.formId));
 	const currentFormTitle = $derived(currentFormSummary?.title?.trim() || `Form #${data.formId}`);
-	const currentFormAdapterLabel = $derived(
-		currentFormSummary?.adapter_name?.trim() ||
-			(data.formSourceSlug === 'gravity_forms' ? 'Gravity Forms' : data.formSourceSlug)
-	);
-	const formSourceDescriptor = $derived(actionsState.bootstrap?.form_source_descriptor ?? null);
 	const submissionLedgerSettings = $derived(actionsState.bootstrap?.ledger_settings ?? null);
 	const submissionLedgerEnabled = $derived(submissionLedgerSettings?.enabled === true);
 	const submissionLedgerSaving = $derived(actionsState.submissionLedgerSaving === true);
@@ -1637,6 +1812,21 @@
 	const submissionLedgerDetailHref = $derived(
 		appHref(`/actions/${routeFormSourceSlug}/${routeFormId}/submissions`)
 	);
+	const submissionLedgerDescription = $derived.by(() => {
+		if (submissionLedgerEnabled) {
+			return 'Logical field snapshots are stored for this form.';
+		}
+
+		if (submissionLedgerRequired && data.formSourceSlug === 'contact_form_7') {
+			return 'Contact Form 7 submissions need Sentient Forms Submission Ledger storage before after-submission actions can run with stored submission context.';
+		}
+
+		if (submissionLedgerRequired) {
+			return 'Ledger-required review features stay unavailable until storage is enabled.';
+		}
+
+		return 'Logical field snapshots are not stored until enabled.';
+	});
 	const sectionDescription = $derived(`Link actions and execution settings for ${currentFormTitle}.`);
 	const selectedCreateActionLabel = $derived.by(() => {
 		if (createKind === 'template') {
@@ -1678,18 +1868,22 @@
 	let lastPresetKey = $state<string | null>(null);
 	const LAST_HOOKS_KEY = 'sentient_forms_last_hooks';
 	$effect(() => {
+		if (!localBuilderSupportsSync && localBuilderExecutionMode === 'sync') {
+			localBuilderExecutionMode = 'async';
+		}
+	});
+
+	$effect(() => {
 		if (!selectedActionKey || selectedActionKey === lastPresetKey) return;
 		const presetHooks =
 			createKind === 'template'
 				? defaultDefinitionHooks(selectedDefinition)
 				: createKind === 'local_openrouter'
-					? localBuilderTemplateKey === 'spam_filter' && localBuilderExecutionMode === 'sync'
-						? ['gform_validation']
-						: ['gform_after_submission']
-					: ['gform_validation'];
+					? defaultLocalBuilderHooks()
+					: defaultAvailableHookKeys().slice(0, 1);
 		const actionId = createKind === 'template' ? selectedTemplateId : null;
 		const normalized = sanitizeHooksForAction(
-			presetHooks.length > 0 ? presetHooks : ['gform_validation'],
+			presetHooks.length > 0 ? presetHooks : defaultAvailableHookKeys().slice(0, 1),
 			actionId
 		);
 		selectedHooks = new Set(normalized);
@@ -2218,7 +2412,8 @@
 			new Set(
 				Array.from(hooks)
 					.map((hook) => hook?.toString().trim())
-					.filter(Boolean)
+					.map((hook) => (formSourceDescriptor && hook ? (lifecycleIdForHook(hook) ?? hook) : hook))
+					.filter((hook): hook is string => Boolean(hook))
 			)
 		).sort();
 	}
@@ -2469,7 +2664,11 @@
 	}
 
 	function applyLocalBuilderTemplate(key: LocalBuilderTemplateKey) {
-		const template = LOCAL_BUILDER_TEMPLATES[key];
+		const template = sourceAwareLocalBuilderTemplate(
+			LOCAL_BUILDER_TEMPLATES[key],
+			currentFormAdapterLabel,
+			supportsSpamNoteControls
+		);
 		const templateSpamNote =
 			template.effectMapping &&
 			typeof template.effectMapping.spam === 'object' &&
@@ -2482,7 +2681,9 @@
 		localBuilderSystemPrompt = template.systemPrompt;
 		localBuilderPromptTemplate = template.promptTemplate;
 		localBuilderResultMetaKey = template.resultMetaKey;
-		localBuilderExecutionMode = template.defaultExecutionMode ?? 'async';
+		localBuilderExecutionMode = normalizeLocalBuilderExecutionMode(
+			template.defaultExecutionMode ?? 'async'
+		);
 		localBuilderSpamResultDisplayMode = normalizeSpamResultDisplayMode(
 			templateSpamNote?.result_display_mode,
 			'spam_only'
@@ -2583,23 +2784,27 @@
 			meta
 		};
 		if (localBuilderTemplate.key === 'spam_filter') {
-			const spamConfig =
-				effectMapping.spam && typeof effectMapping.spam === 'object'
-					? { ...(effectMapping.spam as Record<string, unknown>) }
-					: {};
-			effectMapping.spam = {
-				...spamConfig,
-				note: {
-					result_display_mode: normalizeSpamResultDisplayMode(
-						localBuilderSpamResultDisplayMode,
-						'spam_only'
-					),
-					indicators_display: normalizeSpamIndicatorsDisplay(
-						localBuilderSpamIndicatorsDisplay,
-						'simple'
-					)
-				}
-			};
+			if (supportsSpamNoteControls) {
+				const spamConfig =
+					effectMapping.spam && typeof effectMapping.spam === 'object'
+						? { ...(effectMapping.spam as Record<string, unknown>) }
+						: {};
+				effectMapping.spam = {
+					...spamConfig,
+					note: {
+						result_display_mode: normalizeSpamResultDisplayMode(
+							localBuilderSpamResultDisplayMode,
+							'spam_only'
+						),
+						indicators_display: normalizeSpamIndicatorsDisplay(
+							localBuilderSpamIndicatorsDisplay,
+							'simple'
+						)
+					}
+				};
+			} else {
+				delete effectMapping.spam;
+			}
 		}
 
 		const mappings: LocalFormMappingRecord[] = [];
@@ -4018,7 +4223,7 @@
 					rel="external"
 					data-testid="actions-provider-edit-link"
 				>
-					Open in Gravity Forms
+					{providerEditLinkLabel}
 				</a>
 			{/if}
 			<Button variant="secondary" onclick={refresh}>Refresh</Button>
@@ -4067,7 +4272,7 @@
 					rel="external"
 					data-testid="form-context-provider-edit-link"
 				>
-					Open in Gravity Forms
+					{providerEditLinkLabel}
 				</a>
 			{/if}
 			<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
@@ -4094,11 +4299,7 @@
 				{/if}
 			</div>
 			<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
-				{submissionLedgerEnabled
-					? 'Logical field snapshots are stored for this form.'
-					: submissionLedgerRequired
-						? 'Ledger-required review features stay unavailable until storage is enabled.'
-						: 'Logical field snapshots are not stored until enabled.'}
+				{submissionLedgerDescription}
 			</p>
 		</div>
 		<div class="sf:flex sf:shrink-0 sf:flex-wrap sf:items-center sf:gap-2">
@@ -5910,12 +6111,14 @@
 											data-testid="local-builder-execution-mode"
 										>
 											<option value="async">Background local run</option>
-											<option value="sync">Immediate local run</option>
+											{#if localBuilderSupportsSync}
+												<option value="sync">Immediate local run</option>
+											{/if}
 										</select>
 									</div>
 								</div>
 
-								{#if localBuilderTemplateKey === 'spam_filter'}
+								{#if localBuilderTemplateKey === 'spam_filter' && supportsSpamNoteControls}
 									<div class="sf:grid sf:gap-3 sf:lg:grid-cols-2">
 										<div class="sf:space-y-1">
 											<label

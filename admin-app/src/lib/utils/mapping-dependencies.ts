@@ -87,9 +87,20 @@ export interface DependencyExecutionPreview {
 const COLUMN_GAP = 420;
 const KNOWN_HOOK_ORDER: Record<string, number> = {
 	real_time: 5,
+	validation: 10,
 	gform_validation: 10,
+	after_submission: 20,
+	wpcf7_mail_sent: 20,
 	gform_after_submission: 20
 };
+
+function isValidationHook(hook: string): boolean {
+	return hook === 'validation' || hook === 'gform_validation';
+}
+
+function isAfterSubmissionHook(hook: string): boolean {
+	return hook === 'after_submission' || hook === 'gform_after_submission' || hook === 'wpcf7_mail_sent';
+}
 
 function compareHookIds(left: string, right: string): number {
 	const leftRank = KNOWN_HOOK_ORDER[left] ?? 1000;
@@ -388,8 +399,8 @@ export function validateMappingDependencies(
 					});
 				}
 
-				const dependencyRunsAfterSubmission = dependencyHooks.includes('gform_after_submission');
-				if (hook === 'gform_after_submission' && dependencyRunsAfterSubmission) {
+				const dependencyRunsAfterSubmission = dependencyHooks.some(isAfterSubmissionHook);
+				if (isAfterSubmissionHook(hook) && dependencyRunsAfterSubmission) {
 					const dependencyIsAsync = isMappingAsync(dependency);
 					if (dependencyIsAsync && !mappingIsAsync) {
 						issues.push({ code: 'execution_mode_mismatch', mappingId, dependencyId });
@@ -553,8 +564,8 @@ function hookRootNodeId(hook: string): string {
 function isMappingAsync(linkage: FormActionLinkage): boolean {
 	const hooks = getMappingTriggerHooks(linkage);
 	const hasRealtimeHook = hooks.includes('real_time');
-	const hasValidationHook = hooks.includes('gform_validation');
-	const hasAfterSubmissionHook = hooks.includes('gform_after_submission');
+	const hasValidationHook = hooks.some(isValidationHook);
+	const hasAfterSubmissionHook = hooks.some(isAfterSubmissionHook);
 
 	if (hasRealtimeHook && !hasValidationHook && !hasAfterSubmissionHook) {
 		return false;
@@ -685,7 +696,7 @@ function buildHookExecutionPreview(items: FormActionLinkage[], hook: string): Ho
 			continue;
 		}
 
-		if (hook === 'gform_after_submission') {
+		if (isAfterSubmissionHook(hook)) {
 			const invalidDependency = dependencyIds.find((dependencyId) => {
 				const dependency = byIdAll.get(dependencyId);
 				if (!dependency) return false;
@@ -906,7 +917,7 @@ export function canDependencySatisfyHook(dependencyHooks: string[], requiredHook
 		return true;
 	}
 	// Validation (sync) can satisfy after-submission dependants.
-	if (requiredHook === 'gform_after_submission' && dependencyHooks.includes('gform_validation')) {
+	if (isAfterSubmissionHook(requiredHook) && dependencyHooks.some(isValidationHook)) {
 		return true;
 	}
 	return false;

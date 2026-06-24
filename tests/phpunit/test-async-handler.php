@@ -415,6 +415,99 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey( 'discount_percent', $context_settings );
     }
 
+    public function test_process_action_async_batches_cf7_native_after_submission_hook(): void
+    {
+        $data = [
+            'hook'        => 'wpcf7_mail_sent',
+            'form_source' => 'contact_form_7',
+            'form'        => [ 'id' => 144, 'title' => 'CF7 Batch Form' ],
+            'entry'       => [
+                'submission_uuid' => '11111111-1111-4111-8111-111111111111',
+                'your-name'       => 'CF7 Batch User',
+            ],
+        ];
+
+        $settings = [
+            'central_action_id'     => 'entry_summary_v1',
+            'action_type_indicator' => 'master',
+            'batch_settings'        => [
+                'enabled'          => true,
+                'delay_seconds'    => 150,
+                'max_wait_seconds' => 43200,
+            ],
+        ];
+
+        $context = [
+            'hook'            => 'wpcf7_mail_sent',
+            'form_source'     => 'contact_form_7',
+            'form_id'         => '144',
+            'submission_uuid' => '11111111-1111-4111-8111-111111111111',
+        ];
+
+        $scheduled = $this->plugin->process_action_async(
+            'cf7_batch_summary',
+            $data,
+            $settings,
+            $context
+        );
+
+        $this->assertTrue( $scheduled );
+        $this->assertEmpty( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+
+        $calls = $this->get_execute_async_calls();
+        $this->assertCount( 1, $calls );
+
+        $payload = json_decode( (string) $calls[0]['body'], true );
+        $this->assertIsArray( $payload );
+        $this->assertSame( 150, $payload['async_options']['delay_seconds'] ?? null );
+        $this->assertSame( 'contact_form_7', $payload['action_context']['form_source'] ?? null );
+        $this->assertSame( 'wpcf7_mail_sent', $payload['action_context']['hook'] ?? null );
+    }
+
+    public function test_schedule_action_applies_batch_delay_for_cf7_native_after_submission_hook(): void
+    {
+        $started_at = time();
+        $scheduled  = $this->plugin->get_async_handler()->schedule_action(
+            'cf7_batch_summary',
+            [
+                'hook'        => 'wpcf7_mail_sent',
+                'form_source' => 'contact_form_7',
+                'form'        => [ 'id' => 244, 'title' => 'CF7 Scheduled Batch Form' ],
+                'entry'       => [
+                    'submission_uuid' => '22222222-2222-4222-8222-222222222222',
+                    'your-name'       => 'CF7 Scheduled Batch User',
+                ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'batch_settings'        => [
+                    'enabled'       => true,
+                    'delay_seconds' => 120,
+                ],
+            ],
+            [
+                'hook'        => 'wpcf7_mail_sent',
+                'form_source' => 'contact_form_7',
+                'form_id'     => '244',
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $recorded = array_values(
+            array_filter(
+                $GLOBALS['__sentient_forms_async_queue']['enqueued'],
+                static fn ( array $job ): bool => isset( $job['run_at'] )
+            )
+        );
+        $this->assertNotEmpty( $recorded );
+
+        $job = $recorded[0];
+        $this->assertGreaterThanOrEqual( $started_at + 110, (int) ( $job['run_at'] ?? 0 ) );
+        $this->assertSame( 120, $job['args']['context']['batch_context']['delay'] ?? null );
+    }
+
     public function test_process_action_async_falls_back_to_local_schedule_when_cps_enqueue_fails(): void
     {
         add_filter(

@@ -880,7 +880,7 @@ class Sentient_Forms_Async_Handler
         // CB-EXEC-003/004: Batch delay scheduling (pricing remains CPS-authoritative).
         $batch_settings = $settings['batch_settings'] ?? null;
         $batch_enabled  = ! empty( $batch_settings['enabled'] )
-            && ( ( $data['hook'] ?? ( $context['hook'] ?? '' ) ) === 'gform_after_submission' );
+            && $this->is_after_submission_batch_hook( $data['hook'] ?? ( $context['hook'] ?? '' ) );
 
         if ( $batch_enabled )
         {
@@ -951,11 +951,18 @@ class Sentient_Forms_Async_Handler
             return false;
         }
 
-        $form_source = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
-        $form_id     = sanitize_text_field( (string) ( $context['form_id'] ?? $form['id'] ?? '' ) );
-        $entry_id    = sanitize_text_field( (string) ( $context['entry_id'] ?? $entry['id'] ?? '' ) );
+        $form_source     = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
+        $form_id         = sanitize_text_field( (string) ( $context['form_id'] ?? $form['id'] ?? '' ) );
+        $entry_id        = sanitize_text_field( (string) ( $context['entry_id'] ?? $entry['id'] ?? '' ) );
+        $submission_uuid = $this->resolve_submission_uuid(
+            [
+                'submission_uuid' => $context['submission_uuid'] ?? $entry['submission_uuid'] ?? null,
+            ],
+            $context
+        );
+        $entry_lookup_id = '' !== $entry_id ? $entry_id : (string) $submission_uuid;
 
-        if ( '' === $form_source || '' === $form_id || '' === $entry_id )
+        if ( '' === $form_source || '' === $form_id || '' === $entry_lookup_id )
         {
             return false;
         }
@@ -965,7 +972,7 @@ class Sentient_Forms_Async_Handler
             : '';
         if ( '' === $execution_request_id )
         {
-            $execution_request_id = $this->generate_local_mapping_request_id( $local_mapping_id, $form_source, $form_id, $entry_id, $context );
+            $execution_request_id = $this->generate_local_mapping_request_id( $local_mapping_id, $form_source, $form_id, $entry_lookup_id, $context );
         }
 
         $job_context = $this->normalize_context(
@@ -976,7 +983,8 @@ class Sentient_Forms_Async_Handler
                     'central_action_id'     => $context['central_action_id'] ?? 'sentient_forms_local_custom_action',
                     'form_source'           => $form_source,
                     'form_id'               => $form_id,
-                    'entry_id'              => $entry_id,
+                    'entry_id'              => '' !== $entry_id ? $entry_id : null,
+                    'submission_uuid'       => $submission_uuid,
                     'execution_request_id'  => $execution_request_id,
                     'job_type'              => 'local_mapping',
                     'local_form_mapping_id' => $local_mapping_id,
@@ -995,7 +1003,8 @@ class Sentient_Forms_Async_Handler
             'local_mapping_id'      => $local_mapping_id,
             'form_source'           => $form_source,
             'form_id'               => $form_id,
-            'entry_id'              => $entry_id,
+            'entry_id'              => '' !== $entry_id ? $entry_id : null,
+            'submission_uuid'       => $submission_uuid,
             'execution_request_id'  => $execution_request_id,
             'context'               => $job_context,
         ];
@@ -1155,12 +1164,14 @@ class Sentient_Forms_Async_Handler
      */
     private function resolve_local_mapping_form_entry( array $payload ): array | WP_Error
     {
-        $context     = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
-        $form_source = sanitize_key( (string) ( $payload['form_source'] ?? $context['form_source'] ?? $context['adapter_id'] ?? '' ) );
-        $form_id     = sanitize_text_field( (string) ( $payload['form_id'] ?? $context['form_id'] ?? '' ) );
-        $entry_id    = sanitize_text_field( (string) ( $payload['entry_id'] ?? $context['entry_id'] ?? '' ) );
+        $context         = isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : [];
+        $form_source     = sanitize_key( (string) ( $payload['form_source'] ?? $context['form_source'] ?? $context['adapter_id'] ?? '' ) );
+        $form_id         = sanitize_text_field( (string) ( $payload['form_id'] ?? $context['form_id'] ?? '' ) );
+        $entry_id        = sanitize_text_field( (string) ( $payload['entry_id'] ?? $context['entry_id'] ?? '' ) );
+        $submission_uuid = $this->resolve_submission_uuid( $payload, $context );
+        $entry_lookup_id = '' !== $entry_id ? $entry_id : (string) $submission_uuid;
 
-        if ( '' === $form_source || '' === $form_id || '' === $entry_id )
+        if ( '' === $form_source || '' === $form_id || '' === $entry_lookup_id )
         {
             return new WP_Error(
                 'sentient_forms_local_mapping_missing_identifiers',
@@ -1198,7 +1209,7 @@ class Sentient_Forms_Async_Handler
         }
 
         $entry = method_exists( $adapter, 'get_entry_data' )
-            ? $adapter->get_entry_data( $entry_id, $form_id )
+            ? $adapter->get_entry_data( $entry_lookup_id, $form_id )
             : null;
         if ( is_wp_error( $entry ) )
         {
@@ -1490,6 +1501,10 @@ class Sentient_Forms_Async_Handler
                     'form_source'      => sanitize_key( (string) ( $payload['form_source'] ?? '' ) ),
                     'form_id'          => sanitize_text_field( (string) ( $payload['form_id'] ?? '' ) ),
                     'entry_id'         => sanitize_text_field( (string) ( $payload['entry_id'] ?? '' ) ),
+                    'submission_uuid'  => $this->resolve_submission_uuid(
+                        $payload,
+                        isset( $payload['context'] ) && is_array( $payload['context'] ) ? $payload['context'] : []
+                    ),
                 ]
             )
         );
@@ -1587,6 +1602,11 @@ class Sentient_Forms_Async_Handler
         return $settings;
     }
 
+    private function is_after_submission_batch_hook( mixed $hook ): bool
+    {
+        return Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
+    }
+
     private function prepare_job_data( array $data ): array
     {
         $form = [];
@@ -1608,9 +1628,10 @@ class Sentient_Forms_Async_Handler
         {
             foreach ( $data['entry'] as $key => $value )
             {
-                if ( is_scalar( $value ) )
+                $sanitized_value = $this->sanitize_job_data_value( $value );
+                if ( null !== $sanitized_value )
                 {
-                    $entry[ (string) $key ] = sanitize_text_field( (string) $value );
+                    $entry[ (string) $key ] = $sanitized_value;
                 }
             }
         }
@@ -1641,6 +1662,36 @@ class Sentient_Forms_Async_Handler
         }
 
         return $payload;
+    }
+
+    private function sanitize_job_data_value( mixed $value ): mixed
+    {
+        if ( is_scalar( $value ) )
+        {
+            return sanitize_text_field( (string) $value );
+        }
+
+        if ( ! is_array( $value ) )
+        {
+            return null;
+        }
+
+        $sanitized = [];
+        foreach ( $value as $key => $nested_value )
+        {
+            if ( ! is_int( $key ) && ! is_string( $key ) )
+            {
+                continue;
+            }
+
+            $sanitized_value = $this->sanitize_job_data_value( $nested_value );
+            if ( null !== $sanitized_value )
+            {
+                $sanitized[ $key ] = $sanitized_value;
+            }
+        }
+
+        return $sanitized;
     }
 
     public function dispatch_evaluation( array $job ): bool

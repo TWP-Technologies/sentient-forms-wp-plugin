@@ -56,6 +56,80 @@ const baseForms = [
 	}
 ];
 
+const cf7FormSource = 'contact_form_7';
+const cf7FormId = 77;
+const cf7Forms = [
+	{
+		id: cf7FormId,
+		title: 'CF7 contact form',
+		adapter: cf7FormSource,
+		adapter_name: 'Contact Form 7',
+		provider_edit_url: 'admin.php?page=wpcf7&post=77&action=edit',
+		settings: null
+	}
+];
+const cf7FormsWithoutProviderEditUrl = [
+	{
+		id: cf7FormId,
+		title: 'CF7 contact form',
+		adapter: cf7FormSource,
+		adapter_name: 'Contact Form 7',
+		settings: null
+	}
+];
+
+const cf7FormSourceDescriptor = {
+	slug: cf7FormSource,
+	label: 'Contact Form 7',
+	is_active: true,
+	lifecycles: {
+		validation: {
+			supported: false,
+			label: 'Validation',
+			native_hook: null,
+			execution_mode: 'blocking',
+			requires_ledger: false,
+			unsupported_reason: 'Contact Form 7 validation blocking is not supported.'
+		},
+		after_submission: {
+			supported: true,
+			label: 'After submission',
+			native_hook: 'wpcf7_mail_sent',
+			execution_mode: 'async',
+			requires_ledger: true,
+			unsupported_reason: null
+		},
+		real_time: {
+			supported: false,
+			label: 'Realtime',
+			native_hook: null,
+			execution_mode: 'real_time',
+			requires_ledger: false,
+			unsupported_reason: 'Realtime Contact Form 7 support is not available.'
+		}
+	},
+	native_entry: {
+		id: false,
+		link: false,
+		read: false,
+		write: false
+	},
+	native_enrichment: {
+		notes: false,
+		status: false,
+		spam: false,
+		notification_controls: false,
+		webhook_controls: false
+	},
+	ledger: {
+		required_for_parity: true,
+		enabled: false,
+		settings_source: 'sentient_submission_ledger_settings',
+		unavailable_reason:
+			'Enable the Sentient Forms Submission Ledger before reviewing Contact Form 7 submissions in Sentient Forms.'
+	}
+};
+
 const baseLinkages = [
 	{
 		local_mapping_id: 'map-1',
@@ -2336,6 +2410,166 @@ test.describe('Actions admin flows', () => {
 			is_action_enabled_for_form: false
 		});
 		await expect(table.getByText('Disabled')).toBeVisible();
+	});
+
+	test('scopes the Direct OpenRouter drawer to Contact Form 7 after-submission ledger storage', async ({
+		page
+	}) => {
+		let modelResolveRequests = 0;
+		page.on('request', (request) => {
+			const url = new URL(request.url());
+			if (request.method() === 'POST' && url.pathname.endsWith('/models/resolve')) {
+				modelResolveRequests += 1;
+			}
+		});
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [cf7FormSource]: cf7FormsWithoutProviderEditUrl },
+				definitions: [],
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [
+					{ id: 'your-name', label: 'Your name', type: 'text' },
+					{ id: 'your-email', label: 'Your email', type: 'email' },
+					{ id: 'your-message', label: 'Your message', type: 'textarea' }
+				],
+				formSourceDescriptors: { [cf7FormSource]: cf7FormSourceDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } },
+			localProviders: {
+				credentials: [
+					{
+						id: 42,
+						provider: 'openrouter',
+						label: 'OpenRouter ready key',
+						auth_mode: 'manual_key',
+						constant_name: null,
+						status: 'valid',
+						status_json: null,
+						last_validated_at: '2030-01-05T10:00:00Z',
+						created_at: '2030-01-05T09:00:00Z',
+						updated_at: '2030-01-05T10:00:00Z',
+						secret_configured: true
+					}
+				]
+			}
+		});
+
+		await page.goto('/actions/contact_form_7/77', { waitUntil: 'networkidle' });
+		await expect(page.getByTestId('form-context-band')).toContainText('Contact Form 7');
+		await expect(page.getByTestId('form-context-provider-edit-link')).toHaveText(
+			'Open in Contact Form 7'
+		);
+		await expect(page.getByTestId('submission-ledger-affordance')).toContainText(
+			'Required for parity'
+		);
+		await expect(page.getByTestId('submission-ledger-affordance')).toContainText(
+			'Contact Form 7 submissions need Sentient Forms Submission Ledger storage'
+		);
+
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await page.getByTestId('create-kind-local-openrouter').click();
+
+		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
+		await expect(drawer.getByTestId('local-builder-template')).toHaveValue('spam_filter');
+		await expect(drawer.getByText('does not block validation or write native notes')).toBeVisible();
+		await expect(drawer.getByTestId('local-builder-execution-mode')).toHaveValue('async');
+		await expect(drawer.getByTestId('local-builder-spam-result-display')).toHaveCount(0);
+		await expect(drawer.getByTestId('local-builder-spam-indicators-display')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-after_submission')).toBeChecked();
+		await expect(drawer.getByTestId('create-trigger-hook-wpcf7_mail_sent')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-gform_validation')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toHaveCount(0);
+		await page.waitForTimeout(600);
+		expect(modelResolveRequests).toBeLessThanOrEqual(3);
+	});
+
+	test('maps Contact Form 7 built-in Entry Summary to the CF7 after-submission hook', async ({
+		page
+	}) => {
+		await page.addInitScript(() => {
+			try {
+				localStorage.setItem('sentient_forms_last_hooks', '["gform_validation"]');
+			} catch {}
+		});
+
+		await mockWpJson(page, {
+			actions: {
+				forms: { [cf7FormSource]: cf7Forms },
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						label: 'Spam Detection',
+						source: 'bundled',
+						hooks: ['gform_validation', 'gform_after_submission'],
+						base_credit_cost: null,
+						model_hint: 'openrouter/auto'
+					},
+					{
+						id: 'entry_summary_v1',
+						label: 'Entry Summary',
+						source: 'bundled',
+						hooks: ['gform_after_submission'],
+						base_credit_cost: null,
+						model_hint: 'openrouter/auto'
+					}
+				],
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [
+					{ id: 'your-name', label: 'Your name', type: 'text' },
+					{ id: 'your-email', label: 'Your email', type: 'email' },
+					{ id: 'your-message', label: 'Your message', type: 'textarea' }
+				],
+				formSourceDescriptors: { [cf7FormSource]: cf7FormSourceDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/actions/contact_form_7/77', { waitUntil: 'networkidle' });
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+
+		await drawer.locator('label', { hasText: 'Entry Summary' }).locator('input[type="radio"]').check();
+
+		await expect(drawer.getByTestId('create-trigger-hook-after_submission')).toBeChecked();
+		await expect(drawer.getByTestId('create-trigger-hook-wpcf7_mail_sent')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-gform_validation')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toHaveCount(0);
+
+		const createRequestPromise = page.waitForRequest((request) => {
+			const url = new URL(request.url());
+			return (
+				request.method() === 'POST' &&
+				url.pathname.endsWith('/contact_form_7/forms/77/actions')
+			);
+		});
+		const createResponsePromise = page.waitForResponse((response) => {
+			const url = new URL(response.url());
+			return (
+				response.request().method() === 'POST' &&
+				url.pathname.endsWith('/contact_form_7/forms/77/actions')
+			);
+		});
+		await drawer.getByRole('button', { name: 'Link action' }).click();
+		const createRequest = await createRequestPromise;
+		await createResponsePromise;
+
+		const payload = createRequest.postDataJSON() as Record<string, unknown>;
+		const settings = (payload.settings ?? {}) as Record<string, unknown>;
+		expect(payload.central_action_id).toBe('entry_summary_v1');
+		expect(payload.trigger_hooks).toEqual(['after_submission']);
+		expect(settings.execution_mode).toBe('after_submission');
+		expect(
+			(settings.trigger_sources as Record<string, { type?: string }> | undefined)
+				?.after_submission?.type
+		).toBe('hook_root');
 	});
 
 	test('surfaces only the documented bundled built-ins in the add-action drawer', async ({

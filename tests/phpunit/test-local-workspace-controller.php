@@ -207,6 +207,54 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
         $this->assertSame( 400, $response->get_status() );
     }
 
+    public function test_contact_form_7_native_after_submission_hook_creates_canonical_mapping(): void
+    {
+        $custom_action = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/custom-actions',
+            [
+                'code'                 => 'cf7_summary',
+                'display_name'         => 'CF7 Summary',
+                'definition_json'      => [
+                    'prompt' => 'Summarize the Contact Form 7 submission.',
+                ],
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => 'openrouter/auto',
+                ],
+            ],
+            201
+        );
+
+        $mapping = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/form-mappings',
+            [
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '646',
+                'hook'                => 'wpcf7_mail_sent',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $custom_action['id'],
+                'input_bindings_json' => [
+                    'email' => 'your-email',
+                ],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ],
+            201
+        );
+
+        $this->assertSame( 'contact_form_7', $mapping['form_source'] );
+        $this->assertSame( '646', $mapping['form_id'] );
+        $this->assertSame( 'after_submission', $mapping['hook'] );
+
+        $mappings = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/form-mappings?form_source=contact_form_7&form_id=646' );
+
+        $this->assertCount( 1, $mappings );
+        $this->assertSame( $mapping['id'], $mappings[0]['id'] );
+        $this->assertSame( 'after_submission', $mappings[0]['hook'] );
+    }
+
     public function test_managed_execution_events_are_sanitized_on_write_and_read(): void
     {
         $event = $this->dispatch_json(

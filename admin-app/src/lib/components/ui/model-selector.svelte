@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { Alert, Badge, Button, ReasoningEffortRail, SelectField } from '$lib/components/ui';
 	import * as Popover from '$lib/components/ui/popover/index.js';
 	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
@@ -963,6 +963,31 @@
 		return selectionSignature(selection) !== selectionSignature(value ?? null);
 	}
 
+	function currentSelectionDependencySignature(): string {
+		return JSON.stringify({
+			selectionMode,
+			selectedPreset,
+			selectedModel,
+			selectedBackup,
+			selectedCustomModel,
+			selectedCustomBackup,
+			selectedReasoning,
+			savedReasoningSettings,
+			savedReasoningSelectionKey,
+			toolChoiceMode,
+			webSearchMode,
+			webSearchMaxResults,
+			webFetchMode,
+			datetimeMode,
+			selectedProvider,
+			selectedCredentialId,
+			zdrOnly,
+			explicitRequireZdr,
+			effectiveManagedZdrRequired,
+			effectiveWebSearchMaxResultsLimit
+		});
+	}
+
 	function emitSelectionChange(selection: ModelSelection) {
 		lastEmittedSelectionSignature = selectionSignature(selection);
 		onchange?.(selection);
@@ -1468,8 +1493,11 @@
 	});
 
 	$effect(() => {
-		const selection = currentSelection();
-		void resolveSelectionPreview(selection);
+		currentSelectionDependencySignature();
+		const selection = untrack(() => currentSelection());
+		untrack(() => {
+			void resolveSelectionPreview(selection);
+		});
 		if (
 			!readonly &&
 			(value === null || value === undefined) &&

@@ -39,6 +39,7 @@ final class Sentient_Forms_Form_Source_Lifecycles
         return [
             'gform_validation'        => self::VALIDATION,
             'gform_after_submission'  => self::AFTER_SUBMISSION,
+            'wpcf7_mail_sent'         => self::AFTER_SUBMISSION,
         ];
     }
 

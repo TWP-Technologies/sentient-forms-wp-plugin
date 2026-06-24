@@ -301,6 +301,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     protected function tearDown(): void {
         remove_filter( 'sentient_forms_supported_form_sources', [ $this, 'add_opaque_form_source' ] );
+        remove_all_filters( 'sentient_forms_contact_form_7_is_active' );
+        remove_all_filters( 'sentient_forms_contact_form_7_forms' );
+        remove_all_filters( 'sentient_forms_contact_form_7_form_object' );
         Sentient_Forms_Plugin::instance()->get_form_adapter_registry()->unregister_adapter( 'opaque_forms' );
         $this->opaque_form_adapter = null;
         parent::tearDown();
@@ -3273,6 +3276,74 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'cps', $data['workflow_plan']['authority'] ?? null );
         $this->assertSame( 2, $sync->plan_calls );
         $this->assertSame( 1, $sync->sync_calls );
+    }
+
+    public function test_contact_form_7_bootstrap_exposes_ledger_required_capabilities_without_gravity_only_claims(): void
+    {
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter(
+            'sentient_forms_contact_form_7_forms',
+            static fn(): array => [
+                new class {
+                    public function id(): int
+                    {
+                        return 42;
+                    }
+
+                    public function title(): string
+                    {
+                        return 'CF7 Support Intake';
+                    }
+                },
+            ]
+        );
+        add_filter(
+            'sentient_forms_contact_form_7_form_object',
+            static fn( $form, $form_id ) => 42 === absint( $form_id )
+                ? new class {
+                    public function scan_form_tags(): array
+                    {
+                        return [
+                            (object) [
+                                'type'     => 'text*',
+                                'basetype' => 'text',
+                                'name'     => 'your-name',
+                            ],
+                        ];
+                    }
+                }
+                : $form,
+            10,
+            2
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/contact_form_7/forms/42/actions/bootstrap' );
+        $request->set_param( 'form_source_slug', 'contact_form_7' );
+        $request->set_param( 'form_id', 42 );
+
+        $response = $this->controller->get_form_actions_bootstrap( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data       = $response->get_data();
+        $descriptor = $data['form_source_descriptor'] ?? [];
+
+        $this->assertSame( 'contact_form_7', $descriptor['slug'] ?? null );
+        $this->assertSame( 'Contact Form 7', $descriptor['label'] ?? null );
+        $this->assertTrue( $descriptor['is_active'] ?? false );
+        $this->assertSame( 'available', $descriptor['availability'] ?? null );
+        $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] ?? true );
+        $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] ?? true );
+        $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] ?? false );
+        $this->assertSame( 'wpcf7_mail_sent', $descriptor['lifecycles']['after_submission']['native_hook'] ?? null );
+        $this->assertTrue( $descriptor['lifecycles']['after_submission']['requires_ledger'] ?? false );
+        $this->assertFalse( $descriptor['native_entry']['id'] ?? true );
+        $this->assertFalse( $descriptor['native_entry']['link'] ?? true );
+        $this->assertFalse( $descriptor['native_enrichment']['notes'] ?? true );
+        $this->assertFalse( $descriptor['native_enrichment']['spam'] ?? true );
+        $this->assertTrue( $descriptor['ledger']['required_for_parity'] ?? false );
+        $this->assertFalse( $data['ledger_settings']['enabled'] ?? true );
+        $this->assertSame( 'your-name', $data['form_fields'][0]['id'] ?? null );
+        $this->assertTrue( $data['form_fields'][0]['storage_eligible'] ?? false );
     }
 
     public function test_bootstrap_action_defaults_chunks_more_than_batch_limit_ids(): void

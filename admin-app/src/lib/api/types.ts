@@ -1744,6 +1744,11 @@ export type ActionKind = 'template_override' | 'custom_definition';
 export type ExecutionMode = 'validation' | 'after_submission' | 'real_time';
 
 /**
+ * Form-source lifecycle descriptors report runtime behavior, not stored mapping IDs.
+ */
+export type FormSourceLifecycleExecutionMode = 'blocking' | 'async' | 'real_time';
+
+/**
  * Output contract defining expected structured output
  */
 export interface OutputContract extends Record<string, unknown> {
@@ -1983,7 +1988,7 @@ export interface FormSourceLifecycleDescriptor {
 	supported: boolean;
 	label: string;
 	native_hook: string | null;
-	execution_mode: ExecutionMode;
+	execution_mode: FormSourceLifecycleExecutionMode;
 	requires_ledger: boolean;
 	unsupported_reason: string | null;
 }
@@ -1995,6 +2000,19 @@ export interface FormSourceDescriptor {
 	adapter_class?: string | null;
 	capabilities?: Record<string, boolean | string | number | null>;
 	lifecycles: Record<string, FormSourceLifecycleDescriptor>;
+	native_entry?: {
+		id: boolean;
+		link: boolean;
+		read: boolean;
+		write: boolean;
+	};
+	native_enrichment?: {
+		notes: boolean;
+		status: boolean;
+		spam: boolean;
+		notification_controls: boolean;
+		webhook_controls: boolean;
+	};
 	ledger?: {
 		required_for_parity: boolean;
 		enabled: boolean;
