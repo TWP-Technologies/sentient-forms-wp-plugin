@@ -215,4 +215,34 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertTrue( $descriptor['native_enrichment']['notes'] );
         $this->assertTrue( $descriptor['native_enrichment']['spam'] );
     }
+
+    public function test_contact_form_7_absent_descriptor_requires_ledger_and_hides_gravity_only_capabilities(): void
+    {
+        $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $descriptor = $registry->get_capability_descriptor( 'contact_form_7' );
+
+        $this->assertIsArray( $descriptor );
+        $this->assertSame( 'contact_form_7', $descriptor['slug'] );
+        $this->assertSame( 'Contact Form 7', $descriptor['label'] );
+        $this->assertFalse( $descriptor['is_active'] );
+        $this->assertSame( 'not_installed', $descriptor['availability'] );
+        $this->assertFalse( $descriptor['forms_discovery']['supported'] );
+        $this->assertFalse( $descriptor['field_manifest']['supported'] );
+        $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );
+        $this->assertSame( 'wpcf7_mail_sent', $descriptor['lifecycles']['after_submission']['native_hook'] );
+        $this->assertTrue( $descriptor['lifecycles']['after_submission']['requires_ledger'] );
+        $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] );
+        $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] );
+        $this->assertFalse( $descriptor['native_entry']['id'] );
+        $this->assertFalse( $descriptor['native_entry']['link'] );
+        $this->assertFalse( $descriptor['native_enrichment']['notes'] );
+        $this->assertFalse( $descriptor['native_enrichment']['spam'] );
+        $this->assertTrue( $descriptor['ledger']['required_for_parity'] );
+        $this->assertFalse( $descriptor['ledger']['enabled'] );
+    }
+
+    public function test_contact_form_7_is_supported_form_source_slug(): void
+    {
+        $this->assertTrue( Sentient_Forms_Form_Sources::is_supported_source( 'contact_form_7' ) );
+    }
 }

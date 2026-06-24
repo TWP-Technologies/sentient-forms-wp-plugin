@@ -154,6 +154,7 @@ class Sentient_Forms_Form_Adapter_Registry
     private function discover_adapters(): void
     {
         $this->register_adapter( new Sentient_Forms_Gravity_Forms_Adapter( $this->plugin ) );
+        $this->register_adapter( new Sentient_Forms_Contact_Form_7_Adapter( $this->plugin ) );
 
         /**
          * Action hook to allow other plugins/themes to register their own adapters.

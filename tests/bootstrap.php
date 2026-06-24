@@ -81,6 +81,16 @@ if ( ! file_exists( "$includes_dir/functions.php" ) ) {
         );
         exec( $tar_command, $tar_output, $tar_exit_code );
 
+        if ( 0 !== $tar_exit_code && str_contains( implode( "\n", $tar_output ), 'Option --touch is not supported' ) ) {
+            $tar_command = sprintf(
+                'tar --no-same-owner --no-same-permissions -xzf %s -C %s 2>&1',
+                escapeshellarg( $archive ),
+                escapeshellarg( $tmp_dir )
+            );
+            $tar_output = [];
+            exec( $tar_command, $tar_output, $tar_exit_code );
+        }
+
         if ( 0 !== $tar_exit_code ) {
             throw new RuntimeException( 'Extraction error: ' . implode( "\n", $tar_output ) );
         }

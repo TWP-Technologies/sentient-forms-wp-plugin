@@ -37,6 +37,7 @@ return [
 	'Sentient_Forms_Autoloader' => __DIR__ . '/class-autoloader.php',
 	'Sentient_Forms_Bundled_Action_Templates' => __DIR__ . '/class-sentient-forms-bundled-action-templates.php',
 	'Sentient_Forms_Condition_Evaluator' => __DIR__ . '/services/class-sentient-forms-condition-evaluator.php',
+	'Sentient_Forms_Contact_Form_7_Adapter' => __DIR__ . '/adapters/forms/class-sentient-forms-contact-form-7-adapter.php',
 	'Sentient_Forms_Credit_Controller' => __DIR__ . '/rest-api/controllers/class-credit-controller.php',
 	'Sentient_Forms_Custom_Action_List_Response' => __DIR__ . '/api/dto/class-sentient-forms-custom-action-list-response.php',
 	'Sentient_Forms_Custom_Action_Mutation_Response' => __DIR__ . '/api/dto/class-sentient-forms-custom-action-mutation-response.php',

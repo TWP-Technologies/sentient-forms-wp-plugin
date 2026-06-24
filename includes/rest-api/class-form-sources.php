@@ -27,15 +27,15 @@ final class Sentient_Forms_Form_Sources
      * @var string
      * @since 0.1.0
      */
-	const GRAVITY_FORMS = 'gravity_forms';
+    const GRAVITY_FORMS = 'gravity_forms';
 
     /**
-     * Slug for Contact Form 7 (example for future).
+     * Slug for Contact Form 7.
      *
      * @var string
-     * @since 0.1.0
+     * @since 0.3.18
      */
-    // const CONTACT_FORM_7 = 'contactform7';
+    const CONTACT_FORM_7 = 'contact_form_7';
 
     /**
      * Slug for WPForms (example for future).
@@ -57,7 +57,7 @@ final class Sentient_Forms_Form_Sources
     {
         $core_sources = [
             self::GRAVITY_FORMS,
-            // self::CONTACT_FORM_7, // Uncomment when CF7 adapter is added
+            self::CONTACT_FORM_7,
             // self::WPFORMS,        // Uncomment when WPForms adapter is added
         ];
 

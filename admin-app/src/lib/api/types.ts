@@ -1995,6 +1995,19 @@ export interface FormSourceDescriptor {
 	adapter_class?: string | null;
 	capabilities?: Record<string, boolean | string | number | null>;
 	lifecycles: Record<string, FormSourceLifecycleDescriptor>;
+	native_entry?: {
+		id: boolean;
+		link: boolean;
+		read: boolean;
+		write: boolean;
+	};
+	native_enrichment?: {
+		notes: boolean;
+		status: boolean;
+		spam: boolean;
+		notification_controls: boolean;
+		webhook_controls: boolean;
+	};
 	ledger?: {
 		required_for_parity: boolean;
 		enabled: boolean;

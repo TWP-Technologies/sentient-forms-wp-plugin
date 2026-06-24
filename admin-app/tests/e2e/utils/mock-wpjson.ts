@@ -9,6 +9,7 @@ type Routes = {
 		settings?: Record<string, unknown>;
 		actionDefaultsById?: Record<string, Record<string, unknown>>;
 		formActionConfigById?: Record<string, Record<string, unknown>>;
+		formSourceDescriptors?: Record<string, unknown>;
 		formsActions?: unknown[];
 		formFields?: unknown[];
 		creditBalance?: unknown;
@@ -827,6 +828,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 						supports_credits: false,
 						cps_version: null
 					},
+					form_source_descriptor: routes.actions?.formSourceDescriptors?.[sourceSlug] ?? null,
 					definitions,
 					custom_actions: customActionsPayload,
 					provider_credentials: routes.localProviders?.credentials ?? [],
