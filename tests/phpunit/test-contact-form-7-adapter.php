@@ -263,12 +263,20 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                         'your-name'     => 'Katherine Johnson',
                         'your-email'    => 'katherine@example.test',
                         'message'       => 'Please summarize this.',
+                        'your-topic'    => [ 'Support', 'Sales' ],
                         'captcha_token' => 'do-not-send',
                         'id'            => 'shadow-id',
                         'submission_uuid' => '00000000-0000-4000-8000-000000000000',
                         'form_source'   => 'gravity_forms',
                         'form_id'       => '999',
                         '_wpcf7'        => '44',
+                    ];
+                }
+
+                public function uploaded_files(): array
+                {
+                    return [
+                        'brief' => [ 'C:\\private\\brief.pdf' ],
                     ];
                 }
             }
@@ -299,11 +307,15 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( $submission_uuid, $job_context['submission_uuid'] ?? null );
 
         $job_entry = $scheduled_jobs[0]['args']['data']['entry'] ?? [];
+        $this->assertSame( 'contact_form_7', $scheduled_jobs[0]['args']['data']['form_source'] ?? null );
         $this->assertNull( $job_entry['id'] ?? null );
         $this->assertSame( $submission_uuid, $job_entry['submission_uuid'] ?? null );
         $this->assertSame( 'contact_form_7', $job_entry['form_source'] ?? null );
         $this->assertSame( '44', $job_entry['form_id'] ?? null );
         $this->assertSame( 'Katherine Johnson', $job_entry['your-name'] ?? null );
+        $this->assertSame( [ 'Support', 'Sales' ], $job_entry['your-topic'] ?? null );
+        $this->assertSame( 'brief', $job_entry['file_refs'][0]['field_id'] ?? null );
+        $this->assertSame( 'brief.pdf', $job_entry['file_refs'][0]['filename'] ?? null );
         $this->assertSame( '[redacted]', $job_entry['captcha_token'] ?? null );
         $this->assertArrayNotHasKey( '_wpcf7', $job_entry );
     }

@@ -880,7 +880,7 @@ class Sentient_Forms_Async_Handler
         // CB-EXEC-003/004: Batch delay scheduling (pricing remains CPS-authoritative).
         $batch_settings = $settings['batch_settings'] ?? null;
         $batch_enabled  = ! empty( $batch_settings['enabled'] )
-            && ( ( $data['hook'] ?? ( $context['hook'] ?? '' ) ) === 'gform_after_submission' );
+            && $this->is_after_submission_batch_hook( $data['hook'] ?? ( $context['hook'] ?? '' ) );
 
         if ( $batch_enabled )
         {
@@ -1602,6 +1602,11 @@ class Sentient_Forms_Async_Handler
         return $settings;
     }
 
+    private function is_after_submission_batch_hook( mixed $hook ): bool
+    {
+        return Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
+    }
+
     private function prepare_job_data( array $data ): array
     {
         $form = [];
@@ -1623,9 +1628,10 @@ class Sentient_Forms_Async_Handler
         {
             foreach ( $data['entry'] as $key => $value )
             {
-                if ( is_scalar( $value ) )
+                $sanitized_value = $this->sanitize_job_data_value( $value );
+                if ( null !== $sanitized_value )
                 {
-                    $entry[ (string) $key ] = sanitize_text_field( (string) $value );
+                    $entry[ (string) $key ] = $sanitized_value;
                 }
             }
         }
@@ -1656,6 +1662,36 @@ class Sentient_Forms_Async_Handler
         }
 
         return $payload;
+    }
+
+    private function sanitize_job_data_value( mixed $value ): mixed
+    {
+        if ( is_scalar( $value ) )
+        {
+            return sanitize_text_field( (string) $value );
+        }
+
+        if ( ! is_array( $value ) )
+        {
+            return null;
+        }
+
+        $sanitized = [];
+        foreach ( $value as $key => $nested_value )
+        {
+            if ( ! is_int( $key ) && ! is_string( $key ) )
+            {
+                continue;
+            }
+
+            $sanitized_value = $this->sanitize_job_data_value( $nested_value );
+            if ( null !== $sanitized_value )
+            {
+                $sanitized[ $key ] = $sanitized_value;
+            }
+        }
+
+        return $sanitized;
     }
 
     public function dispatch_evaluation( array $job ): bool

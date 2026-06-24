@@ -445,9 +445,10 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
             $this->plugin->process_action_async(
                 $central_action_id,
                 [
-                    'hook'  => self::NATIVE_AFTER_SUBMISSION_HOOK,
-                    'form'  => $form,
-                    'entry' => $entry,
+                    'hook'        => self::NATIVE_AFTER_SUBMISSION_HOOK,
+                    'form_source' => $this->get_id(),
+                    'form'        => $form,
+                    'entry'       => $entry,
                 ],
                 $action_settings,
                 [

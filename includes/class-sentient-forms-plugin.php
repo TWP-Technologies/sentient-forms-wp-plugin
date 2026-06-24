@@ -469,7 +469,7 @@ final class Sentient_Forms_Plugin
             ? $settings['batch_settings']
             : [];
         $batch_enabled = ! empty( $batch_settings['enabled'] )
-            && ( ( $context['hook'] ?? '' ) === 'gform_after_submission' );
+            && $this->is_after_submission_batch_hook( $context['hook'] ?? '' );
         $action_type_indicator = (string) ( $settings['action_type_indicator'] ?? '' );
         $is_cps_managed_action = in_array( $action_type_indicator, [ 'master', 'custom' ], true );
 
@@ -566,6 +566,11 @@ final class Sentient_Forms_Plugin
         ];
 
         return $settings;
+    }
+
+    private function is_after_submission_batch_hook( mixed $hook ): bool
+    {
+        return Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION === Sentient_Forms_Form_Source_Lifecycles::normalize_id( $hook );
     }
 
     public function dispatch_action_evaluation( array $job ): bool

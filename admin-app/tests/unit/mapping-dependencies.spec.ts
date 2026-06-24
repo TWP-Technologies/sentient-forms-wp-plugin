@@ -250,6 +250,39 @@ describe('mapping-dependencies utils (CB-FORMS-004)', () => {
 		);
 	});
 
+	it('rejects async dependency when dependent mapping uses canonical after-submission hook', () => {
+		const items: FormActionLinkage[] = [
+			linkage('map_async', ['after_submission']),
+			{
+				local_mapping_id: 'map_sync',
+				central_action_id: 'custom-hello',
+				action_type_indicator: 'custom',
+				trigger_hooks: ['after_submission'],
+				action_name_label: 'map_sync',
+				settings: { dependency_ids: ['map_async'], execution_mode: 'validation' }
+			}
+		];
+
+		const issues = validateMappingDependencies(items);
+		expect(
+			issues.some(
+				(issue) =>
+					issue.code === 'execution_mode_mismatch' &&
+					issue.mappingId === 'map_sync' &&
+					issue.dependencyId === 'map_async'
+			)
+		).toBe(true);
+
+		const preview = buildExecutionPreview(items, 'after_submission');
+		const hookPreview = preview.hooks[0];
+		expect(hookPreview?.runnable).toEqual(['map_async']);
+		expect(
+			hookPreview?.blocked.some(
+				(item) => item.mappingId === 'map_sync' && item.reason === 'policy_violation'
+			)
+		).toBe(true);
+	});
+
 	it('marks execution-mode mismatch as blocked in after-submission preview', () => {
 		const items: FormActionLinkage[] = [
 			linkage('map_async', ['gform_after_submission']),
