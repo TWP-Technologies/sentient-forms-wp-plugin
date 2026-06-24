@@ -243,12 +243,7 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
             return null;
         }
 
-        $entry = [
-            'id'              => null,
-            'submission_uuid' => $submission_uuid,
-            'form_source'     => $this->get_id(),
-            'form_id'         => sanitize_text_field( (string) ( $record['form_id'] ?? '' ) ),
-        ];
+        $entry = [];
 
         if ( isset( $record['logical_fields_json'] ) && is_array( $record['logical_fields_json'] ) )
         {
@@ -259,6 +254,11 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
         {
             $entry['file_refs'] = $record['file_refs_json'];
         }
+
+        $entry['id']              = null;
+        $entry['submission_uuid'] = $submission_uuid;
+        $entry['form_source']     = $this->get_id();
+        $entry['form_id']         = sanitize_text_field( (string) ( $record['form_id'] ?? '' ) );
 
         return $entry;
     }
@@ -1121,9 +1121,7 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
      */
     private function ledger_entry_snapshot( array $captured, string $submission_uuid ): array
     {
-        $entry = [
-            'submission_uuid' => $submission_uuid,
-        ];
+        $entry = [];
 
         if ( isset( $captured['logical_fields_json'] ) && is_array( $captured['logical_fields_json'] ) )
         {
@@ -1134,6 +1132,11 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
         {
             $entry['file_refs'] = $captured['file_refs_json'];
         }
+
+        $entry['id']              = null;
+        $entry['submission_uuid'] = $submission_uuid;
+        $entry['form_source']     = $this->get_id();
+        $entry['form_id']         = sanitize_text_field( (string) ( $captured['form_id'] ?? '' ) );
 
         return $entry;
     }

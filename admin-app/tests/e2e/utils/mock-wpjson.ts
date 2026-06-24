@@ -16,6 +16,7 @@ type Routes = {
 		disableState?: unknown;
 		workflowPlan?: unknown;
 		executionStatus?: Record<number, unknown>;
+		ledgerSettings?: unknown;
 		createResponse?: (payload: Record<string, unknown>) => unknown;
 		requestTrace?: unknown | ((payload: Record<string, unknown>) => unknown);
 	};
@@ -783,6 +784,20 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			const definitions = Array.isArray(routes.actions?.definitions)
 				? routes.actions.definitions
 				: [];
+			const ledgerSettings =
+				routes.actions?.ledgerSettings ??
+				({
+					form_source: sourceSlug,
+					form_id: String(currentFormId),
+					enabled: false,
+					enabled_at: null,
+					enabled_by_user_id: null,
+					disabled_at: null,
+					disabled_by_user_id: null,
+					settings_source: 'sentient_submission_ledger_settings',
+					ledger_records_endpoint: `/wp-json/sentient-forms/v1/${sourceSlug}/forms/${currentFormId}/submission-ledger`,
+					record_count: 0
+				} satisfies Record<string, unknown>);
 			const customActionsPayload = routes.customActions?.list ?? { actions: [], quota: null };
 			const customActionItems =
 				customActionsPayload &&
@@ -849,6 +864,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 						hooks: [],
 						policy_violations: []
 					},
+					ledger_settings: ledgerSettings,
 					generated_at: '2026-04-22T00:00:00Z'
 				})
 			});

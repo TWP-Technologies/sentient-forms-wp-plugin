@@ -327,6 +327,8 @@
 					promptTemplate:
 						'Form: {{form.title}}\nSubmission: {{entry}}\n\nReturn JSON shaped as {"sentiment":"positive|neutral|negative|urgent"} based on the sender tone.'
 				};
+			default:
+				return baseTemplate;
 		}
 	}
 
@@ -396,7 +398,9 @@
 		currentFormSummary?.provider_edit_url ??
 			(data.formSourceSlug === 'gravity_forms'
 				? `admin.php?page=gf_edit_forms&id=${encodeURIComponent(String(data.formId))}`
-				: null)
+				: data.formSourceSlug === 'contact_form_7'
+					? `admin.php?page=wpcf7&post=${encodeURIComponent(String(data.formId))}&action=edit`
+					: null)
 	);
 	const supportsNativeSpamEffects = $derived(
 		formSourceDescriptor?.native_enrichment?.spam === true ||
@@ -542,19 +546,14 @@
 		return null;
 	}
 
-	function sourceHookForLifecycle(lifecycleId: string | null): string | null {
-		if (!formSourceDescriptor || !lifecycleId) return null;
-
-		const lifecycle = formSourceDescriptor.lifecycles?.[lifecycleId];
-		if (!lifecycle?.supported) return null;
-
-		return lifecycle.native_hook ?? lifecycleId;
-	}
-
 	function adaptHookForCurrentSource(hook: string): string | null {
 		if (!formSourceDescriptor) return hook;
 
-		return sourceHookForLifecycle(lifecycleIdForHook(hook));
+		const lifecycleId = lifecycleIdForHook(hook);
+		if (!lifecycleId) return null;
+
+		const lifecycle = formSourceDescriptor.lifecycles?.[lifecycleId];
+		return lifecycle?.supported ? lifecycleId : null;
 	}
 
 	function adaptHooksForCurrentSource(hooks: Iterable<string>): string[] {
@@ -611,14 +610,17 @@
 
 	function defaultLocalBuilderHooks(): string[] {
 		const availableHookKeys = new Set(defaultAvailableHookKeys());
+		if (localBuilderExecutionMode === 'sync' && availableHookKeys.has('validation')) {
+			return ['validation'];
+		}
 		if (localBuilderExecutionMode === 'sync' && availableHookKeys.has('gform_validation')) {
 			return ['gform_validation'];
 		}
+		if (availableHookKeys.has('after_submission')) {
+			return ['after_submission'];
+		}
 		if (availableHookKeys.has('gform_after_submission')) {
 			return ['gform_after_submission'];
-		}
-		if (availableHookKeys.has('wpcf7_mail_sent')) {
-			return ['wpcf7_mail_sent'];
 		}
 
 		return defaultAvailableHookKeys().slice(0, 1);
@@ -640,7 +642,9 @@
 			return current;
 		}
 
-		return normalizedHooks.includes('gform_validation') ? 'validation' : 'after_submission';
+		return normalizedHooks.includes('validation') || normalizedHooks.includes('gform_validation')
+			? 'validation'
+			: 'after_submission';
 	}
 
 	function resolveRealtimeSettingsChain(
@@ -1386,7 +1390,7 @@
 		const descriptorHookKeys = new Set<string>();
 		for (const [lifecycleId, lifecycle] of Object.entries(formSourceDescriptor?.lifecycles ?? {})) {
 			if (!lifecycle.supported) continue;
-			const hookKey = lifecycle.native_hook ?? lifecycleId;
+			const hookKey = lifecycleId;
 			descriptorHookKeys.add(hookKey);
 			next[hookKey] = lifecycle.label?.toString() || next[hookKey] || hookKey;
 		}
@@ -1395,14 +1399,15 @@
 
 			if (Array.isArray(definition.hooks)) {
 				for (const hook of definition.hooks) {
-					const key = hook?.toString();
+					const key = hasSourceDescriptor ? adaptHookForCurrentSource(hook?.toString() ?? '') : hook?.toString();
 					if (hasSourceDescriptor && (!key || !descriptorHookKeys.has(key))) continue;
 					if (key) next[key] = next[key] ?? key;
 				}
 			} else if (typeof definition.hooks === 'object') {
 				for (const [hook, label] of Object.entries(definition.hooks)) {
-					if (hasSourceDescriptor && !descriptorHookKeys.has(hook)) continue;
-					if (hook) next[hook] = label?.toString() ?? hook;
+					const key = hasSourceDescriptor ? adaptHookForCurrentSource(hook) : hook;
+					if (hasSourceDescriptor && (!key || !descriptorHookKeys.has(key))) continue;
+					if (key) next[key] = label?.toString() ?? next[key] ?? key;
 				}
 			}
 		}
@@ -2407,7 +2412,8 @@
 			new Set(
 				Array.from(hooks)
 					.map((hook) => hook?.toString().trim())
-					.filter(Boolean)
+					.map((hook) => (formSourceDescriptor && hook ? (lifecycleIdForHook(hook) ?? hook) : hook))
+					.filter((hook): hook is string => Boolean(hook))
 			)
 		).sort();
 	}

@@ -17,6 +17,8 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             'sentient_form_mappings',
             'sentient_execution_events',
             'sentient_async_requests',
+            'sentient_submission_ledger_settings',
+            'sentient_submission_ledger',
         ] as $table ) {
             $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
         }
@@ -262,6 +264,10 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                         'your-email'    => 'katherine@example.test',
                         'message'       => 'Please summarize this.',
                         'captcha_token' => 'do-not-send',
+                        'id'            => 'shadow-id',
+                        'submission_uuid' => '00000000-0000-4000-8000-000000000000',
+                        'form_source'   => 'gravity_forms',
+                        'form_id'       => '999',
                         '_wpcf7'        => '44',
                     ];
                 }
@@ -293,7 +299,10 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( $submission_uuid, $job_context['submission_uuid'] ?? null );
 
         $job_entry = $scheduled_jobs[0]['args']['data']['entry'] ?? [];
+        $this->assertNull( $job_entry['id'] ?? null );
         $this->assertSame( $submission_uuid, $job_entry['submission_uuid'] ?? null );
+        $this->assertSame( 'contact_form_7', $job_entry['form_source'] ?? null );
+        $this->assertSame( '44', $job_entry['form_id'] ?? null );
         $this->assertSame( 'Katherine Johnson', $job_entry['your-name'] ?? null );
         $this->assertSame( '[redacted]', $job_entry['captcha_token'] ?? null );
         $this->assertArrayNotHasKey( '_wpcf7', $job_entry );
@@ -366,6 +375,10 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                         'your-name'  => 'Dorothy Vaughan',
                         'your-email' => 'dorothy@example.test',
                         'message'    => 'Queue this local-first CF7 summary.',
+                        'id'         => 'shadow-id',
+                        'submission_uuid' => '00000000-0000-4000-8000-000000000000',
+                        'form_source' => 'gravity_forms',
+                        'form_id'    => '999',
                         '_wpcf7'     => '45',
                     ];
                 }
@@ -391,6 +404,8 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertIsArray( $resolved_entry );
         $this->assertNull( $resolved_entry['id'] ?? null );
         $this->assertSame( $submission_uuid, $resolved_entry['submission_uuid'] ?? null );
+        $this->assertSame( 'contact_form_7', $resolved_entry['form_source'] ?? null );
+        $this->assertSame( '45', $resolved_entry['form_id'] ?? null );
         $this->assertSame( 'Dorothy Vaughan', $resolved_entry['your-name'] ?? null );
         $this->assertNull( $adapter->get_entry_data( $submission_uuid, '999' ) );
 

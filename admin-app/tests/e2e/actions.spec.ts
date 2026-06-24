@@ -68,6 +68,15 @@ const cf7Forms = [
 		settings: null
 	}
 ];
+const cf7FormsWithoutProviderEditUrl = [
+	{
+		id: cf7FormId,
+		title: 'CF7 contact form',
+		adapter: cf7FormSource,
+		adapter_name: 'Contact Form 7',
+		settings: null
+	}
+];
 
 const cf7FormSourceDescriptor = {
 	slug: cf7FormSource,
@@ -78,7 +87,7 @@ const cf7FormSourceDescriptor = {
 			supported: false,
 			label: 'Validation',
 			native_hook: null,
-			execution_mode: 'validation',
+			execution_mode: 'blocking',
 			requires_ledger: false,
 			unsupported_reason: 'Contact Form 7 validation blocking is not supported.'
 		},
@@ -86,7 +95,7 @@ const cf7FormSourceDescriptor = {
 			supported: true,
 			label: 'After submission',
 			native_hook: 'wpcf7_mail_sent',
-			execution_mode: 'after_submission',
+			execution_mode: 'async',
 			requires_ledger: true,
 			unsupported_reason: null
 		},
@@ -2416,7 +2425,7 @@ test.describe('Actions admin flows', () => {
 
 		await mockWpJson(page, {
 			actions: {
-				forms: { [cf7FormSource]: cf7Forms },
+				forms: { [cf7FormSource]: cf7FormsWithoutProviderEditUrl },
 				definitions: [],
 				status: statusUnknown,
 				formsActions: [],
@@ -2471,7 +2480,8 @@ test.describe('Actions admin flows', () => {
 		await expect(drawer.getByTestId('local-builder-execution-mode')).toHaveValue('async');
 		await expect(drawer.getByTestId('local-builder-spam-result-display')).toHaveCount(0);
 		await expect(drawer.getByTestId('local-builder-spam-indicators-display')).toHaveCount(0);
-		await expect(drawer.getByTestId('create-trigger-hook-wpcf7_mail_sent')).toBeChecked();
+		await expect(drawer.getByTestId('create-trigger-hook-after_submission')).toBeChecked();
+		await expect(drawer.getByTestId('create-trigger-hook-wpcf7_mail_sent')).toHaveCount(0);
 		await expect(drawer.getByTestId('create-trigger-hook-gform_validation')).toHaveCount(0);
 		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toHaveCount(0);
 		await page.waitForTimeout(600);
@@ -2528,7 +2538,8 @@ test.describe('Actions admin flows', () => {
 
 		await drawer.locator('label', { hasText: 'Entry Summary' }).locator('input[type="radio"]').check();
 
-		await expect(drawer.getByTestId('create-trigger-hook-wpcf7_mail_sent')).toBeChecked();
+		await expect(drawer.getByTestId('create-trigger-hook-after_submission')).toBeChecked();
+		await expect(drawer.getByTestId('create-trigger-hook-wpcf7_mail_sent')).toHaveCount(0);
 		await expect(drawer.getByTestId('create-trigger-hook-gform_validation')).toHaveCount(0);
 		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toHaveCount(0);
 
@@ -2553,11 +2564,11 @@ test.describe('Actions admin flows', () => {
 		const payload = createRequest.postDataJSON() as Record<string, unknown>;
 		const settings = (payload.settings ?? {}) as Record<string, unknown>;
 		expect(payload.central_action_id).toBe('entry_summary_v1');
-		expect(payload.trigger_hooks).toEqual(['wpcf7_mail_sent']);
+		expect(payload.trigger_hooks).toEqual(['after_submission']);
 		expect(settings.execution_mode).toBe('after_submission');
 		expect(
 			(settings.trigger_sources as Record<string, { type?: string }> | undefined)
-				?.wpcf7_mail_sent?.type
+				?.after_submission?.type
 		).toBe('hook_root');
 	});
 

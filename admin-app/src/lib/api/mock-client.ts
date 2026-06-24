@@ -545,7 +545,7 @@ export class MockSentientFormsApiClient {
 						supported: false,
 						label: 'Validation',
 						native_hook: null,
-						execution_mode: 'validation',
+						execution_mode: 'blocking',
 						requires_ledger: false,
 						unsupported_reason: 'Contact Form 7 validation blocking is not supported.'
 					},
@@ -554,7 +554,7 @@ export class MockSentientFormsApiClient {
 						supported: true,
 						label: 'After submission',
 						native_hook: 'wpcf7_mail_sent',
-						execution_mode: 'after_submission',
+						execution_mode: 'async',
 						requires_ledger: true,
 						unsupported_reason: null
 					},
@@ -601,7 +601,7 @@ export class MockSentientFormsApiClient {
 					supported: true,
 					label: 'During validation',
 					native_hook: 'gform_validation',
-					execution_mode: 'validation',
+					execution_mode: 'blocking',
 					requires_ledger: false,
 					unsupported_reason: null
 				},
@@ -610,7 +610,7 @@ export class MockSentientFormsApiClient {
 					supported: true,
 					label: 'After submission',
 					native_hook: 'gform_after_submission',
-					execution_mode: 'after_submission',
+					execution_mode: 'async',
 					requires_ledger: false,
 					unsupported_reason: null
 				},
@@ -623,6 +623,19 @@ export class MockSentientFormsApiClient {
 					requires_ledger: false,
 					unsupported_reason: null
 				}
+			},
+			native_entry: {
+				id: true,
+				link: true,
+				read: true,
+				write: true
+			},
+			native_enrichment: {
+				notes: true,
+				status: true,
+				spam: true,
+				notification_controls: true,
+				webhook_controls: true
 			},
 			ledger: {
 				required_for_parity: false,

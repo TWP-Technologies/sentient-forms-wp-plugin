@@ -906,7 +906,10 @@ export function canDependencySatisfyHook(dependencyHooks: string[], requiredHook
 		return true;
 	}
 	// Validation (sync) can satisfy after-submission dependants.
-	if (requiredHook === 'gform_after_submission' && dependencyHooks.includes('gform_validation')) {
+	if (
+		(requiredHook === 'after_submission' || requiredHook === 'gform_after_submission') &&
+		(dependencyHooks.includes('validation') || dependencyHooks.includes('gform_validation'))
+	) {
 		return true;
 	}
 	return false;
