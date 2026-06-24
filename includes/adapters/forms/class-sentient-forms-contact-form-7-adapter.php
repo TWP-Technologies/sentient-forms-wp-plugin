@@ -396,6 +396,8 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
         );
         $form  = $this->form_snapshot( $contact_form, $form_id );
         $entry = $this->ledger_entry_snapshot( $captured, $submission_uuid );
+        $mapping_outcomes      = [];
+        $execution_request_ids = [];
 
         foreach ( $plan['order'] as $mapping_id )
         {
@@ -425,24 +427,115 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
                 continue;
             }
 
-            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $action_settings, $entry ) )
+            $execution_request_ids[ (string) $mapping_id ] = Sentient_Forms_Action_Executor::generate_execution_request_id(
+                $central_action_id,
+                $form,
+                $entry,
+                [
+                    'hook'      => self::NATIVE_AFTER_SUBMISSION_HOOK,
+                    'action_id' => (string) $mapping_id,
+                ],
+            );
+        }
+
+        foreach ( $plan['order'] as $mapping_id )
+        {
+            $node = $plan['nodes'][ $mapping_id ] ?? null;
+            if ( ! is_array( $node ) || ! isset( $node['mapping'] ) || ! is_array( $node['mapping'] ) )
             {
                 continue;
             }
 
+            if (
+                empty( $node['enabled'] )
+                || empty( $node['hook_enabled'] )
+                || $this->is_plan_node_trigger_unbound( $node, Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION )
+            )
+            {
+                $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
+                continue;
+            }
+
+            $action_settings = $node['mapping'];
+            $action_settings['local_mapping_id'] = $action_settings['local_mapping_id'] ?? $mapping_id;
+
+            $central_action_id = isset( $action_settings['central_action_id'] ) && is_scalar( $action_settings['central_action_id'] )
+                ? sanitize_key( (string) $action_settings['central_action_id'] )
+                : '';
+            if ( '' === $central_action_id )
+            {
+                $mapping_outcomes[ (string) $mapping_id ] = 'failed';
+                continue;
+            }
+
+            $dependency_ids = is_array( $node['dependency_ids'] ?? null ) ? $node['dependency_ids'] : [];
+            $blocked_by_dependency = $this->resolve_dependency_blocking_mapping( $dependency_ids, $mapping_outcomes );
+            if ( null !== $blocked_by_dependency )
+            {
+                $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
+                continue;
+            }
+
+            if ( ! $this->plugin->get_condition_evaluator()->should_execute( $action_settings, $entry ) )
+            {
+                $mapping_outcomes[ (string) $mapping_id ] = 'skipped';
+                continue;
+            }
+
+            $dependency_initial_outcomes      = [];
+            $dependency_execution_request_ids = [];
+            foreach ( $dependency_ids as $dependency_id )
+            {
+                if ( ! is_scalar( $dependency_id ) )
+                {
+                    continue;
+                }
+
+                $dependency_id = sanitize_text_field( (string) $dependency_id );
+                if ( '' === $dependency_id )
+                {
+                    continue;
+                }
+
+                if ( isset( $mapping_outcomes[ $dependency_id ] ) )
+                {
+                    $dependency_initial_outcomes[ $dependency_id ] = $mapping_outcomes[ $dependency_id ];
+                }
+
+                if ( isset( $execution_request_ids[ $dependency_id ] ) )
+                {
+                    $dependency_execution_request_ids[ $dependency_id ] = $execution_request_ids[ $dependency_id ];
+                }
+            }
+
+            $dependency_context = [
+                'execution_request_id'             => $execution_request_ids[ (string) $mapping_id ] ?? null,
+                'dependency_mapping_ids'           => $dependency_ids,
+                'dependency_execution_request_ids' => $dependency_execution_request_ids,
+                'dependency_initial_outcomes'      => $dependency_initial_outcomes,
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => max(
+                    30,
+                    (int) ( $action_settings['settings']['batch_settings']['max_wait_seconds'] ?? 600 )
+                ),
+                'dependency_wait_poll_seconds'     => 10,
+            ];
+
             if ( $this->is_local_first_mapping( $action_settings ) )
             {
-                $this->schedule_local_first_after_submission_mapping(
+                $scheduled = $this->schedule_local_first_after_submission_mapping(
                     $form,
                     $entry,
                     (string) $mapping_id,
                     $action_settings,
-                    $submission_uuid
+                    $submission_uuid,
+                    $dependency_context
                 );
+                $mapping_outcomes[ (string) $mapping_id ] = $scheduled ? 'queued' : 'failed';
                 continue;
             }
 
-            $this->plugin->process_action_async(
+            $scheduled = $this->plugin->process_action_async(
                 $central_action_id,
                 [
                     'hook'        => self::NATIVE_AFTER_SUBMISSION_HOOK,
@@ -462,8 +555,9 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
                     'submission_uuid'   => $submission_uuid,
                     'central_action_id' => $central_action_id,
                     'action_name_label' => $action_settings['action_name_label'] ?? $central_action_id,
-                ]
+                ] + $dependency_context
             );
+            $mapping_outcomes[ (string) $mapping_id ] = $scheduled ? 'queued' : 'failed';
         }
     }
 
@@ -812,13 +906,15 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
      * @param string               $mapping_id      Runtime planner mapping ID.
      * @param array<string, mixed> $action_settings Mapping settings.
      * @param string               $submission_uuid Sentient Forms submission ledger UUID.
+     * @param array<string, mixed> $async_context   Dependency/runtime context.
      */
     private function schedule_local_first_after_submission_mapping(
         array $form,
         array $entry,
         string $mapping_id,
         array $action_settings,
-        string $submission_uuid
+        string $submission_uuid,
+        array $async_context = []
     ): bool
     {
         $local_mapping_id = absint( $action_settings['local_form_mapping_id'] ?? 0 );
@@ -845,8 +941,39 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
                 'settings'              => isset( $action_settings['settings'] ) && is_array( $action_settings['settings'] )
                     ? $action_settings['settings']
                     : [],
-            ]
+            ] + $async_context
         );
+    }
+
+    /**
+     * Resolve whether a mapping should be blocked by prerequisite outcomes.
+     *
+     * @param array<int, mixed>    $dependency_ids  Dependency mapping ids.
+     * @param array<string,string> $mapping_outcomes Known outcomes keyed by mapping id.
+     */
+    private function resolve_dependency_blocking_mapping( array $dependency_ids, array $mapping_outcomes ): ?string
+    {
+        foreach ( $dependency_ids as $dependency_id )
+        {
+            if ( ! is_scalar( $dependency_id ) )
+            {
+                continue;
+            }
+
+            $dependency_id = sanitize_text_field( (string) $dependency_id );
+            if ( '' === $dependency_id )
+            {
+                continue;
+            }
+
+            $outcome = $mapping_outcomes[ $dependency_id ] ?? null;
+            if ( null === $outcome || 'failed' === $outcome || 'skipped' === $outcome )
+            {
+                return $dependency_id;
+            }
+        }
+
+        return null;
     }
 
     /**

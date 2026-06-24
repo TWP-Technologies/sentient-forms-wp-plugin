@@ -9,7 +9,10 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_contact_form_7_form_object' );
         remove_all_filters( 'sentient_forms_contact_form_7_current_submission' );
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
-        delete_option( 'sentient_forms_actions_contact_form_7_44' );
+        foreach ( [ '44', '47', '48' ] as $form_id )
+        {
+            delete_option( 'sentient_forms_actions_contact_form_7_' . $form_id );
+        }
 
         global $wpdb;
         foreach ( [
@@ -320,6 +323,109 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertArrayNotHasKey( '_wpcf7', $job_entry );
     }
 
+    public function test_mail_sent_passes_dependency_metadata_to_cf7_async_jobs(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'contact_form_7', '47', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $scheduled_jobs = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+            },
+            10,
+            5
+        );
+
+        update_option(
+            'sentient_forms_actions_contact_form_7_47',
+            [
+                'map_first' => [
+                    'local_mapping_id'           => 'map_first',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_name_label'          => 'First CF7 async action',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async' => true,
+                    ],
+                ],
+                'map_second' => [
+                    'local_mapping_id'           => 'map_second',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_name_label'          => 'Dependent CF7 async action',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async'           => true,
+                        'trigger_sources' => [
+                            'after_submission' => [
+                                'type'       => 'mapping',
+                                'mapping_id' => 'map_first',
+                            ],
+                        ],
+                        'batch_settings'   => [
+                            'max_wait_seconds' => 45,
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter(
+            'sentient_forms_contact_form_7_current_submission',
+            static fn() => new class {
+                public function get_posted_data(): array
+                {
+                    return [
+                        'your-name'  => 'Mary Jackson',
+                        'your-email' => 'mary@example.test',
+                        'message'    => 'Queue dependent async actions.',
+                        '_wpcf7'     => '47',
+                    ];
+                }
+            }
+        );
+
+        $adapter         = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_mail_sent( $this->cf7_form( 47, 'CF7 Dependency Metadata' ) );
+
+        $this->assertNotNull( $submission_uuid );
+        $this->assertCount( 2, $scheduled_jobs );
+
+        $contexts = [];
+        foreach ( $scheduled_jobs as $job )
+        {
+            $context = $job['args']['context'] ?? [];
+            if ( is_array( $context ) && isset( $context['local_mapping_id'] ) )
+            {
+                $contexts[ $context['local_mapping_id'] ] = $context;
+            }
+        }
+
+        $this->assertArrayHasKey( 'map_first', $contexts );
+        $this->assertArrayHasKey( 'map_second', $contexts );
+
+        $this->assertSame( [ 'map_first' ], $contexts['map_second']['dependency_mapping_ids'] ?? null );
+        $this->assertSame( 'queued', $contexts['map_second']['dependency_initial_outcomes']['map_first'] ?? null );
+        $this->assertSame(
+            $contexts['map_first']['execution_request_id'] ?? null,
+            $contexts['map_second']['dependency_execution_request_ids']['map_first'] ?? null
+        );
+        $this->assertSame( 45, $contexts['map_second']['dependency_wait_max_seconds'] ?? null );
+        $this->assertSame( 10, $contexts['map_second']['dependency_wait_poll_seconds'] ?? null );
+    }
+
     public function test_mail_sent_schedules_local_first_mapping_with_submission_uuid_without_native_entry_id(): void
     {
         global $wpdb;
@@ -429,6 +535,145 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( '45', $event['form_id'] ?? null );
         $this->assertNull( $event['entry_id'] ?? null );
         $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
+    }
+
+    public function test_mail_sent_passes_dependency_metadata_to_cf7_local_first_jobs(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'contact_form_7', '48', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'cf7_local_dependency_summary',
+                'display_name'         => 'CF7 Local Dependency Summary',
+                'definition_json'      => [
+                    'prompt' => 'Summarize {{entry}} after dependency.',
+                ],
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => 'openrouter/auto',
+                ],
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '48',
+                'hook'                => 'wpcf7_mail_sent',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'summary_source' => 'message',
+                ],
+                'settings_json'       => [
+                    'trigger_sources' => [
+                        'after_submission' => [
+                            'type'       => 'mapping',
+                            'mapping_id' => 'map_first',
+                        ],
+                    ],
+                    'batch_settings'   => [
+                        'max_wait_seconds' => 70,
+                    ],
+                ],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $local_mapping_key = 'local_first_' . $mapping_id;
+        $scheduled_jobs    = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+            },
+            10,
+            5
+        );
+
+        update_option(
+            'sentient_forms_actions_contact_form_7_48',
+            [
+                'map_first' => [
+                    'local_mapping_id'           => 'map_first',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_name_label'          => 'First CF7 async action',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async' => true,
+                    ],
+                ],
+            ],
+            false
+        );
+
+        add_filter( 'sentient_forms_contact_form_7_is_active', '__return_true' );
+        add_filter(
+            'sentient_forms_contact_form_7_current_submission',
+            static fn() => new class {
+                public function get_posted_data(): array
+                {
+                    return [
+                        'your-name'  => 'Christine Darden',
+                        'your-email' => 'christine@example.test',
+                        'message'    => 'Queue a dependent local-first action.',
+                        '_wpcf7'     => '48',
+                    ];
+                }
+            }
+        );
+
+        $adapter         = new Sentient_Forms_Contact_Form_7_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_mail_sent( $this->cf7_form( 48, 'CF7 Local Dependency Metadata' ) );
+
+        $this->assertNotNull( $submission_uuid );
+        $this->assertCount( 2, $scheduled_jobs );
+
+        $contexts = [];
+        foreach ( $scheduled_jobs as $job )
+        {
+            if ( 'sentient_forms_process_action' === ( $job['hook'] ?? null ) )
+            {
+                $context = $job['args']['context'] ?? [];
+            }
+            else
+            {
+                $payload = $job['args'][0] ?? [];
+                $context = is_array( $payload ) ? ( $payload['context'] ?? [] ) : [];
+            }
+
+            if ( is_array( $context ) && isset( $context['local_mapping_id'] ) )
+            {
+                $contexts[ $context['local_mapping_id'] ] = $context;
+            }
+        }
+
+        $this->assertArrayHasKey( 'map_first', $contexts );
+        $this->assertArrayHasKey( $local_mapping_key, $contexts );
+
+        $this->assertSame( [ 'map_first' ], $contexts[ $local_mapping_key ]['dependency_mapping_ids'] ?? null );
+        $this->assertSame( 'queued', $contexts[ $local_mapping_key ]['dependency_initial_outcomes']['map_first'] ?? null );
+        $this->assertSame(
+            $contexts['map_first']['execution_request_id'] ?? null,
+            $contexts[ $local_mapping_key ]['dependency_execution_request_ids']['map_first'] ?? null
+        );
+        $this->assertSame( 70, $contexts[ $local_mapping_key ]['dependency_wait_max_seconds'] ?? null );
+        $this->assertSame( 10, $contexts[ $local_mapping_key ]['dependency_wait_poll_seconds'] ?? null );
     }
 
     private function cf7_tag( string $type, string $basetype, string $name ): object
