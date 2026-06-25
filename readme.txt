@@ -1,18 +1,20 @@
 === Sentient Forms ===
 Contributors: twptech
-Tags: forms, ai, gravity-forms, openrouter, automation
+Tags: forms, ai, automation, openrouter, form-automation
 Requires at least: 6.8
 Tested up to: 7.0
 Requires PHP: 8.2
-Stable tag: 0.6.0
+Stable tag: 0.6.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-AI actions for Gravity Forms: lead scoring, spam review, entry summaries, and WordPress logs.
+AI actions for Gravity Forms, Contact Form 7, and WPForms: lead scoring, spam review, summaries, and logs.
 
 == Description ==
 
-Sentient Forms adds AI actions to Gravity Forms submissions: lead scoring (A/B/C/Reject), spam review, entry summaries, content checks, and WordPress logs. Other form builders are not supported in this release.
+Sentient Forms adds AI actions to Gravity Forms, Contact Form 7, and WPForms submissions: lead scoring (A/B/C/Reject), spam review, entry summaries, content checks, and WordPress logs.
+
+Gravity Forms supports native workflows, including validation and realtime actions where available. Contact Form 7 and WPForms support after-submission actions through the Sentient Forms Submission Ledger. CF7 and WPForms validation blocking, realtime suggestions, native spam status, webhook suppression, and notification suppression are not supported in this release.
 
 A TWP Technologies, LLC product. Product site: https://sentientforms.com. Public development: https://github.com/TWP-Technologies/sentient-forms-wp-plugin.
 
@@ -22,7 +24,7 @@ Use your OpenRouter key for direct execution, or connect Sentient Forms Managed 
 
 == Source ==
 
-JavaScript and CSS in `assets/dist` are generated from `admin-app` in the public release source: https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.6.0. Build with `cd admin-app`, `bun install --frozen-lockfile`, and `bun run build:wp`.
+JavaScript and CSS in `assets/dist` are generated from `admin-app` in the public release source: https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.6.1. Build with `cd admin-app`, `bun install --frozen-lockfile`, and `bun run build:wp`.
 
 == External services ==
 
@@ -33,7 +35,7 @@ OpenRouter direct execution:
 * Service: OpenRouter
 * Endpoint: https://openrouter.ai/
 * When used: after an administrator connects OpenRouter and runs direct provider validation, a form action, or AI-generated Site Context. Site Context needs a paid, web-capable OpenRouter model.
-* Data sent: selected form fields, prompt/action instructions, model identifier, and request metadata for form actions. Site Context sends the site URL, public-site research prompt, selected model, and request metadata; web-capable models may search or fetch public pages.
+* Data sent: selected submitted fields from mapped Gravity Forms, Contact Form 7, or WPForms actions, prompt/action instructions, model identifier, and request metadata. Site Context sends the site URL, public-site research prompt, selected model, and request metadata; web-capable models may search or fetch public pages.
 * Account required: an OpenRouter account/API key. Site Context requires a paid, non-free, web-capable model.
 * Terms: https://openrouter.ai/terms
 * Privacy policy: https://openrouter.ai/privacy
@@ -43,7 +45,7 @@ Sentient Forms Managed Execution:
 * Service: Sentient Forms
 * Endpoint: https://api.sentientforms.com/
 * When used: optional managed account, billing, metering, managed model execution, support diagnostics, or administrator-enabled managed features.
-* Data sent: account/site identifiers, billing state, and, for managed AI execution, selected form fields and prompt/action instructions. Managed Site Context sends the site URL, public-site research prompt, selected model, and request metadata; web-capable models may search or fetch public pages.
+* Data sent: account/site identifiers, billing state, and, for managed AI execution, selected submitted fields from mapped Gravity Forms, Contact Form 7, or WPForms actions plus prompt/action instructions. Managed Site Context sends the site URL, public-site research prompt, selected model, and request metadata; web-capable models may search or fetch public pages.
 * Account required: a Sentient Forms account may be required for managed paid features. Direct OpenRouter does not require Sentient payment.
 * Terms: https://sentientforms.com/terms
 * Privacy policy: https://sentientforms.com/privacy
@@ -87,7 +89,7 @@ No OpenRouter or Sentient AI execution request should be sent until an administr
 2. Activate Sentient Forms in WordPress.
 3. Open the Sentient Forms admin screen.
 4. Connect OpenRouter for direct local-first execution, or connect Sentient Forms Managed Execution if you want managed paid usage.
-5. Create or select an action, map it to a Gravity Forms form, and run a test submission. Current form-action workflows require Gravity Forms.
+5. Create or select an action, map it to a Gravity Forms, Contact Form 7, or WPForms form, and run a test submission. Gravity Forms supports native workflows; Contact Form 7 and WPForms support after-submission actions through the Submission Ledger.
 
 == Frequently Asked Questions ==
 
@@ -113,7 +115,7 @@ The plugin includes WordPress personal data export/erase integration for local e
 
 = Which form builders are supported? =
 
-Gravity Forms is required for the current form-action workflows. Other form builders are planned but are not supported in this release.
+Gravity Forms, Contact Form 7, and WPForms are supported. Gravity Forms supports the full native path, including validation and realtime modes where available. Contact Form 7 and WPForms support after-submission actions through the Submission Ledger; validation blocking and realtime suggestions are not supported for those builders in this release.
 
 = Where is the source for the compressed admin JavaScript? =
 
@@ -122,46 +124,23 @@ See "Source" above and `assets/dist/SOURCE.md` in the package.
 == Screenshots ==
 
 1. Review leads with A/B/C/Reject grades and rationale.
-2. See AI results on each Gravity Forms entry.
+2. Review saved AI results in Gravity Forms entries and Submission Ledger records.
 3. Tune Lead Scoring with site context and examples.
-4. Track action runs by status, form, entry, model, and result.
-5. Map AI actions to a Gravity Forms form.
-6. View setup state, providers, forms, and recent runs.
+4. Track action runs by status, form source, entry, model, and result.
+5. Map AI actions to supported Gravity Forms, Contact Form 7, or WPForms forms.
+6. View setup state, providers, form sources, and recent runs.
 
 == Changelog ==
 
-= 0.3.11 =
+= 0.6.1 =
 
-* Make generated admin asset source and build instructions prominent for WordPress.org review.
+* Update the WordPress.org listing to reflect Gravity Forms, Contact Form 7, and WPForms support.
+* Keep Gravity Forms-only validation and realtime limits explicit for site owners.
 
-= 0.3.10 =
+= 0.6.0 =
 
-* Harden realtime structured-output requests so reasoning-capable OpenRouter models do not consume the completion budget before returning JSON.
+* Add WPForms after-submission actions through the Sentient Forms Submission Ledger.
 
-= 0.3.9 =
+= 0.5.0 =
 
-* Fix paginated realtime suggestions and add safe structured-output failure diagnostics.
-
-= 0.3.8 =
-
-* Enforce strict OpenRouter JSON Schema output and require structured-capable models for realtime suggestions.
-
-= 0.3.7 =
-
-* Harden public realtime suggestions so stale WordPress REST nonces cannot block logged-in visitors; realtime requests now use only the Sentient Forms form-scoped nonce.
-
-= 0.3.6 =
-
-* Remove UTF-8 BOMs that could contaminate WordPress JSON responses, add source/package encoding gates, and improve admin diagnostics for invalid JSON responses.
-
-= 0.3.5 =
-
-* Remove admin app development source and build tooling from the WordPress.org package, document the public source tag for generated assets, and harden WordPress.org review checks.
-
-= 0.1.1 =
-
-* Prepare the WordPress.org production package pipeline, include admin app source for generated assets, and harden serviceware disclosures.
-
-= 0.1.0 =
-
-* Initial local-first migration baseline.
+* Add Contact Form 7 after-submission actions through the Sentient Forms Submission Ledger.

@@ -17,12 +17,13 @@ This ledger covers the marketing/compliance bundle for `MKT-010`, `MKT-009`,
 | Item | MKT ID | Readme byte impact | Notes |
 |---|---:|---:|---|
 | Baseline after strict fast-lane copy | MKT-001/MKT-002 | 9908 | Existing `production` readme before this bundle. |
-| Preserve `AI actions for Gravity Forms` positioning | MKT-009 | 0 | Short description and opening description remain unchanged. |
+| Expand support positioning to Gravity Forms, Contact Form 7, and WPForms | WPORG-0.6.1 | +36 | Short description, opening copy, FAQ, install steps, screenshots, and service disclosures now reflect the three supported form sources while pruning stale readme changelog entries. |
+| Replace plugin-name tag with generic automation tag | WPORG-0.6.1 | 0 | The support-copy task approved a keyword refresh; WordPress.org readme rules disallow competitor plugin names as tags. |
 | Compress external-service copy | MKT-006 | -606 | Plain-language rewrite keeps service names, data categories, account requirements, terms/privacy links, telemetry limits, webhook responsibility, and Realtime Clarification disclosure. |
 | Add this ledger | MKT-010 | 0 | Tracked outside `readme.txt`; no listing byte impact. |
 | Add 10 KB preflight to release checklist | MKT-066 | 0 | Tracked outside `readme.txt`; no listing byte impact. |
 | Add six WordPress.org screenshot captions | MKT-013 | +339 | Terse captions preserve the `9700` byte target while matching `screenshot-1.png` through `screenshot-6.png`. |
-| Final current readme | MKT-010/MKT-013 | 9641 | `59` bytes under target, `359` bytes under hard maximum. |
+| Final current readme | MKT-010/MKT-013/WPORG-0.6.1 | 9675 | `25` bytes under target, `325` bytes under hard maximum. |
 
 ## Required Checks
 

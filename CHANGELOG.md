@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.6.0...v0.6.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* **wporg:** update listing support copy for Gravity Forms, Contact Form 7, and WPForms
+
 ## [0.6.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.5.0...v0.6.0) (2026-06-25)
 
 

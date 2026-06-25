@@ -616,7 +616,7 @@ function validate_readme( string $readme_path, string $plugin_file ): array
         }
     }
 
-    foreach ( [ 'OpenRouter', 'Sentient Forms Managed Execution', 'Data sent', 'Terms', 'Privacy policy', 'Realtime Clarification Assistant', 'Gravity Forms' ] as $required_disclosure )
+    foreach ( [ 'OpenRouter', 'Sentient Forms Managed Execution', 'Data sent', 'Terms', 'Privacy policy', 'Realtime Clarification Assistant', 'Gravity Forms', 'Contact Form 7', 'WPForms' ] as $required_disclosure )
     {
         if ( false === stripos( $readme, $required_disclosure ) )
         {
