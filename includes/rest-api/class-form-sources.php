@@ -38,12 +38,12 @@ final class Sentient_Forms_Form_Sources
     const CONTACT_FORM_7 = 'contact_form_7';
 
     /**
-     * Slug for WPForms (example for future).
+     * Slug for WPForms.
      *
      * @var string
-     * @since 0.1.0
+     * @since 0.5.1
      */
-    // const WPFORMS = 'wpforms';
+    const WPFORMS = 'wpforms';
 
     /**
      * Gets an array of all known and supported form source slugs.
@@ -58,7 +58,7 @@ final class Sentient_Forms_Form_Sources
         $core_sources = [
             self::GRAVITY_FORMS,
             self::CONTACT_FORM_7,
-            // self::WPFORMS,        // Uncomment when WPForms adapter is added
+            self::WPFORMS,
         ];
 
         /**

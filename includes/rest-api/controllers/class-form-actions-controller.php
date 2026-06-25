@@ -1994,13 +1994,13 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
     ): ?array
     {
         $form_data   = is_array( $form ) ? $form : get_object_vars( $form );
-        $resolved_id = absint( $form_data['id'] ?? $form_id );
+        $resolved_id = absint( $form_data['id'] ?? ( $form_data['ID'] ?? $form_id ) );
         if ( $resolved_id !== $form_id )
         {
             return null;
         }
 
-        $title = $form_data['title'] ?? $form_data['name'] ?? '';
+        $title = $form_data['title'] ?? $form_data['name'] ?? ( $form_data['post_title'] ?? '' );
         $title = is_scalar( $title ) && '' !== (string) $title
             ? (string) $title
             : sprintf(

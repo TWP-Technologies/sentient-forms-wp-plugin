@@ -130,6 +130,84 @@ const cf7FormSourceDescriptor = {
 	}
 };
 
+const wpformsFormSource = 'wpforms';
+const wpformsFormId = 88;
+const wpformsForms = [
+	{
+		id: wpformsFormId,
+		title: 'WPForms inquiry form',
+		adapter: wpformsFormSource,
+		adapter_name: 'WPForms',
+		provider_edit_url: 'admin.php?page=wpforms-builder&view=fields&form_id=88',
+		settings: null
+	}
+];
+const wpformsLiteFormSourceDescriptor = {
+	slug: wpformsFormSource,
+	label: 'WPForms',
+	is_active: true,
+	lifecycles: {
+		validation: {
+			supported: false,
+			label: 'Validation',
+			native_hook: null,
+			execution_mode: 'blocking',
+			requires_ledger: false,
+			unsupported_reason: 'WPForms validation blocking is not supported.'
+		},
+		after_submission: {
+			supported: true,
+			label: 'After submission',
+			native_hook: 'wpforms_process_complete',
+			execution_mode: 'async',
+			requires_ledger: true,
+			unsupported_reason: null
+		},
+		real_time: {
+			supported: false,
+			label: 'Realtime',
+			native_hook: null,
+			execution_mode: 'real_time',
+			requires_ledger: false,
+			unsupported_reason: 'Realtime WPForms support is not available.'
+		}
+	},
+	native_entry: {
+		id: false,
+		link: false,
+		read: false,
+		write: false
+	},
+	native_enrichment: {
+		notes: false,
+		status: false,
+		spam: false,
+		notification_controls: false,
+		webhook_controls: false
+	},
+	ledger: {
+		required_for_parity: true,
+		enabled: false,
+		settings_source: 'sentient_submission_ledger_settings',
+		unavailable_reason:
+			'Enable the Sentient Forms Submission Ledger before reviewing WPForms Lite submissions in Sentient Forms.'
+	}
+};
+const wpformsPaidLikeFormSourceDescriptor = {
+	...wpformsLiteFormSourceDescriptor,
+	native_entry: {
+		id: true,
+		link: true,
+		read: false,
+		write: false
+	},
+	ledger: {
+		...wpformsLiteFormSourceDescriptor.ledger,
+		unavailable_reason:
+			'Enable the Sentient Forms Submission Ledger before reviewing paid WPForms submissions in Sentient Forms.'
+	}
+};
+
 const baseLinkages = [
 	{
 		local_mapping_id: 'map-1',
@@ -2486,6 +2564,108 @@ test.describe('Actions admin flows', () => {
 		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toHaveCount(0);
 		await page.waitForTimeout(600);
 		expect(modelResolveRequests).toBeLessThanOrEqual(3);
+	});
+
+	test('presents WPForms Lite as ledger-only after-submission support without native entry claims', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [wpformsFormSource]: wpformsForms },
+				definitions: [],
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [
+					{ id: '1', label: 'Name', type: 'name' },
+					{ id: '2', label: 'Email', type: 'email' },
+					{ id: '3', label: 'Message', type: 'textarea' }
+				],
+				formSourceDescriptors: { [wpformsFormSource]: wpformsLiteFormSourceDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } },
+			localProviders: {
+				credentials: [
+					{
+						id: 42,
+						provider: 'openrouter',
+						label: 'OpenRouter ready key',
+						auth_mode: 'manual_key',
+						constant_name: null,
+						status: 'valid',
+						status_json: null,
+						last_validated_at: '2030-01-05T10:00:00Z',
+						created_at: '2030-01-05T09:00:00Z',
+						updated_at: '2030-01-05T10:00:00Z',
+						secret_configured: true
+					}
+				]
+			}
+		});
+
+		await page.goto('/actions/wpforms/88', { waitUntil: 'networkidle' });
+		await expect(page.getByTestId('form-context-band')).toContainText('WPForms');
+		await expect(page.getByTestId('form-context-provider-edit-link')).toHaveText(
+			'Open in WPForms'
+		);
+		await expect(page.getByTestId('submission-ledger-affordance')).toContainText(
+			'Required for parity'
+		);
+		await expect(page.getByTestId('submission-ledger-affordance')).toContainText(
+			'WPForms Lite/no-native-entry submissions use Sentient Forms Submission Ledger records'
+		);
+		await expect(page.getByTestId('submission-ledger-affordance')).not.toContainText(
+			'Native entry links available'
+		);
+
+		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
+		const drawer = page.getByTestId('link-action-form');
+		await expect(drawer).toBeVisible();
+		await page.getByTestId('create-kind-local-openrouter').click();
+
+		await expect(drawer.getByTestId('local-openrouter-builder')).toBeVisible();
+		await expect(drawer.getByTestId('local-builder-template')).toHaveValue('spam_filter');
+		await expect(drawer.getByText('does not block validation or write native notes')).toBeVisible();
+		await expect(drawer.getByTestId('local-builder-execution-mode')).toHaveValue('async');
+		await expect(drawer.getByTestId('local-builder-spam-result-display')).toHaveCount(0);
+		await expect(drawer.getByTestId('local-builder-spam-indicators-display')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-after_submission')).toBeChecked();
+		await expect(drawer.getByTestId('create-trigger-hook-wpforms_process_complete')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-gform_validation')).toHaveCount(0);
+		await expect(drawer.getByTestId('create-trigger-hook-real_time')).toHaveCount(0);
+	});
+
+	test('presents paid-like WPForms entry storage as native-entry link enrichment', async ({
+		page
+	}) => {
+		await mockWpJson(page, {
+			actions: {
+				forms: { [wpformsFormSource]: wpformsForms },
+				definitions: [],
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [
+					{ id: '1', label: 'Name', type: 'name' },
+					{ id: '2', label: 'Email', type: 'email' },
+					{ id: '3', label: 'Message', type: 'textarea' }
+				],
+				formSourceDescriptors: { [wpformsFormSource]: wpformsPaidLikeFormSourceDescriptor },
+				creditBalance
+			},
+			customActions: { list: { actions: [], quota } }
+		});
+
+		await page.goto('/actions/wpforms/88', { waitUntil: 'networkidle' });
+		await expect(page.getByTestId('form-context-band')).toContainText('WPForms');
+		await expect(page.getByTestId('submission-ledger-provider-note')).toContainText(
+			'WPForms paid entry storage is detected'
+		);
+		await expect(page.getByTestId('submission-ledger-provider-note')).toContainText(
+			'native entry links will be attached when WPForms provides a non-zero entry ID'
+		);
+		await expect(page.getByTestId('submission-ledger-provider-note')).not.toContainText(
+			'Lite/no-native-entry'
+		);
 	});
 
 	test('maps Contact Form 7 built-in Entry Summary to the CF7 after-submission hook', async ({

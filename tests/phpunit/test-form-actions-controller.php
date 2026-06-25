@@ -304,6 +304,8 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         remove_all_filters( 'sentient_forms_contact_form_7_is_active' );
         remove_all_filters( 'sentient_forms_contact_form_7_forms' );
         remove_all_filters( 'sentient_forms_contact_form_7_form_object' );
+        remove_all_filters( 'sentient_forms_wpforms_is_active' );
+        remove_all_filters( 'sentient_forms_wpforms_native_entry_storage_available' );
         Sentient_Forms_Plugin::instance()->get_form_adapter_registry()->unregister_adapter( 'opaque_forms' );
         $this->opaque_form_adapter = null;
         parent::tearDown();
@@ -2927,37 +2929,45 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
 
     public function test_get_request_trace_reads_canonical_lifecycle_mappings(): void
     {
-        update_option(
-            'sentient_forms_actions_gravity_forms_73',
-            [
-                'map_canonical_validation' => [
-                    'local_mapping_id'           => 'map_canonical_validation',
-                    'central_action_id'          => 'spam_detection_v1',
-                    'action_type_indicator'      => 'master',
-                    'is_action_enabled_for_form' => true,
-                    'trigger_hooks'              => [ 'validation' ],
+        $option_key = 'sentient_forms_actions_gravity_forms_73';
+
+        try
+        {
+            update_option(
+                $option_key,
+                [
+                    'map_canonical_validation' => [
+                        'local_mapping_id'           => 'map_canonical_validation',
+                        'central_action_id'          => 'spam_detection_v1',
+                        'action_type_indicator'      => 'master',
+                        'is_action_enabled_for_form' => true,
+                        'trigger_hooks'              => [ 'validation' ],
+                    ],
                 ],
-            ],
-            false
-        );
+                false
+            );
+            $this->set_mappings_sync( null );
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/73/actions/request-trace' );
-        $request->set_param( 'form_source_slug', 'gravity_forms' );
-        $request->set_param( 'form_id', 73 );
-        $request->set_param( 'hook_scope', 'validation' );
-        $request->set_param( 'entry_values', [ '1' => 'prospect@example.test' ] );
+            $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/73/actions/request-trace' );
+            $request->set_param( 'form_source_slug', 'gravity_forms' );
+            $request->set_param( 'form_id', 73 );
+            $request->set_param( 'hook_scope', 'validation' );
+            $request->set_param( 'entry_values', [ '1' => 'prospect@example.test' ] );
 
-        $response = $this->controller->get_request_trace( $request );
-        $this->assertInstanceOf( WP_REST_Response::class, $response );
+            $response = $this->controller->get_request_trace( $request );
+            $this->assertInstanceOf( WP_REST_Response::class, $response );
 
-        $data = $response->get_data();
-        $this->assertSame( 'validation', $data['hook_scope'] ?? null );
-        $this->assertSame( [ 'validation' ], $data['available_hooks'] ?? null );
-        $this->assertSame( 'validation', $data['hooks'][0]['hook'] ?? null );
-        $this->assertSame( [ 'map_canonical_validation' ], $data['hooks'][0]['runnable'] ?? null );
-        $this->assertSame( 'would_run', $data['hooks'][0]['steps'][0]['outcome'] ?? null );
-
-        delete_option( 'sentient_forms_actions_gravity_forms_73' );
+            $data = $response->get_data();
+            $this->assertSame( 'validation', $data['hook_scope'] ?? null );
+            $this->assertSame( [ 'validation' ], $data['available_hooks'] ?? null );
+            $this->assertSame( 'validation', $data['hooks'][0]['hook'] ?? null );
+            $this->assertSame( [ 'map_canonical_validation' ], $data['hooks'][0]['runnable'] ?? null );
+            $this->assertSame( 'would_run', $data['hooks'][0]['steps'][0]['outcome'] ?? null );
+        }
+        finally
+        {
+            delete_option( $option_key );
+        }
     }
 
     // =========================================================================
@@ -3343,6 +3353,77 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertTrue( $descriptor['ledger']['required_for_parity'] ?? false );
         $this->assertFalse( $data['ledger_settings']['enabled'] ?? true );
         $this->assertSame( 'your-name', $data['form_fields'][0]['id'] ?? null );
+        $this->assertTrue( $data['form_fields'][0]['storage_eligible'] ?? false );
+    }
+
+    public function test_wpforms_bootstrap_exposes_paid_like_native_links_and_ledger_state_without_unsupported_claims(): void
+    {
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+        add_filter( 'sentient_forms_wpforms_native_entry_storage_available', '__return_true' );
+
+        $form_id = self::factory()->post->create(
+            [
+                'post_type'    => 'wpforms',
+                'post_status'  => 'publish',
+                'post_title'   => 'WPForms REST Intake',
+                'post_content' => wp_json_encode(
+                    [
+                        'id'       => 47,
+                        'settings' => [
+                            'form_title' => 'WPForms REST Intake',
+                        ],
+                        'fields'   => [
+                            1 => [
+                                'id'    => 1,
+                                'type'  => 'name',
+                                'label' => 'Full Name',
+                            ],
+                            2 => [
+                                'id'    => 2,
+                                'type'  => 'email',
+                                'label' => 'Email',
+                            ],
+                        ],
+                    ]
+                ),
+            ]
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/wpforms/forms/' . $form_id . '/actions/bootstrap' );
+        $request->set_param( 'form_source_slug', 'wpforms' );
+        $request->set_param( 'form_id', $form_id );
+
+        $response = $this->controller->get_form_actions_bootstrap( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data       = $response->get_data();
+        $descriptor = $data['form_source_descriptor'] ?? [];
+
+        $this->assertSame( 'wpforms', $data['form_source'] ?? null );
+        $this->assertSame( $form_id, $data['form_id'] ?? null );
+        $this->assertSame( 'WPForms REST Intake', $data['form']['title'] ?? null );
+        $this->assertSame( 'wpforms', $descriptor['slug'] ?? null );
+        $this->assertSame( 'WPForms', $descriptor['label'] ?? null );
+        $this->assertTrue( $descriptor['is_active'] ?? false );
+        $this->assertSame( 'available', $descriptor['availability'] ?? null );
+        $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] ?? false );
+        $this->assertSame( 'wpforms_process_complete', $descriptor['lifecycles']['after_submission']['native_hook'] ?? null );
+        $this->assertTrue( $descriptor['lifecycles']['after_submission']['requires_ledger'] ?? false );
+        $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] ?? true );
+        $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] ?? true );
+        $this->assertTrue( $descriptor['native_entry']['id'] ?? false );
+        $this->assertTrue( $descriptor['native_entry']['link'] ?? false );
+        $this->assertFalse( $descriptor['native_entry']['read'] ?? true );
+        $this->assertFalse( $descriptor['native_entry']['write'] ?? true );
+        $this->assertFalse( $descriptor['native_enrichment']['notes'] ?? true );
+        $this->assertFalse( $descriptor['native_enrichment']['spam'] ?? true );
+        $this->assertTrue( $descriptor['ledger']['required_for_parity'] ?? false );
+        $this->assertSame( 'wpforms', $data['ledger_settings']['form_source'] ?? null );
+        $this->assertSame( (string) $form_id, $data['ledger_settings']['form_id'] ?? null );
+        $this->assertFalse( $data['ledger_settings']['enabled'] ?? true );
+        $this->assertStringContainsString( '/wpforms/forms/' . $form_id . '/submissions', $data['ledger_settings']['ledger_records_endpoint'] ?? '' );
+        $this->assertSame( '1', $data['form_fields'][0]['id'] ?? null );
+        $this->assertSame( 'Full Name', $data['form_fields'][0]['label'] ?? null );
         $this->assertTrue( $data['form_fields'][0]['storage_eligible'] ?? false );
     }
 
