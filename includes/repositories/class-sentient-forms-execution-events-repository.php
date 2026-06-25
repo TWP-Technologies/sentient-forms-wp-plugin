@@ -261,6 +261,57 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         return $row ? $this->decode_row( $row ) : null;
     }
 
+    public function get_latest_for_entry( string $form_source, mixed $form_id, mixed $entry_id, ?string $submission_uuid = null ): ?array
+    {
+        $form_source     = sanitize_key( $form_source );
+        $form_id         = sanitize_text_field( (string) $form_id );
+        $entry_id        = is_scalar( $entry_id ) ? sanitize_text_field( (string) $entry_id ) : '';
+        $submission_uuid = null !== $submission_uuid ? sanitize_text_field( $submission_uuid ) : '';
+        if ( '' === $form_source || '' === $form_id )
+        {
+            return null;
+        }
+
+        $wpdb = $this->wpdb;
+
+        if ( '' !== $submission_uuid )
+        {
+            $row = $wpdb->get_row(
+                $wpdb->prepare(
+                    'SELECT * FROM %i WHERE form_source = %s AND form_id = %s AND submission_uuid = %s ORDER BY created_at DESC, id DESC LIMIT 1',
+                    $this->table_name(),
+                    $form_source,
+                    $form_id,
+                    $submission_uuid
+                ),
+                ARRAY_A
+            );
+
+            if ( is_array( $row ) )
+            {
+                return $this->decode_row( $row );
+            }
+        }
+
+        if ( '' === $entry_id )
+        {
+            return null;
+        }
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT * FROM %i WHERE form_source = %s AND form_id = %s AND entry_id = %s ORDER BY created_at DESC, id DESC LIMIT 1',
+                $this->table_name(),
+                $form_source,
+                $form_id,
+                $entry_id
+            ),
+            ARRAY_A
+        );
+
+        return $row ? $this->decode_row( $row ) : null;
+    }
+
     /**
      * @param array<int, int|string> $form_ids Form IDs to load.
      *

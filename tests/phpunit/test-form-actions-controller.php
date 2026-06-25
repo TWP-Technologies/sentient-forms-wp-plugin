@@ -955,6 +955,72 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertNull( $data['metering_summary'] ?? null );
     }
 
+    public function test_get_wpforms_entry_execution_status_uses_submission_ledger_and_local_execution_events(): void
+    {
+        global $wpdb;
+
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+
+        $submission_uuid = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $created         = $ledger->create(
+            [
+                'submission_uuid'     => $submission_uuid,
+                'form_source'         => 'wpforms',
+                'form_id'             => '47',
+                'native_entry_id'     => '779',
+                'native_entry_url'    => admin_url( 'admin.php?page=wpforms-entries&view=details&entry_id=779' ),
+                'logical_fields_json' => [
+                    'full_name' => 'Ada Lovelace',
+                ],
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $events->record(
+            [
+                'execution_request_id' => 'req-wpforms-native-779',
+                'form_source'          => 'wpforms',
+                'form_id'              => '47',
+                'entry_id'             => '779',
+                'submission_uuid'      => $submission_uuid,
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'meta' => [
+                        'execution_request_id' => 'req-wpforms-native-779',
+                        'correlation_id'       => 'corr-wpforms-native-779',
+                        'credits_debited'      => 3,
+                    ],
+                    'structured' => [
+                        'summary' => 'Qualified lead.',
+                    ],
+                ],
+            ]
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/wpforms/forms/47/actions/entries/779/status' );
+        $request->set_param( 'form_source_slug', 'wpforms' );
+        $request->set_param( 'form_id', 47 );
+        $request->set_param( 'entry_id', 779 );
+
+        $response = $this->controller->get_entry_execution_status( $request );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+
+        $data = $response->get_data();
+        $this->assertSame( 'success', $data['status'] ?? null );
+        $this->assertSame( 'wpforms', $data['form_source'] ?? null );
+        $this->assertSame( 47, $data['form_id'] ?? null );
+        $this->assertSame( 779, $data['entry_id'] ?? null );
+        $this->assertSame( $submission_uuid, $data['submission_uuid'] ?? null );
+        $this->assertSame( 'Qualified lead.', $data['last_response']['structured']['summary'] ?? null );
+        $this->assertNull( $data['last_error'] ?? null );
+        $this->assertSame( 'corr-wpforms-native-779', $data['metering_summary']['correlation_id'] ?? null );
+        $this->assertSame( 3, $data['metering_summary']['credits_debited'] ?? null );
+    }
+
     public function test_validate_trigger_hooks_accepts_allowed_values(): void {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
         $result  = $this->controller->validate_trigger_hooks_param(
@@ -3402,6 +3468,9 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'wpforms', $data['form_source'] ?? null );
         $this->assertSame( $form_id, $data['form_id'] ?? null );
         $this->assertSame( 'WPForms REST Intake', $data['form']['title'] ?? null );
+        $this->assertStringContainsString( 'page=wpforms-builder', $data['form']['provider_edit_url'] ?? '' );
+        $this->assertStringContainsString( 'view=fields', $data['form']['provider_edit_url'] ?? '' );
+        $this->assertStringContainsString( 'form_id=' . $form_id, $data['form']['provider_edit_url'] ?? '' );
         $this->assertSame( 'wpforms', $descriptor['slug'] ?? null );
         $this->assertSame( 'WPForms', $descriptor['label'] ?? null );
         $this->assertTrue( $descriptor['is_active'] ?? false );

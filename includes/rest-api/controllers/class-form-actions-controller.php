@@ -2026,6 +2026,14 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 )
             );
         }
+        elseif ( method_exists( $adapter, 'get_provider_edit_url' ) )
+        {
+            $provider_edit_url = $adapter->get_provider_edit_url( $form_id );
+            if ( is_scalar( $provider_edit_url ) && '' !== (string) $provider_edit_url )
+            {
+                $summary['provider_edit_url'] = esc_url_raw( (string) $provider_edit_url );
+            }
+        }
 
         if ( method_exists( $adapter, 'get_form_settings' ) )
         {
@@ -5597,6 +5605,17 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      */
     public function get_entry_execution_status( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
+        $form_source_slug = Sentient_Forms_Form_Sources::rest_sanitize_form_source_slug(
+            $request->get_param( 'form_source_slug' ) ?: Sentient_Forms_Form_Sources::GRAVITY_FORMS,
+            $request,
+            'form_source_slug'
+        );
+
+        if ( Sentient_Forms_Form_Sources::GRAVITY_FORMS !== $form_source_slug )
+        {
+            return $this->get_provider_entry_execution_status( $request, $form_source_slug );
+        }
+
         if ( ! class_exists( 'GFAPI' ) )
         {
             return $this->prepare_error_response( 'rest_gf_missing', __( 'Gravity Forms is required for this endpoint.', 'sentient-forms' ), 500 );
@@ -5624,6 +5643,71 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             'processed_at'   => is_string( $processed_at ) && $processed_at !== '' ? $processed_at : null,
             'status'         => is_string( $last_error ) && $last_error !== '' ? 'error' : ( $last_response ? 'success' : 'unknown' ),
             'metering_summary' => $this->build_metering_summary( $decoded_last_response ),
+        ];
+
+        return $this->prepare_item_for_response( $payload );
+    }
+
+    private function get_provider_entry_execution_status( WP_REST_Request $request, string $form_source_slug ): WP_Error | WP_REST_Response
+    {
+        $form_id  = absint( $request->get_param( 'form_id' ) );
+        $entry_id = absint( $request->get_param( 'entry_id' ) );
+        if ( $form_id <= 0 || $entry_id <= 0 )
+        {
+            return $this->prepare_error_response( 'rest_entry_not_found', __( 'Entry not found.', 'sentient-forms' ), 404 );
+        }
+
+        $registry = Sentient_Forms_Plugin::instance()->get_form_adapter_registry();
+        $adapter  = $registry ? $registry->get_adapter_by_id( $form_source_slug ) : null;
+        if ( ! $adapter || ! method_exists( $adapter, 'get_entry_data' ) )
+        {
+            return $this->prepare_error_response( 'rest_entry_not_found', __( 'Entry not found.', 'sentient-forms' ), 404 );
+        }
+
+        $entry = $adapter->get_entry_data( $entry_id, $form_id );
+        if ( ! is_array( $entry ) )
+        {
+            return $this->prepare_error_response( 'rest_entry_not_found', __( 'Entry not found.', 'sentient-forms' ), 404 );
+        }
+
+        $submission_uuid = isset( $entry['submission_uuid'] ) && is_scalar( $entry['submission_uuid'] )
+            ? sanitize_text_field( (string) $entry['submission_uuid'] )
+            : null;
+        $event           = null !== $this->local_execution_events
+            ? $this->local_execution_events->get_latest_for_entry( $form_source_slug, $form_id, $entry_id, $submission_uuid )
+            : null;
+
+        $raw_status = is_array( $event ) && isset( $event['status'] ) && is_scalar( $event['status'] )
+            ? sanitize_key( (string) $event['status'] )
+            : 'unknown';
+        $status     = match ( $raw_status ) {
+            'succeeded', 'success' => 'success',
+            'failed', 'error'      => 'error',
+            default                => 'unknown',
+        };
+
+        $last_response = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : null;
+        $last_error    = is_array( $event ) && isset( $event['error_message'] ) && is_scalar( $event['error_message'] ) && '' !== (string) $event['error_message']
+            ? sanitize_textarea_field( (string) $event['error_message'] )
+            : null;
+
+        $payload = [
+            'entry_id'          => absint( $entry['id'] ?? $entry_id ),
+            'form_id'           => $form_id,
+            'form_source'       => $form_source_slug,
+            'submission_uuid'   => $submission_uuid,
+            'native_entry_url'  => isset( $entry['native_entry_url'] ) && is_scalar( $entry['native_entry_url'] )
+                ? esc_url_raw( (string) $entry['native_entry_url'] )
+                : null,
+            'last_response'     => $last_response,
+            'last_error'        => $last_error,
+            'processed_at'      => is_array( $event ) && isset( $event['updated_at'] ) && is_scalar( $event['updated_at'] )
+                ? sanitize_text_field( (string) $event['updated_at'] )
+                : ( is_array( $event ) && isset( $event['created_at'] ) && is_scalar( $event['created_at'] )
+                    ? sanitize_text_field( (string) $event['created_at'] )
+                    : null ),
+            'status'            => $status,
+            'metering_summary'  => $this->build_metering_summary( $last_response ),
         ];
 
         return $this->prepare_item_for_response( $payload );

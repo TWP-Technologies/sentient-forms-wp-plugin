@@ -10,6 +10,11 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_wpforms_native_entry_available' );
         remove_all_actions( 'sentient_forms_async_job_scheduled' );
 
+        foreach ( [ 44, 48, 49, 50 ] as $form_id )
+        {
+            delete_option( 'sentient_forms_actions_wpforms_' . $form_id );
+        }
+
         global $wpdb;
         $wpforms_entries_table = $wpdb->prefix . 'wpforms_entries';
         if ( $this->wpforms_entries_table_exists() )
@@ -126,7 +131,18 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                         'settings' => [
                             'form_title' => 'WPForms Runtime Prompt Title',
                         ],
-                        'fields'   => [],
+                        'fields'   => [
+                            1 => [
+                                'id'    => 1,
+                                'type'  => 'name',
+                                'label' => 'Full Name',
+                            ],
+                            2 => [
+                                'id'    => 2,
+                                'type'  => 'email',
+                                'label' => 'Email',
+                            ],
+                        ],
                     ]
                 ),
             ]
@@ -140,14 +156,15 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertSame( (string) $form_id, $form['id'] ?? null );
         $this->assertSame( 'WPForms Runtime Prompt Title', $form['title'] ?? null );
         $this->assertSame( 'wpforms', $form['form_source'] ?? null );
+        $this->assertSame( 'email', $form['fields'][1]['type'] ?? null );
 
         $renderer  = new Sentient_Forms_Local_Prompt_Renderer();
-        $variables = $renderer->build_variables( [], $form, [ 'name' => 'Ada Lovelace' ] );
+        $variables = $renderer->build_variables( [], $form, [ 'name' => 'Ada Lovelace', '2' => 'ada@example.test' ] );
         $this->assertNotWPError( $variables );
 
-        $prompt = $renderer->render_template( 'Form: {{form.title}} Name: {{entry.name}}', $variables );
+        $prompt = $renderer->render_template( 'Form: {{form.title}} Name: {{entry.name}} Email: {{field:type:email}}', $variables );
         $this->assertNotWPError( $prompt );
-        $this->assertSame( 'Form: WPForms Runtime Prompt Title Name: Ada Lovelace', $prompt );
+        $this->assertSame( 'Form: WPForms Runtime Prompt Title Name: Ada Lovelace Email: ada@example.test', $prompt );
     }
 
     public function test_process_complete_stores_redacted_logical_fields_and_file_references_when_ledger_is_enabled_without_native_entry_id(): void
@@ -187,6 +204,12 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                     'type'  => 'file-upload',
                     'value' => 'https://example.test/uploads/resume.pdf',
                 ],
+                5 => [
+                    'id'    => 5,
+                    'name'  => 'Campaign Code',
+                    'type'  => 'hidden',
+                    'value' => 'internal-route',
+                ],
             ],
             [],
             [
@@ -209,6 +232,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'grace@example.test', $stored['logical_fields_json']['email'] ?? null );
         $this->assertSame( '[redacted]', $stored['logical_fields_json']['captcha_token'] ?? null );
         $this->assertArrayNotHasKey( 'resume', $stored['logical_fields_json'] ?? [] );
+        $this->assertArrayNotHasKey( 'campaign_code', $stored['logical_fields_json'] ?? [] );
         $this->assertSame( '4', $stored['file_refs_json'][0]['field_id'] ?? null );
         $this->assertSame( 'resume.pdf', $stored['file_refs_json'][0]['filename'] ?? null );
         $this->assertSame( 'https://example.test/uploads/resume.pdf', $stored['file_refs_json'][0]['url'] ?? null );
@@ -296,6 +320,276 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
 
         $this->assertNull( $result );
         $this->assertSame( [], $ledger->list_for_form( 'wpforms', '45' ) );
+        $this->assertSame( [], $scheduled_jobs );
+        $this->assertSame( [], $events->list_recent( 1 ) );
+    }
+
+    public function test_process_complete_schedules_option_backed_after_submission_mapping(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'wpforms', '48', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $scheduled_jobs = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+            },
+            10,
+            5
+        );
+
+        update_option(
+            'sentient_forms_actions_wpforms_48',
+            [
+                'map_summary' => [
+                    'local_mapping_id'           => 'map_summary',
+                    'central_action_id'          => 'entry_evaluation',
+                    'action_name_label'          => 'Summarize WPForms submission',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'async' => true,
+                    ],
+                ],
+            ],
+            false
+        );
+
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+
+        $adapter         = new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_process_complete(
+            [
+                1 => [
+                    'id'    => 1,
+                    'name'  => 'Full Name',
+                    'type'  => 'name',
+                    'value' => 'Ada Lovelace',
+                ],
+                2 => [
+                    'id'    => 2,
+                    'name'  => 'Message',
+                    'type'  => 'textarea',
+                    'value' => 'Summarize this WPForms submission.',
+                ],
+            ],
+            [],
+            [
+                'id'       => 48,
+                'settings' => [
+                    'form_title' => 'WPForms Option Backed Execution',
+                ],
+            ],
+            0
+        );
+
+        $this->assertNotNull( $submission_uuid );
+        $this->assertCount( 1, $scheduled_jobs );
+        $this->assertSame( 'sentient_forms_process_action', $scheduled_jobs[0]['hook'] ?? null );
+        $this->assertSame( 'sentient_forms_async', $scheduled_jobs[0]['group'] ?? null );
+
+        $job_context = $scheduled_jobs[0]['args']['context'] ?? [];
+        $this->assertSame( 'wpforms', $job_context['form_source'] ?? null );
+        $this->assertSame( 'wpforms_process_complete', $job_context['hook'] ?? null );
+        $this->assertSame( '48', $job_context['form_id'] ?? null );
+        $this->assertSame( 'map_summary', $job_context['local_mapping_id'] ?? null );
+        $this->assertSame( 'entry_evaluation', $job_context['central_action_id'] ?? null );
+        $this->assertSame( $submission_uuid, $job_context['submission_uuid'] ?? null );
+
+        $job_entry = $scheduled_jobs[0]['args']['data']['entry'] ?? [];
+        $this->assertSame( 'Ada Lovelace', $job_entry['full_name'] ?? null );
+        $this->assertSame( $submission_uuid, $job_entry['submission_uuid'] ?? null );
+    }
+
+    public function test_process_complete_honors_form_disabled_state_before_scheduling_local_first_mapping(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'wpforms', '49', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'wpforms_disabled_form_summary',
+                'display_name'         => 'WPForms Disabled Form Summary',
+                'definition_json'      => [
+                    'prompt' => 'Summarize {{entry}}.',
+                ],
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => 'openrouter/auto',
+                ],
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'wpforms',
+                'form_id'             => '49',
+                'hook'                => Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION,
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'summary_source' => 'full_name',
+                ],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        update_option( 'sentient_forms_actions_wpforms_49', [ 'sf_disabled' => true ], false );
+
+        $scheduled_jobs = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+            },
+            10,
+            5
+        );
+
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+
+        $adapter         = new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_process_complete(
+            [
+                1 => [
+                    'id'    => 1,
+                    'name'  => 'Full Name',
+                    'type'  => 'name',
+                    'value' => 'Should Not Queue',
+                ],
+            ],
+            [],
+            [
+                'id'       => 49,
+                'settings' => [
+                    'form_title' => 'WPForms Disabled Form',
+                ],
+            ],
+            0
+        );
+
+        $this->assertNotNull( $submission_uuid );
+        $this->assertSame( [], $scheduled_jobs );
+        $this->assertSame( [], $events->list_recent( 1 ) );
+    }
+
+    public function test_process_complete_honors_local_first_conditions_before_scheduling(): void
+    {
+        global $wpdb;
+
+        if ( function_exists( 'sentient_forms_tests_reset_async_state' ) )
+        {
+            sentient_forms_tests_reset_async_state();
+        }
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'wpforms', '50', true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $custom_actions = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings       = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $events         = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'wpforms_conditional_summary',
+                'display_name'         => 'WPForms Conditional Summary',
+                'definition_json'      => [
+                    'prompt' => 'Summarize {{entry}}.',
+                ],
+                'model_selection_json' => [
+                    'provider' => 'openrouter',
+                    'model'    => 'openrouter/auto',
+                ],
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'wpforms',
+                'form_id'             => '50',
+                'hook'                => Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION,
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'summary_source' => 'full_name',
+                ],
+                'conditions_json'     => [
+                    'enabled' => true,
+                    'root'    => [
+                        'type'  => 'group',
+                        'logic' => 'all',
+                        'rules' => [
+                            [
+                                'type'     => 'rule',
+                                'field_id' => 'full_name',
+                                'operator' => 'eq',
+                                'value'    => 'Run Summary',
+                            ],
+                        ],
+                    ],
+                ],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $scheduled_jobs = [];
+        add_action(
+            'sentient_forms_async_job_scheduled',
+            static function ( string $hook, array $args, string $group, mixed $action_id, int $run_at ) use ( &$scheduled_jobs ): void {
+                $scheduled_jobs[] = compact( 'hook', 'args', 'group', 'action_id', 'run_at' );
+            },
+            10,
+            5
+        );
+
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+
+        $adapter         = new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_process_complete(
+            [
+                1 => [
+                    'id'    => 1,
+                    'name'  => 'Full Name',
+                    'type'  => 'name',
+                    'value' => 'Skip Summary',
+                ],
+            ],
+            [],
+            [
+                'id'       => 50,
+                'settings' => [
+                    'form_title' => 'WPForms Conditional Form',
+                ],
+            ],
+            0
+        );
+
+        $this->assertNotNull( $submission_uuid );
         $this->assertSame( [], $scheduled_jobs );
         $this->assertSame( [], $events->list_recent( 1 ) );
     }
