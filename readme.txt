@@ -4,7 +4,7 @@ Tags: forms, ai, gravity-forms, openrouter, automation
 Requires at least: 6.8
 Tested up to: 7.0
 Requires PHP: 8.2
-Stable tag: 0.4.0
+Stable tag: 0.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -22,7 +22,7 @@ Use your OpenRouter key for direct execution, or connect Sentient Forms Managed 
 
 == Source ==
 
-JavaScript and CSS in `assets/dist` are generated from `admin-app` in the public release source: https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.4.0. Build with `cd admin-app`, `bun install --frozen-lockfile`, and `bun run build:wp`.
+JavaScript and CSS in `assets/dist` are generated from `admin-app` in the public release source: https://github.com/TWP-Technologies/sentient-forms-wp-plugin/tree/v0.5.0. Build with `cd admin-app`, `bun install --frozen-lockfile`, and `bun run build:wp`.
 
 == External services ==
 

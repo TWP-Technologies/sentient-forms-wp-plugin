@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.4.0...v0.5.0) (2026-06-24)
+
+
+### Features
+
+* **forms:** add Contact Form 7 form source adapter ([e8611ac](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/e8611ac999f0b88531319836249cbe9834a22bbb))
+* **forms:** add Contact Form 7 form source adapter ([a50baca](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a50bacae475402a2f06bc28a0dedbccbb4b92158))
+
+
+### Bug Fixes
+
+* **forms:** address CF7 adapter review findings ([71eba45](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/71eba4506468820a67e42b834a31c2b9916460d1))
+* **forms:** address CF7 autoreview findings ([3bf0243](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/3bf02436a6f70c74f867995ccd759d02cfed72ee))
+* **forms:** pass CF7 dependency metadata to async jobs ([afcf5a6](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/afcf5a6c0b34004d84a8540f4865d992404f6ee9))
+
 ## [0.4.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.3.17...v0.4.0) (2026-06-23)
 
 
