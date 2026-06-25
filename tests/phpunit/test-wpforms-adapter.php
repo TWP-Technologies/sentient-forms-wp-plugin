@@ -167,6 +167,98 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'Form: WPForms Runtime Prompt Title Name: Ada Lovelace Email: ada@example.test', $prompt );
     }
 
+    public function test_get_entry_data_adds_wpforms_field_id_aliases_for_prompt_rendering(): void
+    {
+        global $wpdb;
+
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+
+        $form_id = self::factory()->post->create(
+            [
+                'post_type'    => 'wpforms',
+                'post_status'  => 'publish',
+                'post_title'   => 'WPForms Field Alias Prompt Form',
+                'post_content' => wp_json_encode(
+                    [
+                        'id'       => 0,
+                        'settings' => [
+                            'form_title' => 'WPForms Field Alias Prompt Form',
+                        ],
+                        'fields'   => [
+                            1 => [
+                                'id'    => 1,
+                                'type'  => 'name',
+                                'label' => 'Full Name',
+                            ],
+                            2 => [
+                                'id'    => 2,
+                                'type'  => 'email',
+                                'label' => 'Email Address',
+                            ],
+                            3 => [
+                                'id'    => 3,
+                                'type'  => 'hidden',
+                                'label' => 'Campaign Code',
+                            ],
+                        ],
+                    ]
+                ),
+            ]
+        );
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'wpforms', (string) $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $adapter         = new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_process_complete(
+            [
+                1 => [
+                    'id'    => 1,
+                    'name'  => 'Full Name',
+                    'type'  => 'name',
+                    'value' => 'Ada Lovelace',
+                ],
+                2 => [
+                    'id'    => 2,
+                    'name'  => 'Email Address',
+                    'type'  => 'email',
+                    'value' => 'ada@example.test',
+                ],
+                3 => [
+                    'id'    => 3,
+                    'name'  => 'Campaign Code',
+                    'type'  => 'hidden',
+                    'value' => 'internal-campaign',
+                ],
+            ],
+            [],
+            [
+                'id'       => $form_id,
+                'settings' => [
+                    'form_title' => 'WPForms Field Alias Prompt Form',
+                ],
+            ],
+            0
+        );
+
+        $this->assertNotNull( $submission_uuid );
+
+        $entry = $adapter->get_entry_data( $submission_uuid, (string) $form_id );
+        $this->assertIsArray( $entry );
+        $this->assertSame( 'ada@example.test', $entry['email_address'] ?? null );
+        $this->assertSame( 'ada@example.test', $entry['2'] ?? null );
+        $this->assertArrayNotHasKey( '3', $entry );
+
+        $form      = $adapter->get_form_data( $form_id );
+        $renderer  = new Sentient_Forms_Local_Prompt_Renderer();
+        $variables = $renderer->build_variables( [], $form, $entry );
+        $this->assertNotWPError( $variables );
+
+        $prompt = $renderer->render_template( 'Email: {{field:type:email}}', $variables );
+        $this->assertNotWPError( $prompt );
+        $this->assertSame( 'Email: ada@example.test', $prompt );
+    }
+
     public function test_process_complete_stores_redacted_logical_fields_and_file_references_when_ledger_is_enabled_without_native_entry_id(): void
     {
         global $wpdb;
@@ -390,7 +482,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                     'form_title' => 'WPForms Option Backed Execution',
                 ],
             ],
-            0
+            781
         );
 
         $this->assertNotNull( $submission_uuid );
@@ -401,13 +493,16 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $job_context = $scheduled_jobs[0]['args']['context'] ?? [];
         $this->assertSame( 'wpforms', $job_context['form_source'] ?? null );
         $this->assertSame( 'wpforms_process_complete', $job_context['hook'] ?? null );
+        $this->assertSame( Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION, Sentient_Forms_Form_Source_Lifecycles::normalize_id( $job_context['hook'] ?? null ) );
         $this->assertSame( '48', $job_context['form_id'] ?? null );
+        $this->assertSame( '781', $job_context['entry_id'] ?? null );
         $this->assertSame( 'map_summary', $job_context['local_mapping_id'] ?? null );
         $this->assertSame( 'entry_evaluation', $job_context['central_action_id'] ?? null );
         $this->assertSame( $submission_uuid, $job_context['submission_uuid'] ?? null );
 
         $job_entry = $scheduled_jobs[0]['args']['data']['entry'] ?? [];
         $this->assertSame( 'Ada Lovelace', $job_entry['full_name'] ?? null );
+        $this->assertSame( '781', $job_entry['id'] ?? null );
         $this->assertSame( $submission_uuid, $job_entry['submission_uuid'] ?? null );
     }
 

@@ -265,7 +265,10 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             return null;
         }
 
-        return $this->ledger_entry_snapshot( $record, $submission_uuid );
+        $record_form_id = absint( $record['form_id'] ?? 0 );
+        $snapshot_form  = $record_form_id > 0 ? $this->get_form_object( $record_form_id ) : null;
+
+        return $this->ledger_entry_snapshot( $record, $submission_uuid, $snapshot_form );
     }
 
     public function handle_process_complete( mixed $fields, mixed $entry, mixed $form_data, mixed $entry_id ): ?string
@@ -919,8 +922,11 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             $settings,
             Sentient_Forms_Form_Source_Lifecycles::AFTER_SUBMISSION
         );
-        $form  = $this->form_snapshot( $form_data, $form_id );
-        $entry = $this->ledger_entry_snapshot( $captured, $submission_uuid );
+        $form            = $this->form_snapshot( $form_data, $form_id );
+        $entry           = $this->ledger_entry_snapshot( $captured, $submission_uuid, $form_data );
+        $native_entry_id = isset( $entry['id'] ) && is_scalar( $entry['id'] ) && '' !== (string) $entry['id']
+            ? sanitize_text_field( (string) $entry['id'] )
+            : null;
         $mapping_outcomes      = [];
         $execution_request_ids = [];
 
@@ -1076,7 +1082,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
                     'mapping_id'        => (string) $mapping_id,
                     'local_mapping_id'  => (string) $mapping_id,
                     'form_id'           => (string) $form_id,
-                    'entry_id'          => null,
+                    'entry_id'          => $native_entry_id,
                     'submission_uuid'   => $submission_uuid,
                     'central_action_id' => $central_action_id,
                     'action_name_label' => $action_settings['action_name_label'] ?? $central_action_id,
@@ -1716,13 +1722,18 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
      *
      * @return array<string, mixed>
      */
-    private function ledger_entry_snapshot( array $record, string $submission_uuid ): array
+    private function ledger_entry_snapshot( array $record, string $submission_uuid, mixed $form_data = null ): array
     {
         $entry = [];
 
         if ( isset( $record['logical_fields_json'] ) && is_array( $record['logical_fields_json'] ) )
         {
             $entry = array_merge( $entry, $record['logical_fields_json'] );
+        }
+
+        if ( null !== $form_data )
+        {
+            $entry = $this->add_field_id_aliases_to_entry( $entry, $form_data );
         }
 
         if ( isset( $record['file_refs_json'] ) && is_array( $record['file_refs_json'] ) )
@@ -1742,6 +1753,85 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             : null;
 
         return $entry;
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     *
+     * @return array<string, mixed>
+     */
+    private function add_field_id_aliases_to_entry( array $entry, mixed $form_data ): array
+    {
+        foreach ( $this->field_manifest_from_form_data( $form_data ) as $field )
+        {
+            if ( empty( $field['storage_eligible'] ) )
+            {
+                continue;
+            }
+
+            $field_id = isset( $field['id'] ) && is_scalar( $field['id'] )
+                ? sanitize_text_field( (string) $field['id'] )
+                : '';
+            if ( '' === $field_id || array_key_exists( $field_id, $entry ) )
+            {
+                continue;
+            }
+
+            foreach ( $this->submission_ledger_field_keys_from_manifest( $field, $field_id ) as $ledger_key )
+            {
+                if ( array_key_exists( $ledger_key, $entry ) )
+                {
+                    $entry[ $field_id ] = $entry[ $ledger_key ];
+                    break;
+                }
+            }
+        }
+
+        return $entry;
+    }
+
+    /**
+     * @param array<string, mixed> $field
+     *
+     * @return array<int, string>
+     */
+    private function submission_ledger_field_keys_from_manifest( array $field, string $field_id ): array
+    {
+        $labels = [];
+        foreach ( [ 'label', 'name', 'admin_label', 'adminLabel' ] as $key )
+        {
+            if ( ! isset( $field[ $key ] ) || ! is_scalar( $field[ $key ] ) )
+            {
+                continue;
+            }
+
+            $label = sanitize_text_field( (string) $field[ $key ] );
+            if ( '' === $label )
+            {
+                continue;
+            }
+
+            if ( 'adminLabel' === $key && str_starts_with( $label, 'WPForms: ' ) )
+            {
+                continue;
+            }
+
+            $labels[] = $label;
+        }
+
+        $keys = [];
+        foreach ( $labels as $label )
+        {
+            $ledger_key = sanitize_key( str_replace( [ ' ', '.', '-' ], '_', strtolower( $label ) ) );
+            if ( '' !== $ledger_key )
+            {
+                $keys[] = $ledger_key;
+            }
+        }
+
+        $keys[] = sanitize_key( 'field_' . str_replace( '.', '_', $field_id ) );
+
+        return array_values( array_unique( array_filter( $keys ) ) );
     }
 
     /**

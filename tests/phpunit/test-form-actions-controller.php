@@ -1038,6 +1038,90 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 3, $data['metering_summary']['credits_debited'] ?? null );
     }
 
+    public function test_get_wpforms_entry_execution_status_falls_back_to_action_log_for_async_jobs(): void
+    {
+        global $wpdb;
+
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+
+        $submission_uuid = 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff';
+        $form_id         = self::factory()->post->create(
+            [
+                'post_type'    => 'wpforms',
+                'post_status'  => 'publish',
+                'post_title'   => 'WPForms Async Status',
+                'post_content' => wp_json_encode(
+                    [
+                        'id'       => 0,
+                        'settings' => [
+                            'form_title' => 'WPForms Async Status',
+                        ],
+                        'fields'   => [],
+                    ]
+                ),
+            ]
+        );
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $created         = $ledger->create(
+            [
+                'submission_uuid'     => $submission_uuid,
+                'form_source'         => 'wpforms',
+                'form_id'             => (string) $form_id,
+                'native_entry_id'     => '780',
+                'native_entry_url'    => admin_url( 'admin.php?page=wpforms-entries&view=details&entry_id=780' ),
+                'logical_fields_json' => [
+                    'full_name' => 'Katherine Johnson',
+                ],
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        update_option(
+            'sentient_forms_action_log',
+            [
+                [
+                    'form_source'    => 'wpforms',
+                    'form_id'        => $form_id,
+                    'entry_id'       => 780,
+                    'action_code'    => 'entry_evaluation',
+                    'action_label'   => 'Entry Evaluation',
+                    'status'         => 'success',
+                    'result_summary' => 'Entry evaluation completed.',
+                    'created_at'     => '2026-06-25T11:20:00+00:00',
+                    'details'        => [
+                        'meta'       => [
+                            'execution_request_id' => 'req-wpforms-async-780',
+                            'correlation_id'       => 'corr-wpforms-async-780',
+                            'credits_debited'      => 5,
+                        ],
+                        'structured' => [
+                            'summary' => 'Qualified WPForms lead.',
+                        ],
+                    ],
+                ],
+            ],
+            false
+        );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/wpforms/forms/' . $form_id . '/actions/entries/780/status' );
+        $request->set_param( 'form_source_slug', 'wpforms' );
+        $request->set_param( 'form_id', $form_id );
+        $request->set_param( 'entry_id', 780 );
+
+        $response = $this->dispatch_form_actions_request( $this->authenticate_rest_request( $request ) );
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertSame( 'success', $data['status'] ?? null );
+        $this->assertSame( 780, $data['entry_id'] ?? null );
+        $this->assertSame( $submission_uuid, $data['submission_uuid'] ?? null );
+        $this->assertSame( 'Qualified WPForms lead.', $data['last_response']['structured']['summary'] ?? null );
+        $this->assertSame( '2026-06-25T11:20:00+00:00', $data['processed_at'] ?? null );
+        $this->assertSame( 'corr-wpforms-async-780', $data['metering_summary']['correlation_id'] ?? null );
+        $this->assertSame( 5, $data['metering_summary']['credits_debited'] ?? null );
+    }
+
     public function test_validate_trigger_hooks_accepts_allowed_values(): void {
         $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/gravity_forms/forms/1/actions' );
         $result  = $this->controller->validate_trigger_hooks_param(

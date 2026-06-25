@@ -37,9 +37,10 @@ final class Sentient_Forms_Form_Source_Lifecycles
     public static function legacy_aliases(): array
     {
         return [
-            'gform_validation'        => self::VALIDATION,
-            'gform_after_submission'  => self::AFTER_SUBMISSION,
-            'wpcf7_mail_sent'         => self::AFTER_SUBMISSION,
+            'gform_validation'         => self::VALIDATION,
+            'gform_after_submission'   => self::AFTER_SUBMISSION,
+            'wpcf7_mail_sent'          => self::AFTER_SUBMISSION,
+            'wpforms_process_complete' => self::AFTER_SUBMISSION,
         ];
     }
 

@@ -5449,6 +5449,36 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         return null;
     }
 
+    private function get_entry_execution_status_from_action_log( string $form_source_slug, int $form_id, int $entry_id ): ?array
+    {
+        $entries = get_option( self::ACTION_LOG_OPTION_KEY, [] );
+        if ( ! is_array( $entries ) )
+        {
+            return null;
+        }
+
+        foreach ( $entries as $entry )
+        {
+            if ( ! is_array( $entry ) )
+            {
+                continue;
+            }
+
+            if ( absint( $entry['entry_id'] ?? 0 ) !== $entry_id )
+            {
+                continue;
+            }
+
+            $status = $this->get_form_execution_status_from_action_log( $form_source_slug, $form_id, false, [ $entry ] );
+            if ( null !== $status )
+            {
+                return $status;
+            }
+        }
+
+        return null;
+    }
+
     private function get_local_mapping_integrity_status( string $form_source_slug, int $form_id, ?array $local_mapping_rows = null ): ?array
     {
         if ( null === $local_mapping_rows && ! $this->local_form_mappings )
@@ -5686,20 +5716,49 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $event           = null !== $this->local_execution_events
             ? $this->local_execution_events->get_latest_for_entry( $form_source_slug, $form_id, $entry_id, $submission_uuid )
             : null;
-
-        $raw_status = is_array( $event ) && isset( $event['status'] ) && is_scalar( $event['status'] )
-            ? sanitize_key( (string) $event['status'] )
-            : 'unknown';
-        $status     = match ( $raw_status ) {
-            'succeeded', 'success' => 'success',
-            'failed', 'error'      => 'error',
-            default                => 'unknown',
-        };
-
-        $last_response = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : null;
-        $last_error    = is_array( $event ) && isset( $event['error_message'] ) && is_scalar( $event['error_message'] ) && '' !== (string) $event['error_message']
-            ? sanitize_textarea_field( (string) $event['error_message'] )
+        $action_log_status = ! is_array( $event )
+            ? $this->get_entry_execution_status_from_action_log( $form_source_slug, $form_id, $entry_id )
             : null;
+
+        if ( is_array( $action_log_status ) )
+        {
+            $raw_status    = isset( $action_log_status['status'] ) && is_scalar( $action_log_status['status'] )
+                ? sanitize_key( (string) $action_log_status['status'] )
+                : 'unknown';
+            $status        = match ( $raw_status ) {
+                'succeeded', 'success' => 'success',
+                'failed', 'error'      => 'error',
+                default                => 'unknown',
+            };
+            $last_response = is_array( $action_log_status['last_result'] ?? null ) ? $action_log_status['last_result'] : null;
+            $last_error    = 'error' === $status && isset( $action_log_status['message'] ) && is_scalar( $action_log_status['message'] ) && '' !== (string) $action_log_status['message']
+                ? sanitize_textarea_field( (string) $action_log_status['message'] )
+                : null;
+            $processed_at  = isset( $action_log_status['updated_at'] ) && is_scalar( $action_log_status['updated_at'] )
+                ? sanitize_text_field( (string) $action_log_status['updated_at'] )
+                : null;
+        }
+        else
+        {
+            $raw_status = is_array( $event ) && isset( $event['status'] ) && is_scalar( $event['status'] )
+                ? sanitize_key( (string) $event['status'] )
+                : 'unknown';
+            $status     = match ( $raw_status ) {
+                'succeeded', 'success' => 'success',
+                'failed', 'error'      => 'error',
+                default                => 'unknown',
+            };
+
+            $last_response = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : null;
+            $last_error    = is_array( $event ) && isset( $event['error_message'] ) && is_scalar( $event['error_message'] ) && '' !== (string) $event['error_message']
+                ? sanitize_textarea_field( (string) $event['error_message'] )
+                : null;
+            $processed_at  = is_array( $event ) && isset( $event['updated_at'] ) && is_scalar( $event['updated_at'] )
+                ? sanitize_text_field( (string) $event['updated_at'] )
+                : ( is_array( $event ) && isset( $event['created_at'] ) && is_scalar( $event['created_at'] )
+                    ? sanitize_text_field( (string) $event['created_at'] )
+                    : null );
+        }
 
         $payload = [
             'entry_id'          => absint( $entry['id'] ?? $entry_id ),
@@ -5711,11 +5770,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 : null,
             'last_response'     => $last_response,
             'last_error'        => $last_error,
-            'processed_at'      => is_array( $event ) && isset( $event['updated_at'] ) && is_scalar( $event['updated_at'] )
-                ? sanitize_text_field( (string) $event['updated_at'] )
-                : ( is_array( $event ) && isset( $event['created_at'] ) && is_scalar( $event['created_at'] )
-                    ? sanitize_text_field( (string) $event['created_at'] )
-                    : null ),
+            'processed_at'      => $processed_at,
             'status'            => $status,
             'metering_summary'  => $this->build_metering_summary( $last_response ),
         ];
