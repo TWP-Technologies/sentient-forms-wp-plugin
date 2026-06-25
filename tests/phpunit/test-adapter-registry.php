@@ -245,4 +245,136 @@ class AdapterRegistryTest extends WP_UnitTestCase
     {
         $this->assertTrue( Sentient_Forms_Form_Sources::is_supported_source( 'contact_form_7' ) );
     }
+
+    public function test_wpforms_is_supported_form_source_slug(): void
+    {
+        $this->assertTrue( Sentient_Forms_Form_Sources::is_supported_source( 'wpforms' ) );
+    }
+
+    public function test_wpforms_active_discovers_published_forms_from_wpforms_posts(): void
+    {
+        $active_filter = static fn(): bool => true;
+        add_filter( 'sentient_forms_wpforms_is_active', $active_filter );
+
+        $published_form_id = self::factory()->post->create(
+            [
+                'post_type'    => 'wpforms',
+                'post_status'  => 'publish',
+                'post_title'   => 'Partner Intake',
+                'post_content' => wp_json_encode(
+                    [
+                        'settings' => [
+                            'form_title' => 'Partner Intake',
+                        ],
+                        'fields'   => [],
+                    ]
+                ),
+            ]
+        );
+
+        self::factory()->post->create(
+            [
+                'post_type'    => 'wpforms',
+                'post_status'  => 'draft',
+                'post_title'   => 'Draft Intake',
+                'post_content' => wp_json_encode(
+                    [
+                        'settings' => [
+                            'form_title' => 'Draft Intake',
+                        ],
+                        'fields'   => [],
+                    ]
+                ),
+            ]
+        );
+
+        try
+        {
+            $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+            $adapter  = $registry->get_adapter_by_id( 'wpforms' );
+
+            $this->assertInstanceOf( Sentient_Forms_WPForms_Adapter::class, $adapter );
+
+            $forms = $adapter->get_forms();
+
+            $this->assertCount( 1, $forms );
+            $this->assertSame( $published_form_id, $forms[0]['id'] );
+            $this->assertSame( 'Partner Intake', $forms[0]['title'] );
+            $this->assertSame( 'wpforms', $forms[0]['adapter'] );
+            $this->assertSame( 'WPForms', $forms[0]['adapter_name'] );
+            $this->assertTrue( $forms[0]['provider_is_active'] );
+            $this->assertSame(
+                admin_url( 'admin.php?page=wpforms-builder&view=fields&form_id=' . $published_form_id ),
+                $forms[0]['provider_edit_url']
+            );
+            $this->assertNull( $forms[0]['settings'] );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_wpforms_is_active', $active_filter );
+        }
+    }
+
+    public function test_wpforms_absent_descriptor_requires_ledger_and_hides_gravity_only_capabilities(): void
+    {
+        $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $descriptor = $registry->get_capability_descriptor( 'wpforms' );
+
+        $this->assertIsArray( $descriptor );
+        $this->assertSame( 'wpforms', $descriptor['slug'] );
+        $this->assertSame( 'WPForms', $descriptor['label'] );
+        $this->assertFalse( $descriptor['is_active'] );
+        $this->assertSame( 'not_installed', $descriptor['availability'] );
+        $this->assertFalse( $descriptor['forms_discovery']['supported'] );
+        $this->assertFalse( $descriptor['field_manifest']['supported'] );
+        $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );
+        $this->assertSame( 'wpforms_process_complete', $descriptor['lifecycles']['after_submission']['native_hook'] );
+        $this->assertTrue( $descriptor['lifecycles']['after_submission']['requires_ledger'] );
+        $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] );
+        $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] );
+        $this->assertFalse( $descriptor['native_entry']['id'] );
+        $this->assertFalse( $descriptor['native_entry']['link'] );
+        $this->assertFalse( $descriptor['native_enrichment']['notes'] );
+        $this->assertFalse( $descriptor['native_enrichment']['spam'] );
+        $this->assertTrue( $descriptor['ledger']['required_for_parity'] );
+        $this->assertFalse( $descriptor['ledger']['enabled'] );
+    }
+
+    public function test_wpforms_active_descriptor_reports_native_entry_links_only_for_verified_paid_storage(): void
+    {
+        $active_filter = static fn(): bool => true;
+        $native_filter = static fn(): bool => true;
+
+        add_filter( 'sentient_forms_wpforms_is_active', $active_filter );
+        add_filter( 'sentient_forms_wpforms_native_entry_storage_available', $native_filter );
+
+        try
+        {
+            $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+            $descriptor = $registry->get_capability_descriptor( 'wpforms' );
+
+            $this->assertIsArray( $descriptor );
+            $this->assertSame( 'wpforms', $descriptor['slug'] );
+            $this->assertTrue( $descriptor['is_active'] );
+            $this->assertSame( 'available', $descriptor['availability'] );
+            $this->assertTrue( $descriptor['forms_discovery']['supported'] );
+            $this->assertTrue( $descriptor['field_manifest']['supported'] );
+            $this->assertTrue( $descriptor['lifecycles']['after_submission']['supported'] );
+            $this->assertTrue( $descriptor['lifecycles']['after_submission']['requires_ledger'] );
+            $this->assertFalse( $descriptor['lifecycles']['validation']['supported'] );
+            $this->assertFalse( $descriptor['lifecycles']['real_time']['supported'] );
+            $this->assertTrue( $descriptor['native_entry']['id'] );
+            $this->assertTrue( $descriptor['native_entry']['link'] );
+            $this->assertFalse( $descriptor['native_entry']['read'] );
+            $this->assertFalse( $descriptor['native_entry']['write'] );
+            $this->assertFalse( $descriptor['native_enrichment']['notes'] );
+            $this->assertFalse( $descriptor['native_enrichment']['spam'] );
+            $this->assertTrue( $descriptor['ledger']['required_for_parity'] );
+        }
+        finally
+        {
+            remove_filter( 'sentient_forms_wpforms_is_active', $active_filter );
+            remove_filter( 'sentient_forms_wpforms_native_entry_storage_available', $native_filter );
+        }
+    }
 }

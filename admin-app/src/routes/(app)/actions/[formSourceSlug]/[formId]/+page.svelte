@@ -1827,6 +1827,20 @@
 
 		return 'Logical field snapshots are not stored until enabled.';
 	});
+	const wpformsNativeEntryLinksAvailable = $derived(
+		data.formSourceSlug === 'wpforms' && formSourceDescriptor?.native_entry?.link === true
+	);
+	const submissionLedgerProviderNote = $derived.by(() => {
+		if (data.formSourceSlug !== 'wpforms') {
+			return null;
+		}
+
+		if (wpformsNativeEntryLinksAvailable) {
+			return 'WPForms paid entry storage is detected; native entry links will be attached when WPForms provides a non-zero entry ID. Sentient Forms still keeps ledger snapshots for action context.';
+		}
+
+		return 'WPForms Lite/no-native-entry submissions use Sentient Forms Submission Ledger records instead of native WPForms entry links.';
+	});
 	const sectionDescription = $derived(`Link actions and execution settings for ${currentFormTitle}.`);
 	const selectedCreateActionLabel = $derived.by(() => {
 		if (createKind === 'template') {
@@ -4301,6 +4315,11 @@
 			<p class="sf:mt-1 sf:text-xs sf:text-slate-600">
 				{submissionLedgerDescription}
 			</p>
+			{#if submissionLedgerProviderNote}
+				<p class="sf:mt-1 sf:text-xs sf:text-slate-600" data-testid="submission-ledger-provider-note">
+					{submissionLedgerProviderNote}
+				</p>
+			{/if}
 		</div>
 		<div class="sf:flex sf:shrink-0 sf:flex-wrap sf:items-center sf:gap-2">
 			<Toggle

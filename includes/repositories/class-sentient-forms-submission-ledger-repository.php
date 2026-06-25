@@ -101,6 +101,31 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         return is_array( $row ) ? $this->decode_row( $row ) : null;
     }
 
+    public function get_by_native_entry_id( string $form_source, string $form_id, string $native_entry_id ): ?array
+    {
+        $form_source     = sanitize_key( $form_source );
+        $form_id         = sanitize_text_field( $form_id );
+        $native_entry_id = sanitize_text_field( $native_entry_id );
+
+        if ( '' === $form_source || '' === $form_id || '' === $native_entry_id )
+        {
+            return null;
+        }
+
+        $row = $this->wpdb->get_row(
+            $this->wpdb->prepare(
+                'SELECT * FROM %i WHERE form_source = %s AND form_id = %s AND native_entry_id = %s ORDER BY captured_at DESC, id DESC LIMIT 1',
+                $this->table_name(),
+                $form_source,
+                $form_id,
+                $native_entry_id
+            ),
+            ARRAY_A
+        );
+
+        return is_array( $row ) ? $this->decode_row( $row ) : null;
+    }
+
     /**
      * @return array<int, array<string, mixed>>
      */
