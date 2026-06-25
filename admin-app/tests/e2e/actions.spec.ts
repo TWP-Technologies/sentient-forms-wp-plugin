@@ -2615,7 +2615,7 @@ test.describe('Actions admin flows', () => {
 			'WPForms Lite/no-native-entry submissions use Sentient Forms Submission Ledger records'
 		);
 		await expect(page.getByTestId('submission-ledger-affordance')).not.toContainText(
-			'Native entry links available'
+			'WPForms paid entry storage is detected'
 		);
 
 		await page.locator('header').getByRole('button', { name: 'Add action' }).click();
