@@ -1758,7 +1758,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             }
         }
 
-        return $values;
+        return $this->deduplicate_file_values( $values );
     }
 
     /**
@@ -1797,6 +1797,52 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         }
 
         return false;
+    }
+
+    /**
+     * @param array<int, mixed> $values
+     *
+     * @return array<int, mixed>
+     */
+    private function deduplicate_file_values( array $values ): array
+    {
+        $deduplicated = [];
+        $seen         = [];
+
+        foreach ( $values as $value )
+        {
+            $key = $this->file_value_dedupe_key( $value );
+            if ( '' !== $key )
+            {
+                if ( isset( $seen[ $key ] ) )
+                {
+                    continue;
+                }
+
+                $seen[ $key ] = true;
+            }
+
+            $deduplicated[] = $value;
+        }
+
+        return $deduplicated;
+    }
+
+    private function file_value_dedupe_key( mixed $file_value ): string
+    {
+        $url = $this->uploaded_file_url( $file_value );
+        if ( '' !== $url )
+        {
+            return 'url:' . strtolower( $url );
+        }
+
+        $filename = $this->uploaded_file_name( $file_value );
+        if ( '' !== $filename )
+        {
+            return 'filename:' . strtolower( $filename );
+        }
+
+        return '';
     }
 
     /**

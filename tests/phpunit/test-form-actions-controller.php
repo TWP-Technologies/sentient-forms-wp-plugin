@@ -962,12 +962,28 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
 
         $submission_uuid = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+        $form_id         = self::factory()->post->create(
+            [
+                'post_type'    => 'wpforms',
+                'post_status'  => 'publish',
+                'post_title'   => 'WPForms REST Status',
+                'post_content' => wp_json_encode(
+                    [
+                        'id'       => 0,
+                        'settings' => [
+                            'form_title' => 'WPForms REST Status',
+                        ],
+                        'fields'   => [],
+                    ]
+                ),
+            ]
+        );
         $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
         $created         = $ledger->create(
             [
                 'submission_uuid'     => $submission_uuid,
                 'form_source'         => 'wpforms',
-                'form_id'             => '47',
+                'form_id'             => (string) $form_id,
                 'native_entry_id'     => '779',
                 'native_entry_url'    => admin_url( 'admin.php?page=wpforms-entries&view=details&entry_id=779' ),
                 'logical_fields_json' => [
@@ -982,7 +998,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             [
                 'execution_request_id' => 'req-wpforms-native-779',
                 'form_source'          => 'wpforms',
-                'form_id'              => '47',
+                'form_id'              => (string) $form_id,
                 'entry_id'             => '779',
                 'submission_uuid'      => $submission_uuid,
                 'provider'             => 'openrouter',
@@ -1001,18 +1017,19 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             ]
         );
 
-        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/wpforms/forms/47/actions/entries/779/status' );
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/wpforms/forms/' . $form_id . '/actions/entries/779/status' );
         $request->set_param( 'form_source_slug', 'wpforms' );
-        $request->set_param( 'form_id', 47 );
+        $request->set_param( 'form_id', $form_id );
         $request->set_param( 'entry_id', 779 );
 
-        $response = $this->controller->get_entry_execution_status( $request );
+        $response = $this->dispatch_form_actions_request( $this->authenticate_rest_request( $request ) );
         $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 200, $response->get_status() );
 
         $data = $response->get_data();
         $this->assertSame( 'success', $data['status'] ?? null );
         $this->assertSame( 'wpforms', $data['form_source'] ?? null );
-        $this->assertSame( 47, $data['form_id'] ?? null );
+        $this->assertSame( $form_id, $data['form_id'] ?? null );
         $this->assertSame( 779, $data['entry_id'] ?? null );
         $this->assertSame( $submission_uuid, $data['submission_uuid'] ?? null );
         $this->assertSame( 'Qualified lead.', $data['last_response']['structured']['summary'] ?? null );

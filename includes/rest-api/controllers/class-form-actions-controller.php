@@ -1105,7 +1105,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                     'validate_callback' => [ $this, 'validate_entry_id_param' ],
                     'required'          => true,
                     'type'              => 'integer',
-                    'description'       => __( 'Gravity Forms entry ID to inspect.', 'sentient-forms' ),
+                    'description'       => __( 'Provider-native entry ID to inspect.', 'sentient-forms' ),
                 ],
             ],
         );
@@ -1369,6 +1369,16 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         if ( ! $this->can_validate_form_action_objects( $request ) )
+        {
+            return true;
+        }
+
+        $form_source_slug = Sentient_Forms_Form_Sources::rest_sanitize_form_source_slug(
+            $request->get_param( 'form_source_slug' ) ?: Sentient_Forms_Form_Sources::GRAVITY_FORMS,
+            $request,
+            'form_source_slug'
+        );
+        if ( Sentient_Forms_Form_Sources::GRAVITY_FORMS !== $form_source_slug )
         {
             return true;
         }

@@ -199,10 +199,11 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
                     'value' => 'do-not-store',
                 ],
                 4 => [
-                    'id'    => 4,
-                    'name'  => 'Resume',
-                    'type'  => 'file-upload',
-                    'value' => 'https://example.test/uploads/resume.pdf',
+                    'id'        => 4,
+                    'name'      => 'Resume',
+                    'type'      => 'file-upload',
+                    'value_raw' => 'https://example.test/uploads/resume.pdf',
+                    'value'     => 'https://example.test/uploads/resume.pdf',
                 ],
                 5 => [
                     'id'    => 5,
@@ -233,6 +234,7 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertSame( '[redacted]', $stored['logical_fields_json']['captcha_token'] ?? null );
         $this->assertArrayNotHasKey( 'resume', $stored['logical_fields_json'] ?? [] );
         $this->assertArrayNotHasKey( 'campaign_code', $stored['logical_fields_json'] ?? [] );
+        $this->assertCount( 1, $stored['file_refs_json'] ?? [] );
         $this->assertSame( '4', $stored['file_refs_json'][0]['field_id'] ?? null );
         $this->assertSame( 'resume.pdf', $stored['file_refs_json'][0]['filename'] ?? null );
         $this->assertSame( 'https://example.test/uploads/resume.pdf', $stored['file_refs_json'][0]['url'] ?? null );
