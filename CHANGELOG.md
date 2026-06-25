@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.5.0...v0.6.0) (2026-06-25)
+
+
+### Features
+
+* **forms:** add WPForms form source adapter ([5c56711](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/5c56711ac111a611fafd919da01d8b0b18dcc1f0))
+* **forms:** add WPForms form source adapter ([10bf7db](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/10bf7db850fcead250ff5d199dc22c8aaf156bb7))
+
+
+### Bug Fixes
+
+* **forms:** honor WPForms execution gates ([ccf2a6c](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/ccf2a6c583f35a876550c4cfc484fb7f3095dc36))
+* **forms:** preserve WPForms async entry context ([7936efb](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/7936efb04380b9dafc1a356f3902a7fabf783ac8))
+* **forms:** resolve WPForms duplicate field aliases ([efb3ad8](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/efb3ad8902a9b67da30c941577bdeb6bebd1d2ba))
+* **forms:** route WPForms status validation ([55ee814](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/55ee814877f5877c86870f3a4c0e5c4c673e6ba0))
+
 ## [0.5.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.4.0...v0.5.0) (2026-06-24)
 
 
