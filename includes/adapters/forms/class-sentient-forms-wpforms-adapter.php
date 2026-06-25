@@ -1819,17 +1819,25 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             $labels[] = $label;
         }
 
-        $keys = [];
+        $base_keys = [];
         foreach ( $labels as $label )
         {
             $ledger_key = sanitize_key( str_replace( [ ' ', '.', '-' ], '_', strtolower( $label ) ) );
             if ( '' !== $ledger_key )
             {
-                $keys[] = $ledger_key;
+                $base_keys[] = $ledger_key;
             }
         }
 
-        $keys[] = sanitize_key( 'field_' . str_replace( '.', '_', $field_id ) );
+        $field_id_suffix = str_replace( '.', '_', $field_id );
+        $keys            = [];
+        foreach ( $base_keys as $ledger_key )
+        {
+            $keys[] = sanitize_key( $ledger_key . '_field_' . $field_id_suffix );
+        }
+
+        $keys = array_merge( $keys, $base_keys );
+        $keys[] = sanitize_key( 'field_' . $field_id_suffix );
 
         return array_values( array_unique( array_filter( $keys ) ) );
     }

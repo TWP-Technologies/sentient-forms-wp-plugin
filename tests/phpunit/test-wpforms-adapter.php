@@ -259,6 +259,79 @@ class Tests_WPForms_Adapter extends WP_UnitTestCase
         $this->assertSame( 'Email: ada@example.test', $prompt );
     }
 
+    public function test_get_entry_data_resolves_duplicate_label_field_id_aliases(): void
+    {
+        global $wpdb;
+
+        add_filter( 'sentient_forms_wpforms_is_active', '__return_true' );
+
+        $form_id = self::factory()->post->create(
+            [
+                'post_type'    => 'wpforms',
+                'post_status'  => 'publish',
+                'post_title'   => 'WPForms Duplicate Label Alias Form',
+                'post_content' => wp_json_encode(
+                    [
+                        'id'       => 0,
+                        'settings' => [
+                            'form_title' => 'WPForms Duplicate Label Alias Form',
+                        ],
+                        'fields'   => [
+                            2 => [
+                                'id'    => 2,
+                                'type'  => 'email',
+                                'label' => 'Email',
+                            ],
+                            5 => [
+                                'id'    => 5,
+                                'type'  => 'text',
+                                'label' => 'Email',
+                            ],
+                        ],
+                    ]
+                ),
+            ]
+        );
+
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'wpforms', (string) $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $adapter         = new Sentient_Forms_WPForms_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_process_complete(
+            [
+                2 => [
+                    'id'    => 2,
+                    'name'  => 'Email',
+                    'type'  => 'email',
+                    'value' => 'primary@example.test',
+                ],
+                5 => [
+                    'id'    => 5,
+                    'name'  => 'Email',
+                    'type'  => 'text',
+                    'value' => 'backup@example.test',
+                ],
+            ],
+            [],
+            [
+                'id'       => $form_id,
+                'settings' => [
+                    'form_title' => 'WPForms Duplicate Label Alias Form',
+                ],
+            ],
+            0
+        );
+
+        $this->assertNotNull( $submission_uuid );
+
+        $entry = $adapter->get_entry_data( $submission_uuid, (string) $form_id );
+        $this->assertIsArray( $entry );
+        $this->assertSame( 'primary@example.test', $entry['email'] ?? null );
+        $this->assertSame( 'primary@example.test', $entry['2'] ?? null );
+        $this->assertSame( 'backup@example.test', $entry['email_field_5'] ?? null );
+        $this->assertSame( 'backup@example.test', $entry['5'] ?? null );
+    }
+
     public function test_process_complete_stores_redacted_logical_fields_and_file_references_when_ledger_is_enabled_without_native_entry_id(): void
     {
         global $wpdb;
