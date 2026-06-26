@@ -1,3 +1,7 @@
+/*
+	Generated utilities are important on purpose. WordPress admin hosts can load
+	unlayered global CSS, including Bootstrap resets, before or after this sheet.
+*/
 @import 'tailwindcss' prefix(sf) important;
 
 @plugin '@tailwindcss/forms';
