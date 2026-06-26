@@ -1,4 +1,4 @@
-@import 'tailwindcss' prefix(sf);
+@import 'tailwindcss' prefix(sf) important;
 
 @plugin '@tailwindcss/forms';
 @plugin '@tailwindcss/typography';
@@ -55,15 +55,15 @@
 	}
 }
 
-@utility sf-card {
+.sf-card {
 	@apply sf:min-w-0 sf:bg-white sf:rounded-lg sf:shadow-card sf:border sf:border-slate-200;
 }
 
-@utility sf-card-header {
+.sf-card-header {
 	@apply sf:flex sf:flex-col sf:items-start sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between;
 }
 
-@utility sf-card-body {
+.sf-card-body {
 	@apply sf:space-y-4;
 }
 

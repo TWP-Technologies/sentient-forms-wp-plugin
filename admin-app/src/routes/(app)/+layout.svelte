@@ -26,6 +26,7 @@
 	} from '$lib/navigation';
 	import { Alert, Badge, Button } from '$lib/components/ui';
 	import { notifications } from '$lib/stores/notifications';
+	import { runAdminCssHealthCheck } from '$lib/utils/admin-css-health';
 	import { Toaster } from 'sonner-svelte';
 
 	interface Props {
@@ -266,6 +267,7 @@
 
 		void loadPrivacySettings();
 		updateWpAdminOffset();
+		runAdminCssHealthCheck();
 
 		const openAssistant = () => {
 			privacyApplyError = null;
@@ -467,7 +469,7 @@
 	settings={privacySettings}
 	saving={privacyAssistantSaving}
 	applyError={privacyApplyError}
-	managedAccountReady={managedAccountReady}
+	{managedAccountReady}
 	dismissible={Boolean(privacySettings?.privacy_setup_completed_at)}
 	onapply={applyPrivacyPreset}
 	onclose={() => {
