@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { array as zodArray, enum as zodEnum } from 'zod';
 
 export const ADMIN_CSS_HEALTH_WARNING = '[Sentient Forms] Admin CSS health check failed';
 
@@ -35,13 +35,25 @@ type HealthCheckOptions = InspectOptions & {
 const DEFAULT_EXPECTED_TARGETS: AdminCssHealthTarget[] = ['button', 'card'];
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 150;
-const expectedTargetsSchema = z.array(z.enum(ADMIN_CSS_HEALTH_TARGETS)).default(DEFAULT_EXPECTED_TARGETS);
 
 const TARGET_MISSING_FAILURES: Record<AdminCssHealthTarget, AdminCssHealthFailure> = {
 	button: 'button-target-missing',
 	card: 'card-target-missing',
 	modal: 'modal-target-missing'
 };
+
+type ExpectedTargetsSchema = {
+	safeParse: (
+		value: unknown
+	) => { success: true; data: AdminCssHealthTarget[] } | { success: false };
+};
+
+type ZodRuntime = {
+	array: typeof zodArray;
+	enum: typeof zodEnum;
+};
+
+let expectedTargetsSchema: ExpectedTargetsSchema | null | undefined;
 
 function readPixels(value: string): number {
 	const parsed = Number.parseFloat(value);
@@ -62,8 +74,38 @@ function cssHealthProbeEnabled(): boolean {
 	return typeof window !== 'undefined' && Boolean(window.sentientFormsConfig?.devMode);
 }
 
+function isAdminCssHealthTarget(value: unknown): value is AdminCssHealthTarget {
+	return typeof value === 'string' && ADMIN_CSS_HEALTH_TARGETS.includes(value as AdminCssHealthTarget);
+}
+
+function resolveZodRuntime(): ZodRuntime | null {
+	return typeof zodArray === 'function' && typeof zodEnum === 'function'
+		? { array: zodArray, enum: zodEnum }
+		: null;
+}
+
+function getExpectedTargetsSchema(): ExpectedTargetsSchema | null {
+	if (expectedTargetsSchema !== undefined) return expectedTargetsSchema;
+	const runtime = resolveZodRuntime();
+	expectedTargetsSchema = runtime
+		? (runtime
+				.array(runtime.enum(ADMIN_CSS_HEALTH_TARGETS))
+				.default(DEFAULT_EXPECTED_TARGETS) as ExpectedTargetsSchema)
+		: null;
+	return expectedTargetsSchema;
+}
+
+function parseExpectedTargetsFallback(value: unknown): AdminCssHealthTarget[] {
+	if (value === undefined) return DEFAULT_EXPECTED_TARGETS;
+	if (!Array.isArray(value)) return DEFAULT_EXPECTED_TARGETS;
+	return value.every(isAdminCssHealthTarget) ? value : DEFAULT_EXPECTED_TARGETS;
+}
+
 function parseExpectedTargets(value: unknown): AdminCssHealthTarget[] {
-	const parsed = expectedTargetsSchema.safeParse(value);
+	const schema = getExpectedTargetsSchema();
+	if (!schema) return parseExpectedTargetsFallback(value);
+
+	const parsed = schema.safeParse(value);
 	return parsed.success ? parsed.data : DEFAULT_EXPECTED_TARGETS;
 }
 
