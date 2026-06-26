@@ -32,6 +32,23 @@ async function injectHostileWpAdminCss(page: Page): Promise<void> {
 			.notice {
 				border-radius: 0;
 			}
+
+			.sf-card {
+				border-width: 0;
+				border-color: transparent;
+				border-radius: 0;
+				background-color: transparent;
+				box-shadow: none;
+			}
+
+			.sf-card-header {
+				display: block;
+				gap: 0;
+			}
+
+			.sf-card-body > :not(:last-child) {
+				margin-block: 0;
+			}
 		`
 	});
 }

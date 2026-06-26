@@ -51,13 +51,23 @@ describe('admin CSS health probe', () => {
 		expect(document.body.innerHTML).toBe(originalMarkup);
 	});
 
-	it('reports missing expected probe targets instead of silently passing an empty DOM', () => {
-		const report = inspectAdminCssHealth(document, { expectedTargets: ['button', 'card'] });
+	it('reports missing default probe targets instead of silently passing an empty DOM', () => {
+		const report = inspectAdminCssHealth(document);
 
 		expect(report.ok).toBe(false);
 		expect(report.elementsChecked).toBe(0);
 		expect(report.targetsChecked).toEqual({ button: false, card: false, modal: false });
 		expect(report.failures).toEqual(['button-target-missing', 'card-target-missing']);
+	});
+
+	it('falls back to default targets when runtime options are malformed', () => {
+		const report = inspectAdminCssHealth(document, {
+			expectedTargets: ['card', 'unknown-target']
+		} as never);
+
+		expect(report.ok).toBe(false);
+		expect(report.failures).toEqual(['button-target-missing', 'card-target-missing']);
+		expect(report.failures).not.toContain(undefined);
 	});
 
 	it('logs a concise warning when the scheduled probe detects failures', () => {

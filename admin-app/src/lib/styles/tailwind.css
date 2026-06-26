@@ -60,15 +60,30 @@
 }
 
 .sf-card {
-	@apply sf:min-w-0 sf:bg-white sf:rounded-lg sf:shadow-card sf:border sf:border-slate-200;
+	min-width: 0 !important;
+	border: 1px solid var(--sf-color-slate-200) !important;
+	border-radius: var(--sf-radius-lg) !important;
+	background-color: var(--sf-color-white) !important;
+	box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.08) !important;
 }
 
 .sf-card-header {
-	@apply sf:flex sf:flex-col sf:items-start sf:gap-3 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between;
+	display: flex !important;
+	flex-direction: column !important;
+	align-items: flex-start !important;
+	gap: calc(var(--sf-spacing) * 3) !important;
 }
 
-.sf-card-body {
-	@apply sf:space-y-4;
+@media (min-width: 40rem) {
+	.sf-card-header {
+		flex-direction: row !important;
+		align-items: center !important;
+		justify-content: space-between !important;
+	}
+}
+
+.sf-card-body > :not(:last-child) {
+	margin-block: 0 calc(var(--sf-spacing) * 4) !important;
 }
 
 @layer components {

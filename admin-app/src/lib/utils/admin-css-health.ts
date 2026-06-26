@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 export const ADMIN_CSS_HEALTH_WARNING = '[Sentient Forms] Admin CSS health check failed';
 
 export type AdminCssHealthFailure =
@@ -10,7 +12,8 @@ export type AdminCssHealthFailure =
 	| 'modal-radius'
 	| 'modal-target-missing';
 
-export type AdminCssHealthTarget = 'button' | 'card' | 'modal';
+const ADMIN_CSS_HEALTH_TARGETS = ['button', 'card', 'modal'] as const;
+export type AdminCssHealthTarget = (typeof ADMIN_CSS_HEALTH_TARGETS)[number];
 
 export interface AdminCssHealthReport {
 	ok: boolean;
@@ -32,6 +35,7 @@ type HealthCheckOptions = InspectOptions & {
 const DEFAULT_EXPECTED_TARGETS: AdminCssHealthTarget[] = ['button', 'card'];
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 150;
+const expectedTargetsSchema = z.array(z.enum(ADMIN_CSS_HEALTH_TARGETS)).default(DEFAULT_EXPECTED_TARGETS);
 
 const TARGET_MISSING_FAILURES: Record<AdminCssHealthTarget, AdminCssHealthFailure> = {
 	button: 'button-target-missing',
@@ -56,6 +60,11 @@ function queryElement(root: ParentNode, selector: string): HTMLElement | null {
 function cssHealthProbeEnabled(): boolean {
 	if (import.meta.env.DEV || import.meta.env.MODE === 'test') return true;
 	return typeof window !== 'undefined' && Boolean(window.sentientFormsConfig?.devMode);
+}
+
+function parseExpectedTargets(value: unknown): AdminCssHealthTarget[] {
+	const parsed = expectedTargetsSchema.safeParse(value);
+	return parsed.success ? parsed.data : DEFAULT_EXPECTED_TARGETS;
 }
 
 export function inspectAdminCssHealth(
@@ -110,7 +119,7 @@ export function inspectAdminCssHealth(
 		if (modalRadius <= 0) failures.push('modal-radius');
 	}
 
-	for (const target of new Set(options.expectedTargets ?? [])) {
+	for (const target of new Set(parseExpectedTargets(options.expectedTargets))) {
 		if (!targetsChecked[target]) failures.push(TARGET_MISSING_FAILURES[target]);
 	}
 
@@ -142,7 +151,7 @@ export function runAdminCssHealthCheck(
 			runAfterDelay();
 		});
 
-	const expectedTargets = options.expectedTargets ?? DEFAULT_EXPECTED_TARGETS;
+	const expectedTargets = parseExpectedTargets(options.expectedTargets);
 	const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
 
 	const inspect = (attempt: number) => {
