@@ -3,6 +3,7 @@
 	import { Badge, Button, ButtonLink, Card, Section, StateTemplate } from '$lib/components/ui';
 	import { createClientFromConfig } from '$lib/api/client';
 	import type {
+		FormSourceDescriptor,
 		SubmissionLedgerRecord,
 		SubmissionLedgerSettingsResponse
 	} from '$lib/api/types';
@@ -21,6 +22,7 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let settings = $state<SubmissionLedgerSettingsResponse | null>(null);
+	let formSourceDescriptor = $state<FormSourceDescriptor | null>(null);
 	let records = $state<SubmissionLedgerRecord[]>([]);
 	let total = $state(0);
 
@@ -28,24 +30,56 @@
 	const routeFormId = $derived(encodeURIComponent(data.formId));
 	const formDetailHref = $derived(appHref(`/actions/${routeFormSourceSlug}/${routeFormId}`));
 	const formLabel = $derived(`${data.formSourceSlug.replaceAll('_', ' ')} #${data.formId}`);
+	const nativeSubmissionLimitation = $derived(
+		descriptorRequirementString(formSourceDescriptor?.requirements, 'native_submission_parity_reason')
+	);
+
+	function descriptorRequirementString(
+		requirements: FormSourceDescriptor['requirements'] | undefined,
+		key: string
+	): string {
+		const value = requirements?.[key];
+		return typeof value === 'string' ? value.trim() : '';
+	}
 
 	async function loadLedgerSubmissions() {
 		loading = true;
 		error = null;
 
 		try {
-			const [nextSettings, nextRecords] = await Promise.all([
-				client.getSubmissionLedgerSettings(data.formSourceSlug, data.formId, {
+			const [bootstrapResult, settingsResult] = await Promise.allSettled([
+				client.getFormActionsBootstrap(data.formSourceSlug, data.formId, {
 					showNotifications: false
 				}),
-				client.getSubmissionLedgerRecords(data.formSourceSlug, data.formId, {
-					perPage: 50,
-					offset: 0,
+				client.getSubmissionLedgerSettings(data.formSourceSlug, data.formId, {
 					showNotifications: false
 				})
 			]);
 
+			formSourceDescriptor =
+				bootstrapResult.status === 'fulfilled'
+					? (bootstrapResult.value.form_source_descriptor ?? null)
+					: null;
+
+			if (settingsResult.status === 'rejected') {
+				throw settingsResult.reason;
+			}
+
+			const nextSettings = settingsResult.value;
 			settings = nextSettings;
+
+			if (!nextSettings.enabled) {
+				records = [];
+				total = 0;
+				return;
+			}
+
+			const nextRecords = await client.getSubmissionLedgerRecords(data.formSourceSlug, data.formId, {
+				perPage: 50,
+				offset: 0,
+				showNotifications: false
+			});
+
 			records = Array.isArray(nextRecords.records) ? nextRecords.records : [];
 			total = Number.isFinite(nextRecords.total) ? nextRecords.total : records.length;
 		} catch (caught) {
@@ -60,6 +94,40 @@
 	onMount(() => {
 		void loadLedgerSubmissions();
 	});
+
+	function actionRunCountLabel(record: SubmissionLedgerRecord) {
+		const count = record.action_runs.length;
+		return `${count.toLocaleString()} action ${count === 1 ? 'run' : 'runs'}`;
+	}
+
+	function latestActionRunSummary(record: SubmissionLedgerRecord) {
+		const latest = record.action_runs[0];
+		if (!latest) {
+			return 'No action output recorded yet.';
+		}
+
+		const result = latest.last_result;
+		if (result && typeof result === 'object' && !Array.isArray(result)) {
+			const structured = result.structured;
+			if (structured && typeof structured === 'object' && !Array.isArray(structured)) {
+				const summary = (structured as Record<string, unknown>).summary;
+				if (typeof summary === 'string' && summary.trim()) {
+					return summary;
+				}
+			}
+
+			const summary = result.summary;
+			if (typeof summary === 'string' && summary.trim()) {
+				return summary;
+			}
+		}
+
+		if (latest.last_error_message) {
+			return latest.last_error_message;
+		}
+
+		return latest.status;
+	}
 </script>
 
 {#snippet actions()}
@@ -83,6 +151,11 @@
 						? 'Logical field snapshots are enabled for this form.'
 						: 'Logical field snapshots are not stored while this is off.'}
 				</p>
+				{#if nativeSubmissionLimitation}
+					<p class="sf:mt-2 sf:text-xs sf:text-amber-700" data-testid="submission-ledger-native-limit">
+						{nativeSubmissionLimitation}
+					</p>
+				{/if}
 			</div>
 			<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 				<Badge variant={settings?.enabled ? 'success' : 'neutral'}>
@@ -130,6 +203,7 @@
 							<th class="sf:px-4 sf:py-3">Submission</th>
 							<th class="sf:px-4 sf:py-3">Captured</th>
 							<th class="sf:px-4 sf:py-3">Fields</th>
+							<th class="sf:px-4 sf:py-3">Action runs</th>
 							<th class="sf:px-4 sf:py-3 sf:text-right">Native entry</th>
 						</tr>
 					</thead>
@@ -156,6 +230,14 @@
 								<td class="sf:max-w-md sf:px-4 sf:py-3">
 									<p class="sf:line-clamp-2 sf:text-slate-700">
 										{formatSubmissionLedgerFieldPreview(record)}
+									</p>
+								</td>
+								<td class="sf:max-w-sm sf:px-4 sf:py-3" data-testid="submission-ledger-action-runs">
+									<p class="sf:text-sm sf:font-medium sf:text-slate-800">
+										{actionRunCountLabel(record)}
+									</p>
+									<p class="sf:mt-1 sf:line-clamp-2 sf:text-xs sf:text-slate-600">
+										{latestActionRunSummary(record)}
 									</p>
 								</td>
 								<td class="sf:px-4 sf:py-3 sf:text-right">

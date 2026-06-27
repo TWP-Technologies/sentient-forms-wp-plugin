@@ -26,7 +26,7 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Mappings
          * : Restrict migration to one form source (requires --form-id).
          *
          * [--form-id=<id>]
-         * : Restrict migration to one form id (requires --form-source).
+         * : Restrict migration to one provider-native form id (requires --form-source).
          *
          * [--apply]
          * : Persist changes in CPS. Without this flag, command runs dry-run only.
@@ -52,7 +52,7 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Mappings
                 ? sanitize_key( (string) $assoc_args['form-source'] )
                 : null;
             $form_id          = isset( $assoc_args['form-id'] )
-                ? absint( $assoc_args['form-id'] )
+                ? sanitize_text_field( rawurldecode( trim( (string) $assoc_args['form-id'] ) ) )
                 : null;
             $format           = isset( $assoc_args['format'] )
                 ? sanitize_key( (string) $assoc_args['format'] )
@@ -139,7 +139,9 @@ if ( defined( '\\WP_CLI' ) && WP_CLI && ! class_exists( 'Sentient_Forms_Mappings
                 $form_source = isset( $form_summary['form_source'] ) && is_scalar( $form_summary['form_source'] )
                     ? (string) $form_summary['form_source']
                     : '';
-                $form_id     = isset( $form_summary['form_id'] ) ? (string) absint( $form_summary['form_id'] ) : '';
+                $form_id     = isset( $form_summary['form_id'] ) && is_scalar( $form_summary['form_id'] )
+                    ? (string) $form_summary['form_id']
+                    : '';
 
                 foreach ( $form_summary['operations'] ?? [] as $operation )
                 {

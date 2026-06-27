@@ -146,6 +146,31 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         return $row ? $this->decode_row( $row ) : null;
     }
 
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function list_for_submission_uuid( string $submission_uuid, int $limit = 20 ): array
+    {
+        $submission_uuid = sanitize_text_field( $submission_uuid );
+        if ( '' === $submission_uuid )
+        {
+            return [];
+        }
+
+        $wpdb = $this->wpdb;
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT * FROM %i WHERE submission_uuid = %s ORDER BY created_at DESC, id DESC LIMIT %d',
+                $this->table_name(),
+                $submission_uuid,
+                max( 1, min( 100, $limit ) )
+            ),
+            ARRAY_A
+        ) ?: [];
+
+        return array_map( [ $this, 'decode_row' ], $rows );
+    }
+
     public function list_recent( int $limit = 50 ): array
     {
         $wpdb = $this->wpdb;
@@ -193,7 +218,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
                     AND (%s = '' OR created_at <= %s)
                     ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d",
                 $this->table_name(),
-                $filter_values['form_id'],
+                $filter_values['has_form_id'],
                 $filter_values['form_id_text'],
                 $filter_values['status'],
                 $filter_values['status'],
@@ -230,7 +255,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
                     AND (%s = '' OR created_at >= %s)
                     AND (%s = '' OR created_at <= %s)",
                 $this->table_name(),
-                $filter_values['form_id'],
+                $filter_values['has_form_id'],
                 $filter_values['form_id_text'],
                 $filter_values['status'],
                 $filter_values['status'],
@@ -245,15 +270,21 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         );
     }
 
-    public function get_latest_for_form( string $form_source, int $form_id ): ?array
+    public function get_latest_for_form( string $form_source, int|string $form_id ): ?array
     {
+        $normalized_form_id = sanitize_text_field( (string) $form_id );
+        if ( '' === $normalized_form_id )
+        {
+            return null;
+        }
+
         $wpdb = $this->wpdb;
         $row  = $wpdb->get_row(
             $wpdb->prepare(
                 'SELECT * FROM %i WHERE form_source = %s AND form_id = %s ORDER BY created_at DESC, id DESC LIMIT 1',
                 $this->table_name(),
                 sanitize_key( $form_source ),
-                (string) $form_id
+                $normalized_form_id
             ),
             ARRAY_A
         );
@@ -395,14 +426,20 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
 
     private function action_log_filter_values( array $filters ): array
     {
-        $form_id   = absint( $filters['form_id'] ?? 0 );
+        $form_id   = isset( $filters['form_id'] ) && is_scalar( $filters['form_id'] )
+            ? sanitize_text_field( trim( (string) $filters['form_id'] ) )
+            : '';
+        if ( '0' === $form_id )
+        {
+            $form_id = '';
+        }
         $status    = sanitize_key( (string) ( $filters['status'] ?? '' ) );
         $date_from = isset( $filters['date_from'] ) ? sanitize_text_field( (string) $filters['date_from'] ) : '';
         $date_to   = isset( $filters['date_to'] ) ? sanitize_text_field( (string) $filters['date_to'] ) : '';
 
         return [
-            'form_id'      => $form_id,
-            'form_id_text' => (string) $form_id,
+            'has_form_id'  => '' !== $form_id ? 1 : 0,
+            'form_id_text' => $form_id,
             'status'       => $status,
             'date_from'    => $date_from,
             'date_to'      => $date_to,

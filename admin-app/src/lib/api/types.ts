@@ -777,6 +777,12 @@ export interface FormFieldInfo {
 	adminLabel?: string;
 	/** Gravity Forms page number for paginated forms */
 	page_index?: number;
+	/** Whether this provider field ID is ambiguous in the current form manifest */
+	field_id_ambiguous?: boolean;
+	/** Provider-specific scope where this field ID is unique or ambiguous */
+	field_id_scope?: string;
+	/** Machine-readable reason for field ID ambiguity */
+	field_id_ambiguity_reason?: string;
 }
 
 /**
@@ -1961,7 +1967,7 @@ export interface AsyncHealthResponse {
 }
 
 export interface FormSummary {
-	id: number;
+	id: string | number;
 	title: string;
 	adapter: string;
 	adapter_name?: string;
@@ -1979,6 +1985,7 @@ export interface FormOverviewItem extends FormSummary {
 
 export interface FormsOverviewResponse {
 	form_source: string;
+	form_source_descriptor?: FormSourceDescriptor | null;
 	forms: FormOverviewItem[];
 	generated_at: string;
 }
@@ -1997,6 +2004,9 @@ export interface FormSourceDescriptor {
 	slug: string;
 	label: string;
 	is_active: boolean;
+	availability?: 'available' | 'requires_pro' | 'inactive' | 'not_installed' | string;
+	availability_message?: string | null;
+	requires_pro?: boolean;
 	adapter_class?: string | null;
 	capabilities?: Record<string, boolean | string | number | null>;
 	lifecycles: Record<string, FormSourceLifecycleDescriptor>;
@@ -2019,6 +2029,7 @@ export interface FormSourceDescriptor {
 		settings_source: string;
 		unavailable_reason?: string | null;
 	};
+	requirements?: Record<string, boolean | string | number | null>;
 }
 
 export interface SubmissionLedgerSettingsResponse {
@@ -2047,8 +2058,22 @@ export interface SubmissionLedgerRecord {
 	provider_metadata: Record<string, unknown>;
 	file_refs: Array<Record<string, unknown>>;
 	redaction_summary: Record<string, unknown>;
+	action_runs: SubmissionLedgerActionRun[];
 	expires_at: string | null;
 	detail_endpoint: string;
+}
+
+export interface SubmissionLedgerActionRun {
+	execution_request_id: string;
+	mapping_id: number | null;
+	status: string;
+	provider: string | null;
+	model: string | null;
+	last_result: Record<string, unknown> | null;
+	last_error_code: string | null;
+	last_error_message: string | null;
+	created_at: string | null;
+	updated_at: string | null;
 }
 
 export interface SubmissionLedgerRecordsResponse {
@@ -2087,6 +2112,10 @@ export interface FormSourceSummary {
 	slug: string;
 	label: string;
 	isActive: boolean;
+	availability?: FormSourceDescriptor['availability'];
+	availabilityMessage?: string | null;
+	requiresPro?: boolean;
+	descriptor?: FormSourceDescriptor | null;
 }
 
 // ============================================================================

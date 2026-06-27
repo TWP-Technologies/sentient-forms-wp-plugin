@@ -45,7 +45,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
      * @var string
      * @since 0.1.0
      */
-    protected string $rest_base = 'forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/action-config';
+    protected string $rest_base = 'forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/action-config';
 
     /**
      * Registers the routes for the form action config controller.
@@ -71,10 +71,11 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
                             'sanitize_callback' => 'sanitize_key',
                         ],
                         'form_id' => [
-                            'description'       => __( 'Form ID.', 'sentient-forms' ),
-                            'type'              => 'integer',
+                            'description'       => __( 'The provider-native form identifier.', 'sentient-forms' ),
+                            'type'              => 'string',
                             'required'          => true,
-                            'sanitize_callback' => 'absint',
+                            'sanitize_callback' => [ $this, 'sanitize_form_id_param' ],
+                            'validate_callback' => [ $this, 'validate_form_id_param' ],
                         ],
                     ],
                 ],
@@ -182,10 +183,11 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
                 'sanitize_callback' => 'sanitize_key',
             ],
             'form_id' => [
-                'description'       => __( 'Form ID.', 'sentient-forms' ),
-                'type'              => 'integer',
+                'description'       => __( 'The provider-native form identifier.', 'sentient-forms' ),
+                'type'              => 'string',
                 'required'          => true,
-                'sanitize_callback' => 'absint',
+                'sanitize_callback' => [ $this, 'sanitize_form_id_param' ],
+                'validate_callback' => [ $this, 'validate_form_id_param' ],
             ],
             'action_id' => [
                 'description'       => __( 'Action ID (e.g., spam_detection_v1).', 'sentient-forms' ),
@@ -744,22 +746,93 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
      * Generates the option key for a form's action configs.
      *
      * @param string $form_source Form source slug.
-     * @param int    $form_id     Form ID.
+     * @param mixed  $form_id     Provider-native form ID.
      * @return string
      */
-    private function get_option_key( string $form_source, int $form_id ): string
+    private function get_option_key( string $form_source, mixed $form_id ): string
     {
-        return self::OPTION_PREFIX . $form_source . '_' . $form_id;
+        return self::OPTION_PREFIX . sanitize_key( $form_source ) . '_' . $this->normalize_form_id_option_suffix( $form_id );
+    }
+
+    /**
+     * Sanitizes provider-native form identifiers for REST route params.
+     *
+     * @param mixed $value Raw route parameter value.
+     * @return string
+     */
+    public function sanitize_form_id_param( mixed $value ): string
+    {
+        return $this->normalize_provider_form_id( $value );
+    }
+
+    /**
+     * Validates provider-native form identifiers for REST route params.
+     *
+     * @param mixed           $value   Raw route parameter value.
+     * @param WP_REST_Request $request Request object.
+     * @param string          $param   Parameter name.
+     * @return true|WP_Error
+     */
+    public function validate_form_id_param( mixed $value, WP_REST_Request $request, string $param ): true | WP_Error
+    {
+        if ( '' !== $this->normalize_provider_form_id( $value ) )
+        {
+            return true;
+        }
+
+        return new WP_Error(
+            'rest_invalid_param',
+            __( 'Form ID must be a valid provider-native identifier.', 'sentient-forms' ),
+            [ 'status' => 400, 'param' => $param ],
+        );
+    }
+
+    private function get_request_form_id( WP_REST_Request $request ): string
+    {
+        return $this->normalize_provider_form_id( $request->get_param( 'form_id' ) );
+    }
+
+    private function normalize_provider_form_id( mixed $value ): string
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return '';
+        }
+
+        return sanitize_text_field( rawurldecode( trim( (string) $value ) ) );
+    }
+
+    private function normalize_form_id_option_suffix( mixed $form_id ): string
+    {
+        $form_key = preg_replace( '/[^A-Za-z0-9_-]+/', '_', $this->normalize_provider_form_id( $form_id ) );
+        $form_key = is_string( $form_key ) ? trim( $form_key, '_' ) : '';
+
+        return '' !== $form_key ? $form_key : '0';
+    }
+
+    private function is_positive_integer_form_id( string $form_id ): bool
+    {
+        return ctype_digit( $form_id ) && absint( $form_id ) > 0;
+    }
+
+    private function response_form_id( string $form_source, string $form_id ): int | string
+    {
+        if ( Sentient_Forms_Form_Sources::GRAVITY_FORMS === sanitize_key( $form_source ) && $this->is_positive_integer_form_id( $form_id ) )
+        {
+            return absint( $form_id );
+        }
+
+        return $form_id;
     }
 
     /**
      * Gets all action configs for a form.
      *
      * @param string $form_source Form source slug.
-     * @param int    $form_id     Form ID.
+     * @param mixed  $form_id     Provider-native form ID.
      * @return array<string, array>
      */
-    private function get_all_configs( string $form_source, int $form_id ): array
+    private function get_all_configs( string $form_source, mixed $form_id ): array
     {
         $option_key = $this->get_option_key( $form_source, $form_id );
         $configs    = get_option( $option_key, [] );
@@ -771,11 +844,11 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
      * Saves all action configs for a form.
      *
      * @param string              $form_source Form source slug.
-     * @param int                 $form_id     Form ID.
+     * @param mixed               $form_id     Provider-native form ID.
      * @param array<string,array> $configs     The configs to save.
      * @return bool
      */
-    private function save_all_configs( string $form_source, int $form_id, array $configs ): bool
+    private function save_all_configs( string $form_source, mixed $form_id, array $configs ): bool
     {
         $option_key = $this->get_option_key( $form_source, $form_id );
 
@@ -797,14 +870,14 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
      */
     public function get_form_configs( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $form_source = $request->get_param( 'form_source' );
-        $form_id     = (int) $request->get_param( 'form_id' );
+        $form_source = (string) $request->get_param( 'form_source' );
+        $form_id     = $this->get_request_form_id( $request );
 
         $configs = array_map( [ $this, 'normalize_action_config' ], $this->get_all_configs( $form_source, $form_id ) );
 
         return $this->prepare_item_for_response( [
             'form_source' => $form_source,
-            'form_id'     => $form_id,
+            'form_id'     => $this->response_form_id( $form_source, $form_id ),
             'configs'     => $configs,
         ] );
     }
@@ -818,16 +891,16 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
      */
     public function get_action_config( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $form_source = $request->get_param( 'form_source' );
-        $form_id     = (int) $request->get_param( 'form_id' );
-        $action_id   = $request->get_param( 'action_id' );
+        $form_source = (string) $request->get_param( 'form_source' );
+        $form_id     = $this->get_request_form_id( $request );
+        $action_id   = (string) $request->get_param( 'action_id' );
 
         $configs       = $this->get_all_configs( $form_source, $form_id );
         $action_config = $this->normalize_action_config( $configs[ $action_id ] ?? [] );
 
         return $this->prepare_item_for_response( [
             'form_source' => $form_source,
-            'form_id'     => $form_id,
+            'form_id'     => $this->response_form_id( $form_source, $form_id ),
             'action_id'   => $action_id,
             'config'      => $action_config,
         ] );
@@ -842,9 +915,9 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
      */
     public function update_action_config( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $form_source = $request->get_param( 'form_source' );
-        $form_id     = (int) $request->get_param( 'form_id' );
-        $action_id   = $request->get_param( 'action_id' );
+        $form_source = (string) $request->get_param( 'form_source' );
+        $form_id     = $this->get_request_form_id( $request );
+        $action_id   = (string) $request->get_param( 'action_id' );
 
         $validation = $this->validate_action_config_write_request( $request );
         if ( is_wp_error( $validation ) )
@@ -919,7 +992,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
 
         return $this->prepare_item_for_response( [
             'form_source' => $form_source,
-            'form_id'     => $form_id,
+            'form_id'     => $this->response_form_id( $form_source, $form_id ),
             'action_id'   => $action_id,
             'config'      => $this->normalize_action_config( $action_config ),
         ] );
@@ -934,9 +1007,9 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
      */
     public function delete_action_config( WP_REST_Request $request ): WP_Error | WP_REST_Response
     {
-        $form_source = $request->get_param( 'form_source' );
-        $form_id     = (int) $request->get_param( 'form_id' );
-        $action_id   = $request->get_param( 'action_id' );
+        $form_source = (string) $request->get_param( 'form_source' );
+        $form_id     = $this->get_request_form_id( $request );
+        $action_id   = (string) $request->get_param( 'action_id' );
 
         $configs = $this->get_all_configs( $form_source, $form_id );
 
@@ -955,7 +1028,7 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
         return $this->prepare_item_for_response( [
             'deleted'     => true,
             'form_source' => $form_source,
-            'form_id'     => $form_id,
+            'form_id'     => $this->response_form_id( $form_source, $form_id ),
             'action_id'   => $action_id,
         ] );
     }
@@ -1351,8 +1424,8 @@ class Sentient_Forms_Form_Action_Config_Controller extends Sentient_Forms_Abstra
                     'readonly'    => true,
                 ],
                 'form_id' => [
-                    'description' => __( 'Form ID.', 'sentient-forms' ),
-                    'type'        => 'integer',
+                    'description' => __( 'Provider-native form identifier.', 'sentient-forms' ),
+                    'type'        => [ 'integer', 'string' ],
                     'context'     => [ 'view' ],
                     'readonly'    => true,
                 ],

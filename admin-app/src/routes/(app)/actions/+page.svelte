@@ -67,6 +67,8 @@
 	} from '$lib/utils/provider-health';
 	import { formatModelSelectionPrimary, formatTemplateModelHint } from '$lib/utils/model-selection';
 
+	type BadgeVariant = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
+
 	const client = createClientFromConfig();
 	const runtime = typeof window === 'undefined' ? undefined : window.sentientFormsConfig;
 	const formSources: FormSourceSummary[] = runtime?.formSources ?? [];
@@ -118,6 +120,33 @@
 		customActionsState.actions.filter((action) => action.status === 'active')
 	);
 	const openRouterHealth = $derived(openRouterActionHealth(providerCredentials));
+
+	function formSourceAvailabilityLabel(source: FormSourceSummary): string {
+		if (source.availability === 'requires_pro' || (source.requiresPro && !source.isActive)) {
+			return 'Requires Pro';
+		}
+
+		if (source.availability === 'not_installed') {
+			return 'Not installed';
+		}
+
+		return source.isActive ? 'Plugin active' : 'Inactive';
+	}
+
+	function formSourceAvailabilityVariant(source: FormSourceSummary): BadgeVariant {
+		return source.isActive && source.availability !== 'requires_pro' ? 'success' : 'warning';
+	}
+
+	function formSourceAvailabilityHelp(source: FormSourceSummary): string {
+		const explicit = source.availabilityMessage?.trim();
+		if (explicit) return explicit;
+
+		if (source.availability === 'requires_pro' || (source.requiresPro && !source.isActive)) {
+			return `${source.label} support requires the provider's Pro Forms APIs.`;
+		}
+
+		return '';
+	}
 
 	// CB-ACTIONS-002: count how many forms have each action enabled
 	const formsPerAction = $derived.by(() => {
@@ -665,7 +694,7 @@
 		return resolveHealthBadge(healthByForm.get(key) ?? null, healthLoading.has(key));
 	}
 
-	function formStateKey(sourceSlug: string, formId: number): string {
+	function formStateKey(sourceSlug: string, formId: string | number): string {
 		return `${sourceSlug}:${formId}`;
 	}
 
@@ -885,26 +914,35 @@
 				<div class="sf:flex sf:min-w-0 sf:flex-wrap sf:items-center sf:gap-2">
 					{#each formSources as source}
 						<div
-							class="sf:flex sf:items-center sf:gap-2 sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:px-3 sf:py-2"
+							class="sf:flex sf:items-center sf:gap-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-white sf:px-3 sf:py-2"
 						>
-							<span class="sf:max-w-40 sf:truncate sf:text-sm sf:font-medium sf:text-slate-800">
-								{source.label}
+							<span class="sf:flex sf:min-w-0 sf:flex-col">
+								<span class="sf:max-w-40 sf:truncate sf:text-sm sf:font-medium sf:text-slate-800">
+									{source.label}
+								</span>
+								{#if formSourceAvailabilityHelp(source)}
+									<span class="sf:max-w-64 sf:text-xs sf:text-slate-500">
+										{formSourceAvailabilityHelp(source)}
+									</span>
+								{/if}
 							</span>
-							<Badge variant={source.isActive ? 'success' : 'warning'}>
-								{source.isActive ? 'Plugin active' : 'Inactive'}
+							<Badge variant={formSourceAvailabilityVariant(source)}>
+								{formSourceAvailabilityLabel(source)}
 							</Badge>
-							<Badge variant={providerExecutionIsPaused(source.slug) ? 'warning' : 'success'}>
-								{providerExecutionIsPaused(source.slug) ? 'Paused' : 'Running'}
-							</Badge>
-							<Toggle
-								checked={!Boolean(executionProviderDisabled[source.slug])}
-								disabled={executionSettingsSaving || executionSettingsLoading || !source.isActive}
-								onchange={() =>
-									toggleProviderExecutionDisabled(
-										source.slug,
-										!Boolean(executionProviderDisabled[source.slug])
-									)}
-							/>
+							{#if source.isActive}
+								<Badge variant={providerExecutionIsPaused(source.slug) ? 'warning' : 'success'}>
+									{providerExecutionIsPaused(source.slug) ? 'Paused' : 'Running'}
+								</Badge>
+								<Toggle
+									checked={!Boolean(executionProviderDisabled[source.slug])}
+									disabled={executionSettingsSaving || executionSettingsLoading}
+									onchange={() =>
+										toggleProviderExecutionDisabled(
+											source.slug,
+											!Boolean(executionProviderDisabled[source.slug])
+										)}
+								/>
+							{/if}
 						</div>
 					{/each}
 				</div>

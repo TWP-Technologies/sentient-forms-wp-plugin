@@ -609,11 +609,11 @@ class Sentient_Forms_Async_Handler
         }
 
         $form_source = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
-        $form_id     = absint( $context['form_id'] ?? 0 );
+        $form_id     = $this->normalize_provider_form_id( $context['form_id'] ?? '' );
         $resolved    = $settings;
 
         $action_defaults = $this->get_action_defaults_config( $action_id );
-        $form_config     = $form_id > 0
+        $form_config     = '' !== $form_id
             ? $this->get_form_action_config( $form_source, $form_id, $action_id )
             : [];
 
@@ -656,15 +656,15 @@ class Sentient_Forms_Async_Handler
      * Load and normalize form-level action config for a specific action.
      *
      * @param string $form_source Form source id.
-     * @param int    $form_id     Form id.
+     * @param string $form_id     Provider-native form id.
      * @param string $action_id   Action id.
      *
      * @return array<string, mixed>
      */
-    private function get_form_action_config( string $form_source, int $form_id, string $action_id ): array
+    private function get_form_action_config( string $form_source, string $form_id, string $action_id ): array
     {
         $configs = get_option(
-            self::FORM_ACTION_CONFIG_OPTION_PREFIX . sanitize_key( $form_source ) . '_' . $form_id,
+            self::FORM_ACTION_CONFIG_OPTION_PREFIX . sanitize_key( $form_source ) . '_' . $this->normalize_form_id_option_suffix( $form_id ),
             []
         );
 
@@ -674,6 +674,31 @@ class Sentient_Forms_Async_Handler
         }
 
         return $this->normalize_action_config_payload( $configs[ $action_id ] ?? [] );
+    }
+
+    private function normalize_provider_form_id( mixed $form_id ): string
+    {
+        if ( ! is_scalar( $form_id ) )
+        {
+            return '';
+        }
+
+        return trim( sanitize_text_field( rawurldecode( (string) $form_id ) ) );
+    }
+
+    private function normalize_form_id_option_suffix( mixed $form_id ): string
+    {
+        $normalized = $this->normalize_provider_form_id( $form_id );
+        $suffix     = preg_replace( '/[^A-Za-z0-9_-]+/', '_', $normalized );
+
+        if ( ! is_string( $suffix ) )
+        {
+            return '0';
+        }
+
+        $suffix = trim( $suffix, '_' );
+
+        return '' !== $suffix ? $suffix : '0';
     }
 
     /**
@@ -1621,6 +1646,12 @@ class Sentient_Forms_Async_Handler
             {
                 $form['title'] = sanitize_text_field( (string) $data['form']['title'] );
             }
+
+            $fields = $this->sanitize_job_form_fields( $data['form']['fields'] ?? [] );
+            if ( [] !== $fields )
+            {
+                $form['fields'] = $fields;
+            }
         }
 
         $entry = [];
@@ -1662,6 +1693,60 @@ class Sentient_Forms_Async_Handler
         }
 
         return $payload;
+    }
+
+    /**
+     * @param mixed $fields Raw form-source field manifest rows.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function sanitize_job_form_fields( mixed $fields ): array
+    {
+        if ( ! is_array( $fields ) )
+        {
+            return [];
+        }
+
+        $sanitized = [];
+        foreach ( $fields as $field )
+        {
+            if ( ! is_array( $field ) )
+            {
+                continue;
+            }
+
+            $field_id = isset( $field['id'] ) && is_scalar( $field['id'] )
+                ? sanitize_text_field( (string) $field['id'] )
+                : '';
+            if ( '' === $field_id )
+            {
+                continue;
+            }
+
+            $row = [
+                'id' => $field_id,
+            ];
+
+            foreach ( [ 'label', 'adminLabel', 'type', 'visibility', 'field_id_scope', 'field_id_ambiguity_reason' ] as $key )
+            {
+                if ( isset( $field[ $key ] ) && is_scalar( $field[ $key ] ) )
+                {
+                    $row[ $key ] = sanitize_text_field( (string) $field[ $key ] );
+                }
+            }
+
+            foreach ( [ 'storage_eligible', 'file_reference_eligible', 'required', 'field_id_ambiguous' ] as $key )
+            {
+                if ( array_key_exists( $key, $field ) )
+                {
+                    $row[ $key ] = (bool) $field[ $key ];
+                }
+            }
+
+            $sanitized[] = $row;
+        }
+
+        return $sanitized;
     }
 
     private function sanitize_job_data_value( mixed $value ): mixed
@@ -2217,7 +2302,7 @@ class Sentient_Forms_Async_Handler
             return null;
         }
 
-        $classification = $this->get_upstream_spam_classification( $job );
+        $classification = $this->get_upstream_spam_classification( $job, $dependency_id );
         if ( null === $classification || ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
             return null;
@@ -2268,16 +2353,23 @@ class Sentient_Forms_Async_Handler
      */
     private function upstream_mapping_skips_downstream_on_spam( array $job, string $dependency_id ): bool
     {
-        $context    = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $context     = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
         $form_source = sanitize_key( (string) ( $context['form_source'] ?? $context['adapter_id'] ?? 'gravity_forms' ) );
-        $form_id     = absint( $context['form_id'] ?? 0 );
+        $form_id     = $this->normalize_provider_form_id( $context['form_id'] ?? '' );
 
-        if ( '' === $form_source || $form_id <= 0 )
+        if ( '' === $form_source || '' === $form_id )
         {
             return false;
         }
 
-        $form_settings = get_option( sprintf( 'sentient_forms_actions_%s_%d', $form_source, $form_id ), [] );
+        $form_settings = get_option(
+            sprintf(
+                'sentient_forms_actions_%s_%s',
+                $form_source,
+                $this->normalize_form_id_option_suffix( $form_id )
+            ),
+            []
+        );
         if ( ! is_array( $form_settings ) || ! isset( $form_settings[ $dependency_id ] ) || ! is_array( $form_settings[ $dependency_id ] ) )
         {
             return false;
@@ -2318,9 +2410,15 @@ class Sentient_Forms_Async_Handler
      *
      * @return string|null
      */
-    private function get_upstream_spam_classification( array $job ): ?string
+    private function get_upstream_spam_classification( array $job, ?string $dependency_id = null ): ?string
     {
         $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $classification = $this->get_upstream_spam_classification_from_event( $context, $dependency_id );
+        if ( null !== $classification )
+        {
+            return $classification;
+        }
+
         $entry_id = isset( $job['data']['entry']['id'] ) ? (int) $job['data']['entry']['id'] : (int) ( $context['entry_id'] ?? 0 );
 
         if ( $entry_id <= 0 )
@@ -2348,6 +2446,133 @@ class Sentient_Forms_Async_Handler
 
         $normalized = sanitize_key( (string) $classification );
         return '' === $normalized ? null : $normalized;
+    }
+
+    /**
+     * Resolve an upstream spam classification from the persisted execution event.
+     *
+     * @param array<string, mixed> $context       Current job context.
+     * @param string|null          $dependency_id Upstream mapping id.
+     *
+     * @return string|null
+     */
+    private function get_upstream_spam_classification_from_event( array $context, ?string $dependency_id ): ?string
+    {
+        $dependency_id = is_scalar( $dependency_id ) ? sanitize_text_field( (string) $dependency_id ) : '';
+        if ( '' === $dependency_id )
+        {
+            return null;
+        }
+
+        $dependency_request_ids = isset( $context['dependency_execution_request_ids'] ) && is_array( $context['dependency_execution_request_ids'] )
+            ? $context['dependency_execution_request_ids']
+            : [];
+        $execution_request_id = isset( $dependency_request_ids[ $dependency_id ] ) && is_scalar( $dependency_request_ids[ $dependency_id ] )
+            ? sanitize_text_field( (string) $dependency_request_ids[ $dependency_id ] )
+            : '';
+        if ( '' === $execution_request_id )
+        {
+            return null;
+        }
+
+        $event = $this->get_execution_events_repository()->get_by_request_id( $execution_request_id );
+        if ( ! is_array( $event ) || ! $this->execution_event_matches_context( $event, $context ) )
+        {
+            return null;
+        }
+
+        $result = isset( $event['result_json'] ) && is_array( $event['result_json'] )
+            ? $event['result_json']
+            : [];
+        if ( [] === $result )
+        {
+            return null;
+        }
+
+        return $this->extract_spam_classification_from_result( $result );
+    }
+
+    /**
+     * Prevent a stale event with the same request id from influencing another form/submission.
+     *
+     * @param array<string, mixed> $event   Persisted execution event.
+     * @param array<string, mixed> $context Current job context.
+     *
+     * @return bool
+     */
+    private function execution_event_matches_context( array $event, array $context ): bool
+    {
+        foreach ( [ 'form_source', 'form_id', 'submission_uuid' ] as $field )
+        {
+            $expected = isset( $context[ $field ] ) && is_scalar( $context[ $field ] )
+                ? sanitize_text_field( (string) $context[ $field ] )
+                : '';
+            $actual = isset( $event[ $field ] ) && is_scalar( $event[ $field ] )
+                ? sanitize_text_field( (string) $event[ $field ] )
+                : '';
+
+            if ( '' !== $expected && '' !== $actual && $expected !== $actual )
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Extract a normalized spam classification from common action result shapes.
+     *
+     * @param array<string, mixed> $result Stored action result payload.
+     *
+     * @return string|null
+     */
+    private function extract_spam_classification_from_result( array $result ): ?string
+    {
+        foreach (
+            [
+                [ 'evaluation_payload', 'result_data', 'classification' ],
+                [ 'result_data', 'classification' ],
+                [ 'result', 'structured', 'classification' ],
+                [ 'structured', 'classification' ],
+                [ 'classification' ],
+            ] as $path
+        )
+        {
+            $value = $this->array_path_value( $result, $path );
+            if ( is_scalar( $value ) )
+            {
+                $classification = sanitize_key( (string) $value );
+                if ( '' !== $classification )
+                {
+                    return $classification;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $payload Payload to inspect.
+     * @param array<int, string>   $path    Array path segments.
+     *
+     * @return mixed
+     */
+    private function array_path_value( array $payload, array $path ): mixed
+    {
+        $current = $payload;
+        foreach ( $path as $segment )
+        {
+            if ( ! is_array( $current ) || ! array_key_exists( $segment, $current ) )
+            {
+                return null;
+            }
+
+            $current = $current[ $segment ];
+        }
+
+        return $current;
     }
 
     /**

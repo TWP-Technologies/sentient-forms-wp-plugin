@@ -198,4 +198,48 @@ describe('Form field primitives', () => {
 		expect(thumb.style.transform).toBe('translateX(1.25rem)');
 		dispose();
 	});
+
+	it('toggle keeps click handling when rest attributes are forwarded', async () => {
+		const changes: boolean[] = [];
+		const { target, dispose } = mount(Toggle, {
+			id: 'ledger-enabled',
+			label: 'Store snapshots',
+			'data-testid': 'submission-ledger-toggle',
+			onchange: (event: CustomEvent<{ checked: boolean }>) => {
+				changes.push(event.detail.checked);
+			}
+		});
+
+		const button = target.querySelector('[data-testid="submission-ledger-toggle"]') as HTMLButtonElement;
+		expect(button).toBeTruthy();
+		expect(button.getAttribute('aria-checked')).toBe('false');
+
+		button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		await tick();
+
+		expect(button.getAttribute('aria-checked')).toBe('true');
+		expect(changes).toEqual([true]);
+		dispose();
+	});
+
+	it('toggle reports changes when checked is provided as a controlled value', async () => {
+		const changes: boolean[] = [];
+		const { target, dispose } = mount(Toggle, {
+			id: 'controlled-ledger-enabled',
+			label: 'Store snapshots',
+			checked: false,
+			onchange: (event: CustomEvent<{ checked: boolean }>) => {
+				changes.push(event.detail.checked);
+			}
+		});
+
+		const button = target.querySelector('button') as HTMLButtonElement;
+		expect(button.getAttribute('aria-checked')).toBe('false');
+
+		button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		await tick();
+
+		expect(changes).toEqual([true]);
+		dispose();
+	});
 });

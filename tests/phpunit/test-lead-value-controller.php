@@ -772,6 +772,54 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertContains( '99', $form_ids );
     }
 
+    public function test_elementor_provider_native_lead_grade_correction_uses_stored_result(): void
+    {
+        global $wpdb;
+
+        $results = new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
+        $grade_id = $results->upsert_from_execution(
+            [
+                'form_source'          => 'elementor_forms',
+                'form_id'              => '91:formabc',
+                'form_title'           => 'Elementor lead form',
+                'entry_id'             => 'sf-ledger-1',
+                'action_code'          => 'lead_grading_v1',
+                'execution_request_id' => 'lead-grading:elementor:sf-ledger-1',
+                'profile_version'      => 2,
+                'grade'                => 'C',
+                'justification'        => 'The model was unsure about fit.',
+                'entry_snapshot'       => [
+                    'field_summary' => [
+                        [
+                            'field_id' => 'name',
+                            'label'    => 'Name',
+                            'value'    => 'Ada Buyer',
+                        ],
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $grade_id );
+
+        $corrected = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/lead-value/forms/elementor_forms/91%3Aformabc/entries/sf-ledger-1/correction',
+            [
+                'grade'         => 'B',
+                'justification' => 'Human review found a likely fit.',
+            ]
+        );
+
+        $this->assertSame( 'elementor_forms', $corrected['entry']['form_source'] );
+        $this->assertSame( '91:formabc', $corrected['entry']['form_id'] );
+        $this->assertSame( 'sf-ledger-1', $corrected['entry']['entry_id'] );
+        $this->assertSame( 'B', $corrected['entry']['grade'] );
+        $this->assertSame( 'C', $corrected['entry']['correction']['original_grade'] );
+        $this->assertSame( 'Human review found a likely fit.', $corrected['entry']['correction']['justification'] );
+        $this->assertSame( '91:formabc', $corrected['dashboard']['form_id'] );
+        $this->assertSame( 'B', $corrected['dashboard']['entries'][0]['grade'] );
+    }
+
     public function test_dashboards_hydrate_missing_entry_preview_from_gravity_forms(): void
     {
         global $wpdb;

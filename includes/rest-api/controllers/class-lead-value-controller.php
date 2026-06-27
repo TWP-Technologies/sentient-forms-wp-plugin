@@ -207,14 +207,14 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
         register_rest_route(
             $this->namespace,
-            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[\d]+)/entries/(?P<entry_id>[^/]+)/correction',
+            '/' . $this->rest_base . '/forms/(?P<form_source>[a-z0-9_-]+)/(?P<form_id>[^/]+)/entries/(?P<entry_id>[^/]+)/correction',
             [
                 [
                     'methods'             => WP_REST_Server::CREATABLE,
                     'callback'            => [ $this, 'correct_entry_grade' ],
                     'permission_callback' => [ $this, 'permission_callback_with_nonce' ],
                     'args'                => array_merge(
-                        $this->form_args(),
+                        $this->provider_form_args(),
                         $this->entry_args(),
                         [
                             'grade' => [
@@ -1535,6 +1535,22 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
                 'type'              => 'integer',
                 'required'          => true,
                 'sanitize_callback' => 'absint',
+            ],
+        ];
+    }
+
+    private function provider_form_args(): array
+    {
+        return [
+            'form_source' => [
+                'type'              => 'string',
+                'required'          => true,
+                'sanitize_callback' => 'sanitize_key',
+            ],
+            'form_id' => [
+                'type'              => 'string',
+                'required'          => true,
+                'sanitize_callback' => static fn ( mixed $value ): string => sanitize_text_field( rawurldecode( (string) $value ) ),
             ],
         ];
     }

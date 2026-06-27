@@ -294,6 +294,10 @@ class AsyncHandlerTest extends WP_UnitTestCase
         GFAPI::$entries = [];
         GFAPI::$forms = [];
         remove_all_filters( 'pre_http_request' );
+        remove_all_filters( 'sentient_forms_elementor_is_active' );
+        remove_all_filters( 'sentient_forms_elementor_pro_forms_api_available' );
+        remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
+        remove_all_filters( 'sentient_forms_elementor_data_for_post' );
         remove_all_filters( 'sentient_forms_async_queue_threshold' );
         remove_all_filters( 'sentient_forms_async_stale_queue_threshold' );
         parent::tearDown();
@@ -1236,6 +1240,121 @@ class AsyncHandlerTest extends WP_UnitTestCase
         delete_option( 'sentient_forms_actions_gravity_forms_226' );
     }
 
+    public function test_process_action_skips_elementor_submission_when_upstream_event_classifies_spam(): void
+    {
+        $form_id         = '91:formabc';
+        $submission_uuid = '11111111-1111-4111-8111-111111111111';
+
+        update_option(
+            'sentient_forms_actions_elementor_forms_91_formabc',
+            [
+                'map_prereq' => [
+                    'local_mapping_id'           => 'map_prereq',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'skip_downstream_on_spam' => true,
+                    ],
+                ],
+            ]
+        );
+
+        $request_store = $this->plugin->get_async_request_store();
+        $executor      = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        try
+        {
+            $request_store->record(
+                'dep_req_elementor_spam',
+                [
+                    'status'    => 'success',
+                    'action_id' => 'spam_detection_v1',
+                    'adapter'   => 'elementor_forms',
+                ]
+            );
+
+            global $wpdb;
+            $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+            $events->record(
+                [
+                    'execution_request_id' => 'dep_req_elementor_spam',
+                    'form_source'          => 'elementor_forms',
+                    'form_id'              => $form_id,
+                    'entry_id'             => null,
+                    'submission_uuid'      => $submission_uuid,
+                    'provider'             => 'openrouter',
+                    'status'               => 'success',
+                    'result_json'          => [
+                        'structured' => [
+                            'classification' => 'spam',
+                        ],
+                    ],
+                ]
+            );
+
+            $scheduled = $this->plugin->process_action_async(
+                'entry_summary_v1',
+                [
+                    'hook'        => 'elementor_pro/forms/new_record',
+                    'form_source' => 'elementor_forms',
+                    'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
+                    'entry'       => [
+                        'id'              => null,
+                        'submission_uuid' => $submission_uuid,
+                        'full_name'       => 'Ada Lovelace',
+                    ],
+                ],
+                [
+                    'central_action_id'     => 'entry_summary_v1',
+                    'action_type_indicator' => 'master',
+                    'settings'              => [],
+                ],
+                [
+                    'hook'                             => 'elementor_pro/forms/new_record',
+                    'form_source'                      => 'elementor_forms',
+                    'form_id'                          => $form_id,
+                    'entry_id'                         => null,
+                    'submission_uuid'                  => $submission_uuid,
+                    'action_id'                        => 'map_summary_default_skip',
+                    'action_name_label'                => 'Entry Summary',
+                    'local_mapping_id'                 => 'map_summary_default_skip',
+                    'dependency_mapping_ids'           => [ 'map_prereq' ],
+                    'dependency_execution_request_ids' => [ 'map_prereq' => 'dep_req_elementor_spam' ],
+                    'dependency_wait_started_at'       => time(),
+                    'dependency_wait_max_seconds'      => 120,
+                    'dependency_wait_poll_seconds'     => 5,
+                ]
+            );
+
+            $this->assertTrue( $scheduled );
+
+            $job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+            $handler = $this->plugin->get_async_handler();
+            $handler->process_action(
+                $job['args']['action_id'],
+                $job['args']['data'],
+                $job['args']['settings'],
+                $job['args']['execution_request_id'],
+                $job['args']['context'],
+            );
+
+            $metadata = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] );
+            $this->assertSame( 'skipped', $metadata['status'] ?? null );
+
+            $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
+            $this->assertSame( 'skipped', $row['status'] ?? null );
+            $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
+            $this->assertSame( [], $executor->captured );
+        }
+        finally
+        {
+            delete_option( 'sentient_forms_actions_elementor_forms_91_formabc' );
+        }
+    }
+
     public function test_dispatch_action_evaluation_enqueues_evaluation_job(): void
     {
         $job = [
@@ -2135,6 +2254,68 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		delete_option( 'sentient_forms_form_config_gravity_forms_226' );
 	}
 
+	public function test_process_action_resolves_form_level_customization_for_provider_native_form_id(): void
+	{
+		update_option(
+			'sentient_forms_action_defaults_entry_summary_v1',
+			[
+				'action_customization' => 'Action-level Elementor summary customization.',
+			]
+		);
+		update_option(
+			'sentient_forms_form_config_elementor_forms_91_formabc',
+			[
+				'entry_summary_v1' => [
+					'action_customization' => 'Elementor form-level summary customization.',
+				],
+			]
+		);
+
+		$executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+		$reflection = new ReflectionClass( $this->plugin );
+		$property   = $reflection->getProperty( 'action_executor' );
+		$property->setAccessible( true );
+		$property->setValue( $this->plugin, $executor );
+
+		$data = [
+			'form'  => [ 'id' => '91:formabc', 'title' => 'Elementor lead form' ],
+			'entry' => [ 'id' => 'submission-uuid-123', 'field_1' => 'summarize me' ],
+		];
+		$context = [
+			'form_source' => 'elementor_forms',
+			'form_id'     => '91:formabc',
+			'entry_id'    => 'submission-uuid-123',
+			'job_id'      => wp_generate_uuid4(),
+			'action_id'   => 'entry_summary_v1',
+		];
+
+		try
+		{
+			$handler = $this->plugin->get_async_handler();
+			$handler->process_action(
+				'entry_summary_v1',
+				$data,
+				[
+					'central_action_id'     => 'entry_summary_v1',
+					'action_type_indicator' => 'master',
+				],
+				null,
+				$context
+			);
+
+			$captured_settings = $executor->captured['context']['settings'] ?? [];
+			$this->assertSame(
+				'Elementor form-level summary customization.',
+				$captured_settings['action_customization'] ?? null
+			);
+		}
+		finally
+		{
+			delete_option( 'sentient_forms_action_defaults_entry_summary_v1' );
+			delete_option( 'sentient_forms_form_config_elementor_forms_91_formabc' );
+		}
+	}
+
 	public function test_process_action_form_level_spam_policies_override_action_defaults(): void
 	{
 		update_option(
@@ -2587,6 +2768,190 @@ class AsyncHandlerTest extends WP_UnitTestCase
 		}
 	}
 
+    public function test_process_local_mapping_executes_elementor_mapping_from_submission_ledger_identifiers(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        global $wpdb;
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id = self::factory()->post->create(
+            [
+                'post_type'   => 'page',
+                'post_status' => 'publish',
+                'post_title'  => 'Elementor Landing',
+            ]
+        );
+        update_post_meta( $page_id, '_elementor_data', wp_slash( wp_json_encode( $this->elementor_local_mapping_form_tree() ) ) );
+        add_filter( 'sentient_forms_elementor_posts_with_data', static fn() => [ $page_id ] );
+
+        $credentials     = new Sentient_Forms_Provider_Credentials_Repository( $wpdb );
+        $consents        = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $custom_actions  = new Sentient_Forms_Local_Custom_Actions_Repository( $wpdb );
+        $mappings        = new Sentient_Forms_Form_Mappings_Repository( $wpdb );
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger_capture  = new Sentient_Forms_Submission_Ledger_Capture_Service( $wpdb );
+        $events          = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $vault           = new Sentient_Forms_Provider_Credential_Vault();
+        $encrypted       = $vault->encrypt( 'sk-or-elementor-local-async-test-secret' );
+        $form_id         = $page_id . ':formabc';
+        $submission_uuid = '44444444-5555-4666-8777-888888888888';
+
+        $this->assertIsString( $encrypted );
+
+        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+        $captured = $ledger_capture->capture(
+            [
+                'submission_uuid'  => $submission_uuid,
+                'form_source'      => 'elementor_forms',
+                'form_id'          => $form_id,
+                'logical_fields'   => [
+                    'full_name' => 'Elementor Lead',
+                ],
+                'provider_metadata' => [
+                    'form_name' => 'Async Elementor Form',
+                ],
+            ]
+        );
+        $this->assertIsArray( $captured );
+
+        $credential_id = $credentials->create(
+            [
+                'provider'          => 'openrouter',
+                'label'             => 'Elementor Async OpenRouter key',
+                'auth_mode'         => 'manual_key',
+                'encrypted_secret'  => $encrypted,
+                'status'            => 'valid',
+                'last_validated_at' => current_time( 'mysql' ),
+            ]
+        );
+        $this->assertIsInt( $credential_id );
+
+        $this->assertIsInt( $consents->record( 'openrouter', '2026-04-18', 0 ) );
+
+        $action_id = $custom_actions->create(
+            [
+                'code'                 => 'elementor_local_async_summary',
+                'display_name'         => 'Elementor Local Async Summary',
+                'definition_json'      => [
+                    'prompt_template' => 'Summarize {{name}} from {{form.title}}.',
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+                'status'               => 'active',
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $mappings->create(
+            [
+                'form_source'         => 'elementor_forms',
+                'form_id'             => $form_id,
+                'hook'                => 'after_submission',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'name' => 'full_name',
+                ],
+                'execution_mode'      => 'async',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        add_filter(
+            'pre_http_request',
+            static function ( $preempt, array $args, string $url ): mixed {
+                if ( false !== strpos( $url, 'openrouter.ai/api/v1/chat/completions' ) )
+                {
+                    return [
+                        'headers'  => [],
+                        'body'     => wp_json_encode(
+                            [
+                                'id'      => 'chatcmpl-elementor-local-async',
+                                'model'   => 'openrouter/auto',
+                                'choices' => [
+                                    [
+                                        'message'       => [
+                                            'role'    => 'assistant',
+                                            'content' => wp_json_encode(
+                                                [
+                                                    'summary' => 'Elementor local execution completed.',
+                                                ]
+                                            ),
+                                        ],
+                                        'finish_reason' => 'stop',
+                                    ],
+                                ],
+                                'usage'   => [
+                                    'prompt_tokens'     => 7,
+                                    'completion_tokens' => 5,
+                                    'total_tokens'      => 12,
+                                ],
+                            ]
+                        ),
+                        'response' => [
+                            'code'    => 200,
+                            'message' => 'OK',
+                        ],
+                        'cookies'  => [],
+                    ];
+                }
+
+                return $preempt;
+            },
+            9,
+            3
+        );
+
+        $handler   = $this->plugin->get_async_handler();
+        $scheduled = $handler->schedule_local_mapping(
+            $mapping_id,
+            [
+                'id'    => $form_id,
+                'title' => 'Async Elementor Form',
+            ],
+            [
+                'submission_uuid' => $submission_uuid,
+                'full_name'       => 'Elementor Lead',
+            ],
+            [
+                'form_source'          => 'elementor_forms',
+                'form_id'              => $form_id,
+                'action_id'            => 'local_first_' . $mapping_id,
+                'execution_request_id' => 'elementor-local-async-request-success',
+                'submission_uuid'      => $submission_uuid,
+            ]
+        );
+        $this->assertTrue( $scheduled );
+
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $payload = $job['args'][0] ?? [];
+        $this->assertNull( $payload['entry_id'] ?? null );
+        $this->assertSame( $submission_uuid, $payload['submission_uuid'] ?? null );
+
+        $handler->process_local_mapping( $payload );
+
+        $event = $events->get_by_request_id( 'elementor-local-async-request-success' );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'succeeded', $event['status'] ?? null );
+        $this->assertSame( $mapping_id, (int) ( $event['mapping_id'] ?? 0 ) );
+        $this->assertSame( 'elementor_forms', $event['form_source'] ?? null );
+        $this->assertSame( $form_id, $event['form_id'] ?? null );
+        $this->assertNull( $event['entry_id'] ?? null );
+        $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
+        $this->assertSame( 'Elementor local execution completed.', $event['result_json']['structured']['summary'] ?? null );
+
+        $request = $this->plugin->get_async_request_store()->get( 'elementor-local-async-request-success' );
+        $this->assertSame( 'success', $request['status'] ?? null );
+    }
+
 	public function test_process_local_mapping_retries_transient_openrouter_failure(): void
 	{
 		Sentient_Forms_Installer::maybe_upgrade();
@@ -2876,10 +3241,45 @@ class AsyncHandlerTest extends WP_UnitTestCase
 				'sentient_custom_actions',
 				'sentient_form_mappings',
 				'sentient_execution_events',
+				'sentient_submission_ledger_settings',
+				'sentient_submission_ledger',
 			] as $table
 		)
 		{
 			$wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
 		}
 	}
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function elementor_local_mapping_form_tree(): array
+    {
+        return [
+            [
+                'id'       => 'container1',
+                'elType'   => 'container',
+                'settings' => [],
+                'elements' => [
+                    [
+                        'id'         => 'formabc',
+                        'elType'     => 'widget',
+                        'widgetType' => 'form',
+                        'settings'   => [
+                            'form_name'   => 'Async Elementor Form',
+                            'form_fields' => [
+                                [
+                                    'custom_id'   => 'full_name',
+                                    'field_label' => 'Full name',
+                                    'field_type'  => 'text',
+                                    'required'    => 'true',
+                                ],
+                            ],
+                        ],
+                        'elements'   => [],
+                    ],
+                ],
+            ],
+        ];
+    }
 }

@@ -8,6 +8,12 @@ describe('lead scoring utilities', () => {
 		);
 	});
 
+	it('routes Elementor setup jumps to the form actions page', () => {
+		expect(setupJumpPath({ form_source: 'elementor_forms', form_id: '91:formabc' })).toBe(
+			'/actions/elementor_forms/91:formabc'
+		);
+	});
+
 	it('reads setup view from hash-router query strings', () => {
 		expect(leadScoringViewFromLocation('', '#/actions/gravity_forms/7/lead-value?view=setup')).toBe(
 			'setup'

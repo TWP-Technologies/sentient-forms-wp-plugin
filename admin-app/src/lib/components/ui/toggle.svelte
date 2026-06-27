@@ -50,6 +50,7 @@
 
 <div class="sf:flex sf:items-start sf:gap-3" data-testid="toggle">
 	<button
+		{...rest}
 		type="button"
 		id={id}
 		role="switch"
@@ -65,7 +66,6 @@
 		disabled={disabled}
 		onclick={handleClick}
 		onkeydown={handleKeydown}
-		{...rest}
 	>
 		<span
 			aria-hidden="true"

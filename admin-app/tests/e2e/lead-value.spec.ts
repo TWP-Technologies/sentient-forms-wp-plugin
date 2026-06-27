@@ -478,4 +478,163 @@ test.describe('lead scoring workspace', () => {
 		expect(await quickJumpList.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
 		expect(await configuredFormsList.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(true);
 	});
+
+	test('keeps local correction and hides Gravity-only replies for Elementor aggregate rows', async ({
+		page
+	}) => {
+		const elementorFormId = '91:formabc';
+		const encodedElementorFormId = encodeURIComponent(elementorFormId);
+		const elementorDashboardResponse = {
+			...dashboardResponse,
+			form_source: 'elementor_forms',
+			form_id: elementorFormId,
+			entries: [
+				{
+					...dashboardResponse.entries[0],
+					form_source: 'elementor_forms',
+					form_id: elementorFormId,
+					form_title: 'Elementor lead form',
+					provider_label: 'Elementor Forms',
+					entry_id: 'sf-ledger-1',
+					lead_execution_id: 'lead:elementor:sf-ledger-1',
+					reply_execution_id: 'reply:elementor:sf-ledger-1'
+				}
+			],
+			forms: [
+				{
+					...dashboardResponse.forms[0],
+					form_source: 'elementor_forms',
+					form_id: elementorFormId,
+					form_title: 'Elementor lead form',
+					provider_label: 'Elementor Forms'
+				}
+			],
+			unconfigured_forms: []
+		};
+
+		await page.route('**/wp-json/sentient-forms/v1/lead-value/dashboard**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(elementorDashboardResponse)
+			})
+		);
+		let correctionRequests = 0;
+		await page.route(
+			`**/wp-json/sentient-forms/v1/lead-value/forms/elementor_forms/${encodedElementorFormId}/entries/sf-ledger-1/correction`,
+			async (route) => {
+				correctionRequests += 1;
+				expect(route.request().method()).toBe('POST');
+				const payload = route.request().postDataJSON() as {
+					grade?: string;
+					justification?: string;
+				};
+				expect(payload.grade).toBe('B');
+				expect(payload.justification).toBe('Human review found a likely fit.');
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/json',
+					body: JSON.stringify({
+						entry: {
+							...elementorDashboardResponse.entries[0],
+							grade: 'B',
+							correction: {
+								original_grade: 'A',
+								grade: 'B',
+								justification: 'Human review found a likely fit.'
+							}
+						},
+						dashboard: elementorDashboardResponse
+					})
+				});
+			}
+		);
+
+		await page.goto(
+			`/lead-scoring?entry=sf-ledger-1&form_source=elementor_forms&form_id=${encodedElementorFormId}`,
+			{ waitUntil: 'networkidle' }
+		);
+		await expect(page.getByRole('table').getByText('Elementor lead form')).toBeVisible();
+
+		const dialog = page.getByRole('dialog');
+		await expect(dialog).toContainText('Entry #sf-ledger-1');
+		await expect(dialog.getByRole('button', { name: 'Correct grade' })).toBeVisible();
+		await expect(dialog.getByRole('button', { name: 'Generate reply' })).toHaveCount(0);
+		await expect(dialog).toContainText(
+			'Manual reply generation for Elementor Forms requires proven native Form Submissions support.'
+		);
+		await dialog.getByRole('button', { name: 'Correct grade' }).click();
+		const correctionDialog = page.getByRole('dialog', { name: 'Correct this grade' });
+		await correctionDialog.getByLabel('Corrected Grade').selectOption('B');
+		await correctionDialog
+			.getByLabel('Correction Justification')
+			.fill('Human review found a likely fit.');
+		await correctionDialog.getByRole('button', { name: 'Save Correction' }).click();
+		await expect(correctionDialog).toHaveCount(0);
+		expect(correctionRequests).toBe(1);
+	});
+
+	test('routes Elementor aggregate setup links to form actions instead of Lead Scoring setup', async ({
+		page
+	}) => {
+		const elementorDashboardResponse = {
+			...dashboardResponse,
+			form_source: 'elementor_forms',
+			form_id: '91:formabc',
+			entries: [
+				{
+					...dashboardResponse.entries[0],
+					form_source: 'elementor_forms',
+					form_id: '91:formabc',
+					form_title: 'Elementor lead form',
+					provider_label: 'Elementor Forms',
+					entry_id: 'sf-ledger-1'
+				}
+			],
+			forms: [
+				{
+					...dashboardResponse.forms[0],
+					form_source: 'elementor_forms',
+					form_id: '91:formabc',
+					form_title: 'Elementor lead form',
+					provider_label: 'Elementor Forms'
+				}
+			],
+			unconfigured_forms: [
+				{
+					...dashboardResponse.unconfigured_forms[0],
+					form_source: 'elementor_forms',
+					form_id: '92:quote-widget',
+					form_title: 'Elementor quote form',
+					provider_label: 'Elementor Forms'
+				}
+			]
+		};
+
+		await page.route('**/wp-json/sentient-forms/v1/lead-value/dashboard**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify(elementorDashboardResponse)
+			})
+		);
+
+		await page.goto('/lead-scoring', { waitUntil: 'networkidle' });
+
+		await expect(
+			page
+				.getByRole('row', { name: /Elementor lead form/ })
+				.getByRole('link', { name: 'Setup' })
+		).toHaveAttribute('href', /\/actions\/elementor_forms\/91(?::|%3A)formabc$/);
+		await expect(
+			page
+				.getByTestId('lead-scoring-configured-forms-list')
+				.getByRole('link', { name: 'Setup' })
+		).toHaveAttribute('href', /\/actions\/elementor_forms\/91(?::|%3A)formabc$/);
+		await expect(
+			page
+				.getByTestId('lead-scoring-quick-jump-list')
+				.getByRole('link', { name: 'Set Up' })
+		).toHaveAttribute('href', /\/actions\/elementor_forms\/92(?::|%3A)quote-widget$/);
+	});
 });

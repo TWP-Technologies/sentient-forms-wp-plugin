@@ -27,6 +27,9 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
     protected function tearDown(): void
     {
         remove_filter( 'sentient_forms_rest_api_controller_classes', [ $this, 'controller_classes' ], 99 );
+        remove_all_filters( 'sentient_forms_elementor_is_active' );
+        remove_all_filters( 'sentient_forms_elementor_pro_forms_api_available' );
+        remove_all_filters( 'sentient_forms_elementor_pro_form_submissions_api_available' );
         parent::tearDown();
     }
 
@@ -197,6 +200,132 @@ class Tests_Local_Workspace_Controller extends WP_UnitTestCase
             'diagnostic-person@example.test',
             wp_json_encode( $support_bundle )
         );
+    }
+
+    public function test_support_bundle_includes_elementor_pro_requirement_diagnostics(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_false' );
+
+        $support_bundle = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/support-bundle' );
+        $elementor      = $support_bundle['form_sources']['elementor_forms'] ?? null;
+
+        $this->assertIsArray( $elementor );
+        $this->assertSame( 'Elementor Forms', $elementor['label'] );
+        $this->assertFalse( $elementor['is_active'] );
+        $this->assertSame( 'requires_pro', $elementor['availability'] );
+        $this->assertStringContainsString( 'Elementor Pro Forms', $elementor['availability_message'] );
+        $this->assertTrue( $elementor['requirements']['requires_pro'] );
+        $this->assertTrue( $elementor['requirements']['is_elementor_active'] );
+        $this->assertFalse( $elementor['requirements']['is_pro_forms_api_available'] );
+        $this->assertTrue( $elementor['ledger']['required_for_parity'] );
+        $this->assertFalse( $elementor['lifecycles']['after_submission']['supported'] );
+    }
+
+    public function test_support_bundle_marks_elementor_pro_forms_without_form_submissions_as_paid_but_limited(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+
+        $support_bundle = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/support-bundle' );
+        $elementor      = $support_bundle['form_sources']['elementor_forms'] ?? null;
+
+        $this->assertIsArray( $elementor );
+        $this->assertTrue( $elementor['is_active'] );
+        $this->assertSame( 'available', $elementor['availability'] );
+        $this->assertTrue( $elementor['lifecycles']['after_submission']['supported'] );
+        $this->assertFalse( $elementor['native_entry']['id'] );
+        $this->assertFalse( $elementor['native_entry']['link'] );
+        $this->assertTrue( $elementor['requirements']['is_pro_forms_api_available'] );
+        $this->assertFalse( $elementor['requirements']['is_form_submissions_api_available'] );
+        $this->assertSame( 'unavailable', $elementor['requirements']['native_submission_parity'] );
+        $this->assertSame(
+            'elementor_pro_advanced_solo_or_higher',
+            $elementor['requirements']['minimum_native_submission_plan']
+        );
+        $this->assertStringContainsString(
+            'Form Submissions',
+            $elementor['requirements']['native_submission_parity_reason']
+        );
+    }
+
+    public function test_support_bundle_suppresses_elementor_native_entry_ids_when_form_submissions_are_unavailable(): void
+    {
+        global $wpdb;
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $created = $ledger->create(
+            [
+                'submission_uuid'        => '55555555-5555-4555-8555-555555555555',
+                'form_source'            => 'elementor_forms',
+                'form_id'                => '91:formabc',
+                'native_entry_id'        => 'elementor-submission-123',
+                'native_entry_url'       => 'https://example.test/wp-admin/admin.php?page=e-form-submissions&submission=123',
+                'logical_fields_json'    => [
+                    'email' => 'elementor-diagnostic@example.test',
+                ],
+                'provider_metadata_json' => [
+                    'source' => 'elementor_forms',
+                ],
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        $support_bundle = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/support-bundle' );
+        $recent         = $support_bundle['submission_ledger']['recent'][0] ?? [];
+
+        $this->assertSame( 'elementor_forms', $recent['form_source'] ?? null );
+        $this->assertSame( '91:formabc', $recent['form_id'] ?? null );
+        $this->assertNull( $recent['native_entry_id'] ?? null );
+        $this->assertStringNotContainsString( 'elementor-submission-123', wp_json_encode( $support_bundle ) );
+        $this->assertStringNotContainsString( 'e-form-submissions', wp_json_encode( $support_bundle ) );
+        $this->assertStringNotContainsString( 'elementor-diagnostic@example.test', wp_json_encode( $support_bundle ) );
+    }
+
+    public function test_local_execution_events_suppress_elementor_entry_ids_when_form_submissions_are_unavailable(): void
+    {
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+
+        $event = $this->dispatch_json(
+            'POST',
+            '/sentient-forms/v1/local/execution-events',
+            [
+                'execution_request_id' => 'request-elementor-native-entry-suppression',
+                'form_source'          => 'elementor_forms',
+                'form_id'              => '91:formabc',
+                'entry_id'             => 'elementor-submission-123',
+                'submission_uuid'      => '66666666-6666-4666-8666-666666666666',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+            ],
+            201
+        );
+        $this->assertArrayHasKey( 'entry_id', $event );
+        $this->assertNull( $event['entry_id'] );
+
+        $events = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/execution-events?limit=10' );
+        $this->assertSame( 'elementor_forms', $events[0]['form_source'] ?? null );
+        $this->assertSame( '91:formabc', $events[0]['form_id'] ?? null );
+        $this->assertArrayHasKey( 'entry_id', $events[0] );
+        $this->assertNull( $events[0]['entry_id'] );
+        $this->assertStringNotContainsString( 'elementor-submission-123', wp_json_encode( $events ) );
+
+        $support_bundle = $this->dispatch_json( 'GET', '/sentient-forms/v1/local/support-bundle' );
+        $recent         = $support_bundle['execution_summary']['recent'][0] ?? [];
+
+        $this->assertSame( 'elementor_forms', $recent['form_source'] ?? null );
+        $this->assertSame( '91:formabc', $recent['form_id'] ?? null );
+        $this->assertArrayHasKey( 'entry_id', $recent );
+        $this->assertNull( $recent['entry_id'] );
+        $this->assertStringNotContainsString( 'elementor-submission-123', wp_json_encode( $support_bundle ) );
     }
 
     public function test_mapping_list_requires_form_filter(): void

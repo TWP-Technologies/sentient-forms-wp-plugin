@@ -38,6 +38,14 @@ final class Sentient_Forms_Form_Sources
     const CONTACT_FORM_7 = 'contact_form_7';
 
     /**
+     * Slug for Elementor Forms.
+     *
+     * @var string
+     * @since 0.5.1
+     */
+    const ELEMENTOR_FORMS = 'elementor_forms';
+
+    /**
      * Slug for WPForms.
      *
      * @var string
@@ -59,6 +67,7 @@ final class Sentient_Forms_Form_Sources
             self::GRAVITY_FORMS,
             self::CONTACT_FORM_7,
             self::WPFORMS,
+            self::ELEMENTOR_FORMS,
         ];
 
         /**

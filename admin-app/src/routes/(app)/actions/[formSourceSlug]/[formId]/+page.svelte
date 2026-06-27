@@ -62,6 +62,7 @@
 		FormActionMutationPayload,
 		FormExecutionStatus,
 		FormFieldInfo,
+		FormSourceDescriptor,
 		FormSummary,
 		LinkedActionStatus,
 		InputMapping,
@@ -269,12 +270,21 @@
 	function fallbackFormSourceLabel(slug: string): string {
 		if (slug === 'gravity_forms') return 'Gravity Forms';
 		if (slug === 'contact_form_7') return 'Contact Form 7';
+		if (slug === 'elementor_forms') return 'Elementor Forms';
 
 		return slug
 			.split('_')
 			.filter(Boolean)
 			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
 			.join(' ');
+	}
+
+	function descriptorRequirementString(
+		requirements: FormSourceDescriptor['requirements'] | undefined,
+		key: string
+	): string {
+		const value = requirements?.[key];
+		return typeof value === 'string' ? value.trim() : '';
 	}
 
 	function sourceAwareLocalBuilderTemplate(
@@ -393,6 +403,62 @@
 			formSourceDescriptor?.label?.trim() ||
 			fallbackFormSourceLabel(data.formSourceSlug)
 	);
+	const formSourceAvailability = $derived(
+		formSourceDescriptor?.availability ??
+			(formSourceDescriptor?.is_active === false ? 'inactive' : 'available')
+	);
+	const formSourceUnavailable = $derived(
+		formSourceDescriptor !== null && formSourceAvailability !== 'available'
+	);
+	const canConfigureFormSource = $derived(!formSourceUnavailable);
+	const formSourceAvailabilityMessage = $derived.by(() => {
+		const explicit = formSourceDescriptor?.availability_message?.trim();
+		if (explicit) return explicit;
+
+		if (formSourceAvailability === 'requires_pro' || formSourceDescriptor?.requires_pro === true) {
+			return `${currentFormAdapterLabel} support requires the provider's Pro Forms APIs before Sentient Forms actions can be configured.`;
+		}
+
+		if (formSourceAvailability === 'not_installed') {
+			return `${currentFormAdapterLabel} is not installed in this WordPress environment.`;
+		}
+
+		return `${currentFormAdapterLabel} is unavailable in this WordPress environment.`;
+	});
+	const formSourceLimitationMessages = $derived.by(() => {
+		if (formSourceUnavailable || !formSourceDescriptor) return [];
+
+		const messages: string[] = [];
+		const validationUnsupported = formSourceDescriptor.lifecycles.validation?.supported === false;
+		const realtimeUnsupported = formSourceDescriptor.lifecycles.real_time?.supported === false;
+		if (validationUnsupported && realtimeUnsupported) {
+			messages.push(
+				`Validation blocking and realtime assistance are not supported for ${currentFormAdapterLabel} in this release.`
+			);
+		}
+
+		const nativeSubmissionReason = descriptorRequirementString(
+			formSourceDescriptor.requirements,
+			'native_submission_parity_reason'
+		);
+		if (nativeSubmissionReason) {
+			messages.push(nativeSubmissionReason);
+		}
+
+		const nativeEnrichment = formSourceDescriptor.native_enrichment;
+		if (
+			nativeEnrichment &&
+			nativeEnrichment.notes === false &&
+			nativeEnrichment.status === false &&
+			nativeEnrichment.spam === false
+		) {
+			messages.push(
+				`Native result writing and spam status updates stay disabled for ${currentFormAdapterLabel}.`
+			);
+		}
+
+		return messages;
+	});
 	const providerEditLinkLabel = $derived(`Open in ${currentFormAdapterLabel}`);
 	const providerEditUrl = $derived(
 		currentFormSummary?.provider_edit_url ??
@@ -1799,6 +1865,7 @@
 	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
 	const routeFormId = $derived(encodeURIComponent(data.formId));
 	const currentFormTitle = $derived(currentFormSummary?.title?.trim() || `Form #${data.formId}`);
+	const showLeadScoringLink = $derived(data.formSourceSlug !== 'elementor_forms');
 	const submissionLedgerSettings = $derived(actionsState.bootstrap?.ledger_settings ?? null);
 	const submissionLedgerEnabled = $derived(submissionLedgerSettings?.enabled === true);
 	const submissionLedgerSaving = $derived(actionsState.submissionLedgerSaving === true);
@@ -1842,6 +1909,21 @@
 		return 'WPForms Lite/no-native-entry submissions use Sentient Forms Submission Ledger records instead of native WPForms entry links.';
 	});
 	const sectionDescription = $derived(`Link actions and execution settings for ${currentFormTitle}.`);
+	const entryLookupHelpText = $derived(
+		data.formSourceSlug === 'gravity_forms'
+			? 'Use an entry ID from the Sentient Forms Action Log for this Gravity Forms form, not the Gravity Forms submission ID.'
+			: `Use a Sentient Forms Action Log entry ID for this ${currentFormAdapterLabel} form. Native provider submission IDs are not used for this check.`
+	);
+	const uploadSourceModeLabel = $derived(
+		data.formSourceSlug === 'gravity_forms'
+			? 'Gravity Forms uploads'
+			: `${currentFormAdapterLabel} uploads`
+	);
+	const mixedUploadSourceModeLabel = $derived(
+		data.formSourceSlug === 'gravity_forms'
+			? 'Mixed (uploads + media)'
+			: `Mixed (${currentFormAdapterLabel} uploads + media)`
+	);
 	const selectedCreateActionLabel = $derived.by(() => {
 		if (createKind === 'template') {
 			return selectedDefinition?.label ?? selectedTemplateId ?? 'Built-in action';
@@ -1864,6 +1946,7 @@
 	});
 	const linkActionDisabled = $derived(
 		creating ||
+			!canConfigureFormSource ||
 			selectedHooks.size === 0 ||
 			(!hasDefinitions && createKind === 'template') ||
 			(createKind === 'custom' && customActions.length === 0) ||
@@ -2653,6 +2736,8 @@
 	}
 
 	function openAddActionPanel() {
+		if (!canConfigureFormSource) return;
+
 		selectedCreateDependencyIds = new Set();
 		createError = null;
 		localBuilderResult = null;
@@ -3917,7 +4002,7 @@
 	}
 
 	async function toggleSubmissionLedger() {
-		if (submissionLedgerSaving) return;
+		if (submissionLedgerSaving || !canConfigureFormSource) return;
 
 		await formActionsStore.updateSubmissionLedgerSettings(
 			data.formSourceSlug,
@@ -4223,12 +4308,14 @@
 				/>
 			</div>
 			<ButtonLink variant="secondary" href={appHref('/actions')}>All forms</ButtonLink>
-			<ButtonLink
-				variant="secondary"
-				href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}/lead-value`)}
-			>
-				Lead Scoring
-			</ButtonLink>
+			{#if showLeadScoringLink}
+				<ButtonLink
+					variant="secondary"
+					href={appHref(`/actions/${routeFormSourceSlug}/${routeFormId}/lead-value`)}
+				>
+					Lead Scoring
+				</ButtonLink>
+			{/if}
 			{#if providerEditUrl}
 				<a
 					href={providerEditUrl}
@@ -4241,8 +4328,11 @@
 				</a>
 			{/if}
 			<Button variant="secondary" onclick={refresh}>Refresh</Button>
-			<Button onclick={openAddActionPanel}>Add action</Button>
-			<Button variant="secondary" onclick={() => (showTemplateLibrary = true)}
+			<Button onclick={openAddActionPanel} disabled={!canConfigureFormSource}>Add action</Button>
+			<Button
+				variant="secondary"
+				onclick={() => (showTemplateLibrary = true)}
+				disabled={!canConfigureFormSource}
 				>Import from Library</Button
 			>
 			<Button variant="secondary" onclick={checkEntryStatus}>Check Sentient Forms log entry</Button>
@@ -4289,9 +4379,46 @@
 					{providerEditLinkLabel}
 				</a>
 			{/if}
-			<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
+			<Button size="sm" onclick={openAddActionPanel} disabled={!canConfigureFormSource}
+				>Add action</Button
+			>
 		</div>
 	</div>
+
+	{#if formSourceUnavailable}
+		<Alert
+			variant="warning"
+			class="sf:mt-2"
+			data-testid="form-source-availability-alert"
+		>
+			<div class="sf:flex sf:flex-col sf:gap-2 sf:sm:flex-row sf:sm:items-start sf:sm:justify-between">
+				<div>
+					<p class="sf:font-medium">{currentFormAdapterLabel} is unavailable</p>
+					<p class="sf:mt-1 sf:text-sm">{formSourceAvailabilityMessage}</p>
+				</div>
+				{#if formSourceAvailability === 'requires_pro' || formSourceDescriptor?.requires_pro === true}
+					<Badge variant="warning">Requires Pro</Badge>
+				{/if}
+			</div>
+		</Alert>
+	{/if}
+
+	{#if formSourceLimitationMessages.length > 0}
+		<Alert
+			variant="info"
+			class="sf:mt-2"
+			data-testid="form-source-limitations-alert"
+		>
+			<div class="sf:flex sf:flex-col sf:gap-2">
+				<p class="sf:font-medium">{currentFormAdapterLabel} capability limits</p>
+				<ul class="sf:list-disc sf:space-y-1 sf:pl-4 sf:text-sm">
+					{#each formSourceLimitationMessages as message}
+						<li>{message}</li>
+					{/each}
+				</ul>
+			</div>
+		</Alert>
+	{/if}
 
 	<div
 		class="sf:mt-2 sf:flex sf:flex-col sf:gap-3 sf:rounded-md sf:border sf:border-slate-200 sf:bg-slate-50 sf:px-4 sf:py-3 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between"
@@ -4324,7 +4451,7 @@
 		<div class="sf:flex sf:shrink-0 sf:flex-wrap sf:items-center sf:gap-2">
 			<Toggle
 				checked={submissionLedgerEnabled}
-				disabled={submissionLedgerSaving}
+				disabled={submissionLedgerSaving || !canConfigureFormSource}
 				onchange={toggleSubmissionLedger}
 				label="Store snapshots"
 				data-testid="submission-ledger-toggle"
@@ -4528,7 +4655,9 @@
 						Choose an action template or custom action, then select hooks.
 					</p>
 				</div>
-				<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
+				<Button size="sm" onclick={openAddActionPanel} disabled={!canConfigureFormSource}
+					>Add action</Button
+				>
 			</div>
 		</Card>
 	</div>
@@ -4583,7 +4712,9 @@
 						Table
 					</Button>
 				{/if}
-				<Button size="sm" onclick={openAddActionPanel}>Add action</Button>
+				<Button size="sm" onclick={openAddActionPanel} disabled={!canConfigureFormSource}
+					>Add action</Button
+				>
 				<Button variant="secondary" size="sm" onclick={refresh}>Refresh</Button>
 			</div>
 		</div>
@@ -4697,9 +4828,11 @@
 			<StateTemplate
 				variant="empty"
 				title="No linked actions yet"
-				message="Add an action mapping to run Sentient Forms logic for this form."
-				actionLabel="Add action"
-				onAction={openAddActionPanel}
+				message={canConfigureFormSource
+					? 'Add an action mapping to run Sentient Forms logic for this form.'
+					: formSourceAvailabilityMessage}
+				actionLabel={canConfigureFormSource ? 'Add action' : null}
+				onAction={canConfigureFormSource ? openAddActionPanel : null}
 				inline
 				testId="form-actions-empty-state"
 			/>
@@ -4933,8 +5066,7 @@
 								bind:value={entryLookupId}
 							/>
 							<p class="sf:text-xs sf:text-slate-500">
-								Use an entry ID from the Sentient Forms Action Log for this Gravity Forms form, not
-								the Gravity Forms submission ID.
+								{entryLookupHelpText}
 							</p>
 							<div class="sf:flex sf:justify-end">
 								<Button type="submit" variant="secondary" size="sm">Check log entry</Button>
@@ -5546,9 +5678,9 @@
 												})}
 										>
 											<option value="none">Disabled</option>
-											<option value="gf_upload">Gravity Forms uploads</option>
+											<option value="gf_upload">{uploadSourceModeLabel}</option>
 											<option value="media_library">Media library</option>
-											<option value="mixed">Mixed (uploads + media)</option>
+											<option value="mixed">{mixedUploadSourceModeLabel}</option>
 										</select>
 									</label>
 

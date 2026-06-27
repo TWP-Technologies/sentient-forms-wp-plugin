@@ -61,7 +61,7 @@ class Sentient_Forms_Mappings_Migration_Service
      *   apply?: bool,
      *   include_disabled?: bool,
      *   form_source?: string|null,
-     *   form_id?: int|null
+     *   form_id?: int|string|null
      * } $args
      * @return array|WP_Error
      */
@@ -73,7 +73,7 @@ class Sentient_Forms_Mappings_Migration_Service
             ? sanitize_key( (string) $args['form_source'] )
             : null;
         $form_id          = isset( $args['form_id'] ) && null !== $args['form_id']
-            ? absint( $args['form_id'] )
+            ? $this->normalize_provider_form_id( $args['form_id'] )
             : null;
 
         if ( ( null === $form_source ) xor ( null === $form_id ) )
@@ -84,11 +84,11 @@ class Sentient_Forms_Mappings_Migration_Service
             );
         }
 
-        if ( null !== $form_id && $form_id <= 0 )
+        if ( null !== $form_id && ! $this->is_valid_provider_form_id( $form_id ) )
         {
             return new WP_Error(
                 'invalid_form_id',
-                __( 'form_id must be a positive integer.', 'sentient-forms' )
+                __( 'form_id must be a valid provider-native identifier.', 'sentient-forms' )
             );
         }
 
@@ -217,11 +217,11 @@ class Sentient_Forms_Mappings_Migration_Service
     /**
      * @return array<int, array{
      *   form_source: string,
-     *   form_id: int,
+     *   form_id: string,
      *   option_key: string
      * }>|WP_Error
      */
-    private function discover_form_targets( ?string $form_source, ?int $form_id )
+    private function discover_form_targets( ?string $form_source, ?string $form_id )
     {
         global $wpdb;
 
@@ -280,10 +280,10 @@ class Sentient_Forms_Mappings_Migration_Service
 
         usort(
             $targets,
-            static function ( array $left, array $right ): int {
+            function ( array $left, array $right ): int {
                 if ( $left['form_source'] === $right['form_source'] )
                 {
-                    return $left['form_id'] <=> $right['form_id'];
+                    return $this->compare_form_ids( $left['form_id'], $right['form_id'] );
                 }
 
                 return strcmp( $left['form_source'], $right['form_source'] );
@@ -293,34 +293,60 @@ class Sentient_Forms_Mappings_Migration_Service
         return $targets;
     }
 
-    private function build_option_key( string $form_source, int $form_id ): string
+    private function build_option_key( string $form_source, string $form_id ): string
     {
-        return self::OPTION_PREFIX . sanitize_key( $form_source ) . '_' . absint( $form_id );
+        return self::OPTION_PREFIX . sanitize_key( $form_source ) . '_' . $this->normalize_form_id_option_suffix( $form_id );
     }
 
     /**
-     * @return array{form_source: string, form_id: int}|null
+     * @return array{form_source: string, form_id: string}|null
      */
     private function parse_option_key( string $option_key ): ?array
     {
-        $pattern = '/^sentient_forms_actions_(.+)_(\d+)$/';
-        if ( 1 !== preg_match( $pattern, $option_key, $matches ) )
+        if ( ! str_starts_with( $option_key, self::OPTION_PREFIX ) )
         {
             return null;
         }
 
-        $form_source = sanitize_key( $matches[1] ?? '' );
-        $form_id     = absint( $matches[2] ?? 0 );
+        $remainder = substr( $option_key, strlen( self::OPTION_PREFIX ) );
+        $sources   = array_values(
+            array_unique(
+                array_filter(
+                    array_map(
+                        static function ( $source ): string {
+                            return is_scalar( $source ) ? sanitize_key( (string) $source ) : '';
+                        },
+                        Sentient_Forms_Form_Sources::get_supported_sources()
+                    )
+                )
+            )
+        );
+        usort(
+            $sources,
+            static fn ( string $left, string $right ): int => strlen( $right ) <=> strlen( $left )
+        );
 
-        if ( '' === $form_source || $form_id <= 0 )
+        foreach ( $sources as $form_source )
         {
-            return null;
+            $source_prefix = $form_source . '_';
+            if ( ! str_starts_with( $remainder, $source_prefix ) )
+            {
+                continue;
+            }
+
+            $form_id = $this->decode_option_suffix_form_id( $form_source, substr( $remainder, strlen( $source_prefix ) ) );
+            if ( ! $this->is_valid_provider_form_id( $form_id ) )
+            {
+                return null;
+            }
+
+            return [
+                'form_source' => $form_source,
+                'form_id'     => $form_id,
+            ];
         }
 
-        return [
-            'form_source' => $form_source,
-            'form_id'     => $form_id,
-        ];
+        return null;
     }
 
     /**
@@ -396,11 +422,11 @@ class Sentient_Forms_Mappings_Migration_Service
     }
 
     /**
-     * @param array{form_source: string, form_id: int, option_key: string} $target
+     * @param array{form_source: string, form_id: string, option_key: string} $target
      * @param array<int, array<string, mixed>> $remote_mappings
      * @return array{
      *   form_source: string,
-     *   form_id: int,
+     *   form_id: int|string,
      *   option_key: string,
      *   operations: array<int, array<string, mixed>>,
      *   counts: array{create: int, update: int, skip: int, error: int}
@@ -415,7 +441,7 @@ class Sentient_Forms_Mappings_Migration_Service
     {
         $form_summary = [
             'form_source' => $target['form_source'],
-            'form_id'     => $target['form_id'],
+            'form_id'     => $this->response_form_id( $target['form_source'], $target['form_id'] ),
             'option_key'  => $target['option_key'],
             'operations'  => [],
             'counts'      => $this->build_empty_counts(),
@@ -607,7 +633,7 @@ class Sentient_Forms_Mappings_Migration_Service
                 [
                     'site_id'      => $this->site_id,
                     'form_source'  => $target['form_source'],
-                    'form_id'      => $target['form_id'],
+                    'form_id'      => $this->response_form_id( $target['form_source'], $target['form_id'] ),
                     'display_name' => $normalized['display_name'],
                     'settings'     => $normalized['settings'],
                     'is_template'  => false,
@@ -713,7 +739,7 @@ class Sentient_Forms_Mappings_Migration_Service
     private function index_remote_form_mappings(
         array $remote_mappings,
         string $form_source,
-        int $form_id
+        string $form_id
     ): array
     {
         $indexed = [];
@@ -746,7 +772,7 @@ class Sentient_Forms_Mappings_Migration_Service
                 continue;
             }
 
-            $mapping_form_id = isset( $mapping['form_id'] ) ? absint( $mapping['form_id'] ) : 0;
+            $mapping_form_id = isset( $mapping['form_id'] ) ? $this->normalize_provider_form_id( $mapping['form_id'] ) : '';
             if ( $mapping_form_id !== $form_id )
             {
                 continue;
@@ -899,6 +925,78 @@ class Sentient_Forms_Mappings_Migration_Service
         return rest_sanitize_boolean( $value );
     }
 
+    private function normalize_provider_form_id( mixed $value ): string
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return '';
+        }
+
+        return sanitize_text_field( rawurldecode( trim( (string) $value ) ) );
+    }
+
+    private function normalize_form_id_option_suffix( mixed $form_id ): string
+    {
+        $form_key = preg_replace( '/[^A-Za-z0-9_-]+/', '_', $this->normalize_provider_form_id( $form_id ) );
+        $form_key = is_string( $form_key ) ? trim( $form_key, '_' ) : '';
+
+        return '' !== $form_key ? $form_key : '0';
+    }
+
+    private function decode_option_suffix_form_id( string $form_source, string $suffix ): string
+    {
+        $suffix = trim( $suffix, '_' );
+        if ( '' === $suffix )
+        {
+            return '';
+        }
+
+        if (
+            Sentient_Forms_Form_Sources::ELEMENTOR_FORMS === sanitize_key( $form_source )
+            && 1 === preg_match( '/^([1-9][0-9]*)_(.+)$/', $suffix, $matches )
+        )
+        {
+            return sanitize_text_field( $matches[1] . ':' . $matches[2] );
+        }
+
+        return sanitize_text_field( $suffix );
+    }
+
+    private function is_valid_provider_form_id( string $form_id ): bool
+    {
+        if ( '' === $form_id )
+        {
+            return false;
+        }
+
+        if ( ctype_digit( $form_id ) )
+        {
+            return absint( $form_id ) > 0;
+        }
+
+        return '0' !== $this->normalize_form_id_option_suffix( $form_id );
+    }
+
+    private function response_form_id( string $form_source, string $form_id ): int | string
+    {
+        if ( Sentient_Forms_Form_Sources::GRAVITY_FORMS === sanitize_key( $form_source ) && ctype_digit( $form_id ) )
+        {
+            return absint( $form_id );
+        }
+
+        return $form_id;
+    }
+
+    private function compare_form_ids( string $left, string $right ): int
+    {
+        if ( ctype_digit( $left ) && ctype_digit( $right ) )
+        {
+            return absint( $left ) <=> absint( $right );
+        }
+
+        return strcmp( $left, $right );
+    }
+
     /**
      * @param mixed $hooks
      * @return array<int, string>
@@ -933,7 +1031,7 @@ class Sentient_Forms_Mappings_Migration_Service
     /**
      * @param array{
      *   form_source: string,
-     *   form_id: int,
+     *   form_id: int|string,
      *   option_key: string,
      *   operations: array<int, array<string, mixed>>,
      *   counts: array{create: int, update: int, skip: int, error: int}

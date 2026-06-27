@@ -45,6 +45,7 @@ return [
 	'Sentient_Forms_Custom_Action_Response' => __DIR__ . '/api/dto/class-sentient-forms-custom-action-response.php',
 	'Sentient_Forms_Custom_Actions_Controller' => __DIR__ . '/rest-api/controllers/class-custom-actions-controller.php',
 	'Sentient_Forms_Custom_Actions_Service' => __DIR__ . '/services/class-sentient-forms-custom-actions-service.php',
+	'Sentient_Forms_Elementor_Forms_Adapter' => __DIR__ . '/adapters/forms/class-sentient-forms-elementor-forms-adapter.php',
 	'Sentient_Forms_Entry_Evaluation_Action' => __DIR__ . '/actions/class-sentient-forms-entry-evaluation-action.php',
 	'Sentient_Forms_Error_Type' => __DIR__ . '/utilities/errors.php',
 	'Sentient_Forms_Error_Utils' => __DIR__ . '/utilities/errors.php',

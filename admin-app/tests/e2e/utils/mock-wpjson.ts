@@ -60,6 +60,19 @@ const defaultExecutionStatus = {
 	updated_at: null
 };
 
+function decodePathSegment(segment: string): string {
+	try {
+		return decodeURIComponent(segment);
+	} catch {
+		return segment;
+	}
+}
+
+function routeFormId(segment: string): string | number {
+	const decoded = decodePathSegment(segment);
+	return /^\d+$/.test(decoded) ? Number(decoded) : decoded;
+}
+
 const defaultModelCatalog = {
 	models: [
 		{
@@ -777,10 +790,11 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		const formActionsBootstrapMatch = urlWithoutQuery.match(/\/([^/]+)\/forms\/(\d+)\/actions\/bootstrap$/);
+		const formActionsBootstrapMatch = urlWithoutQuery.match(/\/([^/]+)\/forms\/([^/]+)\/actions\/bootstrap$/);
 		if (formActionsBootstrapMatch && method === 'GET') {
 			const sourceSlug = formActionsBootstrapMatch[1];
-			const currentFormId = Number(formActionsBootstrapMatch[2] ?? formId);
+			const currentFormId = routeFormId(formActionsBootstrapMatch[2] ?? String(formId));
+			const currentFormIdSegment = encodeURIComponent(String(currentFormId));
 			const definitions = Array.isArray(routes.actions?.definitions)
 				? routes.actions.definitions
 				: [];
@@ -795,7 +809,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 					disabled_at: null,
 					disabled_by_user_id: null,
 					settings_source: 'sentient_submission_ledger_settings',
-					ledger_records_endpoint: `/wp-json/sentient-forms/v1/${sourceSlug}/forms/${currentFormId}/submission-ledger`,
+					ledger_records_endpoint: `/wp-json/sentient-forms/v1/${sourceSlug}/forms/${currentFormIdSegment}/submission-ledger`,
 					record_count: 0
 				} satisfies Record<string, unknown>);
 			const customActionsPayload = routes.customActions?.list ?? { actions: [], quota: null };
@@ -832,7 +846,7 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 					form:
 						sourceForms.find((form) => {
 							if (!form || typeof form !== 'object' || Array.isArray(form)) return false;
-							return Number((form as { id?: unknown }).id ?? 0) === currentFormId;
+							return String((form as { id?: unknown }).id ?? '') === String(currentFormId);
 						}) ?? null,
 					actions: routes.actions?.formsActions ?? [],
 					execution_status: routes.actions?.status ?? defaultExecutionStatus,
@@ -1002,19 +1016,42 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 			});
 		}
 
-		const actionConfigMatch = urlWithoutQuery.match(
-			/\/forms\/[^/]+\/(\d+)\/action-config\/([^/]+)$/
+		const actionConfigIndexMatch = urlWithoutQuery.match(
+			/\/forms\/([^/]+)\/([^/]+)\/action-config$/
 		);
-		if (actionConfigMatch && method === 'GET') {
-			const actionId = decodeURIComponent(actionConfigMatch[2]);
+		if (actionConfigIndexMatch && method === 'GET') {
+			const sourceSlug = decodePathSegment(actionConfigIndexMatch[1]);
+			const currentFormId = routeFormId(actionConfigIndexMatch[2]);
 			return route.fulfill({
 				status: 200,
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
 					success: true,
 					data: {
-						form_source_slug: 'gravity_forms',
-						form_id: Number(actionConfigMatch[1]),
+						form_source: sourceSlug,
+						form_id: currentFormId,
+						configs: formActionConfigState
+					}
+				})
+			});
+		}
+
+		const actionConfigMatch = urlWithoutQuery.match(
+			/\/forms\/([^/]+)\/([^/]+)\/action-config\/([^/]+)$/
+		);
+		if (actionConfigMatch && method === 'GET') {
+			const sourceSlug = decodePathSegment(actionConfigMatch[1]);
+			const currentFormId = routeFormId(actionConfigMatch[2]);
+			const actionId = decodeURIComponent(actionConfigMatch[3]);
+			return route.fulfill({
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					success: true,
+					data: {
+						form_source_slug: sourceSlug,
+						form_source: sourceSlug,
+						form_id: currentFormId,
 						action_id: actionId,
 						config: formActionConfigState[actionId] ?? {}
 					}
@@ -1023,7 +1060,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 		}
 
 		if (actionConfigMatch && method === 'POST') {
-			const actionId = decodeURIComponent(actionConfigMatch[2]);
+			const sourceSlug = decodePathSegment(actionConfigMatch[1]);
+			const currentFormId = routeFormId(actionConfigMatch[2]);
+			const actionId = decodeURIComponent(actionConfigMatch[3]);
 			const body = (route.request().postDataJSON() as Record<string, unknown>) ?? {};
 			formActionConfigState[actionId] = {
 				...(formActionConfigState[actionId] ?? {}),
@@ -1035,8 +1074,9 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 				body: JSON.stringify({
 					success: true,
 					data: {
-						form_source_slug: 'gravity_forms',
-						form_id: Number(actionConfigMatch[1]),
+						form_source_slug: sourceSlug,
+						form_source: sourceSlug,
+						form_id: currentFormId,
 						action_id: actionId,
 						config: formActionConfigState[actionId]
 					}

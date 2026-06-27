@@ -99,8 +99,8 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                         ],
                         'form_id' => [
                             'required'          => true,
-                            'type'              => 'integer',
-                            'sanitize_callback' => 'absint',
+                            'type'              => 'string',
+                            'sanitize_callback' => 'sanitize_text_field',
                         ],
                         'entry_id' => [
                             'required'          => false,
@@ -227,7 +227,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         $entry = [
             'id'             => wp_generate_uuid4(),
             'form_source'    => $request->get_param( 'form_source' ),
-            'form_id'        => (int) $request->get_param( 'form_id' ),
+            'form_id'        => self::normalize_form_id_for_log( $request->get_param( 'form_id' ) ),
             'entry_id'       => (int) $request->get_param( 'entry_id' ) ?: null,
             'action_code'    => $request->get_param( 'action_code' ),
             'action_label'   => $request->get_param( 'action_label' ),
@@ -261,7 +261,13 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             );
         }
 
-        return $this->prepare_item_for_response( $entry, 201 );
+        $response_entry = $entry;
+        $response_entry['entry_id'] = $this->normalize_log_entry_id_for_form_source(
+            $entry['entry_id'] ?? null,
+            $this->normalize_form_source( (string) ( $entry['form_source'] ?? '' ) )
+        );
+
+        return $this->prepare_item_for_response( $response_entry, 201 );
     }
 
     public function get_entry_preview( WP_REST_Request $request ): WP_REST_Response | WP_Error
@@ -367,7 +373,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         $entry = [
             'id'             => wp_generate_uuid4(),
             'form_source'    => sanitize_key( $data['form_source'] ?? 'unknown' ),
-            'form_id'        => absint( $data['form_id'] ?? 0 ),
+            'form_id'        => self::normalize_form_id_for_log( $data['form_id'] ?? 0 ),
             'entry_id'       => isset( $data['entry_id'] ) ? absint( $data['entry_id'] ) : null,
             'action_code'    => sanitize_text_field( $data['action_code'] ?? '' ),
             'action_label'   => sanitize_text_field( $data['action_label'] ?? '' ),
@@ -648,8 +654,8 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
     private function log_entry_matches_filters( array $entry, array $filters ): bool
     {
-        $form_id = absint( $filters['form_id'] ?? 0 );
-        if ( $form_id > 0 && absint( $entry['form_id'] ?? 0 ) !== $form_id )
+        $form_id = self::normalize_form_id_filter_value( $filters['form_id'] ?? null );
+        if ( '' !== $form_id && self::normalize_form_id_filter_value( $entry['form_id'] ?? null ) !== $form_id )
         {
             return false;
         }
@@ -723,6 +729,11 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 continue;
             }
 
+            $form_source = $this->normalize_form_source( (string) ( $entry['form_source'] ?? '' ) );
+            $entries[ $index ]['entry_id'] = $this->normalize_log_entry_id_for_form_source(
+                $entry['entry_id'] ?? null,
+                $form_source
+            );
             $entries[ $index ]['form_context'] = $this->build_form_context( $entry );
         }
 
@@ -768,9 +779,9 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
     private function build_form_context( array $entry ): array
     {
         $form_source = $this->normalize_form_source( (string) ( $entry['form_source'] ?? '' ) );
-        $form_id     = absint( $entry['form_id'] ?? 0 );
-        $entry_id    = $this->normalize_log_entry_id( $entry['entry_id'] ?? null );
-        $cache_key   = $form_source . ':' . $form_id;
+        $form_id     = self::normalize_form_id_for_log( $entry['form_id'] ?? 0 );
+        $entry_id    = $this->normalize_log_entry_id_for_form_source( $entry['entry_id'] ?? null, $form_source );
+        $cache_key   = $form_source . ':' . self::normalize_form_id_filter_value( $form_id );
 
         if ( ! isset( $this->form_context_cache[ $cache_key ] ) )
         {
@@ -780,7 +791,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         $context = $this->form_context_cache[ $cache_key ];
         $links   = is_array( $context['links'] ?? null ) ? $context['links'] : [];
 
-        if ( $entry_id && 'gravity_forms' === $form_source )
+        if ( $entry_id && 'gravity_forms' === $form_source && is_int( $form_id ) )
         {
             $links['entry_admin_url'] = $this->gravity_forms_entry_admin_url( $form_id, $entry_id );
         }
@@ -788,6 +799,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         $context['entry_id'] = $entry_id;
         $context['links']    = $links;
         $context['entry_preview_available'] = 'gravity_forms' === $form_source
+            && is_int( $form_id )
             && $form_id > 0
             && null !== $entry_id
             && empty( $context['form_missing'] )
@@ -798,14 +810,26 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         return $context;
     }
 
-    private function build_base_form_context( string $form_source, int $form_id ): array
+    private function build_base_form_context( string $form_source, int|string $form_id ): array
     {
         $provider_label = $this->provider_label( $form_source );
-        $form_name      = $form_id > 0 ? sprintf(
-            /* translators: %d: Form ID. */
-            __( 'Form #%d', 'sentient-forms' ),
-            $form_id
-        ) : __( 'Unknown form', 'sentient-forms' );
+        $form_name      = __( 'Unknown form', 'sentient-forms' );
+        if ( is_int( $form_id ) && $form_id > 0 )
+        {
+            $form_name = sprintf(
+                /* translators: %d: Form ID. */
+                __( 'Form #%d', 'sentient-forms' ),
+                $form_id
+            );
+        }
+        elseif ( is_string( $form_id ) && '' !== $form_id )
+        {
+            $form_name = sprintf(
+                /* translators: %s: Provider-native form ID. */
+                __( 'Form %s', 'sentient-forms' ),
+                $form_id
+            );
+        }
         $form_missing = false;
         $links = [
             'provider_admin_url' => null,
@@ -817,14 +841,14 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         if ( 'gravity_forms' === $form_source )
         {
             $links['provider_admin_url'] = admin_url( 'admin.php?page=gf_edit_forms' );
-            if ( $form_id > 0 )
+            if ( is_int( $form_id ) && $form_id > 0 )
             {
                 $links['form_admin_url']    = admin_url( sprintf( 'admin.php?page=gf_edit_forms&id=%d', $form_id ) );
                 $links['entries_admin_url'] = admin_url( sprintf( 'admin.php?page=gf_entries&id=%d', $form_id ) );
             }
 
             $form = null;
-            if ( $form_id > 0 && class_exists( 'GFAPI' ) && is_callable( [ 'GFAPI', 'get_form' ] ) )
+            if ( is_int( $form_id ) && $form_id > 0 && class_exists( 'GFAPI' ) && is_callable( [ 'GFAPI', 'get_form' ] ) )
             {
                 $form = GFAPI::get_form( $form_id );
             }
@@ -837,7 +861,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                     $form_name = sanitize_text_field( $title );
                 }
             }
-            elseif ( $form_id > 0 && class_exists( 'GFAPI' ) )
+            elseif ( is_int( $form_id ) && $form_id > 0 && class_exists( 'GFAPI' ) )
             {
                 $form_missing = true;
             }
@@ -867,9 +891,10 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
     private function provider_label( string $form_source ): string
     {
         return match ( $this->normalize_form_source( $form_source ) ) {
-            'gravity_forms' => __( 'Gravity Forms', 'sentient-forms' ),
-            'unknown'       => __( 'Unknown provider', 'sentient-forms' ),
-            default         => ucwords( str_replace( [ '_', '-' ], ' ', sanitize_key( $form_source ) ) ),
+            'gravity_forms'   => __( 'Gravity Forms', 'sentient-forms' ),
+            'elementor_forms' => __( 'Elementor Forms', 'sentient-forms' ),
+            'unknown'         => __( 'Unknown provider', 'sentient-forms' ),
+            default           => ucwords( str_replace( [ '_', '-' ], ' ', sanitize_key( $form_source ) ) ),
         };
     }
 
@@ -1149,6 +1174,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         $action      = $this->resolve_local_execution_action( $event );
         $cost        = is_array( $event['cost_json'] ?? null ) ? $event['cost_json'] : [];
         $provider    = sanitize_key( (string) ( $event['provider'] ?? 'openrouter' ) );
+        $form_source = sanitize_key( (string) ( $event['form_source'] ?? 'unknown' ) );
         if ( 'sentient_managed' === $provider && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
         {
             $result_json = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $result_json );
@@ -1199,9 +1225,9 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
         return [
             'id'                      => 'local-event-' . absint( $event['id'] ?? 0 ),
-            'form_source'             => sanitize_key( (string) ( $event['form_source'] ?? 'unknown' ) ),
-            'form_id'                 => absint( $event['form_id'] ?? 0 ),
-            'entry_id'                => $this->normalize_log_entry_id( $event['entry_id'] ?? null ),
+            'form_source'             => $form_source,
+            'form_id'                 => self::normalize_form_id_for_log( $event['form_id'] ?? 0 ),
+            'entry_id'                => $this->normalize_log_entry_id_for_form_source( $event['entry_id'] ?? null, $form_source ),
             'action_code'             => $action['code'],
             'action_label'            => $action['label'],
             'status'                  => $status,
@@ -1234,6 +1260,76 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
         $normalized = absint( $entry_id );
         return $normalized > 0 ? $normalized : null;
+    }
+
+    private function normalize_log_entry_id_for_form_source( mixed $entry_id, string $form_source ): ?int
+    {
+        $normalized = $this->normalize_log_entry_id( $entry_id );
+        if ( null === $normalized )
+        {
+            return null;
+        }
+
+        $native_entry = $this->native_entry_capability_for_form_source( $form_source );
+        if ( is_array( $native_entry ) && array_key_exists( 'id', $native_entry ) && ! $native_entry['id'] )
+        {
+            return null;
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @return array<string, bool>|null
+     */
+    private function native_entry_capability_for_form_source( string $form_source_slug ): ?array
+    {
+        $plugin = Sentient_Forms_Plugin::instance();
+        if ( ! method_exists( $plugin, 'get_form_adapter_registry' ) )
+        {
+            return null;
+        }
+
+        $registry = $plugin->get_form_adapter_registry();
+        if ( ! $registry || ! method_exists( $registry, 'get_capability_descriptor' ) )
+        {
+            return null;
+        }
+
+        $descriptor = $registry->get_capability_descriptor( $form_source_slug );
+        if ( ! is_array( $descriptor ) || ! isset( $descriptor['native_entry'] ) || ! is_array( $descriptor['native_entry'] ) )
+        {
+            return null;
+        }
+
+        return $descriptor['native_entry'];
+    }
+
+    private static function normalize_form_id_for_log( mixed $form_id ): int|string
+    {
+        if ( ! is_scalar( $form_id ) )
+        {
+            return 0;
+        }
+
+        $form_id = sanitize_text_field( trim( (string) $form_id ) );
+        if ( '' === $form_id )
+        {
+            return 0;
+        }
+
+        return ctype_digit( $form_id ) ? absint( $form_id ) : $form_id;
+    }
+
+    private static function normalize_form_id_filter_value( mixed $form_id ): string
+    {
+        $form_id = self::normalize_form_id_for_log( $form_id );
+        if ( is_int( $form_id ) )
+        {
+            return $form_id > 0 ? (string) $form_id : '';
+        }
+
+        return $form_id;
     }
 
     private static function normalize_submission_uuid( mixed $submission_uuid ): ?string
@@ -1665,7 +1761,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
         $seed = [
             'form_source' => sanitize_key( $data['form_source'] ?? 'unknown' ),
-            'form_id'     => absint( $data['form_id'] ?? 0 ),
+            'form_id'     => self::normalize_form_id_for_log( $data['form_id'] ?? 0 ),
             'entry_id'    => isset( $data['entry_id'] ) ? absint( $data['entry_id'] ) : null,
             'mapping_id'  => isset( $data['mapping_id'] ) ? sanitize_text_field( (string) $data['mapping_id'] ) : null,
             'action_code' => sanitize_text_field( $data['action_code'] ?? '' ),
@@ -1681,8 +1777,8 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             [
                 'form_id' => [
                     'description'       => __( 'Filter by form ID.', 'sentient-forms' ),
-                    'type'              => 'integer',
-                    'sanitize_callback' => 'absint',
+                    'type'              => 'string',
+                    'sanitize_callback' => 'sanitize_text_field',
                 ],
                 'action_code' => [
                     'description'       => __( 'Filter by action code.', 'sentient-forms' ),
@@ -1734,7 +1830,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 ],
                 'form_id' => [
                     'description' => __( 'Form ID.', 'sentient-forms' ),
-                    'type'        => 'integer',
+                    'type'        => [ 'integer', 'string' ],
                 ],
                 'entry_id' => [
                     'description' => __( 'Entry ID (null for validation-phase).', 'sentient-forms' ),

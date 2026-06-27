@@ -414,6 +414,33 @@ class Tests_Form_Suggestions_Controller extends WP_UnitTestCase {
 		$this->assertSame( 400, (int) ( $response->get_error_data()['status'] ?? 0 ) );
 	}
 
+	public function test_runtime_config_route_reports_elementor_provider_native_ids_as_unsupported(): void {
+		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/91:formabc/actions/runtime-config' );
+
+		$response = rest_do_request( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'rest_invalid_form_source', $response->get_data()['code'] ?? null );
+		$this->assertStringContainsString( 'Gravity Forms', $response->get_data()['message'] ?? '' );
+	}
+
+	public function test_suggest_route_reports_elementor_provider_native_ids_as_unsupported(): void {
+		$request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/91:formabc/actions/suggest' );
+		$request->set_param( 'mapping_id', 'map_rt_1' );
+		$request->set_param( 'all_known_field_values', [ 'email' => 'lead@example.test' ] );
+		$request->set_param( 'visible_field_ids', [ 'email' ] );
+		$request->set_param( 'current_page_index', 1 );
+		$request->set_param( 'total_pages', 1 );
+
+		$response = rest_do_request( $request );
+
+		$this->assertInstanceOf( WP_REST_Response::class, $response );
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'rest_invalid_form_source', $response->get_data()['code'] ?? null );
+		$this->assertStringContainsString( 'Gravity Forms', $response->get_data()['message'] ?? '' );
+	}
+
 	public function test_runtime_config_endpoint_rejects_invalid_form_id(): void {
 		$request = new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/0/actions/runtime-config' );
 		$request->set_param( 'form_source_slug', 'gravity_forms' );
