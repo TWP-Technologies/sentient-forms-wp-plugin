@@ -2171,7 +2171,45 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             return array_values( $files );
         }
 
-        return [ $files ];
+        return $this->scalar_uploaded_file_values( $files );
+    }
+
+    /**
+     * @return array<int, mixed>
+     */
+    private function scalar_uploaded_file_values( mixed $files ): array
+    {
+        if ( ! is_scalar( $files ) )
+        {
+            return [ $files ];
+        }
+
+        $value = trim( (string) $files );
+        if ( '' === $value || false === strpos( $value, ',' ) )
+        {
+            return [ $files ];
+        }
+
+        $parts = array_values(
+            array_filter(
+                array_map( 'trim', explode( ',', $value ) ),
+                static fn ( string $part ): bool => '' !== $part
+            )
+        );
+        if ( count( $parts ) < 2 )
+        {
+            return [ $files ];
+        }
+
+        foreach ( $parts as $part )
+        {
+            if ( '' === $this->uploaded_file_name_from_scalar( $part ) )
+            {
+                return [ $files ];
+            }
+        }
+
+        return $parts;
     }
 
     /**

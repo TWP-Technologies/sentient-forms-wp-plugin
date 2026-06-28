@@ -394,6 +394,59 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         $this->assertStringNotContainsString( 'secret-token', $file_refs_json );
     }
 
+    public function test_new_record_splits_comma_separated_scalar_upload_urls_into_file_references(): void
+    {
+        global $wpdb;
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+
+        $page_id         = $this->create_elementor_form_page();
+        $form_id         = $page_id . ':formabc';
+        $ledger_settings = new Sentient_Forms_Submission_Ledger_Settings_Repository( $wpdb );
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $ledger_settings->set_enabled( 'elementor_forms', $form_id, true, self::factory()->user->create( [ 'role' => 'administrator' ] ) );
+
+        $adapter         = new Sentient_Forms_Elementor_Forms_Adapter( Sentient_Forms_Plugin::instance() );
+        $submission_uuid = $adapter->handle_new_record(
+            $this->elementor_submission_record(
+                [
+                    'full_name' => [
+                        'id'    => 'full_name',
+                        'title' => 'Full name',
+                        'type'  => 'text',
+                        'value' => 'Ada Lovelace',
+                    ],
+                    'resume'    => [
+                        'id'    => 'resume',
+                        'title' => 'Resume',
+                        'type'  => 'upload',
+                        'value' => 'https://example.test/uploads/private/resume.pdf?token=resume-secret, https://example.test/uploads/private/cover-letter.pdf?token=cover-secret#fragment',
+                    ],
+                ]
+            ),
+            null
+        );
+
+        $this->assertNotNull( $submission_uuid );
+
+        $stored = $ledger->get_by_submission_uuid( $submission_uuid );
+        $this->assertArrayNotHasKey( 'resume', $stored['logical_fields_json'] ?? [] );
+        $this->assertCount( 2, $stored['file_refs_json'] ?? [] );
+        $this->assertSame( 'resume', $stored['file_refs_json'][0]['field_id'] ?? null );
+        $this->assertSame( 'resume.pdf', $stored['file_refs_json'][0]['filename'] ?? null );
+        $this->assertArrayNotHasKey( 'url', $stored['file_refs_json'][0] ?? [] );
+        $this->assertSame( 'resume', $stored['file_refs_json'][1]['field_id'] ?? null );
+        $this->assertSame( 'cover-letter.pdf', $stored['file_refs_json'][1]['filename'] ?? null );
+        $this->assertArrayNotHasKey( 'url', $stored['file_refs_json'][1] ?? [] );
+
+        $file_refs_json = wp_json_encode( $stored['file_refs_json'] ?? [] );
+        $this->assertIsString( $file_refs_json );
+        $this->assertStringNotContainsString( 'resume-secret', $file_refs_json );
+        $this->assertStringNotContainsString( 'cover-secret', $file_refs_json );
+        $this->assertStringNotContainsString( '#fragment', $file_refs_json );
+    }
+
     public function test_new_record_stores_columnar_multi_upload_array_as_safe_file_references(): void
     {
         global $wpdb;
