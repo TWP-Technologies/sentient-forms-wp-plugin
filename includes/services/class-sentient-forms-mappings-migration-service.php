@@ -231,7 +231,7 @@ class Sentient_Forms_Mappings_Migration_Service
                 [
                     'form_source' => $form_source,
                     'form_id'     => $form_id,
-                    'option_key'  => $this->build_option_key( $form_source, $form_id ),
+                    'option_key'  => $this->resolve_scoped_option_key( $form_source, $form_id ),
                 ],
             ];
         }
@@ -296,6 +296,30 @@ class Sentient_Forms_Mappings_Migration_Service
     private function build_option_key( string $form_source, string $form_id ): string
     {
         return self::OPTION_PREFIX . sanitize_key( $form_source ) . '_' . $this->normalize_form_id_option_suffix( $form_id );
+    }
+
+    private function resolve_scoped_option_key( string $form_source, string $form_id ): string
+    {
+        $source     = sanitize_key( $form_source );
+        $option_key = $this->build_option_key( $source, $form_id );
+        $stored     = get_option( $option_key, null );
+
+        if ( null !== $stored )
+        {
+            return $option_key;
+        }
+
+        foreach ( Sentient_Forms_Provider_Form_Id_Keys::legacy_option_suffixes( $source, $form_id ) as $suffix )
+        {
+            $legacy_option_key = self::OPTION_PREFIX . $source . '_' . $suffix;
+            $stored            = get_option( $legacy_option_key, null );
+            if ( null !== $stored )
+            {
+                return $legacy_option_key;
+            }
+        }
+
+        return $option_key;
     }
 
     /**

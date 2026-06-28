@@ -330,6 +330,75 @@ class Tests_Mappings_Migration_Service extends WP_UnitTestCase
         $this->assertSame( '91:formabc', $client->post_calls[0]['payload']['form_id'] ?? null );
     }
 
+    public function test_scoped_elementor_migration_reads_legacy_provider_native_option_key(): void
+    {
+        $option_key           = 'sentient_forms_actions_elementor_forms_91_formabc';
+        $this->option_keys[] = $option_key;
+        update_option(
+            $option_key,
+            [
+                'map_existing' => [
+                    'local_mapping_id'           => 'map_existing',
+                    'central_action_id'          => 'entry_summary_v1',
+                    'action_type_indicator'      => 'master',
+                    'trigger_hooks'              => [ 'elementor_pro_forms_new_record' ],
+                    'is_action_enabled_for_form' => true,
+                    'execution_priority'         => 10,
+                    'action_name_label'          => 'Entry Summary',
+                    'settings'                   => [],
+                ],
+            ],
+            false
+        );
+
+        $client  = new Sentient_Forms_Test_Mappings_Migration_Api_Client(
+            [
+                [
+                    'id'                   => 'ffffffff-2222-4333-8444-111111111111',
+                    'site_id'              => '11111111-2222-4333-8444-555555555555',
+                    'form_source'          => 'elementor_forms',
+                    'form_id'              => '91:formabc',
+                    'action_template_id'   => null,
+                    'action_template_code' => 'entry_summary_v1',
+                    'custom_action_id'     => null,
+                    'display_name'         => 'Entry Summary',
+                    'settings'             => [
+                        'local_mapping_id'           => 'map_existing',
+                        'trigger_hooks'              => [ 'elementor_pro_forms_new_record' ],
+                        'is_action_enabled_for_form' => true,
+                    ],
+                    'is_template'          => false,
+                ],
+            ]
+        );
+        $service = new Sentient_Forms_Mappings_Migration_Service(
+            $client,
+            'proxy-migrate-test',
+            '11111111-2222-4333-8444-555555555555'
+        );
+
+        $result = $service->migrate(
+            [
+                'apply'            => true,
+                'include_disabled' => true,
+                'form_source'      => 'elementor_forms',
+                'form_id'          => '91:formabc',
+            ]
+        );
+
+        $this->assertIsArray( $result );
+        $this->assertSame( '91:formabc', $result['forms'][0]['form_id'] ?? null );
+        $this->assertSame( $option_key, $result['forms'][0]['option_key'] ?? '' );
+        $this->assertSame( 0, $result['totals']['create'] ?? -1 );
+        $this->assertSame( 1, $result['totals']['update'] ?? -1 );
+        $this->assertSame( 0, count( $client->post_calls ) );
+        $this->assertSame( 1, count( $client->put_calls ) );
+        $this->assertStringContainsString(
+            '/mappings/ffffffff-2222-4333-8444-111111111111',
+            $client->put_calls[0]['path'] ?? ''
+        );
+    }
+
     public function test_migrate_skips_custom_mapping_without_uuid_action_id(): void
     {
         $this->store_form_actions(
