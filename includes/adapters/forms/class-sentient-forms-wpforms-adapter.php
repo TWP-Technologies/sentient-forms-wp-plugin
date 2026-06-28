@@ -179,24 +179,14 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             return [];
         }
 
+        $form_data = $this->form_data( $form );
         $fields = function_exists( 'wpforms_get_form_fields' ) ? wpforms_get_form_fields( $form ) : false;
         if ( ! is_array( $fields ) )
         {
-            $form_data = $this->form_data( $form );
             $fields    = is_array( $form_data['fields'] ?? null ) ? $form_data['fields'] : [];
         }
 
-        $manifest = [];
-        foreach ( $fields as $field_key => $field )
-        {
-            $normalized = $this->normalize_field( $field, $field_key );
-            if ( null !== $normalized )
-            {
-                $manifest[] = $normalized;
-            }
-        }
-
-        return $manifest;
+        return $this->normalize_fields( $fields, $form_data );
     }
 
     /**
@@ -605,7 +595,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
     /**
      * @return array<string, mixed>|null
      */
-    private function normalize_field( mixed $field, mixed $field_key ): ?array
+    private function normalize_field( mixed $field, mixed $field_key, mixed $form_data = null ): ?array
     {
         if ( ! is_array( $field ) )
         {
@@ -633,6 +623,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         $label     = $this->field_label( $field, $field_id );
         $is_hidden = 'hidden' === $type;
         $is_file   = 'file-upload' === $type;
+        $storage_eligible = ! $is_file && ( ! $is_hidden || $this->wpforms_hidden_field_storage_allowed( $field, $field_id, $form_data ) );
 
         return [
             'id'                      => $field_id,
@@ -640,7 +631,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
             'type'                    => $type,
             'adminLabel'              => $this->field_admin_label( $field, $label ),
             'visibility'              => $is_hidden ? 'hidden' : 'visible',
-            'storage_eligible'        => ! $is_hidden && ! $is_file,
+            'storage_eligible'        => $storage_eligible,
             'file_reference_eligible' => $is_file,
             'required'                => $this->field_required( $field ),
         ];
@@ -650,12 +641,12 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
      * @param array<string, mixed> $fields
      * @return array<int, array<string, mixed>>
      */
-    private function normalize_fields( array $fields ): array
+    private function normalize_fields( array $fields, mixed $form_data = null ): array
     {
         $manifest = [];
         foreach ( $fields as $field_key => $field )
         {
-            $normalized = $this->normalize_field( $field, $field_key );
+            $normalized = $this->normalize_field( $field, $field_key, $form_data );
             if ( null !== $normalized )
             {
                 $manifest[] = $normalized;
@@ -673,7 +664,7 @@ class Sentient_Forms_WPForms_Adapter implements Sentient_Forms_Adapter_Interface
         $data   = $this->form_data( $form_data );
         $fields = is_array( $data['fields'] ?? null ) ? $data['fields'] : [];
 
-        return $this->normalize_fields( $fields );
+        return $this->normalize_fields( $fields, $data );
     }
 
     /**

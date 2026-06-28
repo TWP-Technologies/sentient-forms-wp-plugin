@@ -739,6 +739,42 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertStringNotContainsString( '"currency"', wp_json_encode( $entry ) );
     }
 
+    public function test_get_log_entries_resolves_managed_action_identity_from_event_payload(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $events->record(
+            [
+                'execution_request_id' => 'req-managed-cf7-summary',
+                'mapping_id'           => 0,
+                'form_source'          => 'contact_form_7',
+                'form_id'              => '42',
+                'submission_uuid'      => '66666666-7777-4888-8999-aaaaaaaaaaaa',
+                'provider'             => 'sentient_managed',
+                'model'                => 'openai/gpt-4.1-mini',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'central_action_id' => 'entry_summary_v1',
+                    'action_name_label' => 'Entry Summary',
+                    'structured'        => [
+                        'summary' => 'Ledger summary completed.',
+                    ],
+                ],
+            ]
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+        $entry    = $data['entries'][0];
+
+        $this->assertSame( 'entry_summary_v1', $entry['action_code'] );
+        $this->assertSame( 'Entry Summary', $entry['action_label'] );
+        $this->assertNull( $entry['mapping_id'] );
+        $this->assertSame( 'req-managed-cf7-summary', $entry['execution_request_id'] );
+    }
+
     public function test_get_log_entries_surfaces_managed_zdr_fallback_and_failure_messages(): void
     {
         global $wpdb;

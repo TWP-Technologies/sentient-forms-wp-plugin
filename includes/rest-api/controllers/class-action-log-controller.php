@@ -1350,6 +1350,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         $action      = $this->resolve_local_execution_action( $event );
         $cost        = is_array( $event['cost_json'] ?? null ) ? $event['cost_json'] : [];
         $provider    = sanitize_key( (string) ( $event['provider'] ?? 'openrouter' ) );
+        $mapping_id  = absint( $event['mapping_id'] ?? 0 );
         if ( 'sentient_managed' === $provider && class_exists( 'Sentient_Forms_Managed_Usage_Sanitizer' ) )
         {
             $result_json = Sentient_Forms_Managed_Usage_Sanitizer::sanitize_for_managed_context( $result_json );
@@ -1413,7 +1414,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             'error_message'           => isset( $event['error_message'] ) ? sanitize_textarea_field( (string) $event['error_message'] ) : null,
             'execution_request_id'    => isset( $event['execution_request_id'] ) ? sanitize_text_field( (string) $event['execution_request_id'] ) : null,
             'submission_uuid'         => self::normalize_submission_uuid( $event['submission_uuid'] ?? null ),
-            'mapping_id'              => isset( $event['mapping_id'] ) ? 'local_first_' . absint( $event['mapping_id'] ) : null,
+            'mapping_id'              => $mapping_id > 0 ? 'local_first_' . $mapping_id : null,
             'resolved_model_id'       => isset( $event['model'] ) ? sanitize_text_field( (string) $event['model'] ) : null,
             'pricing'                 => $pricing,
             'usage_cost'              => $this->build_local_usage_cost_summary( $provider, $event, $result_json, $cost, $pricing ),
@@ -1487,6 +1488,15 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 ),
         ];
 
+        if ( $is_managed )
+        {
+            $managed_action = $this->resolve_managed_execution_action_from_event( $event );
+            if ( null !== $managed_action )
+            {
+                return $managed_action;
+            }
+        }
+
         if ( $mapping_id <= 0 )
         {
             return $fallback;
@@ -1525,6 +1535,89 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         }
 
         return $fallback;
+    }
+
+    private function resolve_managed_execution_action_from_event( array $event ): ?array
+    {
+        $result_json = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
+        $code        = $this->first_sanitized_key(
+            [
+                $result_json['central_action_id'] ?? null,
+                $result_json['action_id'] ?? null,
+                $result_json['action_code'] ?? null,
+                $result_json['evaluation_payload']['central_action_id'] ?? null,
+                $result_json['evaluation_payload']['action_id'] ?? null,
+            ]
+        );
+        $label       = $this->first_sanitized_text(
+            [
+                $result_json['action_name_label'] ?? null,
+                $result_json['action_label'] ?? null,
+                $result_json['display_name'] ?? null,
+                $result_json['evaluation_payload']['action_name_label'] ?? null,
+            ]
+        );
+
+        if ( '' === $code && '' === $label )
+        {
+            return null;
+        }
+
+        return [
+            'code'  => '' !== $code ? $code : 'sentient_forms_managed_action',
+            'label' => '' !== $label ? $label : $this->humanize_action_code( $code ),
+        ];
+    }
+
+    private function first_sanitized_key( array $candidates ): string
+    {
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $value = sanitize_key( (string) $candidate );
+            if ( '' !== $value )
+            {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function first_sanitized_text( array $candidates ): string
+    {
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $value = sanitize_text_field( (string) $candidate );
+            if ( '' !== $value )
+            {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function humanize_action_code( string $code ): string
+    {
+        if ( '' === $code )
+        {
+            return __( 'Sentient Forms managed action', 'sentient-forms' );
+        }
+
+        $label = preg_replace( '/_v\d+$/', '', $code );
+        $label = is_string( $label ) ? $label : $code;
+
+        return sanitize_text_field( ucwords( str_replace( '_', ' ', $label ) ) );
     }
 
     private function get_local_mapping( int $mapping_id ): ?array

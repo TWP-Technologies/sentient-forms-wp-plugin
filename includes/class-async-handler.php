@@ -270,6 +270,7 @@ class Sentient_Forms_Async_Handler
 		{
 			$this->get_request_store()->mark_status( $job['execution_request_id'], 'failed', $error->get_error_message() );
 		}
+        $this->record_managed_execution_failure_event( $job, $error );
     }
 
     private function handle_evaluation_failure( array $context, array $result, WP_Error $error ): void
@@ -1559,9 +1560,14 @@ class Sentient_Forms_Async_Handler
         $this->get_execution_events_repository()->record( $event );
     }
 
-    private function record_managed_execution_event( array $job, array $result ): void
+    private function record_managed_execution_event( array $job, array $result, ?WP_Error $error = null ): void
     {
         if ( ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
+        {
+            return;
+        }
+
+        if ( ! $this->should_record_managed_execution_event( $job ) )
         {
             return;
         }
@@ -1577,28 +1583,44 @@ class Sentient_Forms_Async_Handler
 
         $payload = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
         $provider = sanitize_key( (string) ( $result['provider'] ?? $context['provider'] ?? 'sentient_managed' ) );
+        $status   = $error ? 'failed' : sanitize_key( (string) ( $result['status'] ?? 'succeeded' ) );
+        $identity = $this->managed_execution_action_identity( $job );
+        if ( $error )
+        {
+            $result['status']        = 'failed';
+            $result['error_code']    = $error->get_error_code();
+            $result['error_message'] = $error->get_error_message();
+        }
         $stored_result = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage(
             array_merge(
                 [
                     'provider' => $provider,
+                    'status'   => $status,
                 ],
-                $result
+                $result,
+                $identity
             )
         );
 
         $event = [
             'execution_request_id' => $execution_request_id,
-            'mapping_id'           => absint( $context['local_form_mapping_id'] ?? $context['local_mapping_id'] ?? 0 ),
-            'form_source'          => $payload['form_source'] ?? $context['form_source'] ?? 'gravity_forms',
+            'mapping_id'           => $this->managed_execution_numeric_mapping_id( $job ),
+            'form_source'          => $this->managed_execution_form_source( $job ),
             'form_id'              => $payload['form']['id'] ?? $context['form_id'] ?? null,
             'entry_id'             => $payload['entry']['id'] ?? $context['entry_id'] ?? null,
             'submission_uuid'      => $this->resolve_submission_uuid( $payload, $context ),
             'provider'             => $provider,
             'model'                => $result['model'] ?? $context['model'] ?? null,
-            'status'               => sanitize_key( (string) ( $result['status'] ?? 'succeeded' ) ),
+            'status'               => $status,
             'result_json'          => $stored_result,
             'payload_digest'       => $this->managed_execution_payload_digest( $job ),
         ];
+
+        if ( $error )
+        {
+            $event['error_code']    = $error->get_error_code();
+            $event['error_message'] = $error->get_error_message();
+        }
 
         $token_usage = $this->managed_execution_token_usage( $result );
         if ( null !== $token_usage )
@@ -1607,6 +1629,141 @@ class Sentient_Forms_Async_Handler
         }
 
         $this->get_execution_events_repository()->record( $event );
+    }
+
+    private function record_managed_execution_failure_event( array $job, WP_Error $error ): void
+    {
+        $this->record_managed_execution_event(
+            $job,
+            [
+                'provider' => 'sentient_managed',
+                'status'   => 'failed',
+            ],
+            $error
+        );
+    }
+
+    private function should_record_managed_execution_event( array $job ): bool
+    {
+        if ( ! $this->is_cps_managed_job( $job ) )
+        {
+            return false;
+        }
+
+        return 'gravity_forms' !== $this->managed_execution_form_source( $job );
+    }
+
+    private function is_cps_managed_job( array $job ): bool
+    {
+        $settings = isset( $job['settings'] ) && is_array( $job['settings'] ) ? $job['settings'] : [];
+        $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $action_type_indicator = sanitize_key(
+            (string) ( $settings['action_type_indicator'] ?? $context['action_type_indicator'] ?? '' )
+        );
+
+        return in_array( $action_type_indicator, [ 'master', 'custom' ], true );
+    }
+
+    private function managed_execution_form_source( array $job ): string
+    {
+        $payload = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $form_source = sanitize_key(
+            (string) ( $context['form_source'] ?? $context['adapter_id'] ?? $payload['form_source'] ?? 'gravity_forms' )
+        );
+
+        return str_replace( '-', '_', $form_source );
+    }
+
+    private function managed_execution_numeric_mapping_id( array $job ): int
+    {
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        foreach ( [ 'local_form_mapping_id', 'local_mapping_id', 'mapping_id' ] as $key )
+        {
+            if ( isset( $context[ $key ] ) && is_scalar( $context[ $key ] ) && preg_match( '/^\d+$/', (string) $context[ $key ] ) )
+            {
+                return absint( $context[ $key ] );
+            }
+        }
+
+        return 0;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function managed_execution_action_identity( array $job ): array
+    {
+        $settings = isset( $job['settings'] ) && is_array( $job['settings'] ) ? $job['settings'] : [];
+        $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+
+        $central_action_id = $this->first_sanitized_key(
+            [
+                $settings['central_action_id'] ?? null,
+                $context['central_action_id'] ?? null,
+                $context['action_id'] ?? null,
+                $job['action_id'] ?? null,
+            ]
+        );
+        $action_label = $this->first_sanitized_text(
+            [
+                $settings['action_name_label'] ?? null,
+                $context['action_name_label'] ?? null,
+                $settings['display_name'] ?? null,
+                $settings['label'] ?? null,
+            ]
+        );
+
+        $identity = [];
+        if ( '' !== $central_action_id )
+        {
+            $identity['central_action_id'] = $central_action_id;
+            $identity['action_id']         = $central_action_id;
+        }
+        if ( '' !== $action_label )
+        {
+            $identity['action_name_label'] = $action_label;
+        }
+
+        return $identity;
+    }
+
+    private function first_sanitized_key( array $candidates ): string
+    {
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $value = sanitize_key( (string) $candidate );
+            if ( '' !== $value )
+            {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function first_sanitized_text( array $candidates ): string
+    {
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $value = sanitize_text_field( (string) $candidate );
+            if ( '' !== $value )
+            {
+                return $value;
+            }
+        }
+
+        return '';
     }
 
     private function managed_execution_payload_digest( array $job ): string
