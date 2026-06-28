@@ -253,6 +253,34 @@ class AdapterRegistryTest extends WP_UnitTestCase
         $this->assertFalse( $capability['write'] );
     }
 
+    public function test_native_entry_capability_rejects_non_boolean_descriptor_flags(): void
+    {
+        $registry = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );
+        $registry->register_adapter(
+            new Sentient_Forms_Test_Form_Source_Adapter(
+                'malformed_source',
+                'Malformed Source',
+                true,
+                [
+                    'native_entry' => [
+                        'id'    => 'false',
+                        'link'  => 1,
+                        'read'  => true,
+                        'write' => false,
+                    ],
+                ]
+            )
+        );
+
+        $capability = Sentient_Forms_Form_Sources::native_entry_capability_for_form_source( 'malformed_source', $registry );
+
+        $this->assertIsArray( $capability );
+        $this->assertFalse( $capability['id'] );
+        $this->assertFalse( $capability['link'] );
+        $this->assertTrue( $capability['read'] );
+        $this->assertFalse( $capability['write'] );
+    }
+
     public function test_elementor_forms_absent_descriptor_is_visible_and_unavailable(): void
     {
         $registry   = new Sentient_Forms_Form_Adapter_Registry( Sentient_Forms_Plugin::instance() );

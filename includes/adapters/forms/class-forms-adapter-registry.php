@@ -280,7 +280,9 @@ class Sentient_Forms_Form_Adapter_Registry
 
         foreach ( $keys as $key )
         {
-            $normalized[ $key ] = (bool) ( $value[ $key ] ?? false );
+            $normalized[ $key ] = isset( $value[ $key ] ) && is_bool( $value[ $key ] )
+                ? $value[ $key ]
+                : false;
         }
 
         return $normalized;
