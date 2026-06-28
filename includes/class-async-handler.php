@@ -2684,6 +2684,16 @@ class Sentient_Forms_Async_Handler
             $this->get_request_store()->mark_status( (string) $job['execution_request_id'], 'skipped', $reason );
         }
 
+        if ( $this->should_record_provider_execution_event( $job ) )
+        {
+            $this->record_local_execution_event(
+                $job,
+                'skipped',
+                null,
+                new WP_Error( 'sentient_forms_local_mapping_dependency_skipped', $reason )
+            );
+        }
+
         $this->record_managed_execution_skip_event( $job, $reason, $reason_code );
 
         if ( 'upstream_spam' === $reason_code && ! $already_recorded )

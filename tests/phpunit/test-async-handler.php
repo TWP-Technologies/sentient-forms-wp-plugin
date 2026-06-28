@@ -1857,6 +1857,69 @@ class AsyncHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_process_action_records_elementor_provider_skip_event_when_dependency_gate_skips(): void
+    {
+        global $wpdb;
+
+        $request_id      = 'elementor-provider-skip-event';
+        $submission_uuid = '44444444-5555-4666-8777-888888888888';
+        $handler         = $this->plugin->get_async_handler();
+
+        $this->plugin->get_async_request_store()->record(
+            $request_id,
+            [
+                'action_id' => 'entry_summary_v1',
+                'adapter'   => 'elementor_forms',
+                'status'    => 'queued',
+            ]
+        );
+
+        $handler->process_action(
+            'entry_summary_v1',
+            [
+                'hook'        => 'elementor_pro/forms/new_record',
+                'form_source' => 'elementor_forms',
+                'form'        => [ 'id' => '91:formabc', 'title' => 'Elementor Lead' ],
+                'entry'       => [
+                    'id'              => null,
+                    'submission_uuid' => $submission_uuid,
+                    'full_name'       => 'Ada Lovelace',
+                ],
+            ],
+            [
+                'settings' => [],
+            ],
+            $request_id,
+            [
+                'hook'                        => 'elementor_pro/forms/new_record',
+                'form_source'                 => 'elementor_forms',
+                'form_id'                     => '91:formabc',
+                'entry_id'                    => null,
+                'submission_uuid'             => $submission_uuid,
+                'action_id'                   => 'map_summary_provider',
+                'action_name_label'           => 'Entry Summary',
+                'local_mapping_id'            => 'map_summary_provider',
+                'dependency_mapping_ids'      => [ 'map_prereq' ],
+                'dependency_initial_outcomes' => [ 'map_prereq' => 'failed' ],
+                'attempt'                     => 1,
+                'max_attempts'                => 1,
+            ]
+        );
+
+        $row = $this->plugin->get_async_request_store()->get( $request_id, 'job' );
+        $this->assertSame( 'skipped', $row['status'] ?? null );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event  = $events->get_by_request_id( $request_id );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'skipped', $event['status'] ?? null );
+        $this->assertSame( 'map_summary_provider', $event['mapping_key'] ?? null );
+        $this->assertSame( 'entry_summary_v1', $event['action_code'] ?? null );
+        $this->assertSame( 'Entry Summary', $event['action_label'] ?? null );
+        $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
+        $this->assertSame( 'sentient_forms_local_mapping_dependency_skipped', $event['error_code'] ?? null );
+    }
+
     public function test_process_action_does_not_record_gravity_cps_success_as_local_execution_event(): void
     {
         $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
