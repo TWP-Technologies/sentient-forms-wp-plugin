@@ -420,6 +420,7 @@
 		formSourceDescriptor !== null && formSourceAvailability !== 'available'
 	);
 	const canConfigureFormSource = $derived(!formSourceUnavailable);
+	const linkedActionsError = $derived(formSourceUnavailable ? null : actionsState.error);
 	const formSourceAvailabilityMessage = $derived.by(() => {
 		const explicit = formSourceDescriptor?.availability_message?.trim();
 		if (explicit) return explicit;
@@ -4716,12 +4717,12 @@
 		</Card>
 	</div>
 
-	{#if actionsState.error}
+	{#if linkedActionsError}
 		<div class="sf:mt-4">
 			<StateTemplate
 				variant="error"
 				title="Unable to load linked actions"
-				message={actionsState.error}
+				message={linkedActionsError}
 				actionLabel="Retry"
 				onAction={refresh}
 				testId="form-actions-error-state"

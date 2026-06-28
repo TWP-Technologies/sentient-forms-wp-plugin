@@ -3118,6 +3118,7 @@ test.describe('Actions admin flows', () => {
 		await expect(page.getByRole('button', { name: 'Check Sentient Forms log entry' })).toHaveCount(
 			0
 		);
+		await expect(page.getByTestId('form-actions-error-state')).toHaveCount(0);
 
 		const addActionButtons = page.getByRole('button', { name: 'Add action' });
 		await expect(addActionButtons.first()).toBeDisabled();
