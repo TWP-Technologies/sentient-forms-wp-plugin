@@ -2702,7 +2702,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         // Phase 7 CSM: Optionally merge CPS mappings
         $cps_actions = null === $cps_actions
-            ? ( $this->is_positive_integer_form_id( $form_id ) ? $this->fetch_cps_mappings_for_form( $form_source_slug, absint( $form_id ) ) : [] )
+            ? $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id )
             : $cps_actions;
         $merged = $this->merge_local_and_cps_actions( $local_actions, $cps_actions );
 
@@ -3559,12 +3559,18 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      * Phase 7 CSM: Fetch CPS mappings for a specific form.
      *
      * @param string $form_source_slug Form source (e.g., 'gravity_forms').
-     * @param int    $form_id          Form ID.
+     * @param int|string $form_id      Form ID.
      * @return array Transformed CPS mappings as local linkage format.
      */
-    private function fetch_cps_mappings_for_form( string $form_source_slug, int $form_id ): array
+    private function fetch_cps_mappings_for_form( string $form_source_slug, int|string $form_id ): array
     {
         if ( ! $this->mappings_sync ) {
+            return [];
+        }
+
+        $normalized_form_id = $this->normalize_cps_mapping_form_id( $form_source_slug, $form_id );
+        if ( '' === $normalized_form_id )
+        {
             return [];
         }
 
@@ -3577,11 +3583,11 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             $all_mappings  = $this->fetch_cps_mappings_once();
             $form_mappings = array_filter(
                 $all_mappings,
-                function ( array $m ) use ( $site_id, $form_source_slug, $form_id ) {
+                function ( array $m ) use ( $site_id, $form_source_slug, $normalized_form_id ) {
                     return
                         ( $m['site_id'] ?? '' ) === $site_id &&
                         ( $m['form_source'] ?? '' ) === $form_source_slug &&
-                        ( (int) ( $m['form_id'] ?? 0 ) ) === $form_id &&
+                        $this->normalize_cps_mapping_form_id( $form_source_slug, $m['form_id'] ?? '' ) === $normalized_form_id &&
                         empty( $m['is_template'] ); // Exclude templates
                 }
             );
@@ -3610,10 +3616,10 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $requested_form_ids = [];
         foreach ( $form_ids as $form_id )
         {
-            $normalized_id = absint( $form_id );
-            if ( $normalized_id > 0 )
+            $normalized_id = $this->normalize_cps_mapping_form_id( $form_source_slug, $form_id );
+            if ( '' !== $normalized_id )
             {
-                $requested_form_ids[ (string) $normalized_id ] = true;
+                $requested_form_ids[ $normalized_id ] = true;
             }
         }
 
@@ -3631,10 +3637,9 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $actions_by_form = [];
         foreach ( $this->fetch_cps_mappings_once() as $mapping )
         {
-            $mapping_form_id = absint( $mapping['form_id'] ?? 0 );
-            $form_key        = (string) $mapping_form_id;
+            $form_key = $this->normalize_cps_mapping_form_id( $form_source_slug, $mapping['form_id'] ?? '' );
             if (
-                $mapping_form_id <= 0
+                '' === $form_key
                 || ! isset( $requested_form_ids[ $form_key ] )
                 || ( $mapping['site_id'] ?? '' ) !== $site_id
                 || ( $mapping['form_source'] ?? '' ) !== $form_source_slug
@@ -3653,6 +3658,22 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         return $actions_by_form;
+    }
+
+    private function normalize_cps_mapping_form_id( string $form_source_slug, mixed $form_id ): string
+    {
+        $form_id = $this->normalize_provider_form_id( $form_id );
+        if ( '' === $form_id )
+        {
+            return '';
+        }
+
+        if ( Sentient_Forms_Form_Sources::GRAVITY_FORMS === sanitize_key( $form_source_slug ) )
+        {
+            return $this->is_positive_integer_form_id( $form_id ) ? (string) absint( $form_id ) : '';
+        }
+
+        return Sentient_Forms_Provider_Form_Id_Keys::is_valid( $form_id ) ? $form_id : '';
     }
 
     /**

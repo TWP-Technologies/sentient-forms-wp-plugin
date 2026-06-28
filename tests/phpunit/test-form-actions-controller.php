@@ -217,6 +217,38 @@ if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient
 	}
 }
 
+if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch' ) ) {
+	class Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch extends Sentient_Forms_Mappings_Sync {
+		public int $fetch_calls = 0;
+
+		public function __construct( private string $form_id ) {}
+
+		public function get_site_id(): string {
+			return 'site-provider-native-test';
+		}
+
+		public function fetch_mappings(): array {
+			$this->fetch_calls++;
+
+			return [
+				[
+					'id'                   => 'cps-elementor-summary',
+					'site_id'              => 'site-provider-native-test',
+					'form_source'          => 'elementor_forms',
+					'form_id'              => $this->form_id,
+					'action_template_code' => 'entry_summary_v1',
+					'display_name'         => 'Entry Summary',
+					'settings'             => [
+						'local_mapping_id'           => 'cps_elementor_summary',
+						'trigger_hooks'              => [ 'after_submission' ],
+						'is_action_enabled_for_form' => true,
+					],
+				],
+			];
+		}
+	}
+}
+
 if ( ! class_exists( 'Sentient_Forms_Test_Opaque_Form_Source_Adapter' ) ) {
 	class Sentient_Forms_Test_Opaque_Form_Source_Adapter implements Sentient_Forms_Adapter_Interface {
 		/** @var array<int,string> */
@@ -4439,6 +4471,66 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
             $data['form_source_descriptor']['requirements']['native_submission_parity'] ?? null
         );
         $this->assertFalse( $data['form_source_descriptor']['native_entry']['link'] ?? true );
+    }
+
+    public function test_elementor_form_actions_bootstrap_merges_cps_mappings_for_provider_native_form_id(): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch' ) ) {
+            $this->markTestSkipped( 'Provider-native mappings sync test double is unavailable.' );
+        }
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+
+        $page_id = $this->create_elementor_form_page_for_controller();
+        $form_id = $page_id . ':formabc';
+        $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
+        $this->set_mappings_sync( $sync );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . rawurlencode( $form_id ) . '/actions/bootstrap' );
+        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request->set_param( 'form_id', $form_id );
+
+        $response = $this->controller->get_form_actions_bootstrap( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( $form_id, $data['form_id'] ?? null );
+        $this->assertSame( 1, $sync->fetch_calls );
+        $this->assertCount( 1, $data['actions'] ?? [] );
+        $this->assertSame( 'cps_elementor_summary', $data['actions'][0]['local_mapping_id'] ?? null );
+        $this->assertSame( 'entry_summary_v1', $data['actions'][0]['central_action_id'] ?? null );
+        $this->assertSame( 'cps', $data['actions'][0]['source'] ?? null );
+    }
+
+    public function test_elementor_forms_overview_merges_cps_mappings_for_provider_native_form_id(): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch' ) ) {
+            $this->markTestSkipped( 'Provider-native mappings sync test double is unavailable.' );
+        }
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+
+        $page_id = $this->create_elementor_form_page_for_controller();
+        $form_id = $page_id . ':formabc';
+        $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
+        $this->set_mappings_sync( $sync );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/overview' );
+        $request->set_param( 'form_source_slug', 'elementor_forms' );
+
+        $response = $this->controller->get_forms_overview( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 1, $sync->fetch_calls );
+        $this->assertSame( $form_id, $data['forms'][0]['id'] ?? null );
+        $this->assertCount( 1, $data['forms'][0]['actions'] ?? [] );
+        $this->assertSame( 'cps_elementor_summary', $data['forms'][0]['actions'][0]['local_mapping_id'] ?? null );
+        $this->assertSame( 'cps', $data['forms'][0]['actions'][0]['source'] ?? null );
     }
 
     public function test_get_form_actions_bootstrap_combines_actions_status_and_disabled_state(): void
