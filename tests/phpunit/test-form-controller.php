@@ -11,6 +11,7 @@ class Tests_Form_Controller extends WP_UnitTestCase
         delete_option( 'sentient_forms_actions_contact_form_7_55' );
         delete_option( 'sentient_forms_actions_elementor_forms_123' );
         delete_option( 'sentient_forms_actions_elementor_forms_123_formabc' );
+        delete_option( 'sentient_forms_actions_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '123:formabc' ) );
 
         parent::tearDown();
     }
@@ -150,7 +151,10 @@ class Tests_Form_Controller extends WP_UnitTestCase
         $this->assertFalse( $data['settings']['enabled'] ?? true );
         $this->assertSame( 'entry_summary_v1', $data['settings']['map_summary']['central_action_id'] ?? null );
 
-        $stored_opaque = get_option( 'sentient_forms_actions_elementor_forms_123_formabc', [] );
+        $stored_opaque = get_option(
+            'sentient_forms_actions_elementor_forms_' . Sentient_Forms_Provider_Form_Id_Keys::option_suffix( '123:formabc' ),
+            []
+        );
         $stored_numeric = get_option( 'sentient_forms_actions_elementor_forms_123', [] );
 
         $this->assertFalse( $stored_opaque['enabled'] ?? true );
