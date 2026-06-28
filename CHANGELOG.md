@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.8.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.7.0...v0.8.0) (2026-06-28)
+
+
+### Features
+
+* **plugin:** harden admin qol and late clarification callbacks ([40fa253](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/40fa25380b401982d42534dd7c6b61e250510928))
+* **plugin:** harden admin qol and late clarification callbacks ([2ea7367](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2ea73673353bd803116fec2e21e0911192bd6a19))
+
+
+### Bug Fixes
+
+* **ci:** validate release workflow path filters ([4f42b5b](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/4f42b5bd5de09c59d1e166caa420b7707b8e427a))
+* **plugin:** address final ledger and consent review feedback ([855d2a8](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/855d2a8806e7d65231584796ff516e8555764c78))
+* **plugin:** address final review feedback ([a0a29b1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a0a29b1d35492d445c40051840b26e636cd86886))
+* **plugin:** address qol hardening review feedback ([b69d429](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b69d4294e2f642ca7b9c0005bf8cc99b34ae0586))
+* **plugin:** avoid dynamic ledger SQL fragments ([a041b4c](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a041b4cde2173181bea266eadc0dd974b218c6b6))
+* **plugin:** handle nested consent action candidates ([77b5b85](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/77b5b851c567454801d3c6de407e72fad1b3b5a8))
+* **plugin:** ignore invalid ledger date filters ([e37d135](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/e37d13509c9127454a5fc1c59fea95573825085a))
+* **plugin:** keep consent action lookup bounded ([4c4ecda](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/4c4ecda43c450109f8ed6b408a858181f2261bab))
+* **plugin:** normalize ledger date filters for package scan ([cd5c6f3](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/cd5c6f3aa1002fe92b4307e2540b687bbbcf471a))
+* **plugin:** preserve catalog when zdr refresh fails ([0c80bde](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0c80bde8af19ecb5dfa9b8f7ed1950aa8447d0aa))
+* **plugin:** render late qna admin script outside footer phase ([60f97b1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/60f97b1c2fbb19c48fbdc8356c4ef440943b81aa))
+* **plugin:** satisfy plugin check for ledger queries ([e2149c5](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/e2149c5e6a84c3793a076a22cf9d65ecfe4d2f10))
+
 ## [0.7.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.6.1...v0.7.0) (2026-06-28)
 
 
