@@ -131,11 +131,10 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
      */
     public function list_for_form( string $form_source, string $form_id, int $limit = 50, int $offset = 0, array $filters = [] ): array
     {
-        $where = $this->build_form_filter_where( $form_source, $form_id, $filters );
-        $order = $this->order_clause( (string) ( $filters['sort'] ?? '' ) );
         $args  = array_merge(
             [ $this->table_name() ],
-            $where['values'],
+            $this->build_form_filter_values( $form_source, $form_id, $filters ),
+            $this->build_order_values( (string) ( $filters['sort'] ?? '' ) ),
             [
                 max( 1, min( 100, $limit ) ),
                 max( 0, $offset ),
@@ -143,9 +142,38 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         );
 
         $rows = $this->wpdb->get_results(
-            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber,PluginCheck.Security.DirectDB.UnescapedDBParameter -- WHERE and ORDER fragments are built from fixed internal clauses; values remain bound through prepare().
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters and sort modes are represented by repeated scalar placeholders.
             $this->wpdb->prepare(
-                'SELECT * FROM %i ' . $where['sql'] . ' ' . $order . ' LIMIT %d OFFSET %d',
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY
+                    CASE WHEN %s = 'captured_asc' THEN captured_at END ASC,
+                    CASE WHEN %s = 'captured_asc' THEN id END ASC,
+                    CASE WHEN %s = 'submitted_desc' THEN source_submitted_at END DESC,
+                    CASE WHEN %s = 'submitted_desc' THEN captured_at END DESC,
+                    CASE WHEN %s = 'submitted_desc' THEN id END DESC,
+                    CASE WHEN %s = 'submitted_asc' THEN source_submitted_at END ASC,
+                    CASE WHEN %s = 'submitted_asc' THEN captured_at END ASC,
+                    CASE WHEN %s = 'submitted_asc' THEN id END ASC,
+                    CASE WHEN %s = 'native_entry_asc' THEN native_entry_id END ASC,
+                    CASE WHEN %s = 'native_entry_asc' THEN captured_at END DESC,
+                    CASE WHEN %s = 'native_entry_asc' THEN id END DESC,
+                    CASE WHEN %s = 'native_entry_desc' THEN native_entry_id END DESC,
+                    CASE WHEN %s = 'native_entry_desc' THEN captured_at END DESC,
+                    CASE WHEN %s = 'native_entry_desc' THEN id END DESC,
+                    CASE WHEN %s NOT IN ('captured_asc', 'submitted_desc', 'submitted_asc', 'native_entry_asc', 'native_entry_desc') THEN captured_at END DESC,
+                    CASE WHEN %s NOT IN ('captured_asc', 'submitted_desc', 'submitted_asc', 'native_entry_asc', 'native_entry_desc') THEN id END DESC
+                LIMIT %d OFFSET %d",
                 ...$args
             ),
             ARRAY_A
@@ -166,13 +194,26 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
 
     public function count_for_form( string $form_source, string $form_id, array $filters = [] ): int
     {
-        $where = $this->build_form_filter_where( $form_source, $form_id, $filters );
-        $args  = array_merge( [ $this->table_name() ], $where['values'] );
+        $args = array_merge(
+            [ $this->table_name() ],
+            $this->build_form_filter_values( $form_source, $form_id, $filters )
+        );
 
         return (int) $this->wpdb->get_var(
-            // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber,PluginCheck.Security.DirectDB.UnescapedDBParameter -- WHERE fragment is built from fixed internal clauses; values remain bound through prepare().
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
             $this->wpdb->prepare(
-                'SELECT COUNT(*) FROM %i ' . $where['sql'],
+                "SELECT COUNT(*) FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )",
                 ...$args
             )
         );
@@ -223,61 +264,37 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
     /**
      * @param array<string, mixed> $filters
      *
-     * @return array{sql:string,values:array<int,string>}
+     * @return array<int, string>
      */
-    private function build_form_filter_where( string $form_source, string $form_id, array $filters ): array
+    private function build_form_filter_values( string $form_source, string $form_id, array $filters ): array
     {
-        $clauses = [ 'form_source = %s', 'form_id = %s' ];
-        $values  = [
+        $values = [
             sanitize_key( $form_source ),
             sanitize_text_field( $form_id ),
         ];
 
         $query = isset( $filters['q'] ) ? sanitize_text_field( (string) $filters['q'] ) : '';
-        if ( '' !== $query )
-        {
-            $like      = '%' . $this->wpdb->esc_like( $query ) . '%';
-            $clauses[] = '(submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)';
-            array_push( $values, $like, $like, $like, $like );
-        }
+        $like  = '%' . $this->wpdb->esc_like( $query ) . '%';
+        array_push( $values, $query, $like, $like, $like, $like );
 
         $native_entry = isset( $filters['native_entry'] ) ? sanitize_text_field( (string) $filters['native_entry'] ) : '';
-        if ( '' !== $native_entry )
-        {
-            $clauses[] = 'native_entry_id = %s';
-            $values[]  = $native_entry;
-        }
+        array_push( $values, $native_entry, $native_entry );
 
         $captured_from = $this->normalize_captured_filter_datetime( $filters['captured_from'] ?? null );
-        if ( '' !== $captured_from )
-        {
-            $clauses[] = 'captured_at >= %s';
-            $values[]  = $captured_from;
-        }
+        array_push( $values, $captured_from, $captured_from );
 
         $captured_to = $this->normalize_captured_filter_datetime( $filters['captured_to'] ?? null );
-        if ( '' !== $captured_to )
-        {
-            $clauses[] = 'captured_at <= %s';
-            $values[]  = $captured_to;
-        }
+        array_push( $values, $captured_to, $captured_to );
 
+        $has_files = '';
         if ( array_key_exists( 'has_files', $filters ) && null !== $filters['has_files'] )
         {
-            if ( filter_var( $filters['has_files'], FILTER_VALIDATE_BOOLEAN ) )
-            {
-                $clauses[] = "(file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')";
-            }
-            else
-            {
-                $clauses[] = "(file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]')";
-            }
+            $has_files = filter_var( $filters['has_files'], FILTER_VALIDATE_BOOLEAN ) ? '1' : '0';
         }
 
-        return [
-            'sql'    => 'WHERE ' . implode( ' AND ', $clauses ),
-            'values' => $values,
-        ];
+        array_push( $values, $has_files, $has_files, $has_files );
+
+        return $values;
     }
 
     private function normalize_captured_filter_datetime( mixed $value ): string
@@ -307,16 +324,11 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         return $raw;
     }
 
-    private function order_clause( string $sort ): string
+    /**
+     * @return array<int, string>
+     */
+    private function build_order_values( string $sort ): array
     {
-        return match ( sanitize_key( $sort ) )
-        {
-            'captured_asc' => 'ORDER BY captured_at ASC, id ASC',
-            'submitted_desc' => 'ORDER BY source_submitted_at DESC, captured_at DESC, id DESC',
-            'submitted_asc' => 'ORDER BY source_submitted_at ASC, captured_at ASC, id ASC',
-            'native_entry_asc' => 'ORDER BY native_entry_id ASC, captured_at DESC, id DESC',
-            'native_entry_desc' => 'ORDER BY native_entry_id DESC, captured_at DESC, id DESC',
-            default => 'ORDER BY captured_at DESC, id DESC',
-        };
+        return array_fill( 0, 16, sanitize_key( $sort ) );
     }
 }
