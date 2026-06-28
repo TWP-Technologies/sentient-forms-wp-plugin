@@ -2927,6 +2927,46 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertNotContains( 'queue_stalled', $codes );
     }
 
+    public function test_remote_cps_elementor_success_records_provider_native_action_identity(): void
+    {
+        Sentient_Forms_Installer::maybe_upgrade();
+        $this->truncate_local_first_runtime_tables();
+
+        $submission_uuid = '55555555-6666-4777-8888-999999999999';
+
+        $this->plugin->get_async_handler()->complete_remote_cps_async_success(
+            'req-elementor-cps-provider-native-identity',
+            [
+                'form_source'       => 'elementor_forms',
+                'form_id'           => '4:formabc',
+                'entry_id'          => null,
+                'submission_uuid'   => $submission_uuid,
+                'action_id'         => 'map_summary',
+                'central_action_id' => 'entry_summary_v1',
+                'local_mapping_id'  => 'map_summary',
+                'action_name_label' => 'Entry Summary',
+            ],
+            [
+                'provider' => 'openrouter',
+                'model'    => 'openrouter/auto',
+                'result'   => [
+                    'content' => 'Summary stored for Elementor.',
+                ],
+            ]
+        );
+
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event  = $events->get_by_request_id( 'req-elementor-cps-provider-native-identity' );
+
+        $this->assertIsArray( $event );
+        $this->assertSame( 0, (int) ( $event['mapping_id'] ?? 0 ) );
+        $this->assertSame( 'map_summary', $event['mapping_key'] ?? null );
+        $this->assertSame( 'entry_summary_v1', $event['action_code'] ?? null );
+        $this->assertSame( 'Entry Summary', $event['action_label'] ?? null );
+        $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
+    }
+
 	public function test_process_local_mapping_executes_openrouter_mapping_from_identifiers(): void
 	{
 		Sentient_Forms_Installer::maybe_upgrade();

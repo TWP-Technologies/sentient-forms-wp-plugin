@@ -2814,9 +2814,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
             }
         }
 
-        $cps_actions = $this->is_positive_integer_form_id( $form_id )
-            ? $this->fetch_cps_mappings_for_form( $form_source_slug, absint( $form_id ) )
-            : [];
+        $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
         $merged      = $this->merge_local_and_cps_actions( $local_actions, $cps_actions );
         $fallback = $this->build_local_workflow_plan_payload( $merged, $hook_scope, $authority_reason );
         $fallback['cps_unreachable'] = 'cps_mismatch' !== $authority_reason;
@@ -3140,9 +3138,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $local_actions = $this->extract_action_linkages_from_option( $local_actions );
         $local_actions = $this->merge_local_first_actions( $local_actions, $form_source_slug, $form_id );
 
-        $cps_actions = $this->is_positive_integer_form_id( $form_id )
-            ? $this->fetch_cps_mappings_for_form( $form_source_slug, absint( $form_id ) )
-            : [];
+        $cps_actions = $this->fetch_cps_mappings_for_form( $form_source_slug, $form_id );
         $merged      = $this->merge_local_and_cps_actions( $local_actions, $cps_actions );
 
         return $this->normalize_local_action_mappings( $merged );
@@ -3734,16 +3730,35 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
      * Local persistence remains the fallback if CPS is down, but a healthy CPS
      * should not be left stale until the admin planner is opened again.
      */
-    private function sync_form_mappings_after_local_change( string $form_source_slug, int $form_id, array $actions ): void
+    private function normalize_syncable_cps_form_id( string $form_source_slug, mixed $form_id ): int|string|null
+    {
+        $normalized = $this->normalize_cps_mapping_form_id( $form_source_slug, $form_id );
+        if ( '' === $normalized )
+        {
+            return null;
+        }
+
+        return Sentient_Forms_Form_Sources::GRAVITY_FORMS === sanitize_key( $form_source_slug )
+            ? absint( $normalized )
+            : $normalized;
+    }
+
+    private function sync_form_mappings_after_local_change( string $form_source_slug, int|string $form_id, array $actions ): void
     {
         if ( ! $this->mappings_sync )
         {
             return;
         }
 
+        $sync_form_id = $this->normalize_syncable_cps_form_id( $form_source_slug, $form_id );
+        if ( null === $sync_form_id )
+        {
+            return;
+        }
+
         $this->mappings_sync->sync_form_mappings_for_form(
             $form_source_slug,
-            $form_id,
+            $sync_form_id,
             $this->extract_action_linkages_from_option( $actions ),
             true
         );
@@ -4032,14 +4047,11 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         $actions[ $new_id ] = $action;
         update_option( $option_key, $actions, false );
-        if ( $this->is_positive_integer_form_id( $form_id ) )
-        {
-            $this->sync_form_mappings_after_local_change(
-                $form_source_slug,
-                absint( $form_id ),
-                $actions
-            );
-        }
+        $this->sync_form_mappings_after_local_change(
+            $form_source_slug,
+            $form_id,
+            $actions
+        );
 
         return $this->prepare_item_for_response( $action, 201 );
     }
@@ -5279,14 +5291,11 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
 
         $actions = $this->upsert_option_backed_action_linkage( $actions, (string) $id, $linkage );
         update_option( $option_key, $actions, false );
-        if ( $this->is_positive_integer_form_id( $form_id ) )
-        {
-            $this->sync_form_mappings_after_local_change(
-                $form_source_slug,
-                absint( $form_id ),
-                $actions
-            );
-        }
+        $this->sync_form_mappings_after_local_change(
+            $form_source_slug,
+            $form_id,
+            $actions
+        );
 
         return $this->prepare_item_for_response( $linkage );
     }
@@ -5543,14 +5552,11 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         update_option( $option_key, $working, false );
-        if ( $this->is_positive_integer_form_id( $form_id ) )
-        {
-            $this->sync_form_mappings_after_local_change(
-                $form_source_slug,
-                absint( $form_id ),
-                $working
-            );
-        }
+        $this->sync_form_mappings_after_local_change(
+            $form_source_slug,
+            $form_id,
+            $working
+        );
 
         $warnings = [];
         if ( ! empty( $skipped_children ) )
@@ -5808,14 +5814,11 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         }
 
         update_option( $option_key, $actions, false );
-        if ( $this->is_positive_integer_form_id( $form_id ) )
-        {
-            $this->sync_form_mappings_after_local_change(
-                $form_source_slug,
-                absint( $form_id ),
-                $actions
-            );
-        }
+        $this->sync_form_mappings_after_local_change(
+            $form_source_slug,
+            $form_id,
+            $actions
+        );
 
         return $this->prepare_item_for_response( [ 'deleted' => true, 'previous' => $deleted ] );
     }

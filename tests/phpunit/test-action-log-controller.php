@@ -507,6 +507,42 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'Submission looks legitimate.', $data['entries'][0]['details']['stored_result']['content'] );
     }
 
+    public function test_get_log_entries_prefers_provider_native_event_identity_for_elementor_cps_events(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $events->record(
+            [
+                'execution_request_id' => 'req-elementor-provider-native-log',
+                'mapping_id'           => 0,
+                'mapping_key'          => 'map_summary',
+                'action_code'          => 'entry_summary_v1',
+                'action_label'         => 'Entry Summary',
+                'form_source'          => 'elementor_forms',
+                'form_id'              => '4:formabc',
+                'entry_id'             => null,
+                'submission_uuid'      => '44444444-5555-4666-8777-888888888888',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'success',
+                'result_json'          => [
+                    'content' => 'Summary stored for Elementor.',
+                ],
+            ]
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 1, $data['total'] );
+        $this->assertSame( 'entry_summary_v1', $data['entries'][0]['action_code'] );
+        $this->assertSame( 'Entry Summary', $data['entries'][0]['action_label'] );
+        $this->assertSame( 'map_summary', $data['entries'][0]['mapping_id'] );
+        $this->assertSame( '44444444-5555-4666-8777-888888888888', $data['entries'][0]['submission_uuid'] );
+    }
+
     public function test_get_log_entries_includes_submission_uuid_for_grouped_local_events(): void
     {
         global $wpdb;

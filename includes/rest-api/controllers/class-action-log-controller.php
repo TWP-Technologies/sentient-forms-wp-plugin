@@ -1238,7 +1238,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             'error_message'           => isset( $event['error_message'] ) ? sanitize_textarea_field( (string) $event['error_message'] ) : null,
             'execution_request_id'    => isset( $event['execution_request_id'] ) ? sanitize_text_field( (string) $event['execution_request_id'] ) : null,
             'submission_uuid'         => self::normalize_submission_uuid( $event['submission_uuid'] ?? null ),
-            'mapping_id'              => isset( $event['mapping_id'] ) ? 'local_first_' . absint( $event['mapping_id'] ) : null,
+            'mapping_id'              => $this->resolve_local_execution_mapping_id( $event ),
             'resolved_model_id'       => isset( $event['model'] ) ? sanitize_text_field( (string) $event['model'] ) : null,
             'pricing'                 => $pricing,
             'usage_cost'              => $this->build_local_usage_cost_summary( $provider, $event, $result_json, $cost, $pricing ),
@@ -1358,6 +1358,12 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
 
         if ( $mapping_id <= 0 )
         {
+            $event_action = $this->resolve_provider_native_event_action( $event, $fallback );
+            if ( null !== $event_action )
+            {
+                return $event_action;
+            }
+
             return $fallback;
         }
 
@@ -1394,6 +1400,40 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         }
 
         return $fallback;
+    }
+
+    private function resolve_local_execution_mapping_id( array $event ): ?string
+    {
+        $mapping_key = isset( $event['mapping_key'] ) && is_scalar( $event['mapping_key'] )
+            ? sanitize_text_field( (string) $event['mapping_key'] )
+            : '';
+        if ( '' !== $mapping_key )
+        {
+            return $mapping_key;
+        }
+
+        $mapping_id = absint( $event['mapping_id'] ?? 0 );
+        return $mapping_id > 0 ? 'local_first_' . $mapping_id : null;
+    }
+
+    private function resolve_provider_native_event_action( array $event, array $fallback ): ?array
+    {
+        $action_code = isset( $event['action_code'] ) && is_scalar( $event['action_code'] )
+            ? sanitize_key( (string) $event['action_code'] )
+            : '';
+        $action_label = isset( $event['action_label'] ) && is_scalar( $event['action_label'] )
+            ? sanitize_text_field( (string) $event['action_label'] )
+            : '';
+
+        if ( '' === $action_code && '' === $action_label )
+        {
+            return null;
+        }
+
+        return [
+            'code'  => '' !== $action_code ? $action_code : $fallback['code'],
+            'label' => '' !== $action_label ? $action_label : $fallback['label'],
+        ];
     }
 
     private function get_local_mapping( int $mapping_id ): ?array

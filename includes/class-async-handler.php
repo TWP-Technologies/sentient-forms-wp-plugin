@@ -1632,6 +1632,9 @@ class Sentient_Forms_Async_Handler
         $event = [
             'execution_request_id' => $execution_request_id,
             'mapping_id'           => absint( $payload['local_mapping_id'] ?? $context['local_form_mapping_id'] ?? 0 ),
+            'mapping_key'          => $this->resolve_event_mapping_key( $payload, $context ),
+            'action_code'          => $this->resolve_event_action_code( $payload, $context ),
+            'action_label'         => $this->resolve_event_action_label( $payload, $context ),
             'form_source'          => $payload['form_source'] ?? $context['form_source'] ?? 'gravity_forms',
             'form_id'              => $payload['form_id'] ?? $context['form_id'] ?? null,
             'entry_id'             => $payload['entry_id'] ?? $context['entry_id'] ?? null,
@@ -1660,6 +1663,65 @@ class Sentient_Forms_Async_Handler
         }
 
         $this->get_execution_events_repository()->record( $event );
+    }
+
+    private function resolve_event_mapping_key( array $payload, array $context ): ?string
+    {
+        foreach ( [ $payload['local_mapping_id'] ?? null, $context['local_mapping_id'] ?? null, $context['mapping_id'] ?? null ] as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $mapping_key = sanitize_text_field( (string) $candidate );
+            if ( '' === $mapping_key || ( ctype_digit( $mapping_key ) && absint( $mapping_key ) > 0 ) )
+            {
+                continue;
+            }
+
+            return $mapping_key;
+        }
+
+        return null;
+    }
+
+    private function resolve_event_action_code( array $payload, array $context ): ?string
+    {
+        foreach ( [ $payload['central_action_id'] ?? null, $context['central_action_id'] ?? null, $payload['action_id'] ?? null, $context['action_id'] ?? null ] as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $action_code = sanitize_text_field( (string) $candidate );
+            if ( '' !== $action_code )
+            {
+                return $action_code;
+            }
+        }
+
+        return null;
+    }
+
+    private function resolve_event_action_label( array $payload, array $context ): ?string
+    {
+        foreach ( [ $payload['action_name_label'] ?? null, $context['action_name_label'] ?? null ] as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $action_label = sanitize_text_field( (string) $candidate );
+            if ( '' !== $action_label )
+            {
+                return $action_label;
+            }
+        }
+
+        return null;
     }
 
     private function resolve_submission_uuid( array $payload, array $context ): ?string

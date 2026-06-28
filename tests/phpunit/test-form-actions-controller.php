@@ -153,9 +153,40 @@ if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient
 			];
 		}
 
-		public function sync_form_mappings_for_form( string $form_source_slug, int $form_id, array $local_actions, bool $include_disabled = true ) {
+		public function sync_form_mappings_for_form( string $form_source_slug, int|string $form_id, array $local_actions, bool $include_disabled = true ) {
 			$this->sync_calls++;
 			$this->synced_actions = $local_actions;
+
+			return [
+				'counts' => [
+					'create' => 1,
+					'update' => 0,
+					'delete' => 0,
+					'skip'   => 0,
+					'error'  => 0,
+				],
+			];
+		}
+
+		public function fetch_mappings(): array {
+			return [];
+		}
+	}
+}
+
+if ( class_exists( 'Sentient_Forms_Mappings_Sync' ) && ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Records_Local_Change' ) ) {
+	class Sentient_Forms_Test_Mappings_Sync_Records_Local_Change extends Sentient_Forms_Mappings_Sync {
+		public int $sync_calls = 0;
+		public string $synced_form_source = '';
+		public int|string|null $synced_form_id = null;
+		/** @var array<int, array<string,mixed>> */
+		public array $synced_actions = [];
+
+		public function sync_form_mappings_for_form( string $form_source_slug, int|string $form_id, array $local_actions, bool $include_disabled = true ) {
+			$this->sync_calls++;
+			$this->synced_form_source = $form_source_slug;
+			$this->synced_form_id     = $form_id;
+			$this->synced_actions     = $local_actions;
 
 			return [
 				'counts' => [
@@ -702,7 +733,7 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $form_id = $page_id . ':formabc';
 
         $request = $this->authenticate_rest_request( new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/actions' ) );
-        $request->set_param( 'central_action_id', 'remote_summary_v1' );
+        $request->set_param( 'central_action_id', 'cps_remote_summary_v1' );
         $request->set_param( 'action_type_indicator', 'master' );
         $request->set_param( 'trigger_hooks', [ 'validation' ] );
 
@@ -744,6 +775,40 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'store_result', $stored[0]['effect_mapping_json'] ?? [] );
         $this->assertArrayNotHasKey( 'meta', $stored[0]['effect_mapping_json'] ?? [] );
         $this->assertArrayNotHasKey( 'entry_note', $stored[0]['effect_mapping_json'] ?? [] );
+    }
+
+    public function test_elementor_provider_native_action_create_syncs_local_change_to_cps(): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Records_Local_Change' ) ) {
+            $this->markTestSkipped( 'Mappings sync local-change test double is unavailable.' );
+        }
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+
+        $page_id = $this->create_elementor_form_page_for_controller();
+        $form_id = $page_id . ':formabc';
+        $sync    = new Sentient_Forms_Test_Mappings_Sync_Records_Local_Change();
+        $this->set_mappings_sync( $sync );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/' . $form_id . '/actions' );
+        $request->set_param( 'central_action_id', 'cps_remote_summary_v1' );
+        $request->set_param( 'action_type_indicator', 'master' );
+        $request->set_param( 'trigger_hooks', [ 'after_submission' ] );
+        $request->set_param( 'action_name_label', 'Remote Summary' );
+        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request->set_param( 'form_id', $form_id );
+
+        $response = $this->controller->add_form_action( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 201, $response->get_status() );
+        $this->assertSame( 'cps_remote_summary_v1', $data['central_action_id'] ?? null );
+        $this->assertSame( 1, $sync->sync_calls );
+        $this->assertSame( 'elementor_forms', $sync->synced_form_source );
+        $this->assertSame( $form_id, $sync->synced_form_id );
+        $this->assertSame( $data['local_mapping_id'] ?? null, $sync->synced_actions[0]['local_mapping_id'] ?? null );
     }
 
     public function test_elementor_spam_actions_strip_native_spam_status_effects(): void
@@ -4123,6 +4188,37 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         }
     }
 
+    public function test_elementor_request_trace_merges_cps_mappings_for_provider_native_form_id(): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch' ) ) {
+            $this->markTestSkipped( 'Provider-native mappings sync test double is unavailable.' );
+        }
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+
+        $page_id = $this->create_elementor_form_page_for_controller();
+        $form_id = $page_id . ':formabc';
+        $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
+        $this->set_mappings_sync( $sync );
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/elementor_forms/forms/' . rawurlencode( $form_id ) . '/actions/request-trace' );
+        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request->set_param( 'form_id', $form_id );
+        $request->set_param( 'hook_scope', 'after_submission' );
+        $request->set_param( 'entry_values', [ 'email' => 'prospect@example.test' ] );
+
+        $response = $this->controller->get_request_trace( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 1, $sync->fetch_calls );
+        $this->assertSame( 'after_submission', $data['hook_scope'] ?? null );
+        $this->assertSame( [ 'after_submission' ], $data['available_hooks'] ?? null );
+        $this->assertSame( [ 'cps_elementor_summary' ], $data['hooks'][0]['queued'] ?? null );
+    }
+
     // =========================================================================
     // CB-FORMS-001: Per-Form Master Disable Tests
     // =========================================================================
@@ -4531,6 +4627,36 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertCount( 1, $data['forms'][0]['actions'] ?? [] );
         $this->assertSame( 'cps_elementor_summary', $data['forms'][0]['actions'][0]['local_mapping_id'] ?? null );
         $this->assertSame( 'cps', $data['forms'][0]['actions'][0]['source'] ?? null );
+    }
+
+    public function test_elementor_workflow_plan_merges_cps_mappings_for_provider_native_form_id(): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch' ) ) {
+            $this->markTestSkipped( 'Provider-native mappings sync test double is unavailable.' );
+        }
+
+        add_filter( 'sentient_forms_elementor_is_active', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_forms_api_available', '__return_true' );
+        add_filter( 'sentient_forms_elementor_pro_form_submissions_api_available', '__return_false' );
+
+        $page_id = $this->create_elementor_form_page_for_controller();
+        $form_id = $page_id . ':formabc';
+        $sync    = new Sentient_Forms_Test_Mappings_Sync_Provider_Native_Fetch( $form_id );
+        $this->set_mappings_sync( $sync );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/elementor_forms/forms/' . rawurlencode( $form_id ) . '/actions/workflow-plan' );
+        $request->set_param( 'form_source_slug', 'elementor_forms' );
+        $request->set_param( 'form_id', $form_id );
+        $request->set_param( 'hook_scope', 'after_submission' );
+
+        $response = $this->controller->get_workflow_plan( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 1, $sync->fetch_calls );
+        $this->assertSame( 'local', $data['authority'] ?? null );
+        $this->assertContains( 'after_submission', $data['available_hooks'] ?? [] );
+        $this->assertContains( 'cps_elementor_summary', array_column( $data['nodes'] ?? [], 'mapping_id' ) );
     }
 
     public function test_get_form_actions_bootstrap_combines_actions_status_and_disabled_state(): void

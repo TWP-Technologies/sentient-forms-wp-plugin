@@ -60,6 +60,9 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $row = [
             'execution_request_id' => $execution_request_id,
             'mapping_id'           => isset( $data['mapping_id'] ) ? (int) $data['mapping_id'] : null,
+            'mapping_key'          => isset( $data['mapping_key'] ) ? sanitize_text_field( (string) $data['mapping_key'] ) : null,
+            'action_code'          => isset( $data['action_code'] ) ? sanitize_text_field( (string) $data['action_code'] ) : null,
+            'action_label'         => isset( $data['action_label'] ) ? sanitize_text_field( (string) $data['action_label'] ) : null,
             'form_source'          => isset( $data['form_source'] ) ? sanitize_key( (string) $data['form_source'] ) : null,
             'form_id'              => isset( $data['form_id'] ) ? sanitize_text_field( (string) $data['form_id'] ) : null,
             'entry_id'             => isset( $data['entry_id'] ) ? sanitize_text_field( (string) $data['entry_id'] ) : null,
@@ -86,7 +89,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
                 $this->table_name(),
                 $row,
                 [ 'execution_request_id' => $execution_request_id ],
-                [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ],
+                $this->record_row_formats( $row ),
                 [ '%s' ]
             );
 
@@ -101,7 +104,7 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $inserted = $this->wpdb->insert(
             $this->table_name(),
             $row,
-            [ '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ]
+            $this->record_row_formats( $row )
         );
 
         if ( false === $inserted )
@@ -422,6 +425,20 @@ class Sentient_Forms_Execution_Events_Repository extends Sentient_Forms_Local_Re
         $row['cost_json']        = $this->decode_json_field( $row['cost_json'] ?? null );
         $row['result_json']      = $this->decode_json_field( $row['result_json'] ?? null );
         return $row;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function record_row_formats( array $row ): array
+    {
+        $formats = [];
+        foreach ( array_keys( $row ) as $field )
+        {
+            $formats[] = 'mapping_id' === $field ? '%d' : '%s';
+        }
+
+        return $formats;
     }
 
     private function action_log_filter_values( array $filters ): array
