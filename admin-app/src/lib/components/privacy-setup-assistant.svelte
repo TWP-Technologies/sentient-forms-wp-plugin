@@ -8,6 +8,7 @@
 	} from '$lib/api/types';
 	import SiteContextNotices from '$lib/components/site-context-notices.svelte';
 	import SiteContextSetupPanel from '$lib/components/site-context-setup-panel.svelte';
+	import StickyActionFooter from '$lib/components/sticky-action-footer.svelte';
 	import { Alert, Badge, Button } from '$lib/components/ui';
 	import { appHref } from '$lib/navigation';
 	import { parseSiteContextStatusResponse } from '$lib/schemas/site-context';
@@ -557,14 +558,14 @@
 		data-testid="privacy-setup-assistant-backdrop"
 	>
 		<div
-			class="sf:my-6 sf:w-full sf:max-w-5xl sf:overflow-hidden sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:shadow-2xl"
+			class="sf:my-6 sf:flex sf:max-h-[calc(100vh-3rem)] sf:w-full sf:max-w-5xl sf:flex-col sf:overflow-hidden sf:rounded-lg sf:border sf:border-slate-200 sf:bg-white sf:shadow-2xl"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="privacy-setup-assistant-title"
 			data-testid="privacy-setup-assistant"
 		>
 			<div
-				class="sf:border-b sf:border-slate-200 sf:bg-slate-950 sf:px-5 sf:py-5 sf:text-white sf:sm:px-6"
+				class="sf:shrink-0 sf:border-b sf:border-slate-200 sf:bg-slate-950 sf:px-5 sf:py-5 sf:text-white sf:sm:px-6"
 			>
 				<div class="sf:flex sf:flex-wrap sf:items-start sf:justify-between sf:gap-3">
 					<div class="sf:max-w-3xl sf:space-y-2">
@@ -600,7 +601,7 @@
 				</div>
 			</div>
 
-			<div class="sf:space-y-6 sf:p-5 sf:sm:p-6">
+			<div class="sf:flex-1 sf:space-y-6 sf:overflow-y-auto sf:p-5 sf:sm:p-6">
 				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
 					<span
 						class="sf:inline-flex sf:h-7 sf:w-7 sf:items-center sf:justify-center sf:rounded-full sf:bg-primary-600 sf:text-sm sf:font-semibold sf:text-white"
@@ -767,11 +768,14 @@
 						<SiteContextNotices />
 					</div>
 				</div>
+			</div>
 
-				<div
-					class="sf:flex sf:flex-col sf:gap-3 sf:border-t sf:border-slate-200 sf:pt-5 sf:md:flex-row sf:md:items-center sf:md:justify-between"
-				>
-					<div class="sf:flex sf:min-w-0 sf:flex-col sf:gap-3">
+			<StickyActionFooter
+				align="between"
+				class="sf:bg-white"
+				testId="privacy-setup-action-footer"
+			>
+					<div class="sf:flex sf:min-w-0 sf:flex-1 sf:flex-col sf:gap-3">
 						<div class="sf:flex sf:min-w-0 sf:items-start sf:gap-3">
 							<span
 								class="sf:inline-flex sf:h-7 sf:w-7 sf:shrink-0 sf:items-center sf:justify-center sf:rounded-full sf:bg-slate-900 sf:text-sm sf:font-semibold sf:text-white"
@@ -813,8 +817,7 @@
 							{saving || siteContextSaving ? 'Saving...' : `Apply ${selectedDefinition.label}`}
 						</Button>
 					</div>
-				</div>
-			</div>
+			</StickyActionFooter>
 		</div>
 	</div>
 {/if}

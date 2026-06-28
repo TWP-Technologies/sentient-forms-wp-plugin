@@ -1,6 +1,16 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { Badge, Button, ButtonLink, Card, Section, StateTemplate } from '$lib/components/ui';
+	import { onDestroy, onMount } from 'svelte';
+	import {
+		Badge,
+		Button,
+		ButtonLink,
+		Card,
+		InputField,
+		SearchInput,
+		Section,
+		SelectField,
+		StateTemplate
+	} from '$lib/components/ui';
 	import { createClientFromConfig } from '$lib/api/client';
 	import type {
 		SubmissionLedgerRecord,
@@ -17,19 +27,69 @@
 
 	let { data }: Props = $props();
 
+	const FILTER_DEBOUNCE_MS = 300;
+	const pageSizeOptions = [
+		{ value: '10', label: '10 per page' },
+		{ value: '25', label: '25 per page' },
+		{ value: '50', label: '50 per page' },
+		{ value: '100', label: '100 per page' }
+	];
+	const hasFilesOptions = [
+		{ value: 'all', label: 'All submissions' },
+		{ value: 'yes', label: 'With files' },
+		{ value: 'no', label: 'Without files' }
+	];
+	const sortOptions = [
+		{ value: 'captured_desc', label: 'Newest captured' },
+		{ value: 'captured_asc', label: 'Oldest captured' },
+		{ value: 'submitted_desc', label: 'Newest submitted' },
+		{ value: 'submitted_asc', label: 'Oldest submitted' },
+		{ value: 'native_entry_desc', label: 'Native entry desc' },
+		{ value: 'native_entry_asc', label: 'Native entry asc' }
+	];
+
 	const client = createClientFromConfig();
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let settings = $state<SubmissionLedgerSettingsResponse | null>(null);
 	let records = $state<SubmissionLedgerRecord[]>([]);
 	let total = $state(0);
+	let query = $state('');
+	let nativeEntry = $state('');
+	let capturedFrom = $state('');
+	let capturedTo = $state('');
+	let hasFiles = $state('all');
+	let sort = $state('captured_desc');
+	let perPage = $state('10');
+	let offset = $state(0);
+	let filterTimer: ReturnType<typeof setTimeout> | null = null;
+	let ledgerRequestSequence = 0;
 
 	const routeFormSourceSlug = $derived(encodeURIComponent(data.formSourceSlug));
 	const routeFormId = $derived(encodeURIComponent(data.formId));
 	const formDetailHref = $derived(appHref(`/actions/${routeFormSourceSlug}/${routeFormId}`));
 	const formLabel = $derived(`${data.formSourceSlug.replaceAll('_', ' ')} #${data.formId}`);
+	const pageSize = $derived(Math.max(1, Number(perPage) || 10));
+	const resultStart = $derived(total > 0 && records.length > 0 ? offset + 1 : 0);
+	const resultEnd = $derived(total > 0 ? Math.min(offset + records.length, total) : 0);
+	const resultSummary = $derived.by(() => {
+		if (total <= 0 || records.length === 0) return 'Showing 0 of 0';
+		if (resultStart === resultEnd) return `Showing ${resultStart} of ${total.toLocaleString()}`;
+		return `Showing ${resultStart.toLocaleString()}-${resultEnd.toLocaleString()} of ${total.toLocaleString()}`;
+	});
+	const hasPreviousPage = $derived(offset > 0);
+	const hasNextPage = $derived(offset + records.length < total);
+	const hasActiveFilters = $derived(
+		query.trim() !== '' ||
+			nativeEntry.trim() !== '' ||
+			capturedFrom.trim() !== '' ||
+			capturedTo.trim() !== '' ||
+			hasFiles !== 'all' ||
+			sort !== 'captured_desc'
+	);
 
 	async function loadLedgerSubmissions() {
+		const requestSequence = ++ledgerRequestSequence;
 		loading = true;
 		error = null;
 
@@ -39,26 +99,85 @@
 					showNotifications: false
 				}),
 				client.getSubmissionLedgerRecords(data.formSourceSlug, data.formId, {
-					perPage: 50,
-					offset: 0,
+					perPage: pageSize,
+					offset,
+					q: query,
+					nativeEntry,
+					capturedFrom,
+					capturedTo,
+					hasFiles: hasFiles === 'all' ? null : hasFiles === 'yes',
+					sort,
 					showNotifications: false
 				})
 			]);
+
+			if (requestSequence !== ledgerRequestSequence) return;
 
 			settings = nextSettings;
 			records = Array.isArray(nextRecords.records) ? nextRecords.records : [];
 			total = Number.isFinite(nextRecords.total) ? nextRecords.total : records.length;
 		} catch (caught) {
+			if (requestSequence !== ledgerRequestSequence) return;
+
 			error = caught instanceof Error ? caught.message : 'Unable to load submission ledger.';
 			records = [];
 			total = 0;
 		} finally {
-			loading = false;
+			if (requestSequence === ledgerRequestSequence) {
+				loading = false;
+			}
 		}
+	}
+
+	function clearFilterTimer() {
+		if (!filterTimer) return;
+		clearTimeout(filterTimer);
+		filterTimer = null;
+	}
+
+	function queueFilterReload() {
+		clearFilterTimer();
+		filterTimer = setTimeout(() => {
+			offset = 0;
+			void loadLedgerSubmissions();
+		}, FILTER_DEBOUNCE_MS);
+	}
+
+	function applyFilterReload() {
+		clearFilterTimer();
+		offset = 0;
+		void loadLedgerSubmissions();
+	}
+
+	function clearFilters() {
+		query = '';
+		nativeEntry = '';
+		capturedFrom = '';
+		capturedTo = '';
+		hasFiles = 'all';
+		sort = 'captured_desc';
+		offset = 0;
+		clearFilterTimer();
+		void loadLedgerSubmissions();
+	}
+
+	function goToPreviousPage() {
+		offset = Math.max(0, offset - pageSize);
+		void loadLedgerSubmissions();
+	}
+
+	function goToNextPage() {
+		offset += pageSize;
+		void loadLedgerSubmissions();
 	}
 
 	onMount(() => {
 		void loadLedgerSubmissions();
+	});
+
+	onDestroy(() => {
+		clearFilterTimer();
+		ledgerRequestSequence += 1;
 	});
 </script>
 
@@ -94,6 +213,78 @@
 	</Card>
 
 	<Card data-testid="submission-ledger-records-card">
+		<div class="sf:mb-5 sf:space-y-4" data-testid="submission-ledger-controls">
+			<div class="sf:grid sf:gap-3 sf:lg:grid-cols-[minmax(14rem,1.2fr)_minmax(10rem,0.8fr)_auto] sf:lg:items-end">
+				<div>
+					<label
+						for="submission-ledger-search"
+						class="sf:mb-1 sf:block sf:text-sm sf:font-medium sf:text-slate-700"
+					>
+						Search submissions
+					</label>
+					<SearchInput
+						id="submission-ledger-search"
+						bind:value={query}
+						placeholder="Search fields, UUID, metadata, or native entry"
+						aria-label="Search Submission Ledger"
+						data-testid="submission-ledger-search"
+						oninput={queueFilterReload}
+					/>
+				</div>
+				<InputField
+					id="submission-ledger-native-entry"
+					label="Native Entry"
+					placeholder="Entry ID"
+					bind:value={nativeEntry}
+					data-testid="submission-ledger-native-entry"
+					oninput={queueFilterReload}
+				/>
+				<Button variant="secondary" onclick={clearFilters} disabled={!hasActiveFilters}>
+					Clear filters
+				</Button>
+			</div>
+
+			<div class="sf:grid sf:gap-3 sf:md:grid-cols-2 sf:xl:grid-cols-5">
+				<InputField
+					id="submission-ledger-captured-from"
+					label="Captured From"
+					type="datetime-local"
+					placeholder={undefined}
+					bind:value={capturedFrom}
+					onchange={applyFilterReload}
+				/>
+				<InputField
+					id="submission-ledger-captured-to"
+					label="Captured To"
+					type="datetime-local"
+					placeholder={undefined}
+					bind:value={capturedTo}
+					onchange={applyFilterReload}
+				/>
+				<SelectField
+					id="submission-ledger-has-files"
+					label="Files"
+					options={hasFilesOptions}
+					bind:value={hasFiles}
+					onchange={applyFilterReload}
+				/>
+				<SelectField
+					id="submission-ledger-sort"
+					label="Sort"
+					options={sortOptions}
+					bind:value={sort}
+					onchange={applyFilterReload}
+				/>
+				<SelectField
+					id="submission-ledger-page-size"
+					label="Page Size"
+					options={pageSizeOptions}
+					bind:value={perPage}
+					onchange={applyFilterReload}
+				/>
+			</div>
+		</div>
+
 		{#if loading}
 			<StateTemplate
 				variant="loading"
@@ -115,12 +306,29 @@
 		{:else if records.length === 0}
 			<StateTemplate
 				variant="empty"
-				title="No stored submissions"
-				message="New submitted forms will appear here after ledger storage is enabled and a form is submitted."
+				title={hasActiveFilters ? 'No matching submissions' : 'No stored submissions'}
+				message={hasActiveFilters
+					? 'Clear filters or broaden the search to review more stored submissions.'
+					: 'New submitted forms will appear here after ledger storage is enabled and a form is submitted.'}
 				inline
 				testId="submission-ledger-empty"
 			/>
 		{:else}
+			<div
+				class="sf:mb-3 sf:flex sf:flex-col sf:gap-2 sf:sm:flex-row sf:sm:items-center sf:sm:justify-between"
+			>
+				<p class="sf:text-sm sf:font-medium sf:text-slate-700" data-testid="submission-ledger-results-summary">
+					{resultSummary}
+				</p>
+				<div class="sf:flex sf:flex-wrap sf:items-center sf:gap-2">
+					<Button variant="secondary" size="sm" onclick={goToPreviousPage} disabled={!hasPreviousPage}>
+						Previous page
+					</Button>
+					<Button variant="secondary" size="sm" onclick={goToNextPage} disabled={!hasNextPage}>
+						Next page
+					</Button>
+				</div>
+			</div>
 			<div class="sf:overflow-x-auto" data-testid="submission-ledger-table-scroll">
 				<table class="sf:min-w-full sf:divide-y sf:divide-slate-200" data-testid="submission-ledger-table">
 					<thead class="sf:bg-slate-50">

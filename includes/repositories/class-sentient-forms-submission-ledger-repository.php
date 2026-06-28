@@ -129,19 +129,26 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function list_for_form( string $form_source, string $form_id, int $limit = 50, int $offset = 0 ): array
+    public function list_for_form( string $form_source, string $form_id, int $limit = 50, int $offset = 0, array $filters = [] ): array
     {
-        $rows = $this->wpdb->get_results(
-            $this->wpdb->prepare(
-                'SELECT * FROM %i WHERE form_source = %s AND form_id = %s ORDER BY captured_at DESC, id DESC LIMIT %d OFFSET %d',
-                $this->table_name(),
-                sanitize_key( $form_source ),
-                sanitize_text_field( $form_id ),
+        $args = array_merge(
+            [ $this->table_name() ],
+            $this->build_form_filter_values( $form_source, $form_id, $filters ),
+            [
                 max( 1, min( 100, $limit ) ),
-                max( 0, $offset )
-            ),
-            ARRAY_A
-        ) ?: [];
+                max( 0, $offset ),
+            ]
+        );
+
+        $rows = match ( sanitize_key( (string) ( $filters['sort'] ?? '' ) ) )
+        {
+            'captured_asc' => $this->list_for_form_ordered_by_captured_asc( $args ),
+            'submitted_desc' => $this->list_for_form_ordered_by_submitted_desc( $args ),
+            'submitted_asc' => $this->list_for_form_ordered_by_submitted_asc( $args ),
+            'native_entry_asc' => $this->list_for_form_ordered_by_native_entry_asc( $args ),
+            'native_entry_desc' => $this->list_for_form_ordered_by_native_entry_desc( $args ),
+            default => $this->list_for_form_ordered_by_captured_desc( $args ),
+        };
 
         return array_map( [ $this, 'decode_row' ], $rows );
     }
@@ -156,14 +163,29 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         );
     }
 
-    public function count_for_form( string $form_source, string $form_id ): int
+    public function count_for_form( string $form_source, string $form_id, array $filters = [] ): int
     {
+        $args = array_merge(
+            [ $this->table_name() ],
+            $this->build_form_filter_values( $form_source, $form_id, $filters )
+        );
+
         return (int) $this->wpdb->get_var(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
             $this->wpdb->prepare(
-                'SELECT COUNT(*) FROM %i WHERE form_source = %s AND form_id = %s',
-                $this->table_name(),
-                sanitize_key( $form_source ),
-                sanitize_text_field( $form_id )
+                "SELECT COUNT(*) FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )",
+                ...$args
             )
         );
     }
@@ -208,5 +230,258 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         $row['redaction_summary_json']  = $this->decode_json_field( $row['redaction_summary_json'] ?? null );
 
         return $row;
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     *
+     * @return array<int, string>
+     */
+    private function build_form_filter_values( string $form_source, string $form_id, array $filters ): array
+    {
+        $values = [
+            sanitize_key( $form_source ),
+            sanitize_text_field( $form_id ),
+        ];
+
+        $query = isset( $filters['q'] ) ? sanitize_text_field( (string) $filters['q'] ) : '';
+        $like  = '%' . $this->wpdb->esc_like( $query ) . '%';
+        array_push( $values, $query, $like, $like, $like, $like );
+
+        $native_entry = isset( $filters['native_entry'] ) ? sanitize_text_field( (string) $filters['native_entry'] ) : '';
+        array_push( $values, $native_entry, $native_entry );
+
+        $captured_from = $this->normalize_captured_filter_datetime( $filters['captured_from'] ?? null );
+        array_push( $values, $captured_from, $captured_from );
+
+        $captured_to = $this->normalize_captured_filter_datetime( $filters['captured_to'] ?? null );
+        array_push( $values, $captured_to, $captured_to );
+
+        $has_files = '';
+        if ( array_key_exists( 'has_files', $filters ) && null !== $filters['has_files'] )
+        {
+            $has_files = filter_var( $filters['has_files'], FILTER_VALIDATE_BOOLEAN ) ? '1' : '0';
+        }
+
+        array_push( $values, $has_files, $has_files, $has_files );
+
+        return $values;
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_captured_desc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY captured_at DESC, id DESC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_captured_asc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY captured_at ASC, id ASC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_submitted_desc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY source_submitted_at DESC, captured_at DESC, id DESC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_submitted_asc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY source_submitted_at ASC, captured_at ASC, id ASC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_native_entry_asc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY
+                    CASE WHEN native_entry_id REGEXP '^[0-9]+$' THEN 0 ELSE 1 END ASC,
+                    CAST(native_entry_id AS UNSIGNED) ASC,
+                    native_entry_id ASC,
+                    captured_at DESC,
+                    id DESC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    /**
+     * @param array<int, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function list_for_form_ordered_by_native_entry_desc( array $args ): array
+    {
+        return $this->wpdb->get_results(
+            // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Optional filters are represented by repeated scalar placeholders.
+            $this->wpdb->prepare(
+                "SELECT * FROM %i
+                WHERE form_source = %s
+                AND form_id = %s
+                AND (%s = '' OR submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)
+                AND (%s = '' OR native_entry_id = %s)
+                AND (%s = '' OR captured_at >= %s)
+                AND (%s = '' OR captured_at <= %s)
+                AND (
+                    %s = ''
+                    OR (%s = '1' AND file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')
+                    OR (%s = '0' AND (file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]'))
+                )
+                ORDER BY
+                    CASE WHEN native_entry_id REGEXP '^[0-9]+$' THEN 0 ELSE 1 END ASC,
+                    CAST(native_entry_id AS UNSIGNED) DESC,
+                    native_entry_id DESC,
+                    captured_at DESC,
+                    id DESC
+                LIMIT %d OFFSET %d",
+                ...$args
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    private function normalize_captured_filter_datetime( mixed $value ): string
+    {
+        if ( null === $value || ! is_scalar( $value ) )
+        {
+            return '';
+        }
+
+        $raw = sanitize_text_field( (string) $value );
+        if ( '' === $raw )
+        {
+            return '';
+        }
+
+        $normalized = str_replace( 'T', ' ', $raw );
+        if ( preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $normalized ) )
+        {
+            return $normalized . ':00';
+        }
+
+        if ( preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $normalized ) )
+        {
+            return $normalized;
+        }
+
+        return '';
     }
 }

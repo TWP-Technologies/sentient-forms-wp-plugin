@@ -17,6 +17,7 @@ name: WordPress.org Package Preflight
       - 'scripts/build-wporg-package.php'
       - 'scripts/bump-release-version.php'
       - 'scripts/check-text-encoding.php'
+      - 'scripts/generate-openrouter-model-recommendations.mjs'
       - 'scripts/scan-wporg-package.php'
       - 'scripts/audit-wporg-licenses.php'
       - 'scripts/validate-release-version.php'
@@ -42,6 +43,7 @@ name: WordPress.org Package Preflight
       - 'scripts/build-wporg-package.php'
       - 'scripts/bump-release-version.php'
       - 'scripts/check-text-encoding.php'
+      - 'scripts/generate-openrouter-model-recommendations.mjs'
       - 'scripts/scan-wporg-package.php'
       - 'scripts/audit-wporg-licenses.php'
       - 'scripts/validate-release-version.php'
@@ -128,6 +130,18 @@ jobs:
       - name: Install admin app dependencies
         working-directory: admin-app
         run: bun install --frozen-lockfile
+
+      - name: Refresh bundled OpenRouter model snapshot
+        run: |
+          for attempt in 1 2 3; do
+            if composer openrouter-model-snapshot; then
+              exit 0
+            fi
+
+            sleep "$(( attempt * 10 ))"
+          done
+
+          echo "::warning::OpenRouter model snapshot refresh failed after retries; continuing with the committed bundled snapshot."
 
       - name: Build WordPress admin assets
         working-directory: admin-app

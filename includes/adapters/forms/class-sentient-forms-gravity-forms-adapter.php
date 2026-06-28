@@ -5388,6 +5388,8 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
         $structured_valid = $this->extract_structured_output_valid( $result );
         $this->persist_entry_runtime_meta( $entry_id, 'sentient_forms_structured_output_valid', $structured_valid ? '1' : '0' );
 
+        $this->maybe_persist_realtime_clarification_late_result( $entry_id, $context, $result );
+
         if ( empty( $classification ) )
         {
             $this->add_entry_note(
@@ -5413,10 +5415,701 @@ class Sentient_Forms_Gravity_Forms_Adapter implements Sentient_Forms_Adapter_Int
             $context,
             $this->should_suppress_deferred_notifications_from_result( $context, $result ),
         );
-        $this->resolve_deferred_webhooks_after_async_completion(
-            $context,
-            $this->should_suppress_deferred_webhooks_from_result( $context, $result ),
+            $this->resolve_deferred_webhooks_after_async_completion(
+                $context,
+                $this->should_suppress_deferred_webhooks_from_result( $context, $result ),
+            );
+    }
+
+    private function maybe_persist_realtime_clarification_late_result( int $entry_id, array $context, array $result ): void
+    {
+        if ( $entry_id <= 0 || ! $this->is_realtime_clarification_result( $context, $result ) )
+        {
+            return;
+        }
+
+        $output = $this->extract_realtime_clarification_output( $result );
+        if ( [] === $output )
+        {
+            return;
+        }
+
+        $timing   = $this->build_realtime_clarification_timing_meta( $entry_id, $context, $result );
+        $questions = $this->normalize_realtime_clarification_questions(
+            $output['virtual_questions'] ?? [],
+            $timing
         );
+        $has_decisions = array_key_exists( 'conditional_decisions', $output );
+        $decisions     = $has_decisions
+            ? $this->normalize_realtime_clarification_decisions( $output['conditional_decisions'] )
+            : [];
+        if ( [] === $questions && [] === $decisions )
+        {
+            return;
+        }
+
+        $entry = $this->get_entry_record( $entry_id );
+        if ( ! is_array( $entry ) )
+        {
+            return;
+        }
+
+        $storage_field_id = $this->resolve_realtime_qna_storage_field_id( $entry, $context );
+        if ( '' === $storage_field_id )
+        {
+            return;
+        }
+
+        $existing_payload = $this->decode_realtime_qna_payload( $entry[ $storage_field_id ] ?? null );
+        $mapping          = array_merge(
+            [
+                'mapping_id'        => $this->resolve_realtime_context_identifier( $context, [ 'mapping_id', 'local_mapping_id', 'action_id' ] ),
+                'central_action_id' => self::REALTIME_ACTION_ID,
+                'action_name_label' => $this->resolve_realtime_action_label( $context ),
+                'questions'         => $questions,
+            ],
+            $timing
+        );
+        if ( $has_decisions )
+        {
+            $mapping['conditional_decisions'] = $decisions;
+        }
+
+        $payload = $this->merge_realtime_qna_mapping(
+            $existing_payload,
+            $mapping,
+            (string) ( $entry['form_id'] ?? $context['form_id'] ?? '' ),
+            $timing['returned_at'] ?? ''
+        );
+
+        $encoded = wp_json_encode( $payload );
+        if ( ! is_string( $encoded ) || '' === $encoded )
+        {
+            return;
+        }
+
+        $entry[ $storage_field_id ] = $encoded;
+        $this->persist_realtime_qna_entry_field( $entry_id, $storage_field_id, $entry, $encoded );
+    }
+
+    private function persist_realtime_qna_entry_field( int $entry_id, string $storage_field_id, array $entry, string $encoded ): void
+    {
+        if ( ! class_exists( 'GFAPI' ) )
+        {
+            return;
+        }
+
+        if ( is_callable( [ 'GFAPI', 'update_entry_field' ] ) )
+        {
+            try
+            {
+                $field_result = GFAPI::update_entry_field( $entry_id, $storage_field_id, $encoded );
+                if ( ! is_wp_error( $field_result ) && false !== $field_result )
+                {
+                    return;
+                }
+
+                if ( is_wp_error( $field_result ) )
+                {
+                    sentient_forms_debug_log(
+                        'Sentient Forms could not persist late realtime clarification questions with update_entry_field.',
+                        [
+                            'entry_id' => $entry_id,
+                            'field_id' => $storage_field_id,
+                            'error'    => $field_result->get_error_message(),
+                        ]
+                    );
+                }
+            }
+            catch ( Exception $e )
+            {
+                sentient_forms_debug_log(
+                    'Sentient Forms could not persist late realtime clarification questions with update_entry_field.',
+                    [
+                        'entry_id' => $entry_id,
+                        'field_id' => $storage_field_id,
+                        'error'    => $e->getMessage(),
+                    ]
+                );
+            }
+        }
+
+        if ( ! is_callable( [ 'GFAPI', 'update_entry' ] ) )
+        {
+            return;
+        }
+
+        try
+        {
+            $entry_result = GFAPI::update_entry( $entry );
+            if ( is_wp_error( $entry_result ) )
+            {
+                sentient_forms_debug_log(
+                    'Sentient Forms could not persist late realtime clarification questions with update_entry.',
+                    [
+                        'entry_id' => $entry_id,
+                        'field_id' => $storage_field_id,
+                        'error'    => $entry_result->get_error_message(),
+                    ]
+                );
+            }
+        }
+        catch ( Exception $e )
+        {
+            sentient_forms_debug_log(
+                'Sentient Forms could not persist late realtime clarification questions with update_entry.',
+                [
+                    'entry_id' => $entry_id,
+                    'field_id' => $storage_field_id,
+                    'error'    => $e->getMessage(),
+                ]
+            );
+        }
+    }
+
+    private function is_realtime_clarification_result( array $context, array $result ): bool
+    {
+        $candidates = [
+            $context['central_action_id'] ?? null,
+            $context['action_id'] ?? null,
+            $result['central_action_id'] ?? null,
+            $result['meta']['action_template_code'] ?? null,
+            $result['evaluation_payload']['meta']['action_template_code'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( is_scalar( $candidate ) && self::REALTIME_ACTION_ID === sanitize_key( (string) $candidate ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function extract_realtime_clarification_output( array $result ): array
+    {
+        $candidates = [
+            $result,
+            $result['result'] ?? null,
+            $result['result']['structured_output'] ?? null,
+            $result['result_data'] ?? null,
+            $result['result_data']['structured_output'] ?? null,
+            $result['evaluation_payload'] ?? null,
+            $result['evaluation_payload']['result'] ?? null,
+            $result['evaluation_payload']['result']['structured_output'] ?? null,
+            $result['evaluation_payload']['result_data'] ?? null,
+            $result['evaluation_payload']['result_data']['structured_output'] ?? null,
+        ];
+
+        foreach (
+            [
+                $result['llm_output'] ?? null,
+                $result['result']['llm_output'] ?? null,
+                $result['result_data']['llm_output'] ?? null,
+                $result['evaluation_payload']['llm_output'] ?? null,
+                $result['evaluation_payload']['result']['llm_output'] ?? null,
+                $result['evaluation_payload']['result_data']['llm_output'] ?? null,
+            ] as $llm_output
+        )
+        {
+            $decoded = $this->decode_realtime_clarification_llm_output( $llm_output );
+            if ( [] !== $decoded )
+            {
+                $candidates[] = $decoded;
+            }
+        }
+
+        foreach ( $candidates as $candidate )
+        {
+            if (
+                is_array( $candidate )
+                && (
+                    isset( $candidate['virtual_questions'] )
+                    || isset( $candidate['conditional_decisions'] )
+                )
+            )
+            {
+                return $candidate;
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function decode_realtime_clarification_llm_output( mixed $value ): array
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return [];
+        }
+
+        $raw = trim( (string) $value );
+        if ( '' === $raw )
+        {
+            return [];
+        }
+
+        if ( str_starts_with( $raw, '```' ) )
+        {
+            $raw = preg_replace( '/^```(?:json)?\s*|\s*```$/i', '', $raw );
+            $raw = is_string( $raw ) ? trim( $raw ) : '';
+        }
+
+        $decoded = json_decode( $raw, true );
+
+        return is_array( $decoded ) ? $decoded : [];
+    }
+
+    /**
+     * @param mixed $raw_questions
+     * @param array<string,mixed> $timing
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function normalize_realtime_clarification_questions( mixed $raw_questions, array $timing ): array
+    {
+        if ( ! is_array( $raw_questions ) )
+        {
+            return [];
+        }
+
+        $questions = [];
+        foreach ( $raw_questions as $question )
+        {
+            if ( ! is_array( $question ) )
+            {
+                continue;
+            }
+
+            $question_text = $this->stringify_post_execution_value( $question['question'] ?? '' );
+            if ( '' === trim( $question_text ) )
+            {
+                continue;
+            }
+
+            $question_id = $this->stringify_post_execution_value( $question['question_id'] ?? '' );
+            if ( '' === $question_id )
+            {
+                $question_id = substr( hash( 'sha256', $question_text ), 0, 16 );
+            }
+
+            $questions[] = array_merge(
+                [
+                    'question_id'     => sanitize_text_field( $question_id ),
+                    'question'        => sanitize_textarea_field( $question_text ),
+                    'reason'          => sanitize_textarea_field( $this->stringify_post_execution_value( $question['reason'] ?? '' ) ),
+                    'target_field_id' => sanitize_text_field( $this->stringify_post_execution_value( $question['target_field_id'] ?? '' ) ),
+                    'required'        => rest_sanitize_boolean( $question['required'] ?? false ),
+                    'answer_type'     => sanitize_key( $this->stringify_post_execution_value( $question['answer_type'] ?? 'long_text' ) ),
+                    'choices'         => $this->sanitize_realtime_question_choices( $question['choices'] ?? [] ),
+                    'answer'          => sanitize_textarea_field( $this->stringify_post_execution_value( $question['answer'] ?? '' ) ),
+                    'completed'       => rest_sanitize_boolean( $question['completed'] ?? false ),
+                ],
+                $timing
+            );
+        }
+
+        return $questions;
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function sanitize_realtime_question_choices( mixed $choices ): array
+    {
+        if ( ! is_array( $choices ) )
+        {
+            return [];
+        }
+
+        $sanitized = [];
+        foreach ( $choices as $choice )
+        {
+            if ( ! is_scalar( $choice ) )
+            {
+                continue;
+            }
+
+            $value = sanitize_text_field( (string) $choice );
+            if ( '' !== $value )
+            {
+                $sanitized[] = $value;
+            }
+        }
+
+        return array_values( array_unique( $sanitized ) );
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function normalize_realtime_clarification_decisions( mixed $raw_decisions ): array
+    {
+        if ( ! is_array( $raw_decisions ) )
+        {
+            return [];
+        }
+
+        $decisions = [];
+        foreach ( $raw_decisions as $decision )
+        {
+            if ( is_array( $decision ) )
+            {
+                $decisions[] = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage( $decision );
+            }
+        }
+
+        return $decisions;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function build_realtime_clarification_timing_meta( int $entry_id, array $context, array $result ): array
+    {
+        $entry        = $this->get_entry_record( $entry_id ) ?? [];
+        $submitted_at = $this->first_scalar_value(
+            [
+                $context['submitted_at'] ?? null,
+                $context['submission_submitted_at'] ?? null,
+                $context['suggestion_context']['submitted_at'] ?? null,
+                $entry['date_created'] ?? null,
+            ]
+        );
+        $returned_at  = $this->first_scalar_value(
+            [
+                $result['returned_at'] ?? null,
+                $result['meta']['returned_at'] ?? null,
+                $result['evaluation_payload']['returned_at'] ?? null,
+                $result['evaluation_payload']['meta']['returned_at'] ?? null,
+            ]
+        );
+        if ( '' === $returned_at )
+        {
+            $returned_at = gmdate( 'c' );
+        }
+
+        $submitted_ms      = $this->parse_realtime_timestamp_ms( $submitted_at );
+        $returned_ms       = $this->parse_realtime_timestamp_ms( $returned_at );
+        $returned_after_ms = null;
+        if ( null !== $submitted_ms && null !== $returned_ms )
+        {
+            $returned_after_ms = max( 0, $returned_ms - $submitted_ms );
+        }
+
+        $meta = [
+            'submitted_at'          => sanitize_text_field( $submitted_at ),
+            'returned_at'           => sanitize_text_field( $returned_at ),
+            'returned_after_ms'     => $returned_after_ms,
+            'late_after_submission' => null !== $returned_after_ms && $returned_after_ms > 0,
+            'execution_request_id'  => $this->extract_execution_request_id_from_log( $context, $result ) ?? '',
+            'timeout_source'        => sanitize_key(
+                $this->first_scalar_value(
+                    [
+                        $context['timeout_source'] ?? null,
+                        $context['request_reason'] ?? null,
+                        $context['suggestion_context']['request_reason'] ?? null,
+                    ]
+                )
+            ),
+        ];
+
+        $pre_submit_timeout_ms = $this->extract_realtime_pre_submit_timeout_ms( $context );
+        if ( null !== $pre_submit_timeout_ms )
+        {
+            $meta['pre_submit_timeout_ms'] = $pre_submit_timeout_ms;
+        }
+
+        return $meta;
+    }
+
+    private function parse_realtime_timestamp_ms( string $timestamp ): ?int
+    {
+        if ( '' === trim( $timestamp ) )
+        {
+            return null;
+        }
+
+        try
+        {
+            $date = new DateTimeImmutable( $timestamp );
+        }
+        catch ( Exception $e )
+        {
+            return null;
+        }
+
+        return ( (int) $date->format( 'U' ) * 1000 ) + (int) floor( (int) $date->format( 'u' ) / 1000 );
+    }
+
+    /**
+     * @param array<int,mixed> $candidates
+     */
+    private function first_scalar_value( array $candidates ): string
+    {
+        foreach ( $candidates as $candidate )
+        {
+            if ( is_scalar( $candidate ) )
+            {
+                $value = trim( (string) $candidate );
+                if ( '' !== $value )
+                {
+                    return $value;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    private function extract_realtime_pre_submit_timeout_ms( array $context ): ?int
+    {
+        $candidates = [
+            $context['pre_submit_timeout_ms'] ?? null,
+            $context['realtime_settings']['pre_submit_timeout_ms'] ?? null,
+            $context['settings']['realtime_settings']['pre_submit_timeout_ms'] ?? null,
+            $context['suggestion_context']['pre_submit_timeout_ms'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( is_numeric( $candidate ) )
+            {
+                return max( 0, (int) $candidate );
+            }
+        }
+
+        return null;
+    }
+
+    private function resolve_realtime_qna_storage_field_id( array $entry, array $context ): string
+    {
+        $form_id = isset( $entry['form_id'] ) ? absint( $entry['form_id'] ) : 0;
+        if ( $form_id <= 0 || ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_form' ] ) )
+        {
+            return '';
+        }
+
+        $form = GFAPI::get_form( $form_id );
+        if ( ! is_array( $form ) )
+        {
+            return '';
+        }
+
+        $candidates = [
+            $context['storage_target_field_id'] ?? null,
+            $context['realtime_settings']['storage_target_field_id'] ?? null,
+            $context['settings']['realtime_settings']['storage_target_field_id'] ?? null,
+            $context['suggestion_context']['storage_target_field_id'] ?? null,
+        ];
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $field_id = sanitize_text_field( (string) $candidate );
+            if ( '' !== $field_id && $this->form_has_realtime_qna_storage_target( $form, $field_id ) )
+            {
+                return $field_id;
+            }
+        }
+
+        return $this->find_realtime_storage_field_id( $form );
+    }
+
+    /**
+     * @param array<string,mixed> $form
+     */
+    private function form_has_realtime_qna_storage_target( array $form, string $field_id ): bool
+    {
+        if ( '' === trim( $field_id ) )
+        {
+            return false;
+        }
+
+        $fields = isset( $form['fields'] ) && is_array( $form['fields'] ) ? $form['fields'] : [];
+        foreach ( $fields as $field )
+        {
+            if ( $field_id !== $this->extract_gravity_field_property( $field, 'id' ) )
+            {
+                continue;
+            }
+
+            return $this->is_realtime_storage_field( $field );
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function decode_realtime_qna_payload( mixed $raw_value ): array
+    {
+        if ( ! is_string( $raw_value ) || '' === trim( $raw_value ) )
+        {
+            return [];
+        }
+
+        $decoded = json_decode( $raw_value, true );
+        if ( ! is_array( $decoded ) || ( $decoded['schema'] ?? '' ) !== 'sentient_forms_realtime_clarification_qna.v1' )
+        {
+            return [];
+        }
+
+        return $decoded;
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @param array<string,mixed> $mapping
+     *
+     * @return array<string,mixed>
+     */
+    private function merge_realtime_qna_mapping( array $payload, array $mapping, string $form_id, string $updated_at ): array
+    {
+        if ( [] === $payload )
+        {
+            $payload = [
+                'schema'     => 'sentient_forms_realtime_clarification_qna.v1',
+                'form_id'    => $form_id,
+                'source'     => $this->get_id(),
+                'updated_at' => $updated_at,
+                'mappings'   => [],
+            ];
+        }
+
+        $payload['schema']     = 'sentient_forms_realtime_clarification_qna.v1';
+        $payload['form_id']    = $this->stringify_post_execution_value( $payload['form_id'] ?? $form_id );
+        $payload['source']     = $this->stringify_post_execution_value( $payload['source'] ?? $this->get_id() );
+        $payload['updated_at'] = $updated_at;
+        $payload['mappings']   = isset( $payload['mappings'] ) && is_array( $payload['mappings'] )
+            ? array_values( $payload['mappings'] )
+            : [];
+
+        $target_mapping_id = $this->stringify_post_execution_value( $mapping['mapping_id'] ?? '' );
+        $replaced          = false;
+        foreach ( $payload['mappings'] as $index => $existing_mapping )
+        {
+            if ( ! is_array( $existing_mapping ) )
+            {
+                continue;
+            }
+
+            $existing_mapping_id = $this->stringify_post_execution_value( $existing_mapping['mapping_id'] ?? '' );
+            if ( '' === $target_mapping_id || $existing_mapping_id !== $target_mapping_id )
+            {
+                continue;
+            }
+
+            $mapping['questions'] = $this->merge_realtime_qna_questions(
+                isset( $existing_mapping['questions'] ) && is_array( $existing_mapping['questions'] )
+                    ? $existing_mapping['questions']
+                    : [],
+                isset( $mapping['questions'] ) && is_array( $mapping['questions'] )
+                    ? $mapping['questions']
+                    : []
+            );
+            $payload['mappings'][ $index ] = array_merge( $existing_mapping, $mapping );
+            $replaced = true;
+            break;
+        }
+
+        if ( ! $replaced )
+        {
+            $payload['mappings'][] = $mapping;
+        }
+
+        return $payload;
+    }
+
+    /**
+     * @param array<int,mixed> $existing_questions
+     * @param array<int,mixed> $new_questions
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function merge_realtime_qna_questions( array $existing_questions, array $new_questions ): array
+    {
+        $merged_by_id = [];
+        foreach ( $existing_questions as $question )
+        {
+            if ( ! is_array( $question ) )
+            {
+                continue;
+            }
+
+            $question_id = $this->stringify_post_execution_value( $question['question_id'] ?? '' );
+            if ( '' !== $question_id )
+            {
+                $merged_by_id[ $question_id ] = $question;
+            }
+        }
+
+        foreach ( $new_questions as $question )
+        {
+            if ( ! is_array( $question ) )
+            {
+                continue;
+            }
+
+            $question_id = $this->stringify_post_execution_value( $question['question_id'] ?? '' );
+            if ( '' === $question_id )
+            {
+                continue;
+            }
+
+            $existing = $merged_by_id[ $question_id ] ?? [];
+            if (
+                is_array( $existing )
+                && '' === $this->stringify_post_execution_value( $question['answer'] ?? '' )
+                && '' !== $this->stringify_post_execution_value( $existing['answer'] ?? '' )
+            )
+            {
+                $question['answer']    = $existing['answer'];
+                $question['completed'] = $existing['completed'] ?? $question['completed'];
+            }
+
+            $merged_by_id[ $question_id ] = array_merge( is_array( $existing ) ? $existing : [], $question );
+        }
+
+        return array_values( $merged_by_id );
+    }
+
+    private function resolve_realtime_context_identifier( array $context, array $keys ): string
+    {
+        foreach ( $keys as $key )
+        {
+            if ( isset( $context[ $key ] ) && is_scalar( $context[ $key ] ) )
+            {
+                $value = sanitize_text_field( (string) $context[ $key ] );
+                if ( '' !== $value )
+                {
+                    return $value;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    private function resolve_realtime_action_label( array $context ): string
+    {
+        $label = $this->resolve_realtime_context_identifier( $context, [ 'action_name_label', 'action_label' ] );
+
+        return '' === $label
+            ? __( 'Real-time Clarification Assistant', 'sentient-forms' )
+            : $label;
     }
 
     /**

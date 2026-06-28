@@ -3,11 +3,29 @@ name: Full QA
 
 'on':
   push:
-    paths:
-      - '**'
+    branches:
+      - production
+      - 'release/**'
+    paths-ignore:
+      - '*.md'
+      - 'AGENTS.md'
+      - 'GEMINI.md'
+      - '**/*.md'
+      - '**/AGENTS.md'
+      - '**/GEMINI.md'
+      - 'agent-logs/**'
+      - 'docs/**'
   pull_request:
-    paths:
-      - '**'
+    paths-ignore:
+      - '*.md'
+      - 'AGENTS.md'
+      - 'GEMINI.md'
+      - '**/*.md'
+      - '**/AGENTS.md'
+      - '**/GEMINI.md'
+      - 'agent-logs/**'
+      - 'docs/**'
+  workflow_dispatch:
 
 env:
   BUN_VERSION: '1.3.0'

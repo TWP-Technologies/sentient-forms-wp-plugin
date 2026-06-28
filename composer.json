@@ -14,6 +14,7 @@
         "phpcbf": "vendor/bin/phpcbf --standard=phpcs-rulesets/SentientForms.xml",
         "encoding-check": "php scripts/check-text-encoding.php --source-tree",
         "encoding-check-package": "php scripts/check-text-encoding.php",
+        "openrouter-model-snapshot": "node scripts/generate-openrouter-model-recommendations.mjs",
         "wporg-build-package": "php scripts/build-wporg-package.php",
         "wporg-license-audit": "php scripts/audit-wporg-licenses.php",
         "wporg-license-audit-package": "php scripts/audit-wporg-licenses.php --package",

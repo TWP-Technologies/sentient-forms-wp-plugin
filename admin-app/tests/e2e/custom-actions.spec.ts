@@ -1,11 +1,79 @@
 import { test, expect } from '@playwright/test';
 import { seedRuntimeConfig } from './utils/runtime-config';
 import { expectAppUrl } from './utils/app-navigation';
+import { mockWpJson } from './utils/mock-wpjson';
 
 test.describe('Custom actions admin view', () => {
 	test.beforeEach(async ({ page }) => {
 		const wpHost = process.env.SENTIENT_WP_BASE_URL ?? 'http://localhost:8080';
 		await seedRuntimeConfig(page, { apiBaseUrl: `${wpHost}/wp-json/sentient-forms/v1/` });
+	});
+
+	test('keeps Custom Action save controls visible while editing a long form', async ({ page }) => {
+		await page.setViewportSize({ width: 1280, height: 640 });
+		await mockWpJson(page, {
+			actions: {
+				definitions: [
+					{
+						id: 'spam_detection_v1',
+						templateId: '11111111-1111-4111-8111-111111111111',
+						code: 'spam_detection_v1',
+						label: 'Spam Detection',
+						description: 'Detects spam submissions',
+						form_sources: ['gravity_forms'],
+						baseCreditCost: 10,
+						modelHint: 'openai/gpt-5.5',
+						source: 'cps'
+					}
+				]
+			},
+			customActions: {
+				list: {
+					success: true,
+					data: {
+						actions: [],
+						quota: {
+							quota_max: 5,
+							quota_used: 0,
+							quota_remaining: 5
+						}
+					}
+				}
+			},
+			localProviders: {
+				credentials: [
+					{
+						id: 1,
+						provider: 'openrouter',
+						label: 'OpenRouter test key',
+						status: 'valid',
+						secret_configured: true
+					}
+				]
+			}
+		});
+
+		await page.goto('/#/actions/custom/new');
+		await expect(page.getByTestId('custom-action-form')).toBeVisible();
+
+		const body = page.getByTestId('custom-action-form-body');
+		const footer = page.getByTestId('custom-action-form-footer');
+		const scrollMetrics = await body.evaluate((element) => ({
+			clientHeight: element.clientHeight,
+			scrollHeight: element.scrollHeight
+		}));
+
+		expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight + 24);
+		await body.evaluate((element) => {
+			element.scrollTop = element.scrollHeight;
+		});
+		await expect
+			.poll(() => body.evaluate((element) => element.scrollTop))
+			.toBeGreaterThan(0);
+		await expect(footer).toBeVisible();
+		await expect(footer).toHaveCSS('position', 'sticky');
+		await expect(footer.getByRole('button', { name: 'Create Action' })).toBeInViewport();
+		await expect(footer.getByRole('button', { name: 'Cancel' })).toBeInViewport();
 	});
 
 	test('lists, creates, archives, and reactivates custom actions', async ({ page }) => {

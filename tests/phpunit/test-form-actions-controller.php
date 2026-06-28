@@ -557,6 +557,255 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( '1', $data['form_id'] ?? null );
     }
 
+    public function test_submission_ledger_search_filters_server_side_before_pagination(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'    => 1,
+            'title' => 'Contact Form',
+        ];
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+
+        for ( $index = 1; $index <= 60; $index++ )
+        {
+            $this->assertIsInt(
+                $ledger->create(
+                    [
+                        'submission_uuid'     => sprintf( '%08d-1111-4111-8111-%012d', $index, $index ),
+                        'form_source'         => 'gravity_forms',
+                        'form_id'             => '1',
+                        'native_entry_id'     => (string) ( 1000 + $index ),
+                        'captured_at'         => sprintf( '2026-06-20 %02d:00:00', $index % 24 ),
+                        'logical_fields_json' => [
+                            'name'    => 'Ordinary Lead ' . $index,
+                            'message' => 'General inquiry without the search token.',
+                        ],
+                    ]
+                )
+            );
+        }
+
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'     => '99999999-1111-4111-8111-999999999999',
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => '1',
+                    'native_entry_id'     => 'needle-entry-77',
+                    'captured_at'         => '2026-06-01 00:00:00',
+                    'logical_fields_json' => [
+                        'name'    => 'Late Prospect',
+                        'message' => 'needle-prospect asks about a custom integration.',
+                    ],
+                ]
+            )
+        );
+
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/submissions' ) );
+        $request->set_param( 'per_page', 10 );
+        $request->set_param( 'offset', 0 );
+        $request->set_param( 'q', 'needle-prospect' );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 1, $data['total'] ?? null );
+        $this->assertCount( 1, $data['submissions'] ?? [] );
+        $this->assertSame( 'needle-entry-77', $data['submissions'][0]['native_entry_id'] ?? null );
+    }
+
+    public function test_submission_ledger_sort_orders_server_side_records(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'    => 1,
+            'title' => 'Contact Form',
+        ];
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+        foreach ( [ 'entry-c', 'entry-a', 'entry-b' ] as $index => $native_entry_id )
+        {
+            $this->assertIsInt(
+                $ledger->create(
+                    [
+                        'submission_uuid'     => sprintf( '78787878-1111-4111-8111-00000000000%d', $index + 1 ),
+                        'form_source'         => 'gravity_forms',
+                        'form_id'             => '1',
+                        'native_entry_id'     => $native_entry_id,
+                        'captured_at'         => sprintf( '2026-06-20 10:0%d:00', $index ),
+                        'logical_fields_json' => [
+                            'name' => 'Sorted Lead ' . $index,
+                        ],
+                    ]
+                )
+            );
+        }
+
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/submissions' ) );
+        $request->set_param( 'sort', 'native_entry_asc' );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 3, $data['total'] ?? null );
+        $this->assertSame(
+            [ 'entry-a', 'entry-b', 'entry-c' ],
+            array_column( $data['submissions'] ?? [], 'native_entry_id' )
+        );
+    }
+
+    public function test_submission_ledger_sorts_numeric_native_entry_ids_by_number(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'    => 1,
+            'title' => 'Contact Form',
+        ];
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+        foreach ( [ '10', '1', '2' ] as $index => $native_entry_id )
+        {
+            $this->assertIsInt(
+                $ledger->create(
+                    [
+                        'submission_uuid'     => sprintf( '98989898-1111-4111-8111-00000000000%d', $index + 1 ),
+                        'form_source'         => 'gravity_forms',
+                        'form_id'             => '1',
+                        'native_entry_id'     => $native_entry_id,
+                        'captured_at'         => sprintf( '2026-06-20 11:0%d:00', $index ),
+                        'logical_fields_json' => [
+                            'name' => 'Numeric Entry Lead ' . $index,
+                        ],
+                    ]
+                )
+            );
+        }
+
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/submissions' ) );
+        $request->set_param( 'sort', 'native_entry_asc' );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame(
+            [ '1', '2', '10' ],
+            array_column( $data['submissions'] ?? [], 'native_entry_id' )
+        );
+
+        $request->set_param( 'sort', 'native_entry_desc' );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame(
+            [ '10', '2', '1' ],
+            array_column( $data['submissions'] ?? [], 'native_entry_id' )
+        );
+    }
+
+    public function test_submission_ledger_datetime_local_filters_match_mysql_captured_timestamps(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'    => 1,
+            'title' => 'Contact Form',
+        ];
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'     => '12121212-3434-4567-8abc-121212121212',
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => '1',
+                    'native_entry_id'     => 'same-day-entry',
+                    'captured_at'         => '2026-06-28 13:00:00',
+                    'logical_fields_json' => [
+                        'name' => 'Same Day Prospect',
+                    ],
+                ]
+            )
+        );
+
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/submissions' ) );
+        $request->set_param( 'captured_from', '2026-06-28T12:00' );
+        $request->set_param( 'captured_to', '2026-06-28T14:00' );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 1, $data['total'] ?? null );
+        $this->assertCount( 1, $data['submissions'] ?? [] );
+        $this->assertSame( 'same-day-entry', $data['submissions'][0]['native_entry_id'] ?? null );
+    }
+
+    public function test_submission_ledger_ignores_invalid_captured_datetime_filters(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'    => 1,
+            'title' => 'Contact Form',
+        ];
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'     => '34343434-5656-4789-8abc-343434343434',
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => '1',
+                    'native_entry_id'     => 'invalid-date-survivor',
+                    'captured_at'         => '2026-06-28 13:00:00',
+                    'logical_fields_json' => [
+                        'name' => 'Invalid Date Survivor',
+                    ],
+                ]
+            )
+        );
+
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/submissions' ) );
+        $request->set_param( 'captured_from', 'not-a-date' );
+        $request->set_param( 'captured_to', 'also-not-a-date' );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 1, $data['total'] ?? null );
+        $this->assertCount( 1, $data['submissions'] ?? [] );
+        $this->assertSame( 'invalid-date-survivor', $data['submissions'][0]['native_entry_id'] ?? null );
+    }
+
+    public function test_submission_ledger_repository_ignores_invalid_captured_datetime_filters(): void
+    {
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'     => '45454545-6767-489a-8abc-454545454545',
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => '1',
+                    'native_entry_id'     => 'repository-invalid-date-survivor',
+                    'captured_at'         => '2026-06-28 13:00:00',
+                    'logical_fields_json' => [
+                        'name' => 'Repository Invalid Date Survivor',
+                    ],
+                ]
+            )
+        );
+
+        $filters = [
+            'captured_from' => 'not-a-date',
+            'captured_to'   => 'also-not-a-date',
+        ];
+        $records = $ledger->list_for_form( 'gravity_forms', '1', 10, 0, $filters );
+
+        $this->assertSame( 1, $ledger->count_for_form( 'gravity_forms', '1', $filters ) );
+        $this->assertCount( 1, $records );
+        $this->assertSame( 'repository-invalid-date-survivor', $records[0]['native_entry_id'] ?? null );
+    }
+
     public function test_get_submission_ledger_detail_returns_scoped_submission(): void
     {
         GFAPI::$forms[1] = [
