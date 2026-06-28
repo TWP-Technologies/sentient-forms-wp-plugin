@@ -181,17 +181,7 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
             return [];
         }
 
-        $fields = [];
-        foreach ( $this->scan_form_tags( $form ) as $tag )
-        {
-            $field = $this->normalize_form_tag( $tag );
-            if ( null !== $field )
-            {
-                $fields[] = $field;
-            }
-        }
-
-        return $fields;
+        return $this->field_manifest_from_form( $form );
     }
 
     /**
@@ -1239,6 +1229,7 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
             'id'          => (string) $form_id,
             'title'       => $this->contact_form_title( $contact_form, $form_id ),
             'form_source' => $this->get_id(),
+            'fields'      => $this->field_manifest_from_form( $contact_form ),
         ];
     }
 
@@ -1320,6 +1311,24 @@ class Sentient_Forms_Contact_Form_7_Adapter implements Sentient_Forms_Adapter_In
         $tags = apply_filters( 'sentient_forms_contact_form_7_form_tags', $tags, $form, $this );
 
         return is_array( $tags ) ? $tags : [];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function field_manifest_from_form( object | array $form ): array
+    {
+        $fields = [];
+        foreach ( $this->scan_form_tags( $form ) as $tag )
+        {
+            $field = $this->normalize_form_tag( $tag );
+            if ( null !== $field )
+            {
+                $fields[] = $field;
+            }
+        }
+
+        return $fields;
     }
 
     /**

@@ -656,10 +656,6 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         $form_source = sanitize_key( (string) $request['form_source'] );
         $form_id     = sanitize_text_field( (string) $request['form_id'] );
         $entry_id    = sanitize_text_field( (string) $request['entry_id'] );
-        if ( 'gravity_forms' !== $form_source && 'gravity-forms' !== $form_source )
-        {
-            return new WP_Error( 'sentient_forms_suggested_reply_unsupported_source', __( 'Manual suggested replies currently support Gravity Forms only.', 'sentient-forms' ), [ 'status' => 400 ] );
-        }
 
         $mapping = $this->find_enabled_mapping_for_action_code( $form_source, $form_id, 'suggested_reply_v1' );
         if ( null === $mapping )
@@ -671,27 +667,59 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
             );
         }
 
-        if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_form' ] ) || ! is_callable( [ 'GFAPI', 'get_entry' ] ) )
+        if ( $this->is_gravity_forms_source( $form_source ) )
         {
-            return new WP_Error( 'sentient_forms_gfapi_unavailable', __( 'Gravity Forms is unavailable for manual suggested replies.', 'sentient-forms' ), [ 'status' => 503 ] );
-        }
+            if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_form' ] ) || ! is_callable( [ 'GFAPI', 'get_entry' ] ) )
+            {
+                return new WP_Error( 'sentient_forms_gfapi_unavailable', __( 'Gravity Forms is unavailable for manual suggested replies.', 'sentient-forms' ), [ 'status' => 503 ] );
+            }
 
-        $form  = GFAPI::get_form( absint( $form_id ) );
-        $entry = GFAPI::get_entry( $entry_id );
-        if ( is_wp_error( $entry ) )
+            $form = GFAPI::get_form( absint( $form_id ) );
+            if ( ! is_array( $form ) )
+            {
+                return new WP_Error( 'sentient_forms_gf_form_missing', __( 'Gravity Forms form could not be loaded for manual suggested replies.', 'sentient-forms' ), [ 'status' => 404 ] );
+            }
+
+            $entry = GFAPI::get_entry( $entry_id );
+            if ( is_wp_error( $entry ) )
+            {
+                return $entry;
+            }
+            if ( ! is_array( $entry ) || absint( $entry['form_id'] ?? 0 ) !== absint( $form_id ) )
+            {
+                return new WP_Error( 'sentient_forms_gf_entry_form_mismatch', __( 'The selected entry does not belong to the requested form.', 'sentient-forms' ), [ 'status' => 409 ] );
+            }
+
+            $context = [
+                'execution_request_id'  => sprintf( 'manual:suggested_reply_v1:%s:%s:%s', $form_source, $form_id, $entry_id ),
+                'manual_suggested_reply'=> true,
+                'force_suggested_reply' => true,
+            ];
+        }
+        else
         {
-            return $entry;
+            $resolved = $this->resolve_ledger_entry_for_manual_reply( $form_source, $form_id, $entry_id );
+            if ( is_wp_error( $resolved ) )
+            {
+                return $resolved;
+            }
+
+            $form     = $resolved['form'];
+            $entry    = $resolved['entry'];
+            $entry_id = $resolved['submission_uuid'];
+            $context  = [
+                'execution_request_id'  => sprintf( 'manual:suggested_reply_v1:%s:%s:%s', $form_source, $form_id, $entry_id ),
+                'manual_suggested_reply'=> true,
+                'force_suggested_reply' => true,
+                'submission_uuid'       => $resolved['submission_uuid'],
+            ];
         }
 
         $result = $this->local_execution->execute_mapping(
             (int) $mapping['id'],
             is_array( $form ) ? $form : [ 'id' => absint( $form_id ), 'title' => sprintf( 'Form %d', absint( $form_id ) ) ],
             is_array( $entry ) ? $entry : [],
-            [
-                'execution_request_id'  => sprintf( 'manual:suggested_reply_v1:%s:%s:%s', $form_source, $form_id, $entry_id ),
-                'manual_suggested_reply'=> true,
-                'force_suggested_reply' => true,
-            ]
+            $context
         );
         if ( is_wp_error( $result ) )
         {
@@ -987,17 +1015,17 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         $metadata = array_merge(
             is_array( $profile['generation_metadata_json'] ?? null ) ? $profile['generation_metadata_json'] : [],
             [
-            'generated_at'      => current_time( 'mysql' ),
-            'generation_mode'   => 'managed_augmented_profile_v1',
-            'llm_augmentation'  => array_filter(
-                [
-                    'status' => sanitize_key( $status ),
-                    'job_id' => $job_id,
-                    'reason' => null === $reason ? null : sanitize_key( $reason ),
-                ],
-                static fn ( mixed $value ): bool => null !== $value && '' !== $value
-            ),
-            'readiness_version' => 'lead_profile_readiness_v1',
+                'generated_at'      => current_time( 'mysql' ),
+                'generation_mode'   => 'managed_augmented_profile_v1',
+                'llm_augmentation'  => array_filter(
+                    [
+                        'status' => sanitize_key( $status ),
+                        'job_id' => $job_id,
+                        'reason' => null === $reason ? null : sanitize_key( $reason ),
+                    ],
+                    static fn ( mixed $value ): bool => null !== $value && '' !== $value,
+                ),
+                'readiness_version' => 'lead_profile_readiness_v1',
             ]
         );
 
@@ -1116,9 +1144,12 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
     {
         $form_source = sanitize_key( (string) $request['form_source'] );
         $form_id     = absint( $request['form_id'] );
-        if ( 'gravity_forms' !== $form_source && 'gravity-forms' !== $form_source )
+        $query = strtolower( trim( sanitize_text_field( (string) ( $request->get_param( 'q' ) ?? '' ) ) ) );
+        $limit = max( 1, min( 50, absint( $request->get_param( 'limit' ) ?: 10 ) ) );
+
+        if ( ! $this->is_gravity_forms_source( $form_source ) )
         {
-            return new WP_Error( 'sentient_forms_entry_search_unsupported_source', __( 'Entry search currently supports Gravity Forms only.', 'sentient-forms' ), [ 'status' => 400 ] );
+            return $this->search_submission_ledger_entries( $form_source, (string) $form_id, $query, $limit );
         }
 
         if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_entries' ] ) )
@@ -1126,8 +1157,6 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
             return new WP_Error( 'sentient_forms_gfapi_unavailable', __( 'Gravity Forms entry search is unavailable.', 'sentient-forms' ), [ 'status' => 503 ] );
         }
 
-        $query = strtolower( trim( sanitize_text_field( (string) ( $request->get_param( 'q' ) ?? '' ) ) ) );
-        $limit = max( 1, min( 50, absint( $request->get_param( 'limit' ) ?: 10 ) ) );
         $form  = is_callable( [ 'GFAPI', 'get_form' ] ) ? GFAPI::get_form( $form_id ) : null;
 
         $entries = GFAPI::get_entries(
@@ -1178,6 +1207,125 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         );
     }
 
+    private function search_submission_ledger_entries( string $form_source, string $form_id, string $query, int $limit ): WP_REST_Response | WP_Error
+    {
+        $ledger = $this->submission_ledger_repository();
+        if ( null === $ledger )
+        {
+            return new WP_Error( 'sentient_forms_submission_ledger_unavailable', __( 'Submission ledger entry search is unavailable.', 'sentient-forms' ), [ 'status' => 503 ] );
+        }
+
+        $results   = [];
+        $page_size = 100;
+        $offset    = 0;
+
+        do
+        {
+            $records = $ledger->list_for_form( $form_source, $form_id, $page_size, $offset );
+            foreach ( $records as $record )
+            {
+                if ( '' !== $query && ! $this->submission_ledger_record_matches_query( $record, $query ) )
+                {
+                    continue;
+                }
+
+                $summary         = $this->summarize_submission_ledger_fields( $record );
+                $submission_uuid = isset( $record['submission_uuid'] ) && is_scalar( $record['submission_uuid'] )
+                    ? sanitize_text_field( (string) $record['submission_uuid'] )
+                    : '';
+                if ( '' === $submission_uuid )
+                {
+                    continue;
+                }
+
+                $native_entry_id = isset( $record['native_entry_id'] ) && is_scalar( $record['native_entry_id'] ) && '' !== trim( (string) $record['native_entry_id'] )
+                    ? sanitize_text_field( (string) $record['native_entry_id'] )
+                    : null;
+                $native_entry_url = isset( $record['native_entry_url'] ) && is_scalar( $record['native_entry_url'] ) && '' !== trim( (string) $record['native_entry_url'] )
+                    ? esc_url_raw( (string) $record['native_entry_url'] )
+                    : null;
+
+                $results[] = [
+                    'id'               => $submission_uuid,
+                    'submission_uuid'  => $submission_uuid,
+                    'native_entry_id'  => $native_entry_id,
+                    'native_entry_url' => $native_entry_url,
+                    'date_created'     => isset( $record['source_submitted_at'] ) && is_scalar( $record['source_submitted_at'] ) && '' !== trim( (string) $record['source_submitted_at'] )
+                        ? sanitize_text_field( (string) $record['source_submitted_at'] )
+                        : ( isset( $record['captured_at'] ) && is_scalar( $record['captured_at'] ) ? sanitize_text_field( (string) $record['captured_at'] ) : null ),
+                    'status'           => null,
+                    'field_summary'    => $summary,
+                ];
+
+                if ( count( $results ) >= $limit )
+                {
+                    break 2;
+                }
+            }
+
+            $offset += $page_size;
+        }
+        while ( count( $records ) === $page_size );
+
+        return $this->prepare_item_for_response(
+            [
+                'entries'     => $results,
+                'form_source' => sanitize_key( $form_source ),
+                'form_id'     => absint( $form_id ),
+            ]
+        );
+    }
+
+    private function resolve_ledger_entry_for_manual_reply( string $form_source, string $form_id, string $entry_id ): array | WP_Error
+    {
+        $record = $this->submission_ledger_record_for_entry_identifier( $form_source, $form_id, $entry_id );
+        if ( null === $record )
+        {
+            return new WP_Error( 'sentient_forms_submission_ledger_entry_not_found', __( 'Submission ledger entry could not be found for this form.', 'sentient-forms' ), [ 'status' => 404 ] );
+        }
+
+        $adapter = $this->form_adapter_for_source( $form_source );
+        $form    = null;
+        if ( $adapter && method_exists( $adapter, 'get_form_data' ) )
+        {
+            $form = $adapter->get_form_data( $form_id );
+        }
+
+        $submission_uuid = isset( $record['submission_uuid'] ) && is_scalar( $record['submission_uuid'] )
+            ? sanitize_text_field( (string) $record['submission_uuid'] )
+            : $entry_id;
+        $entry = null;
+        if ( $adapter && method_exists( $adapter, 'get_entry_data' ) )
+        {
+            $entry = $adapter->get_entry_data( $submission_uuid, $form_id );
+        }
+
+        if ( ! is_array( $entry ) )
+        {
+            $entry = $this->submission_ledger_entry_snapshot( $record );
+        }
+
+        if ( ! is_array( $form ) )
+        {
+            $form = [
+                'id'          => $form_id,
+                'title'       => sprintf(
+                    /* translators: %s: form id. */
+                    __( 'Form %s', 'sentient-forms' ),
+                    $form_id
+                ),
+                'form_source' => $form_source,
+                'fields'      => $this->submission_ledger_field_manifest( $record ),
+            ];
+        }
+
+        return [
+            'form'            => $form,
+            'entry'           => $entry,
+            'submission_uuid' => $submission_uuid,
+        ];
+    }
+
     public function list_historical_runs( WP_REST_Request $request ): WP_REST_Response
     {
         $form_source = sanitize_key( (string) $request['form_source'] );
@@ -1197,6 +1345,15 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         $action_code = sanitize_key( (string) ( $request->get_param( 'action_code' ) ?: 'lead_grading_v1' ) );
         $entry_ids   = $this->normalize_entry_ids( $request->get_param( 'entry_ids' ) );
         $entry_count = count( $entry_ids );
+
+        if ( [] !== $entry_ids && ! $this->is_gravity_forms_source( $form_source ) )
+        {
+            return new WP_Error(
+                'sentient_forms_historical_non_gravity_unsupported',
+                __( 'Historical scoring selected-entry previews currently require Gravity Forms entries.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
 
         if ( 0 === $entry_count )
         {
@@ -1313,6 +1470,15 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
             return new WP_Error(
                 'sentient_forms_historical_mapping_missing',
                 __( 'Create and enable the matching action on this form before running historical scoring.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
+
+        if ( ! $this->is_gravity_forms_source( (string) $run['form_source'] ) )
+        {
+            return new WP_Error(
+                'sentient_forms_historical_non_gravity_unsupported',
+                __( 'Historical scoring execution currently requires Gravity Forms entries.', 'sentient-forms' ),
                 [ 'status' => 409 ]
             );
         }
@@ -2812,13 +2978,32 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
                 continue;
             }
 
-            $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
-            $structured = is_array( $result['result']['structured'] ?? null )
-                ? $result['result']['structured']
-                : ( is_array( $result['structured'] ?? null ) ? $result['structured'] : [] );
+            $structured = $this->lead_structured_result_from_event( $event );
             if ( [] === $structured )
             {
                 continue;
+            }
+
+            $event_entry_id = $this->lead_result_entry_identifier_from_event( $event );
+            if ( '' === $event_entry_id )
+            {
+                continue;
+            }
+
+            $entry_snapshot = [];
+            $record = $this->submission_ledger_record_for_entry_identifier(
+                sanitize_key( (string) ( $event['form_source'] ?? '' ) ),
+                sanitize_text_field( (string) ( $event['form_id'] ?? '' ) ),
+                $event_entry_id
+            );
+            if ( is_array( $record ) )
+            {
+                $entry_snapshot = [
+                    'date_created'    => $record['source_submitted_at'] ?? $record['captured_at'] ?? null,
+                    'status'          => null,
+                    'submission_uuid' => $record['submission_uuid'] ?? $event_entry_id,
+                    'field_summary'   => $this->summarize_submission_ledger_fields( $record ),
+                ];
             }
 
             $indexed = $this->lead_scoring_results->upsert_from_execution(
@@ -2826,7 +3011,7 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
                     'form_source'          => $event['form_source'] ?? 'gravity_forms',
                     'form_id'              => $event['form_id'] ?? '',
                     'form_title'           => $event['form_title'] ?? '',
-                    'entry_id'             => $event['entry_id'] ?? '',
+                    'entry_id'             => $event_entry_id,
                     'action_code'          => $action_code,
                     'execution_request_id' => $event['execution_request_id'] ?? '',
                     'historical_run_id'    => $this->historical_run_id_from_execution_request( (string) ( $event['execution_request_id'] ?? '' ) ),
@@ -2842,6 +3027,7 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
                     'reply_rationale'      => $structured['reply_rationale'] ?? '',
                     'do_not_send'          => $structured['do_not_send'] ?? false,
                     'status'               => $event['status'] ?? 'succeeded',
+                    'entry_snapshot'       => $entry_snapshot,
                     'source_created_at'    => $event['created_at'] ?? null,
                     'source_payload'       => [ 'structured' => $structured ],
                 ]
@@ -2868,9 +3054,21 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         }
 
         $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
-        $structured = is_array( $result['result']['structured'] ?? null )
-            ? $result['result']['structured']
-            : ( is_array( $result['structured'] ?? null ) ? $result['structured'] : [] );
+        foreach ( [ $result['central_action_id'] ?? null, $result['action_id'] ?? null, $result['evaluation_payload']['central_action_id'] ?? null ] as $candidate )
+        {
+            $action_id = is_scalar( $candidate ) ? sanitize_key( (string) $candidate ) : '';
+            if ( 'lead_grading_v1' === $action_id )
+            {
+                return 'lead_grading_v1';
+            }
+
+            if ( 'suggested_reply_v1' === $action_id )
+            {
+                return 'suggested_reply_v1';
+            }
+        }
+
+        $structured = $this->lead_structured_result_from_event( $event );
 
         if ( isset( $structured['grade'] ) )
         {
@@ -2885,6 +3083,45 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         return '';
     }
 
+    private function lead_structured_result_from_event( array $event ): array
+    {
+        $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
+
+        $candidates = [
+            $result['result']['structured'] ?? null,
+            $result['structured'] ?? null,
+            $result['result_data']['structured_output'] ?? null,
+            $result['result_data']['structured'] ?? null,
+            $result['result_data'] ?? null,
+            $result['evaluation_payload']['result_data']['structured_output'] ?? null,
+            $result['evaluation_payload']['result_data']['structured'] ?? null,
+            $result['evaluation_payload']['result_data'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( is_array( $candidate ) && $this->looks_like_lead_structured_result( $candidate ) )
+            {
+                return $candidate;
+            }
+        }
+
+        return [];
+    }
+
+    private function looks_like_lead_structured_result( array $structured ): bool
+    {
+        foreach ( [ 'grade', 'fit_summary', 'intent_summary', 'recommended_priority', 'suggested_reply_draft', 'next_best_action', 'reply_rationale', 'do_not_send' ] as $key )
+        {
+            if ( array_key_exists( $key, $structured ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function historical_run_id_from_execution_request( string $execution_request_id ): ?int
     {
         if ( preg_match( '/^historical:(\d+):/', $execution_request_id, $matches ) )
@@ -2893,6 +3130,24 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         }
 
         return null;
+    }
+
+    private function lead_result_entry_identifier_from_event( array $event ): string
+    {
+        $form_source = sanitize_key( (string) ( $event['form_source'] ?? 'gravity_forms' ) );
+        $candidates  = 'gravity_forms' === $form_source
+            ? [ $event['entry_id'] ?? null, $event['submission_uuid'] ?? null ]
+            : [ $event['submission_uuid'] ?? null, $event['entry_id'] ?? null ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( is_scalar( $candidate ) && '' !== trim( (string) $candidate ) && '0' !== trim( (string) $candidate ) )
+            {
+                return sanitize_text_field( (string) $candidate );
+            }
+        }
+
+        return '';
     }
 
     private function form_has_mapping_for_action_code( string $form_source, string $form_id, string $action_code ): bool
@@ -2932,6 +3187,172 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         return null;
     }
 
+    private function is_gravity_forms_source( string $form_source ): bool
+    {
+        return in_array( sanitize_key( $form_source ), [ 'gravity_forms', 'gravity-forms' ], true );
+    }
+
+    private function submission_ledger_repository(): ?Sentient_Forms_Submission_Ledger_Repository
+    {
+        if ( ! class_exists( 'Sentient_Forms_Submission_Ledger_Repository' ) )
+        {
+            return null;
+        }
+
+        global $wpdb;
+        return new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+    }
+
+    private function submission_ledger_record_for_entry_identifier( string $form_source, string $form_id, string $entry_id ): ?array
+    {
+        $ledger = $this->submission_ledger_repository();
+        if ( null === $ledger )
+        {
+            return null;
+        }
+
+        $entry_id = sanitize_text_field( $entry_id );
+        if ( '' === $entry_id )
+        {
+            return null;
+        }
+
+        $record = $ledger->get_by_submission_uuid( $entry_id );
+        if ( is_array( $record ) && $this->submission_ledger_record_matches_form( $record, $form_source, $form_id ) )
+        {
+            return $record;
+        }
+
+        $record = $ledger->get_by_native_entry_id( $form_source, $form_id, $entry_id );
+        if ( is_array( $record ) && $this->submission_ledger_record_matches_form( $record, $form_source, $form_id ) )
+        {
+            return $record;
+        }
+
+        return null;
+    }
+
+    private function submission_ledger_record_matches_form( array $record, string $form_source, string $form_id ): bool
+    {
+        return sanitize_key( (string) ( $record['form_source'] ?? '' ) ) === sanitize_key( $form_source )
+            && sanitize_text_field( (string) ( $record['form_id'] ?? '' ) ) === sanitize_text_field( $form_id );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function submission_ledger_entry_snapshot( array $record ): array
+    {
+        $entry = is_array( $record['logical_fields_json'] ?? null ) ? $record['logical_fields_json'] : [];
+        $submission_uuid = isset( $record['submission_uuid'] ) && is_scalar( $record['submission_uuid'] )
+            ? sanitize_text_field( (string) $record['submission_uuid'] )
+            : '';
+
+        if ( isset( $record['file_refs_json'] ) && is_array( $record['file_refs_json'] ) )
+        {
+            $entry['file_refs'] = $record['file_refs_json'];
+        }
+
+        $entry['id']              = isset( $record['native_entry_id'] ) && is_scalar( $record['native_entry_id'] ) && '' !== trim( (string) $record['native_entry_id'] )
+            ? sanitize_text_field( (string) $record['native_entry_id'] )
+            : null;
+        $entry['submission_uuid'] = $submission_uuid;
+        $entry['form_source']     = sanitize_key( (string) ( $record['form_source'] ?? '' ) );
+        $entry['form_id']         = sanitize_text_field( (string) ( $record['form_id'] ?? '' ) );
+
+        return $entry;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function submission_ledger_field_manifest( array $record ): array
+    {
+        $fields = [];
+        foreach ( $this->summarize_submission_ledger_fields( $record ) as $field )
+        {
+            $fields[] = [
+                'id'         => $field['field_id'],
+                'label'      => $field['label'],
+                'adminLabel' => $field['label'],
+                'type'       => 'text',
+                'visibility' => 'visible',
+            ];
+        }
+
+        return $fields;
+    }
+
+    private function submission_ledger_record_matches_query( array $record, string $query ): bool
+    {
+        $logical_fields = is_array( $record['logical_fields_json'] ?? null ) ? $record['logical_fields_json'] : [];
+        $haystack       = strtolower( wp_json_encode( $logical_fields ) ?: '' );
+
+        return str_contains( $haystack, strtolower( $query ) );
+    }
+
+    /**
+     * @return array<int, array{field_id: string, label: string, value: string}>
+     */
+    private function summarize_submission_ledger_fields( array $record ): array
+    {
+        $logical_fields = is_array( $record['logical_fields_json'] ?? null ) ? $record['logical_fields_json'] : [];
+        $summary        = [];
+        foreach ( $logical_fields as $field_id => $value )
+        {
+            if ( count( $summary ) >= 12 )
+            {
+                break;
+            }
+
+            if ( is_array( $value ) )
+            {
+                $value = wp_json_encode( $value );
+            }
+
+            if ( ! is_scalar( $value ) || '' === trim( (string) $value ) )
+            {
+                continue;
+            }
+
+            $field_id = sanitize_key( (string) $field_id );
+            if ( '' === $field_id )
+            {
+                continue;
+            }
+
+            $summary[] = [
+                'field_id' => $field_id,
+                'label'    => sanitize_text_field( ucwords( str_replace( [ '_', '-' ], ' ', $field_id ) ) ),
+                'value'    => mb_substr( sanitize_textarea_field( (string) $value ), 0, 300 ),
+            ];
+        }
+
+        return $summary;
+    }
+
+    private function form_adapter_for_source( string $form_source ): mixed
+    {
+        if ( ! class_exists( 'Sentient_Forms_Plugin' ) || ! method_exists( 'Sentient_Forms_Plugin', 'instance' ) )
+        {
+            return null;
+        }
+
+        $plugin = Sentient_Forms_Plugin::instance();
+        if ( ! is_object( $plugin ) || ! method_exists( $plugin, 'get_form_adapter_registry' ) )
+        {
+            return null;
+        }
+
+        $registry = $plugin->get_form_adapter_registry();
+        if ( ! is_object( $registry ) || ! method_exists( $registry, 'get_adapter_by_id' ) )
+        {
+            return null;
+        }
+
+        return $registry->get_adapter_by_id( sanitize_key( $form_source ) );
+    }
+
     private function hydrate_entry_previews( array $entries ): array
     {
         foreach ( $entries as $index => $entry )
@@ -2956,6 +3377,22 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         $form_source = sanitize_key( (string) ( $entry['form_source'] ?? '' ) );
         if ( ! in_array( $form_source, [ 'gravity_forms', 'gravity-forms' ], true ) )
         {
+            $form_id  = sanitize_text_field( (string) ( $entry['form_id'] ?? '' ) );
+            $entry_id = sanitize_text_field( (string) ( $entry['entry_id'] ?? '' ) );
+            $record   = $this->submission_ledger_record_for_entry_identifier( $form_source, $form_id, $entry_id );
+            if ( is_array( $record ) )
+            {
+                $summary = $this->summarize_submission_ledger_fields( $record );
+                if ( [] !== $summary )
+                {
+                    $snapshot['date_created']  = $snapshot['date_created'] ?? ( $record['source_submitted_at'] ?? $record['captured_at'] ?? null );
+                    $snapshot['status']        = $snapshot['status'] ?? null;
+                    $snapshot['field_summary'] = $summary;
+                    $snapshot['submission_uuid'] = $record['submission_uuid'] ?? $entry_id;
+                    $entry['entry_snapshot']   = $snapshot;
+                }
+            }
+
             return $entry;
         }
 
@@ -3063,7 +3500,12 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
 
     private function estimate_form_entry_count( string $form_source, string $form_id ): int
     {
-        if ( ! in_array( sanitize_key( $form_source ), [ 'gravity_forms', 'gravity-forms' ], true ) || ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'count_entries' ] ) )
+        if ( ! $this->is_gravity_forms_source( $form_source ) )
+        {
+            return 0;
+        }
+
+        if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'count_entries' ] ) )
         {
             return 0;
         }
