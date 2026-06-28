@@ -57,6 +57,8 @@ if ( ! class_exists( 'GFAPI' ) )
         /** @var array<int,array<string,mixed>> */
         public static array $forms = [];
 
+        public static bool $skip_field_values_on_full_entry_update = false;
+
         public static function get_entry( $entry_id )
         {
             $entry_id = (int) $entry_id;
@@ -110,6 +112,49 @@ if ( ! class_exists( 'GFAPI' ) )
             }
 
             self::$entries[ $entry_id ][ (string) $property ] = $value;
+
+            return true;
+        }
+
+        public static function update_entry( $entry )
+        {
+            if ( ! is_array( $entry ) || empty( $entry['id'] ) )
+            {
+                return new WP_Error( 'missing_entry_id', 'Missing entry id.' );
+            }
+
+            if ( self::$skip_field_values_on_full_entry_update && isset( self::$entries[ (int) $entry['id'] ] ) )
+            {
+                $merged = self::$entries[ (int) $entry['id'] ];
+                foreach ( $entry as $key => $value )
+                {
+                    if ( preg_match( '/^\d+(?:\.\d+)?$/', (string) $key ) )
+                    {
+                        continue;
+                    }
+
+                    $merged[ $key ] = $value;
+                }
+
+                self::$entries[ (int) $entry['id'] ] = $merged;
+
+                return true;
+            }
+
+            self::$entries[ (int) $entry['id'] ] = $entry;
+
+            return true;
+        }
+
+        public static function update_entry_field( $entry_id, $field_id, $value )
+        {
+            $entry_id = (int) $entry_id;
+            if ( ! isset( self::$entries[ $entry_id ] ) )
+            {
+                return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+            }
+
+            self::$entries[ $entry_id ][ (string) $field_id ] = $value;
 
             return true;
         }
@@ -281,6 +326,10 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         if ( class_exists( 'GFAPI' ) && property_exists( 'GFAPI', 'forms' ) )
         {
             GFAPI::$forms = [];
+        }
+        if ( class_exists( 'GFAPI' ) && property_exists( 'GFAPI', 'skip_field_values_on_full_entry_update' ) )
+        {
+            GFAPI::$skip_field_values_on_full_entry_update = false;
         }
         $this->adapter = new Sentient_Forms_Gravity_Forms_Adapter( Sentient_Forms_Plugin::instance() );
     }
@@ -1155,6 +1204,486 @@ class Tests_Gravity_Forms_Adapter extends WP_UnitTestCase
         );
 
         $this->assertSame( '1', gform_get_meta( $entry_id, 'sentient_forms_structured_output_valid' ) );
+    }
+
+    public function test_realtime_clarification_assistant_late_callback_persists_questions_after_submission(): void
+    {
+        $entry_id = 703;
+        $form_id  = 46;
+
+        GFAPI::$forms[ $form_id ] = [
+            'id'     => $form_id,
+            'title'  => 'Late RCA Callback Form',
+            'fields' => [
+                (object) [
+                    'id'    => 1,
+                    'type'  => 'text',
+                    'label' => 'Name',
+                ],
+                (object) [
+                    'id'                           => 9,
+                    'type'                         => 'hidden',
+                    'label'                        => 'Sentient Forms Realtime Q&A',
+                    'adminLabel'                   => 'Sentient Forms Realtime Q&A',
+                    'inputName'                    => 'sentient_forms_realtime_qna',
+                    'cssClass'                     => 'sentient-forms-realtime-qna-storage',
+                    'sentientFormsRealtimeStorage' => true,
+                ],
+            ],
+        ];
+        GFAPI::$entries[ $entry_id ] = [
+            'id'           => $entry_id,
+            'form_id'      => $form_id,
+            'date_created' => '2026-06-26 17:00:00',
+            '1'            => 'Morgan',
+            '9'            => '',
+            'status'       => 'active',
+        ];
+
+        $this->adapter->finalize_async_success(
+            [
+                'entry_id'             => $entry_id,
+                'form_id'              => $form_id,
+                'central_action_id'    => 'clarification_assistant_v1',
+                'action_name_label'    => 'Real-time Clarification Assistant',
+                'mapping_id'           => 'map-rt-late',
+                'execution_request_id' => 'rt-late-callback-703',
+                'submitted_at'         => '2026-06-26T17:00:00Z',
+                'settings'             => [
+                    'realtime_settings' => [
+                        'storage_target_field_id' => '9',
+                        'pre_submit_timeout_ms'   => 2500,
+                    ],
+                ],
+                'suggestion_context'   => [
+                    'request_reason' => 'pre_submit',
+                ],
+            ],
+            [
+                'status'      => 'succeeded',
+                'result_data' => [
+                    'structured_output_valid' => true,
+                    'structured_output'       => [
+                        'virtual_questions' => [
+                            [
+                                'question_id'     => 'timeline',
+                                'question'        => 'When do you need the first follow-up?',
+                                'reason'          => 'Timeline affects routing.',
+                                'target_field_id' => '4',
+                                'required'        => true,
+                                'answer_type'     => 'short_text',
+                            ],
+                        ],
+                    ],
+                ],
+                'meta'        => [
+                    'returned_at'          => '2026-06-26T17:00:05.250Z',
+                    'execution_request_id' => 'rt-late-callback-703',
+                ],
+            ]
+        );
+
+        $stored = json_decode( (string) ( GFAPI::$entries[ $entry_id ]['9'] ?? '' ), true );
+
+        $this->assertIsArray( $stored );
+        $this->assertSame( 'sentient_forms_realtime_clarification_qna.v1', $stored['schema'] ?? null );
+        $this->assertSame( 'map-rt-late', $stored['mappings'][0]['mapping_id'] ?? null );
+        $this->assertSame( 'rt-late-callback-703', $stored['mappings'][0]['execution_request_id'] ?? null );
+        $this->assertTrue( $stored['mappings'][0]['late_after_submission'] ?? false );
+        $this->assertSame( 5250, $stored['mappings'][0]['returned_after_ms'] ?? null );
+        $this->assertSame( 2500, $stored['mappings'][0]['pre_submit_timeout_ms'] ?? null );
+        $this->assertSame( 'pre_submit', $stored['mappings'][0]['timeout_source'] ?? null );
+        $this->assertSame(
+            'When do you need the first follow-up?',
+            $stored['mappings'][0]['questions'][0]['question'] ?? null
+        );
+        $this->assertTrue( $stored['mappings'][0]['questions'][0]['late_after_submission'] ?? false );
+        $this->assertSame( 'rt-late-callback-703', $stored['mappings'][0]['questions'][0]['execution_request_id'] ?? null );
+    }
+
+    public function test_realtime_clarification_assistant_late_cps_callback_persists_llm_output_json_questions(): void
+    {
+        $entry_id = 704;
+        $form_id  = 47;
+
+        GFAPI::$forms[ $form_id ] = [
+            'id'     => $form_id,
+            'title'  => 'Late RCA CPS Callback Form',
+            'fields' => [
+                (object) [
+                    'id'    => 2,
+                    'type'  => 'textarea',
+                    'label' => 'Current context',
+                ],
+                (object) [
+                    'id'                           => 9,
+                    'type'                         => 'hidden',
+                    'label'                        => 'Sentient Forms Realtime Q&A',
+                    'adminLabel'                   => 'Sentient Forms Realtime Q&A',
+                    'inputName'                    => 'sentient_forms_realtime_qna',
+                    'cssClass'                     => 'sentient-forms-realtime-qna-storage',
+                    'sentientFormsRealtimeStorage' => true,
+                ],
+            ],
+        ];
+        GFAPI::$entries[ $entry_id ] = [
+            'id'           => $entry_id,
+            'form_id'      => $form_id,
+            'date_created' => '2026-06-27 08:32:26',
+            '2'            => 'Submitted through the public form before CPS returned.',
+            '9'            => '',
+            'status'       => 'active',
+        ];
+
+        $this->adapter->finalize_async_success(
+            [
+                'entry_id'             => (string) $entry_id,
+                'form_id'              => (string) $form_id,
+                'central_action_id'    => 'clarification_assistant_v1',
+                'action_id'            => 'clarification_assistant_v1',
+                'action_name_label'    => 'Real-time Clarification Assistant',
+                'mapping_id'           => 'local_first_20',
+                'execution_request_id' => 'staging-cps-rca-late-704',
+                'submitted_at'         => '2026-06-27T08:32:26Z',
+                'settings'             => [
+                    'realtime_settings' => [
+                        'storage_target_field_id' => '9',
+                        'pre_submit_timeout_ms'   => 2500,
+                    ],
+                ],
+                'suggestion_context'   => [
+                    'request_reason' => 'pre_submit',
+                ],
+            ],
+            [
+                'status'      => 'success',
+                'result_data' => [
+                    'llm_output' => wp_json_encode(
+                        [
+                            'virtual_questions'     => [
+                                [
+                                    'question_id'     => 'rca_impact_severity',
+                                    'question'        => 'What is the business impact or severity level of this callback issue?',
+                                    'reason'          => 'Understanding severity helps the team allocate the correct technical resources for the RCA.',
+                                    'target_field_id' => '2',
+                                    'required'        => false,
+                                    'answer_type'     => 'long_text',
+                                    'choices'         => [],
+                                ],
+                            ],
+                            'conditional_decisions' => [],
+                        ]
+                    ),
+                ],
+                'meta'        => [
+                    'returned_at'          => '2026-06-27T20:38:52.966Z',
+                    'execution_request_id' => 'staging-cps-rca-late-704',
+                ],
+            ]
+        );
+
+        $stored = json_decode( (string) ( GFAPI::$entries[ $entry_id ]['9'] ?? '' ), true );
+
+        $this->assertIsArray( $stored );
+        $this->assertSame( 'local_first_20', $stored['mappings'][0]['mapping_id'] ?? null );
+        $this->assertSame( 'staging-cps-rca-late-704', $stored['mappings'][0]['execution_request_id'] ?? null );
+        $this->assertTrue( $stored['mappings'][0]['late_after_submission'] ?? false );
+        $this->assertSame(
+            'What is the business impact or severity level of this callback issue?',
+            $stored['mappings'][0]['questions'][0]['question'] ?? null
+        );
+        $this->assertSame( 'staging-cps-rca-late-704', $stored['mappings'][0]['questions'][0]['execution_request_id'] ?? null );
+    }
+
+    public function test_realtime_clarification_assistant_late_callback_updates_storage_field_when_full_entry_update_skips_field_values(): void
+    {
+        $entry_id = 705;
+        $form_id  = 48;
+
+        GFAPI::$skip_field_values_on_full_entry_update = true;
+        GFAPI::$forms[ $form_id ]                     = [
+            'id'     => $form_id,
+            'title'  => 'Late RCA CPS Worker Callback Form',
+            'fields' => [
+                (object) [
+                    'id'    => 2,
+                    'type'  => 'textarea',
+                    'label' => 'Current context',
+                ],
+                (object) [
+                    'id'                           => 9,
+                    'type'                         => 'hidden',
+                    'label'                        => 'Sentient Forms Realtime Q&A',
+                    'adminLabel'                   => 'Sentient Forms Realtime Q&A',
+                    'inputName'                    => 'sentient_forms_realtime_qna',
+                    'cssClass'                     => 'sentient-forms-realtime-qna-storage',
+                    'sentientFormsRealtimeStorage' => true,
+                ],
+            ],
+        ];
+
+        $existing_payload = [
+            'schema'     => 'sentient_forms_realtime_clarification_qna.v1',
+            'form_id'    => (string) $form_id,
+            'source'     => 'gravity_forms',
+            'updated_at' => '2026-06-27T08:34:15Z',
+            'mappings'   => [
+                [
+                    'mapping_id'           => 'local_first_20',
+                    'central_action_id'    => 'clarification_assistant_v1',
+                    'action_name_label'    => 'Real-time Clarification Assistant',
+                    'execution_request_id' => 'staging-rca-late-705-previous',
+                    'returned_after_ms'    => 109250,
+                    'late_after_submission'=> true,
+                    'questions'            => [
+                        [
+                            'question_id' => 'timeline',
+                            'question'    => 'When do you need the first follow-up?',
+                        ],
+                    ],
+                    'conditional_decisions' => [],
+                ],
+            ],
+        ];
+
+        GFAPI::$entries[ $entry_id ] = [
+            'id'           => $entry_id,
+            'form_id'      => $form_id,
+            'date_created' => '2026-06-27 08:32:26',
+            '2'            => 'Submitted through the public form before CPS returned.',
+            '9'            => wp_json_encode( $existing_payload ),
+            'status'       => 'active',
+        ];
+
+        $this->adapter->finalize_async_success(
+            [
+                'hook'                 => 'gform_after_submission',
+                'source'               => 'gravity_forms',
+                'form_id'              => (string) $form_id,
+                'entry_id'             => (string) $entry_id,
+                'settings'             => [
+                    'execution_mode'     => 'real_time',
+                    'realtime_settings'  => [
+                        'pre_submit_timeout_ms'   => 2500,
+                        'storage_target_field_id' => '9',
+                    ],
+                ],
+                'action_id'            => 'clarification_assistant_v1',
+                'adapter_id'           => 'gravity_forms',
+                'mapping_id'           => 'local_first_20',
+                'form_source'          => 'gravity_forms',
+                'submitted_at'         => '2026-06-27T08:32:26Z',
+                'action_name_label'    => 'Real-time Clarification Assistant',
+                'central_action_id'    => 'clarification_assistant_v1',
+                'suggestion_context'   => [
+                    'request_reason' => 'pre_submit',
+                ],
+                'execution_request_id' => 'staging-cps-rca-late-705',
+            ],
+            [
+                'meta'        => [
+                    'execution_request_id' => 'staging-cps-rca-late-705',
+                ],
+                'status'      => 'success',
+                'result_data' => [
+                    'llm_output' => wp_json_encode(
+                        [
+                            'virtual_questions'     => [
+                                [
+                                    'question_id'     => 'rca_impact_severity',
+                                    'question'        => 'What is the business impact or severity level of this callback issue?',
+                                    'reason'          => 'Understanding severity helps the team allocate the correct technical resources for the RCA.',
+                                    'target_field_id' => '2',
+                                    'required'        => false,
+                                    'answer_type'     => 'long_text',
+                                    'choices'         => [],
+                                ],
+                            ],
+                            'conditional_decisions' => [],
+                        ]
+                    ),
+                ],
+            ]
+        );
+
+        $stored = json_decode( (string) ( GFAPI::$entries[ $entry_id ]['9'] ?? '' ), true );
+
+        $this->assertIsArray( $stored );
+        $this->assertSame( 'staging-cps-rca-late-705', $stored['mappings'][0]['execution_request_id'] ?? null );
+        $this->assertSame(
+            'What is the business impact or severity level of this callback issue?',
+            $stored['mappings'][0]['questions'][1]['question'] ?? null
+        );
+    }
+
+    public function test_realtime_clarification_assistant_late_question_only_callback_preserves_existing_decisions(): void
+    {
+        $entry_id = 706;
+        $form_id  = 49;
+
+        GFAPI::$forms[ $form_id ] = [
+            'id'     => $form_id,
+            'title'  => 'Late RCA Decision Preservation Form',
+            'fields' => [
+                (object) [
+                    'id'                           => 9,
+                    'type'                         => 'hidden',
+                    'label'                        => 'Sentient Forms Realtime Q&A',
+                    'adminLabel'                   => 'Sentient Forms Realtime Q&A',
+                    'inputName'                    => 'sentient_forms_realtime_qna',
+                    'cssClass'                     => 'sentient-forms-realtime-qna-storage',
+                    'sentientFormsRealtimeStorage' => true,
+                ],
+            ],
+        ];
+
+        $existing_payload = [
+            'schema'     => 'sentient_forms_realtime_clarification_qna.v1',
+            'form_id'    => (string) $form_id,
+            'source'     => 'gravity_forms',
+            'updated_at' => '2026-06-27T08:34:15Z',
+            'mappings'   => [
+                [
+                    'mapping_id'             => 'local_first_decision',
+                    'central_action_id'      => 'clarification_assistant_v1',
+                    'action_name_label'      => 'Real-time Clarification Assistant',
+                    'questions'              => [],
+                    'conditional_decisions'  => [
+                        [
+                            'decision_id' => 'budget-route',
+                            'target'      => 'budget',
+                            'operator'    => 'requires_follow_up',
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        GFAPI::$entries[ $entry_id ] = [
+            'id'           => $entry_id,
+            'form_id'      => $form_id,
+            'date_created' => '2026-06-27 08:32:26',
+            '9'            => wp_json_encode( $existing_payload ),
+            'status'       => 'active',
+        ];
+
+        $this->adapter->finalize_async_success(
+            [
+                'entry_id'             => $entry_id,
+                'form_id'              => $form_id,
+                'central_action_id'    => 'clarification_assistant_v1',
+                'action_name_label'    => 'Real-time Clarification Assistant',
+                'mapping_id'           => 'local_first_decision',
+                'execution_request_id' => 'staging-cps-rca-late-706',
+                'submitted_at'         => '2026-06-27T08:32:26Z',
+                'settings'             => [
+                    'realtime_settings' => [
+                        'storage_target_field_id' => '9',
+                    ],
+                ],
+            ],
+            [
+                'status'      => 'succeeded',
+                'result_data' => [
+                    'structured_output' => [
+                        'virtual_questions' => [
+                            [
+                                'question_id' => 'budget',
+                                'question'    => 'What budget range should we plan around?',
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $stored = json_decode( (string) ( GFAPI::$entries[ $entry_id ]['9'] ?? '' ), true );
+
+        $this->assertIsArray( $stored );
+        $this->assertSame(
+            'budget-route',
+            $stored['mappings'][0]['conditional_decisions'][0]['decision_id'] ?? null
+        );
+        $this->assertSame(
+            'What budget range should we plan around?',
+            $stored['mappings'][0]['questions'][0]['question'] ?? null
+        );
+    }
+
+    public function test_realtime_clarification_assistant_late_callback_falls_back_from_stale_configured_storage_field(): void
+    {
+        $entry_id = 707;
+        $form_id  = 50;
+
+        GFAPI::$forms[ $form_id ] = [
+            'id'     => $form_id,
+            'title'  => 'Late RCA Storage Fallback Form',
+            'fields' => [
+                (object) [
+                    'id'    => 9,
+                    'type'  => 'hidden',
+                    'label' => 'Legacy Hidden Field',
+                ],
+                (object) [
+                    'id'                           => 10,
+                    'type'                         => 'hidden',
+                    'label'                        => 'Sentient Forms Realtime Q&A',
+                    'adminLabel'                   => 'Sentient Forms Realtime Q&A',
+                    'inputName'                    => 'sentient_forms_realtime_qna',
+                    'cssClass'                     => 'sentient-forms-realtime-qna-storage',
+                    'sentientFormsRealtimeStorage' => true,
+                ],
+            ],
+        ];
+
+        GFAPI::$entries[ $entry_id ] = [
+            'id'           => $entry_id,
+            'form_id'      => $form_id,
+            'date_created' => '2026-06-27 09:00:00',
+            '9'            => 'legacy value',
+            '10'           => '',
+            'status'       => 'active',
+        ];
+
+        $this->adapter->finalize_async_success(
+            [
+                'entry_id'             => $entry_id,
+                'form_id'              => $form_id,
+                'central_action_id'    => 'clarification_assistant_v1',
+                'action_name_label'    => 'Real-time Clarification Assistant',
+                'mapping_id'           => 'local_first_storage',
+                'execution_request_id' => 'staging-cps-rca-late-707',
+                'submitted_at'         => '2026-06-27T09:00:00Z',
+                'settings'             => [
+                    'realtime_settings' => [
+                        'storage_target_field_id' => '9',
+                    ],
+                ],
+            ],
+            [
+                'status'      => 'succeeded',
+                'result_data' => [
+                    'structured_output' => [
+                        'virtual_questions' => [
+                            [
+                                'question_id' => 'scope',
+                                'question'    => 'Which scope should the team prioritize?',
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $stored = json_decode( (string) ( GFAPI::$entries[ $entry_id ]['10'] ?? '' ), true );
+
+        $this->assertSame( 'legacy value', GFAPI::$entries[ $entry_id ]['9'] ?? null );
+        $this->assertIsArray( $stored );
+        $this->assertSame( 'local_first_storage', $stored['mappings'][0]['mapping_id'] ?? null );
+        $this->assertSame(
+            'Which scope should the team prioritize?',
+            $stored['mappings'][0]['questions'][0]['question'] ?? null
+        );
     }
 
     /**

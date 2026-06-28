@@ -360,12 +360,25 @@
 }
 
 .sentient-forms-qna-card__reason,
+.sentient-forms-qna-card__late-notice,
 .sentient-forms-qna-more,
 .sentient-forms-qna-empty {
 	margin: 8px 0 0;
 	color: #646970;
 	font-size: 12px;
 	line-height: 1.45;
+}
+
+.sentient-forms-qna-card__late-notice {
+	padding: 8px 10px;
+	border: 1px solid #f0c36d;
+	border-radius: 6px;
+	background: #fff8e5;
+	color: #7a3b00;
+}
+
+.sentient-forms-qna-card__late-notice strong {
+	color: #1d2327;
 }
 
 .sentient-forms-qna-review-toolbar {

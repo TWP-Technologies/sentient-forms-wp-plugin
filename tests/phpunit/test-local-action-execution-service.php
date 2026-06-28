@@ -932,6 +932,141 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertCount( 1, $client->chat_calls );
     }
 
+    public function test_non_gravity_suggested_reply_uses_submission_uuid_for_skip_lookup_and_result_index(): void
+    {
+        global $wpdb;
+
+        $submission_uuid = '33333333-4444-4555-8666-777777777777';
+        $profiles = new Sentient_Forms_Lead_Profiles_Repository( $wpdb );
+        $profile_id = $profiles->save(
+            [
+                'form_source'              => 'contact_form_7',
+                'form_id'                  => '42',
+                'status'                   => 'active',
+                'profile_version'          => 2,
+                'consented_at'             => current_time( 'mysql' ),
+                'generated_profile_prompt' => 'Trusted lead scoring prompt.',
+                'grading_rubric_json'      => [ 'scale' => [ 'Reject' => 'Spam or low-fit lead.' ] ],
+                'handoff_rules_json'       => [
+                    'reply_rules' => [
+                        'skip_reject_grade' => true,
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $profile_id );
+
+        $stored = ( new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb ) )->upsert_from_execution(
+            [
+                'form_source'          => 'contact_form_7',
+                'form_id'              => '42',
+                'form_title'           => 'CF7 Contact',
+                'entry_id'             => $submission_uuid,
+                'action_code'          => 'lead_grading_v1',
+                'execution_request_id' => 'cf7-lead-reject-' . $submission_uuid,
+                'lead_profile_id'      => $profile_id,
+                'profile_version'      => 2,
+                'grade'                => 'Reject',
+                'confidence'           => 0.95,
+                'priority'             => 'low',
+                'justification'        => 'The entry was classified as spam and should not receive an automatic reply draft.',
+                'status'               => 'succeeded',
+                'entry_snapshot'       => [ 'submission_uuid' => $submission_uuid ],
+            ]
+        );
+        $this->assertIsInt( $stored );
+
+        $credential_id = $this->create_ready_openrouter_credential( 'CF7 Suggested Reply', 'sk-or-cf7-reply-secret' );
+        $consent_id    = $this->consents->record( 'openrouter', '2026-04-16', get_current_user_id() );
+        $this->assertIsInt( $consent_id );
+
+        $action_id = $this->custom_actions->create(
+            [
+                'code'                 => 'suggested_reply_v1',
+                'display_name'         => 'Suggested Reply',
+                'definition_json'      => [
+                    'system_prompt'   => 'Draft a concise reply.',
+                    'prompt_template' => 'Message: {{message}}',
+                ],
+                'model_selection_json' => [
+                    'provider'      => 'openrouter',
+                    'model'         => 'openrouter/auto',
+                    'credential_id' => $credential_id,
+                ],
+            ]
+        );
+        $this->assertIsInt( $action_id );
+
+        $mapping_id = $this->mappings->create(
+            [
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'hook'                => 'wpcf7_mail_sent',
+                'action_kind'         => 'custom_action',
+                'action_id'           => $action_id,
+                'input_bindings_json' => [
+                    'message' => 'message',
+                ],
+                'execution_mode'      => 'sync',
+                'enabled'             => true,
+            ]
+        );
+        $this->assertIsInt( $mapping_id );
+
+        $client = new Sentient_Forms_Test_OpenRouter_Client(
+            $this->openrouter_json_response(
+                [
+                    'suggested_reply_draft' => 'Thanks for reaching out.',
+                    'next_best_action'      => 'Reply after review.',
+                    'reply_rationale'       => 'Manual override requested a draft.',
+                ]
+            )
+        );
+        $service = $this->create_service( $client );
+        $entry   = [
+            'id'              => '501',
+            'submission_uuid' => $submission_uuid,
+            'message'         => 'Can you help with a multi-location intake workflow?',
+        ];
+
+        $skipped = $service->execute_mapping(
+            $mapping_id,
+            [ 'id' => 42, 'title' => 'CF7 Contact' ],
+            $entry,
+            [
+                'hook'            => 'wpcf7_mail_sent',
+                'submission_uuid' => $submission_uuid,
+            ]
+        );
+
+        $this->assertIsArray( $skipped );
+        $this->assertSame( 'skipped', $skipped['status'] );
+        $this->assertSame( 'lead_grade_reject', $skipped['effects']['skipped'][0]['reason'] ?? null );
+        $this->assertSame( [], $client->chat_calls );
+
+        $manual = $service->execute_mapping(
+            $mapping_id,
+            [ 'id' => 42, 'title' => 'CF7 Contact' ],
+            $entry,
+            [
+                'hook'                   => 'wpcf7_mail_sent',
+                'manual_suggested_reply' => true,
+                'force_suggested_reply'  => true,
+                'submission_uuid'        => $submission_uuid,
+            ]
+        );
+
+        $this->assertIsArray( $manual );
+        $this->assertSame( 'succeeded', $manual['status'] );
+        $this->assertCount( 1, $client->chat_calls );
+
+        $results = new Sentient_Forms_Lead_Scoring_Results_Repository( $wpdb );
+        $by_uuid = $results->get_entry_result( 'contact_form_7', '42', $submission_uuid );
+        $this->assertIsArray( $by_uuid );
+        $this->assertSame( 'Thanks for reaching out.', $by_uuid['suggested_reply_draft'] ?? null );
+        $this->assertNull( $results->get_entry_result( 'contact_form_7', '42', '501' ) );
+    }
+
     public function test_executes_imported_bundled_openrouter_mapping_without_saved_credential_id(): void
     {
         $fixture = $this->create_local_openrouter_mapping(
@@ -2543,6 +2678,172 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
         $this->assertIsArray( $event );
         $this->assertSame( 'spam', $event['result_json']['structured']['classification'] );
         $this->assertContains( 'mark_as_spam', $event['result_json']['effects']['applied'] );
+    }
+
+    public function test_non_gravity_result_effects_use_sentient_surface_and_skip_native_effects_specifically(): void
+    {
+        $applier = new Sentient_Forms_Local_Result_Applier();
+
+        $effects = $applier->apply(
+            [
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'effect_mapping_json' => [
+                    'store_result' => true,
+                    'entry_note'   => [
+                        'path' => 'structured.summary',
+                    ],
+                    'meta'         => [
+                        'sentient_forms_summary' => 'structured.summary',
+                    ],
+                    'spam'         => [
+                        'enabled'             => true,
+                        'classification_path' => 'structured.classification',
+                        'confidence_path'     => 'structured.confidence',
+                        'min_confidence'      => 0.8,
+                    ],
+                ],
+            ],
+            [ 'id' => '42', 'title' => 'Contact Form 7' ],
+            [
+                'id'              => null,
+                'submission_uuid' => '11111111-2222-4333-8444-555555555555',
+            ],
+            [
+                'execution_request_id' => 'cf7-provider-neutral-result',
+                'status'               => 'succeeded',
+                'result'               => [
+                    'structured' => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.92,
+                        'summary'        => 'Suspicious submission.',
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertContains( 'store_result', $effects['applied'] );
+        $this->assertContains( 'spam_classification', $effects['applied'] );
+
+        $skipped = [];
+        foreach ( $effects['skipped'] as $skip )
+        {
+            $skipped[ $skip['effect'] ] = $skip['reason'];
+        }
+
+        $this->assertSame(
+            [
+                'meta:sentient_forms_summary' => 'native_meta_unsupported',
+                'entry_note'                  => 'native_note_unsupported',
+                'mark_as_spam'                => 'native_spam_status_unsupported',
+            ],
+            $skipped
+        );
+    }
+
+    public function test_non_gravity_spam_effects_use_configured_classification_path(): void
+    {
+        $applier = new Sentient_Forms_Local_Result_Applier();
+
+        $effects = $applier->apply(
+            [
+                'form_source'         => 'wpforms',
+                'form_id'             => '77',
+                'effect_mapping_json' => [
+                    'spam' => [
+                        'enabled'             => true,
+                        'classification_path' => 'verdict.kind',
+                        'confidence_path'     => 'verdict.confidence',
+                        'min_confidence'      => 0.8,
+                        'note'                => [
+                            'result_display_mode' => 'spam_only',
+                        ],
+                    ],
+                ],
+            ],
+            [ 'id' => '77', 'title' => 'WPForms Contact' ],
+            [
+                'id'              => null,
+                'submission_uuid' => '22222222-3333-4444-8555-666666666666',
+            ],
+            [
+                'execution_request_id' => 'wpforms-configured-spam-path',
+                'status'               => 'succeeded',
+                'result'               => [
+                    'verdict' => [
+                        'kind'       => 'likely-spam',
+                        'confidence' => 0.91,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertContains( 'spam_classification', $effects['applied'] );
+
+        $skipped = [];
+        foreach ( $effects['skipped'] as $skip )
+        {
+            $skipped[ $skip['effect'] ] = $skip['reason'];
+        }
+
+        $this->assertSame(
+            [
+                'mark_as_spam' => 'native_spam_status_unsupported',
+                'spam_note'    => 'native_note_unsupported',
+            ],
+            $skipped
+        );
+    }
+
+    public function test_non_gravity_post_execution_actions_do_not_write_gravity_entry_meta(): void
+    {
+        $hook_calls = 0;
+        $hook       = static function () use ( &$hook_calls ): void {
+            ++$hook_calls;
+        };
+
+        add_action( 'sentient_forms_non_gravity_post_execution_test', $hook, 10, 4 );
+
+        try
+        {
+            $applier = new Sentient_Forms_Local_Result_Applier();
+            $effects = $applier->apply(
+                [
+                    'form_source'         => 'wpforms',
+                    'form_id'             => '77',
+                    'effect_mapping_json' => [
+                        'post_execution_actions' => [
+                            [
+                                'type'      => 'wp_hook',
+                                'hook_name' => 'sentient_forms_non_gravity_post_execution_test',
+                            ],
+                        ],
+                    ],
+                ],
+                [ 'id' => '77', 'title' => 'WPForms Contact' ],
+                [
+                    'id'              => 501,
+                    'submission_uuid' => '33333333-4444-4555-8666-777777777777',
+                ],
+                [
+                    'execution_request_id' => 'wpforms-post-execution-audit',
+                    'status'               => 'succeeded',
+                    'result'               => [
+                        'structured' => [
+                            'summary' => 'Provider-neutral post action.',
+                        ],
+                    ],
+                ]
+            );
+        }
+        finally
+        {
+            remove_action( 'sentient_forms_non_gravity_post_execution_test', $hook, 10 );
+        }
+
+        $this->assertContains( 'post_execution:wp_hook', $effects['applied'] );
+        $this->assertSame( 1, $hook_calls );
+        $this->assertNull( gform_get_meta( 501, 'sentient_forms_post_execution_actions' ) );
     }
 
     public function test_applies_custom_action_post_execution_defaults_for_local_mapping(): void

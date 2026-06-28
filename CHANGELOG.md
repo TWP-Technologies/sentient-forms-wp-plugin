@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.8.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.7.0...v0.8.0) (2026-06-28)
+
+
+### Features
+
+* **plugin:** harden admin qol and late clarification callbacks ([40fa253](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/40fa25380b401982d42534dd7c6b61e250510928))
+* **plugin:** harden admin qol and late clarification callbacks ([2ea7367](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2ea73673353bd803116fec2e21e0911192bd6a19))
+
+
+### Bug Fixes
+
+* **ci:** validate release workflow path filters ([4f42b5b](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/4f42b5bd5de09c59d1e166caa420b7707b8e427a))
+* **plugin:** address final ledger and consent review feedback ([855d2a8](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/855d2a8806e7d65231584796ff516e8555764c78))
+* **plugin:** address final review feedback ([a0a29b1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a0a29b1d35492d445c40051840b26e636cd86886))
+* **plugin:** address qol hardening review feedback ([b69d429](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/b69d4294e2f642ca7b9c0005bf8cc99b34ae0586))
+* **plugin:** avoid dynamic ledger SQL fragments ([a041b4c](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/a041b4cde2173181bea266eadc0dd974b218c6b6))
+* **plugin:** handle nested consent action candidates ([77b5b85](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/77b5b851c567454801d3c6de407e72fad1b3b5a8))
+* **plugin:** ignore invalid ledger date filters ([e37d135](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/e37d13509c9127454a5fc1c59fea95573825085a))
+* **plugin:** keep consent action lookup bounded ([4c4ecda](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/4c4ecda43c450109f8ed6b408a858181f2261bab))
+* **plugin:** normalize ledger date filters for package scan ([cd5c6f3](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/cd5c6f3aa1002fe92b4307e2540b687bbbcf471a))
+* **plugin:** preserve catalog when zdr refresh fails ([0c80bde](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/0c80bde8af19ecb5dfa9b8f7ed1950aa8447d0aa))
+* **plugin:** render late qna admin script outside footer phase ([60f97b1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/60f97b1c2fbb19c48fbdc8356c4ef440943b81aa))
+* **plugin:** satisfy plugin check for ledger queries ([e2149c5](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/e2149c5e6a84c3793a076a22cf9d65ecfe4d2f10))
+
+## [0.7.0](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.6.1...v0.7.0) (2026-06-28)
+
+
+### Features
+
+* **forms:** add ledger parity for cf7 and wpforms ([4a18432](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/4a1843230b8562258d621c822fee236d57f22480))
+* **forms:** add ledger parity for cf7 and wpforms ([1363d2f](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/1363d2f1cc1b46eec41214f587755623cc59d658))
+
+
+### Bug Fixes
+
+* **admin:** avoid CSS health import crash ([dbf1d7e](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/dbf1d7e64e2965e97b551b7042ed51d6eb23c395))
+* **admin:** harden card chrome against host resets ([be72fcf](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/be72fcf5351faa54b4f654cf1fe226ecfe308e89))
+* **admin:** harden CSS against host resets ([be096a2](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/be096a2a3814265163c2386b78e623323cd8f3ff))
+* **admin:** harden CSS against host resets ([997505a](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/997505ad3252f0bab712de9c8a78baea1e7e9e0c))
+* **admin:** make CSS health probe retry async targets ([7903eb7](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/7903eb7cc9f8833585f49d2661738c40a1898630))
+* **forms:** address final pr review findings ([535a538](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/535a53887852010367178d974df9425ab38720db))
+* **forms:** address parity pr review feedback ([2f86b16](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2f86b16a096805c70b45dd48cc4c51e49939d890))
+* **forms:** close managed parity review gaps ([978c9b4](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/978c9b42f8d16aef6d2c94831c82b29f63fca3f4))
+* **forms:** close parity bot review loop ([5b6160e](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/5b6160e89109a9bafd40d7d04dfff0a57fb65307))
+* **forms:** close parity review findings ([2430c47](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/commit/2430c47e80342902a7299e80a0d8b46e3a0ffad9))
+
 ## [0.6.1](https://github.com/TWP-Technologies/sentient-forms-wp-plugin/compare/v0.6.0...v0.6.1) (2026-06-25)
 
 

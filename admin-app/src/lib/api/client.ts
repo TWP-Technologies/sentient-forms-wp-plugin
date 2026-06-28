@@ -125,6 +125,17 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
 	invalidateCacheTags?: string[] | false;
 }
 
+interface SubmissionLedgerRecordsRequestOptions extends RequestOptions {
+	perPage?: number;
+	offset?: number;
+	q?: string;
+	nativeEntry?: string;
+	capturedFrom?: string;
+	capturedTo?: string;
+	hasFiles?: boolean | null;
+	sort?: string;
+}
+
 type FormSourceFormId = string | number;
 
 interface RestEnvelope<T> {
@@ -1581,7 +1592,7 @@ export class SentientFormsApiClient {
 	async getSubmissionLedgerRecords(
 		formSourceSlug: string,
 		formId: string | number,
-		options: RequestOptions & { perPage?: number; offset?: number } = {}
+		options: SubmissionLedgerRecordsRequestOptions = {}
 	): Promise<SubmissionLedgerRecordsResponse> {
 		const slug = formSourcePathSegment(formSourceSlug);
 		const formIdSegment = formIdPathSegment(formId);
@@ -1592,8 +1603,36 @@ export class SentientFormsApiClient {
 		if (typeof options.offset === 'number') {
 			params.set('offset', String(options.offset));
 		}
+		if (options.q?.trim()) {
+			params.set('q', options.q.trim());
+		}
+		if (options.nativeEntry?.trim()) {
+			params.set('native_entry', options.nativeEntry.trim());
+		}
+		if (options.capturedFrom?.trim()) {
+			params.set('captured_from', options.capturedFrom.trim());
+		}
+		if (options.capturedTo?.trim()) {
+			params.set('captured_to', options.capturedTo.trim());
+		}
+		if (typeof options.hasFiles === 'boolean') {
+			params.set('has_files', String(options.hasFiles));
+		}
+		if (options.sort?.trim()) {
+			params.set('sort', options.sort.trim());
+		}
 		const query = params.toString();
-		const { perPage: _perPage, offset: _offset, ...requestOptions } = options;
+		const {
+			perPage: _perPage,
+			offset: _offset,
+			q: _q,
+			nativeEntry: _nativeEntry,
+			capturedFrom: _capturedFrom,
+			capturedTo: _capturedTo,
+			hasFiles: _hasFiles,
+			sort: _sort,
+			...requestOptions
+		} = options;
 		const response = await this.request<RestEnvelope<unknown>>(
 			`${slug}/forms/${formIdSegment}/submissions${query ? `?${query}` : ''}`,
 			withCacheDefaults(requestOptions, {

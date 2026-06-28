@@ -287,11 +287,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         $form_source = $this->normalize_form_source( (string) ( $entry['form_source'] ?? '' ) );
         if ( ! in_array( $form_source, [ 'gravity_forms', 'gravity-forms' ], true ) )
         {
-            return $this->prepare_error_response(
-                'sentient_forms_action_log_preview_unsupported_provider',
-                __( 'Entry preview is currently available for Gravity Forms entries only.', 'sentient-forms' ),
-                400
-            );
+            return $this->get_ledger_entry_preview( $entry, $form_source );
         }
 
         if ( ! class_exists( 'GFAPI' ) || ! is_callable( [ 'GFAPI', 'get_form' ] ) || ! is_callable( [ 'GFAPI', 'get_entry' ] ) )
@@ -353,10 +349,68 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 'form_id'      => $form_id,
                 'form_name'    => $context['form_name'],
                 'entry_id'     => $entry_id,
+                'submission_uuid' => self::normalize_submission_uuid( $entry['submission_uuid'] ?? null ),
+                'preview_source' => 'native',
+                'native_entry_url' => $this->gravity_forms_entry_admin_url( $form_id, $entry_id ),
                 'date_created' => isset( $gf_entry['date_created'] ) ? sanitize_text_field( (string) $gf_entry['date_created'] ) : null,
                 'status'       => isset( $gf_entry['status'] ) ? sanitize_key( (string) $gf_entry['status'] ) : null,
                 'fields'       => $this->summarize_gravity_forms_entry_fields( $form, $gf_entry ),
                 'links'        => $context['links'],
+                'capabilities' => $this->preview_capabilities( $form_source ),
+            ]
+        );
+    }
+
+    private function get_ledger_entry_preview( array $entry, string $form_source ): WP_REST_Response | WP_Error
+    {
+        $record = $this->ledger_record_for_log_entry( $entry );
+        if ( null === $record )
+        {
+            return $this->prepare_error_response(
+                'sentient_forms_action_log_ledger_preview_unavailable',
+                __( 'No submission ledger snapshot is available for this action log row.', 'sentient-forms' ),
+                400
+            );
+        }
+
+        $form_id = absint( $entry['form_id'] ?? $record['form_id'] ?? 0 );
+        $context = $this->build_form_context( $entry );
+        $links   = is_array( $context['links'] ?? null ) ? $context['links'] : [];
+        $native_entry_url = isset( $record['native_entry_url'] ) && is_scalar( $record['native_entry_url'] )
+            ? esc_url_raw( (string) $record['native_entry_url'] )
+            : null;
+        if ( null !== $native_entry_url )
+        {
+            $links['entry_admin_url'] = $native_entry_url;
+        }
+
+        $native_entry_id = isset( $record['native_entry_id'] ) && is_scalar( $record['native_entry_id'] ) && '' !== trim( (string) $record['native_entry_id'] )
+            ? sanitize_text_field( (string) $record['native_entry_id'] )
+            : null;
+        $entry_id = null;
+        if ( null !== $native_entry_id && is_numeric( $native_entry_id ) && absint( $native_entry_id ) > 0 )
+        {
+            $entry_id = absint( $native_entry_id );
+        }
+
+        return $this->prepare_item_for_response(
+            [
+                'log_id'          => $entry['id'],
+                'form_source'     => $form_source,
+                'provider_label'  => $context['provider_label'],
+                'form_id'         => $form_id,
+                'form_name'       => $context['form_name'],
+                'entry_id'        => $entry_id,
+                'submission_uuid' => self::normalize_submission_uuid( $record['submission_uuid'] ?? $entry['submission_uuid'] ?? null ),
+                'preview_source'  => 'ledger',
+                'native_entry_url'=> $native_entry_url,
+                'date_created'    => isset( $record['source_submitted_at'] ) && is_scalar( $record['source_submitted_at'] ) && '' !== trim( (string) $record['source_submitted_at'] )
+                    ? sanitize_text_field( (string) $record['source_submitted_at'] )
+                    : ( isset( $record['captured_at'] ) && is_scalar( $record['captured_at'] ) ? sanitize_text_field( (string) $record['captured_at'] ) : null ),
+                'status'          => null,
+                'fields'          => $this->summarize_submission_ledger_fields( $record ),
+                'links'           => $links,
+                'capabilities'    => $this->preview_capabilities( $form_source, $record ),
             ]
         );
     }
@@ -795,21 +849,35 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         {
             $links['entry_admin_url'] = $this->gravity_forms_entry_admin_url( $form_id, $entry_id );
         }
+        elseif ( 'gravity_forms' !== $form_source )
+        {
+            $ledger_record = $this->ledger_record_for_log_entry( $entry );
+            if ( is_array( $ledger_record ) && isset( $ledger_record['native_entry_url'] ) && is_scalar( $ledger_record['native_entry_url'] ) )
+            {
+                $native_entry_url = esc_url_raw( (string) $ledger_record['native_entry_url'] );
+                if ( '' !== $native_entry_url )
+                {
+                    $links['entry_admin_url'] = $native_entry_url;
+                }
+            }
+        }
 
         $context['entry_id'] = $entry_id;
         $context['links']    = $links;
         $context['entry_preview_available'] = 'gravity_forms' === $form_source
-            && is_int( $form_id )
-            && $form_id > 0
-            && null !== $entry_id
-            && empty( $context['form_missing'] )
-            && class_exists( 'GFAPI' )
-            && is_callable( [ 'GFAPI', 'get_form' ] )
-            && is_callable( [ 'GFAPI', 'get_entry' ] );
+            ? (
+                is_int( $form_id )
+                && $form_id > 0
+                && null !== $entry_id
+                && empty( $context['form_missing'] )
+                && class_exists( 'GFAPI' )
+                && is_callable( [ 'GFAPI', 'get_form' ] )
+                && is_callable( [ 'GFAPI', 'get_entry' ] )
+            )
+            : null !== $this->ledger_record_for_log_entry( $entry );
 
         return $context;
     }
-
     private function build_base_form_context( string $form_source, int|string $form_id ): array
     {
         $provider_label = $this->provider_label( $form_source );
@@ -866,6 +934,23 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 $form_missing = true;
             }
         }
+        elseif ( 'contact_form_7' === $form_source )
+        {
+            $links['provider_admin_url'] = admin_url( 'admin.php?page=wpcf7' );
+            if ( $form_id > 0 )
+            {
+                $links['form_admin_url'] = admin_url( sprintf( 'admin.php?page=wpcf7&post=%d&action=edit', $form_id ) );
+            }
+        }
+        elseif ( 'wpforms' === $form_source )
+        {
+            $links['provider_admin_url'] = admin_url( 'admin.php?page=wpforms-overview' );
+            if ( $form_id > 0 )
+            {
+                $links['form_admin_url']    = admin_url( sprintf( 'admin.php?page=wpforms-builder&view=fields&form_id=%d', $form_id ) );
+                $links['entries_admin_url'] = admin_url( sprintf( 'admin.php?page=wpforms-entries&view=list&form_id=%d', $form_id ) );
+            }
+        }
 
         return [
             'provider_slug'            => $form_source,
@@ -906,6 +991,121 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
         }
 
         return admin_url( sprintf( 'admin.php?page=gf_entries&view=entry&id=%d&lid=%d', $form_id, $entry_id ) );
+    }
+
+    private function ledger_record_for_log_entry( array $entry ): ?array
+    {
+        if ( ! class_exists( 'Sentient_Forms_Submission_Ledger_Repository' ) )
+        {
+            return null;
+        }
+
+        global $wpdb;
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+
+        $submission_uuid = self::normalize_submission_uuid( $entry['submission_uuid'] ?? null );
+        if ( null !== $submission_uuid )
+        {
+            $record = $ledger->get_by_submission_uuid( $submission_uuid );
+            if ( is_array( $record ) && $this->ledger_record_matches_log_entry( $record, $entry ) )
+            {
+                return $record;
+            }
+        }
+
+        $form_source = $this->normalize_form_source( (string) ( $entry['form_source'] ?? '' ) );
+        $form_id     = sanitize_text_field( (string) ( $entry['form_id'] ?? '' ) );
+        $entry_id    = isset( $entry['entry_id'] ) && is_scalar( $entry['entry_id'] ) ? sanitize_text_field( (string) $entry['entry_id'] ) : '';
+        if ( '' !== $form_source && '' !== $form_id && '' !== $entry_id )
+        {
+            $record = $ledger->get_by_native_entry_id( $form_source, $form_id, $entry_id );
+            if ( is_array( $record ) && $this->ledger_record_matches_log_entry( $record, $entry ) )
+            {
+                return $record;
+            }
+        }
+
+        return null;
+    }
+
+    private function ledger_record_matches_log_entry( array $record, array $entry ): bool
+    {
+        $record_source = $this->normalize_form_source( (string) ( $record['form_source'] ?? '' ) );
+        $entry_source  = $this->normalize_form_source( (string) ( $entry['form_source'] ?? '' ) );
+        if ( $record_source !== $entry_source )
+        {
+            return false;
+        }
+
+        $record_form_id = sanitize_text_field( (string) ( $record['form_id'] ?? '' ) );
+        $entry_form_id  = sanitize_text_field( (string) ( $entry['form_id'] ?? '' ) );
+        return '' !== $record_form_id && $record_form_id === $entry_form_id;
+    }
+
+    /**
+     * @return array<int, array{field_id: string, label: string, value: string}>
+     */
+    private function summarize_submission_ledger_fields( array $record ): array
+    {
+        $logical_fields = is_array( $record['logical_fields_json'] ?? null ) ? $record['logical_fields_json'] : [];
+        $summary        = [];
+
+        foreach ( $logical_fields as $field_id => $value )
+        {
+            if ( count( $summary ) >= 12 )
+            {
+                break;
+            }
+
+            if ( is_array( $value ) )
+            {
+                $value = wp_json_encode( $value );
+            }
+
+            if ( ! is_scalar( $value ) || '' === trim( (string) $value ) )
+            {
+                continue;
+            }
+
+            $field_id = sanitize_key( (string) $field_id );
+            if ( '' === $field_id )
+            {
+                continue;
+            }
+
+            $summary[] = [
+                'field_id' => $field_id,
+                'label'    => sanitize_text_field( ucwords( str_replace( [ '_', '-' ], ' ', $field_id ) ) ),
+                'value'    => $this->truncate_preview_value( sanitize_textarea_field( (string) $value ) ),
+            ];
+        }
+
+        return $summary;
+    }
+
+    private function preview_capabilities( string $form_source, ?array $ledger_record = null ): array
+    {
+        $form_source          = $this->normalize_form_source( $form_source );
+        $is_gravity_forms     = 'gravity_forms' === $form_source;
+        $has_native_entry_id  = $is_gravity_forms || ( is_array( $ledger_record ) && isset( $ledger_record['native_entry_id'] ) && is_scalar( $ledger_record['native_entry_id'] ) && '' !== trim( (string) $ledger_record['native_entry_id'] ) );
+        $has_native_entry_url = $is_gravity_forms || ( is_array( $ledger_record ) && isset( $ledger_record['native_entry_url'] ) && is_scalar( $ledger_record['native_entry_url'] ) && '' !== trim( (string) $ledger_record['native_entry_url'] ) );
+
+        return [
+            'ledger'       => [
+                'submission_uuid' => true,
+                'logical_fields'  => true,
+                'results'         => true,
+            ],
+            'native_entry' => [
+                'id'          => $has_native_entry_id,
+                'url'         => $has_native_entry_url,
+                'read'        => $is_gravity_forms,
+                'notes'       => $is_gravity_forms,
+                'status'      => $is_gravity_forms,
+                'spam_status' => $is_gravity_forms,
+                'field_write' => $is_gravity_forms,
+            ],
+        ];
     }
 
     private function summarize_gravity_forms_entry_fields( array $form, array $entry ): array
@@ -1203,6 +1403,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 'debited_credits'            => $debited_credits,
             ];
         }
+        $credits_used = 'sentient_managed' === $provider ? absint( $pricing['debited_credits'] ?? 0 ) : 0;
 
         if ( ! empty( $cost ) && 'sentient_managed' !== $provider )
         {
@@ -1233,7 +1434,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             'status'                  => $status,
             'result_summary'          => $this->extract_local_result_summary( $result_json, $result_data ),
             'classification'          => $this->extract_local_result_classification( $result_json, $result_data ),
-            'credits_used'            => 0,
+            'credits_used'            => $credits_used,
             'error_code'              => isset( $event['error_code'] ) ? sanitize_text_field( (string) $event['error_code'] ) : null,
             'error_message'           => isset( $event['error_message'] ) ? sanitize_textarea_field( (string) $event['error_message'] ) : null,
             'execution_request_id'    => isset( $event['execution_request_id'] ) ? sanitize_text_field( (string) $event['execution_request_id'] ) : null,
@@ -1356,6 +1557,15 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                 ),
         ];
 
+        if ( $is_managed )
+        {
+            $managed_action = $this->resolve_managed_execution_action_from_event( $event );
+            if ( null !== $managed_action )
+            {
+                return $managed_action;
+            }
+        }
+
         if ( $mapping_id <= 0 )
         {
             $event_action = $this->resolve_provider_native_event_action( $event, $fallback );
@@ -1434,6 +1644,89 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
             'code'  => '' !== $action_code ? $action_code : $fallback['code'],
             'label' => '' !== $action_label ? $action_label : $fallback['label'],
         ];
+    }
+
+    private function resolve_managed_execution_action_from_event( array $event ): ?array
+    {
+        $result_json = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
+        $code        = $this->first_sanitized_key(
+            [
+                $result_json['central_action_id'] ?? null,
+                $result_json['action_id'] ?? null,
+                $result_json['action_code'] ?? null,
+                $result_json['evaluation_payload']['central_action_id'] ?? null,
+                $result_json['evaluation_payload']['action_id'] ?? null,
+            ]
+        );
+        $label       = $this->first_sanitized_text(
+            [
+                $result_json['action_name_label'] ?? null,
+                $result_json['action_label'] ?? null,
+                $result_json['display_name'] ?? null,
+                $result_json['evaluation_payload']['action_name_label'] ?? null,
+            ]
+        );
+
+        if ( '' === $code && '' === $label )
+        {
+            return null;
+        }
+
+        return [
+            'code'  => '' !== $code ? $code : 'sentient_forms_managed_action',
+            'label' => '' !== $label ? $label : $this->humanize_action_code( $code ),
+        ];
+    }
+
+    private function first_sanitized_key( array $candidates ): string
+    {
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $value = sanitize_key( (string) $candidate );
+            if ( '' !== $value )
+            {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function first_sanitized_text( array $candidates ): string
+    {
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $value = sanitize_text_field( (string) $candidate );
+            if ( '' !== $value )
+            {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function humanize_action_code( string $code ): string
+    {
+        if ( '' === $code )
+        {
+            return __( 'Sentient Forms managed action', 'sentient-forms' );
+        }
+
+        $label = preg_replace( '/_v\d+$/', '', $code );
+        $label = is_string( $label ) ? $label : $code;
+
+        return sanitize_text_field( ucwords( str_replace( '_', ' ', $label ) ) );
     }
 
     private function get_local_mapping( int $mapping_id ): ?array
@@ -1872,7 +2165,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                     'type'        => [ 'string', 'null' ],
                 ],
                 'credits_used' => [
-					'description' => __( 'Sentient Forms managed action credits debited; zero for direct local provider runs.', 'sentient-forms' ),
+                    'description' => __( 'Sentient Forms managed action credits debited; zero for direct local provider runs.', 'sentient-forms' ),
                     'type'        => 'integer',
                 ],
                 'error_code' => [
@@ -1905,7 +2198,7 @@ class Sentient_Forms_Action_Log_Controller extends Sentient_Forms_Abstract_Base_
                     'readonly'    => true,
                 ],
                 'usage_cost' => [
-					'description' => __( 'Human-readable billing route and usage summary.', 'sentient-forms' ),
+                    'description' => __( 'Human-readable billing route and usage summary.', 'sentient-forms' ),
                     'type'        => 'object',
                     'readonly'    => true,
                 ],

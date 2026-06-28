@@ -155,6 +155,7 @@ class Sentient_Forms_Installer
     private static function deactivate_current_site(): void
     {
         Sentient_Forms_Local_Data_Governance::unschedule_retention_cleanup();
+        Sentient_Forms_OpenRouter_Model_Catalog_Refresh_Cron::unschedule();
     }
 
     private static function uninstall_current_site(): void

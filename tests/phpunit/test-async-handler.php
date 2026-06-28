@@ -34,8 +34,11 @@ if ( ! class_exists( 'GFAPI' ) )
         public static array $entries = [];
         /** @var array<int,array<string,mixed>> */
         public static array $forms = [];
+        public static int $get_entry_calls = 0;
+        public static int $get_form_calls = 0;
 
         public static function get_entry( $entry_id ) {
+            ++self::$get_entry_calls;
             $entry_id = (int) $entry_id;
             if ( isset( self::$entries[ $entry_id ] ) )
             {
@@ -46,6 +49,7 @@ if ( ! class_exists( 'GFAPI' ) )
         }
 
         public static function get_form( $form_id ) {
+            ++self::$get_form_calls;
             $form_id = (int) $form_id;
             return self::$forms[ $form_id ] ?? false;
         }
@@ -70,6 +74,17 @@ if ( ! class_exists( 'GFAPI' ) )
             }
 
             self::$forms[ $form_id ] = $form;
+
+            return true;
+        }
+
+        public static function update_entry( $entry ) {
+            if ( ! is_array( $entry ) || empty( $entry['id'] ) )
+            {
+                return new WP_Error( 'missing_entry_id', 'Missing entry id.' );
+            }
+
+            self::$entries[ (int) $entry['id'] ] = $entry;
 
             return true;
         }
@@ -127,6 +142,7 @@ class Sentient_Forms_Test_Action_Executor extends Sentient_Forms_Action_Executor
         'result_data' => [],
         'meta'        => [],
     ];
+    public mixed $response = null;
 
     public function execute( string $central_action_id, array $form, array $entry, array $context = [] )
     {
@@ -137,7 +153,7 @@ class Sentient_Forms_Test_Action_Executor extends Sentient_Forms_Action_Executor
             'context'           => $context,
         ];
 
-        return $this->result;
+        return null !== $this->response ? $this->response : $this->result;
     }
 }
 
@@ -243,6 +259,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
             3
         );
         $GLOBALS['__sentient_forms_async_queue'] = [ 'enqueued' => [] ];
+        remove_all_actions( 'sentient_forms_async_job_scheduled' );
         add_action(
             'sentient_forms_async_job_scheduled',
             static function ( $hook, $args, $group, $action_id, $run_at ) {
@@ -259,12 +276,12 @@ class AsyncHandlerTest extends WP_UnitTestCase
         );
         $this->plugin->get_async_metadata_store()->clear();
         Sentient_Forms_Installer::maybe_upgrade();
-        global $wpdb;
-        $wpdb->query( 'TRUNCATE TABLE ' . $wpdb->prefix . 'sentient_async_requests' );
-        $wpdb->query( 'TRUNCATE TABLE ' . $wpdb->prefix . 'sentient_execution_events' );
+        $this->truncate_async_runtime_tables();
 		delete_option( 'sentient_forms_async_settings' );
-        GFAPI::$entries = [];
-        GFAPI::$forms = [];
+        GFAPI::$entries         = [];
+        GFAPI::$forms           = [];
+        GFAPI::$get_entry_calls = 0;
+        GFAPI::$get_form_calls  = 0;
 
         if ( class_exists( 'Sentient_Forms_Test_Gf_Meta_Store' ) )
         {
@@ -285,24 +302,36 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
     protected function tearDown(): void
     {
-        global $wpdb;
-        $table   = $wpdb->prefix . 'sentient_async_requests';
-        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table )
-        {
-            $wpdb->query( "TRUNCATE TABLE {$table}" );
-        }
+        $this->truncate_async_runtime_tables();
         $GLOBALS['__sentient_forms_async_queue'] = [ 'enqueued' => [] ];
         $GLOBALS['__sentient_forms_http_calls'] = [];
-        GFAPI::$entries = [];
-        GFAPI::$forms = [];
+        GFAPI::$entries         = [];
+        GFAPI::$forms           = [];
+        GFAPI::$get_entry_calls = 0;
+        GFAPI::$get_form_calls  = 0;
         remove_all_filters( 'pre_http_request' );
         remove_all_filters( 'sentient_forms_elementor_is_active' );
         remove_all_filters( 'sentient_forms_elementor_pro_forms_api_available' );
         remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
         remove_all_filters( 'sentient_forms_elementor_data_for_post' );
+        remove_all_actions( 'sentient_forms_async_job_scheduled' );
         remove_all_filters( 'sentient_forms_async_queue_threshold' );
         remove_all_filters( 'sentient_forms_async_stale_queue_threshold' );
         parent::tearDown();
+    }
+
+    private function truncate_async_runtime_tables(): void
+    {
+        global $wpdb;
+
+        foreach ( [ 'sentient_async_requests', 'sentient_execution_events' ] as $table_name )
+        {
+            $table = $wpdb->prefix . $table_name;
+            if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table )
+            {
+                $wpdb->query( "TRUNCATE TABLE {$table}" );
+            }
+        }
     }
 
     private function set_async_handler( Sentient_Forms_Async_Handler $handler ): void
@@ -1018,6 +1047,445 @@ class AsyncHandlerTest extends WP_UnitTestCase
             $notes = gform_get_meta( $entry_id, 'sentient_forms_notes' );
             $this->assertCount( 1, $notes );
         }
+    }
+
+    public function test_process_action_marks_non_gravity_dependent_job_skipped_from_upstream_spam_event(): void
+    {
+        global $wpdb;
+
+        $request_store = $this->plugin->get_async_request_store();
+        $executor      = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $this->set_action_executor( $executor );
+
+        $submission_uuid       = '11111111-2222-4333-8444-555555555555';
+        $dependency_request_id = 'cf7_dep_req_spam_event';
+
+        $request_store->record(
+            $dependency_request_id,
+            [
+                'status'    => 'success',
+                'action_id' => 'spam_detection_v1',
+            ]
+        );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $events->record(
+            [
+                'execution_request_id' => $dependency_request_id,
+                'submission_uuid'      => $submission_uuid,
+                'form_source'          => 'contact_form_7',
+                'form_id'              => '42',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'is_spam' => '1',
+                ],
+            ]
+        );
+
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'  => 'wpcf7_mail_sent',
+                'form'  => [ 'id' => 42, 'title' => 'CF7 Dependency Gate' ],
+                'entry' => [
+                    'id'              => null,
+                    'submission_uuid' => $submission_uuid,
+                    'message'         => 'skip me',
+                ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'settings'              => [
+                    'skip_on_upstream_spam' => true,
+                ],
+            ],
+            [
+                'hook'                           => 'wpcf7_mail_sent',
+                'form_source'                    => 'contact_form_7',
+                'form_id'                        => 42,
+                'submission_uuid'                => $submission_uuid,
+                'action_id'                      => 'map_summary_cf7',
+                'action_name_label'              => 'Entry Summary',
+                'local_mapping_id'               => 'map_summary_cf7',
+                'dependency_mapping_ids'         => [ 'map_prereq' ],
+                'dependency_execution_request_ids' => [ 'map_prereq' => $dependency_request_id ],
+                'dependency_wait_started_at'     => time(),
+                'dependency_wait_max_seconds'    => 120,
+                'dependency_wait_poll_seconds'   => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $metadata = $this->plugin->get_async_metadata_store()->get( $job['args']['context']['job_id'] );
+        $this->assertSame( 'skipped', $metadata['status'] ?? null );
+
+        $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'skipped', $row['status'] ?? null );
+        $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
+        $this->assertSame( [], $executor->captured );
+    }
+
+    public function test_cps_managed_non_gravity_spam_success_records_event_for_downstream_skip(): void
+    {
+        global $wpdb;
+
+        $request_store = $this->plugin->get_async_request_store();
+        $executor      = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $executor->response = [
+            'result_data' => [
+                'classification' => 'spam',
+                'confidence'     => 0.98,
+            ],
+            'meta'        => [],
+        ];
+        $this->set_action_executor( $executor );
+
+        $submission_uuid = '33333333-4444-4555-8666-777777777777';
+        $scheduled       = $this->plugin->process_action_async(
+            'nonexistent_spam_master',
+            [
+                'hook'  => 'wpcf7_mail_sent',
+                'form'  => [ 'id' => 42, 'title' => 'CF7 Dependency Gate' ],
+                'entry' => [
+                    'id'              => null,
+                    'submission_uuid' => $submission_uuid,
+                    'message'         => 'spammy upstream content',
+                ],
+            ],
+            [
+                'central_action_id'     => 'spam_detection_v1',
+                'action_type_indicator' => 'master',
+                'action_name_label'     => 'Spam Detection',
+            ],
+            [
+                'hook'             => 'wpcf7_mail_sent',
+                'form_source'      => 'contact_form_7',
+                'form_id'          => 42,
+                'submission_uuid'  => $submission_uuid,
+                'action_id'        => 'map_prereq',
+                'action_name_label' => 'Spam Detection',
+                'local_mapping_id' => 'map_prereq',
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $upstream_job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler      = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $upstream_job['args']['action_id'],
+            $upstream_job['args']['data'],
+            $upstream_job['args']['settings'],
+            $upstream_job['args']['execution_request_id'],
+            $upstream_job['args']['context'],
+        );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event  = $events->get_by_request_id( $upstream_job['args']['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertSame( $submission_uuid, $event['submission_uuid'] );
+        $this->assertSame( 0, (int) ( $event['mapping_id'] ?? -1 ) );
+        $this->assertSame( 'spam_detection_v1', $event['result_json']['central_action_id'] ?? null );
+        $this->assertSame( 'Spam Detection', $event['result_json']['action_name_label'] ?? null );
+        $this->assertSame( 'spam', $event['result_json']['result_data']['classification'] ?? null );
+
+        $executor->captured = [];
+        $scheduled = $this->plugin->process_action_async(
+            'entry_summary_v1',
+            [
+                'hook'  => 'wpcf7_mail_sent',
+                'form'  => [ 'id' => 42, 'title' => 'CF7 Dependency Gate' ],
+                'entry' => [
+                    'id'              => null,
+                    'submission_uuid' => $submission_uuid,
+                    'message'         => 'skip me',
+                ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'settings'              => [
+                    'skip_on_upstream_spam' => true,
+                ],
+            ],
+            [
+                'hook'                             => 'wpcf7_mail_sent',
+                'form_source'                      => 'contact_form_7',
+                'form_id'                          => 42,
+                'submission_uuid'                  => $submission_uuid,
+                'action_id'                        => 'map_summary_cf7',
+                'action_name_label'                => 'Entry Summary',
+                'local_mapping_id'                 => 'map_summary_cf7',
+                'dependency_mapping_ids'           => [ 'map_prereq' ],
+                'dependency_execution_request_ids' => [ 'map_prereq' => $upstream_job['args']['execution_request_id'] ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $downstream_job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler->process_action(
+            $downstream_job['args']['action_id'],
+            $downstream_job['args']['data'],
+            $downstream_job['args']['settings'],
+            $downstream_job['args']['execution_request_id'],
+            $downstream_job['args']['context'],
+        );
+
+        $row = $request_store->get( $downstream_job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'skipped', $row['status'] ?? null );
+        $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
+        $this->assertSame( [], $executor->captured );
+
+        $downstream_event = $events->get_by_request_id( $downstream_job['args']['execution_request_id'] );
+        $this->assertIsArray( $downstream_event );
+        $this->assertSame( 'skipped', $downstream_event['status'] ?? null );
+        $this->assertSame( $submission_uuid, $downstream_event['submission_uuid'] ?? null );
+        $this->assertSame( 'entry_summary_v1', $downstream_event['result_json']['central_action_id'] ?? null );
+        $this->assertSame( 'upstream_spam', $downstream_event['result_json']['skip_reason_code'] ?? null );
+        $this->assertStringContainsString( 'spam', (string) ( $downstream_event['result_json']['skip_reason'] ?? '' ) );
+    }
+
+    public function test_cps_managed_gravity_success_does_not_record_duplicate_execution_event(): void
+    {
+        global $wpdb;
+
+        delete_option( 'sentient_forms_action_log' );
+
+        $executor = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $executor->response = [
+            'result_data' => [
+                'summary' => 'Gravity summary completed.',
+            ],
+            'meta'        => [],
+        ];
+        $this->set_action_executor( $executor );
+
+        GFAPI::$forms[55] = [
+            'id'     => 55,
+            'title'  => 'Managed Gravity Form',
+            'fields' => [],
+        ];
+        GFAPI::$entries[155] = [
+            'id'      => 155,
+            'form_id' => 55,
+            '1'       => 'Gravity lead',
+        ];
+
+        $scheduled = $this->plugin->process_action_async(
+            'nonexistent_summary_master',
+            [
+                'hook'        => 'gform_after_submission',
+                'form_source' => 'gravity_forms',
+                'form'        => [ 'id' => 55, 'title' => 'Managed Gravity Form' ],
+                'entry'       => [ 'id' => 155, '1' => 'Gravity lead' ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'action_name_label'     => 'Entry Summary',
+            ],
+            [
+                'hook'              => 'gform_after_submission',
+                'form_source'       => 'gravity_forms',
+                'form_id'           => 55,
+                'entry_id'          => 155,
+                'central_action_id' => 'entry_summary_v1',
+                'action_name_label' => 'Entry Summary',
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $this->assertNull( $events->get_by_request_id( $job['args']['execution_request_id'] ) );
+
+        $legacy_entries = get_option( 'sentient_forms_action_log', [] );
+        $this->assertIsArray( $legacy_entries );
+        $this->assertCount( 1, $legacy_entries );
+        $this->assertSame( $job['args']['execution_request_id'], $legacy_entries[0]['execution_request_id'] ?? null );
+        delete_option( 'sentient_forms_action_log' );
+    }
+
+    public function test_cps_managed_non_gravity_terminal_failure_records_execution_event(): void
+    {
+        global $wpdb;
+
+        $request_store = $this->plugin->get_async_request_store();
+        $executor      = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $executor->response = new WP_Error( 'sentient_forms_managed_timeout', 'Managed route timed out.' );
+        $this->set_action_executor( $executor );
+
+        $submission_uuid = '44444444-5555-4666-8777-888888888888';
+        $scheduled       = $this->plugin->process_action_async(
+            'nonexistent_summary_master',
+            [
+                'hook'        => 'wpcf7_mail_sent',
+                'form_source' => 'contact_form_7',
+                'form'        => [ 'id' => 43, 'title' => 'CF7 Failure Log' ],
+                'entry'       => [
+                    'id'              => null,
+                    'submission_uuid' => $submission_uuid,
+                    'message'         => 'Summarize this later.',
+                ],
+            ],
+            [
+                'central_action_id'     => 'entry_summary_v1',
+                'action_type_indicator' => 'master',
+                'action_name_label'     => 'Entry Summary',
+            ],
+            [
+                'hook'              => 'wpcf7_mail_sent',
+                'form_source'       => 'contact_form_7',
+                'form_id'           => 43,
+                'submission_uuid'   => $submission_uuid,
+                'action_id'         => 'map_summary_cf7',
+                'local_mapping_id'  => 'map_summary_cf7',
+                'central_action_id' => 'entry_summary_v1',
+                'action_name_label' => 'Entry Summary',
+                'max_attempts'      => 1,
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_action(
+            $job['args']['action_id'],
+            $job['args']['data'],
+            $job['args']['settings'],
+            $job['args']['execution_request_id'],
+            $job['args']['context'],
+        );
+
+        $row = $request_store->get( $job['args']['execution_request_id'], 'job' );
+        $this->assertSame( 'failed', $row['status'] ?? null );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event  = $events->get_by_request_id( $job['args']['execution_request_id'] );
+        $this->assertIsArray( $event );
+        $this->assertSame( 'failed', $event['status'] ?? null );
+        $this->assertSame( 'sentient_forms_managed_timeout', $event['error_code'] ?? null );
+        $this->assertSame( 'Managed route timed out.', $event['error_message'] ?? null );
+        $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
+        $this->assertSame( 'entry_summary_v1', $event['result_json']['central_action_id'] ?? null );
+        $this->assertSame( 'Entry Summary', $event['result_json']['action_name_label'] ?? null );
+    }
+
+    public function test_process_local_mapping_marks_non_gravity_dependent_job_skipped_from_upstream_spam_event(): void
+    {
+        global $wpdb;
+
+        $request_store         = $this->plugin->get_async_request_store();
+        $submission_uuid       = '22222222-3333-4444-8555-666666666666';
+        $dependency_request_id = 'cf7_local_dep_req_spam_event';
+
+        $request_store->record(
+            $dependency_request_id,
+            [
+                'status'    => 'success',
+                'action_id' => 'local_mapping_100',
+            ]
+        );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $events->record(
+            [
+                'execution_request_id' => $dependency_request_id,
+                'submission_uuid'      => $submission_uuid,
+                'form_source'          => 'contact_form_7',
+                'form_id'              => '42',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'structured' => [
+                        'classification' => 'spam',
+                        'confidence'     => 0.97,
+                    ],
+                ],
+            ]
+        );
+
+        $scheduled = $this->plugin->get_async_handler()->schedule_local_mapping(
+            321,
+            [ 'id' => 42, 'title' => 'CF7 Local Dependency Gate' ],
+            [
+                'id'              => null,
+                'submission_uuid' => $submission_uuid,
+                'message'         => 'skip local-first downstream work',
+            ],
+            [
+                'hook'                             => 'wpcf7_mail_sent',
+                'form_source'                      => 'contact_form_7',
+                'form_id'                          => 42,
+                'submission_uuid'                  => $submission_uuid,
+                'action_id'                        => 'local_first_321',
+                'action_name_label'                => 'Entry Summary',
+                'local_mapping_id'                 => 'local_first_321',
+                'dependency_mapping_ids'           => [ 'local_first_100' ],
+                'dependency_execution_request_ids' => [ 'local_first_100' => $dependency_request_id ],
+                'dependency_wait_started_at'       => time(),
+                'dependency_wait_max_seconds'      => 120,
+                'dependency_wait_poll_seconds'     => 5,
+                'settings'                         => [
+                    'skip_on_upstream_spam' => true,
+                ],
+            ]
+        );
+
+        $this->assertTrue( $scheduled );
+
+        $job     = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+        $payload = $job['args'][0] ?? [];
+        $this->assertIsArray( $payload );
+
+        $handler = $this->plugin->get_async_handler();
+        $handler->process_local_mapping( $payload );
+
+        $metadata = $this->plugin->get_async_metadata_store()->get( $payload['context']['job_id'] );
+        $this->assertSame( 'skipped', $metadata['status'] ?? null );
+
+        $row = $request_store->get( $payload['execution_request_id'], 'job' );
+        $this->assertSame( 'skipped', $row['status'] ?? null );
+        $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
+
+        $local_events = array_values(
+            array_filter(
+                $events->list_recent( 10 ),
+                static fn( array $event ): bool => (string) ( $event['execution_request_id'] ?? '' ) === (string) $payload['execution_request_id']
+            )
+        );
+        $this->assertNotEmpty( $local_events );
+        $this->assertSame( 'skipped', $local_events[0]['status'] ?? null );
     }
 
     public function test_process_action_continues_when_upstream_spam_classification_is_ham(): void

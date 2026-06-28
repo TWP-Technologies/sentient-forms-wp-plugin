@@ -16,8 +16,15 @@ if ( ! class_exists( 'GFAPI' ) )
         /** @var array<int,array<string,mixed>> */
         public static array $forms = [];
 
+        public static int $get_entry_calls = 0;
+
+        public static int $get_form_calls = 0;
+
+        public static bool $skip_field_values_on_full_entry_update = false;
+
         public static function get_entry( $entry_id )
         {
+            ++self::$get_entry_calls;
             $entry_id = (int) $entry_id;
             if ( isset( self::$entries[ $entry_id ] ) )
             {
@@ -29,6 +36,7 @@ if ( ! class_exists( 'GFAPI' ) )
 
         public static function get_form( $form_id )
         {
+            ++self::$get_form_calls;
             $form_id = (int) $form_id;
             return self::$forms[ $form_id ] ?? false;
         }
@@ -68,6 +76,49 @@ if ( ! class_exists( 'GFAPI' ) )
             }
 
             self::$entries[ $entry_id ][ (string) $property ] = $value;
+
+            return true;
+        }
+
+        public static function update_entry( $entry )
+        {
+            if ( ! is_array( $entry ) || empty( $entry['id'] ) )
+            {
+                return new WP_Error( 'missing_entry_id', 'Missing entry id.' );
+            }
+
+            if ( self::$skip_field_values_on_full_entry_update && isset( self::$entries[ (int) $entry['id'] ] ) )
+            {
+                $merged = self::$entries[ (int) $entry['id'] ];
+                foreach ( $entry as $key => $value )
+                {
+                    if ( preg_match( '/^\d+(?:\.\d+)?$/', (string) $key ) )
+                    {
+                        continue;
+                    }
+
+                    $merged[ $key ] = $value;
+                }
+
+                self::$entries[ (int) $entry['id'] ] = $merged;
+
+                return true;
+            }
+
+            self::$entries[ (int) $entry['id'] ] = $entry;
+
+            return true;
+        }
+
+        public static function update_entry_field( $entry_id, $field_id, $value )
+        {
+            $entry_id = (int) $entry_id;
+            if ( ! isset( self::$entries[ $entry_id ] ) )
+            {
+                return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+            }
+
+            self::$entries[ $entry_id ][ (string) $field_id ] = $value;
 
             return true;
         }
@@ -324,6 +375,69 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertCount( 2, $data['fields'], 'Hidden and file-upload fields should not be exposed in previews.' );
         $this->assertStringNotContainsString( 'hidden routing', wp_json_encode( $data['fields'] ) );
         $this->assertStringNotContainsString( 'contract.pdf', wp_json_encode( $data['fields'] ) );
+    }
+
+    public function test_entry_preview_endpoint_returns_ledger_snapshot_for_non_gravity_sources(): void
+    {
+        global $wpdb;
+
+        $submission_uuid = '11111111-2222-4333-8444-555555555555';
+        $ledger          = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $ledger_id       = $ledger->create(
+            [
+                'submission_uuid'        => $submission_uuid,
+                'form_source'            => 'contact_form_7',
+                'form_id'                => '42',
+                'logical_fields_json'    => [
+                    'your_name'  => 'Ada Buyer',
+                    'your_email' => 'ada@example.test',
+                    'message'    => 'I need pricing help.',
+                ],
+                'provider_metadata_json' => [
+                    'source' => 'contact_form_7',
+                ],
+                'file_refs_json'         => [
+                    [
+                        'field_id' => 'attachment',
+                        'filename' => 'private.pdf',
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $ledger_id );
+
+        $events   = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $event_id = $events->record(
+            [
+                'execution_request_id' => 'cf7-ledger-preview',
+                'submission_uuid'      => $submission_uuid,
+                'form_source'          => 'contact_form_7',
+                'form_id'              => '42',
+                'provider'             => 'openrouter',
+                'model'                => 'openrouter/auto',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'structured' => [
+                        'summary' => 'Pricing request.',
+                    ],
+                ],
+            ]
+        );
+        $this->assertIsInt( $event_id );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log/local-event-' . $event_id . '/entry-preview' );
+        $request->set_param( 'log_id', 'local-event-' . $event_id );
+
+        $response = $this->controller->get_entry_preview( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 'ledger', $data['preview_source'] );
+        $this->assertSame( $submission_uuid, $data['submission_uuid'] );
+        $this->assertSame( 'Contact Form 7', $data['provider_label'] );
+        $this->assertNull( $data['entry_id'] );
+        $this->assertSame( 'Ada Buyer', $data['fields'][0]['value'] );
+        $this->assertStringNotContainsString( 'private.pdf', wp_json_encode( $data['fields'] ) );
+        $this->assertFalse( $data['capabilities']['native_entry']['id'] );
     }
 
     /**
@@ -806,6 +920,7 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertSame( 'sentient_forms_managed', $entry['usage_cost']['route'] );
         $this->assertSame( 'sentient_forms_managed_action', $entry['action_code'] );
         $this->assertSame( 'Sentient Forms managed action', $entry['action_label'] );
+        $this->assertSame( 2, $entry['credits_used'] );
         $this->assertSame( 2, $entry['usage_cost']['credits'] );
         $this->assertArrayNotHasKey( 'amount_usd', $entry['usage_cost'] );
         $this->assertArrayNotHasKey( 'provider_cost', $entry['pricing'] );
@@ -816,6 +931,42 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
         $this->assertStringNotContainsString( 'microusd', wp_json_encode( $entry ) );
         $this->assertStringNotContainsString( '"cost"', wp_json_encode( $entry ) );
         $this->assertStringNotContainsString( '"currency"', wp_json_encode( $entry ) );
+    }
+
+    public function test_get_log_entries_resolves_managed_action_identity_from_event_payload(): void
+    {
+        global $wpdb;
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+
+        $events->record(
+            [
+                'execution_request_id' => 'req-managed-cf7-summary',
+                'mapping_id'           => 0,
+                'form_source'          => 'contact_form_7',
+                'form_id'              => '42',
+                'submission_uuid'      => '66666666-7777-4888-8999-aaaaaaaaaaaa',
+                'provider'             => 'sentient_managed',
+                'model'                => 'openai/gpt-4.1-mini',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'central_action_id' => 'entry_summary_v1',
+                    'action_name_label' => 'Entry Summary',
+                    'structured'        => [
+                        'summary' => 'Ledger summary completed.',
+                    ],
+                ],
+            ]
+        );
+
+        $request  = new WP_REST_Request( 'GET', '/sentient-forms/v1/actions/log' );
+        $response = $this->controller->get_log_entries( $request );
+        $data     = $response->get_data();
+        $entry    = $data['entries'][0];
+
+        $this->assertSame( 'entry_summary_v1', $entry['action_code'] );
+        $this->assertSame( 'Entry Summary', $entry['action_label'] );
+        $this->assertNull( $entry['mapping_id'] );
+        $this->assertSame( 'req-managed-cf7-summary', $entry['execution_request_id'] );
     }
 
     public function test_get_log_entries_surfaces_managed_zdr_fallback_and_failure_messages(): void
@@ -1108,6 +1259,8 @@ class Tests_Action_Log_Controller extends WP_UnitTestCase
                 'sentient_custom_actions',
                 'sentient_form_mappings',
                 'sentient_execution_events',
+                'sentient_submission_ledger_settings',
+                'sentient_submission_ledger',
             ] as $table
         )
         {

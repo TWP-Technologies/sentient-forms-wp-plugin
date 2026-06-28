@@ -5,6 +5,22 @@ name: Release Please
   push:
     branches:
       - production
+    paths:
+      - 'assets/**'
+      - 'includes/**'
+      - 'languages/**'
+      - 'admin-app/**'
+      - 'scripts/**'
+      - 'vendor/woocommerce/action-scheduler/**'
+      - 'sentient-forms.php'
+      - 'readme.txt'
+      - 'CHANGELOG.md'
+      - 'composer.json'
+      - 'composer.lock'
+      - '.github/actions/**'
+      - '.github/workflows/**'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
   workflow_dispatch:
 
 permissions:
@@ -196,6 +212,19 @@ jobs:
         if: ${{ steps.release-state.outputs.publish == 'true' }}
         working-directory: admin-app
         run: bun install --frozen-lockfile
+
+      - name: Refresh bundled OpenRouter model snapshot
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        run: |
+          for attempt in 1 2 3; do
+            if composer openrouter-model-snapshot; then
+              exit 0
+            fi
+
+            sleep "$(( attempt * 10 ))"
+          done
+
+          echo "::warning::OpenRouter model snapshot refresh failed after retries; continuing with the committed bundled snapshot."
 
       - name: Build WordPress admin assets
         if: ${{ steps.release-state.outputs.publish == 'true' }}

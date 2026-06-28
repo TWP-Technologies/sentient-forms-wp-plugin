@@ -119,7 +119,14 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         add_filter(
             'sentient_forms_contact_form_7_form_object',
             fn( $form, $form_id ) => 46 === absint( $form_id )
-                ? $this->cf7_form( 46, 'CF7 Async Snapshot' )
+                ? $this->cf7_form(
+                    46,
+                    'CF7 Async Snapshot',
+                    [
+                        $this->cf7_tag( 'text*', 'text', 'your-name' ),
+                        $this->cf7_tag( 'textarea', 'textarea', 'message' ),
+                    ]
+                )
                 : $form,
             10,
             2
@@ -131,6 +138,8 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         $this->assertSame( '46', $form['id'] ?? null );
         $this->assertSame( 'CF7 Async Snapshot', $form['title'] ?? null );
         $this->assertSame( 'contact_form_7', $form['form_source'] ?? null );
+        $this->assertSame( 'your-name', $form['fields'][0]['id'] ?? null );
+        $this->assertSame( 'Message', $form['fields'][1]['label'] ?? null );
     }
 
     public function test_mail_sent_does_not_store_logical_fields_when_ledger_is_disabled(): void
@@ -683,7 +692,8 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
                 public string $type,
                 public string $basetype,
                 public string $name
-            ) {
+            )
+            {
             }
 
             public function is_required(): bool
@@ -693,10 +703,16 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
         };
     }
 
-    private function cf7_form( int $id, string $title ): object
+    /**
+     * @param array<int, object> $tags
+     */
+    private function cf7_form( int $id, string $title, array $tags = [] ): object
     {
-        return new class( $id, $title ) {
-            public function __construct( private int $id, private string $title )
+        return new class( $id, $title, $tags ) {
+            /**
+             * @param array<int, object> $tags
+             */
+            public function __construct( private int $id, private string $title, private array $tags )
             {
             }
 
@@ -708,6 +724,11 @@ class Tests_Contact_Form_7_Adapter extends WP_UnitTestCase
             public function title(): string
             {
                 return $this->title;
+            }
+
+            public function scan_form_tags(): array
+            {
+                return $this->tags;
             }
         };
     }

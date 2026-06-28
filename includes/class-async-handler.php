@@ -200,6 +200,7 @@ class Sentient_Forms_Async_Handler
 		do_action( 'sentient_forms_async_success', $context_with_settings, $result );
 		$this->notify_adapter_success( $context_with_settings, $result );
 		$this->emit_async_event( 'success', $job['context'], $result );
+		$this->record_managed_execution_event( $job, $result );
 		$this->maybe_schedule_evaluation_jobs( $job, $result );
 		$this->get_metadata_store()->update_status(
 			$job['context']['job_id'] ?? null,
@@ -278,6 +279,7 @@ class Sentient_Forms_Async_Handler
 		{
 			$this->get_request_store()->mark_status( $job['execution_request_id'], 'failed', $error->get_error_message() );
 		}
+        $this->record_managed_execution_failure_event( $job, $error );
     }
 
 	private function should_record_provider_execution_event( array $job ): bool
@@ -1187,12 +1189,16 @@ class Sentient_Forms_Async_Handler
             ? sanitize_text_field( (string) $payload['execution_request_id'] )
             : sanitize_text_field( (string) ( $context['execution_request_id'] ?? '' ) );
 
+        $job_settings = isset( $context['settings'] ) && is_array( $context['settings'] )
+            ? $context['settings']
+            : [];
+
         $job = [
             'action_id'            => 'sentient_forms_local_mapping',
             'data'                 => [
                 'entry' => [ 'id' => $payload['entry_id'] ?? $context['entry_id'] ?? null ],
             ],
-            'settings'             => [],
+            'settings'             => $job_settings,
             'execution_request_id' => $execution_request_id,
             'context'              => $context,
         ];
@@ -1665,6 +1671,243 @@ class Sentient_Forms_Async_Handler
         $this->get_execution_events_repository()->record( $event );
     }
 
+    private function record_managed_execution_event( array $job, array $result, ?WP_Error $error = null ): void
+    {
+        if ( ! class_exists( 'Sentient_Forms_Execution_Events_Repository' ) )
+        {
+            return;
+        }
+
+        if ( ! $this->should_record_managed_execution_event( $job ) )
+        {
+            return;
+        }
+
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $execution_request_id = sanitize_text_field(
+            (string) ( $job['execution_request_id'] ?? $context['execution_request_id'] ?? '' )
+        );
+        if ( '' === $execution_request_id )
+        {
+            return;
+        }
+
+        $payload = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
+        $provider = sanitize_key( (string) ( $result['provider'] ?? $context['provider'] ?? 'sentient_managed' ) );
+        $status   = $error ? 'failed' : sanitize_key( (string) ( $result['status'] ?? 'succeeded' ) );
+        $identity = $this->managed_execution_action_identity( $job );
+        $identity_payload = array_merge(
+            $payload,
+            [
+                'central_action_id'  => $identity['central_action_id'] ?? null,
+                'action_id'          => $identity['action_id'] ?? null,
+                'action_name_label'  => $identity['action_name_label'] ?? null,
+            ]
+        );
+        if ( $error )
+        {
+            $result['status']        = 'failed';
+            $result['error_code']    = $error->get_error_code();
+            $result['error_message'] = $error->get_error_message();
+        }
+        $result_payload = isset( $result['result'] ) && is_array( $result['result'] )
+            ? Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result['result'], $provider )
+            : [];
+        $stored_result = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage(
+            array_merge(
+                [
+                    'provider' => $provider,
+                    'status'   => $status,
+                ],
+                $result,
+                $identity,
+                $result_payload
+            )
+        );
+
+        $event = [
+            'execution_request_id' => $execution_request_id,
+            'mapping_id'           => $this->managed_execution_numeric_mapping_id( $job ),
+            'mapping_key'          => $this->resolve_event_mapping_key( $payload, $context ),
+            'action_code'          => $this->resolve_event_action_code( $identity_payload, $context ),
+            'action_label'         => $this->resolve_event_action_label( $identity_payload, $context ),
+            'form_source'          => $this->managed_execution_form_source( $job ),
+            'form_id'              => $payload['form']['id'] ?? $context['form_id'] ?? null,
+            'entry_id'             => $payload['entry']['id'] ?? $context['entry_id'] ?? null,
+            'submission_uuid'      => $this->resolve_submission_uuid( $payload, $context ),
+            'provider'             => $provider,
+            'model'                => $result['model'] ?? $context['model'] ?? null,
+            'status'               => $status,
+            'result_json'          => $stored_result,
+            'payload_digest'       => $this->managed_execution_payload_digest( $job ),
+        ];
+
+        if ( $error )
+        {
+            $event['error_code']    = $error->get_error_code();
+            $event['error_message'] = $error->get_error_message();
+        }
+
+        $token_usage = $this->managed_execution_token_usage( $result );
+        if ( null !== $token_usage )
+        {
+            $event['token_usage_json'] = $token_usage;
+        }
+
+        $this->get_execution_events_repository()->record( $event );
+    }
+
+    private function record_managed_execution_failure_event( array $job, WP_Error $error ): void
+    {
+        $this->record_managed_execution_event(
+            $job,
+            [
+                'provider' => 'sentient_managed',
+                'status'   => 'failed',
+            ],
+            $error
+        );
+    }
+
+    private function record_managed_execution_skip_event( array $job, string $reason, ?string $reason_code = null ): void
+    {
+        $result = [
+            'provider'    => 'sentient_managed',
+            'status'      => 'skipped',
+            'skip_reason' => $reason,
+        ];
+
+        if ( null !== $reason_code && '' !== $reason_code )
+        {
+            $result['skip_reason_code'] = $reason_code;
+        }
+
+        $this->record_managed_execution_event( $job, $result );
+    }
+
+    private function should_record_managed_execution_event( array $job ): bool
+    {
+        if ( ! $this->is_cps_managed_job( $job ) )
+        {
+            return false;
+        }
+
+        return 'gravity_forms' !== $this->managed_execution_form_source( $job );
+    }
+
+    private function is_cps_managed_job( array $job ): bool
+    {
+        $settings = isset( $job['settings'] ) && is_array( $job['settings'] ) ? $job['settings'] : [];
+        $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $action_type_indicator = sanitize_key(
+            (string) ( $settings['action_type_indicator'] ?? $context['action_type_indicator'] ?? '' )
+        );
+
+        return in_array( $action_type_indicator, [ 'master', 'custom' ], true );
+    }
+
+    private function managed_execution_form_source( array $job ): string
+    {
+        $payload = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $form_source = sanitize_key(
+            (string) ( $context['form_source'] ?? $context['adapter_id'] ?? $payload['form_source'] ?? 'gravity_forms' )
+        );
+
+        return str_replace( '-', '_', $form_source );
+    }
+
+    private function managed_execution_numeric_mapping_id( array $job ): int
+    {
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        foreach ( [ 'local_form_mapping_id', 'local_mapping_id', 'mapping_id' ] as $key )
+        {
+            if ( isset( $context[ $key ] ) && is_scalar( $context[ $key ] ) && preg_match( '/^\d+$/', (string) $context[ $key ] ) )
+            {
+                return absint( $context[ $key ] );
+            }
+        }
+
+        return 0;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function managed_execution_action_identity( array $job ): array
+    {
+        $settings = isset( $job['settings'] ) && is_array( $job['settings'] ) ? $job['settings'] : [];
+        $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+
+        $central_action_id = $this->first_sanitized_key(
+            [
+                $settings['central_action_id'] ?? null,
+                $context['central_action_id'] ?? null,
+                $context['action_id'] ?? null,
+                $job['action_id'] ?? null,
+            ]
+        );
+        $action_label = $this->first_sanitized_text(
+            [
+                $settings['action_name_label'] ?? null,
+                $context['action_name_label'] ?? null,
+                $settings['display_name'] ?? null,
+                $settings['label'] ?? null,
+            ]
+        );
+
+        $identity = [];
+        if ( '' !== $central_action_id )
+        {
+            $identity['central_action_id'] = $central_action_id;
+            $identity['action_id']         = $central_action_id;
+        }
+        if ( '' !== $action_label )
+        {
+            $identity['action_name_label'] = $action_label;
+        }
+
+        return $identity;
+    }
+
+    private function first_sanitized_key( array $candidates ): string
+    {
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $value = sanitize_key( (string) $candidate );
+            if ( '' !== $value )
+            {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
+    private function first_sanitized_text( array $candidates ): string
+    {
+        foreach ( $candidates as $candidate )
+        {
+            if ( ! is_scalar( $candidate ) )
+            {
+                continue;
+            }
+
+            $value = sanitize_text_field( (string) $candidate );
+            if ( '' !== $value )
+            {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
     private function resolve_event_mapping_key( array $payload, array $context ): ?string
     {
         foreach ( [ $payload['local_mapping_id'] ?? null, $context['local_mapping_id'] ?? null, $context['mapping_id'] ?? null ] as $candidate )
@@ -1688,36 +1931,65 @@ class Sentient_Forms_Async_Handler
 
     private function resolve_event_action_code( array $payload, array $context ): ?string
     {
-        foreach ( [ $payload['central_action_id'] ?? null, $context['central_action_id'] ?? null, $payload['action_id'] ?? null, $context['action_id'] ?? null ] as $candidate )
-        {
-            if ( ! is_scalar( $candidate ) )
-            {
-                continue;
-            }
+        $action_code = $this->first_sanitized_key(
+            [
+                $payload['central_action_id'] ?? null,
+                $context['central_action_id'] ?? null,
+                $payload['action_id'] ?? null,
+                $context['action_id'] ?? null,
+            ]
+        );
 
-            $action_code = sanitize_text_field( (string) $candidate );
-            if ( '' !== $action_code )
-            {
-                return $action_code;
-            }
-        }
-
-        return null;
+        return '' !== $action_code ? $action_code : null;
     }
 
     private function resolve_event_action_label( array $payload, array $context ): ?string
     {
-        foreach ( [ $payload['action_name_label'] ?? null, $context['action_name_label'] ?? null ] as $candidate )
-        {
-            if ( ! is_scalar( $candidate ) )
-            {
-                continue;
-            }
+        $action_label = $this->first_sanitized_text(
+            [
+                $payload['action_name_label'] ?? null,
+                $context['action_name_label'] ?? null,
+            ]
+        );
 
-            $action_label = sanitize_text_field( (string) $candidate );
-            if ( '' !== $action_label )
+        return '' !== $action_label ? $action_label : null;
+    }
+
+    private function managed_execution_payload_digest( array $job ): string
+    {
+        $context = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $payload = isset( $job['data'] ) && is_array( $job['data'] ) ? $job['data'] : [];
+
+        return hash(
+            'sha256',
+            wp_json_encode(
+                [
+                    'execution_request_id' => $job['execution_request_id'] ?? $context['execution_request_id'] ?? null,
+                    'action_id'            => $job['action_id'] ?? $context['action_id'] ?? null,
+                    'form_source'          => $payload['form_source'] ?? $context['form_source'] ?? null,
+                    'form_id'              => $payload['form']['id'] ?? $context['form_id'] ?? null,
+                    'entry_id'             => $payload['entry']['id'] ?? $context['entry_id'] ?? null,
+                    'submission_uuid'      => $this->resolve_submission_uuid( $payload, $context ),
+                ]
+            )
+        );
+    }
+
+    private function managed_execution_token_usage( array $result ): ?array
+    {
+        foreach (
+            [
+                $result['usage'] ?? null,
+                $result['token_usage'] ?? null,
+                $result['result']['usage'] ?? null,
+                $result['result_data']['usage'] ?? null,
+                $result['meta']['usage'] ?? null,
+            ] as $candidate
+        )
+        {
+            if ( is_array( $candidate ) )
             {
-                return $action_label;
+                return $candidate;
             }
         }
 
@@ -1726,7 +1998,14 @@ class Sentient_Forms_Async_Handler
 
     private function resolve_submission_uuid( array $payload, array $context ): ?string
     {
-        foreach ( [ $payload['submission_uuid'] ?? null, $context['submission_uuid'] ?? null ] as $candidate )
+        foreach (
+            [
+                $payload['submission_uuid'] ?? null,
+                $payload['entry']['submission_uuid'] ?? null,
+                $payload['data']['entry']['submission_uuid'] ?? null,
+                $context['submission_uuid'] ?? null,
+            ] as $candidate
+        )
         {
             if ( ! is_scalar( $candidate ) )
             {
@@ -2405,6 +2684,8 @@ class Sentient_Forms_Async_Handler
             $this->get_request_store()->mark_status( (string) $job['execution_request_id'], 'skipped', $reason );
         }
 
+        $this->record_managed_execution_skip_event( $job, $reason, $reason_code );
+
         if ( 'upstream_spam' === $reason_code && ! $already_recorded )
         {
             $this->maybe_add_dependency_skip_note( $job, $reason );
@@ -2550,11 +2831,11 @@ class Sentient_Forms_Async_Handler
      */
     private function get_upstream_spam_classification( array $job, ?string $dependency_id = null ): ?string
     {
-        $context  = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
-        $classification = $this->get_upstream_spam_classification_from_event( $context, $dependency_id );
-        if ( null !== $classification )
+        $context      = isset( $job['context'] ) && is_array( $job['context'] ) ? $job['context'] : [];
+        $event_result = $this->get_upstream_spam_classification_from_event( $context, $dependency_id );
+        if ( null !== $event_result )
         {
-            return $classification;
+            return $event_result;
         }
 
         $entry_id = isset( $job['data']['entry']['id'] ) ? (int) $job['data']['entry']['id'] : (int) ( $context['entry_id'] ?? 0 );
@@ -2584,6 +2865,70 @@ class Sentient_Forms_Async_Handler
 
         $normalized = sanitize_key( (string) $classification );
         return '' === $normalized ? null : $normalized;
+    }
+
+    private function extract_spam_classification_from_result( array $result ): ?string
+    {
+        $candidates = [
+            $result['structured']['classification'] ?? null,
+            $result['result']['structured']['classification'] ?? null,
+            $result['result_data']['structured_output']['classification'] ?? null,
+            $result['evaluation_payload']['result_data']['structured_output']['classification'] ?? null,
+            $result['result_data']['classification'] ?? null,
+            $result['evaluation_payload']['result_data']['classification'] ?? null,
+            $result['classification'] ?? null,
+            $result['result']['classification'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( is_scalar( $candidate ) )
+            {
+                $classification = $this->normalize_spam_classification_value( $candidate );
+                if ( '' !== $classification )
+                {
+                    return $classification;
+                }
+            }
+        }
+
+        $is_spam_candidates = [
+            $result['structured']['is_spam'] ?? null,
+            $result['result']['structured']['is_spam'] ?? null,
+            $result['result_data']['structured_output']['is_spam'] ?? null,
+            $result['evaluation_payload']['result_data']['structured_output']['is_spam'] ?? null,
+            $result['result_data']['is_spam'] ?? null,
+            $result['evaluation_payload']['result_data']['is_spam'] ?? null,
+            $result['is_spam'] ?? null,
+            $result['result']['is_spam'] ?? null,
+        ];
+
+        foreach ( $is_spam_candidates as $is_spam )
+        {
+            if ( true === $is_spam )
+            {
+                return 'spam';
+            }
+
+            if ( is_scalar( $is_spam ) && in_array( strtolower( trim( (string) $is_spam ) ), [ '1', 'true', 'yes', 'on' ], true ) )
+            {
+                return 'spam';
+            }
+        }
+
+        return null;
+    }
+
+    private function normalize_spam_classification_value( mixed $candidate ): string
+    {
+        if ( ! is_scalar( $candidate ) )
+        {
+            return '';
+        }
+
+        $normalized = preg_replace( '/[\s-]+/', '_', strtolower( trim( (string) $candidate ) ) );
+
+        return sanitize_key( (string) ( $normalized ?? '' ) );
     }
 
     /**
@@ -2656,61 +3001,6 @@ class Sentient_Forms_Async_Handler
         }
 
         return true;
-    }
-
-    /**
-     * Extract a normalized spam classification from common action result shapes.
-     *
-     * @param array<string, mixed> $result Stored action result payload.
-     *
-     * @return string|null
-     */
-    private function extract_spam_classification_from_result( array $result ): ?string
-    {
-        foreach (
-            [
-                [ 'evaluation_payload', 'result_data', 'classification' ],
-                [ 'result_data', 'classification' ],
-                [ 'result', 'structured', 'classification' ],
-                [ 'structured', 'classification' ],
-                [ 'classification' ],
-            ] as $path
-        )
-        {
-            $value = $this->array_path_value( $result, $path );
-            if ( is_scalar( $value ) )
-            {
-                $classification = sanitize_key( (string) $value );
-                if ( '' !== $classification )
-                {
-                    return $classification;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * @param array<string, mixed> $payload Payload to inspect.
-     * @param array<int, string>   $path    Array path segments.
-     *
-     * @return mixed
-     */
-    private function array_path_value( array $payload, array $path ): mixed
-    {
-        $current = $payload;
-        foreach ( $path as $segment )
-        {
-            if ( ! is_array( $current ) || ! array_key_exists( $segment, $current ) )
-            {
-                return null;
-            }
-
-            $current = $current[ $segment ];
-        }
-
-        return $current;
     }
 
     /**

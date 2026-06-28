@@ -59,6 +59,7 @@ run_wp_php() {
   composer install --no-interaction --prefer-dist
   composer encoding-check
   composer phpcs
+  php scripts/validate-workflow-path-filters.php
   vendor/bin/phpunit
   popd >/dev/null
 }

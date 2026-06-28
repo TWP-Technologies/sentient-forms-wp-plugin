@@ -514,6 +514,7 @@ export interface OpenRouterModelsResponse {
 	consent_recorded?: boolean;
 	consent_id?: number;
 	stored?: number;
+	warnings?: Array<{ code: string; message: string }>;
 }
 
 export interface OpenRouterModelRefreshConsentState {

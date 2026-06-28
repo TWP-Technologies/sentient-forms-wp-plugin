@@ -22,6 +22,7 @@
 	import RealtimeSettingsEditor from '$lib/components/realtime-settings-editor.svelte';
 	import SiteContextWarning from '$lib/components/site-context-warning.svelte';
 	import SpamCriteriaEditor from '$lib/components/spam-criteria-editor.svelte';
+	import StickyActionFooter from '$lib/components/sticky-action-footer.svelte';
 	import { DEFAULT_BATCH_SETTINGS, sanitizeBatchSettings } from '$lib/utils/batch';
 	import { createDefaultConditionConfig, validateConditionConfig } from '$lib/utils/conditions';
 	import {
@@ -4312,9 +4313,7 @@
 					{/if}
 				</div>
 
-				<footer
-					class="sf:flex sf:flex-wrap sf:justify-end sf:gap-2 sf:px-4 sf:sm:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
-				>
+				<StickyActionFooter class="sf:bg-slate-50" testId="form-defaults-action-footer">
 					<Button variant="secondary" onclick={cancelFormLevelConfig}>Cancel</Button>
 					<Button
 						onclick={saveFormLevelConfig}
@@ -4322,7 +4321,7 @@
 					>
 						{formLevelConfigSaving ? 'Saving...' : 'Save Defaults'}
 					</Button>
-				</footer>
+				</StickyActionFooter>
 			</div>
 		</div>
 	{/if}
@@ -6029,8 +6028,10 @@
 					</section>
 				</div>
 
-				<footer
-					class="sf:flex sf:flex-wrap sf:items-center sf:justify-between sf:gap-3 sf:px-4 sf:sm:px-6 sf:py-4 sf:border-t sf:border-slate-200 sf:bg-slate-50"
+				<StickyActionFooter
+					align="between"
+					class="sf:bg-slate-50"
+					testId="mapping-config-action-footer"
 				>
 					<p class="sf:text-xs sf:text-slate-600">
 						Close keeps draft changes in this browser only.
@@ -6058,7 +6059,7 @@
 							Save mapping
 						</Button>
 					</div>
-				</footer>
+				</StickyActionFooter>
 			</div>
 		</div>
 	{/if}

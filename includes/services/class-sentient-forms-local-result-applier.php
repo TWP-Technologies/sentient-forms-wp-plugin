@@ -38,38 +38,14 @@ class Sentient_Forms_Local_Result_Applier
             ];
         }
 
-        if ( 'gravity_forms' !== sanitize_key( (string) ( $mapping['form_source'] ?? 'gravity_forms' ) ) )
-        {
-            return [
-                'applied' => [],
-                'skipped' => [
-                    [
-                        'effect' => 'all',
-                        'reason' => 'unsupported_form_source',
-                    ],
-                ],
-            ];
-        }
+        $form_source      = $this->normalize_form_source( (string) ( $mapping['form_source'] ?? 'gravity_forms' ) );
+        $is_gravity_forms = $this->is_gravity_forms_source( $form_source );
+        $entry_id         = absint( $entry['id'] ?? 0 );
+        $applied          = [];
+        $skipped          = [];
+        $result           = is_array( $execution_result['result'] ?? null ) ? $execution_result['result'] : [];
 
-        $entry_id = absint( $entry['id'] ?? 0 );
-        if ( 0 === $entry_id )
-        {
-            return [
-                'applied' => [],
-                'skipped' => [
-                    [
-                        'effect' => 'all',
-                        'reason' => 'missing_entry_id',
-                    ],
-                ],
-            ];
-        }
-
-        $applied = [];
-        $skipped = [];
-        $result  = is_array( $execution_result['result'] ?? null ) ? $execution_result['result'] : [];
-
-        if ( function_exists( 'gform_update_meta' ) )
+        if ( $is_gravity_forms && $entry_id > 0 && function_exists( 'gform_update_meta' ) )
         {
             gform_update_meta( $entry_id, 'sentient_forms_last_error', '' );
             gform_update_meta( $entry_id, 'sentient_forms_last_processed_at', current_time( 'mysql' ) );
@@ -77,7 +53,18 @@ class Sentient_Forms_Local_Result_Applier
 
         if ( $this->bool_effect( $effects, [ 'store_result', 'store_result_meta' ] ) )
         {
-            if ( function_exists( 'gform_update_meta' ) )
+            if ( ! $is_gravity_forms )
+            {
+                $applied[] = 'store_result';
+            }
+            elseif ( $entry_id <= 0 )
+            {
+                $skipped[] = [
+                    'effect' => 'store_result',
+                    'reason' => 'missing_entry_id',
+                ];
+            }
+            elseif ( function_exists( 'gform_update_meta' ) )
             {
                 $stored_execution_result = Sentient_Forms_Local_Data_Governance::sanitize_execution_payload_for_storage( $execution_result );
                 $stored_result           = Sentient_Forms_Local_Data_Governance::sanitize_execution_result_for_storage( $result );
@@ -118,7 +105,21 @@ class Sentient_Forms_Local_Result_Applier
                 continue;
             }
 
-            if ( function_exists( 'gform_update_meta' ) )
+            if ( ! $is_gravity_forms )
+            {
+                $skipped[] = [
+                    'effect' => 'meta:' . $meta_key,
+                    'reason' => 'native_meta_unsupported',
+                ];
+            }
+            elseif ( $entry_id <= 0 )
+            {
+                $skipped[] = [
+                    'effect' => 'meta:' . $meta_key,
+                    'reason' => 'missing_entry_id',
+                ];
+            }
+            elseif ( function_exists( 'gform_update_meta' ) )
             {
                 gform_update_meta( $entry_id, $meta_key, $value );
                 $applied[] = 'meta:' . $meta_key;
@@ -134,46 +135,110 @@ class Sentient_Forms_Local_Result_Applier
 
         if ( array_key_exists( 'entry_note', $effects ) )
         {
-            $note_result = $this->apply_entry_note( $entry_id, $effects['entry_note'], $result );
-            if ( true === $note_result )
-            {
-                $applied[] = 'entry_note';
-            }
-            else
+            if ( ! $is_gravity_forms )
             {
                 $skipped[] = [
                     'effect' => 'entry_note',
-                    'reason' => $note_result,
+                    'reason' => 'native_note_unsupported',
                 ];
+            }
+            elseif ( $entry_id <= 0 )
+            {
+                $skipped[] = [
+                    'effect' => 'entry_note',
+                    'reason' => 'missing_entry_id',
+                ];
+            }
+            else
+            {
+                $note_result = $this->apply_entry_note( $entry_id, $effects['entry_note'], $result );
+                if ( true === $note_result )
+                {
+                    $applied[] = 'entry_note';
+                }
+                else
+                {
+                    $skipped[] = [
+                        'effect' => 'entry_note',
+                        'reason' => $note_result,
+                    ];
+                }
             }
         }
 
         if ( $this->spam_effect_enabled( $effects ) )
         {
-            $spam_note_result = $this->apply_spam_note( $entry_id, $effects, $result );
-            if ( true === $spam_note_result )
+            if ( ! $is_gravity_forms )
             {
-                $applied[] = 'spam_note';
-            }
-            elseif ( 'not_configured' !== $spam_note_result && 'disabled' !== $spam_note_result && 'classification_hidden' !== $spam_note_result )
-            {
-                $skipped[] = [
-                    'effect' => 'spam_note',
-                    'reason' => $spam_note_result,
-                ];
-            }
+                $classification = $this->extract_configured_spam_classification( $effects, $result );
+                if ( '' === $classification )
+                {
+                    $skipped[] = [
+                        'effect' => 'spam_classification',
+                        'reason' => 'classification_not_found',
+                    ];
+                }
+                else
+                {
+                    $applied[] = 'spam_classification';
+                }
 
-            $spam_result = $this->apply_spam_status( $entry_id, $effects, $result );
-            if ( true === $spam_result )
+                $spam_status_reason = $this->non_native_spam_status_skip_reason( $effects, $result );
+                $skipped[] = [
+                    'effect' => 'mark_as_spam',
+                    'reason' => $spam_status_reason,
+                ];
+
+                if ( $this->non_native_spam_note_requested( $effects, $result ) )
+                {
+                    $skipped[] = [
+                        'effect' => 'spam_note',
+                        'reason' => 'native_note_unsupported',
+                    ];
+                }
+            }
+            elseif ( $entry_id <= 0 )
             {
-                $applied[] = 'mark_as_spam';
+                if ( $this->non_native_spam_note_requested( $effects, $result ) )
+                {
+                    $skipped[] = [
+                        'effect' => 'spam_note',
+                        'reason' => 'missing_entry_id',
+                    ];
+                }
+
+                $skipped[] = [
+                    'effect' => 'mark_as_spam',
+                    'reason' => 'missing_entry_id',
+                ];
             }
             else
             {
-                $skipped[] = [
-                    'effect' => 'mark_as_spam',
-                    'reason' => $spam_result,
-                ];
+                $spam_note_result = $this->apply_spam_note( $entry_id, $effects, $result );
+                if ( true === $spam_note_result )
+                {
+                    $applied[] = 'spam_note';
+                }
+                elseif ( 'not_configured' !== $spam_note_result && 'disabled' !== $spam_note_result && 'classification_hidden' !== $spam_note_result )
+                {
+                    $skipped[] = [
+                        'effect' => 'spam_note',
+                        'reason' => $spam_note_result,
+                    ];
+                }
+
+                $spam_result = $this->apply_spam_status( $entry_id, $effects, $result );
+                if ( true === $spam_result )
+                {
+                    $applied[] = 'mark_as_spam';
+                }
+                else
+                {
+                    $skipped[] = [
+                        'effect' => 'mark_as_spam',
+                        'reason' => $spam_result,
+                    ];
+                }
             }
         }
 
@@ -188,7 +253,10 @@ class Sentient_Forms_Local_Result_Applier
                 $action,
                 $post_execution_actions
             );
-            $this->record_post_execution_action_results( $entry_id, $post_execution_results );
+            if ( $is_gravity_forms && $entry_id > 0 )
+            {
+                $this->record_post_execution_action_results( $entry_id, $post_execution_results );
+            }
 
             foreach ( $post_execution_results as $post_execution_result )
             {
@@ -210,6 +278,70 @@ class Sentient_Forms_Local_Result_Applier
             'applied' => $applied,
             'skipped' => $skipped,
         ];
+    }
+
+    private function normalize_form_source( string $form_source ): string
+    {
+        return match ( sanitize_key( $form_source ) ) {
+            'gravity-forms' => 'gravity_forms',
+            ''              => 'unknown',
+            default         => sanitize_key( $form_source ),
+        };
+    }
+
+    private function is_gravity_forms_source( string $form_source ): bool
+    {
+        return 'gravity_forms' === $this->normalize_form_source( $form_source );
+    }
+
+    private function non_native_spam_status_skip_reason( array $effects, array $result ): string
+    {
+        $config          = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
+        $confidence_path = (string) ( $config['confidence_path'] ?? 'structured.confidence' );
+        $threshold       = is_numeric( $config['min_confidence'] ?? null ) ? (float) $config['min_confidence'] : 0.8;
+        $classification  = $this->extract_configured_spam_classification( $effects, $result );
+
+        if ( '' === $classification )
+        {
+            return 'classification_not_found';
+        }
+
+        if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
+        {
+            return 'classification_not_spam';
+        }
+
+        $confidence = $this->resolve_path( $result, $confidence_path );
+        if ( is_numeric( $confidence ) && (float) $confidence < $threshold )
+        {
+            return 'confidence_below_threshold';
+        }
+
+        return 'native_spam_status_unsupported';
+    }
+
+    private function non_native_spam_note_requested( array $effects, array $result ): bool
+    {
+        $config = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
+        $note   = is_array( $config['note'] ?? null ) ? $config['note'] : null;
+        if ( ! is_array( $note ) )
+        {
+            return false;
+        }
+
+        $display_mode = $this->normalize_spam_result_display_mode( $note['result_display_mode'] ?? 'all_results' );
+        if ( 'none' === $display_mode )
+        {
+            return false;
+        }
+
+        $classification = $this->extract_configured_spam_classification( $effects, $result );
+        if ( '' === $classification )
+        {
+            return true;
+        }
+
+        return in_array( $classification, [ 'spam', 'likely_spam' ], true ) || 'all_results' === $display_mode;
     }
 
     private function apply_entry_note( int $entry_id, mixed $config, array $result ): true | string
@@ -309,7 +441,7 @@ class Sentient_Forms_Local_Result_Applier
             return 'disabled';
         }
 
-        $classification = $this->extract_spam_classification( $result );
+        $classification = $this->extract_configured_spam_classification( $effects, $result );
         if ( '' === $classification )
         {
             return 'classification_not_found';
@@ -337,20 +469,10 @@ class Sentient_Forms_Local_Result_Applier
 
     private function apply_spam_status( int $entry_id, array $effects, array $result ): true | string
     {
-        $config              = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
-        $classification_path = (string) ( $config['classification_path'] ?? 'structured.classification' );
-        $confidence_path     = (string) ( $config['confidence_path'] ?? 'structured.confidence' );
-        $threshold           = is_numeric( $config['min_confidence'] ?? null ) ? (float) $config['min_confidence'] : 0.8;
-        $classification      = strtolower( sanitize_key( (string) $this->resolve_path( $result, $classification_path ) ) );
-
-        if ( '' === $classification )
-        {
-            $is_spam = $this->resolve_path( $result, 'structured.is_spam' );
-            if ( true === $is_spam || 'true' === strtolower( (string) $is_spam ) )
-            {
-                $classification = 'spam';
-            }
-        }
+        $config          = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
+        $confidence_path = (string) ( $config['confidence_path'] ?? 'structured.confidence' );
+        $threshold       = is_numeric( $config['min_confidence'] ?? null ) ? (float) $config['min_confidence'] : 0.8;
+        $classification  = $this->extract_configured_spam_classification( $effects, $result );
 
         if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
@@ -430,16 +552,21 @@ class Sentient_Forms_Local_Result_Applier
         return 'detailed' === sanitize_key( (string) $value ) ? 'detailed' : 'simple';
     }
 
+    private function extract_configured_spam_classification( array $effects, array $result ): string
+    {
+        $config              = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
+        $classification_path = (string) ( $config['classification_path'] ?? 'structured.classification' );
+        $classification      = $this->normalize_spam_classification_value( $this->resolve_path( $result, $classification_path ) );
+
+        return '' !== $classification ? $classification : $this->extract_spam_classification( $result );
+    }
+
     private function extract_spam_classification( array $result ): string
     {
-        $classification = strtolower(
-            sanitize_key(
-                (string) (
-                    $this->resolve_path( $result, 'structured.classification' )
-                    ?? $this->resolve_path( $result, 'classification' )
-                    ?? ''
-                )
-            )
+        $classification = $this->normalize_spam_classification_value(
+            $this->resolve_path( $result, 'structured.classification' )
+            ?? $this->resolve_path( $result, 'classification' )
+            ?? ''
         );
 
         if ( '' !== $classification )
@@ -454,6 +581,18 @@ class Sentient_Forms_Local_Result_Applier
         }
 
         return '';
+    }
+
+    private function normalize_spam_classification_value( mixed $value ): string
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return '';
+        }
+
+        $normalized = preg_replace( '/[\s-]+/', '_', strtolower( trim( (string) $value ) ) );
+
+        return sanitize_key( (string) ( $normalized ?? '' ) );
     }
 
     private function extract_spam_confidence( array $result ): ?float
@@ -892,6 +1031,26 @@ class Sentient_Forms_Local_Result_Applier
         string $type
     ): array
     {
+        if ( ! $this->is_gravity_forms_source( (string) ( $mapping['form_source'] ?? 'gravity_forms' ) ) )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'native_note_unsupported',
+                'message' => __( 'Native entry notes are unavailable for this form source.', 'sentient-forms' ),
+            ];
+        }
+
+        if ( $entry_id <= 0 )
+        {
+            return [
+                'index'   => $index,
+                'type'    => $type,
+                'status'  => 'missing_entry_id',
+                'message' => __( 'A saved native entry is required before adding an entry note.', 'sentient-forms' ),
+            ];
+        }
+
         if ( ! class_exists( 'GFFormsModel' ) || ! method_exists( 'GFFormsModel', 'add_note' ) )
         {
             return [
@@ -1526,7 +1685,7 @@ class Sentient_Forms_Local_Result_Applier
      */
     private function record_post_execution_action_results( int $entry_id, array $results ): void
     {
-        if ( [] === $results || ! function_exists( 'gform_update_meta' ) )
+        if ( $entry_id <= 0 || [] === $results || ! function_exists( 'gform_update_meta' ) )
         {
             return;
         }

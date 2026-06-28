@@ -446,10 +446,39 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
             return $consent_id;
         }
 
-        $remote = $this->openrouter->list_models(
+        do_action( 'sentient_forms_openrouter_model_refresh_consent_recorded', $consent_id, $disclosure_version );
+
+        $response = $this->refresh_openrouter_model_catalog(
             [
                 'output_modalities'    => $request->get_param( 'output_modalities' ) ?: 'text',
                 'supported_parameters' => $request->get_param( 'supported_parameters' ),
+            ]
+        );
+
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        $response['consent_recorded'] = true;
+        $response['consent_id']       = $consent_id;
+
+        return $this->prepare_item_for_response( $response );
+    }
+
+    /**
+     * Refresh the local OpenRouter model cache from the public OpenRouter catalog.
+     *
+     * @param array<string,mixed> $args Optional OpenRouter model filters.
+     *
+     * @return array<string,mixed>|WP_Error
+     */
+    public function refresh_openrouter_model_catalog( array $args = [] ): array | WP_Error
+    {
+        $remote = $this->openrouter->list_models(
+            [
+                'output_modalities'    => $args['output_modalities'] ?? 'text',
+                'supported_parameters' => $args['supported_parameters'] ?? null,
             ]
         );
 
@@ -468,32 +497,25 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
             );
         }
 
+        $warnings       = [];
         $zdr_ids        = null;
         $zdr_checked_at = gmdate( 'Y-m-d H:i:s' );
         $zdr_remote     = $this->openrouter->list_models( [ 'zdr' => true ] );
         if ( is_wp_error( $zdr_remote ) )
         {
-            return new WP_Error(
-                'openrouter_zdr_models_unavailable',
-                __( 'OpenRouter model metadata was refreshed, but ZDR eligibility could not be verified. Try refreshing again before using ZDR filters.', 'sentient-forms' ),
-                [
-                    'status' => 502,
-                ]
-            );
+            $warnings[] = [
+                'code'    => 'openrouter_zdr_models_unavailable',
+                'message' => __( 'OpenRouter model metadata was refreshed, but ZDR eligibility could not be verified. Try refreshing again before using ZDR filters.', 'sentient-forms' ),
+            ];
         }
-
-        if ( ! is_array( $zdr_remote['data'] ?? null ) )
+        elseif ( ! is_array( $zdr_remote['data'] ?? null ) )
         {
-            return new WP_Error(
-                'openrouter_zdr_models_invalid',
-                __( 'OpenRouter returned invalid ZDR model metadata. Try refreshing again before using ZDR filters.', 'sentient-forms' ),
-                [
-                    'status' => 502,
-                ]
-            );
+            $warnings[] = [
+                'code'    => 'openrouter_zdr_models_invalid',
+                'message' => __( 'OpenRouter returned invalid ZDR model metadata. Try refreshing again before using ZDR filters.', 'sentient-forms' ),
+            ];
         }
-
-        if ( ! is_wp_error( $zdr_remote ) )
+        else
         {
             $zdr_ids = $this->openrouter_model_id_set( is_array( $zdr_remote['data'] ?? null ) ? $zdr_remote['data'] : [] );
         }
@@ -526,11 +548,10 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
 
         $rows     = $this->model_cache->list( 'openrouter', true, 1000 );
         $response = $this->format_model_catalog_response( $rows, false, false );
-        $response['consent_recorded'] = true;
-        $response['consent_id']       = $consent_id;
         $response['stored']           = (int) $stored;
+        $response['warnings']         = $warnings;
 
-        return $this->prepare_item_for_response( $response );
+        return $response;
     }
 
     public function setup_sentient_managed_proxy( WP_REST_Request $request ): WP_REST_Response | WP_Error
@@ -1130,19 +1151,8 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
 
     private function format_openrouter_model_refresh_consent(): array
     {
-        $latest = $this->consents->latest_for_provider( 'openrouter' );
+        $latest = $this->consents->latest_for_provider_action( 'openrouter', 'refresh_models' );
         if ( ! is_array( $latest ) )
-        {
-            return [
-                'state'              => 'missing',
-                'disclosure_version' => null,
-                'consent_id'         => null,
-                'accepted_at'        => null,
-            ];
-        }
-
-        $metadata = is_array( $latest['metadata_json'] ?? null ) ? $latest['metadata_json'] : [];
-        if ( 'refresh_models' !== (string) ( $metadata['action'] ?? '' ) )
         {
             return [
                 'state'              => 'missing',
