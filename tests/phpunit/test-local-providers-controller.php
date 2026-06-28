@@ -20,6 +20,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         Sentient_Forms_Plugin::instance()->clear_license_data();
 
         update_option( 'sentient_forms_settings', [ 'enforce_nonce_verification' => false ] );
+        wp_clear_scheduled_hook( 'sentient_forms_openrouter_model_catalog_refresh' );
         Sentient_Forms_Installer::maybe_upgrade();
         $this->truncate_local_provider_tables();
 
@@ -39,6 +40,7 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
 
         $this->http_filters = [];
         Sentient_Forms_Plugin::instance()->clear_license_data();
+        wp_clear_scheduled_hook( 'sentient_forms_openrouter_model_catalog_refresh' );
         parent::tearDown();
     }
 
@@ -709,6 +711,67 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $latest   = $consents->latest_for_provider( 'openrouter' );
         $this->assertIsArray( $latest );
         $this->assertSame( '2026-04-18', $latest['disclosure_version'] );
+    }
+
+    public function test_refresh_openrouter_models_schedules_one_daily_catalog_refresh_after_consent(): void
+    {
+        $this->mock_openrouter_models_response();
+
+        $this->assertFalse( wp_next_scheduled( 'sentient_forms_openrouter_model_catalog_refresh' ) );
+
+        $request = $this->add_rest_nonce( new WP_REST_Request( 'POST', '/sentient-forms/v1/local/providers/openrouter/models/refresh' ) );
+        $request->set_body_params(
+            [
+                'disclosure_version'              => '2026-04-18',
+                'accepted_external_service_terms' => true,
+                'output_modalities'               => 'text',
+            ]
+        );
+
+        $response = rest_get_server()->dispatch( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $first_timestamp = wp_next_scheduled( 'sentient_forms_openrouter_model_catalog_refresh' );
+        $this->assertIsInt( $first_timestamp );
+
+        Sentient_Forms_OpenRouter_Model_Catalog_Refresh_Cron::sync_schedule();
+
+        $this->assertSame( $first_timestamp, wp_next_scheduled( 'sentient_forms_openrouter_model_catalog_refresh' ) );
+    }
+
+    public function test_openrouter_model_catalog_cron_refreshes_cache_after_refresh_consent(): void
+    {
+        global $wpdb;
+
+        $consents = new Sentient_Forms_External_Service_Consent_Repository( $wpdb );
+        $consent_id = $consents->record(
+            'openrouter',
+            '2026-04-18',
+            self::$admin_id,
+            [
+                'action' => 'refresh_models',
+            ]
+        );
+        $this->assertIsInt( $consent_id );
+
+        $external_call_count = 0;
+        $this->mock_openrouter_models_response(
+            function () use ( &$external_call_count ): void {
+                ++$external_call_count;
+            }
+        );
+
+        Sentient_Forms_OpenRouter_Model_Catalog_Refresh_Cron::refresh();
+
+        $this->assertSame( 2, $external_call_count );
+
+        $models = new Sentient_Forms_Model_Cache_Repository( $wpdb );
+        $model  = $models->get( 'openrouter', 'openai/gpt-oss-20b:free' );
+        $this->assertIsArray( $model );
+        $this->assertTrue( $model['metadata_json']['free'] );
+
+        $consent_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}sentient_external_service_consents" );
+        $this->assertSame( 1, $consent_count );
     }
 
     public function test_refresh_openrouter_models_cross_references_zdr_filtered_catalog(): void

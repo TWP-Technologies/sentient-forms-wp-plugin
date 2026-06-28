@@ -72,4 +72,31 @@ class Sentient_Forms_External_Service_Consent_Repository extends Sentient_Forms_
         $row['metadata_json'] = $this->decode_json_field( $row['metadata_json'] ?? null );
         return $row;
     }
+
+    public function latest_for_provider_action( string $provider, string $action ): ?array
+    {
+        $wpdb = $this->wpdb;
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                'SELECT * FROM %i WHERE provider = %s ORDER BY accepted_at DESC, id DESC LIMIT 25',
+                $this->table_name(),
+                sanitize_key( $provider )
+            ),
+            ARRAY_A
+        );
+
+        foreach ( is_array( $rows ) ? $rows : [] as $row )
+        {
+            $metadata = $this->decode_json_field( $row['metadata_json'] ?? null );
+            if ( ! is_array( $metadata ) || $action !== (string) ( $metadata['action'] ?? '' ) )
+            {
+                continue;
+            }
+
+            $row['metadata_json'] = $metadata;
+            return $row;
+        }
+
+        return null;
+    }
 }

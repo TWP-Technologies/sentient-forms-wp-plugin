@@ -814,6 +814,43 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                                 'default'           => 0,
                                 'sanitize_callback' => 'absint',
                             ],
+                            'q'        => [
+                                'description'       => __( 'Search submission UUID, native entry ID, logical fields, or provider metadata.', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => false,
+                                'sanitize_callback' => 'sanitize_text_field',
+                            ],
+                            'native_entry' => [
+                                'description'       => __( 'Filter by provider-native entry ID.', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => false,
+                                'sanitize_callback' => 'sanitize_text_field',
+                            ],
+                            'captured_from' => [
+                                'description'       => __( 'Return records captured on or after this timestamp.', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => false,
+                                'sanitize_callback' => 'sanitize_text_field',
+                            ],
+                            'captured_to' => [
+                                'description'       => __( 'Return records captured on or before this timestamp.', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => false,
+                                'sanitize_callback' => 'sanitize_text_field',
+                            ],
+                            'has_files' => [
+                                'description'       => __( 'Filter records by whether file references were captured.', 'sentient-forms' ),
+                                'type'              => 'boolean',
+                                'required'          => false,
+                                'sanitize_callback' => 'rest_sanitize_boolean',
+                            ],
+                            'sort'     => [
+                                'description'       => __( 'Submission ledger sort mode.', 'sentient-forms' ),
+                                'type'              => 'string',
+                                'required'          => false,
+                                'default'           => 'captured_desc',
+                                'sanitize_callback' => 'sanitize_key',
+                            ],
                         ],
                     ),
                 ],
@@ -1650,10 +1687,21 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
         $form_id     = sanitize_text_field( (string) $request->get_param( 'form_id' ) );
         $per_page    = max( 1, min( 100, absint( $request->get_param( 'per_page' ) ?: 50 ) ) );
         $offset      = max( 0, absint( $request->get_param( 'offset' ) ?: 0 ) );
+        $filters     = [
+            'q'             => sanitize_text_field( (string) ( $request->get_param( 'q' ) ?? '' ) ),
+            'native_entry'  => sanitize_text_field( (string) ( $request->get_param( 'native_entry' ) ?? '' ) ),
+            'captured_from' => sanitize_text_field( (string) ( $request->get_param( 'captured_from' ) ?? '' ) ),
+            'captured_to'   => sanitize_text_field( (string) ( $request->get_param( 'captured_to' ) ?? '' ) ),
+            'has_files'     => null !== $request->get_param( 'has_files' )
+                ? rest_sanitize_boolean( $request->get_param( 'has_files' ) )
+                : null,
+            'sort'          => sanitize_key( (string) ( $request->get_param( 'sort' ) ?: 'captured_desc' ) ),
+        ];
         $submissions = array_map(
             [ $this, 'format_submission_ledger_record' ],
-            $this->submission_ledger->list_for_form( $form_source_slug, $form_id, $per_page, $offset )
+            $this->submission_ledger->list_for_form( $form_source_slug, $form_id, $per_page, $offset, $filters )
         );
+        $total       = $this->submission_ledger->count_for_form( $form_source_slug, $form_id, $filters );
 
         return $this->prepare_item_for_response(
             [
@@ -1661,6 +1709,7 @@ class Sentient_Forms_Form_Actions_Controller extends Sentient_Forms_Abstract_Bas
                 'form_id'     => $form_id,
                 'submissions' => $submissions,
                 'count'       => count( $submissions ),
+                'total'       => $total,
                 'per_page'    => $per_page,
                 'offset'      => $offset,
             ]

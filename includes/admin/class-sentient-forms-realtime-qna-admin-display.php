@@ -783,6 +783,13 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
                 'mapping_id'        => $this->stringify_value( $mapping['mapping_id'] ?? '' ),
                 'central_action_id' => $this->stringify_value( $mapping['central_action_id'] ?? '' ),
                 'action_label'      => $action_label,
+                'submitted_at'      => $this->stringify_value( $mapping['submitted_at'] ?? '' ),
+                'returned_at'       => $this->stringify_value( $mapping['returned_at'] ?? '' ),
+                'returned_after_ms' => $this->normalize_optional_int( $mapping['returned_after_ms'] ?? null ),
+                'late_after_submission' => $this->to_bool( $mapping['late_after_submission'] ?? false ),
+                'execution_request_id' => $this->stringify_value( $mapping['execution_request_id'] ?? '' ),
+                'pre_submit_timeout_ms' => $this->normalize_optional_int( $mapping['pre_submit_timeout_ms'] ?? null ),
+                'timeout_source'    => $this->stringify_value( $mapping['timeout_source'] ?? '' ),
                 'questions'         => [],
             ];
 
@@ -825,6 +832,13 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
                     'has_answer'      => $has_answer,
                     'status'          => $status,
                     'action_label'    => $action_label,
+                    'submitted_at'     => $this->stringify_value( $question['submitted_at'] ?? $normalized_mapping['submitted_at'] ),
+                    'returned_at'      => $this->stringify_value( $question['returned_at'] ?? $normalized_mapping['returned_at'] ),
+                    'returned_after_ms' => $this->normalize_optional_int( $question['returned_after_ms'] ?? $normalized_mapping['returned_after_ms'] ),
+                    'late_after_submission' => $this->to_bool( $question['late_after_submission'] ?? $normalized_mapping['late_after_submission'] ),
+                    'execution_request_id' => $this->stringify_value( $question['execution_request_id'] ?? $normalized_mapping['execution_request_id'] ),
+                    'pre_submit_timeout_ms' => $this->normalize_optional_int( $question['pre_submit_timeout_ms'] ?? $normalized_mapping['pre_submit_timeout_ms'] ),
+                    'timeout_source'   => $this->stringify_value( $question['timeout_source'] ?? $normalized_mapping['timeout_source'] ),
                 ];
 
                 $questions[] = $normalized_question;
@@ -940,6 +954,16 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         }
 
         return false;
+    }
+
+    private function normalize_optional_int( mixed $value ): ?int
+    {
+        if ( is_numeric( $value ) )
+        {
+            return max( 0, (int) $value );
+        }
+
+        return null;
     }
 
     private function format_timestamp( string $timestamp ): string
@@ -1468,6 +1492,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
         $reason = ! $compact && '' !== $question['reason']
             ? sprintf( '<p class="sentient-forms-qna-card__reason">%s</p>', esc_html( $question['reason'] ) )
             : '';
+        $late_notice = ! $compact ? $this->render_question_late_notice( $question ) : '';
         $target = ! $compact && '' !== $question['target_field_id']
             ? sprintf(
                 '<span class="sentient-forms-qna-card__target">%s</span>',
@@ -1517,9 +1542,10 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             );
         }
         $body   = sprintf(
-            '<div class="sentient-forms-qna-card__body" data-sf-qna-card-body><p class="sentient-forms-qna-card__answer">%s</p>%s</div>',
+            '<div class="sentient-forms-qna-card__body" data-sf-qna-card-body><p class="sentient-forms-qna-card__answer">%s</p>%s%s</div>',
             $answer,
-            $reason
+            $reason,
+            $late_notice
         );
 
         return sprintf(
@@ -1534,6 +1560,66 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             $toggle,
             esc_html( $question['question'] ),
             $body
+        );
+    }
+
+    /**
+     * @param array<string,mixed> $question
+     */
+    private function render_question_late_notice( array $question ): string
+    {
+        if ( empty( $question['late_after_submission'] ) )
+        {
+            return '';
+        }
+
+        $returned_after_ms = $question['returned_after_ms'] ?? null;
+        if ( ! is_int( $returned_after_ms ) || $returned_after_ms <= 0 )
+        {
+            return '';
+        }
+
+        $timing = sprintf(
+            /* translators: %s: elapsed time after form submission. */
+            __( 'Returned %s after submission.', 'sentient-forms' ),
+            $this->format_realtime_duration( $returned_after_ms )
+        );
+        $tip = __( 'Increase the pre-submit timeout or choose a faster model so realtime clarification questions can return before visitors submit.', 'sentient-forms' );
+
+        return sprintf(
+            '<p class="sentient-forms-qna-card__late-notice"><strong>%s</strong> %s</p>',
+            esc_html( $timing ),
+            esc_html( $tip )
+        );
+    }
+
+    private function format_realtime_duration( int $milliseconds ): string
+    {
+        if ( $milliseconds < 1000 )
+        {
+            return sprintf(
+                /* translators: %d: elapsed milliseconds. */
+                _n( '%d millisecond', '%d milliseconds', $milliseconds, 'sentient-forms' ),
+                $milliseconds
+            );
+        }
+
+        $seconds = max( 1, (int) round( $milliseconds / 1000 ) );
+        if ( $seconds < 60 )
+        {
+            return sprintf(
+                /* translators: %d: elapsed seconds. */
+                _n( '%d second', '%d seconds', $seconds, 'sentient-forms' ),
+                $seconds
+            );
+        }
+
+        $minutes = max( 1, (int) round( $seconds / 60 ) );
+
+        return sprintf(
+            /* translators: %d: elapsed minutes. */
+            _n( '%d minute', '%d minutes', $minutes, 'sentient-forms' ),
+            $minutes
         );
     }
 

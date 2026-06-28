@@ -197,6 +197,10 @@ jobs:
         working-directory: admin-app
         run: bun install --frozen-lockfile
 
+      - name: Refresh bundled OpenRouter model snapshot
+        if: ${{ steps.release-state.outputs.publish == 'true' }}
+        run: composer openrouter-model-snapshot
+
       - name: Build WordPress admin assets
         if: ${{ steps.release-state.outputs.publish == 'true' }}
         working-directory: admin-app

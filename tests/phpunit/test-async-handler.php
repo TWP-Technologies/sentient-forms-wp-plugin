@@ -77,6 +77,17 @@ if ( ! class_exists( 'GFAPI' ) )
 
             return true;
         }
+
+        public static function update_entry( $entry ) {
+            if ( ! is_array( $entry ) || empty( $entry['id'] ) )
+            {
+                return new WP_Error( 'missing_entry_id', 'Missing entry id.' );
+            }
+
+            self::$entries[ (int) $entry['id'] ] = $entry;
+
+            return true;
+        }
     }
 }
 

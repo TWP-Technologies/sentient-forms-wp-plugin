@@ -446,10 +446,39 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
             return $consent_id;
         }
 
-        $remote = $this->openrouter->list_models(
+        do_action( 'sentient_forms_openrouter_model_refresh_consent_recorded', $consent_id, $disclosure_version );
+
+        $response = $this->refresh_openrouter_model_catalog(
             [
                 'output_modalities'    => $request->get_param( 'output_modalities' ) ?: 'text',
                 'supported_parameters' => $request->get_param( 'supported_parameters' ),
+            ]
+        );
+
+        if ( is_wp_error( $response ) )
+        {
+            return $response;
+        }
+
+        $response['consent_recorded'] = true;
+        $response['consent_id']       = $consent_id;
+
+        return $this->prepare_item_for_response( $response );
+    }
+
+    /**
+     * Refresh the local OpenRouter model cache from the public OpenRouter catalog.
+     *
+     * @param array<string,mixed> $args Optional OpenRouter model filters.
+     *
+     * @return array<string,mixed>|WP_Error
+     */
+    public function refresh_openrouter_model_catalog( array $args = [] ): array | WP_Error
+    {
+        $remote = $this->openrouter->list_models(
+            [
+                'output_modalities'    => $args['output_modalities'] ?? 'text',
+                'supported_parameters' => $args['supported_parameters'] ?? null,
             ]
         );
 
@@ -526,11 +555,9 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
 
         $rows     = $this->model_cache->list( 'openrouter', true, 1000 );
         $response = $this->format_model_catalog_response( $rows, false, false );
-        $response['consent_recorded'] = true;
-        $response['consent_id']       = $consent_id;
         $response['stored']           = (int) $stored;
 
-        return $this->prepare_item_for_response( $response );
+        return $response;
     }
 
     public function setup_sentient_managed_proxy( WP_REST_Request $request ): WP_REST_Response | WP_Error

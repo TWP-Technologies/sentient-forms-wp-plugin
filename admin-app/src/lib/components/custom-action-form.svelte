@@ -33,6 +33,7 @@
 		buildDefaultCustomActionMergeTags,
 		generateCustomActionCode
 	} from '$lib/utils/custom-actions';
+	import StickyActionFooter from '$lib/components/sticky-action-footer.svelte';
 
 	interface Props {
 		/** Existing action data for edit mode */
@@ -391,7 +392,7 @@
 	}
 </script>
 
-<Card>
+<Card class="sf:overflow-hidden">
 	<h2 class="sf:text-base sf:font-semibold sf:text-slate-800 sf:mb-1">
 		{isEditMode ? 'Edit Custom Action' : 'Create Custom Action'}
 	</h2>
@@ -402,16 +403,17 @@
 	</p>
 
 	<form
-		class="sf:flex sf:flex-col sf:gap-5"
+		class="sf:flex sf:max-h-[calc(100vh-22rem)] sf:min-h-[300px] sf:flex-col sf:overflow-hidden"
 		data-testid="custom-action-form"
 		onsubmit={handleSubmit}
 	>
-		{#if baseTemplateUnavailable}
-			<Alert variant="warning">
-				Built-in action template IDs are not available in the current definitions response. You
-				can still create a blank custom action.
-			</Alert>
-		{/if}
+		<div class="sf:flex-1 sf:space-y-5 sf:overflow-y-auto sf:pb-4 sf:pr-1">
+			{#if baseTemplateUnavailable}
+				<Alert variant="warning">
+					Built-in action template IDs are not available in the current definitions response. You
+					can still create a blank custom action.
+				</Alert>
+			{/if}
 
 		{#if !isEditMode}
 			<SelectField
@@ -637,7 +639,9 @@
 			/>
 		{/if}
 
-		<div class="sf:flex sf:justify-end sf:gap-2">
+		</div>
+
+		<StickyActionFooter testId="custom-action-form-footer" class="sf:-mx-4 sf:-mb-4 sf:sm:-mx-6 sf:sm:-mb-6">
 			{#if onCancel}
 				<Button type="button" variant="secondary" onclick={onCancel}>Cancel</Button>
 			{/if}
@@ -654,6 +658,6 @@
 					{isEditMode ? 'Save Changes' : 'Create Action'}
 				{/if}
 			</Button>
-		</div>
+		</StickyActionFooter>
 	</form>
 </Card>

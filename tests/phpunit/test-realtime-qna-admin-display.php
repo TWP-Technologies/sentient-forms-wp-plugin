@@ -226,6 +226,37 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
         $this->assertSame( 2, substr_count( $html, 'data-sf-qna-card ' ) );
     }
 
+    public function test_entry_detail_late_realtime_clarification_questions_show_timing_tip(): void
+    {
+        $form    = $this->form_fixture();
+        $entry   = $this->entry_fixture();
+        $payload = json_decode( $this->payload_fixture(), true );
+
+        $payload['mappings'][0]['submitted_at']          = '2026-05-03T11:30:00Z';
+        $payload['mappings'][0]['returned_at']           = '2026-05-03T11:30:06.250Z';
+        $payload['mappings'][0]['returned_after_ms']     = 6250;
+        $payload['mappings'][0]['late_after_submission'] = true;
+        $payload['mappings'][0]['execution_request_id']  = 'rt-late-display';
+        $payload['mappings'][0]['pre_submit_timeout_ms'] = 2500;
+        $payload['mappings'][0]['timeout_source']        = 'pre_submit';
+        $payload['mappings'][0]['questions'][1]['returned_after_ms']     = 6250;
+        $payload['mappings'][0]['questions'][1]['late_after_submission'] = true;
+        $payload['mappings'][0]['questions'][1]['execution_request_id']  = 'rt-late-display';
+        $entry['5'] = wp_json_encode( $payload );
+
+        $html = $this->display->format_entry_detail_field_value(
+            $entry['5'],
+            $form['fields'][1],
+            $entry,
+            $form
+        );
+
+        $this->assertIsString( $html );
+        $this->assertStringContainsString( 'Returned 6 seconds after submission', $html );
+        $this->assertStringContainsString( 'Increase the pre-submit timeout', $html );
+        $this->assertStringContainsString( 'choose a faster model', $html );
+    }
+
     public function test_entry_detail_admin_render_enqueues_qna_assets(): void
     {
         $_GET['page'] = 'gf_entries';
@@ -821,11 +852,17 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
     {
         wp_dequeue_style( 'sentient-forms-gravity-qna-admin' );
         wp_deregister_style( 'sentient-forms-gravity-qna-admin' );
-        wp_dequeue_script( 'sentient-forms-gravity-qna-admin' );
-        wp_deregister_script( 'sentient-forms-gravity-qna-admin' );
+        if ( $this->can_use_wp_scripts_registry() )
+        {
+            wp_dequeue_script( 'sentient-forms-gravity-qna-admin' );
+            wp_deregister_script( 'sentient-forms-gravity-qna-admin' );
+        }
 
         wp_styles()->done  = array_values( array_diff( wp_styles()->done, [ 'sentient-forms-gravity-qna-admin' ] ) );
-        wp_scripts()->done = array_values( array_diff( wp_scripts()->done, [ 'sentient-forms-gravity-qna-admin' ] ) );
+        if ( $this->can_use_wp_scripts_registry() )
+        {
+            wp_scripts()->done = array_values( array_diff( wp_scripts()->done, [ 'sentient-forms-gravity-qna-admin' ] ) );
+        }
     }
 
     /**
@@ -888,7 +925,9 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
     {
         $this->original_qna_asset_state = [
             'styles'  => $this->capture_dependency_handle_state( wp_styles(), 'sentient-forms-gravity-qna-admin' ),
-            'scripts' => $this->capture_dependency_handle_state( wp_scripts(), 'sentient-forms-gravity-qna-admin' ),
+            'scripts' => $this->can_use_wp_scripts_registry()
+                ? $this->capture_dependency_handle_state( wp_scripts(), 'sentient-forms-gravity-qna-admin' )
+                : null,
         ];
     }
 
@@ -900,11 +939,19 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
             'sentient-forms-gravity-qna-admin',
             $this->original_qna_asset_state['styles']
         );
-        $this->restore_dependency_handle_state(
-            wp_scripts(),
-            'sentient-forms-gravity-qna-admin',
-            $this->original_qna_asset_state['scripts']
-        );
+        if ( $this->can_use_wp_scripts_registry() && is_array( $this->original_qna_asset_state['scripts'] ?? null ) )
+        {
+            $this->restore_dependency_handle_state(
+                wp_scripts(),
+                'sentient-forms-gravity-qna-admin',
+                $this->original_qna_asset_state['scripts']
+            );
+        }
+    }
+
+    private function can_use_wp_scripts_registry(): bool
+    {
+        return file_exists( ABSPATH . WPINC . '/assets/script-loader-react-refresh-entry.php' );
     }
 
     /**

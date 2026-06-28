@@ -557,6 +557,64 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( '1', $data['form_id'] ?? null );
     }
 
+    public function test_submission_ledger_search_filters_server_side_before_pagination(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'    => 1,
+            'title' => 'Contact Form',
+        ];
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+
+        for ( $index = 1; $index <= 60; $index++ )
+        {
+            $this->assertIsInt(
+                $ledger->create(
+                    [
+                        'submission_uuid'     => sprintf( '%08d-1111-4111-8111-%012d', $index, $index ),
+                        'form_source'         => 'gravity_forms',
+                        'form_id'             => '1',
+                        'native_entry_id'     => (string) ( 1000 + $index ),
+                        'captured_at'         => sprintf( '2026-06-20 %02d:00:00', $index % 24 ),
+                        'logical_fields_json' => [
+                            'name'    => 'Ordinary Lead ' . $index,
+                            'message' => 'General inquiry without the search token.',
+                        ],
+                    ]
+                )
+            );
+        }
+
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'     => '99999999-1111-4111-8111-999999999999',
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => '1',
+                    'native_entry_id'     => 'needle-entry-77',
+                    'captured_at'         => '2026-06-01 00:00:00',
+                    'logical_fields_json' => [
+                        'name'    => 'Late Prospect',
+                        'message' => 'needle-prospect asks about a custom integration.',
+                    ],
+                ]
+            )
+        );
+
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/submissions' ) );
+        $request->set_param( 'per_page', 10 );
+        $request->set_param( 'offset', 0 );
+        $request->set_param( 'q', 'needle-prospect' );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 1, $data['total'] ?? null );
+        $this->assertCount( 1, $data['submissions'] ?? [] );
+        $this->assertSame( 'needle-entry-77', $data['submissions'][0]['native_entry_id'] ?? null );
+    }
+
     public function test_get_submission_ledger_detail_returns_scoped_submission(): void
     {
         GFAPI::$forms[1] = [

@@ -20,6 +20,8 @@ if ( ! class_exists( 'GFAPI' ) )
 
         public static int $get_form_calls = 0;
 
+        public static bool $skip_field_values_on_full_entry_update = false;
+
         public static function get_entry( $entry_id )
         {
             ++self::$get_entry_calls;
@@ -74,6 +76,49 @@ if ( ! class_exists( 'GFAPI' ) )
             }
 
             self::$entries[ $entry_id ][ (string) $property ] = $value;
+
+            return true;
+        }
+
+        public static function update_entry( $entry )
+        {
+            if ( ! is_array( $entry ) || empty( $entry['id'] ) )
+            {
+                return new WP_Error( 'missing_entry_id', 'Missing entry id.' );
+            }
+
+            if ( self::$skip_field_values_on_full_entry_update && isset( self::$entries[ (int) $entry['id'] ] ) )
+            {
+                $merged = self::$entries[ (int) $entry['id'] ];
+                foreach ( $entry as $key => $value )
+                {
+                    if ( preg_match( '/^\d+(?:\.\d+)?$/', (string) $key ) )
+                    {
+                        continue;
+                    }
+
+                    $merged[ $key ] = $value;
+                }
+
+                self::$entries[ (int) $entry['id'] ] = $merged;
+
+                return true;
+            }
+
+            self::$entries[ (int) $entry['id'] ] = $entry;
+
+            return true;
+        }
+
+        public static function update_entry_field( $entry_id, $field_id, $value )
+        {
+            $entry_id = (int) $entry_id;
+            if ( ! isset( self::$entries[ $entry_id ] ) )
+            {
+                return new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
+            }
+
+            self::$entries[ $entry_id ][ (string) $field_id ] = $value;
 
             return true;
         }

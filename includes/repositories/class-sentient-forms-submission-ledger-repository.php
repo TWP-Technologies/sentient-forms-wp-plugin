@@ -129,16 +129,23 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function list_for_form( string $form_source, string $form_id, int $limit = 50, int $offset = 0 ): array
+    public function list_for_form( string $form_source, string $form_id, int $limit = 50, int $offset = 0, array $filters = [] ): array
     {
+        $where = $this->build_form_filter_where( $form_source, $form_id, $filters );
+        $order = $this->order_clause( (string) ( $filters['sort'] ?? '' ) );
+        $args  = array_merge(
+            [ $this->table_name() ],
+            $where['values'],
+            [
+                max( 1, min( 100, $limit ) ),
+                max( 0, $offset ),
+            ]
+        );
+
         $rows = $this->wpdb->get_results(
             $this->wpdb->prepare(
-                'SELECT * FROM %i WHERE form_source = %s AND form_id = %s ORDER BY captured_at DESC, id DESC LIMIT %d OFFSET %d',
-                $this->table_name(),
-                sanitize_key( $form_source ),
-                sanitize_text_field( $form_id ),
-                max( 1, min( 100, $limit ) ),
-                max( 0, $offset )
+                'SELECT * FROM %i ' . $where['sql'] . ' ' . $order . ' LIMIT %d OFFSET %d',
+                ...$args
             ),
             ARRAY_A
         ) ?: [];
@@ -156,14 +163,15 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         );
     }
 
-    public function count_for_form( string $form_source, string $form_id ): int
+    public function count_for_form( string $form_source, string $form_id, array $filters = [] ): int
     {
+        $where = $this->build_form_filter_where( $form_source, $form_id, $filters );
+        $args  = array_merge( [ $this->table_name() ], $where['values'] );
+
         return (int) $this->wpdb->get_var(
             $this->wpdb->prepare(
-                'SELECT COUNT(*) FROM %i WHERE form_source = %s AND form_id = %s',
-                $this->table_name(),
-                sanitize_key( $form_source ),
-                sanitize_text_field( $form_id )
+                'SELECT COUNT(*) FROM %i ' . $where['sql'],
+                ...$args
             )
         );
     }
@@ -208,5 +216,78 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         $row['redaction_summary_json']  = $this->decode_json_field( $row['redaction_summary_json'] ?? null );
 
         return $row;
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     *
+     * @return array{sql:string,values:array<int,string>}
+     */
+    private function build_form_filter_where( string $form_source, string $form_id, array $filters ): array
+    {
+        $clauses = [ 'form_source = %s', 'form_id = %s' ];
+        $values  = [
+            sanitize_key( $form_source ),
+            sanitize_text_field( $form_id ),
+        ];
+
+        $query = isset( $filters['q'] ) ? sanitize_text_field( (string) $filters['q'] ) : '';
+        if ( '' !== $query )
+        {
+            $like      = '%' . $this->wpdb->esc_like( $query ) . '%';
+            $clauses[] = '(submission_uuid LIKE %s OR native_entry_id LIKE %s OR logical_fields_json LIKE %s OR provider_metadata_json LIKE %s)';
+            array_push( $values, $like, $like, $like, $like );
+        }
+
+        $native_entry = isset( $filters['native_entry'] ) ? sanitize_text_field( (string) $filters['native_entry'] ) : '';
+        if ( '' !== $native_entry )
+        {
+            $clauses[] = 'native_entry_id = %s';
+            $values[]  = $native_entry;
+        }
+
+        $captured_from = isset( $filters['captured_from'] ) ? sanitize_text_field( (string) $filters['captured_from'] ) : '';
+        if ( '' !== $captured_from )
+        {
+            $clauses[] = 'captured_at >= %s';
+            $values[]  = $captured_from;
+        }
+
+        $captured_to = isset( $filters['captured_to'] ) ? sanitize_text_field( (string) $filters['captured_to'] ) : '';
+        if ( '' !== $captured_to )
+        {
+            $clauses[] = 'captured_at <= %s';
+            $values[]  = $captured_to;
+        }
+
+        if ( array_key_exists( 'has_files', $filters ) && null !== $filters['has_files'] )
+        {
+            if ( filter_var( $filters['has_files'], FILTER_VALIDATE_BOOLEAN ) )
+            {
+                $clauses[] = "(file_refs_json IS NOT NULL AND file_refs_json <> '' AND file_refs_json <> '[]')";
+            }
+            else
+            {
+                $clauses[] = "(file_refs_json IS NULL OR file_refs_json = '' OR file_refs_json = '[]')";
+            }
+        }
+
+        return [
+            'sql'    => 'WHERE ' . implode( ' AND ', $clauses ),
+            'values' => $values,
+        ];
+    }
+
+    private function order_clause( string $sort ): string
+    {
+        return match ( sanitize_key( $sort ) )
+        {
+            'captured_asc' => 'ORDER BY captured_at ASC, id ASC',
+            'submitted_desc' => 'ORDER BY source_submitted_at DESC, captured_at DESC, id DESC',
+            'submitted_asc' => 'ORDER BY source_submitted_at ASC, captured_at ASC, id ASC',
+            'native_entry_asc' => 'ORDER BY native_entry_id ASC, captured_at DESC, id DESC',
+            'native_entry_desc' => 'ORDER BY native_entry_id DESC, captured_at DESC, id DESC',
+            default => 'ORDER BY captured_at DESC, id DESC',
+        };
     }
 }

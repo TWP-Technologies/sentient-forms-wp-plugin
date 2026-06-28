@@ -973,6 +973,44 @@ describe('SentientFormsApiClient', () => {
 		expect(result.total).toBe(1);
 	});
 
+	it('passes Submission Ledger search, filter, sort, and pagination params to the REST endpoint', async () => {
+		mockFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: () =>
+				Promise.resolve({
+					success: true,
+					data: {
+						form_source: 'gravity_forms',
+						form_id: 42,
+						submissions: [],
+						total: 0,
+						count: 0,
+						per_page: 25,
+						offset: 50
+					}
+				})
+		});
+
+		await client.getSubmissionLedgerRecords('gravity_forms', 42, {
+			q: 'needle prospect',
+			nativeEntry: 'entry-77',
+			capturedFrom: '2030-01-01T00:00:00Z',
+			capturedTo: '2030-01-31T23:59:59Z',
+			hasFiles: true,
+			sort: 'captured_asc',
+			perPage: 25,
+			offset: 50,
+			showNotifications: false
+		});
+
+		expect(mockFetch).toHaveBeenCalledWith(
+			`${baseUrl}gravity_forms/forms/42/submissions?per_page=25&offset=50&q=needle+prospect&native_entry=entry-77&captured_from=2030-01-01T00%3A00%3A00Z&captured_to=2030-01-31T23%3A59%3A59Z&has_files=true&sort=captured_asc`,
+			expect.objectContaining({ credentials: 'same-origin' })
+		);
+	});
+
 	it('normalizes nullable ledger JSON containers from PHP responses', async () => {
 		mockFetch.mockResolvedValue({
 			ok: true,
