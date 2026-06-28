@@ -1346,6 +1346,15 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         $entry_ids   = $this->normalize_entry_ids( $request->get_param( 'entry_ids' ) );
         $entry_count = count( $entry_ids );
 
+        if ( [] !== $entry_ids && ! $this->is_gravity_forms_source( $form_source ) )
+        {
+            return new WP_Error(
+                'sentient_forms_historical_non_gravity_unsupported',
+                __( 'Historical scoring selected-entry previews currently require Gravity Forms entries.', 'sentient-forms' ),
+                [ 'status' => 409 ]
+            );
+        }
+
         if ( 0 === $entry_count )
         {
             $entry_count = $this->estimate_form_entry_count( $form_source, $form_id );
@@ -2969,10 +2978,7 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
                 continue;
             }
 
-            $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
-            $structured = is_array( $result['result']['structured'] ?? null )
-                ? $result['result']['structured']
-                : ( is_array( $result['structured'] ?? null ) ? $result['structured'] : [] );
+            $structured = $this->lead_structured_result_from_event( $event );
             if ( [] === $structured )
             {
                 continue;
@@ -3048,9 +3054,21 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         }
 
         $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
-        $structured = is_array( $result['result']['structured'] ?? null )
-            ? $result['result']['structured']
-            : ( is_array( $result['structured'] ?? null ) ? $result['structured'] : [] );
+        foreach ( [ $result['central_action_id'] ?? null, $result['action_id'] ?? null, $result['evaluation_payload']['central_action_id'] ?? null ] as $candidate )
+        {
+            $action_id = is_scalar( $candidate ) ? sanitize_key( (string) $candidate ) : '';
+            if ( 'lead_grading_v1' === $action_id )
+            {
+                return 'lead_grading_v1';
+            }
+
+            if ( 'suggested_reply_v1' === $action_id )
+            {
+                return 'suggested_reply_v1';
+            }
+        }
+
+        $structured = $this->lead_structured_result_from_event( $event );
 
         if ( isset( $structured['grade'] ) )
         {
@@ -3063,6 +3081,45 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         }
 
         return '';
+    }
+
+    private function lead_structured_result_from_event( array $event ): array
+    {
+        $result = is_array( $event['result_json'] ?? null ) ? $event['result_json'] : [];
+
+        $candidates = [
+            $result['result']['structured'] ?? null,
+            $result['structured'] ?? null,
+            $result['result_data']['structured_output'] ?? null,
+            $result['result_data']['structured'] ?? null,
+            $result['result_data'] ?? null,
+            $result['evaluation_payload']['result_data']['structured_output'] ?? null,
+            $result['evaluation_payload']['result_data']['structured'] ?? null,
+            $result['evaluation_payload']['result_data'] ?? null,
+        ];
+
+        foreach ( $candidates as $candidate )
+        {
+            if ( is_array( $candidate ) && $this->looks_like_lead_structured_result( $candidate ) )
+            {
+                return $candidate;
+            }
+        }
+
+        return [];
+    }
+
+    private function looks_like_lead_structured_result( array $structured ): bool
+    {
+        foreach ( [ 'grade', 'fit_summary', 'intent_summary', 'recommended_priority', 'suggested_reply_draft', 'next_best_action', 'reply_rationale', 'do_not_send' ] as $key )
+        {
+            if ( array_key_exists( $key, $structured ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function historical_run_id_from_execution_request( string $execution_request_id ): ?int

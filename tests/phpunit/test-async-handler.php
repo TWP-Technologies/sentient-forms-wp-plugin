@@ -1235,6 +1235,14 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( 'skipped', $row['status'] ?? null );
         $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
         $this->assertSame( [], $executor->captured );
+
+        $downstream_event = $events->get_by_request_id( $downstream_job['args']['execution_request_id'] );
+        $this->assertIsArray( $downstream_event );
+        $this->assertSame( 'skipped', $downstream_event['status'] ?? null );
+        $this->assertSame( $submission_uuid, $downstream_event['submission_uuid'] ?? null );
+        $this->assertSame( 'entry_summary_v1', $downstream_event['result_json']['central_action_id'] ?? null );
+        $this->assertSame( 'upstream_spam', $downstream_event['result_json']['skip_reason_code'] ?? null );
+        $this->assertStringContainsString( 'spam', (string) ( $downstream_event['result_json']['skip_reason'] ?? '' ) );
     }
 
     public function test_cps_managed_gravity_success_does_not_record_duplicate_execution_event(): void

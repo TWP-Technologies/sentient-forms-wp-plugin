@@ -1643,6 +1643,22 @@ class Sentient_Forms_Async_Handler
         );
     }
 
+    private function record_managed_execution_skip_event( array $job, string $reason, ?string $reason_code = null ): void
+    {
+        $result = [
+            'provider'    => 'sentient_managed',
+            'status'      => 'skipped',
+            'skip_reason' => $reason,
+        ];
+
+        if ( null !== $reason_code && '' !== $reason_code )
+        {
+            $result['skip_reason_code'] = $reason_code;
+        }
+
+        $this->record_managed_execution_event( $job, $result );
+    }
+
     private function should_record_managed_execution_event( array $job ): bool
     {
         if ( ! $this->is_cps_managed_job( $job ) )
@@ -2434,6 +2450,8 @@ class Sentient_Forms_Async_Handler
         {
             $this->get_request_store()->mark_status( (string) $job['execution_request_id'], 'skipped', $reason );
         }
+
+        $this->record_managed_execution_skip_event( $job, $reason, $reason_code );
 
         if ( 'upstream_spam' === $reason_code && ! $already_recorded )
         {

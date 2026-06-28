@@ -601,6 +601,30 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertSame( 0, $run['run']['estimated_managed_credits'] );
     }
 
+    public function test_non_gravity_historical_preview_rejects_selected_entries_up_front(): void
+    {
+        $this->reset_gfapi_lookup_counters();
+
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/forms/contact_form_7/42/historical-runs' );
+        $request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+        $request->set_param( 'form_source', 'contact_form_7' );
+        $request->set_param( 'form_id', '42' );
+        $request->set_body_params(
+            [
+                'action_code' => 'lead_grading_v1',
+                'entry_ids'   => [ 1001 ],
+                'dry_run'     => true,
+            ]
+        );
+
+        $response = ( new Sentient_Forms_Lead_Value_Controller() )->create_historical_run( $request );
+
+        $this->assertWPError( $response );
+        $this->assertSame( 'sentient_forms_historical_non_gravity_unsupported', $response->get_error_code() );
+        $this->assertSame( 0, GFAPI::$get_form_calls );
+        $this->assertSame( 0, GFAPI::$get_entry_calls );
+    }
+
     public function test_non_gravity_historical_execution_is_rejected_before_gf_entry_lookup(): void
     {
         global $wpdb;
@@ -647,19 +671,29 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         ];
         $this->reset_gfapi_lookup_counters();
 
-        $run = $this->dispatch_json(
-            'POST',
-            '/sentient-forms/v1/lead-value/forms/contact_form_7/42/historical-runs',
+        $historical_runs = new Sentient_Forms_Historical_Analysis_Runs_Repository( $wpdb );
+        $run_id = $historical_runs->create(
             [
-                'action_code' => 'lead_grading_v1',
-                'entry_ids'   => [ 1001 ],
-                'dry_run'     => false,
-            ],
-            201
+                'form_source'               => 'contact_form_7',
+                'form_id'                   => '42',
+                'action_code'               => 'lead_grading_v1',
+                'selected_entry_ids_json'   => [ 1001 ],
+                'estimated_entry_count'     => 1,
+                'estimated_managed_credits' => 3,
+                'dry_run'                   => false,
+                'status'                    => 'preview_ready',
+                'progress_json'             => [
+                    'processed' => 0,
+                    'total'     => 1,
+                    'errors'    => [],
+                ],
+                'created_by_user_id'        => get_current_user_id() ?: null,
+            ]
         );
+        $this->assertIsInt( $run_id );
 
-        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/historical-runs/' . $run['run']['id'] . '/start' );
-        $request->set_param( 'id', (int) $run['run']['id'] );
+        $request = new WP_REST_Request( 'POST', '/sentient-forms/v1/lead-value/historical-runs/' . $run_id . '/start' );
+        $request->set_param( 'id', $run_id );
         $request->set_param( 'confirm_costs', true );
 
         $controller = new Sentient_Forms_Lead_Value_Controller();
@@ -1078,6 +1112,61 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertSame( 2, $dashboard['event_count'] );
         $this->assertSame( 1, $dashboard['grades']['A'] );
         $this->assertSame( 1, $dashboard['grades']['Reject'] );
+    }
+
+    public function test_dashboard_recovers_managed_non_gravity_lead_result_data(): void
+    {
+        global $wpdb;
+
+        $submission_uuid = '55555555-6666-4777-8888-999999999999';
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $created = $ledger->create(
+            [
+                'submission_uuid'     => $submission_uuid,
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'logical_fields_json' => [
+                    'name' => 'Ada Buyer',
+                ],
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+        $events->record(
+            [
+                'execution_request_id' => 'managed-opaque-request',
+                'form_source'          => 'contact_form_7',
+                'form_id'              => '42',
+                'submission_uuid'      => $submission_uuid,
+                'provider'             => 'sentient_managed',
+                'status'               => 'succeeded',
+                'result_json'          => [
+                    'central_action_id' => 'lead_grading_v1',
+                    'action_name_label' => 'Lead Scoring',
+                    'result_data'       => [
+                        'structured_output' => [
+                            'grade'                => 'A',
+                            'confidence'           => 0.91,
+                            'profile_version'      => 2,
+                            'fit_summary'          => 'Strong fit for a managed follow-up.',
+                            'intent_summary'       => 'Ready to talk with sales.',
+                            'recommended_priority' => 'high',
+                            'justification'        => 'The submission has urgency and clear contact details.',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $dashboard = $this->dispatch_json( 'GET', '/sentient-forms/v1/lead-value/forms/contact_form_7/42/dashboard' );
+
+        $this->assertSame( 1, $dashboard['grades']['A'] );
+        $this->assertSame( 1, $dashboard['metrics']['scored_leads'] );
+        $this->assertSame( $submission_uuid, $dashboard['entries'][0]['entry_id'] );
+        $this->assertSame( 'A', $dashboard['entries'][0]['grade'] );
+        $this->assertSame( 2, $dashboard['entries'][0]['profile_version'] );
+        $this->assertSame( 'Ada Buyer', $dashboard['entries'][0]['entry_snapshot']['field_summary'][0]['value'] );
     }
 
     public function test_aggregate_dashboard_combines_stored_grades_replies_and_setup_forms(): void
