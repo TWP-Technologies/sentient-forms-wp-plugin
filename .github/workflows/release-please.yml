@@ -5,6 +5,22 @@ name: Release Please
   push:
     branches:
       - production
+    paths:
+      - 'assets/**'
+      - 'includes/**'
+      - 'languages/**'
+      - 'admin-app/**'
+      - 'scripts/**'
+      - 'vendor/woocommerce/action-scheduler/**'
+      - 'sentient-forms.php'
+      - 'readme.txt'
+      - 'CHANGELOG.md'
+      - 'composer.json'
+      - 'composer.lock'
+      - '.github/actions/**'
+      - '.github/workflows/**'
+      - 'release-please-config.json'
+      - '.release-please-manifest.json'
   workflow_dispatch:
 
 permissions:
