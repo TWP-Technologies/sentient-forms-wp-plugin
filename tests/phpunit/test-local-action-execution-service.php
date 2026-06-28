@@ -2731,10 +2731,68 @@ class Tests_Local_Action_Execution_Service extends WP_UnitTestCase
             $skipped[ $skip['effect'] ] = $skip['reason'];
         }
 
-        $this->assertSame( 'native_meta_unsupported', $skipped['meta:sentient_forms_summary'] ?? null );
-        $this->assertSame( 'native_note_unsupported', $skipped['entry_note'] ?? null );
-        $this->assertSame( 'native_spam_status_unsupported', $skipped['mark_as_spam'] ?? null );
-        $this->assertArrayNotHasKey( 'all', $skipped );
+        $this->assertSame(
+            [
+                'meta:sentient_forms_summary' => 'native_meta_unsupported',
+                'entry_note'                  => 'native_note_unsupported',
+                'mark_as_spam'                => 'native_spam_status_unsupported',
+            ],
+            $skipped
+        );
+    }
+
+    public function test_non_gravity_spam_effects_use_configured_classification_path(): void
+    {
+        $applier = new Sentient_Forms_Local_Result_Applier();
+
+        $effects = $applier->apply(
+            [
+                'form_source'         => 'wpforms',
+                'form_id'             => '77',
+                'effect_mapping_json' => [
+                    'spam' => [
+                        'enabled'             => true,
+                        'classification_path' => 'verdict.kind',
+                        'confidence_path'     => 'verdict.confidence',
+                        'min_confidence'      => 0.8,
+                        'note'                => [
+                            'result_display_mode' => 'spam_only',
+                        ],
+                    ],
+                ],
+            ],
+            [ 'id' => '77', 'title' => 'WPForms Contact' ],
+            [
+                'id'              => null,
+                'submission_uuid' => '22222222-3333-4444-8555-666666666666',
+            ],
+            [
+                'execution_request_id' => 'wpforms-configured-spam-path',
+                'status'               => 'succeeded',
+                'result'               => [
+                    'verdict' => [
+                        'kind'       => 'likely-spam',
+                        'confidence' => 0.91,
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertContains( 'spam_classification', $effects['applied'] );
+
+        $skipped = [];
+        foreach ( $effects['skipped'] as $skip )
+        {
+            $skipped[ $skip['effect'] ] = $skip['reason'];
+        }
+
+        $this->assertSame(
+            [
+                'mark_as_spam' => 'native_spam_status_unsupported',
+                'spam_note'    => 'native_note_unsupported',
+            ],
+            $skipped
+        );
     }
 
     public function test_non_gravity_post_execution_actions_do_not_write_gravity_entry_meta(): void

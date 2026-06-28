@@ -16,8 +16,13 @@ if ( ! class_exists( 'GFAPI' ) )
         /** @var array<int,array<string,mixed>> */
         public static array $forms = [];
 
+        public static int $get_entry_calls = 0;
+
+        public static int $get_form_calls = 0;
+
         public static function get_entry( $entry_id )
         {
+            ++self::$get_entry_calls;
             $entry_id = (int) $entry_id;
             if ( isset( self::$entries[ $entry_id ] ) )
             {
@@ -29,6 +34,7 @@ if ( ! class_exists( 'GFAPI' ) )
 
         public static function get_form( $form_id )
         {
+            ++self::$get_form_calls;
             $form_id = (int) $form_id;
             return self::$forms[ $form_id ] ?? false;
         }

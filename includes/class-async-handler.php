@@ -2507,7 +2507,7 @@ class Sentient_Forms_Async_Handler
         {
             if ( is_scalar( $candidate ) )
             {
-                $classification = sanitize_key( (string) $candidate );
+                $classification = $this->normalize_spam_classification_value( $candidate );
                 if ( '' !== $classification )
                 {
                     return $classification;
@@ -2540,6 +2540,18 @@ class Sentient_Forms_Async_Handler
         }
 
         return null;
+    }
+
+    private function normalize_spam_classification_value( mixed $candidate ): string
+    {
+        if ( ! is_scalar( $candidate ) )
+        {
+            return '';
+        }
+
+        $normalized = preg_replace( '/[\s-]+/', '_', strtolower( trim( (string) $candidate ) ) );
+
+        return sanitize_key( (string) ( $normalized ?? '' ) );
     }
 
     /**

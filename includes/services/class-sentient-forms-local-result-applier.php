@@ -170,7 +170,7 @@ class Sentient_Forms_Local_Result_Applier
         {
             if ( ! $is_gravity_forms )
             {
-                $classification = $this->extract_spam_classification( $result );
+                $classification = $this->extract_configured_spam_classification( $effects, $result );
                 if ( '' === $classification )
                 {
                     $skipped[] = [
@@ -296,16 +296,10 @@ class Sentient_Forms_Local_Result_Applier
 
     private function non_native_spam_status_skip_reason( array $effects, array $result ): string
     {
-        $config              = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
-        $classification_path = (string) ( $config['classification_path'] ?? 'structured.classification' );
-        $confidence_path     = (string) ( $config['confidence_path'] ?? 'structured.confidence' );
-        $threshold           = is_numeric( $config['min_confidence'] ?? null ) ? (float) $config['min_confidence'] : 0.8;
-        $classification      = strtolower( sanitize_key( (string) $this->resolve_path( $result, $classification_path ) ) );
-
-        if ( '' === $classification )
-        {
-            $classification = $this->extract_spam_classification( $result );
-        }
+        $config          = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
+        $confidence_path = (string) ( $config['confidence_path'] ?? 'structured.confidence' );
+        $threshold       = is_numeric( $config['min_confidence'] ?? null ) ? (float) $config['min_confidence'] : 0.8;
+        $classification  = $this->extract_configured_spam_classification( $effects, $result );
 
         if ( '' === $classification )
         {
@@ -341,7 +335,7 @@ class Sentient_Forms_Local_Result_Applier
             return false;
         }
 
-        $classification = $this->extract_spam_classification( $result );
+        $classification = $this->extract_configured_spam_classification( $effects, $result );
         if ( '' === $classification )
         {
             return true;
@@ -447,7 +441,7 @@ class Sentient_Forms_Local_Result_Applier
             return 'disabled';
         }
 
-        $classification = $this->extract_spam_classification( $result );
+        $classification = $this->extract_configured_spam_classification( $effects, $result );
         if ( '' === $classification )
         {
             return 'classification_not_found';
@@ -475,20 +469,10 @@ class Sentient_Forms_Local_Result_Applier
 
     private function apply_spam_status( int $entry_id, array $effects, array $result ): true | string
     {
-        $config              = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
-        $classification_path = (string) ( $config['classification_path'] ?? 'structured.classification' );
-        $confidence_path     = (string) ( $config['confidence_path'] ?? 'structured.confidence' );
-        $threshold           = is_numeric( $config['min_confidence'] ?? null ) ? (float) $config['min_confidence'] : 0.8;
-        $classification      = strtolower( sanitize_key( (string) $this->resolve_path( $result, $classification_path ) ) );
-
-        if ( '' === $classification )
-        {
-            $is_spam = $this->resolve_path( $result, 'structured.is_spam' );
-            if ( true === $is_spam || 'true' === strtolower( (string) $is_spam ) )
-            {
-                $classification = 'spam';
-            }
-        }
+        $config          = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
+        $confidence_path = (string) ( $config['confidence_path'] ?? 'structured.confidence' );
+        $threshold       = is_numeric( $config['min_confidence'] ?? null ) ? (float) $config['min_confidence'] : 0.8;
+        $classification  = $this->extract_configured_spam_classification( $effects, $result );
 
         if ( ! in_array( $classification, [ 'spam', 'likely_spam' ], true ) )
         {
@@ -568,16 +552,21 @@ class Sentient_Forms_Local_Result_Applier
         return 'detailed' === sanitize_key( (string) $value ) ? 'detailed' : 'simple';
     }
 
+    private function extract_configured_spam_classification( array $effects, array $result ): string
+    {
+        $config              = is_array( $effects['spam'] ?? null ) ? $effects['spam'] : [];
+        $classification_path = (string) ( $config['classification_path'] ?? 'structured.classification' );
+        $classification      = $this->normalize_spam_classification_value( $this->resolve_path( $result, $classification_path ) );
+
+        return '' !== $classification ? $classification : $this->extract_spam_classification( $result );
+    }
+
     private function extract_spam_classification( array $result ): string
     {
-        $classification = strtolower(
-            sanitize_key(
-                (string) (
-                    $this->resolve_path( $result, 'structured.classification' )
-                    ?? $this->resolve_path( $result, 'classification' )
-                    ?? ''
-                )
-            )
+        $classification = $this->normalize_spam_classification_value(
+            $this->resolve_path( $result, 'structured.classification' )
+            ?? $this->resolve_path( $result, 'classification' )
+            ?? ''
         );
 
         if ( '' !== $classification )
@@ -592,6 +581,18 @@ class Sentient_Forms_Local_Result_Applier
         }
 
         return '';
+    }
+
+    private function normalize_spam_classification_value( mixed $value ): string
+    {
+        if ( ! is_scalar( $value ) )
+        {
+            return '';
+        }
+
+        $normalized = preg_replace( '/[\s-]+/', '_', strtolower( trim( (string) $value ) ) );
+
+        return sanitize_key( (string) ( $normalized ?? '' ) );
     }
 
     private function extract_spam_confidence( array $result ): ?float

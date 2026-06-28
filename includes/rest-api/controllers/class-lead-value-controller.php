@@ -1224,12 +1224,12 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
             $records = $ledger->list_for_form( $form_source, $form_id, $page_size, $offset );
             foreach ( $records as $record )
             {
-                $summary = $this->summarize_submission_ledger_fields( $record );
-                if ( '' !== $query && ! str_contains( strtolower( wp_json_encode( $summary ) ?: '' ), $query ) )
+                if ( '' !== $query && ! $this->submission_ledger_record_matches_query( $record, $query ) )
                 {
                     continue;
                 }
 
+                $summary         = $this->summarize_submission_ledger_fields( $record );
                 $submission_uuid = isset( $record['submission_uuid'] ) && is_scalar( $record['submission_uuid'] )
                     ? sanitize_text_field( (string) $record['submission_uuid'] )
                     : '';
@@ -3224,6 +3224,14 @@ class Sentient_Forms_Lead_Value_Controller extends Sentient_Forms_Abstract_Base_
         }
 
         return $fields;
+    }
+
+    private function submission_ledger_record_matches_query( array $record, string $query ): bool
+    {
+        $logical_fields = is_array( $record['logical_fields_json'] ?? null ) ? $record['logical_fields_json'] : [];
+        $haystack       = strtolower( wp_json_encode( $logical_fields ) ?: '' );
+
+        return str_contains( $haystack, strtolower( $query ) );
     }
 
     /**

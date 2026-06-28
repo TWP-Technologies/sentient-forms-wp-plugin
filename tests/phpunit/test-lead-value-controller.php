@@ -6,14 +6,18 @@ if ( ! class_exists( 'Sentient_Forms_Lead_Value_Test_GFAPI' ) && ! class_exists(
     {
         public static array $entries = [];
         public static array $forms = [];
+        public static int $get_form_calls = 0;
+        public static int $get_entry_calls = 0;
 
         public static function get_form( $form_id )
         {
+            ++self::$get_form_calls;
             return self::$forms[ (int) $form_id ] ?? false;
         }
 
         public static function get_entry( $entry_id )
         {
+            ++self::$get_entry_calls;
             return self::$entries[ (int) $entry_id ] ?? new WP_Error( 'rest_entry_not_found', 'Entry not found.' );
         }
 
@@ -641,6 +645,7 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
                 '1'       => 'Gravity overlap',
             ],
         ];
+        $this->reset_gfapi_lookup_counters();
 
         $run = $this->dispatch_json(
             'POST',
@@ -662,6 +667,8 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
 
         $this->assertWPError( $response );
         $this->assertSame( 'sentient_forms_historical_non_gravity_unsupported', $response->get_error_code() );
+        $this->assertSame( 0, GFAPI::$get_form_calls );
+        $this->assertSame( 0, GFAPI::$get_entry_calls );
     }
 
     public function test_historical_confirmed_run_executes_entries_once_and_completed_start_is_idempotent(): void
@@ -825,6 +832,11 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
             $this->assertIsInt( $created );
         }
 
+        $first_page = $ledger->list_for_form( 'contact_form_7', '42', 100, 0 );
+        $this->assertNotContains( $matching_uuid, wp_list_pluck( $first_page, 'submission_uuid' ) );
+        $second_page = $ledger->list_for_form( 'contact_form_7', '42', 100, 100 );
+        $this->assertContains( $matching_uuid, wp_list_pluck( $second_page, 'submission_uuid' ) );
+
         $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/lead-value/forms/contact_form_7/42/entries/search' );
         $request->set_param( 'form_source', 'contact_form_7' );
         $request->set_param( 'form_id', 42 );
@@ -837,6 +849,45 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         $this->assertIsArray( $data );
         $this->assertSame( $matching_uuid, $data['entries'][0]['submission_uuid'] ?? null );
         $this->assertSame( 'Needle Buyer', $data['entries'][0]['field_summary'][0]['value'] ?? null );
+    }
+
+    public function test_search_entries_matches_submission_ledger_fields_beyond_preview_limit(): void
+    {
+        global $wpdb;
+
+        $submission_uuid = '11111111-2222-4333-8444-999999999999';
+        $logical_fields  = [];
+        for ( $i = 1; $i <= 13; ++$i )
+        {
+            $logical_fields[ 'field_' . $i ] = 13 === $i
+                ? 'Deep search needle beyond preview.'
+                : 'Routine preview value ' . $i;
+        }
+
+        $ledger  = new Sentient_Forms_Submission_Ledger_Repository( $wpdb );
+        $created = $ledger->create(
+            [
+                'submission_uuid'     => $submission_uuid,
+                'form_source'         => 'contact_form_7',
+                'form_id'             => '42',
+                'logical_fields_json' => $logical_fields,
+            ]
+        );
+        $this->assertIsInt( $created );
+
+        $request = new WP_REST_Request( 'GET', '/sentient-forms/v1/lead-value/forms/contact_form_7/42/entries/search' );
+        $request->set_param( 'form_source', 'contact_form_7' );
+        $request->set_param( 'form_id', 42 );
+        $request->set_param( 'q', 'deep search needle' );
+        $request->set_param( 'limit', 1 );
+        $response = rest_get_server()->dispatch( $request );
+        $this->assertSame( 200, $response->get_status(), wp_json_encode( $response->get_data() ) );
+
+        $data = $response->get_data();
+        $this->assertIsArray( $data );
+        $this->assertSame( $submission_uuid, $data['entries'][0]['submission_uuid'] ?? null );
+        $this->assertCount( 12, $data['entries'][0]['field_summary'] ?? [] );
+        $this->assertNotContains( 'field_13', wp_list_pluck( $data['entries'][0]['field_summary'] ?? [], 'field_id' ) );
     }
 
     public function test_manual_suggested_reply_accepts_ledger_submission_uuid_for_non_gravity_sources(): void
@@ -1263,6 +1314,15 @@ class Tests_Lead_Value_Controller extends WP_UnitTestCase
         {
             $wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}{$table}" );
         }
+    }
+
+    private function reset_gfapi_lookup_counters(): void
+    {
+        $this->assertTrue( property_exists( GFAPI::class, 'get_form_calls' ) );
+        $this->assertTrue( property_exists( GFAPI::class, 'get_entry_calls' ) );
+
+        GFAPI::$get_form_calls  = 0;
+        GFAPI::$get_entry_calls = 0;
     }
 
     private function reset_options(): void

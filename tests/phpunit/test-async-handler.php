@@ -34,8 +34,11 @@ if ( ! class_exists( 'GFAPI' ) )
         public static array $entries = [];
         /** @var array<int,array<string,mixed>> */
         public static array $forms = [];
+        public static int $get_entry_calls = 0;
+        public static int $get_form_calls = 0;
 
         public static function get_entry( $entry_id ) {
+            ++self::$get_entry_calls;
             $entry_id = (int) $entry_id;
             if ( isset( self::$entries[ $entry_id ] ) )
             {
@@ -46,6 +49,7 @@ if ( ! class_exists( 'GFAPI' ) )
         }
 
         public static function get_form( $form_id ) {
+            ++self::$get_form_calls;
             $form_id = (int) $form_id;
             return self::$forms[ $form_id ] ?? false;
         }
@@ -259,8 +263,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
         );
         $this->plugin->get_async_metadata_store()->clear();
         Sentient_Forms_Installer::maybe_upgrade();
-        global $wpdb;
-        $wpdb->query( 'TRUNCATE TABLE ' . $wpdb->prefix . 'sentient_async_requests' );
+        $this->truncate_async_runtime_tables();
 		delete_option( 'sentient_forms_async_settings' );
         GFAPI::$entries = [];
         GFAPI::$forms = [];
@@ -284,12 +287,7 @@ class AsyncHandlerTest extends WP_UnitTestCase
 
     protected function tearDown(): void
     {
-        global $wpdb;
-        $table   = $wpdb->prefix . 'sentient_async_requests';
-        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table )
-        {
-            $wpdb->query( "TRUNCATE TABLE {$table}" );
-        }
+        $this->truncate_async_runtime_tables();
         $GLOBALS['__sentient_forms_async_queue'] = [ 'enqueued' => [] ];
         $GLOBALS['__sentient_forms_http_calls'] = [];
         GFAPI::$entries = [];
@@ -298,6 +296,20 @@ class AsyncHandlerTest extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_async_queue_threshold' );
         remove_all_filters( 'sentient_forms_async_stale_queue_threshold' );
         parent::tearDown();
+    }
+
+    private function truncate_async_runtime_tables(): void
+    {
+        global $wpdb;
+
+        foreach ( [ 'sentient_async_requests', 'sentient_execution_events' ] as $table_name )
+        {
+            $table = $wpdb->prefix . $table_name;
+            if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table )
+            {
+                $wpdb->query( "TRUNCATE TABLE {$table}" );
+            }
+        }
     }
 
     private function set_async_handler( Sentient_Forms_Async_Handler $handler ): void
