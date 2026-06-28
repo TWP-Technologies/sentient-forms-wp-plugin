@@ -852,16 +852,17 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
     {
         wp_dequeue_style( 'sentient-forms-gravity-qna-admin' );
         wp_deregister_style( 'sentient-forms-gravity-qna-admin' );
-        if ( $this->can_use_wp_scripts_registry() )
+        $wp_scripts = $this->get_initialized_wp_scripts();
+        if ( null !== $wp_scripts )
         {
             wp_dequeue_script( 'sentient-forms-gravity-qna-admin' );
             wp_deregister_script( 'sentient-forms-gravity-qna-admin' );
         }
 
         wp_styles()->done  = array_values( array_diff( wp_styles()->done, [ 'sentient-forms-gravity-qna-admin' ] ) );
-        if ( $this->can_use_wp_scripts_registry() )
+        if ( null !== $wp_scripts )
         {
-            wp_scripts()->done = array_values( array_diff( wp_scripts()->done, [ 'sentient-forms-gravity-qna-admin' ] ) );
+            $wp_scripts->done = array_values( array_diff( $wp_scripts->done, [ 'sentient-forms-gravity-qna-admin' ] ) );
         }
     }
 
@@ -923,10 +924,12 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
 
     private function capture_qna_asset_state(): void
     {
+        $wp_scripts = $this->get_initialized_wp_scripts();
+
         $this->original_qna_asset_state = [
             'styles'  => $this->capture_dependency_handle_state( wp_styles(), 'sentient-forms-gravity-qna-admin' ),
-            'scripts' => $this->can_use_wp_scripts_registry()
-                ? $this->capture_dependency_handle_state( wp_scripts(), 'sentient-forms-gravity-qna-admin' )
+            'scripts' => null !== $wp_scripts
+                ? $this->capture_dependency_handle_state( $wp_scripts, 'sentient-forms-gravity-qna-admin' )
                 : null,
         ];
     }
@@ -939,19 +942,22 @@ final class RealtimeQnaAdminDisplayTest extends WP_UnitTestCase
             'sentient-forms-gravity-qna-admin',
             $this->original_qna_asset_state['styles']
         );
-        if ( $this->can_use_wp_scripts_registry() && is_array( $this->original_qna_asset_state['scripts'] ?? null ) )
+        $wp_scripts = $this->get_initialized_wp_scripts();
+        if ( null !== $wp_scripts && is_array( $this->original_qna_asset_state['scripts'] ?? null ) )
         {
             $this->restore_dependency_handle_state(
-                wp_scripts(),
+                $wp_scripts,
                 'sentient-forms-gravity-qna-admin',
                 $this->original_qna_asset_state['scripts']
             );
         }
     }
 
-    private function can_use_wp_scripts_registry(): bool
+    private function get_initialized_wp_scripts(): ?WP_Scripts
     {
-        return file_exists( ABSPATH . WPINC . '/assets/script-loader-react-refresh-entry.php' );
+        return isset( $GLOBALS['wp_scripts'] ) && $GLOBALS['wp_scripts'] instanceof WP_Scripts
+            ? $GLOBALS['wp_scripts']
+            : null;
     }
 
     /**

@@ -337,15 +337,54 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
     {
         $wp_scripts = wp_scripts();
 
-        if ( ! isset( $wp_scripts->registered[ self::ADMIN_ASSET_HANDLE ] ) )
+        $script = $wp_scripts->registered[ self::ADMIN_ASSET_HANDLE ] ?? null;
+        if ( null === $script )
         {
             return '';
         }
 
-        ob_start();
-        $wp_scripts->do_item( self::ADMIN_ASSET_HANDLE );
+        $src = $this->get_registered_script_src( $wp_scripts, $script );
+        if ( '' === $src )
+        {
+            return '';
+        }
 
-        return (string) ob_get_clean();
+        $tag = wp_get_script_tag(
+            [
+                'src' => $src,
+                'id'  => self::ADMIN_ASSET_HANDLE . '-js',
+            ]
+        );
+
+        return apply_filters( 'script_loader_tag', $tag, self::ADMIN_ASSET_HANDLE, $src );
+    }
+
+    /**
+     * @param WP_Scripts $wp_scripts WordPress scripts registry.
+     * @param _WP_Dependency $script Registered script dependency.
+     */
+    private function get_registered_script_src( $wp_scripts, $script ): string
+    {
+        $src = (string) $script->src;
+        if ( '' === $src )
+        {
+            return '';
+        }
+
+        if (
+            ! preg_match( '|^(https?:)?//|', $src )
+            && ! ( $wp_scripts->content_url && str_starts_with( $src, $wp_scripts->content_url ) )
+        )
+        {
+            $src = $wp_scripts->base_url . $src;
+        }
+
+        if ( null !== $script->ver )
+        {
+            $src = add_query_arg( 'ver', $script->ver, $src );
+        }
+
+        return esc_url_raw( apply_filters( 'script_loader_src', $src, self::ADMIN_ASSET_HANDLE ) );
     }
 
     private function render_entry_detail_bootstrap_tag(): string
