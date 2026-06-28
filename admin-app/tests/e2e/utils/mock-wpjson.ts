@@ -4,6 +4,12 @@ type Routes = {
 	actions?: {
 		forms?: Record<string, unknown[]>;
 		definitions?: unknown;
+		bootstrapError?:
+			| { status?: number; body: unknown }
+			| ((
+					sourceSlug: string,
+					formId: string | number
+			  ) => { status?: number; body: unknown } | null);
 		mappingTemplates?: unknown[];
 		status?: unknown;
 		settings?: Record<string, unknown>;
@@ -854,6 +860,19 @@ export async function mockWpJson(page: Page, routes: Routes, formId = 1) {
 		if (formActionsBootstrapMatch && method === 'GET') {
 			const sourceSlug = formActionsBootstrapMatch[1];
 			const currentFormId = routeFormId(formActionsBootstrapMatch[2] ?? String(formId));
+			const bootstrapErrorSetting = routes.actions?.bootstrapError;
+			const bootstrapError =
+				typeof bootstrapErrorSetting === 'function'
+					? bootstrapErrorSetting(sourceSlug, currentFormId)
+					: bootstrapErrorSetting;
+			if (bootstrapError) {
+				return route.fulfill({
+					status: bootstrapError.status ?? 404,
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify(bootstrapError.body)
+				});
+			}
+
 			const currentFormIdSegment = encodeURIComponent(String(currentFormId));
 			const definitions = Array.isArray(routes.actions?.definitions)
 				? routes.actions.definitions

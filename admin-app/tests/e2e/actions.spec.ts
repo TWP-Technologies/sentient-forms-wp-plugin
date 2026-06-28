@@ -3062,6 +3062,67 @@ test.describe('Actions admin flows', () => {
 		}
 	});
 
+	test('keeps direct free Elementor route unavailable when bootstrap returns requires_pro', async ({
+		page
+	}) => {
+		await seedRuntimeConfig(page, {
+			formSources: [
+				{
+					slug: 'elementor_forms',
+					label: 'Elementor Forms',
+					isActive: false,
+					availability: 'requires_pro',
+					availabilityMessage: 'Elementor Forms support requires Elementor Pro Forms APIs.',
+					requiresPro: true,
+					descriptor: elementorFormsFreeDescriptor
+				}
+			]
+		});
+		await mockWpJson(page, {
+			actions: {
+				forms: {
+					elementor_forms: [
+						{
+							id: '656:sfdogfood1',
+							title: 'Elementor local dogfood',
+							adapter: 'elementor_forms',
+							adapter_name: 'Elementor Forms',
+							settings: null
+						}
+					]
+				},
+				definitions: baseDefinitions,
+				status: statusUnknown,
+				formsActions: [],
+				formFields: [],
+				formSourceDescriptors: { elementor_forms: elementorFormsFreeDescriptor },
+				bootstrapError: {
+					status: 404,
+					body: {
+						code: 'rest_form_source_unavailable',
+						message: 'Elementor Forms support requires Elementor Pro Forms APIs.',
+						data: { status: 404 }
+					}
+				},
+				creditBalance
+			},
+			customActions: { list: { actions: baseCustomActions, quota } }
+		});
+
+		await page.goto('/actions/elementor_forms/656%3Asfdogfood1', { waitUntil: 'networkidle' });
+
+		await expect(page.getByTestId('form-source-availability-alert')).toContainText(
+			'Elementor Forms support requires Elementor Pro Forms APIs.'
+		);
+		await expect(page.getByTestId('submission-ledger-toggle')).toBeDisabled();
+		await expect(page.getByRole('button', { name: 'Check Sentient Forms log entry' })).toHaveCount(
+			0
+		);
+
+		const addActionButtons = page.getByRole('button', { name: 'Add action' });
+		await expect(addActionButtons.first()).toBeDisabled();
+	});
+
 	test('shows Elementor Pro Forms native-submission limitations without blocking after-submission setup', async ({
 		page
 	}) => {

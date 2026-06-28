@@ -63,6 +63,7 @@
 		FormExecutionStatus,
 		FormFieldInfo,
 		FormSourceDescriptor,
+		FormSourceSummary,
 		FormSummary,
 		LinkedActionStatus,
 		InputMapping,
@@ -397,7 +398,15 @@
 	let currentFormSummary = $state<FormSummary | null>(null);
 	let currentFormSummaryLoading = $state(false);
 	let currentFormSummaryError = $state<string | null>(null);
-	const formSourceDescriptor = $derived(actionsState.bootstrap?.form_source_descriptor ?? null);
+	const runtimeFormSources: FormSourceSummary[] =
+		typeof window === 'undefined' ? [] : (window.sentientFormsConfig?.formSources ?? []);
+	const runtimeFormSourceDescriptor = $derived.by(
+		() =>
+			runtimeFormSources.find((source) => source.slug === data.formSourceSlug)?.descriptor ?? null
+	);
+	const formSourceDescriptor = $derived(
+		actionsState.bootstrap?.form_source_descriptor ?? runtimeFormSourceDescriptor
+	);
 	const currentFormAdapterLabel = $derived(
 		currentFormSummary?.adapter_name?.trim() ||
 			formSourceDescriptor?.label?.trim() ||
