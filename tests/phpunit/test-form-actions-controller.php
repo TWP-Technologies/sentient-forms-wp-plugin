@@ -615,6 +615,42 @@ class Tests_Form_Actions_Controller extends WP_UnitTestCase {
         $this->assertSame( 'needle-entry-77', $data['submissions'][0]['native_entry_id'] ?? null );
     }
 
+    public function test_submission_ledger_datetime_local_filters_match_mysql_captured_timestamps(): void
+    {
+        GFAPI::$forms[1] = [
+            'id'    => 1,
+            'title' => 'Contact Form',
+        ];
+
+        $ledger = new Sentient_Forms_Submission_Ledger_Repository( $GLOBALS['wpdb'] );
+        $this->assertIsInt(
+            $ledger->create(
+                [
+                    'submission_uuid'     => '12121212-3434-4567-8abc-121212121212',
+                    'form_source'         => 'gravity_forms',
+                    'form_id'             => '1',
+                    'native_entry_id'     => 'same-day-entry',
+                    'captured_at'         => '2026-06-28 13:00:00',
+                    'logical_fields_json' => [
+                        'name' => 'Same Day Prospect',
+                    ],
+                ]
+            )
+        );
+
+        $request = $this->authenticate_rest_request( new WP_REST_Request( 'GET', '/sentient-forms/v1/gravity_forms/forms/1/submissions' ) );
+        $request->set_param( 'captured_from', '2026-06-28T12:00' );
+        $request->set_param( 'captured_to', '2026-06-28T14:00' );
+
+        $response = $this->dispatch_form_actions_request( $request );
+        $data     = $response->get_data();
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 1, $data['total'] ?? null );
+        $this->assertCount( 1, $data['submissions'] ?? [] );
+        $this->assertSame( 'same-day-entry', $data['submissions'][0]['native_entry_id'] ?? null );
+    }
+
     public function test_get_submission_ledger_detail_returns_scoped_submission(): void
     {
         GFAPI::$forms[1] = [

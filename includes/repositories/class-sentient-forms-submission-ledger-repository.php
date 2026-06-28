@@ -142,13 +142,14 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
             ]
         );
 
-        $rows = $this->wpdb->get_results(
-            $this->wpdb->prepare(
-                'SELECT * FROM %i ' . $where['sql'] . ' ' . $order . ' LIMIT %d OFFSET %d',
-                ...$args
-            ),
-            ARRAY_A
-        ) ?: [];
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber,PluginCheck.Security.DirectDB.UnescapedDBParameter -- WHERE and ORDER fragments are built from fixed internal clauses; values remain bound through prepare().
+        $query = $this->wpdb->prepare(
+            'SELECT * FROM %i ' . $where['sql'] . ' ' . $order . ' LIMIT %d OFFSET %d',
+            ...$args
+        );
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier, filter, limit, and offset placeholders.
+        $rows = $this->wpdb->get_results( $query, ARRAY_A ) ?: [];
 
         return array_map( [ $this, 'decode_row' ], $rows );
     }
@@ -168,12 +169,14 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
         $where = $this->build_form_filter_where( $form_source, $form_id, $filters );
         $args  = array_merge( [ $this->table_name() ], $where['values'] );
 
-        return (int) $this->wpdb->get_var(
-            $this->wpdb->prepare(
-                'SELECT COUNT(*) FROM %i ' . $where['sql'],
-                ...$args
-            )
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber,PluginCheck.Security.DirectDB.UnescapedDBParameter -- WHERE fragment is built from fixed internal clauses; values remain bound through prepare().
+        $query = $this->wpdb->prepare(
+            'SELECT COUNT(*) FROM %i ' . $where['sql'],
+            ...$args
         );
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared immediately above with identifier and filter placeholders.
+        return (int) $this->wpdb->get_var( $query );
     }
 
     /**
@@ -246,14 +249,14 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
             $values[]  = $native_entry;
         }
 
-        $captured_from = isset( $filters['captured_from'] ) ? sanitize_text_field( (string) $filters['captured_from'] ) : '';
+        $captured_from = $this->normalize_captured_filter_datetime( $filters['captured_from'] ?? null );
         if ( '' !== $captured_from )
         {
             $clauses[] = 'captured_at >= %s';
             $values[]  = $captured_from;
         }
 
-        $captured_to = isset( $filters['captured_to'] ) ? sanitize_text_field( (string) $filters['captured_to'] ) : '';
+        $captured_to = $this->normalize_captured_filter_datetime( $filters['captured_to'] ?? null );
         if ( '' !== $captured_to )
         {
             $clauses[] = 'captured_at <= %s';
@@ -276,6 +279,33 @@ class Sentient_Forms_Submission_Ledger_Repository extends Sentient_Forms_Local_R
             'sql'    => 'WHERE ' . implode( ' AND ', $clauses ),
             'values' => $values,
         ];
+    }
+
+    private function normalize_captured_filter_datetime( mixed $value ): string
+    {
+        if ( null === $value || ! is_scalar( $value ) )
+        {
+            return '';
+        }
+
+        $raw = sanitize_text_field( (string) $value );
+        if ( '' === $raw )
+        {
+            return '';
+        }
+
+        $normalized = str_replace( 'T', ' ', $raw );
+        if ( preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $normalized ) )
+        {
+            return $normalized . ':00';
+        }
+
+        if ( preg_match( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $normalized ) )
+        {
+            return $normalized;
+        }
+
+        return $raw;
     }
 
     private function order_clause( string $sort ): string

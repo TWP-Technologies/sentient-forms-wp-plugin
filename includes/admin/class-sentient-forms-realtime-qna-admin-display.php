@@ -356,6 +356,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             ]
         );
 
+        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- This manually mirrors WordPress core's script-loader filter after the normal footer phase has already passed.
         return apply_filters( 'script_loader_tag', $tag, self::ADMIN_ASSET_HANDLE, $src );
     }
 
@@ -384,6 +385,7 @@ class Sentient_Forms_Realtime_Qna_Admin_Display
             $src = add_query_arg( 'ver', $script->ver, $src );
         }
 
+        // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- This manually mirrors WordPress core's script source filter for a late-rendered admin asset.
         return esc_url_raw( apply_filters( 'script_loader_src', $src, self::ADMIN_ASSET_HANDLE ) );
     }
 
