@@ -90,8 +90,8 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
         remove_all_filters( 'sentient_forms_elementor_posts_with_data' );
         add_filter( 'sentient_forms_elementor_discovery_post_limit', static fn() => 1 );
 
-        $observed_query_vars = null;
-        $capture_query       = static function ( $query ) use ( &$observed_query_vars ): void {
+        $used_wp_query_meta_filter = false;
+        $capture_query             = static function ( $query ) use ( &$used_wp_query_meta_filter ): void {
             if (
                 'ids' !== $query->get( 'fields' )
                 || 'any' !== $query->get( 'post_status' )
@@ -101,11 +101,10 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
                 return;
             }
 
-            $observed_query_vars = [
-                'meta_key'       => $query->get( 'meta_key' ),
-                'meta_query'     => $query->get( 'meta_query' ),
-                'posts_per_page' => $query->get( 'posts_per_page' ),
-            ];
+            if ( '' !== (string) $query->get( 'meta_key' ) || ! empty( $query->get( 'meta_query' ) ) )
+            {
+                $used_wp_query_meta_filter = true;
+            }
         };
         add_action( 'pre_get_posts', $capture_query );
 
@@ -114,10 +113,7 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
 
         remove_action( 'pre_get_posts', $capture_query );
 
-        $this->assertIsArray( $observed_query_vars );
-        $this->assertSame( '_elementor_data', $observed_query_vars['meta_key'] );
-        $this->assertEmpty( $observed_query_vars['meta_query'] );
-        $this->assertSame( 1, $observed_query_vars['posts_per_page'] );
+        $this->assertFalse( $used_wp_query_meta_filter );
         $this->assertCount( 1, $forms );
     }
 
@@ -1491,6 +1487,13 @@ class Tests_Elementor_Forms_Adapter extends WP_UnitTestCase
             $contexts['map_first']['execution_request_id'] ?? null,
             $contexts['map_second']['dependency_execution_request_ids']['map_first'] ?? null
         );
+        $upstream_record = Sentient_Forms_Plugin::instance()->get_async_request_store()->get(
+            (string) $contexts['map_second']['dependency_execution_request_ids']['map_first']
+        );
+        $this->assertIsArray( $upstream_record );
+        $this->assertSame( 'queued', $upstream_record['status'] ?? null );
+        $this->assertSame( 'entry_evaluation', $upstream_record['action_id'] ?? null );
+        $this->assertSame( 'elementor_forms', $upstream_record['adapter'] ?? null );
         $this->assertSame( 45, $contexts['map_second']['dependency_wait_max_seconds'] ?? null );
         $this->assertSame( 10, $contexts['map_second']['dependency_wait_poll_seconds'] ?? null );
     }

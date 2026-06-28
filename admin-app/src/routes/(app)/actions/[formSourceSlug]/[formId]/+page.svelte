@@ -4378,7 +4378,9 @@
 				disabled={!canConfigureFormSource}
 				>Import from Library</Button
 			>
-			<Button variant="secondary" onclick={checkEntryStatus}>Check Sentient Forms log entry</Button>
+			{#if supportsNativeEntryLookup}
+				<Button variant="secondary" onclick={checkEntryStatus}>Check Sentient Forms log entry</Button>
+			{/if}
 		</div>
 	{/snippet}
 

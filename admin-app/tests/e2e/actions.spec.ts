@@ -3139,6 +3139,9 @@ test.describe('Actions admin flows', () => {
 				'Native entry status lookup is unavailable for Elementor Forms. Use the Submission Ledger and Action Log list for submitted Elementor records.'
 			)
 		).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Check Sentient Forms log entry' })).toHaveCount(
+			0
+		);
 		await expect(page.getByRole('button', { name: 'Check log entry' })).toHaveCount(0);
 		await expect(page.getByText('this Gravity Forms form')).toHaveCount(0);
 
