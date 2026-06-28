@@ -946,10 +946,12 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
         $this->assertSame( 'openrouter_models_zdr_filter', $zdr_model['metadata_json']['zdr_source'] );
     }
 
-    public function test_refresh_openrouter_models_fails_closed_when_zdr_catalog_fails(): void
+    public function test_refresh_openrouter_models_preserves_catalog_when_zdr_catalog_fails(): void
     {
+        $calls = [];
         $this->mock_openrouter_models_response(
-            static function ( array $args, string $url ): ?array {
+            static function ( array $args, string $url ) use ( &$calls ): ?array {
+                $calls[] = $url;
                 if ( str_contains( $url, 'zdr=true' ) )
                 {
                     return [
@@ -978,11 +980,21 @@ class Tests_Local_Providers_Controller extends WP_UnitTestCase
 
         $response = rest_get_server()->dispatch( $request );
 
-        $this->assertSame( 502, $response->get_status() );
-        $this->assertSame( 'openrouter_zdr_models_unavailable', $response->get_data()['code'] ?? null );
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertCount( 2, $calls );
+
+        $data = $response->get_data();
+        $this->assertSame( 2, $data['total_cached'] );
+        $this->assertSame( 'openrouter_zdr_models_unavailable', $data['warnings'][0]['code'] ?? null );
+        $this->assertStringContainsString( 'ZDR eligibility could not be verified', $data['warnings'][0]['message'] ?? '' );
 
         $models = new Sentient_Forms_Model_Cache_Repository( $GLOBALS['wpdb'] );
-        $this->assertSame( [], $models->list( 'openrouter', true ) );
+        $cached = $models->list( 'openrouter', true );
+        $this->assertCount( 2, $cached );
+
+        $free_model = $models->get( 'openrouter', 'openai/gpt-oss-20b:free' );
+        $this->assertIsArray( $free_model );
+        $this->assertArrayNotHasKey( 'zdr_eligible', $free_model['metadata_json'] );
     }
 
     public function test_setup_sentient_managed_requires_consent_before_local_writes(): void

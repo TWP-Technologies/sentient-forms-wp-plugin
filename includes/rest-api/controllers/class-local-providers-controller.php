@@ -497,32 +497,25 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
             );
         }
 
+        $warnings       = [];
         $zdr_ids        = null;
         $zdr_checked_at = gmdate( 'Y-m-d H:i:s' );
         $zdr_remote     = $this->openrouter->list_models( [ 'zdr' => true ] );
         if ( is_wp_error( $zdr_remote ) )
         {
-            return new WP_Error(
-                'openrouter_zdr_models_unavailable',
-                __( 'OpenRouter model metadata was refreshed, but ZDR eligibility could not be verified. Try refreshing again before using ZDR filters.', 'sentient-forms' ),
-                [
-                    'status' => 502,
-                ]
-            );
+            $warnings[] = [
+                'code'    => 'openrouter_zdr_models_unavailable',
+                'message' => __( 'OpenRouter model metadata was refreshed, but ZDR eligibility could not be verified. Try refreshing again before using ZDR filters.', 'sentient-forms' ),
+            ];
         }
-
-        if ( ! is_array( $zdr_remote['data'] ?? null ) )
+        elseif ( ! is_array( $zdr_remote['data'] ?? null ) )
         {
-            return new WP_Error(
-                'openrouter_zdr_models_invalid',
-                __( 'OpenRouter returned invalid ZDR model metadata. Try refreshing again before using ZDR filters.', 'sentient-forms' ),
-                [
-                    'status' => 502,
-                ]
-            );
+            $warnings[] = [
+                'code'    => 'openrouter_zdr_models_invalid',
+                'message' => __( 'OpenRouter returned invalid ZDR model metadata. Try refreshing again before using ZDR filters.', 'sentient-forms' ),
+            ];
         }
-
-        if ( ! is_wp_error( $zdr_remote ) )
+        else
         {
             $zdr_ids = $this->openrouter_model_id_set( is_array( $zdr_remote['data'] ?? null ) ? $zdr_remote['data'] : [] );
         }
@@ -556,6 +549,7 @@ class Sentient_Forms_Local_Providers_Controller extends Sentient_Forms_Abstract_
         $rows     = $this->model_cache->list( 'openrouter', true, 1000 );
         $response = $this->format_model_catalog_response( $rows, false, false );
         $response['stored']           = (int) $stored;
+        $response['warnings']         = $warnings;
 
         return $response;
     }
