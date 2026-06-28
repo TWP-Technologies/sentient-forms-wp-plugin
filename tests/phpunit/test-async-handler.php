@@ -123,6 +123,10 @@ if ( ! function_exists( 'gform_update_meta' ) )
 class Sentient_Forms_Test_Action_Executor extends Sentient_Forms_Action_Executor
 {
     public array $captured = [];
+    public array $result = [
+        'result_data' => [],
+        'meta'        => [],
+    ];
 
     public function execute( string $central_action_id, array $form, array $entry, array $context = [] )
     {
@@ -133,10 +137,7 @@ class Sentient_Forms_Test_Action_Executor extends Sentient_Forms_Action_Executor
             'context'           => $context,
         ];
 
-        return [
-            'result_data' => [],
-            'meta'        => [],
-        ];
+        return $this->result;
     }
 }
 
@@ -1238,6 +1239,153 @@ class AsyncHandlerTest extends WP_UnitTestCase
         $this->assertSame( [], $executor->captured );
 
         delete_option( 'sentient_forms_actions_gravity_forms_226' );
+    }
+
+    public function test_process_action_records_elementor_cps_result_for_upstream_spam_dependency_gate(): void
+    {
+        $form_id         = '91:formabc';
+        $submission_uuid = '11111111-1111-4111-8111-222222222222';
+
+        update_option(
+            'sentient_forms_actions_elementor_forms_91_formabc',
+            [
+                'map_prereq' => [
+                    'local_mapping_id'           => 'map_prereq',
+                    'central_action_id'          => 'spam_detection_v1',
+                    'action_type_indicator'      => 'master',
+                    'is_action_enabled_for_form' => true,
+                    'trigger_hooks'              => [ 'after_submission' ],
+                    'settings'                   => [
+                        'skip_downstream_on_spam' => true,
+                    ],
+                ],
+            ]
+        );
+
+        $request_store = $this->plugin->get_async_request_store();
+        $executor      = new Sentient_Forms_Test_Action_Executor( $this->plugin );
+        $executor->result = [
+            'result'   => [
+                'structured' => [
+                    'classification' => 'spam',
+                    'confidence'     => 0.98,
+                ],
+            ],
+            'provider' => 'openrouter',
+            'model'    => 'openrouter/auto',
+        ];
+        $this->set_action_executor( $executor );
+
+        try
+        {
+            $scheduled = $this->plugin->process_action_async(
+                'spam_detection_v1',
+                [
+                    'hook'        => 'elementor_pro/forms/new_record',
+                    'form_source' => 'elementor_forms',
+                    'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
+                    'entry'       => [
+                        'id'              => null,
+                        'submission_uuid' => $submission_uuid,
+                        'full_name'       => 'Ada Lovelace',
+                    ],
+                ],
+                [
+                    'central_action_id'     => 'spam_detection_v1',
+                    'action_type_indicator' => 'master',
+                    'settings'              => [
+                        'skip_downstream_on_spam' => true,
+                    ],
+                ],
+                [
+                    'hook'                  => 'elementor_pro/forms/new_record',
+                    'form_source'           => 'elementor_forms',
+                    'form_id'               => $form_id,
+                    'entry_id'              => null,
+                    'submission_uuid'       => $submission_uuid,
+                    'action_id'             => 'map_prereq',
+                    'action_name_label'     => 'Spam Detection',
+                    'local_mapping_id'      => 'map_prereq',
+                ]
+            );
+
+            $this->assertTrue( $scheduled );
+
+            $upstream_job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+            $handler      = $this->plugin->get_async_handler();
+            $handler->process_action(
+                $upstream_job['args']['action_id'],
+                $upstream_job['args']['data'],
+                $upstream_job['args']['settings'],
+                $upstream_job['args']['execution_request_id'],
+                $upstream_job['args']['context'],
+            );
+
+            global $wpdb;
+            $events = new Sentient_Forms_Execution_Events_Repository( $wpdb );
+            $event  = $events->get_by_request_id( $upstream_job['args']['execution_request_id'] );
+            $this->assertIsArray( $event );
+            $this->assertSame( 'spam', $event['result_json']['structured']['classification'] ?? null );
+            $this->assertSame( $submission_uuid, $event['submission_uuid'] ?? null );
+
+            $executor->captured = [];
+            $scheduled = $this->plugin->process_action_async(
+                'entry_summary_v1',
+                [
+                    'hook'        => 'elementor_pro/forms/new_record',
+                    'form_source' => 'elementor_forms',
+                    'form'        => [ 'id' => $form_id, 'title' => 'Elementor Lead' ],
+                    'entry'       => [
+                        'id'              => null,
+                        'submission_uuid' => $submission_uuid,
+                        'full_name'       => 'Ada Lovelace',
+                    ],
+                ],
+                [
+                    'central_action_id'     => 'entry_summary_v1',
+                    'action_type_indicator' => 'master',
+                    'settings'              => [],
+                ],
+                [
+                    'hook'                             => 'elementor_pro/forms/new_record',
+                    'form_source'                      => 'elementor_forms',
+                    'form_id'                          => $form_id,
+                    'entry_id'                         => null,
+                    'submission_uuid'                  => $submission_uuid,
+                    'action_id'                        => 'map_summary_default_skip',
+                    'action_name_label'                => 'Entry Summary',
+                    'local_mapping_id'                 => 'map_summary_default_skip',
+                    'dependency_mapping_ids'           => [ 'map_prereq' ],
+                    'dependency_execution_request_ids' => [ 'map_prereq' => $upstream_job['args']['execution_request_id'] ],
+                    'dependency_wait_started_at'       => time(),
+                    'dependency_wait_max_seconds'      => 120,
+                    'dependency_wait_poll_seconds'     => 5,
+                ]
+            );
+
+            $this->assertTrue( $scheduled );
+
+            $downstream_job = end( $GLOBALS['__sentient_forms_async_queue']['enqueued'] );
+            $handler->process_action(
+                $downstream_job['args']['action_id'],
+                $downstream_job['args']['data'],
+                $downstream_job['args']['settings'],
+                $downstream_job['args']['execution_request_id'],
+                $downstream_job['args']['context'],
+            );
+
+            $metadata = $this->plugin->get_async_metadata_store()->get( $downstream_job['args']['context']['job_id'] );
+            $this->assertSame( 'skipped', $metadata['status'] ?? null );
+
+            $row = $request_store->get( $downstream_job['args']['execution_request_id'], 'job' );
+            $this->assertSame( 'skipped', $row['status'] ?? null );
+            $this->assertStringContainsString( 'spam', (string) ( $row['last_error'] ?? '' ) );
+            $this->assertSame( [], $executor->captured );
+        }
+        finally
+        {
+            delete_option( 'sentient_forms_actions_elementor_forms_91_formabc' );
+        }
     }
 
     public function test_process_action_skips_elementor_submission_when_upstream_event_classifies_spam(): void

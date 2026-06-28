@@ -191,7 +191,9 @@ class Sentient_Forms_Async_Handler
 			$job['context'] ?? [],
 			$job['settings'] ?? []
 		);
-		
+
+		$this->record_local_execution_event( $job, 'success', $result );
+
 		do_action( 'sentient_forms_async_success', $context_with_settings, $result );
 		$this->notify_adapter_success( $context_with_settings, $result );
 		$this->emit_async_event( 'success', $job['context'], $result );

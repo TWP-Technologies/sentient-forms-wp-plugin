@@ -1405,6 +1405,16 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             return '';
         }
 
+        $post_id = $this->record_post_id( $record );
+        if ( $post_id > 0 )
+        {
+            $form = $this->find_form_widget_in_post( $post_id, $widget_id, $form_name );
+            if ( null !== $form )
+            {
+                return $this->format_form_id( $post_id, $widget_id );
+            }
+        }
+
         $matches = [];
         foreach ( $this->discover_elementor_forms() as $form )
         {
@@ -1442,6 +1452,12 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
             return null;
         }
 
+        $direct_form = $this->find_form_widget_in_post( $parsed['post_id'], $parsed['widget_id'] );
+        if ( null !== $direct_form )
+        {
+            return $direct_form;
+        }
+
         foreach ( $this->discover_elementor_forms() as $form )
         {
             if (
@@ -1449,6 +1465,42 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
                 && sanitize_key( (string) ( $form['widget_id'] ?? '' ) ) === $parsed['widget_id']
             )
             {
+                return $form;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function find_form_widget_in_post( int $post_id, string $widget_id, string $form_name = '' ): ?array
+    {
+        $post_id   = absint( $post_id );
+        $widget_id = sanitize_key( $widget_id );
+        if ( $post_id <= 0 || '' === $widget_id )
+        {
+            return null;
+        }
+
+        foreach ( $this->elementor_data_for_post( $post_id ) as $element )
+        {
+            foreach ( $this->find_form_widgets( $element, $post_id ) as $form )
+            {
+                $form_widget_id = isset( $form['widget_id'] ) && is_scalar( $form['widget_id'] )
+                    ? sanitize_key( (string) $form['widget_id'] )
+                    : '';
+                if ( $widget_id !== $form_widget_id )
+                {
+                    continue;
+                }
+
+                if ( '' !== $form_name && $form_name !== $this->form_title( $form ) )
+                {
+                    continue;
+                }
+
                 return $form;
             }
         }
@@ -2067,6 +2119,39 @@ class Sentient_Forms_Elementor_Forms_Adapter implements Sentient_Forms_Adapter_I
         }
 
         return '';
+    }
+
+    private function record_post_id( mixed $record ): int
+    {
+        foreach ( [ 'post_id', '_post_id', 'elementor_post_id', '_elementor_post_id', 'page_id' ] as $candidate_id )
+        {
+            $value = $this->record_form_setting( $record, $candidate_id );
+            if ( is_scalar( $value ) )
+            {
+                $post_id = absint( $value );
+                if ( $post_id > 0 )
+                {
+                    return $post_id;
+                }
+            }
+        }
+
+        foreach ( [ 'post_id', '_post_id', 'elementor_post_id', '_elementor_post_id', 'page_id' ] as $candidate_id )
+        {
+            $value = $this->record_field_value_by_id( $record, $candidate_id );
+            if ( is_scalar( $value ) )
+            {
+                $post_id = absint( $value );
+                if ( $post_id > 0 )
+                {
+                    return $post_id;
+                }
+            }
+        }
+
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Elementor Pro validates the submission before this hook; the posted id is only used to locate the submitted Elementor document.
+        $posted_post_id = $_POST['post_id'] ?? null;
+        return is_scalar( $posted_post_id ) ? absint( wp_unslash( $posted_post_id ) ) : 0;
     }
 
     private function record_field_value_by_id( mixed $record, string $target_field_id ): mixed
